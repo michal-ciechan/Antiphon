@@ -131,8 +131,10 @@ public class ClaudeDialogObservationTests
         var screen = CapturedPalette(highlighted: "/resume");
         ClaudeScreen.TryReadComposer(screen, out var content).ShouldBeTrue();
         content.ShouldBe("/remote-control");
-        ClaudeDialogObservation.Observe(screen).State.ShouldNotBe(
-            ClaudeDialogState.Clear, "highlight-is-resume-draft-is-remote-control");
+        var observed = ClaudeDialogObservation.Observe(screen);
+        observed.State.ShouldNotBe(ClaudeDialogState.Clear, "highlight-is-resume-draft-is-remote-control");
+        observed.EnterCommand.ShouldBe("/resume");
+        observed.AllowsRemoteControlSubmit.ShouldBeFalse();
 
         foreach (var command in new[] { "/clear", "/compact", "/logout" })
         {
@@ -154,7 +156,10 @@ public class ClaudeDialogObservationTests
                 .ShouldNotBe(ClaudeDialogState.Clear, label + " below palette");
         }
 
-        ClaudeDialogObservation.Observe(palette).State.ShouldBe(ClaudeDialogState.Clear);
+        var clear = ClaudeDialogObservation.Observe(palette);
+        clear.State.ShouldBe(ClaudeDialogState.Clear);
+        clear.EnterCommand.ShouldBe("/remote-control");
+        clear.AllowsRemoteControlSubmit.ShouldBeTrue();
     }
 
     private static string CapturedPalette(string highlighted = "/remote-control")

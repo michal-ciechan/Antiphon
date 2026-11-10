@@ -639,7 +639,9 @@ public sealed class RemoteControlRecoveryService
             var snap = await TryReadSnapshotAsync(sessionId, ct);
             if (snap is null || !SessionGeneration.Equal(snap.AcceptedStartedAt, generation))
                 return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
-            if (ClaudeScreen.TryReadComposer(snap.RenderedScreen, out var composer)
+            var current = ClaudeDialogObservation.Observe(snap.RenderedScreen);
+            if (current.AllowsRemoteControlSubmit
+                && ClaudeScreen.TryReadComposer(snap.RenderedScreen, out var composer)
                 && composer == "/remote-control")
             {
                 await _runtime.CatchUpTranscriptAsync(sessionId, ct);
