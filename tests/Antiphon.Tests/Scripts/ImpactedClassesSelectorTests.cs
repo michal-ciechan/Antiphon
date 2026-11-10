@@ -217,11 +217,11 @@ public sealed partial class ImpactedClassesSelectorTests
             ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
             "TestTimingOperationLabelTests");
         await AssertKinds(
-            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
+            root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "test-lane-category", "timing-labels"], "TestTimingOperationLabelTests");
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
-            ["remote-scripts"],
+            ["remote-scripts", "test-lane-category"],
             "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
             "C0995_Deploy_temp_checks_host_absence_before_checkout",
             "C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
@@ -376,9 +376,10 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)"
         + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(CapacityRecoveryTaskTests*)"
         + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)"
-        + "|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)|(LandEvidenceWarningDeliveryTests*)"
-        + "|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)|(PostLandMutationDeliveryTests*)"
+        + "|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)|(ExpectationDebtTests*)|(LandEvidenceWarningDeliveryTests*)"
+        + "|(LandReceiptScanCacheTests*)|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PreDispatchFailureDeliveryTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(RepositoryMutationLeaseOwnerTests*)|(RolePolicyToolBundleDispatchTests*)"
         + "|(VerificationRoundDeliveryTests*)|(WorktreeLandingCleanupRetryTests*)/*";
 
     // The C1432 roster: every server file that starts a git process, plus the CARD-1546 project.
@@ -426,15 +427,16 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(CapacityRecoveryTaskTests*)|(Card1761RunnerReadPollTests*)|(CheckNoteDeliveryHandoffTests*)"
         + "|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)"
         + "|(DelegationTestServicesTests*)|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)"
-        + "|(DispatchHoldVisibilityTests*)|(ExternalTrackerSyncIdentifierTests*)|(ImpactedClassesSelectorTests*)"
-        + "|(InProcessGitCommandsTests*)|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)"
-        + "|(LegacyCheckNotePublicationTests*)|(MergeHighRadiusSubsetTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(DispatchHoldVisibilityTests*)|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)|(ImpactedClassesSelectorTests*)"
+        + "|(InProcessGitCommandsTests*)|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
+        + "|(LegacyCheckNotePublicationTests*)|(LiveLaneRunnerTests*)|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
         + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)|(PostLandMutationWorktreeTests*)"
         + "|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(RepositoryMutationLeaseOwnerTests*)|(RolePolicyToolBundleDispatchTests*)"
         + "|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
         + "|(RunnerTerminalSessionInputEncodingTests*)|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
-        + "|(SessionTerminationSourcePersistenceTests*)|(TestSelectionTests*)|(TimeoutAuditTests*)"
+        + "|(SessionTerminationSourcePersistenceTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)|(TimeoutAuditTests*)"
         + "|(VerificationRoundDeliveryTests*)|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
         + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)|(WorktreeManagerStartRefLocalOnlyTests*)"
         + "|(WorktreeManagerTests*)|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
@@ -539,6 +541,7 @@ public sealed partial class ImpactedClassesSelectorTests
         ]);
         FilterRows(json.RootElement, "windowsFilters").ShouldBe([
             ("tests/Antiphon.E2E", windowsE2e),
+            ("tests/Antiphon.Tests", "/*/*/(AgentTaskLandPublicationTests*)/*"),
         ]);
     }
 

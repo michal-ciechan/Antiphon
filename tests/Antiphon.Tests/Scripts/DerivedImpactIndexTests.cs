@@ -23,7 +23,7 @@ public sealed class DerivedImpactIndexTests
 
     private const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
-    private const string MasterSelector = "9e050cf9600aef15b77d67957fc0cd68826d6b35";
+    private const string MasterSelector = "72fada66545c2dc96a0710827fbc57558700dd61";
 
     private const string PrecheckPath = "scripts/audit-land-verification-precheck.ps1";
 
@@ -133,9 +133,9 @@ public sealed class DerivedImpactIndexTests
         Capped(index, LandingGitPath);
         Capped(index, LeakSweepPath);
         Capped(index, NotificationServicePath);
-        Edge(index, LandingGitPath).ShouldContain("RepositoryMutationLeaseTests");
-        Edge(index, NotificationServicePath).ShouldContain("PreDispatchFailureDeliveryTests");
-        Edge(index, LeakSweepPath).ShouldContain("C1677TempFamilyRegistryTests");
+        Edge(index, LandingGitPath).ShouldContain("DispatchBaseNotificationTests");
+        Edge(index, NotificationServicePath).ShouldContain("PostLandMutationDeliveryTests");
+        Edge(index, LeakSweepPath).ShouldContain("PtyHostAdoptionTests");
         Edge(index, PrecheckPath).ShouldContain("LandGraphEvaluationTests");
     }
 
@@ -458,18 +458,19 @@ public sealed class DerivedImpactIndexTests
         lease.Exit.ShouldBe(0, lease.Text);
         using (var json = JsonDocument.Parse(lease.Stdout))
         {
-            Strings(json.RootElement, "classes").ShouldNotContain("RepositoryMutationLeaseTests");
-            WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryMutationLeaseTests");
+            Strings(json.RootElement, "classes").ShouldContain("RepositoryMutationLeaseTests");
+            Strings(json.RootElement, "classes").ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+            WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryLeaseWindowsBoundaryTests");
             OwedCount(json.RootElement, LandingGitPath).ShouldBe(39);
         }
 
         var leaseText = await SelectAsync(root, "-Path", LandingGitPath);
         leaseText.Exit.ShouldBe(0, leaseText.Text);
         leaseText.Stdout.Replace("\r\n", "\n").Split('\n').ShouldContain(
-            "owed/capped server/Infrastructure/Git/LandingGit.cs count=39 first=DispatchBaseNotificationTests,"
-            + "RunnerSettlementSyncTests,AgentTaskLandVerifierTests,PhoneHomeTaskDispatchProjectionTests,"
+            "owed/capped server/Infrastructure/Git/LandingGit.cs count=39 first=RunnerSettlementSyncTests,"
+            + "AgentTaskLandVerifierTests,PhoneHomeTaskDispatchProjectionTests,"
             + "RepairSourceDispatchTests,RepositoryMutationLeaseDescribeTests,RunnerAlarmDeliveryTests,"
-            + "RunnerStateAlarmExclusionTests");
+            + "RunnerStateAlarmExclusionTests,AgentTaskDispatchBaseGuardTests");
 
         var service = await SelectAsync(root, "-Path", NotificationServicePath, "-Json");
         service.Exit.ShouldBe(0, service.Text);
@@ -483,7 +484,7 @@ public sealed class DerivedImpactIndexTests
         sweep.Exit.ShouldBe(0, sweep.Text);
         using var sweepJson = JsonDocument.Parse(sweep.Stdout);
         Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
-        OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(6);
+        OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(7);
     }
 
     [Test]
