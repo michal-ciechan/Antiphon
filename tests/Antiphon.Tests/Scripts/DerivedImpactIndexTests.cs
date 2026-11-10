@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -67,6 +68,45 @@ public sealed class DerivedImpactIndexTests
         "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
         "ae5b545d9ac9091f42847734b88bf8e202cf2814",
         "dff78584d636fa49eca37652f2c3f14a48002a92",
+    ];
+
+    // Review 7c6f052c: the grep census of *Tests classes whose file contains OSPlatform.Windows.
+    // That census is 31 classes. The report names CodexAdapterLocalShellTests, RawPtyAdapterTests,
+    // AgentSessionServiceIntegrationTests, SessionMessageQueuePtyIntegrationTests,
+    // GrokDelegateEndToEndTests, DelegateLaunchArgvIntegrityTests and FakeClaudeContractTests.
+    private static readonly string[] ReviewerOsPlatformWindowsClasses =
+    [
+        "AgentSessionServiceIntegrationTests",
+        "ClaudeAdapterLocalShellTests",
+        "ClaudeDetectorsTests",
+        "ClaudeRemoteControlLaunchArgsTests",
+        "ClaudeSubmitContractTests",
+        "ClaudeVerifiedDeliveryTests",
+        "CodexAdapterLocalShellTests",
+        "DelegateLaunchArgvIntegrityTests",
+        "DelegationBriefCeilingPtyTests",
+        "FakeClaudeContractTests",
+        "FakeGrokContractTests",
+        "GrokDelegateEndToEndTests",
+        "GrokSignInRuntimeTests",
+        "HostSessionPipeTests",
+        "ModernPtyDa1Tests",
+        "ParentDeathSpikeTests",
+        "PtyAgentRunnerTests",
+        "PtyBackendContractTests",
+        "PtyBracketedPasteContractTests",
+        "PtyHostLauncherTests",
+        "PtyInputChunkingTests",
+        "PtyKillProcessTreeTests",
+        "PtyLargeWriteTests",
+        "PtyStressTests",
+        "RawPtyAdapterTests",
+        "RunnerPlatformContractTests",
+        "SessionMessageQueueGrokPtyIntegrationTests",
+        "SessionMessageQueuePtyIntegrationTests",
+        "SessionQueueReceiptPlumbingTests",
+        "SlashCommandMenuReconciliationTests",
+        "WaitForQuietAfterVisibleTests",
     ];
 
     private static readonly (string Id, string Sha, string? ClassName)[] Replay =
@@ -547,6 +587,101 @@ public sealed class DerivedImpactIndexTests
         }
     }
 
+    [Test]
+    public async Task reviewer_census_classes_are_windows_only()
+    {
+        ReviewerOsPlatformWindowsClasses.Length.ShouldBe(31);
+        var windowsOnly = await CommittedWindowsOnly();
+        foreach (var name in ReviewerOsPlatformWindowsClasses)
+            windowsOnly.ShouldContain(name);
+    }
+
+    [Test]
+    public async Task linux_edge_classes_have_no_os_gate_token()
+    {
+        var root = RepoRoot();
+        using var index = JsonDocument.Parse(await File.ReadAllTextAsync(IndexPath(root)));
+        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
+        var linux = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var edge in index.RootElement.GetProperty("edges").EnumerateArray())
+        {
+            foreach (var name in Strings(edge, "classes"))
+            {
+                if (!windowsOnly.Contains(name))
+                    linux.Add(name);
+            }
+        }
+
+        var sources = OsGateFiles.Load(root);
+        var hits = new List<string>();
+        foreach (var name in linux.Order(StringComparer.Ordinal))
+        {
+            if (!sources.Classes.TryGetValue(name, out var decls))
+                continue;
+            foreach (var decl in decls)
+            {
+                var token = OsGateFiles.FirstToken(decl.Text);
+                if (token is not null)
+                {
+                    hits.Add(name + " file " + token);
+                    break;
+                }
+
+                foreach (var baseName in decl.Bases)
+                {
+                    if (!sources.Classes.TryGetValue(baseName, out var bases))
+                        continue;
+                    foreach (var baseDecl in bases)
+                    {
+                        var baseToken = OsGateFiles.FirstToken(baseDecl.Text);
+                        if (baseToken is null)
+                            continue;
+                        hits.Add(name + " base " + baseName + " " + baseToken);
+                        break;
+                    }
+                }
+            }
+        }
+
+        hits.ShouldBeEmpty(string.Join(", ", hits.Take(8)));
+    }
+
+    [Test]
+    public void os_gate_token_census_is_windows_only()
+    {
+        var root = RepoRoot();
+        using var index = JsonDocument.Parse(File.ReadAllText(IndexPath(root)));
+        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
+        var sources = OsGateFiles.Load(root);
+        var hits = new List<string>();
+        foreach (var pair in sources.Classes.OrderBy(item => item.Key, StringComparer.Ordinal))
+        {
+            if (!pair.Key.EndsWith("Tests", StringComparison.Ordinal))
+                continue;
+            if (windowsOnly.Contains(pair.Key))
+                continue;
+            foreach (var decl in pair.Value)
+            {
+                var token = OsGateFiles.FirstToken(decl.Text);
+                if (token is null)
+                    continue;
+                hits.Add(pair.Key + " " + token);
+                break;
+            }
+        }
+
+        hits.ShouldBeEmpty(string.Join(", ", hits.Take(8)));
+    }
+
+    private static string IndexPath(string root) => Path.Combine(root, "tests", "derived-impact-index.json");
+
+    private static async Task<HashSet<string>> CommittedWindowsOnly()
+    {
+        var root = RepoRoot();
+        using var index = JsonDocument.Parse(await File.ReadAllTextAsync(IndexPath(root)));
+        return Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
+    }
+
     private static List<string> Edge(DerivedImpactIndex index, string path) =>
         index.Edges.Single(edge => edge.Path == path).Classes.ToList();
 
@@ -716,6 +851,109 @@ public sealed class DerivedImpactIndexTests
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
             dir = dir.Parent;
         return dir?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
+    }
+
+    // Grep census, independent of DerivedImpactIndexBuilder. A class file or a base-class file
+    // matches when it contains an OS-gate token. Helper walks stay in the builder.
+    private sealed class OsGateFiles
+    {
+        private static readonly string[] Tokens =
+        [
+            "IsWindows",
+            "IsOSPlatform",
+            "OSPlatform.Windows",
+            "RuntimeInformation",
+            "Skip.Test",
+            "Skip.When",
+            "Skip.Unless",
+            "SkipTestException",
+            "[Skip",
+            "[Windows",
+            "[Linux",
+            "Environment.OSVersion",
+            "PlatformID",
+        ];
+
+        private static readonly Regex HelperName = new(
+            @"\b(?!\w*Tests\b)(?:\w*(?:Windows|Linux)\w*(?:Gate|Skip|Guard)\w*|\w*(?:Gate|Skip|Guard)\w*(?:Windows|Linux)\w*)\b",
+            RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+        private static readonly Regex Declaration = new(
+            @"^\s*(?:(?:public|internal|private|protected|file|sealed|static|abstract|partial|readonly)\s+)*(?:class|record)\s+(\w+)",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+        private OsGateFiles(Dictionary<string, List<ClassText>> classes) => Classes = classes;
+
+        public Dictionary<string, List<ClassText>> Classes { get; }
+
+        public static OsGateFiles Load(string root)
+        {
+            var classes = new Dictionary<string, List<ClassText>>(StringComparer.Ordinal);
+            var tests = Path.Combine(root, "tests");
+            foreach (var file in Directory.EnumerateFiles(tests, "*.cs", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+                if (relative.Split('/').Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.Ordinal)))
+                    continue;
+                var text = File.ReadAllText(file);
+                foreach (Match match in Declaration.Matches(text))
+                {
+                    var name = match.Groups[1].Value;
+                    var header = text.Substring(match.Index, Math.Min(400, text.Length - match.Index));
+                    var brace = header.IndexOf('{');
+                    if (brace >= 0)
+                        header = header[..brace];
+                    if (!classes.TryGetValue(name, out var decls))
+                    {
+                        decls = [];
+                        classes[name] = decls;
+                    }
+
+                    decls.Add(new ClassText(text, BaseNames(header)));
+                }
+            }
+
+            return new OsGateFiles(classes);
+        }
+
+        public static string? FirstToken(string text)
+        {
+            foreach (var token in Tokens)
+            {
+                if (text.Contains(token, StringComparison.Ordinal))
+                    return token;
+            }
+
+            if (text.Contains("DirectorySeparatorChar == '\\\\'", StringComparison.Ordinal))
+                return "DirectorySeparatorChar";
+            var helper = HelperName.Match(text);
+            return helper.Success ? helper.Value : null;
+        }
+
+        private static string[] BaseNames(string header)
+        {
+            var colon = header.IndexOf(':');
+            if (colon < 0)
+                return [];
+            var names = new List<string>();
+            foreach (var part in header[(colon + 1)..].Split(','))
+            {
+                var id = "";
+                foreach (var piece in part.Split(['<', '>', '.', ' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries))
+                {
+                    if (piece.Length == 0 || !char.IsLetter(piece[0]))
+                        continue;
+                    id = piece;
+                }
+
+                if (id.Length > 0 && id is not ("where" or "class" or "struct"))
+                    names.Add(id);
+            }
+
+            return names.ToArray();
+        }
+
+        public readonly record struct ClassText(string Text, string[] Bases);
     }
 
     private sealed class Fixture : IDisposable
