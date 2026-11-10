@@ -68,6 +68,25 @@ duration seconds, table count, `mode=plain`, `encryption=none`, and
 `operatorDecision=2026-11-10`. The operator asked for unencrypted compressed
 dumps on 2026-11-10 because age and a recipient are not set up.
 
+The scheduled job also copies each verified plain dump into
+`C:\Users\lndco\OneDrive\Backups\antiphon-postgres`. The operator asked for
+that copy on 2026-11-10. The dump is unencrypted. It syncs to the cloud, and
+the database holds tokens and transcripts. The age path stays available and
+is still the default when `-Plain` is not named. The script has no age key.
+`-OneDriveCopy` is off unless it is named, so an ad-hoc run does not write
+into OneDrive. The scheduled invoke script names `-OneDriveCopy`. The primary
+destination stays outside OneDrive; a plain destination inside the sync root
+still fails closed with `destination-inside-onedrive`. The OneDrive root and
+its `Backups` folder must already exist. If either is missing, the status
+field is `oneDrive=missing`, nothing is written in OneDrive, and the local
+dump still stands. The copy is written as a name ending in `.partial` and
+renamed only when its sha256 equals the local file. OneDrive keeps 7 dumps.
+The local folder keeps 14. Prune runs only after the new file is in place
+and hash-verified. `snapshot-status.json` adds `oneDrive` (`ok`, `missing`,
+or `failed`), `oneDriveBytes`, and `oneDriveFolder`. The Telegram line ends
+with `+cloud` when the copy succeeded, and with `no cloud copy` as a warning
+when the copy failed or the folder is missing.
+
 `-EnableSchedule` is that human enable. Preview writes nothing.
 `-EnableSchedule` without `-Apply` refuses. The checked-in schedule payload is
 `enabled: true` because the operator asked for the daily job.

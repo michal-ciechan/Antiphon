@@ -14,6 +14,19 @@
     no age step, to C:\Users\lndco\antiphon-backups (outside OneDrive,
     user-only ACL). The plan text and snapshot-status.json both say plain
     and name that decision. -Plain does not run the restore drill.
+
+    -OneDriveCopy is off unless it is named. The scheduled job names it.
+    After pg_restore --list accepts the local file, the script copies that
+    verified dump into <SyncRoot>\Backups\antiphon-postgres (by default
+    C:\Users\lndco\OneDrive\Backups\antiphon-postgres). The copy is written
+    to a name ending in .partial and renamed only when its sha256 equals
+    the local file. OneDrive keeps 7 dumps. The local folder keeps 14.
+    A missing OneDrive root or a missing Backups folder records
+    oneDrive=missing, writes nothing in OneDrive, and still keeps the
+    local dump. The plain dump is unencrypted. This copy syncs it to the
+    cloud. The database holds tokens and transcripts. That is the
+    operator's explicit request on 2026-11-10. The age path is unchanged
+    and this script contains no key.
     -RestoreDrill restores the newest snapshot into a labelled scratch
     container and removes that container and volume unless -KeepScratch.
 
@@ -31,6 +44,8 @@ param(
     [switch]$WhatIf,
     [switch]$Execute,
     [switch]$Plain,
+    [switch]$OneDriveCopy,
+    [int]$OneDriveRetain = 7,
     [switch]$RestoreDrill,
     [string]$Container = 'antiphon-postgres',
     [string]$Database = 'antiphon',
@@ -60,6 +75,7 @@ $script:SnapshotDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$'
 $script:SnapshotPlainDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$'
 $script:SnapshotPlainDestination = 'C:\Users\lndco\antiphon-backups'
 $script:SnapshotPlainDecision = '2026-11-10'
+$script:SnapshotOneDriveRetain = 7
 $script:SnapshotProductionContainers = @(
     'antiphon-postgres',
     'antiphon-server2-postgres-postgres-1'
@@ -1328,6 +1344,12 @@ function Get-SnapshotSha256Prefix {
     return $hash.Substring(0, 12).ToLowerInvariant()
 }
 
+function ConvertTo-SnapshotJsonString {
+    param([string]$Value)
+    if ([string]::IsNullOrEmpty($Value)) { return '' }
+    return $Value.Replace('\', '\\').Replace('"', '\"')
+}
+
 function Write-SnapshotPlainStatus {
     param(
         [string]$Dir,
@@ -1336,14 +1358,23 @@ function Write-SnapshotPlainStatus {
         [int64]$Bytes,
         [string]$Sha256Prefix,
         [int]$DurationSec,
-        [int]$Tables
+        [int]$Tables,
+        [string]$OneDrive = '',
+        [int64]$OneDriveBytes = -1,
+        [string]$OneDriveFolder = ''
     )
     if ([string]::IsNullOrWhiteSpace($Dir) -or -not (Test-Path -LiteralPath $Dir -PathType Container)) { return $false }
     if ($Utc -notmatch '^[0-9]{8}T[0-9]{6}Z$') { return $false }
     if ($Sha256Prefix -notmatch '^[0-9a-f]{12}$') { $Sha256Prefix = '000000000000' }
     if ($DurationSec -lt 0) { $DurationSec = 0 }
     if ($Tables -lt 0) { $Tables = 0 }
-    $json = '{"utc":"' + $Utc + '","exit":' + $Code + ',"bytes":' + $Bytes + ',"sha256":"' + $Sha256Prefix + '","duration":' + $DurationSec + ',"tables":' + $Tables + ',"mode":"plain","encryption":"none","operatorDecision":"' + $script:SnapshotPlainDecision + '"}'
+    $cloud = ''
+    if ($OneDrive -eq 'ok' -or $OneDrive -eq 'missing' -or $OneDrive -eq 'failed') {
+        if ($OneDriveBytes -lt 0) { $OneDriveBytes = [int64]0 }
+        $folderToken = ConvertTo-SnapshotJsonString $OneDriveFolder
+        $cloud = ',"oneDrive":"' + $OneDrive + '","oneDriveBytes":' + $OneDriveBytes + ',"oneDriveFolder":"' + $folderToken + '"'
+    }
+    $json = '{"utc":"' + $Utc + '","exit":' + $Code + ',"bytes":' + $Bytes + ',"sha256":"' + $Sha256Prefix + '","duration":' + $DurationSec + ',"tables":' + $Tables + ',"mode":"plain","encryption":"none","operatorDecision":"' + $script:SnapshotPlainDecision + '"' + $cloud + '}'
     if ($json -match '(?i)password\s*=|postgres://|Host\s*=') { return $false }
     $partial = Join-Path $Dir 'snapshot-status.json.partial'
     $final = Join-Path $Dir 'snapshot-status.json'
@@ -1379,6 +1410,104 @@ function Update-SnapshotPlainRetention {
         return [pscustomobject]@{ Ok = $false; Reason = 'prune-failed'; Kept = $left.Count }
     }
     return [pscustomobject]@{ Ok = $true; Reason = 'prune'; Kept = $left.Count }
+}
+
+function Get-SnapshotPlainOneDriveFolder {
+    param([string]$SyncRoot)
+    if ([string]::IsNullOrWhiteSpace($SyncRoot)) { return '' }
+    return Join-Path (Join-Path $SyncRoot 'Backups') 'antiphon-postgres'
+}
+
+function New-SnapshotOneDriveResult {
+    param([string]$State, [int64]$Bytes, [string]$Folder)
+    $loud = 'ONEDRIVE COPY oneDrive=' + $State
+    if ($State -eq 'ok') { $loud = $loud + ' bytes=' + $Bytes }
+    return [pscustomobject]@{ State = $State; Bytes = $Bytes; Folder = $Folder; Loud = $loud }
+}
+
+function Confirm-SnapshotPlainOneDriveFile {
+    param([string]$SourceFile, [string]$PartialFile, [string]$FinalFile)
+    if ([string]::IsNullOrWhiteSpace($SourceFile) -or -not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($PartialFile) -or -not (Test-Path -LiteralPath $PartialFile -PathType Leaf)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($FinalFile)) { return $false }
+    $sourceHash = (Get-FileHash -LiteralPath $SourceFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    $partialHash = (Get-FileHash -LiteralPath $PartialFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($sourceHash -ne $partialHash) {
+        Remove-Item -LiteralPath $PartialFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    if (Test-Path -LiteralPath $FinalFile) {
+        Remove-Item -LiteralPath $PartialFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    Move-Item -LiteralPath $PartialFile -Destination $FinalFile
+    if (-not (Test-Path -LiteralPath $FinalFile -PathType Leaf)) { return $false }
+    $finalHash = (Get-FileHash -LiteralPath $FinalFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($finalHash -ne $sourceHash) {
+        Remove-Item -LiteralPath $FinalFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    return -not (Test-Path -LiteralPath $PartialFile)
+}
+
+function Invoke-SnapshotPlainOneDriveCopy {
+    param([string]$LocalFile, [string]$SyncRoot, [int]$Keep = 7)
+    $folder = Get-SnapshotPlainOneDriveFolder $SyncRoot
+    if ([string]::IsNullOrWhiteSpace($SyncRoot) -or -not (Test-Path -LiteralPath $SyncRoot -PathType Container)) {
+        return New-SnapshotOneDriveResult 'missing' 0 $folder
+    }
+    $backups = Join-Path $SyncRoot 'Backups'
+    if (-not (Test-Path -LiteralPath $backups -PathType Container)) {
+        return New-SnapshotOneDriveResult 'missing' 0 $folder
+    }
+    if ([string]::IsNullOrWhiteSpace($LocalFile) -or -not (Test-Path -LiteralPath $LocalFile -PathType Leaf)) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    $name = [System.IO.Path]::GetFileName($LocalFile)
+    if ($name -notmatch $script:SnapshotPlainDumpPattern -or $Keep -lt 1) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    if (Test-Path -LiteralPath $folder) {
+        $existing = Get-Item -LiteralPath $folder -Force
+        if ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            return New-SnapshotOneDriveResult 'failed' 0 $folder
+        }
+    } else {
+        New-Item -ItemType Directory -Path $folder | Out-Null
+    }
+    if (-not (Test-SnapshotPathInside $backups $folder)) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    $final = Join-Path $folder $name
+    if (-not (Test-SnapshotPathInside $folder $final)) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    if (Test-Path -LiteralPath $final -PathType Leaf) {
+        $have = (Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash.ToLowerInvariant()
+        $want = (Get-FileHash -LiteralPath $LocalFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($have -ne $want) { return New-SnapshotOneDriveResult 'failed' 0 $folder }
+        $sameBytes = ([System.IO.FileInfo]::new($final)).Length
+        $samePrune = Update-SnapshotPlainRetention $folder $Keep $name
+        if (-not $samePrune.Ok) { return New-SnapshotOneDriveResult 'failed' $sameBytes $folder }
+        return New-SnapshotOneDriveResult 'ok' $sameBytes $folder
+    }
+    $partial = $final + '.partial'
+    if (-not (Test-SnapshotPathInside $folder $partial)) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
+    try {
+        Copy-Item -LiteralPath $LocalFile -Destination $partial
+    } catch {
+        if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue }
+        return New-SnapshotOneDriveResult 'failed' 0 $folder
+    }
+    $confirmed = Confirm-SnapshotPlainOneDriveFile -SourceFile $LocalFile -PartialFile $partial -FinalFile $final
+    if (-not $confirmed) { return New-SnapshotOneDriveResult 'failed' 0 $folder }
+    $bytes = ([System.IO.FileInfo]::new($final)).Length
+    $prune = Update-SnapshotPlainRetention $folder $Keep $name
+    if (-not $prune.Ok) { return New-SnapshotOneDriveResult 'failed' $bytes $folder }
+    return New-SnapshotOneDriveResult 'ok' $bytes $folder
 }
 
 function Set-SnapshotPlainDirectoryAcl {
@@ -1422,7 +1551,10 @@ function Invoke-SnapshotPlainPublish {
         [string]$DestDir,
         [int]$Keep,
         [string]$Docker,
-        [int64]$MinimumBytes
+        [int64]$MinimumBytes,
+        [bool]$CopyToOneDrive = $false,
+        [string]$SyncRoot = '',
+        [int]$OneDriveKeep = 7
     )
     $started = [System.Diagnostics.Stopwatch]::StartNew()
     $stamp = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
@@ -1497,12 +1629,33 @@ function Invoke-SnapshotPlainPublish {
         $prefix = Get-SnapshotSha256Prefix $destFile
         $prune = Update-SnapshotPlainRetention $DestDir $Keep $destName
         $duration = [int]$started.Elapsed.TotalSeconds
-        if (-not $prune.Ok) {
-            [void](Write-SnapshotPlainStatus $DestDir $stamp 8 $destBytes $prefix $duration $tables)
-            return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
+        $cloudState = ''
+        $cloudBytes = [int64]0
+        $cloudFolder = ''
+        $cloudLoud = ''
+        if ($CopyToOneDrive) {
+            $cloud = Invoke-SnapshotPlainOneDriveCopy -LocalFile $destFile -SyncRoot $SyncRoot -Keep $OneDriveKeep
+            if ($cloud) {
+                $cloudState = [string]$cloud.State
+                $cloudBytes = [int64]$cloud.Bytes
+                $cloudFolder = [string]$cloud.Folder
+                $cloudLoud = [string]$cloud.Loud
+            } else {
+                $cloudState = 'failed'
+                $cloudLoud = 'ONEDRIVE COPY oneDrive=failed'
+            }
         }
-        [void](Write-SnapshotPlainStatus $DestDir $stamp 0 $destBytes $prefix $duration $tables)
-        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('bytes=' + $destBytes + ' kept=' + $prune.Kept + ' utc=' + $stamp) }
+        $exitCode = 0
+        $exitReason = 'ok'
+        if (-not $prune.Ok) {
+            $exitCode = 8
+            $exitReason = 'prune-failed'
+        }
+        [void](Write-SnapshotPlainStatus $DestDir $stamp $exitCode $destBytes $prefix $duration $tables $cloudState $cloudBytes $cloudFolder)
+        if ($exitCode -ne 0) {
+            return [pscustomobject]@{ Code = $exitCode; Reason = $exitReason; Loud = $cloudLoud }
+        }
+        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('bytes=' + $destBytes + ' kept=' + $prune.Kept + ' utc=' + $stamp); Loud = $cloudLoud }
     } finally {
         if (-not [string]::IsNullOrWhiteSpace($containerDump)) {
             Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'rm', '-f', $containerDump, $verifyRemote) | Out-Null
@@ -1561,6 +1714,10 @@ function Invoke-SnapshotPlainMode {
     Write-Output 'step copy: write the dump to antiphon-<utc>.dump.partial then rename to antiphon-<utc>.dump'
     Write-Output ('step retention: keep ' + $Retain + ' plain dump files and prune only after the new file is verified')
     Write-Output 'step status: snapshot-status.json partial-write then rename (utc, exit, bytes, sha256 prefix, duration, tables, mode=plain)'
+    if ($OneDriveCopy) {
+        $cloudFolder = Get-SnapshotPlainOneDriveFolder $sync
+        Write-Output ('step onedrive: copy the verified unencrypted dump into ' + $cloudFolder + ' as .partial then rename when sha256 matches; keep ' + $OneDriveRetain)
+    }
     if ($PlanOnly) {
         return Write-SnapshotResult $true 'ok' ('plain=1 encryption=none retention=' + $Retain)
     }
@@ -1592,7 +1749,8 @@ function Invoke-SnapshotPlainMode {
     $run = [string]$script:SnapshotRunStaging
     if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
     try {
-        $published = Invoke-SnapshotPlainPublish $Container $Database $run $dest $Retain $dockerCmd.Source $MinimumDumpBytes
+        $published = Invoke-SnapshotPlainPublish $Container $Database $run $dest $Retain $dockerCmd.Source $MinimumDumpBytes ([bool]$OneDriveCopy) $sync $OneDriveRetain
+        if (-not [string]::IsNullOrWhiteSpace([string]$published.Loud)) { Write-Output ([string]$published.Loud) }
         return Write-SnapshotResult $false $published.Reason $published.Detail
     } finally {
         [void](Remove-SnapshotStaging $run)
