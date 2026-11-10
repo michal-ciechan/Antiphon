@@ -539,6 +539,44 @@ public class TerminalScreenTests
 		s.CursorCol.ShouldBe(9);
 	}
 
+	// Reverse index moves the cursor, so it cancels a pending wrap (CARD-0465).
+	[Test]
+	[Arguments("up", "\x1b[2;1H")]
+	[Arguments("top", "")]
+	public void Reverse_index_clears_a_pending_wrap(string name, string place)
+	{
+		const string ri = "\x1bM";
+		var s = S(10, 3);
+		s.Feed(place + "ABCDEFGHIJ" + ri + "X");
+		var landed = new string(' ', 9) + "X";
+		s.GetRow(0).ShouldBe(landed, $"{name}: X lands on the cell reverse index left the cursor on");
+		s.GetRow(1).ShouldBe("ABCDEFGHIJ", $"{name}: the full row must not take X by paying the wrap");
+		s.GetRow(2).ShouldBe("");
+		s.CursorRow.ShouldBe(0, name);
+		s.CursorCol.ShouldBe(9, name);
+		for (var cut = 1; cut < ri.Length; cut++)
+		{
+			var split = S(10, 3);
+			split.Feed(place + "ABCDEFGHIJ" + ri[..cut]);
+			split.Feed(ri[cut..] + "X");
+			split.GetRows().ShouldBe(s.GetRows(), $"{name}: cut {cut}");
+			split.CursorRow.ShouldBe(s.CursorRow, $"{name}: cut {cut}");
+			split.CursorCol.ShouldBe(s.CursorCol, $"{name}: cut {cut}");
+		}
+	}
+
+	[Test]
+	public void A_non_moving_escape_keeps_a_pending_wrap()
+	{
+		var s = S(10, 3);
+		s.Feed("ABCDEFGHIJ\x1b7X");
+		s.GetRow(0).ShouldBe("ABCDEFGHIJ");
+		s.GetRow(1).ShouldBe("X", "ESC 7 is not a cursor move, so the owed wrap is still paid");
+		s.GetRow(2).ShouldBe("");
+		s.CursorRow.ShouldBe(1);
+		s.CursorCol.ShouldBe(1);
+	}
+
 	[Test]
 	[Arguments("A", "1A", 0, "         X"), Arguments("B", "1B", 2, "         X"),
 	 Arguments("C", "1C", 1, "ABCDEFGHIX"), Arguments("D", "1D", 1, "ABCDEFGHXJ"),
