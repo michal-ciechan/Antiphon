@@ -159,6 +159,53 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task reused_state_fixture_matches_a_fresh_child_refusal()
+    {
+        await CompareChild("status", json => json["rows"] = null);
+        await CompareChild("wait", json => json["rows"] = null);
+        await CompareChild("validate", json => json["rows"] = null);
+        await CompareChild("clean", json => json["rows"]![0]!["id"] = " ");
+    }
+
+    private async Task CompareChild(string verb, Action<JsonObject> mutate)
+    {
+        var (freshRoot, freshRun) = Fixture();
+        var fresh = await MutatedChild(freshRoot, freshRun, verb, mutate);
+
+        var (reusedRoot, reusedRun) = Fixture();
+        var snapshot = Snapshot(reusedRun);
+        snapshot.ContainsKey("state.json").ShouldBeTrue();
+        snapshot.ContainsKey("report.md").ShouldBeTrue();
+        File.WriteAllText(Path.Combine(reusedRun, "debris.txt"), "x");
+        Directory.CreateDirectory(Path.Combine(reusedRun, "debris-dir"));
+        File.WriteAllText(Path.Combine(Path.Combine(reusedRun, "debris-dir"), "nested.txt"), "y");
+        File.WriteAllText(Path.Combine(reusedRun, "state.json"), "{}");
+        Restore(reusedRun, snapshot);
+        var first = await MutatedChild(reusedRoot, reusedRun, verb, mutate);
+        Restore(reusedRun, snapshot);
+        var second = await MutatedChild(reusedRoot, reusedRun, verb, mutate);
+
+        first.Exit.ShouldBe(fresh.Exit, verb);
+        first.Output.ShouldBe(fresh.Output, verb);
+        first.Unchanged.ShouldBe(fresh.Unchanged, verb);
+        second.Exit.ShouldBe(fresh.Exit, verb + "-again");
+        second.Output.ShouldBe(fresh.Output, verb + "-again");
+        second.Unchanged.ShouldBe(fresh.Unchanged, verb + "-again");
+    }
+
+    private async Task<(int Exit, string Output, bool Unchanged)> MutatedChild(string root, string run, string verb, Action<JsonObject> mutate)
+    {
+        var path = Path.Combine(run, "state.json");
+        var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        mutate(json);
+        File.WriteAllText(path, json.ToJsonString());
+        var before = Directory.GetFiles(run).ToDictionary(file => file, File.ReadAllBytes);
+        var result = await Child(root, run, verb);
+        var unchanged = before.All(pair => File.Exists(pair.Key) && File.ReadAllBytes(pair.Key).SequenceEqual(pair.Value));
+        return (result.Exit, result.Output.Replace(root, "<root>", StringComparison.Ordinal), unchanged);
+    }
+
+    [Test]
     [Arguments("")]
     [Arguments(" \t\r\n")]
     [Arguments(null)]
