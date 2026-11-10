@@ -44,6 +44,15 @@ describe('endpointFromDraft userinfo', () => {
     ['a newline inside a non-http authority, because the password is still a credential', `ws://operator:${SENTINEL}@pro\nxy.test`],
     ['an uppercase FTP scheme, because the scheme case does not remove userinfo', `FTP://operator:${SENTINEL}@proxy.test/v1`],
     ['userinfo on an IPv6 host, because brackets do not remove the username or password', `wss://operator:${SENTINEL}@[::1]:8443/v1`],
+    // CARD-1822 A-1: a prefix hides the scheme, so the @ after // must still be refused.
+    ['a quoted paste, because the quote hides the scheme', `"https://u:${SENTINEL}@proxy.test/v1"`],
+    ['an angle-bracket paste, because the bracket hides the scheme', `<https://u:${SENTINEL}@proxy.test/v1>`],
+    ['a zero-width space before the scheme', `\u200Bhttps://u:${SENTINEL}@proxy.test/v1`],
+    ['a BASE_URL= prefix before the scheme', `BASE_URL=https://u:${SENTINEL}@proxy.test/v1`],
+    ['a space before the scheme slashes', `https ://u:${SENTINEL}@proxy.test/v1`],
+    // CARD-1822 A-2: mailto stays allowed only without a password and without //.
+    ['mailto with a password', `mailto:operator:${SENTINEL}@proxy.test`],
+    ['uppercase mailto with an authority', `MAILTO://operator:${SENTINEL}@proxy.test/v1`],
   ])('refuses %s and does not return the URL', (_name, baseUrl) => {
     const result = endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)
     expect(result.endpoint).toBeNull()
