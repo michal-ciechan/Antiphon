@@ -1006,6 +1006,7 @@ or either verification policy changes between the pre-read and the locked decisi
 status leaves the open columns (Backlog, In Progress, Review) for NeedsDecision. A
 transition-sweep move among those open columns, or an active workflow run change, is re-read
 under the card lock and admitted from that locked state; it is not `card_admission_changed`.
+On an ordinary create both refusals are decided before the capacity preview and before BaseTask git errors (`worktree_base_*`). A closed card that is also at capacity returns `card_implementation_closed`.
 Re-read the card after a fence refusal; do not replay or bypass a closed-card refusal.
 
 **Correct Review evidence.** `ReviewEvidenceCorrectionRequest` in

@@ -76,6 +76,8 @@ Closing a card (Done or Canceled), `card.ps1 close`, or archiving it also settle
 
 The sweep still leaves a task created after the close uncanceled, including a post-Done `Mutation`. `CreateAsync` (ordinary create and a new handoff child) returns 409 `card_implementation_closed` for `Code`, `Custom`, `Debug`, `Docs`, `Merge`, `Commit`, and `Deploy` when the resolved card is Done, Canceled, or archived. That resolution includes an explicit card, the first `CARD-nnnn` in the title, the caller parent's card, and a follow-up's card. Unbound creates stay admitted. `CreateMergeTaskAsync` and `CreateCommitTaskAsync` copy the parent card and do not apply this refusal.
 
+On an ordinary create, `card_implementation_closed` and `card_admission_changed` are decided before the capacity preview and before BaseTask git errors (`worktree_base_*`). A closed card that is also at capacity returns `card_implementation_closed`. Handoff and SourceLanding keep the same decision inside the card transaction, before their capacity ensure and git.
+
 ## Blocked by another card (CARD-0100)
 
 A card is held when it has a `BlockedBy` relationship whose blocker is open. A blocker is resolved

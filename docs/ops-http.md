@@ -350,8 +350,10 @@ is **422**. New handoff children and ordinary `POST /api/agent-tasks` implementa
 when board, identifier, required platform, or either verification policy changes between the
 pre-read and the lock, or when status leaves Backlog, In Progress, or Review for NeedsDecision.
 A transition-sweep move among those open columns, or an active workflow run change, is re-read
-under the card lock and admitted from that locked state. Re-read after a fence refusal; a closed
-card needs an explicit disposition, not a blind retry.
+under the card lock and admitted from that locked state. On an ordinary create both refusals
+are decided before the capacity preview and before BaseTask git errors (`worktree_base_*`).
+A closed card that is also at capacity returns `card_implementation_closed`. Re-read after a
+fence refusal; a closed card needs an explicit disposition, not a blind retry.
 
 For correction, send `{ predecessorEvidenceId, expectedReportDigest, subjectTaskId, sourceSha,
 sourceRef, repositoryPath, selection, producerIdentity, bundleDigest, reason }`.
