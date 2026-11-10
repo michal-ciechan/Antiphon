@@ -104,11 +104,11 @@ Scratch probe under `C:\Users\lndco\AppData\Local\Temp\e1fa7e11-trace` (not comm
 
 - 20 fresh rebuilds of the same receipt, then one `status` call: ownership about 15-26ms, state write about 34-50ms, report write about 26-43ms, fresh build p50 about 93ms, `status` p50 11ms, exit 0.
 - Restoring the five golden files (`ownership.json`, `report.json`, `report.md`, `state.history.jsonl`, `state.json`, 9372 bytes) took 1ms, and the `status` output matched the fresh tree on all 20 iterations (exit 0, `same=True`).
-- An earlier 24-iteration refusal loop without `TempDir` took 5319ms (about 220ms per call, exit 2). A WMI sample during 8 iterations saw git processes, and their command lines were another agent's `git ls-remote` of `feat/card-task-a60a4a5e`, not children of the probe (pid 354608).
+- An earlier 24-iteration refusal loop without `TempDir` took 5319ms (about 220ms per call, exit 2). A WMI sample during 8 iterations saw git processes, and their command lines were another agent's `git ls-remote` of `feat/card-task-a60a4a5e`, not children of the probe (pid 354608). A later 596-iteration scratch with no `TempDir` and no WMI sampler finished in 69.2s (p50 100ms, p95 170ms, max 973ms, all exit 2). A 12-root `TempDir` replica outside the test host was tens of milliseconds per root, and its sweep examined 0 because the 5-minute interval skipped.
 - `git rev-parse --show-toplevel` on this worktree was about 150-190ms. The same command on TEMP exited 128 in about 110-140ms.
 - `Get-MpPreference` failed with "Must be an administrator to view exclusions". Defender exclusions were not read and were not changed.
 
-So on this quiet desktop one iteration is about 0.1s of receipt construction plus about 0.02s of in-process `RunAsync`, and it does not spawn git. The RC's 1.38s per call (854.265 / 620) was about six times the quiet loop. The three printed sweeps do not account for the gap. Rebuilding the tree 620 times, each time also registering a new sweep root, is the work this test repeats. `SafeDelete.PreflightRoots` walks parents for `.git` and spawns `git ls-files` only when it finds an owner. TEMP has no `.git` ancestor, which matches the empty process list.
+The scratch is not the test host. Three unmodified runs of this filter, before any snapshot change, took 14m11.428s, 14m52.806s, and 15m19.254s (TRX `UnitTestResult` on DESKTOP-KTLKPIF). A 30-iteration early return inside the real host, deleted before the witness commit, took 47.087s, about 1.57s per `Fixture()` plus `RunAsync`. Six hundred and twenty of those calls are the 14 minute body. The cost is the per-iteration host fixture, not the 90ms `ReportWriter` and not disposing 620 roots at the end. `SafeDelete.PreflightRoots` walks parents for `.git` and spawns `git ls-files` only when it finds an owner. TEMP has no `.git` ancestor, which matches the empty process list. The local before-runs did not record a phase journal: `ANTIPHON_TEST_PHASE_ROOT` alone leaves `TryOpen` disabled unless run id, group id, attempt, and suite are all set. The RC JSONL `processes` array for this test was empty.
 
 ## Choice
 
@@ -116,7 +116,7 @@ Optimize `CheckpointReceiptSafetyTests.malformed_collection_and_string_shapes_re
 
 It is the slowest individual test, it runs in every full RC (its own profile because it is slow), and the repeated work is a fixture tree. Build that tree once inside one `TempDir()`, snapshot the file bytes, and restore those bytes at the start of each iteration before the mutation. The assertions stay: exit 2, output contains `refused:`, and `state.json` is unchanged by `RunAsync`. No timeout, skip, or assertion change.
 
-Expected saving on this desktop: drop about 619 rebuilds at about 90ms each (about 56s) plus 619 `TempDir` registrations. `RunAsync` remains (about 11ms on a healthy `status`, higher on a refusal). A quiet full run is therefore a small number of minutes rather than the RC's 14m14s, if this desktop's per-call cost holds for all 620 shapes. The RC's extra 6x is not reproduced here, so the before/after numbers below are this desktop's wall, not a promise about the next RC's multiplier. Fewer new temp roots also keeps the sweep index from growing by 620 entries per run.
+Expected saving on this desktop: drop 619 of the host `Fixture()` calls at about 1.5s each. `RunAsync` and the byte restore remain. The measured result is in the section below. Fewer new temp roots also keeps the sweep index from growing by 620 entries per run.
 
 Rejected for this change, with the reason:
 
@@ -152,4 +152,20 @@ No `-o`, `--output`, or `OutputPath`. TUnit via `dotnet run --project tests/Anti
 | antiphon/all-group-108 fixture git inside `CheckpointFixtureGitEnvironment.Git` for init/add/commit only | LibGit2Sharp commit of the fixture tree, with a witness that `git rev-parse HEAD^{tree}` and `git status --porcelain` match the CLI under the isolated empty global/system config | About 41s of summed git spawn (24.7s of it in `CheckpointShapeConflictTests`). Chunk wall moves by less than that, because the rows run together and the pwsh build remains | `run-checkpoint.ps1`, validate-receipt pwsh, dotnet build, and any git whose stdout the test asserts |
 | antiphon/all-group-109 dotnet rows | Trace the 24 dotnet processes (70.2s) inside `PlanCoverageBindingTests` / census. Cache only a restore that the assertion does not observe | Up to about 70s if they are repeated restores of one tree. Zero if each build is the assertion | The 184s historical-plan bind if its time is reading plans, which the spawn total says is most of it |
 | antiphon/all-group-11 | 1285 recorded git processes at 9.4s | About 9s, and a large drop in spawn count if the calls are rev-parse/status already covered by `InProcessGitReads` | Recovery and worktree-add commands |
-| antiphon/all-profile-1475 | The 163s sibling can restore one fixture snapshot before each `Child()` | The fixture slice only (about 90ms x 90 calls, under 10s). The `dotnet exec` stays | The process, the 4s kill bound, and the documented exits |
+| antiphon/all-profile-1475 | The 163s sibling can restore one fixture snapshot before each `Child()` | The fixture slice only. On this desktop a host `Fixture()` is about 1.5s, so about 90 calls is roughly two minutes if that sibling pays the same host cost. The `dotnet exec` stays | The process, the 4s kill bound, and the documented exits |
+
+## Measured result
+
+Same filter, `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_shapes_return_named_refusals`, on DESKTOP-KTLKPIF through `scripts/build-slot.ps1`. Before is commit `0077c8df8b047d8f910babd519d002f9f9ce18ce` (the test still called `Fixture()` every iteration). After is `1f9273f75a8da7c353c708c08f4bee2eb8a12590`. Each run executed 1 test, 0 failed. The duration is the TRX `UnitTestResult` duration. p50 is the middle of three. p95 is the slowest of three (nearest rank).
+
+| Run | Before | After |
+|---|---:|---:|
+| 1 | 851.428s | 21.613s |
+| 2 | 892.806s | 13.577s |
+| 3 | 919.254s | 11.701s |
+| p50 | 892.806s | 13.577s |
+| p95 | 919.254s | 21.613s |
+
+Process-spawn count after, from the phase journal (`processes` on the complete record, and `exclusive.process`): 0, 0, 0. Fixture teardown on those journals was 30ms, 12ms, and 15ms. Before had no local journal. The RC record for this test also had an empty `processes` array. The optimized method calls `Program.RunAsync` in-process. `Child()` on the other methods of the class still launches `dotnet exec`.
+
+`reused_receipt_fixture_matches_a_fresh_fixture_refusal` failed at `ee77f13ae81e3ec3c588029e4bd1671ae6775f9e` because the restore omitted `report.md` (1 failed, duration 6s 981ms) and passed at `1f9273f75a8da7c353c708c08f4bee2eb8a12590` (1 passed, duration 8s 494ms).
