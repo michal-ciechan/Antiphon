@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -22,7 +23,7 @@ namespace Antiphon.Nightly
         public bool ZeroCountAtRootWait { get; set; }
         public string TrxPath { get; set; } = "";
         public string DiagnosticDirectory { get; set; } = "";
-        public int ExecutionGraceMilliseconds { get; set; } = 60000;
+        public int ExecutionGraceMilliseconds { get; set; } = NightlyCompletionGrace.DefaultMilliseconds;
         public string HangCapturePath { get; set; } = "";
         internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
         {
@@ -67,6 +68,7 @@ namespace Antiphon.Nightly
         public string HangCapturePath { get; set; } = "";
         public string HangCaptureError { get; set; } = "";
         public long ExecutionFinishedAtMilliseconds { get; set; } = -1;
+        public double ExecutionStopToExitSeconds { get; set; } = -1;
     }
 
     public sealed class NativeProcessOwner
@@ -180,40 +182,40 @@ namespace Antiphon.Nightly
                 Check(ResumeThread(thread) != uint.MaxValue, "ResumeThread"); resumed = true;
                 Close(ref thread);
                 Observation.LaunchMilliseconds = clock.Elapsed.TotalMilliseconds;
-                var execution = Stopwatch.StartNew();
-                long finishedAt = -1;
-                long lastProbe = -500;
-                int grace = _hooks.ExecutionGraceMilliseconds > 0 ? _hooks.ExecutionGraceMilliseconds : 60000;
+                int grace = _hooks.ExecutionGraceMilliseconds > 0 ? _hooks.ExecutionGraceMilliseconds : NightlyCompletionGrace.DefaultMilliseconds;
                 bool watchEvidence = !string.IsNullOrEmpty(_hooks.TrxPath) && !string.IsNullOrEmpty(_hooks.DiagnosticDirectory);
-                while (true)
+                DateTime notBefore = Observation.RootStartedAtUtc;
+                CompletionGraceResult graceResult = NightlyCompletionGrace.Wait(
+                    () =>
+                    {
+                        int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
+                        CaptureDescendants(job);
+                        Observation.RemainingProcessCount = active;
+                        bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
+                        Observation.ChildrenExited = rootExited && active == 0;
+                        return Observation.ChildrenExited;
+                    },
+                    watchEvidence ? (Func<bool>)(() => ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore)) : null,
+                    grace,
+                    timeout,
+                    10);
+                // A host that exits inside the probe interval still has the markers on disk.
+                if (graceResult.ExecutionFinishedAtMilliseconds < 0 && watchEvidence && Observation.ChildrenExited
+                    && ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore))
                 {
-                    int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
-                    CaptureDescendants(job);
-                    Observation.RemainingProcessCount = active;
-                    bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
-                    Observation.ChildrenExited = rootExited && active == 0;
-                    if (Observation.ChildrenExited) break;
-                    long now = execution.ElapsedMilliseconds;
-                    // Same markers as Test-NightlyExecutionFinished: total ran plus request execute stop.
-                    if (watchEvidence && finishedAt < 0 && now - lastProbe >= 500)
-                    {
-                        lastProbe = now;
-                        if (ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory))
-                        {
-                            finishedAt = now;
-                            Observation.ExecutionFinishedAtMilliseconds = now;
-                        }
-                    }
-                    if (finishedAt >= 0 && now - finishedAt >= grace)
-                    {
-                        Observation.TimedOut = true;
-                        Observation.CompletedButHung = true;
-                        break;
-                    }
-                    if (now >= timeout) { Observation.TimedOut = true; break; }
-                    Thread.Sleep(10);
+                    graceResult.ExecutionFinishedAtMilliseconds = graceResult.ElapsedMilliseconds;
                 }
-                Observation.ExecutionMilliseconds = execution.Elapsed.TotalMilliseconds;
+                Observation.ExecutionFinishedAtMilliseconds = graceResult.ExecutionFinishedAtMilliseconds;
+                if (graceResult.CompletedButHung)
+                {
+                    Observation.TimedOut = true;
+                    Observation.CompletedButHung = true;
+                }
+                else if (graceResult.TimedOut)
+                {
+                    Observation.TimedOut = true;
+                }
+                Observation.ExecutionMilliseconds = graceResult.ElapsedMilliseconds;
                 var cleanup = Stopwatch.StartNew();
                 if (Observation.TimedOut)
                 {
@@ -234,6 +236,15 @@ namespace Antiphon.Nightly
                 uint exit;
                 Check(GetExitCodeProcess(root, out exit), "GetExitCodeProcess");
                 Observation.ExitCode = Observation.TimedOut ? 1 : unchecked((int)exit);
+                if (Observation.ExecutionFinishedAtMilliseconds >= 0)
+                {
+                    string diag = LatestDiagnosticFile(_hooks.DiagnosticDirectory);
+                    DateTime exitUtc = DateTime.UtcNow;
+                    long createdTicks, exitTicks, kernelTicks, userTicks;
+                    if (root != IntPtr.Zero && GetProcessTimes(root, out createdTicks, out exitTicks, out kernelTicks, out userTicks) && exitTicks > 0)
+                        exitUtc = DateTime.FromFileTimeUtc(exitTicks);
+                    Observation.ExecutionStopToExitSeconds = NightlyCompletionGrace.MeasureFileStopToExitSeconds(diag, exitUtc);
+                }
                 drain = Stopwatch.StartNew();
                 logWrite = Task.Run(() =>
                 {
@@ -263,6 +274,8 @@ namespace Antiphon.Nightly
                     Thread.Sleep(10);
                 }
                 Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
+                if (Observation.ExecutionStopToExitSeconds >= 0)
+                    NightlyCompletionGrace.AppendStopToExitLine(logPath, Observation.ExecutionStopToExitSeconds);
                 File.Delete(stdoutPath); File.Delete(stderrPath);
             }
             catch (Exception ex)
@@ -560,12 +573,21 @@ namespace Antiphon.Nightly
 
         private static bool ExecutionEvidenceFinished(string trxPath, string diagnosticDirectory)
         {
-            int total, executed, notExecuted;
+            return ExecutionEvidenceFinished(trxPath, diagnosticDirectory, DateTime.MinValue);
+        }
+
+        private static bool ExecutionEvidenceFinished(string trxPath, string diagnosticDirectory, DateTime notBeforeUtc)
+        {
+            if (!EvidenceIsCurrent(trxPath, notBeforeUtc)) return false;
+            string diagnostic = ResolveDiagnostic(diagnosticDirectory);
+            if (!EvidenceIsCurrent(diagnostic, notBeforeUtc)) return false;
+            int total, executed, notExecuted, failed;
             string outcome;
-            if (!TryReadTrxSummary(trxPath, out outcome, out total, out executed, out notExecuted)) return false;
+            if (!TryReadTrxSummary(trxPath, out outcome, out total, out executed, out notExecuted, out failed)) return false;
             if (!string.Equals(outcome, "Completed", StringComparison.Ordinal)) return false;
+            if (failed > 0) return false;
             if (executed != total || notExecuted != 0) return false;
-            string tail = ReadSharedTail(LatestDiagnosticFile(diagnosticDirectory), 16384);
+            string tail = ReadSharedTail(diagnostic, 16384);
             if (string.IsNullOrEmpty(tail)) return false;
             if (tail.IndexOf("request execute stop", StringComparison.Ordinal) < 0) return false;
             const string marker = "total ran:";
@@ -576,46 +598,150 @@ namespace Antiphon.Nightly
             int j = i;
             while (j < tail.Length && tail[j] >= '0' && tail[j] <= '9') j++;
             int ran;
-            if (j == i || !int.TryParse(tail.Substring(i, j - i), out ran)) return false;
+            if (j == i || !int.TryParse(tail.Substring(i, j - i), NumberStyles.Integer, CultureInfo.InvariantCulture, out ran)) return false;
             return ran == total;
         }
 
-        private static bool TryReadTrxSummary(string path, out string outcome, out int total, out int executed, out int notExecuted)
+        // A rerun into the same log root leaves the previous TRX and diagnostic in place.
+        // Evidence written at or before the new process start is not this run.
+        private static bool EvidenceIsCurrent(string path, DateTime notBeforeUtc)
+        {
+            if (notBeforeUtc == DateTime.MinValue) return true;
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return false;
+                return File.GetLastWriteTimeUtc(path) > notBeforeUtc;
+            }
+            catch (Exception) { return false; }
+        }
+
+        private static bool TryReadTrxSummary(string path, out string outcome, out int total, out int executed, out int notExecuted, out int failed)
         {
             outcome = "";
             total = -1;
             executed = -1;
             notExecuted = -1;
+            failed = -1;
             try
             {
                 string text = ReadSharedTail(path, 2 << 20);
                 if (string.IsNullOrEmpty(text)) return false;
-                int summary = text.LastIndexOf("ResultSummary", StringComparison.Ordinal);
+                // The closing tag is </ResultSummary>. LastIndexOf("ResultSummary") lands there
+                // and reads no outcome. Match the opening tag, including a namespace prefix.
+                int summary = LastIndexOfOpeningTag(text, "ResultSummary");
                 if (summary < 0) return false;
                 int summaryEnd = text.IndexOf('>', summary);
                 if (summaryEnd < 0) return false;
                 outcome = XmlAttr(text.Substring(summary, summaryEnd - summary), "outcome");
-                int counters = text.IndexOf("Counters", summary, StringComparison.Ordinal);
-                if (counters < 0 || counters > summaryEnd + 4096) return false;
+                int window = summaryEnd + 4096;
+                if (window > text.Length) window = text.Length;
+                int counters = IndexOfOpeningTag(text, "Counters", summary, window);
+                if (counters < 0) return false;
                 int countersEnd = text.IndexOf('>', counters);
                 if (countersEnd < 0) return false;
                 string open = text.Substring(counters, countersEnd - counters);
-                return int.TryParse(XmlAttr(open, "total"), out total)
-                    && int.TryParse(XmlAttr(open, "executed"), out executed)
-                    && int.TryParse(XmlAttr(open, "notExecuted"), out notExecuted);
+                string failedText = XmlAttr(open, "failed");
+                if (failedText.Length == 0) failed = 0;
+                else if (!int.TryParse(failedText, NumberStyles.Integer, CultureInfo.InvariantCulture, out failed)) return false;
+                return int.TryParse(XmlAttr(open, "total"), NumberStyles.Integer, CultureInfo.InvariantCulture, out total)
+                    && int.TryParse(XmlAttr(open, "executed"), NumberStyles.Integer, CultureInfo.InvariantCulture, out executed)
+                    && int.TryParse(XmlAttr(open, "notExecuted"), NumberStyles.Integer, CultureInfo.InvariantCulture, out notExecuted);
             }
             catch (Exception) { return false; }
         }
 
+        private static int LastIndexOfOpeningTag(string text, string localName)
+        {
+            int found = -1;
+            int from = 0;
+            while (from < text.Length)
+            {
+                int at = IndexOfOpeningTag(text, localName, from, text.Length);
+                if (at < 0) break;
+                found = at;
+                from = at + 1;
+            }
+            return found;
+        }
+
+        private static int IndexOfOpeningTag(string text, string localName, int start, int end)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(localName)) return -1;
+            if (start < 0) start = 0;
+            if (end > text.Length) end = text.Length;
+            int from = start;
+            while (from < end)
+            {
+                int at = text.IndexOf(localName, from, end - from, StringComparison.Ordinal);
+                if (at < 0) return -1;
+                int after = at + localName.Length;
+                if (after < text.Length && !IsTagBoundary(text[after])) { from = at + 1; continue; }
+                int i = at - 1;
+                if (i >= start && text[i] == ':')
+                {
+                    i--;
+                    while (i >= start && IsNameChar(text[i])) i--;
+                }
+                if (i >= start && text[i] == '<' && i + 1 < text.Length && text[i + 1] != '/') return i;
+                from = at + 1;
+            }
+            return -1;
+        }
+
+        private static bool IsTagBoundary(char c)
+        {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '>' || c == '/';
+        }
+
+        private static bool IsNameChar(char c)
+        {
+            return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
+        }
+
         private static string XmlAttr(string open, string name)
         {
-            string key = name + "=\"";
-            int start = open.IndexOf(key, StringComparison.Ordinal);
-            if (start < 0) return "";
-            start += key.Length;
-            int end = open.IndexOf('"', start);
-            if (end < 0) return "";
-            return open.Substring(start, end - start);
+            if (string.IsNullOrEmpty(open) || string.IsNullOrEmpty(name)) return "";
+            int at = 0;
+            while (at < open.Length)
+            {
+                int nameAt = open.IndexOf(name, at, StringComparison.Ordinal);
+                if (nameAt < 0) return "";
+                if (nameAt > 0 && !IsXmlSpace(open[nameAt - 1]) && open[nameAt - 1] != '<')
+                {
+                    at = nameAt + name.Length;
+                    continue;
+                }
+                int i = nameAt + name.Length;
+                while (i < open.Length && IsXmlSpace(open[i])) i++;
+                if (i >= open.Length || open[i] != '=') { at = nameAt + name.Length; continue; }
+                i++;
+                while (i < open.Length && IsXmlSpace(open[i])) i++;
+                if (i >= open.Length) return "";
+                char quote = open[i];
+                if (quote != '"' && quote != '\'') { at = nameAt + name.Length; continue; }
+                int value = i + 1;
+                int end = open.IndexOf(quote, value);
+                if (end < 0) return "";
+                return open.Substring(value, end - value);
+            }
+            return "";
+        }
+
+        private static bool IsXmlSpace(char c)
+        {
+            return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        }
+
+        private static string ResolveDiagnostic(string path)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path)) return "";
+                if (File.Exists(path)) return path;
+                if (Directory.Exists(path)) return LatestDiagnosticFile(path);
+                return "";
+            }
+            catch (Exception) { return ""; }
         }
 
         private static string LatestDiagnosticFile(string directory)
@@ -703,5 +829,86 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
         [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int cls, IntPtr buffer, int length, out int returned);
         [StructLayout(LayoutKind.Sequential)] private struct HandleEntry { public IntPtr Object; public IntPtr UniqueProcessId; public IntPtr HandleValue; public uint GrantedAccess; public ushort CreatorBackTraceIndex; public ushort ObjectTypeIndex; public uint HandleAttributes; public uint Reserved; }
+    }
+
+    public sealed class CompletionGraceResult
+    {
+        public bool TimedOut { get; set; }
+        public bool CompletedButHung { get; set; }
+        public long ElapsedMilliseconds { get; set; }
+        public long ExecutionFinishedAtMilliseconds { get; set; } = -1;
+    }
+
+    public static class NightlyCompletionGrace
+    {
+        // Unmeasured placeholder. Chunk logs record execution-stop-to-exit-seconds
+        // for a normal exit and for this kill. Set this near 2x that p95
+        // (docs/test-performance-standards.md).
+        public const int DefaultMilliseconds = 60000;
+        public const int ProbeIntervalMilliseconds = 500;
+
+        public static CompletionGraceResult Wait(Func<bool> childrenExited, Func<bool> evidenceFinished, int graceMilliseconds, int watchdogMilliseconds, int pollMilliseconds)
+        {
+            if (pollMilliseconds < 1) pollMilliseconds = 1;
+            var clock = Stopwatch.StartNew();
+            long finishedAt = -1;
+            long lastProbe = -500;
+            bool timedOut = false;
+            bool hung = false;
+            while (true)
+            {
+                bool gone = false;
+                if (childrenExited != null) gone = childrenExited();
+                if (gone) break;
+                long now = clock.ElapsedMilliseconds;
+                // Same markers as Test-NightlyExecutionFinished: total ran plus request execute stop.
+                if (evidenceFinished != null && finishedAt < 0 && now - lastProbe >= ProbeIntervalMilliseconds)
+                {
+                    lastProbe = now;
+                    if (evidenceFinished()) finishedAt = now;
+                }
+                if (finishedAt >= 0 && now - finishedAt >= graceMilliseconds)
+                {
+                    timedOut = true;
+                    hung = true;
+                    break;
+                }
+                if (now >= watchdogMilliseconds)
+                {
+                    timedOut = true;
+                    break;
+                }
+                Thread.Sleep(pollMilliseconds);
+            }
+            return new CompletionGraceResult
+            {
+                TimedOut = timedOut,
+                CompletedButHung = hung,
+                ElapsedMilliseconds = clock.ElapsedMilliseconds,
+                ExecutionFinishedAtMilliseconds = finishedAt
+            };
+        }
+
+        public static double MeasureFileStopToExitSeconds(string diagnosticFile, DateTime exitUtc)
+        {
+            if (string.IsNullOrEmpty(diagnosticFile) || exitUtc == DateTime.MinValue) return -1;
+            try
+            {
+                if (!File.Exists(diagnosticFile)) return -1;
+                DateTime stop = File.GetLastWriteTimeUtc(diagnosticFile);
+                if (stop == DateTime.MinValue) return -1;
+                double seconds = (exitUtc - stop).TotalSeconds;
+                if (seconds < 0) return 0;
+                return seconds;
+            }
+            catch (Exception) { return -1; }
+        }
+
+        public static void AppendStopToExitLine(string logPath, double seconds)
+        {
+            if (string.IsNullOrEmpty(logPath) || seconds < 0 || double.IsNaN(seconds) || double.IsInfinity(seconds)) return;
+            string line = "execution-stop-to-exit-seconds=" + seconds.ToString("0.000", CultureInfo.InvariantCulture);
+            File.AppendAllText(logPath, line + "\n", Encoding.ASCII);
+        }
     }
 }
