@@ -58,11 +58,16 @@ public partial class CheckNoteDeliveryHandoffTests
         });
         if (busy)
         {
-            // The turn ends before the scanner host starts (8-26 s). Written after its first scan, this
-            // TurnEnd left the note Pending through 12 scans in CARD-1494 run 20261022-152908-dd89.
-            await Task.Delay(500);
-            await using var mid = NewDb(schema.ConnectionString);
-            (await MatchingPromptsAsync(mid, parent.SessionId, seeded.Body)).Count.ShouldBe(0);
+            // CARD-1501: scan while the turn is still open. The old 500 ms TurnEnd was written
+            // before the child attached, so the scanner never observed Working.
+            await scanner.WaitForReadyAsync();
+            await using var during = NewDb(schema.ConnectionString);
+            (await SessionMessageQueueService.IsWorkingAsync(during, parent.SessionId, CancellationToken.None))
+                .ShouldBeTrue("the first scan ran before the turn ended");
+            File.ReadAllLines(Path.Combine(root.FullPath, "scans.txt")).ShouldNotBeEmpty();
+            (await MatchingPromptsAsync(during, parent.SessionId, seeded.Body)).Count.ShouldBe(0);
+            (await during.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId != null))
+                .ShouldBeGreaterThan(0);
             await BridgeQueueHarness.InsertEntryAsync(parent.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
                 timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
         }
