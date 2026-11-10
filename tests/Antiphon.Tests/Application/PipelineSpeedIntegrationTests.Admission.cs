@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Data.Seeding;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -115,14 +116,25 @@ public sealed partial class PipelineSpeedIntegrationTests
     [Arguments("archived")]
     [Arguments("platform")]
     [Arguments("policy")]
+    [Arguments("board")]
+    [Arguments("identifier")]
+    [Arguments("workflow")]
+    [Arguments("review-policy")]
     public async Task C1289_ConcurrentCardEdit(string change)
     {
         var locks = new CardLockObserver();
         await using var w = await C544World.CreateAsync(locks);
+        if (change == "workflow")
+        {
+            await using var seed = w.CreateContext();
+            await DatabaseSeeder.SeedPipelineDefinitionsAsync(seed, PipelineDefinitions.StandardPipeline, CancellationToken.None);
+        }
         await using var edit = w.CreateContext();
         await using var tx = await edit.Database.BeginTransactionAsync();
         await edit.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"Cards\" WHERE \"Id\" = {w.Card.Id} FOR UPDATE");
         var create = CreateAsync(w, ChildRequest(w));
+        Guid? workflowRunId = null;
+        Guid? otherBoardId = null;
         try
         {
             await Task.WhenAny(locks.Attempt.Task, create).WaitAsync(Guard);
@@ -138,12 +150,41 @@ public sealed partial class PipelineSpeedIntegrationTests
                 case "archived": card.ArchivedAt = DateTime.UtcNow; break;
                 case "platform": card.RequiredPlatform = RequiredPlatform.Windows; break;
                 case "policy": card.CodeVerificationPolicy = CardVerificationPolicy.FullOnly; break;
+                case "board":
+                    otherBoardId = Guid.NewGuid();
+                    var now = DateTime.UtcNow;
+                    edit.Boards.Add(new Board
+                    {
+                        Id = otherBoardId.Value, ProjectId = w.Project.Id, Name = "CARD-1300 other board",
+                        MaxConcurrentSessions = 1, CreatedAt = now, UpdatedAt = now,
+                    });
+                    card.BoardId = otherBoardId.Value;
+                    break;
+                case "identifier": card.Identifier = "CARD-1300"; break;
+                case "workflow":
+                    workflowRunId = Guid.NewGuid();
+                    var runAt = DateTime.UtcNow;
+                    var revisionId = await edit.PipelineDefinitions.AsNoTracking()
+                        .Where(d => d.Id == PipelineDefinitions.StandardPipelineId)
+                        .Select(d => d.ActiveRevisionId)
+                        .SingleAsync();
+                    edit.CardWorkflowRuns.Add(new CardWorkflowRun
+                    {
+                        Id = workflowRunId.Value, CardId = card.Id,
+                        PipelineDefinitionId = PipelineDefinitions.StandardPipelineId,
+                        PipelineDefinitionRevisionId = revisionId!.Value,
+                        WorkflowName = "CARD-1300", Status = CardWorkflowRunStatus.Queued,
+                        CreatedAt = runAt, UpdatedAt = runAt,
+                    });
+                    card.ActiveWorkflowRunId = workflowRunId;
+                    break;
+                case "review-policy": card.ReviewVerificationPolicy = CardVerificationPolicy.FullOnly; break;
             }
             card.ConcurrencyToken = Guid.NewGuid();
             await edit.SaveChangesAsync();
         }
         finally { await tx.CommitAsync(); }
-        if (change is "state" or "archived" or "platform" or "policy")
+        if (change is "state" or "archived" or "platform" or "policy" or "board" or "identifier" or "review-policy")
         {
             var error = await Should.ThrowAsync<ConflictException>(() => create.WaitAsync(Guard));
             error.Code.ShouldBe(change == "archived" ? "card_implementation_closed" : "card_admission_changed");
@@ -155,8 +196,125 @@ public sealed partial class PipelineSpeedIntegrationTests
             child.CardId.ShouldBe(w.Card.Id, "unrelated edit must not refuse ordinary Code admission");
             (await w.TaskCountAsync()).ShouldBe(1);
             await using var verify = w.CreateContext();
-            if (change == "title") (await verify.Cards.SingleAsync(c => c.Id == w.Card.Id)).Title.ShouldBe("Human edited title");
+            var stored = await verify.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            if (change == "title") stored.Title.ShouldBe("Human edited title");
+            if (change == "workflow") stored.ActiveWorkflowRunId.ShouldBe(workflowRunId);
         }
+    }
+
+    /// <summary>
+    /// CARD-1300. An ordinary create on a card that is already closed stops with
+    /// card_implementation_closed before the capacity preview and before BaseTask git.
+    /// </summary>
+    [Test]
+    [Arguments("capacity")]
+    [Arguments("base")]
+    [Arguments("git")]
+    [Timeout(90_000)]
+    public async Task C1300_ClosedCardPrecedesCapacityAndBase(string obstacle)
+    {
+        await using var w = await C544World.CreateAsync(delegation: obstacle == "capacity"
+            ? settings => settings.MaxOpenTasks = 1 : null);
+        var git = new AdmissionGit(w);
+        w.ConfigureServices = services =>
+        {
+            services.AddSingleton<ILandingGit>(git);
+            if (obstacle == "capacity") services.AddScoped<DelegationOpenGate>();
+        };
+        await w.RestartAsync();
+        Guid? foreignId = null;
+        await using (var db = w.CreateContext())
+        {
+            var card = await db.Cards.SingleAsync(c => c.Id == w.Card.Id);
+            card.Status = CardStatus.Done;
+            card.ConcurrencyToken = Guid.NewGuid();
+            if (obstacle == "capacity")
+                db.AgentTasks.Add(OpenCodeOccupant(w));
+            if (obstacle == "base")
+            {
+                var foreign = ForeignBaseTask(w);
+                foreignId = foreign.Id;
+                db.AgentTasks.Add(foreign);
+            }
+            await db.SaveChangesAsync();
+        }
+        var request = obstacle == "base"
+            ? ChildRequest(w) with { WorktreeBaseTask = foreignId!.Value.ToString() }
+            : ChildRequest(w);
+        var error = await Should.ThrowAsync<ConflictException>(() => CreateAsync(w, request));
+        error.Code.ShouldBe("card_implementation_closed");
+        git.Calls.ShouldBe(0, "a closed card is refused before source Git");
+        (await w.TaskCountAsync()).ShouldBe(obstacle == "git" ? 0 : 1);
+    }
+
+    /// <summary>
+    /// CARD-1300. A fence change that lands after the admission pre-read and before
+    /// preparation is card_admission_changed, ahead of capacity and BaseTask errors.
+    /// </summary>
+    [Test]
+    [Arguments("capacity")]
+    [Arguments("base")]
+    [Timeout(90_000)]
+    public async Task C1300_AdmissionChangePrecedesCapacityAndBase(string obstacle)
+    {
+        var flip = new FlipAdmissionAfterPreRead();
+        await using var w = await C544World.CreateAsync(flip, delegation: obstacle == "capacity"
+            ? settings => settings.MaxOpenTasks = 1 : null);
+        flip.Bind(w);
+        var git = new AdmissionGit(w);
+        w.ConfigureServices = services =>
+        {
+            services.AddSingleton<ILandingGit>(git);
+            if (obstacle == "capacity") services.AddScoped<DelegationOpenGate>();
+        };
+        await w.RestartAsync(keepInterceptor: true);
+        Guid? foreignId = null;
+        await using (var db = w.CreateContext())
+        {
+            if (obstacle == "capacity") db.AgentTasks.Add(OpenCodeOccupant(w));
+            if (obstacle == "base")
+            {
+                var foreign = ForeignBaseTask(w);
+                foreignId = foreign.Id;
+                db.AgentTasks.Add(foreign);
+            }
+            await db.SaveChangesAsync();
+        }
+        var request = obstacle == "base"
+            ? ChildRequest(w) with { WorktreeBaseTask = foreignId!.Value.ToString() }
+            : ChildRequest(w);
+        var error = await Should.ThrowAsync<ConflictException>(() => CreateAsync(w, request));
+        flip.Flipped.ShouldBeTrue("admission pre-read must observe the fence change");
+        error.Code.ShouldBe("card_admission_changed");
+        git.Calls.ShouldBe(0, "an admission-changed card is refused before source Git");
+        (await w.TaskCountAsync()).ShouldBe(obstacle == "capacity" || obstacle == "base" ? 1 : 0);
+        await using var verify = w.CreateContext();
+        (await verify.Cards.SingleAsync(c => c.Id == w.Card.Id)).ReviewVerificationPolicy
+            .ShouldBe(CardVerificationPolicy.FullOnly);
+    }
+
+    private static AgentTask OpenCodeOccupant(C544World w)
+    {
+        var id = Guid.NewGuid();
+        return new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "occupied code", Goal = "occupied code",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = w.RepositoryPath, Status = AgentTaskStatus.Working,
+            ProjectId = w.Project.Id, CreatedAt = DateTime.UtcNow,
+        };
+    }
+
+    private static AgentTask ForeignBaseTask(C544World w)
+    {
+        var id = Guid.NewGuid();
+        return new AgentTask
+        {
+            Id = id, RootTaskId = id, Title = "foreign base", Goal = "foreign base",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Shared,
+            WorkingDirectory = w.RepositoryPath, Status = AgentTaskStatus.Succeeded,
+            ProjectId = w.Project.Id, CreatedAt = DateTime.UtcNow,
+        };
     }
 
     /// <summary>
@@ -538,5 +696,51 @@ public sealed partial class PipelineSpeedIntegrationTests
             Calls++;
             return result;
         }
+    }
+
+    /// <summary>
+    /// After the admission coordinate pre-read returns, commit a review-policy change
+    /// on another connection so the next read observes it before capacity or git.
+    /// </summary>
+    private sealed class FlipAdmissionAfterPreRead : DbCommandInterceptor
+    {
+        private string? _connectionString;
+        private Guid _cardId;
+        private int _seen;
+        public bool Flipped { get; private set; }
+
+        public void Bind(C544World world)
+        {
+            _connectionString = world.Schema.ConnectionString;
+            _cardId = world.Card.Id;
+        }
+
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData data, DbDataReader result, CancellationToken ct = default)
+        {
+            if (!IsProjection(command.CommandText) || Interlocked.Increment(ref _seen) != 1)
+                return result;
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(ct);
+            await using var update = new NpgsqlCommand(
+                """
+                UPDATE "Cards"
+                SET "ReviewVerificationPolicy" = @policy, "ConcurrencyToken" = @token
+                WHERE "Id" = @id
+                """, connection);
+            update.Parameters.AddWithValue("policy", (int)CardVerificationPolicy.FullOnly);
+            update.Parameters.AddWithValue("token", Guid.NewGuid());
+            update.Parameters.AddWithValue("id", _cardId);
+            (await update.ExecuteNonQueryAsync(ct)).ShouldBe(1, "fence flip updates the admission card");
+            Flipped = true;
+            return result;
+        }
+
+        private static bool IsProjection(string sql) =>
+            sql.Contains("\"CodeVerificationPolicy\"", StringComparison.Ordinal)
+            && sql.Contains("\"ReviewVerificationPolicy\"", StringComparison.Ordinal)
+            && sql.Contains("\"ActiveWorkflowRunId\"", StringComparison.Ordinal)
+            && !sql.Contains("FOR UPDATE", StringComparison.Ordinal)
+            && !sql.Contains("FOR NO KEY UPDATE", StringComparison.Ordinal);
     }
 }
