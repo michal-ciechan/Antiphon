@@ -515,12 +515,26 @@ public sealed partial class LandGraphEvaluationTests
             await WriteLfAsync(Path.Combine(root, "Antiphon.sln"),
                 Solution(solutionProjects ?? files.Keys.Where(k => k.EndsWith(".csproj", StringComparison.Ordinal)).ToArray(), projectTypes ?? []));
             await WriteLfAsync(Path.Combine(root, ".gitattributes"), "* -text\n");
-            await GitAsync(root, "init", "-q");
-            await GitAsync(root, "config", "core.autocrlf", "false");
-            await GitAsync(root, "config", "core.safecrlf", "false");
-            await GitAsync(root, "add", "-A");
-            await GitAsync(root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
-                "commit", "-q", "-m", "fixture");
+            if (links is null || links.Count == 0)
+            {
+                // In process (LibGit2Sharp): the same init, config, add -A and commit without five git processes.
+                // Fixtures with symbolic links or junctions keep gits own add.
+                using var repo = new LibGit2Sharp.Repository(LibGit2Sharp.Repository.Init(root));
+                repo.Config.Set("core.autocrlf", false);
+                repo.Config.Set("core.safecrlf", false);
+                LibGit2Sharp.Commands.Stage(repo, "*");
+                var signature = new LibGit2Sharp.Signature("c1483", "c1483@antiphon.test", DateTimeOffset.Now);
+                repo.Commit("fixture", signature, signature, new LibGit2Sharp.CommitOptions());
+            }
+            else
+            {
+                await GitAsync(root, "init", "-q");
+                await GitAsync(root, "config", "core.autocrlf", "false");
+                await GitAsync(root, "config", "core.safecrlf", "false");
+                await GitAsync(root, "add", "-A");
+                await GitAsync(root, "-c", "user.name=c1483", "-c", "user.email=c1483@antiphon.test",
+                    "commit", "-q", "-m", "fixture");
+            }
             foreach (var (relative, content) in untrackedFiles ?? [])
             {
                 var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
