@@ -144,6 +144,10 @@ public sealed partial class AgentTaskDispatcher
         + "Original input is retained. The session was not stopped.";
 
     private readonly TaskProviderWaitReader? _providerWait;
+    // CARD-1478. Absent, or a floor of zero, keeps today's launch. The detail is this instance's
+    // stash for the tick that traces HeldOnMemory.
+    private readonly DesktopLaunchMemoryAdmission? _desktopMemory;
+    private string? _desktopMemoryHoldDetail;
 
     public AgentTaskDispatcher(
         AppDbContext db,
@@ -225,8 +229,10 @@ public sealed partial class AgentTaskDispatcher
         DispatchConcurrencySettingsService? dispatchConcurrency = null,
         CardSiblingInspectionService? siblingInspection = null,
         CardSiblingInspectionQueue? siblingInspections = null,
-        TaskProviderWaitReader? providerWait = null)
+        TaskProviderWaitReader? providerWait = null,
+        DesktopLaunchMemoryAdmission? desktopMemory = null)
     {
+        _desktopMemory = desktopMemory;
         _providerWait = providerWait;
         _dispatchConcurrency = dispatchConcurrency;
         _siblingInspection = siblingInspection;
@@ -334,6 +340,8 @@ public sealed partial class AgentTaskDispatcher
         Dispatched, HeldOnLease, HeldForAgent, HeldForRemotePrep, NotClaimed, HeldOnParallel,
         /// <summary>CARD-1428 D-3: the claim's revalidation under the lease found the sibling observation stale.</summary>
         SiblingObservationStale,
+        /// <summary>CARD-1478: a new desktop worker is below the fresh memory floor. The claim was not kept.</summary>
+        HeldOnMemory,
     }
 
     private enum HoldKind
@@ -344,6 +352,8 @@ public sealed partial class AgentTaskDispatcher
         // result yet, or the observation went stale at claim). Unlike SiblingLanding, a task held
         // here still waits for the lease, so its registered waiter is kept by the end-of-tick reconcile.
         SiblingInspectionPending,
+        // CARD-1478: queued, pre-claim. The task still waits for a fresh sample at or above the floor.
+        DesktopMemory,
     }
 
     private sealed class QueuedHoldIndex
@@ -1076,6 +1086,23 @@ public sealed partial class AgentTaskDispatcher
                 {
                     // The claim transaction already wrote the one deduped Held row.
                     heldThisTick.Add((task.Id, HoldKind.Parallel));
+                    continue;
+                }
+
+                if (outcome == DispatchOneResult.HeldOnMemory)
+                {
+                    var detail = _desktopMemoryHoldDetail
+                        ?? DispatchHoldDetails.DesktopLaunchMemory(
+                            "unknown", null, null, _settings.DesktopLaunchMemoryFloorMb);
+                    _desktopMemoryHoldDetail = null;
+                    heldThisTick.Add((task.Id, HoldKind.DesktopMemory));
+                    if (await TraceHeldAsync(task, detail, lastHeld, ct))
+                    {
+                        _logger.LogInformation(
+                            "Task {ShortId} held: {Detail}",
+                            DelegationReportFormatter.Short(task.Id), detail);
+                    }
+
                     continue;
                 }
 
@@ -5685,6 +5712,10 @@ public sealed partial class AgentTaskDispatcher
         // launches nothing; the tick's catch fails it with the code, role and key
         // (RolePolicyToolBundleDispatchTests.the_dispatcher_refuses_a_queued_review_before_the_claim_and_launches_nothing).
         InstructionBundles.ResolveRoleToolBundles(task.Role, _settings);
+        _desktopMemoryHoldDetail = null;
+        // CARD-1478: a new local worker below the fresh floor never reaches auth, the lease, or the claim.
+        if (await HoldBeforeDesktopMemoryClaimAsync(task, ct) is { } memoryHold)
+            return memoryHold;
 
         // Runner RPCs share one budget and run before any row lock. A pinned profile cannot
         // change the task's kind, so the pre-claim answer is the one the claim applies.
@@ -5976,6 +6007,21 @@ public sealed partial class AgentTaskDispatcher
                     return DispatchOneResult.HeldForAgent;
                 case ReuseOutcome.HeldOnParallel:
                     return DispatchOneResult.HeldOnParallel;
+            }
+        }
+
+        // CARD-1478: reuse declined, or this task never had a warm process. Recheck the floor
+        // before the program resolve, the session row, and the launch sink.
+        if (DesktopMemoryApplies(claimed))
+        {
+            var detail = _desktopMemory!.HoldDetail(_settings.DesktopLaunchMemoryFloorMb);
+            if (detail is not null)
+            {
+                if (repositoryLease is not null)
+                    await repositoryLease.DisposeAsync();
+                await AbandonClaimAsync(ct);
+                _desktopMemoryHoldDetail = detail;
+                return DispatchOneResult.HeldOnMemory;
             }
         }
 

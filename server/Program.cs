@@ -160,6 +160,10 @@ try
     builder.Services.AddSingleton(sp => new HostStatsCache(
         sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
         sp.GetRequiredService<TimeProvider>()));
+    builder.Services.AddSingleton(sp => new DesktopLaunchMemoryAdmission(
+        sp.GetRequiredService<HostStatsCache>(),
+        sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
+        sp.GetRequiredService<TimeProvider>()));
     builder.Services.AddSingleton<IHostStatsAntiphonCounters, HostStatsAntiphonCounters>();
     Antiphon.Server.Infrastructure.HostLoad.HostLoadRegistration.AddHostLoadHistory(builder.Services, builder.Configuration);
     builder.Services.Configure<DiagnosticsSettings>(builder.Configuration.GetSection("Diagnostics"));
