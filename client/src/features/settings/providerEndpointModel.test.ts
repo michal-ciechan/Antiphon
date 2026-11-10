@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { AgentTuiRunnerTypeDto } from '../../api/agentTui'
 import { buildProviderEndpointMap, endpointFromDraft } from './providerEndpointModel'
@@ -297,10 +300,22 @@ describe('prefixed special-scheme userinfo', () => {
     ['notes without an at sign', `notes without an at sign`],
     ['https://cdn.example/news:/readme', `https://cdn.example/news:/readme`],
     ['wss://[::1]:8443/v1', `wss://[::1]:8443/v1`],
+    // CARD-1827. The @ is path text. WHATWG leaves username and password empty.
+    ['percent-encoded nested https with userinfo in the path', `https://proxy/https%3A//u:${SENTINEL}@real/v1`],
+    ['percent-encoded nested scheme and slashes', `https://proxy/https%3A%2F%2Fu:${SENTINEL}@h`],
+    ['percent-encoded http colon and one slash', `https://proxy/http%3a/u:${SENTINEL}@h`],
+    ['socks5 nested in the path', `https://proxy/socks5://u:${SENTINEL}@real:1080`],
+    ['redis nested in the path', `https://proxy/redis://u:${SENTINEL}@h`],
   ])('still accepts %s', (_name, baseUrl) => {
     expect(endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)).toEqual({
       endpoint: { baseUrl, apiKeyName: 'claude-proxy-key' },
       error: null,
     })
+  })
+
+  it('documents that path-embedded userinfo is accepted path text', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url))
+    const source = readFileSync(path.join(here, 'providerEndpointModel.ts'), 'utf8')
+    expect(source).toContain('CARD-1827: path-embedded userinfo is accepted path text')
   })
 })

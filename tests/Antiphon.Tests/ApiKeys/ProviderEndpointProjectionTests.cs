@@ -460,6 +460,74 @@ public class ProviderEndpointProjectionTests
         ProviderEndpoint.Serialize(endpoint).ShouldContain("tenant-token-0167");
     }
 
+    // CARD-1827. These strings were already stored: Uri.UserInfo is empty because the @ is in the
+    // path. The witness is the missing acceptance sentence, which this asserts before the docs exist.
+    [Test]
+    public void C1827_path_embedded_userinfo_is_accepted_path_text()
+    {
+        const string sentinel = "SENTINEL1827";
+        string[] urls =
+        [
+            "https://proxy/https%3A//u:" + sentinel + "@real/v1",
+            "https://proxy/https%3A%2F%2Fu:" + sentinel + "@h",
+            "https://proxy/http%3a/u:" + sentinel + "@h",
+            "https://proxy/socks5://u:" + sentinel + "@real:1080",
+            "https://proxy/redis://u:" + sentinel + "@h",
+        ];
+        foreach (var url in urls)
+        {
+            var saved = ProviderEndpointSettings.ValidateBaseUrl(url, "providerEndpoint.baseUrl");
+            var launched = ProviderEndpoint.ValidateBaseUrl(url, "providerEndpoint.baseUrl");
+            saved.ShouldBe(url);
+            launched.ShouldBe(url);
+            Uri.TryCreate(saved, UriKind.Absolute, out var uri).ShouldBeTrue();
+            uri!.UserInfo.ShouldBe(string.Empty);
+            uri.Host.ShouldBe("proxy");
+        }
+
+        const string sentence = "CARD-1827: path-embedded userinfo is accepted path text";
+        foreach (var relative in new[]
+                 {
+                     "server/Application/Services/ProviderEndpointSettings.cs",
+                     "server/Application/Services/ProviderEndpoint.cs",
+                     "docs/agent-credentials.md",
+                 })
+            RepoFile(relative).ShouldContain(sentence, Case.Sensitive, relative);
+    }
+
+    // CARD-1827 A-2. Review 95236406 measured 53 for the six-class Antiphon.Tests filter and 78 only
+    // for the wider union. Briefs had quoted 78 for the six-class subset.
+    [Test]
+    public void C1827_six_class_guard_subset_is_not_described_as_78()
+    {
+        const string count = "The six-class Antiphon.Tests subset is 53 results. Do not describe that subset as 78.";
+        const string wider = "78 is only the nine-class union that also includes MechanicalPcContractTests, TaskPlatformGuidanceTests, C1729LayeringGuardTests and the SessionRunner copies of the layering and policy classes.";
+        foreach (var relative in new[]
+                 {
+                     "docs/testing-and-build.md",
+                     ".claude/skills/antiphon-orchestrator/SKILL.md",
+                 })
+        {
+            var text = RepoFile(relative);
+            text.ShouldContain(count, Case.Sensitive, relative);
+            text.ShouldContain(wider, Case.Sensitive, relative);
+            text.ShouldNotContain("six-class Antiphon.Tests subset is 78", Case.Sensitive, relative);
+        }
+    }
+
+    private static string RepoFile(string relative)
+    {
+        var directory = AppContext.BaseDirectory;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            if (File.Exists(Path.Combine(directory, "docs", "orchestration-loop.md")))
+                return File.ReadAllText(Path.Combine(directory, relative));
+            directory = Path.GetDirectoryName(directory)!;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
     private static IEnumerable<string> Names(IReadOnlyDictionary<string, string> env) => env.Keys;
 
     private static IEnumerable<string> ArgKeys(IReadOnlyList<string> args) =>
