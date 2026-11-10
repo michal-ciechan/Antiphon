@@ -1861,8 +1861,11 @@ those workspaces that starts during gc is not blocked. The pass never enters
 `antiphon_pgdata`, never follows a symlink out of the root, and never follows a
 symlinked .git. One repository that throws does not stop the pass or the owner;
 the next check retries that repository. A budget or shutdown kill can leave
-`packed-refs.lock`, and the pass removes a lock written during that pass. The
-last-run stamp stays in `repository-maintenance.json` beside
+`packed-refs.lock`. The pass does not delete it. Mtime shows when the lock was
+written, not which git holds it, and another git in this repository may be
+using the file. A lock written during the pass is left in place. The row reason is `packed_refs_lock_left` and the log names the repository and the lock age
+in seconds. A lock that already existed is left, and that row keeps the budget
+reason. The last-run stamp stays in `repository-maintenance.json` beside
 `PhoneHome:StoreIdPath`, not inside a repository.
 
 One log line per repository names the outcome and the before/after loose-object
