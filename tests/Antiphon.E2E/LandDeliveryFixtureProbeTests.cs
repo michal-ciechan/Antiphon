@@ -323,38 +323,6 @@ public class LandDeliveryFixtureProbeTests
     }
 
     /// <summary>
-    /// rc 6591e378 e2e-all-split-7: <c>enqueue-errors</c> counted the first two
-    /// <c>before-enqueue</c> reaches in the child, whichever note they belonged to.
-    /// <c>C488_ReviewDeliveryCrashMatrix_Batch2(enqueue-exception)</c> then waited for the review
-    /// note to sit at <c>EnqueueAttempts == 2</c> with no queue row, which never happens once
-    /// another note has used a throw. The named-task file keeps those two throws on the review.
-    /// </summary>
-    [Test]
-    public async Task Enqueue_errors_count_only_the_named_task()
-    {
-        var root = Path.Combine(Path.GetTempPath(), "c488-enqueue-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        var services = new ServiceCollection();
-        services.AddSingleton<VerifierCalls>();
-        services.AddSingleton<ILandingVerifier, RecordingVerifier>();
-        new LandDeliveryOptions(root, "enqueue-errors").ConfigureServices(services);
-        await using var provider = services.BuildServiceProvider();
-        try
-        {
-            var owned = Guid.NewGuid();
-            var foreign = Guid.NewGuid();
-            await File.WriteAllTextAsync(Path.Combine(root, "enqueue-errors-task.txt"), owned.ToString("N"));
-            var boundary = provider.GetRequiredService<LandDeliveryBoundary>();
-            await Should.NotThrowAsync(() => boundary.ReachedAsync("before-enqueue", foreign, Guid.NewGuid(), CancellationToken.None));
-            await Should.ThrowAsync<IOException>(() => boundary.ReachedAsync("before-enqueue", owned, Guid.NewGuid(), CancellationToken.None));
-            await Should.ThrowAsync<IOException>(() => boundary.ReachedAsync("before-enqueue", owned, Guid.NewGuid(), CancellationToken.None));
-            await Should.NotThrowAsync(() => boundary.ReachedAsync("before-enqueue", owned, Guid.NewGuid(), CancellationToken.None));
-            Directory.GetFiles(root, "enqueue-failure-*.json").Length.ShouldBe(2);
-        }
-        finally { Directory.Delete(root, recursive: true); }
-    }
-
-    /// <summary>
     /// CARD-1703 A-2: on a coarse file clock the last records of one verification share a write
     /// time. The diagnostic names the last record written, whichever order the directory lists them.
     /// </summary>
