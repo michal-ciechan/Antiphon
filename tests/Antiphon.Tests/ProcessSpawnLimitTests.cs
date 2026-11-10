@@ -48,9 +48,10 @@ public class ProcessSpawnLimitTests
         typeof(AgentTaskLandRecoveryTests),
         typeof(AgentTaskLandCheckpointWorkerTests),
         typeof(C1514LandingSplitBudgetTests),
-        typeof(Antiphon.Tests.Infrastructure.LandingAdmissionControlTests),
+        // CARD-1439: LandingAdmissionControlTests and LandingSourceBoundaryControlTests only
+        // call the controlled harness, so they are not on this floor. LandingRemovalControlTests
+        // still calls the real-git cleanup and removal classes.
         typeof(Antiphon.Tests.Infrastructure.LandingRemovalControlTests),
-        typeof(Antiphon.Tests.Infrastructure.LandingSourceBoundaryControlTests),
         typeof(AgentTaskLandStageOutcomeTests),
         typeof(DelegationWorktreeTests),
         typeof(Antiphon.Tests.Infrastructure.WorktreeRemovalAuthorityTests),

@@ -11,7 +11,6 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-[ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(60_000)] // CARD-0824 provisional: isolated clone and subject-specific migration round trips.
 public sealed class C0824RefOnlySnapshotMigrationTests
 {
