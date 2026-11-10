@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -221,6 +222,60 @@ public sealed class AgentTaskLandMonitoringTests
         after.LastEvaluatedAt.ShouldBe(now);
         (await db.AgentTaskLandNotifications.CountAsync(n => n.RequestId == request.Id)).ShouldBe(0);
     }
+    /// <summary>
+    /// CARD-1467: a verifier waiting on the build-slot memory floor is named on the LandAged
+    /// warning and the attention headline, in place of "no progress".
+    /// </summary>
+    [Test]
+    public async Task C1467_a_memory_floor_wait_replaces_no_progress_on_the_aged_warning_and_attention()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var now = new DateTime(2026, 10, 22, 13, 49, 55, DateTimeKind.Utc);
+        var clock = new FakeTimeProvider(now);
+        var taskId = Guid.NewGuid();
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = taskId, State = LandRequestState.Running, IsPending = true,
+            RequestedAt = now, LastProgressAt = now, LastEvaluatedAt = now, ReplyTo = AgentTaskReplyTo.None,
+        };
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "C1467 memory floor", Goal = "land status",
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.None,
+            CreatedAt = now, LandRequestedAt = now, CurrentLandRequestId = request.Id,
+        });
+        db.AgentTaskLandRequests.Add(request);
+        await db.SaveChangesAsync();
+
+        var waits = new LandVerificationWaits(clock);
+        waits.Set(request.Id, new BuildSlotMemoryWait(4700, 6144, TimeSpan.FromMinutes(1)));
+        const string waiting = "waiting for memory (available 4700 MB, floor 6144 MB, waited 1 min)";
+        clock.Advance(TimeSpan.FromMinutes(5));
+        var observed = now.AddMinutes(5);
+
+        await new AgentTaskLandMonitorService(db, clock, Options.Create(new DelegationSettings()), new MockEventBus(),
+            verificationWaits: waits).SweepAsync(CancellationToken.None);
+
+        var aged = await db.AgentTaskEvents.AsNoTracking().SingleAsync(e =>
+            e.LandRequestId == request.Id && e.Type == AgentTaskEventType.LandAged);
+        aged.Detail.ShouldBe(
+            $"Warning: Land Running; requested {now:O}; {waiting}; attempt=0; request={request.Id:N}; reason=none; "
+            + $"queue position=unknown (awaiting replay); observed={observed:O}; holder=unknown.");
+        var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
+            n.RequestId == request.Id && n.Kind == LandNotificationKind.Aged);
+        note.Body.ShouldContain(waiting);
+        note.Body.ShouldNotContain("no progress since");
+
+        await using var fresh = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var attention = await new AttentionService(fresh, new RefusingSessionRunnerClient(),
+            Options.Create(new SupervisionSettings()), Options.Create(new DelegationSettings()),
+            clock, NullLogger<AttentionService>.Instance, landWaits: waits).GetAsync(CancellationToken.None);
+        var item = attention.Items.Single(i => i.LandRequestId == request.Id && i.LandNotificationId == null);
+        item.Kind.ShouldBe(AttentionKind.LandNoProgress);
+        item.Headline.ShouldBe($"Land Running; attempt 0; {waiting}");
+    }
+
     /// <summary>
     /// V-19 / G-57, G-58: a DispatchBase note is requestless. It carries the dispatch kind and
     /// dispatch condition key, a null land request, and no <c>request=</c> clause; the land

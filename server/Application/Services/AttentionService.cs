@@ -164,6 +164,8 @@ public sealed partial class AttentionService
     private readonly HostStatsCache? _hostStats;
     private readonly WorkspaceDiskAlarmSettings _workspaceDiskAlarm;
     private readonly IConfiguration? _configuration;
+    // CARD-1467: optional. Absent, a land attention row still says "no progress".
+    private readonly LandVerificationWaits? _landWaits;
 
     public AttentionService(
         AppDbContext db,
@@ -185,8 +187,10 @@ public sealed partial class AttentionService
         IOptions<AttentionSettings>? attention = null, TaskProviderWaitReader? providerWait = null,
         HostStatsCache? hostStats = null,
         IOptions<WorkspaceDiskAlarmSettings>? workspaceDiskAlarm = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        LandVerificationWaits? landWaits = null)
     {
+        _landWaits = landWaits;
         _hostStats = hostStats;
         _workspaceDiskAlarm = workspaceDiskAlarm?.Value ?? new WorkspaceDiskAlarmSettings();
         _configuration = configuration;
@@ -1554,6 +1558,8 @@ public sealed partial class AttentionService
                 && (now - (request.HeldSince ?? request.LastProgressAt)).TotalSeconds < _delegation.LandWarningSeconds)
                 continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.TaskId, ct);
+            // CARD-1467 red: the live memory wait is visible here and still not named.
+            _ = _landWaits?.Find(request.Id);
             var item = new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
                 age >= _delegation.LandErrorSeconds ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, request.ParentSessionId, task.AgentId, null, task.Title,

@@ -122,6 +122,29 @@ it.each([null, 'feat/card-task-ce744e22'])('C470 renders canonical mutation hand
   expect(target.searchParams.get('task')).toBe(FLY_ID)
 })
 
+it('C1467 shows a memory-floor wait instead of no progress', async () => {
+  const waiting = 'waiting for memory (available 4700 MB, floor 6144 MB, waited 1 min)'
+  const task: AgentTaskDetailDto = {
+    ...detail(),
+    landRequest: {
+      id: 'cccccccc-0000-0000-0000-000000000003', state: 'Running',
+      requestedAt: '2026-10-22T13:49:55Z', startedAt: '2026-10-22T13:49:55Z',
+      lastEvaluatedAt: '2026-10-22T13:54:55Z', lastProgressAt: '2026-10-22T13:49:55Z',
+      ageSeconds: 300, noProgressSeconds: 300, attempt: 0,
+      holdReasonCode: null, holdDetail: null, holdingTaskId: null, holdingTaskStatus: null,
+      heldSince: null, holdEpisode: 0, reconciliationError: null, notifications: [],
+      verificationWait: {
+        kind: 'WaitingForMemory', availableMb: 4700, floorMb: 6144, waitedSeconds: 60,
+        maxCpuCount: 0, observedAt: '2026-10-22T13:50:55Z', description: waiting,
+      },
+    },
+  }
+  server.use(http.get('/api/agent-tasks/:id', () => HttpResponse.json(task)))
+  renderWithProviders(<TaskDetailBody taskId={FLY_ID} onClose={() => {}} />)
+  expect(await screen.findByText(waiting, { exact: false })).toBeInTheDocument()
+  expect(screen.queryByText(/no progress for/)).not.toBeInTheDocument()
+})
+
 it.each(['status_untrusted', 'source_dirty'])('C1715 shows the source refusal in task detail: %s', async (reason) => {
   const task: AgentTaskDetailDto = {
     ...detail(),
