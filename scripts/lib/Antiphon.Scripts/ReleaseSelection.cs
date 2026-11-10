@@ -1,11 +1,11 @@
-// select-release: New-ReleaseSelectionAttemptCore (scripts/lib/release-selection.ps1) for an attempt with no
-// baseline, the case every first-rc and fresh-state run takes. It writes byte-for-byte the selection.json and
-// selection-attempt.json the PowerShell worker writes and answers with the same response document.
+// select-release: New-ReleaseSelectionAttemptCore (scripts/lib/release-selection.ps1), with or without a baseline
+// (Baseline.cs reads it; TestSelection.cs and RcProjectSelection.cs propose against it). It writes byte-for-byte the
+// selection.json and selection-attempt.json the PowerShell worker writes and answers with the same response document.
 //
-// Handled only when every check passes on inputs it reads exactly as PowerShell does. A baseline (sha, receipt
-// or archive), any refusal (bad commit, stale hash, invalid catalog, an attempt conflict, a path outside the
-// release state) or an input shape outside PsJson is NotHandled: the caller then runs the PowerShell worker,
-// which answers or refuses with its own message. So this path can be stricter than PowerShell, never laxer.
+// Handled only when every check passes on inputs it reads exactly as PowerShell does. Any refusal (bad commit,
+// stale hash, invalid catalog, a corrupt receipt, a baseline that is not an ancestor, an attempt conflict, a path
+// outside the release state) or an input shape outside PsJson is NotHandled: the caller then runs the PowerShell
+// worker, which answers or refuses with its own message. So this path can be stricter than PowerShell, never laxer.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,11 +22,14 @@ namespace Antiphon.Scripts
         private static readonly bool Windows = Path.DirectorySeparatorChar == '\\';
         private static readonly StringComparison PathComparison = Windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-        public static int Run(string requestPath, string responsePath)
+        /// <summary>scriptsLib: the scripts/lib directory of the bridge that asks, where the worker would run from.
+        /// Only an attempt with a baseline needs it (the selector files and planner it holds); without it such an
+        /// attempt is NotHandled.</summary>
+        public static int Run(string requestPath, string responsePath, string scriptsLib = null)
         {
             object parsed = PsJson.Parse(File.ReadAllText(requestPath, Encoding.UTF8));
             if (!(parsed is PsObject request)) throw new NotHandledException("request-shape");
-            var value = Attempt(request);
+            var value = Attempt(request, scriptsLib);
             var response = new PsObject();
             response.Pairs.Add(new KeyValuePair<string, object>("ok", true));
             response.Pairs.Add(new KeyValuePair<string, object>("value", value));
@@ -52,22 +55,39 @@ namespace Antiphon.Scripts
             return path;
         }
 
-        private static PsObject Attempt(PsObject request)
+        private static PsObject Attempt(PsObject request, string scriptsLib)
         {
             string repositoryRoot = Rooted(Text(request, "RepositoryRoot"), "RepositoryRoot");
             string releaseRoot = Rooted(Text(request, "ReleaseRoot"), "ReleaseRoot");
             string candidateSha = Text(request, "CandidateSha");
             string profile = Text(request, "Profile");
             string selectionMode = Text(request, "SelectionMode");
-            if (Truthy(Text(request, "BaselineSha")) || Truthy(Text(request, "BaselineReceiptPath"))) throw new NotHandledException("baseline-requested");
+            string requestedBaseline = Text(request, "BaselineSha");
             if (!Truthy(profile)) throw new NotHandledException("profile-empty");
 
             AssertCommit(repositoryRoot, candidateSha);
+            if (Truthy(requestedBaseline)) AssertCommit(repositoryRoot, requestedBaseline);
             PsObject contract = Contract(repositoryRoot, candidateSha, profile);
-            // Read-ReleaseSelectionBaseline with no receipt: an archive directory means a baseline may be chosen.
-            if (PathExists(Path.Combine(releaseRoot, "baselines"))) throw new NotHandledException("baseline-archive");
+            var baseline = Baseline.Read(request, repositoryRoot, releaseRoot, contract);
+            string b = baseline.Sha;
+            if (Truthy(b))
+            {
+                AssertCommit(repositoryRoot, b);
+                if (Git(repositoryRoot, new[] { "merge-base", "--is-ancestor", b, candidateSha }, new[] { 0, 1 }).Exit != 0) throw new NotHandledException("baseline-not-ancestor");
+            }
 
-            var reasons = new List<object> { "baseline-absent" };
+            object proposal = null, projectProposal = null;
+            var reasons = new List<string>();
+            if (Truthy(baseline.Reason)) reasons.Add(baseline.Reason);
+            if (Truthy(b))
+            {
+                if (!Truthy(scriptsLib) || !Path.IsPathFullyQualified(scriptsLib)) throw new NotHandledException("scripts-lib-required");
+                var testSelection = TestSelection.Select(repositoryRoot, b, candidateSha, profile, scriptsLib, contract);
+                proposal = testSelection;
+                reasons.AddRange(((List<object>)testSelection.GetExact("fallbackReasons")).Cast<string>());
+                if (!string.Equals(selectionMode, "Full", StringComparison.Ordinal))
+                    projectProposal = RcProjectSelection.Select(repositoryRoot, b, candidateSha, scriptsLib);
+            }
             if (string.Equals(selectionMode, "ChangeAware", StringComparison.Ordinal)) reasons.Add("change-aware-unqualified");
 
             string qualificationDigest = "";
@@ -81,24 +101,24 @@ namespace Antiphon.Scripts
             }
 
             var selection = Obj(
-                ("format", "antiphon-release-selection-v1"), ("candidateSha", candidateSha), ("baselineSha", ""),
-                ("requestedMode", selectionMode), ("effectiveMode", "Full"), ("coverageScope", "Full"), ("proposal", null),
-                ("projectProposal", null), ("fallbackReasons", reasons), ("executionEvidence", false));
-            return Save(request, repositoryRoot, releaseRoot, selection, contract, "", qualificationDigest);
+                ("format", "antiphon-release-selection-v1"), ("candidateSha", candidateSha), ("baselineSha", b),
+                ("requestedMode", selectionMode), ("effectiveMode", "Full"), ("coverageScope", "Full"), ("proposal", proposal),
+                ("projectProposal", projectProposal), ("fallbackReasons", PsSort.CultureUnique(reasons)), ("executionEvidence", false));
+            return Save(request, repositoryRoot, releaseRoot, selection, contract, baseline.Digest, qualificationDigest);
         }
 
         // ----- Assert-ReleaseSelectionCommit / Get-ReleaseSelectionContract -----
 
-        private static readonly Regex FullSha = new Regex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant);
+        internal static readonly Regex FullSha = new Regex("^[0-9a-f]{40}$", RegexOptions.CultureInvariant);
 
-        private static void AssertCommit(string root, string sha)
+        internal static void AssertCommit(string root, string sha)
         {
             if (sha == null || !FullSha.IsMatch(sha)) throw new NotHandledException("selection-commit-required");
             var read = Git(root, new[] { "cat-file", "-t", sha }, new[] { 0, 128 });
             if (read.Exit != 0 || read.Stdout.Trim() != "commit") throw new NotHandledException("selection-commit-unavailable");
         }
 
-        private static CheckpointProcessRunner.Result Git(string root, string[] arguments, int[] allowed)
+        internal static CheckpointProcessRunner.Result Git(string root, string[] arguments, int[] allowed)
         {
             var start = new ProcessStartInfo("git") { WorkingDirectory = Path.GetFullPath(root), StandardOutputEncoding = new UTF8Encoding(false, true) };
             foreach (string argument in arguments) start.ArgumentList.Add(argument);
@@ -113,51 +133,86 @@ namespace Antiphon.Scripts
         private static readonly string[] ContractPaths = { "tests/test-execution-policy.json", "tests/test-selection-policy.json",
             "scripts/select-test-rosters.ps1", "scripts/lib/test-selection.ps1", "global.json" };
 
-        /// <summary>The contract's blobs in two git processes: ls-tree -l gives each blob's size, and one show of
-        /// every blob writes their bytes back to back, split by those sizes. Anything but five regular blobs whose
-        /// sizes add up to exactly the bytes written, or a blob that is not BOM-less strict UTF-8, is NotHandled.</summary>
-        private static Dictionary<string, string> Blobs(string root, string sha)
+        /// <summary>The text of each path at a commit in two git processes: ls-tree -l gives each blob's size, and
+        /// one show of every blob writes their bytes back to back, split by those sizes. Anything but regular blobs
+        /// whose sizes add up to exactly the bytes written, or a blob that is not BOM-less strict UTF-8 (the one
+        /// shape every PowerShell read of it decodes to the same text), is NotHandled. Answers are kept per
+        /// process: the bytes at a full commit id cannot change.</summary>
+        internal static Dictionary<string, string> Texts(string root, string sha, IReadOnlyList<string> paths)
         {
-            var listing = Git(root, new[] { "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", sha, "--" }.Concat(ContractPaths).ToArray(), new[] { 0 }).Stdout;
+            if (sha == null || !FullSha.IsMatch(sha)) throw new NotHandledException("blob-sha");
+            var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+            var missing = new List<string>();
+            foreach (string path in paths)
+            {
+                if (texts.ContainsKey(path)) continue;
+                if (TextCache.TryGetValue(sha + "\0" + path, out string cached)) texts.Add(path, cached);
+                else if (!missing.Contains(path)) missing.Add(path);
+            }
+            for (int at = 0; at < missing.Count; at += 100)
+            {
+                var chunk = missing.Skip(at).Take(100).ToList();
+                foreach (var pair in ReadChunk(root, sha, chunk))
+                {
+                    texts[pair.Key] = pair.Value;
+                    TextCache[sha + "\0" + pair.Key] = pair.Value;
+                }
+            }
+            return texts;
+        }
+
+        private static readonly Dictionary<string, string> TextCache = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        private static Dictionary<string, string> ReadChunk(string root, string sha, List<string> chunk)
+        {
+            var listing = Git(root, new[] { "--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", sha, "--" }.Concat(chunk).ToArray(), new[] { 0 }).Stdout;
             var sizes = new Dictionary<string, long>(StringComparer.Ordinal);
             foreach (string entry in listing.Split('\0'))
             {
                 if (entry.Length == 0) continue;
-                int tab = entry.IndexOf('\t');
+                int tab = entry.IndexOf('	');
                 string[] meta = tab < 0 ? new string[0] : entry.Substring(0, tab).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                 if (meta.Length != 4 || meta[0] != "100644" && meta[0] != "100755" || meta[1] != "blob" || !long.TryParse(meta[3], out long size) || size < 0)
-                    throw new NotHandledException("contract-entry-shape");
+                    throw new NotHandledException("blob-entry-shape");
                 string path = entry.Substring(tab + 1);
-                if (Array.IndexOf(ContractPaths, path) < 0 || sizes.ContainsKey(path)) throw new NotHandledException("contract-entry-shape");
+                if (!chunk.Contains(path) || sizes.ContainsKey(path)) throw new NotHandledException("blob-entry-shape");
                 sizes.Add(path, size);
             }
-            if (sizes.Count != ContractPaths.Length) throw new NotHandledException("contract-entry-missing");
+            if (sizes.Count != chunk.Count) throw new NotHandledException("blob-entry-missing");
             var start = new ProcessStartInfo("git") { WorkingDirectory = Path.GetFullPath(root) };
             foreach (string argument in new[] { "show", "--no-textconv", "--no-color" }) start.ArgumentList.Add(argument);
-            foreach (string path in ContractPaths) start.ArgumentList.Add(sha + ":" + path);
+            foreach (string path in chunk) start.ArgumentList.Add(sha + ":" + path);
             CheckpointProcessRunner.BytesResult shown;
             try { shown = CheckpointProcessRunner.RunBytes(start, 30000, true); }
             catch (Exception e) when (!(e is NotHandledException)) { throw new NotHandledException("git-failed:" + e.GetType().Name); }
             if (shown.TimedOut || shown.Exit != 0) throw new NotHandledException("git-read-failed:show");
             byte[] bytes = shown.Stdout;
-            if (bytes.LongLength != sizes.Values.Sum() || bytes.LongLength > 16777216) throw new NotHandledException("contract-blob-size");
-            var strict = new UTF8Encoding(false, true);
-            var blobs = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (bytes.LongLength != sizes.Values.Sum() || bytes.LongLength > 16777216) throw new NotHandledException("blob-size");
+            var texts = new Dictionary<string, string>(StringComparer.Ordinal);
             int offset = 0;
-            foreach (string path in ContractPaths)
+            foreach (string path in chunk)
             {
                 int length = (int)sizes[path];
-                if (length >= 3 && bytes[offset] == 0xEF && bytes[offset + 1] == 0xBB && bytes[offset + 2] == 0xBF) throw new NotHandledException("contract-blob-bom");
-                try { blobs.Add(path, strict.GetString(bytes, offset, length)); }
-                catch (DecoderFallbackException) { throw new NotHandledException("contract-blob-encoding"); }
+                texts.Add(path, Decode(bytes, offset, length));
                 offset += length;
             }
-            return blobs;
+            return texts;
         }
 
-        private static PsObject Contract(string root, string sha, string profile)
+        /// <summary>BOM-less strict UTF-8 only: with any byte order mark the PowerShell reads differ by route.</summary>
+        internal static string Decode(byte[] bytes, int offset, int length)
         {
-            var blob = Blobs(root, sha);
+            if (length >= 2 && (bytes[offset] == 0xFE && bytes[offset + 1] == 0xFF || bytes[offset] == 0xFF && bytes[offset + 1] == 0xFE)) throw new NotHandledException("blob-bom");
+            if (length >= 3 && bytes[offset] == 0xEF && bytes[offset + 1] == 0xBB && bytes[offset + 2] == 0xBF) throw new NotHandledException("blob-bom");
+            try { return Strict.GetString(bytes, offset, length); }
+            catch (DecoderFallbackException) { throw new NotHandledException("blob-encoding"); }
+        }
+
+        private static readonly UTF8Encoding Strict = new UTF8Encoding(false, true);
+
+        internal static PsObject Contract(string root, string sha, string profile)
+        {
+            var blob = Texts(root, sha, ContractPaths);
             string Blob(string unusedRoot, string unusedSha, string path) => blob[path];
             if (!(PsJson.Parse(Blob(root, sha, "tests/test-execution-policy.json")) is PsObject policy)) throw new NotHandledException("policy-shape");
             if (!(policy.Get("policyHash") is string policyHash) || policyHash != PolicyHash(policy)) throw new NotHandledException("policy-hash-stale");
@@ -175,7 +230,7 @@ namespace Antiphon.Scripts
         }
 
         /// <summary>Get-NightlyPolicyHash: the canonical JSON of every top-level key but policyHash (any case).</summary>
-        private static string PolicyHash(PsObject policy)
+        internal static string PolicyHash(PsObject policy)
         {
             var copy = new PsObject();
             foreach (var pair in policy.Pairs)
@@ -200,7 +255,7 @@ namespace Antiphon.Scripts
         /// <summary>Get-TestSelectionDigest.</summary>
         internal static string SelectionDigest(object value) => PsJson.Sha256Text(PsJson.SelectionCanonical(value));
 
-        private static string LfText(string text) => text == null ? "" : text.Replace("\r\n", "\n").Replace("\r", "\n");
+        internal static string LfText(string text) => text == null ? "" : text.Replace("\r\n", "\n").Replace("\r", "\n");
 
         // ----- Save-ReleaseSelectionAttempt -----
 
@@ -235,7 +290,7 @@ namespace Antiphon.Scripts
             WriteOnce(selectionPath, selectionText);
             WriteOnce(path, attemptText);
             return Obj(("SelectionAttemptPath", path), ("SelectionAttemptDigest", FileSha256(path)), ("SelectionPath", selectionPath),
-                ("SelectionDigest", selectionDigest), ("BaselineSha", ""), ("Selection", attempt));
+                ("SelectionDigest", selectionDigest), ("BaselineSha", selection.Get("baselineSha")), ("Selection", attempt));
         }
 
         private static string TrainDigest(PsObject request, string releaseRoot, string repositoryRoot)
@@ -276,7 +331,7 @@ namespace Antiphon.Scripts
 
         // ----- paths (Assert-ReleaseSelectionPath, Test-NightlyAncestorReparse) -----
 
-        private static string AssertStatePath(string path, string root, string checkout)
+        internal static string AssertStatePath(string path, string root, string checkout)
         {
             string full = Path.GetFullPath(Rooted(path, "state"));
             string parent = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -305,11 +360,11 @@ namespace Antiphon.Scripts
             return false;
         }
 
-        private static bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
+        internal static bool PathExists(string path) => File.Exists(path) || Directory.Exists(path);
 
         private static string ReadText(string path) => File.ReadAllText(path);
 
-        private static string FileSha256(string path) => PsJson.Sha256Hex(File.ReadAllBytes(path));
+        internal static string FileSha256(string path) => PsJson.Sha256Hex(File.ReadAllBytes(path));
 
         internal static PsObject Obj(params (string Key, object Value)[] pairs)
         {

@@ -291,14 +291,14 @@ function New-ReleaseSelectionAttempt {
         $handled = $false
         if ($PSVersionTable.PSVersion.Major -ge 7) {
             . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
-            # The compiled command (Antiphon.Scripts select-release) answers a no-baseline attempt exactly as
-            # the worker would; exit 10 means not this input, and the worker below decides instead. It declines
-            # every request that names a baseline (ReleaseSelection.cs Attempt: baseline-requested, or request-type
-            # for a value that is not a string), so it is not started for one.
-            $cli = if ($Request.BaselineSha -or $Request.BaselineReceiptPath) { $null } else { Get-AntiphonScriptsCli }
+            # The compiled command (Antiphon.Scripts select-release) answers an attempt exactly as the worker
+            # would, with or without a baseline; exit 10 means not this input, and the worker below decides
+            # instead. It is given this directory: a baseline proposal reads the selector and planner files the
+            # worker would run.
+            $cli = Get-AntiphonScriptsCli
             if ($cli) {
                 $start = New-Object Diagnostics.ProcessStartInfo($cli)
-                foreach ($arg in @('select-release', $requestPath, $responsePath)) { $start.ArgumentList.Add($arg) }
+                foreach ($arg in @('select-release', $requestPath, $responsePath, $PSScriptRoot)) { $start.ArgumentList.Add($arg) }
                 $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start, 60000, $false)
                 if (-not $run.TimedOut -and $run.Exit -eq 0) { $handled = $true; $script:ReleaseSelectionRoute = 'cli' }
             }

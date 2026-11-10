@@ -22,8 +22,8 @@ namespace Antiphon.Scripts
                 return LiveLaneEvidence.RunCommand(args[1], args.Length == 3 ? args[2] : null);
             try
             {
-                if (args.Length == 3 && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2]);
-                Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json>"
+                if ((args.Length == 3 || args.Length == 4) && args[0] == "select-release") return ReleaseSelection.Run(args[1], args[2], args.Length == 4 ? args[3] : null);
+                Console.Error.WriteLine("usage: antiphon-scripts select-release <request.json> <response.json> [<scripts-lib>]"
                     + " | live-lane-evidence <case> [<context.json>]");
                 return Usage;
             }
