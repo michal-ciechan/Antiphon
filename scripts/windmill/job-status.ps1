@@ -112,6 +112,9 @@ function Test-SnapshotStatusFresh {
     $exitCode = 1
     try { $exitCode = [int]$obj.exit } catch { return $false }
     if ($exitCode -ne 0) { return $false }
+    $mode = ''
+    try { $mode = [string]$obj.mode } catch { return $false }
+    if ($mode -ne 'plain') { return $false }
     $when = ConvertFrom-SnapshotUtcStamp ([string]$obj.utc)
     if ($null -eq $when) { return $false }
     if ($NowUtc.Kind -ne [DateTimeKind]::Utc) { $NowUtc = [datetime]::SpecifyKind($NowUtc, [DateTimeKind]::Utc) }
