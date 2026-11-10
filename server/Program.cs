@@ -623,7 +623,7 @@ try
     builder.Services.AddScoped<SessionReconciliationService>();
     builder.Services.AddScoped<CardWorkTransitionService>();
     builder.Services.AddScoped<ParkedMessageSweepService>();
-    builder.Services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
+    ZombieCensusRegistration.AddProcessCensus(builder.Services);
     builder.Services.AddSingleton<ZombieCensusState>();
     builder.Services.AddScoped<ZombieCensusService>();
     builder.Services.AddScoped<ZombieCensusJob>();
