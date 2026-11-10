@@ -136,6 +136,75 @@ public class ProcessSpawnLimitTests
         }
     }
 
+    // CARD-1439: confirmed to start no child. The landing wrappers only call the controlled
+    // harness (ControlledLandingGit). The migration class uses the in-process EF migrator.
+    private static readonly (string Relative, string Name)[] SpawnFreeClasses =
+    [
+        ("Infrastructure/LandingAdmissionControlTests.cs", "LandingAdmissionControlTests"),
+        ("Infrastructure/LandingSourceBoundaryControlTests.cs", "LandingSourceBoundaryControlTests"),
+        ("Application/C0824RefOnlySnapshotMigrationTests.cs", "C0824RefOnlySnapshotMigrationTests"),
+    ];
+
+    [Test]
+    public void C1439_spawn_free_classes_carry_no_limiter()
+    {
+        var misses = new List<string>();
+        foreach (var (relative, name) in SpawnFreeClasses)
+        {
+            var path = Path.Combine(CheckpointFixtures.RepoRoot, "tests", "Antiphon.Tests", relative);
+            misses.AddRange(SpawnFreeLimiterMisses(File.ReadAllText(path), name));
+        }
+
+        misses.ShouldBeEmpty(string.Join(Environment.NewLine, misses));
+    }
+
+    [Test]
+    public void C1439_spawn_free_check_rejects_a_limiter_that_is_still_present()
+    {
+        const string stillLimited = """
+            namespace Example;
+            [Category("Unit")]
+            [ParallelLimiter<ProcessSpawnLimit>]
+            public sealed class StillLimitedTests
+            {
+            }
+            """;
+        const string unlimited = """
+            namespace Example;
+            [Category("Unit")]
+            public sealed class UnlimitedTests
+            {
+            }
+            """;
+        var misses = SpawnFreeLimiterMisses(stillLimited, "StillLimitedTests");
+        misses.Count.ShouldBe(1, string.Join(Environment.NewLine, misses));
+        misses[0].ShouldContain("StillLimitedTests");
+        SpawnFreeLimiterMisses(unlimited, "UnlimitedTests").ShouldBeEmpty();
+    }
+
+    internal static List<string> SpawnFreeLimiterMisses(string source, string className)
+    {
+        var misses = new List<string>();
+        var marker = "class " + className;
+        var at = source.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0)
+        {
+            misses.Add(className + " declaration was not found");
+            return misses;
+        }
+
+        var head = Math.Max(0, at - 800);
+        var prelude = source[head..at];
+        var cut = Math.Max(
+            prelude.LastIndexOf('}'),
+            prelude.LastIndexOf("namespace", StringComparison.Ordinal));
+        if (cut >= 0)
+            prelude = prelude[(cut + 1)..];
+        if (prelude.Contains("[ParallelLimiter<", StringComparison.Ordinal))
+            misses.Add(className + " starts no process and must not carry [ParallelLimiter<");
+        return misses;
+    }
+
     [Test]
     [Arguments(1)]
     [Arguments(2)]
