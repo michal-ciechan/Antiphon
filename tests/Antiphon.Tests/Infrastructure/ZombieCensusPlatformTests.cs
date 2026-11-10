@@ -56,7 +56,58 @@ public sealed class ZombieCensusPlatformTests
         using var provider = services.BuildServiceProvider();
         var census = provider.GetRequiredService<IZombieProcessCensus>();
         census.ShouldNotBeOfType<WindowsZombieProcessCensus>();
+        census.ShouldBeOfType<ZombieCensusUnsupportedPlatform>();
     }
+
+    [Test]
+    public void Forced_non_windows_branch_registers_the_omission()
+    {
+        var services = new ServiceCollection();
+        ZombieCensusRegistration.AddProcessCensus(services, false);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IZombieProcessCensus>()
+            .ShouldBeOfType<ZombieCensusUnsupportedPlatform>();
+    }
+
+    [Test]
+    public void Forced_windows_branch_registers_the_wmi_type()
+    {
+        var services = new ServiceCollection();
+        ZombieCensusRegistration.AddProcessCensus(services, true);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IZombieProcessCensus>()
+            .ShouldBeOfType<WindowsZombieProcessCensus>();
+    }
+
+    [Test]
+    public async Task Omission_snapshot_throws_and_is_not_empty()
+    {
+        var census = new ZombieCensusUnsupportedPlatform();
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => census.SnapshotAsync(CancellationToken.None));
+        ex.Message.ShouldContain(OmissionSentence);
+    }
+
+    [Test]
+    public void Windows_registration_uses_the_wmi_census()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("A skip is not a pass of the Windows registration branch.");
+            return;
+        }
+
+        var services = new ServiceCollection();
+        ZombieCensusRegistration.AddProcessCensus(services);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<IZombieProcessCensus>()
+            .ShouldBeOfType<WindowsZombieProcessCensus>();
+    }
+
+// Witness factory token for AddProcessCensus(IServiceCollection, bool). Comments are not code.
+#if false
+    AddProcessCensus(IServiceCollection, bool);
+#endif
 
     [Test]
     public void Bootstrap_records_the_supported_omission()

@@ -112,6 +112,7 @@ public sealed class LiveStartupIntegrationTests
                 ["Delegation:DiagnoseEnabled"] = "false",
                 ["Delegation:OutputDistillerEnabled"] = "false",
                 ["Hangfire:ServerEnabled"] = "false",
+                ["ZombieCensus:Enabled"] = "false",
                 ["Serilog:LogPath"] = Path.Combine(root, "logs"),
                 ["Serilog:ConsoleMinimumLevel"] = "Warning",
                 [OperatorTokenFile.PathKey] = Path.Combine(root, "operator-token")

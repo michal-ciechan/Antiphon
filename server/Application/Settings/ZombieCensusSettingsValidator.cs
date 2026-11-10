@@ -4,7 +4,13 @@ namespace Antiphon.Server.Application.Settings;
 
 public sealed class ZombieCensusSettingsValidator : IValidateOptions<ZombieCensusSettings>
 {
-    public ValidateOptionsResult Validate(string? name, ZombieCensusSettings options)
+    public const string OffWindowsOmission =
+        "Zombie census is a supported omission off Windows. Set ZombieCensus:Enabled to false.";
+
+    public ValidateOptionsResult Validate(string? name, ZombieCensusSettings options) =>
+        Validate(name, options, OperatingSystem.IsWindows());
+
+    public ValidateOptionsResult Validate(string? name, ZombieCensusSettings options, bool isWindows)
     {
         var failures = new List<string>();
 
@@ -46,6 +52,9 @@ public sealed class ZombieCensusSettingsValidator : IValidateOptions<ZombieCensu
             failures.Add("ZombieCensus:PidReuseToleranceSeconds must be positive.");
         if (string.IsNullOrWhiteSpace(options.SessionLogPath))
             failures.Add("ZombieCensus:SessionLogPath must not be empty.");
+
+        if (options.Enabled && !isWindows)
+            failures.Add(OffWindowsOmission);
 
         return failures.Count == 0
             ? ValidateOptionsResult.Success

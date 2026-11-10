@@ -656,6 +656,7 @@ public class AntiphonAppFixture
                     // C:\logs\antiphon\check-interpreter inside the test output.
                     ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspacePath, "check-interpreter"),
                     ["ZombieCensus:SessionLogPath"] = Path.Combine(_workspacePath, "session-runner"),
+                    ["ZombieCensus:Enabled"] = "false",
                     ["Delegation:DiagnoseEnabled"] = "false",
                     ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspacePath, "diagnose"),
                     ["Delegation:OutputDistillerEnabled"] = "false",

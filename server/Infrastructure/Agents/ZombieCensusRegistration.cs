@@ -8,9 +8,15 @@ namespace Antiphon.Server.Infrastructure.Agents;
 /// </summary>
 public static class ZombieCensusRegistration
 {
-    public static IServiceCollection AddProcessCensus(IServiceCollection services)
+    public static IServiceCollection AddProcessCensus(IServiceCollection services) =>
+        AddProcessCensus(services, OperatingSystem.IsWindows());
+
+    public static IServiceCollection AddProcessCensus(IServiceCollection services, bool isWindows)
     {
-        services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
+        if (isWindows)
+            services.AddSingleton<IZombieProcessCensus, WindowsZombieProcessCensus>();
+        else
+            services.AddSingleton<IZombieProcessCensus, ZombieCensusUnsupportedPlatform>();
         return services;
     }
 }
