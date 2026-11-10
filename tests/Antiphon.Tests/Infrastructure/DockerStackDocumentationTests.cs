@@ -493,6 +493,78 @@ public sealed class DockerStackDocumentationTests
             text.ShouldContain(pin, Case.Sensitive, pin);
     }
 
+    // CARD-1779. Topology B operations: production server section, restart front door,
+    // container logs, desktop maintenance as the end state, and the operator token after the move.
+    [Test]
+    public void Production_server_on_the_server2_host_is_documented()
+    {
+        var section = Section(Read("docs/docker-stack.md"), "## Production server on the server2 host (CARD-1744)", " ## ");
+        foreach (var pin in new[]
+        {
+            "antiphon-server2-server",
+            "antiphon-server2-server-server-1",
+            "127.0.0.1:17400",
+            "server-session-runner",
+            "AgentTui__KeyProtection__Mode",
+            "AgentTui__KeyProtection__CertificatePath",
+            "AgentTui__KeyRingPath",
+            "/state/keyring-cert/cert.pem",
+            "/state/keyring-cert/key.pem",
+            "0600",
+            "uid 1654",
+            "does not copy the desktop DPAPI ring",
+            "KEYRING_CERT_FILE",
+            "KEYRING_KEY_FILE",
+            "OPERATOR_TOKEN_FILE",
+            "POSTGRES_PASSWORD",
+            "ANTIPHON_PUBLIC_ORIGIN",
+            "PHONE_HOME_SHARED_SECRET",
+            "PHONE_HOME_HOST_WORKSPACE_ROOT",
+            "HANGFIRE_STORAGE",
+            "CHANNEL_BRIDGE_ENABLED",
+            "Operator__TokenPath",
+            "/state/operator-token",
+            "R-1",
+            "R-2",
+            "R-3",
+            "45-60 minutes",
+            "about 15 minutes",
+            "SessionRunner__BaseUrl",
+            "Hangfire__ServerEnabled",
+            "WorktreeLegacyRelease__Enabled",
+            "RunnerWorktreeRetention__Enabled",
+            "ZombieCensus__Enabled",
+            "Serilog__LogPath",
+            "scripts/restart-linux-server.ps1",
+            "scripts/restart-apphost.ps1",
+        })
+            section.ShouldContain(pin, Case.Sensitive, "c1779-stack: " + pin);
+
+        var agents = Read("AGENTS.md");
+        agents.ShouldContain("`scripts/restart-linux-server.ps1` is the production server restart", Case.Sensitive, "c1779-agents-restart");
+        agents.ShouldContain("`scripts/restart-apphost.ps1` is the rollback path", Case.Sensitive, "c1779-agents-rollback");
+        agents.ShouldContain("maintenance on the desktop is the end state", Case.Sensitive, "c1779-agents-maintenance");
+        agents.ShouldContain("marker present", Case.Sensitive, "c1779-agents-marker");
+        agents.ShouldContain("AppHost logon task", Case.Sensitive, "c1779-agents-logon");
+        agents.ShouldContain("watchdog disabled by design", Case.Sensitive, "c1779-agents-watchdog");
+
+        var logs = Section(Read("docs/logs.md"), "## Production server container (CARD-1744)", " ## ");
+        logs.ShouldContain("/state/logs", Case.Sensitive, "c1779-logs-path");
+        logs.ShouldContain("docker logs antiphon-server2-server-server-1", Case.Sensitive, "c1779-logs-docker");
+        logs.ShouldContain("antiphon-server2-server-server-session-runner-1", Case.Sensitive, "c1779-logs-sidecar");
+
+        var runbook = Section(Read("docs/apphost-runbook.md"), "## Maintenance is the end state after topology B (CARD-1744)", " ## ");
+        runbook.ShouldContain("maintenance on the desktop is the end state", Case.Sensitive, "c1779-runbook-end");
+        runbook.ShouldContain("marker present", Case.Sensitive, "c1779-runbook-marker");
+        runbook.ShouldContain("apphost.down-on-purpose", Case.Sensitive, "c1779-runbook-file");
+        runbook.ShouldContain("Antiphon AppHost Watchdog", Case.Sensitive, "c1779-runbook-watchdog");
+        runbook.ShouldContain("Antiphon AppHost", Case.Sensitive, "c1779-runbook-logon");
+
+        var http = Read("docs/ops-http.md");
+        http.ShouldContain("/state/operator-token", Case.Sensitive, "c1779-http-token");
+        http.ShouldContain("After the CARD-1744 move", Case.Sensitive, "c1779-http-move");
+    }
+
     /// <summary>
     /// Prose wraps. Asserting a phrase against the raw bytes makes the guard fail the moment a
     /// paragraph is rewrapped, which says nothing about whether the doc still means what it must,
@@ -500,4 +572,12 @@ public sealed class DockerStackDocumentationTests
     /// </summary>
     private static string Read(string relative) =>
         System.Text.RegularExpressions.Regex.Replace(DockerStackDocuments.Read(relative), @"\s+", " ");
+
+    private static string Section(string text, string heading, string nextHeading)
+    {
+        var start = text.IndexOf(heading, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, heading);
+        var end = text.IndexOf(nextHeading, start + heading.Length, StringComparison.Ordinal);
+        return end < 0 ? text[start..] : text[start..end];
+    }
 }
