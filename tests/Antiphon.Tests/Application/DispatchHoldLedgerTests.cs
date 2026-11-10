@@ -102,6 +102,7 @@ public sealed class DispatchHoldLedgerTests
     [Test]
     public void Lease_wins_a_tie_and_an_empty_ledger_names_none()
     {
+        // This fixture's lease interval is the later one. Equal time follows that later class (CARD-1835).
         var tie = DispatchHoldLedger.FromRows(
             [(T0, DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1)), (T0.AddSeconds(60), DispatchHoldDetails.LeaseOccupiedUnknown)],
             DateTime.MinValue, T0.AddSeconds(120));
