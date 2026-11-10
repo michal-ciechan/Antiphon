@@ -251,11 +251,13 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     public async Task malformed_state_shape_by_verb_table_matches_documented_exits()
     {
         var failures = new List<string>();
+        var (root, run) = Fixture();
+        var snapshot = Snapshot(run);
         foreach (var collection in new[] { "rows", "builds" })
         foreach (var shape in new[] { "null", "missing", "wrong-type", "null-element", "blank-identity" })
         foreach (var verb in new[] { "report", "report-json", "report-merge", "report-merge-json", "status", "stop", "wait", "clean", "validate" })
         {
-            var (root, run) = Fixture();
+            Restore(run, snapshot);
             var path = Path.Combine(run, "state.json");
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             if (shape == "missing") json.Remove(collection);
