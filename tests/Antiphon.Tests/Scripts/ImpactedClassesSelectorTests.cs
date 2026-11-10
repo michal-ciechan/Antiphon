@@ -631,9 +631,11 @@ public sealed partial class ImpactedClassesSelectorTests
             var slash = row.Selects.IndexOf('/');
             var className = slash < 0 ? row.Selects : row.Selects[..slash];
             var needle = "(" + (slash < 0 ? row.Selects : row.Selects[(slash + 1)..]) + "*)";
-            filters.Any(filter => filter.Filter.Contains(needle, StringComparison.Ordinal)).ShouldBeTrue(row.Path + " " + needle);
-            // A windowsOnly class leaves the Linux filter even when the note's kind is not windows:required.
-            var onWindows = row.Windows || (slash < 0 && windowsOnly.Contains(className));
+            // A windowsOnly class leaves every Linux filter. A method needle stays on its hand lane.
+            var classWindowsOnly = slash < 0 && windowsOnly.Contains(className);
+            filters.Any(filter => filter.Filter.Contains(needle, StringComparison.Ordinal))
+                .ShouldBe(!classWindowsOnly, row.Path + " linux lane " + needle);
+            var onWindows = row.Windows || classWindowsOnly;
             windows.Any(filter => filter.Filter.Contains(needle, StringComparison.Ordinal))
                 .ShouldBe(onWindows, row.Path + " windows lane " + needle);
         }
@@ -833,7 +835,10 @@ public sealed partial class ImpactedClassesSelectorTests
             windows: true,
             also: "RepositoryLeaseWindowsBoundaryTests",
             windowsOnly: true,
-            alsoWindowsOnly: true);
+            alsoWindowsOnly: true,
+            mergeWindows: false,
+            mergeWindowsOnly: false,
+            mergeAlsoWindowsOnly: true);
     }
 
     // CARD-1819 round 2. A kind that is not windows:only or windows:required runs on Linux.
@@ -886,7 +891,9 @@ public sealed partial class ImpactedClassesSelectorTests
             "land-graph-precheck",
             "LandGraphEvaluationTests",
             windows: true,
-            windowsOnly: true);
+            windowsOnly: true,
+            mergeWindows: false,
+            mergeWindowsOnly: false);
     }
 
     [Test]
@@ -1021,7 +1028,9 @@ public sealed partial class ImpactedClassesSelectorTests
             "temp-family-registry",
             "C1677TempFamilyRegistryTests",
             windows: true,
-            windowsOnly: true);
+            windowsOnly: true,
+            mergeWindows: false,
+            mergeWindowsOnly: false);
     }
 
     [Test]
@@ -1034,12 +1043,16 @@ public sealed partial class ImpactedClassesSelectorTests
             windows: true,
             also: "NightlyCoreTests",
             windowsOnly: true,
-            alsoWindowsOnly: true);
+            alsoWindowsOnly: true,
+            mergeWindows: false,
+            mergeWindowsOnly: false,
+            mergeAlsoWindowsOnly: false);
     }
 
     private static async Task AssertFakeDiff(
         string path, string kind, string needle, bool windows, string? also = null,
-        bool windowsOnly = false, bool alsoWindowsOnly = false)
+        bool windowsOnly = false, bool alsoWindowsOnly = false,
+        bool? mergeWindows = null, bool? mergeWindowsOnly = null, bool? mergeAlsoWindowsOnly = null)
     {
         var root = Root();
         var ran = await RunAsync(root, "-Path", path, "-Json");
@@ -1049,15 +1062,31 @@ public sealed partial class ImpactedClassesSelectorTests
 
         if (windowsOnly)
         {
+            // -MergeSubset returns before the derived windowsOnly strip. A hand windows:only
+            // kind stays on that lane; a derived-only class stays on the hand Linux lane.
+            var laneWindows = mergeWindows ?? windows;
+            var laneOnly = mergeWindowsOnly ?? windowsOnly;
+            var laneAlsoOnly = mergeAlsoWindowsOnly ?? alsoWindowsOnly;
             var merged = await RunAsync(root, "-MergeSubset", "-Path", path, "-Json");
             merged.Exit.ShouldBe(0, path + " merge " + merged.Text);
             using var mergeJson = JsonDocument.Parse(merged.Stdout);
-            AssertSelected(mergeJson.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly);
+            AssertSelected(mergeJson.RootElement, kind, needle, laneWindows, also, laneOnly, laneAlsoOnly);
+            if (mergeWindowsOnly == false)
+            {
+                LinuxFilters(mergeJson.RootElement).Any(filter => filter.Contains(needle, StringComparison.Ordinal))
+                    .ShouldBeTrue(kind + " merge linux " + needle);
+                if (also is not null && !laneAlsoOnly)
+                {
+                    LinuxFilters(mergeJson.RootElement).Any(filter => filter.Contains(also, StringComparison.Ordinal))
+                        .ShouldBeTrue(kind + " merge linux " + also);
+                }
+            }
+
             var mergeMutant = merged.Stdout.Replace(needle, "DroppedC1819Selection", StringComparison.Ordinal);
             mergeMutant.ShouldNotBe(merged.Stdout, needle);
             using var brokenMerge = JsonDocument.Parse(mergeMutant);
             Should.Throw<ShouldAssertException>(() =>
-                AssertSelected(brokenMerge.RootElement, kind, needle, windows, also, windowsOnly, alsoWindowsOnly));
+                AssertSelected(brokenMerge.RootElement, kind, needle, laneWindows, also, laneOnly, laneAlsoOnly));
         }
 
         // The replacement must not contain the needle: ShouldContain would still match a prefixed copy.
