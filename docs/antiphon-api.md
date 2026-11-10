@@ -557,9 +557,7 @@ is 422 `worktree_base_source_invalid`. Detail records `worktreeBaseRequestedRef`
 > `RolePolicy[role].RecommendedInFlight` (default 1; Code and Review default 2). Queued, Dispatched and Working count; Blocked
 > does not; specialists and live follow-ups are exempt; tasks with no project scope form their own bucket.
 > The `concurrency` extension names the axis, `projectId`, the occupants (same project only), and
-> `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true`
-> if the user asked for parallel work this turn — that records a Warning and still does not raise
-> `MaxConcurrentTasks`.
+> `override: "ignoreConcurrencyLimit"`. Retry with `ignoreConcurrencyLimit: true` only when `population` is `open`, `canOverride` is true, the axis is `absolute`, and no listed occupant is in the stage you are dispatching; a same-stage collision defers. That records a Warning and still does not raise `MaxConcurrentTasks`.
 >
 > It can also refuse with **409 `provider_sign_in_required`** (CARD-0324) for a registry-Grok
 > create whose `GROK_HOME` has no usable `auth.json`. The problem-details extension carries

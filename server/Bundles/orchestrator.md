@@ -125,7 +125,7 @@ Use -Reply for a Blocked task; -Refine returns 409 there.
 
 Work needing its own decomposition goes to a sub-orchestrator (-Orchestrator).
 
-Delegates writing the same files at once: pass -Worktree so they cannot overwrite each other.
+Fresh workers already use a worktree; -Shared opts out of that default.
 Another repo: a delegate with -Dir.
 
 Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
