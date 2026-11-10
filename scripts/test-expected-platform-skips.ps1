@@ -62,8 +62,14 @@ function Test-EpsVerdict {
 
     $longer = Invoke-EpsVerdict -Rows @(New-EpsRow -Identity $cleanup -Outcome 'NotExecuted' -DebugTrace ($trace + ' extra detail')) -Roster $roster
     $longerReasons = @($longer.reasons) -join ','
-    Assert-C487 -Cond ([bool]$longer.coverageComplete -and [bool]$longer.testsPassed -and $longerReasons -notmatch 'unexecuted-outcome') `
-        -Name 'EPS prefix-extension-accepted' -Detail $longerReasons
+    Assert-C487 -Cond ((-not [bool]$longer.coverageComplete) -and $longerReasons -match 'unexecuted-outcome') `
+        -Name 'EPS prefix-extension-rejected' -Detail $longerReasons
+
+    $tight = 'Skipped:' + $s7
+    $noSpace = Invoke-EpsVerdict -Rows @(New-EpsRow -Identity $cleanup -Outcome 'NotExecuted' -DebugTrace $tight) -Roster $roster
+    $noSpaceReasons = @($noSpace.reasons) -join ','
+    Assert-C487 -Cond ((-not [bool]$noSpace.coverageComplete) -and $noSpaceReasons -match 'unexecuted-outcome') `
+        -Name 'EPS skipped-without-space-rejected' -Detail $noSpaceReasons
 
     $loaded = Invoke-EpsVerdict -Rows @($skip) -OmitRoster
     $loadedReasons = @($loaded.reasons) -join ','
@@ -157,11 +163,144 @@ function Test-EpsVerdict {
     $plantedGaps = @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $repo -Platform 'windows' -Entries $planted)
     Assert-C487 -Cond ($plantedGaps.Count -eq 1 -and [string]$plantedGaps[0] -ceq $missing) `
         -Name 'EPS census-reports-missing' -Detail ($plantedGaps -join ',')
+
+    $reasonCmd = Get-Command -Name 'Get-NightlyExpectedSkipReasonGaps' -CommandType Function -ErrorAction SilentlyContinue
+    $reasonGaps = @()
+    if ($null -ne $reasonCmd) {
+        $reasonGaps = @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $repo -Platform 'windows' -Entries $committed)
+    }
+    Assert-C487 -Cond ($null -ne $reasonCmd -and $reasonGaps.Count -eq 0) `
+        -Name 'EPS reason-text-matches-source' -Detail ($(if ($null -eq $reasonCmd) { 'missing-command' } else { $reasonGaps -join ',' }))
+
+    $wrongId = 'Antiphon.Tests.Scripts.RemoteScriptContractTests.C1105_Resume_extraction_is_closed'
+    $wrongReason = @()
+    foreach ($entry in @($committed)) {
+        if ([string]$entry.test -ceq $wrongId) {
+            $wrongReason += [pscustomobject]@{ platform = 'windows'; test = $wrongId; reasonPrefix = 'not-the-method-skip-text' }
+        } else { $wrongReason += $entry }
+    }
+    $wrongGaps = @()
+    if ($null -ne $reasonCmd) {
+        $wrongGaps = @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $repo -Platform 'windows' -Entries $wrongReason)
+    }
+    Assert-C487 -Cond ($null -ne $reasonCmd -and @($wrongGaps) -contains $wrongId) `
+        -Name 'EPS reason-text-reports-mismatch' -Detail ($(if ($null -eq $reasonCmd) { 'missing-command' } else { $wrongGaps -join ',' }))
+
+    $driftCmd = Get-Command -Name 'Get-NightlyExpectedSkipRosterDrift' -CommandType Function -ErrorAction SilentlyContinue
+    $drift = $null
+    if ($null -ne $driftCmd) { $drift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $repo -Entries $committed }
+    $driftDetail = 'missing-command'
+    $driftStable = $false
+    if ($null -ne $drift) {
+        $driftDetail = ('overlap=' + @($drift.Overlap).Count + ' mismatches=' + (@($drift.Mismatches) -join ','))
+        $driftStable = (@($drift.Overlap).Count -eq 10 -and @($drift.Mismatches).Count -eq 0)
+    }
+    Assert-C487 -Cond $driftStable -Name 'EPS roster-drift-stable' -Detail $driftDetail
+
+    $drifted = @()
+    foreach ($entry in @($committed)) {
+        if ([string]$entry.test -ceq $wrongId) {
+            $drifted += [pscustomobject]@{ platform = [string]$entry.platform; test = [string]$entry.test; reasonPrefix = 'drifted-reason'; reasonClass = 'platform' }
+        } else { $drifted += $entry }
+    }
+    $driftBad = $null
+    if ($null -ne $driftCmd) { $driftBad = Get-NightlyExpectedSkipRosterDrift -RepoRoot $repo -Entries $drifted }
+    $driftBadDetail = 'missing-command'
+    $driftCaught = $false
+    if ($null -ne $driftBad) {
+        $driftBadDetail = (@($driftBad.Mismatches) -join ',')
+        $driftCaught = (@($driftBad.Mismatches) -contains $wrongId)
+    }
+    Assert-C487 -Cond $driftCaught -Name 'EPS roster-drift-reports-mismatch' -Detail $driftBadDetail
+
+    $c680 = 'Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs'
+    $liveRoster = @([pscustomobject]@{ platform = 'windows'; test = $c680; reasonPrefix = '20 missing-context'; reasonClass = 'live-context' })
+    $liveTrace = 'Skipped: 20 missing-context'
+    $liveLinux = Invoke-EpsVerdict -Rows @(New-EpsRow -Identity $c680 -Outcome 'NotExecuted' -DebugTrace $liveTrace) -Roster $liveRoster -Platform 'linux'
+    $liveReasons = @($liveLinux.reasons) -join ','
+    Assert-C487 -Cond ([bool]$liveLinux.coverageComplete -and [bool]$liveLinux.testsPassed -and $liveReasons -notmatch 'unexecuted-outcome') `
+        -Name 'EPS live-context-any-platform' -Detail $liveReasons
+
+    $c680Row = @($committed | Where-Object { [string]$_.test -ceq $c680 })
+    $c680Class = ''
+    if ($c680Row.Count -eq 1 -and $c680Row[0].PSObject.Properties.Name -contains 'reasonClass') { $c680Class = [string]$c680Row[0].reasonClass }
+    Assert-C487 -Cond ($c680Row.Count -eq 1 -and $c680Class -ceq 'live-context') `
+        -Name 'EPS live-context-labeled' -Detail ('count=' + $c680Row.Count + ' class=' + $c680Class)
+
+    $digest = ''
+    $toleratedIds = @()
+    $toleratedClass = ''
+    if ($accepted.PSObject.Properties.Name -contains 'rosterDigest') { $digest = [string]$accepted.rosterDigest }
+    if ($accepted.PSObject.Properties.Name -contains 'toleratedSkips') {
+        $toleratedIds = @($accepted.toleratedSkips | ForEach-Object { [string]$_.identity })
+        if (@($accepted.toleratedSkips).Count -eq 1 -and $accepted.toleratedSkips[0].PSObject.Properties.Name -contains 'reasonClass') {
+            $toleratedClass = [string]$accepted.toleratedSkips[0].reasonClass
+        }
+    }
+    $digestAgain = ''
+    $again = Invoke-EpsVerdict -Rows @($skip) -Roster $roster
+    if ($again.PSObject.Properties.Name -contains 'rosterDigest') { $digestAgain = [string]$again.rosterDigest }
+    $digestOk = ($digest.Length -eq 64 -and $digest -ceq $digestAgain -and @($toleratedIds).Count -eq 1 -and [string]$toleratedIds[0] -ceq $cleanup -and $toleratedClass -ceq 'platform')
+    Assert-C487 -Cond $digestOk -Name 'EPS tolerated-list-and-digest' -Detail ('digest=' + $digest + ' ids=' + ($toleratedIds -join ',') + ' class=' + $toleratedClass)
+
+    $summaryPath = Join-Path $ResultsDirectory 'summary.json'
+    $summaryDigest = 'a' * 64
+    $summaryJson = @{
+        startedAt = '2026-11-10T00:00:00Z'
+        succeeded = $false
+        outcome = 'TESTS'
+        sha = 'abc'
+        gitRef = 'rc/test'
+        profile = 'rc'
+        durationSeconds = 1
+        builds = @()
+        suites = @(
+            @{ id = 'antiphon'; name = 'antiphon chunk-a'; result = 'pass'; exitCode = 8; processExitTolerated = $true; skipped = $false; failed = 0 }
+            @{ id = 'antiphon'; name = 'antiphon chunk-b'; result = 'FAIL'; exitCode = 1; skipped = $false; failed = 2 }
+        )
+        expectedSkipRosterDigest = $summaryDigest
+        toleratedSkips = @(@{ identity = $cleanup; reasonClass = 'platform' })
+    } | ConvertTo-Json -Depth 6
+    [System.IO.File]::WriteAllText($summaryPath, $summaryJson)
+    $shim = {
+        param($Method, $Uri, $Headers, $Body)
+        if ($Uri -match '/api/boards$') { return [pscustomobject]@{ id = 'board-1'; name = 'Antiphon' } }
+        if ($Uri -match '/columns') { return @() }
+        if ($Uri -match '/api/cards') { return [pscustomobject]@{ cards = @(); truncated = $false } }
+        return $null
+    }
+    $title = ''
+    $body = ''
+    $reportError = ''
+    try {
+        $report = & (Join-Path $here 'nightly-report.ps1') -Summary $summaryPath -DryRun -PassThru -HttpShim $shim -Board 'Antiphon' -Api 'http://nightly.test'
+        $title = [string]$report.Title
+        $body = [string]$report.Body
+    } catch {
+        $reportError = $_.Exception.Message
+    }
+    $titleOk = ($title -match '2 failed' -and $title -notmatch 'exit 8' -and $body.Contains($summaryDigest) -and $body.Contains($cleanup) -and $body.Contains('Tolerated skips'))
+    Assert-C487 -Cond $titleOk -Name 'EPS title-omits-tolerated-exit' -Detail ($(if ($reportError) { $reportError } else { $title + ' | ' + $body.Substring(0, [Math]::Min(400, $body.Length)) }))
+
+    $knownCmd = Get-Command -Name 'Get-NightlyDiscoveryKnownIdentities' -CommandType Function -ErrorAction SilentlyContinue
+    $staleCmd = Get-Command -Name 'Get-NightlyExpectedSkipStaleWarnings' -CommandType Function -ErrorAction SilentlyContinue
+    $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+    $known = @()
+    $knownWarnings = @()
+    if ($null -ne $knownCmd) {
+        $known = @(Get-NightlyDiscoveryKnownIdentities -Nodes @([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.C0824RefOnlyCleanupTests'; Method = 'Remote_cleanup_still_uses_its_binding_and_generation' }))
+    }
+    if ($null -ne $staleCmd) {
+        $knownWarnings = @(Get-NightlyExpectedSkipStaleWarnings -Platform 'windows' -Entries $roster -KnownTestIdentities $known)
+    }
+    $wired = $implText.Contains('Get-NightlyDiscoveryKnownIdentities')
+    $discoveryOk = ($null -ne $knownCmd -and $null -ne $staleCmd -and @($known) -contains $cleanup -and @($knownWarnings) -contains ('stale-roster:' + $sync) -and @($knownWarnings) -notcontains ('stale-roster:' + $cleanup) -and $wired)
+    Assert-C487 -Cond $discoveryOk -Name 'EPS discovery-known-identities' -Detail ('known=' + ($known -join ',') + ' warnings=' + ($knownWarnings -join ',') + ' wired=' + $wired)
 }
 
 $expected = 0
 switch -Exact ($Case) {
-    'Verdict' { Test-EpsVerdict; $expected = 14 }
+    'Verdict' { Test-EpsVerdict; $expected = 24 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $expected

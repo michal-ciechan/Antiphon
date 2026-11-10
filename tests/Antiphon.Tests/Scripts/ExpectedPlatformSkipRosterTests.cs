@@ -11,10 +11,11 @@ public sealed class ExpectedPlatformSkipRosterTests
     [Test]
     public Task Verdict_accepts_only_rostered_skips() =>
         ScriptHarness.RunHarnessCaseAsync(
-            "test-expected-platform-skips.ps1", "EPS", "Verdict", 14,
+            "test-expected-platform-skips.ps1", "EPS", "Verdict", 24,
             [
                 "EPS expected-skip-accepted",
-                "EPS prefix-extension-accepted",
+                "EPS prefix-extension-rejected",
+                "EPS skipped-without-space-rejected",
                 "EPS autoload-roster-accepted",
                 "EPS unexpected-skip-rejected",
                 "EPS reason-mismatch-rejected",
@@ -26,6 +27,15 @@ public sealed class ExpectedPlatformSkipRosterTests
                 "EPS stale-roster-warns",
                 "EPS trx-debug-trace",
                 "EPS census-matches-source",
-                "EPS census-reports-missing"
+                "EPS census-reports-missing",
+                "EPS reason-text-matches-source",
+                "EPS reason-text-reports-mismatch",
+                "EPS roster-drift-stable",
+                "EPS roster-drift-reports-mismatch",
+                "EPS live-context-any-platform",
+                "EPS live-context-labeled",
+                "EPS tolerated-list-and-digest",
+                "EPS title-omits-tolerated-exit",
+                "EPS discovery-known-identities"
             ]);
 }
