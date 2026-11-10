@@ -58,8 +58,9 @@ const SPECIAL_URL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file'
 /**
  * True when posting the base URL would send a username or password.
  * Any scheme is refused, not only http(s). A `mailto:` value with no password
- * and no `//` stays a server scheme refusal. Text with no recognised scheme is
- * still checked for userinfo between the first `//` and the next delimiter.
+ * and no `//` stays a server scheme refusal. Text with no recognised scheme,
+ * and a recognised scheme that is not followed by `//`, is still checked for
+ * userinfo between the first `//` and the next delimiter.
  * An `@` only in the path, query, or fragment, and `http://@host` (empty userinfo),
  * are not credentials.
  */
@@ -68,7 +69,8 @@ function baseUrlCarriesUserInfo(baseUrl: string): boolean {
   if (scheme === 'mailto') return mailtoCarriesPasswordOrSlashes(baseUrl)
   if (parsedUrlCarriesCredential(baseUrl)) return true
   if (rawAuthorityCarriesCredential(baseUrl)) return true
-  return scheme === null && doubleSlashAuthorityCarriesCredential(baseUrl)
+  return (scheme === null || !baseUrl.startsWith('//', scheme.length + 1))
+    && doubleSlashAuthorityCarriesCredential(baseUrl)
 }
 
 /** CARD-1822: `mailto:user@host` is not userinfo. A password, or `//`, is. */
@@ -86,7 +88,7 @@ function mailtoCarriesPasswordOrSlashes(value: string): boolean {
   return userinfo.slice(0, colon).length > 0 || userinfo.slice(colon + 1).length > 0
 }
 
-/** CARD-1822: a prefix can hide the scheme. The authority after the first `//` still counts. */
+/** CARD-1822: a prefix can hide the scheme, including one that looks like a scheme. The authority after the first `//` still counts. */
 function doubleSlashAuthorityCarriesCredential(value: string): boolean {
   const slash = value.indexOf('//')
   if (slash < 0) return false
