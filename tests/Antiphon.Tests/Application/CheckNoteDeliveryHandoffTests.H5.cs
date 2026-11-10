@@ -68,8 +68,10 @@ public partial class CheckNoteDeliveryHandoffTests
             (await MatchingPromptsAsync(during, parent.SessionId, seeded.Body)).Count.ShouldBe(0);
             (await during.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId != null))
                 .ShouldBeGreaterThan(0);
-            await BridgeQueueHarness.InsertEntryAsync(parent.SessionId, TranscriptKinds.TurnEnd, stopReason: "end_turn",
-                timestamp: DateTime.UtcNow, connectionString: schema.ConnectionString);
+            // The scanner flushed while the session was Working and left the note Pending.
+            // MarkIdle publishes the turn end into the owner's store, then FlushIfIdle delivers it.
+            await parent.MarkIdleAsync();
+            await parent.Queue.FlushIfIdleAsync(parent.SessionId, CancellationToken.None);
         }
 
         await scanner.WaitForReadyAsync();
