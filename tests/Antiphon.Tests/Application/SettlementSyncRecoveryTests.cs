@@ -1269,6 +1269,81 @@ public sealed class SettlementSyncRecoveryTests
         (await world.Git.HeadAsync()).ShouldBe(source);
     }
 
+    /// <summary>
+    /// CARD-1459. A debt Held <c>settlement_sync_attempts_exhausted</c> stays Held while the desktop
+    /// is not the recorded source. Once the operator has fast-forwarded that checkout, the next due
+    /// recheck marks the row Ready and the attention item is gone. The recheck does not fetch,
+    /// merge, or fast-forward.
+    /// </summary>
+    [Test]
+    public async Task C1459_exhausted_held_debt_becomes_ready_when_desktop_matches()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync();
+        var source = await world.Git.RunnerPushAsync("work.txt", "recorded");
+        await SeedAsync(world, source);
+        await SetAttemptsAsync(world, 48);
+        world.Git.Git.Clear();
+        var heldAt = world.DebtClock.GetUtcNow().UtcDateTime;
+
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0);
+        var exhausted = await DebtAsync(world);
+        exhausted.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        exhausted.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
+        exhausted.NextAttemptAt.ShouldBe(heldAt.AddMinutes(60));
+        world.Git.Git.Commands.ShouldBeEmpty("the claim that holds the row runs no Git");
+
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "the row is not due yet");
+        (await DebtAsync(world)).State.ShouldBe(AgentTaskSyncDebtState.Held);
+        world.Git.Git.Commands.ShouldBeEmpty("a not-due exhausted row is not observed");
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "a mismatch is not an attempt");
+        var mismatched = await DebtAsync(world);
+        mismatched.State.ShouldBe(AgentTaskSyncDebtState.Held);
+        mismatched.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
+        mismatched.Attempts.ShouldBe(48);
+        mismatched.ConfirmedSha.ShouldBeNull();
+        mismatched.SourceReadyAt.ShouldBeNull();
+        mismatched.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
+        world.Git.Git.Commands.ShouldContain(c => c.Contains("rev-parse", StringComparison.Ordinal));
+        world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal)
+            || c.StartsWith("merge", StringComparison.Ordinal)
+            || c.StartsWith("pull", StringComparison.Ordinal)
+            || c.StartsWith("reset", StringComparison.Ordinal));
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        SettlementSyncDebtAttention.Build(
+            [mismatched], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
+            .ShouldHaveSingleItem();
+
+        await world.Git.RunAsync(world.Git.Worktree, "fetch", "origin", world.Git.Branch);
+        await world.Git.RunAsync(world.Git.Worktree, "merge", "--ff-only", source);
+        (await world.Git.HeadAsync()).ShouldBe(source);
+        world.Git.Git.Clear();
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "the match is observed on the next due recheck");
+        (await DebtAsync(world)).State.ShouldBe(AgentTaskSyncDebtState.Held);
+        world.Git.Git.Commands.ShouldBeEmpty();
+
+        world.DebtClock.Advance(TimeSpan.FromMinutes(60));
+        world.Git.Git.Clear();
+        var readyAt = world.DebtClock.GetUtcNow().UtcDateTime;
+        (await world.SweepSettlementSyncAsync()).ShouldBe(0, "marking Ready is not a Git attempt");
+        var ready = await DebtAsync(world);
+        ready.State.ShouldBe(AgentTaskSyncDebtState.Ready);
+        ready.ReasonCode.ShouldBe(RemoteSettlementSyncReasons.SettlementSyncReady);
+        ready.ConfirmedSha.ShouldBe(source);
+        ready.SourceReadyAt.ShouldBe(readyAt);
+        ready.NextAttemptAt.ShouldBeNull();
+        ready.Attempts.ShouldBe(48);
+        (await world.Git.HeadAsync()).ShouldBe(source);
+        world.Git.Git.Commands.ShouldContain(c => c.Contains("rev-parse", StringComparison.Ordinal));
+        world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal)
+            || c.StartsWith("merge", StringComparison.Ordinal)
+            || c.StartsWith("pull", StringComparison.Ordinal));
+        SettlementSyncDebtAttention.Build(
+            [ready], [world.Task], readyAt, new DelegationSettings()).ShouldBeEmpty();
+    }
+
     private static async Task SetAttemptsAsync(RunnerSettlementWorld world, int attempts)
     {
         await using var db = world.CreateContext();

@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -145,6 +146,144 @@ public sealed class AbandonedLandingReconcilerTests
             logger.Entries.ShouldNotContain(e => e.Level == LogLevel.Warning, row);
     }
 
+    /// <summary>
+    /// CARD-1459. A <c>PushStarted</c> row whose push was recorded and then stopped before an exit
+    /// was stored (<c>PushExitCode</c> null) is kept for a human, the same as exit 0.
+    /// </summary>
+    [Test]
+    public async Task C1459_null_push_exit_is_kept()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        Guid opId;
+        var updated = Now.UtcDateTime.AddDays(-8);
+        await using (var db = new AppDbContext(options))
+        {
+            var request = Request(taskId, LandRequestState.Completed);
+            SeedTask(db, taskId, AgentTaskStatus.Succeeded, request.Id);
+            db.AgentTaskLandRequests.Add(request);
+            var op = Landing(taskId, LandPhase.PushStarted, updated, "push_rejected", pushExitCode: null);
+            op.PushStartedAt = updated;
+            opId = op.Id;
+            db.AgentTaskLandings.Add(op);
+            await db.SaveChangesAsync();
+        }
+
+        var logger = new CapturingLogger();
+        await using (var db = new AppDbContext(options))
+            (await Reconciler(db, logger, days: 7).RunAsync(CancellationToken.None)).ShouldBe(0);
+
+        await using (var db = new AppDbContext(options))
+        {
+            var op = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == opId);
+            op.Phase.ShouldBe(LandPhase.PushStarted);
+            op.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
+            op.LastReason.ShouldBe("push_rejected");
+            op.UpdatedAt.ShouldBe(updated);
+            (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
+        }
+
+        logger.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("no push exit", StringComparison.Ordinal),
+            "a push that never recorded an exit is a human decision");
+    }
+
+    /// <summary>
+    /// CARD-1459. A task that is still <c>Working</c> keeps its resumable landing.
+    /// </summary>
+    [Test]
+    public async Task C1459_working_task_is_kept()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        Guid opId;
+        await using (var db = new AppDbContext(options))
+        {
+            var request = Request(taskId, LandRequestState.Completed);
+            SeedTask(db, taskId, AgentTaskStatus.Working, request.Id);
+            db.AgentTaskLandRequests.Add(request);
+            var op = Landing(taskId, LandPhase.PushStarted, Now.UtcDateTime.AddDays(-8), "push_rejected", pushExitCode: 1);
+            opId = op.Id;
+            db.AgentTaskLandings.Add(op);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+            (await Reconciler(db, new CapturingLogger(), days: 7).RunAsync(CancellationToken.None)).ShouldBe(0);
+        await using (var db = new AppDbContext(options))
+            (await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == opId)).Phase.ShouldBe(LandPhase.PushStarted);
+    }
+
+    /// <summary>
+    /// CARD-1459. The task's current request is still <c>Running</c> even when <c>IsPending</c> is false,
+    /// so the landing is kept.
+    /// </summary>
+    [Test]
+    public async Task C1459_live_current_request_is_kept()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var taskId = Guid.NewGuid();
+        Guid opId;
+        await using (var db = new AppDbContext(options))
+        {
+            var request = Request(taskId, LandRequestState.Completed);
+            request.State = LandRequestState.Running;
+            request.IsPending = false;
+            SeedTask(db, taskId, AgentTaskStatus.Succeeded, request.Id);
+            db.AgentTaskLandRequests.Add(request);
+            var op = Landing(taskId, LandPhase.PushStarted, Now.UtcDateTime.AddDays(-8), "push_rejected", pushExitCode: 1);
+            opId = op.Id;
+            db.AgentTaskLandings.Add(op);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+            (await Reconciler(db, new CapturingLogger(), days: 7).RunAsync(CancellationToken.None)).ShouldBe(0);
+        await using (var db = new AppDbContext(options))
+            (await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == opId)).Phase.ShouldBe(LandPhase.PushStarted);
+    }
+
+    /// <summary>
+    /// CARD-1459. The reconciler and the residue sweep share one context. A failed refuse save must not
+    /// leave the Refused landing tracked, or the sweep's next save writes it outside the task lock.
+    /// </summary>
+    [Test]
+    public async Task C1459_failed_refuse_save_does_not_leak_into_the_sweep()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var fault = new RefuseSaveFault();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString, fault);
+        var taskId = Guid.NewGuid();
+        Guid opId;
+        await using (var db = new AppDbContext(options))
+        {
+            var request = Request(taskId, LandRequestState.Completed);
+            SeedTask(db, taskId, AgentTaskStatus.Succeeded, request.Id);
+            db.AgentTaskLandRequests.Add(request);
+            var op = Landing(taskId, LandPhase.PushStarted, Now.UtcDateTime.AddDays(-8), "push_rejected", pushExitCode: 1);
+            opId = op.Id;
+            db.AgentTaskLandings.Add(op);
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(options))
+        {
+            (await Reconciler(db, new CapturingLogger(), days: 7).RunAsync(CancellationToken.None)).ShouldBe(0);
+            fault.Refusals.ShouldBe(1, "the refuse save failed once");
+            await db.SaveChangesAsync();
+        }
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
+        {
+            var op = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == opId);
+            op.Phase.ShouldBe(LandPhase.PushStarted);
+            op.Publication.ShouldBe(LandPublicationOutcome.Unconfirmed);
+            (await db.AgentTaskEvents.AsNoTracking().CountAsync(e => e.AgentTaskId == taskId)).ShouldBe(0);
+        }
+    }
+
     private static AbandonedLandingReconciler Reconciler(AppDbContext db, CapturingLogger logger, int days) => new(
         db,
         Options.Create(new WorktreeResidueSettings { AbandonedLandingDays = days }),
@@ -189,6 +328,21 @@ public sealed class AbandonedLandingReconcilerTests
         SourceLocalSha = new string('a', 40), LocalTargetBeforeSha = new string('b', 40),
         CreatedAt = updatedAt.AddHours(-1), UpdatedAt = updatedAt,
     };
+
+    private sealed class RefuseSaveFault : SaveChangesInterceptor
+    {
+        public int Refusals { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            var refusing = eventData.Context!.ChangeTracker.Entries<AgentTaskLanding>()
+                .Any(e => e.State == EntityState.Modified && e.Entity.Phase == LandPhase.Refused);
+            if (refusing && ++Refusals == 1)
+                throw new IOException("landing save failed");
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
 
     private sealed class CapturingLogger : ILogger<AbandonedLandingReconciler>
     {
