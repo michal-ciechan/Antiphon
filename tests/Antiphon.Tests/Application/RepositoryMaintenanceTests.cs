@@ -38,9 +38,10 @@ public sealed class RepositoryMaintenanceTests
         superseded.CreatedAt = now.AddMinutes(-20);
         var latest = Landing(terminal.Id, LandPhase.Complete);
         latest.CreatedAt = now;
-        terminal.ActiveLandingId = latest.Id;
         db.AgentTaskLandings.AddRange(refused, superseded, latest);
         db.AgentTaskSyncDebts.Add(Debt(protectedTask.Id, AgentTaskSyncDebtState.Pending));
+        await db.SaveChangesAsync();
+        terminal.ActiveLandingId = latest.Id;
         await db.SaveChangesAsync();
 
         string Prefix(Guid taskId, Guid operation) => $"refs/antiphon/land/{taskId:N}/{operation:N}/";
