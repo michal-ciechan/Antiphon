@@ -115,6 +115,85 @@ public sealed class DispatchHoldLedgerTests
     }
 
     /// <summary>
+    /// CARD-1835 A-1. Equal totals name the class whose latest interval ends latest.
+    /// A strict greater-than walk in enum order keeps Lease, and SiblingInspection loses every tie.
+    /// </summary>
+    [Test]
+    public void C1835_equal_time_names_the_most_recent_class()
+    {
+        var inspectionLater = DispatchHoldLedger.FromRows(
+            [
+                (T0, DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1)),
+                (T0.AddSeconds(60), DispatchHoldDetails.SiblingInspectionPending),
+            ],
+            DateTime.MinValue,
+            T0.AddSeconds(120));
+        inspectionLater.SecondsFor(DispatchHoldClass.Runner).ShouldBe(60);
+        inspectionLater.SecondsFor(DispatchHoldClass.SiblingInspection).ShouldBe(60);
+        inspectionLater.Dominant.ShouldBe(DispatchHoldClass.SiblingInspection);
+
+        var leaseLater = DispatchHoldLedger.FromRows(
+            [
+                (T0, DispatchHoldDetails.SiblingInspectionPending),
+                (T0.AddSeconds(60), DispatchHoldDetails.LeaseOccupiedUnknown),
+            ],
+            DateTime.MinValue,
+            T0.AddSeconds(120));
+        leaseLater.SecondsFor(DispatchHoldClass.SiblingInspection).ShouldBe(60);
+        leaseLater.SecondsFor(DispatchHoldClass.Lease).ShouldBe(60);
+        leaseLater.Dominant.ShouldBe(DispatchHoldClass.Lease);
+
+        var runnerLater = DispatchHoldLedger.FromRows(
+            [
+                (T0, DispatchHoldDetails.LeaseOccupiedUnknown),
+                (T0.AddSeconds(60), DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1)),
+            ],
+            DateTime.MinValue,
+            T0.AddSeconds(120));
+        runnerLater.SecondsFor(DispatchHoldClass.Lease).ShouldBe(60);
+        runnerLater.SecondsFor(DispatchHoldClass.Runner).ShouldBe(60);
+        runnerLater.Dominant.ShouldBe(DispatchHoldClass.Runner);
+    }
+
+    /// <summary>
+    /// CARD-1835 A-2. A 60-character land title that itself contains <c>class=&lt;enum&gt;;</c>
+    /// before <c>reason=</c> stays a lease. The reported class token is only the escalation header.
+    /// </summary>
+    [Test]
+    public void C1835_title_class_token_does_not_reclassify_the_hold()
+    {
+        const string title = "class=siblinginspection; reason=quoted";
+        var held = DispatchHoldDetails.LeaseHeldByLand("abcd1234", title, "ef012345", T0);
+        held.ShouldContain("class=siblinginspection;");
+        held.ShouldContain("reason=");
+        DispatchHoldDetails.ClassOf(held).ShouldBe(DispatchHoldClass.Lease);
+
+        var unknown = DispatchHoldDetails.LeaseUnknownAdmissionWriter("abcd1234", title, "ef012345");
+        DispatchHoldDetails.ClassOf(unknown).ShouldBe(DispatchHoldClass.Lease);
+
+        var ledger = DispatchHoldLedger.FromRows(
+            [(T0, held)], DateTime.MinValue, T0.AddSeconds(120));
+        var warning = DispatchHoldDetails.Escalation(
+            DispatchHoldDetails.WarningPrefix, 120, T0, T0, held, 1, 6, ["abcd1234"], ledger);
+        DispatchHoldDetails.ClassOf(warning).ShouldBe(DispatchHoldClass.Lease);
+        var error = DispatchHoldDetails.Escalation(
+            DispatchHoldDetails.ErrorPrefix, 120, T0, T0, held, 1, 6, ["abcd1234"], ledger);
+        DispatchHoldDetails.ClassOf(error).ShouldBe(DispatchHoldClass.Lease);
+    }
+
+    /// <summary>
+    /// CARD-1835 A-3. The operator HTTP guide names the pipeline queue reasons the review found missing.
+    /// </summary>
+    [Test]
+    public void C1835_ops_http_lists_the_pipeline_queue_reasons()
+    {
+        var http = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "ops-http.md"));
+        http.ShouldContain("`siblingInspection`", Case.Sensitive);
+        http.ShouldContain("`awaitingDispatch`", Case.Sensitive);
+        http.ShouldContain("latest interval ends latest", Case.Sensitive);
+    }
+
+    /// <summary>
     /// CARD-1076 D-6. The parser is anchored on the owner sentence. A 32-hex run in any
     /// other hold, including a fenced journal that names a task, is not an owner.
     /// </summary>
