@@ -45,8 +45,10 @@ tui_capture() {
   env -u OPENAI_API_KEY -u CODEX_API_KEY -u CODEX_ACCESS_TOKEN \
     HOME=$PROBE_HOME CODEX_HOME="$home" TERM=xterm-256color ${TUI_API_KEY:+OPENAI_API_KEY=$TUI_API_KEY} \
     timeout 20 script -q -f -e -c "$cmd" "$log" >/dev/null 2>&1 </dev/null
-  # Strip escape sequences so wording checks see rendered text.
-  sed -e 's/\x1b\[[0-9;]*[HC]/ /g' -e 's/\x1b\[[0-9;?]*[ -/]*[@-~]//g' -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' "$log" | tr -s '\r\n ' ' ' > "$log.txt"
+  # Space cursor-positioning CSI (CUU A, CUD B, CUF C, CUB D, CNL E, CPL F,
+  # CHA G, CUP H, HVP f, VPA d) before deleting every other CSI and OSC.
+  # A word drawn with one of those moves must stay separated (CARD-0909).
+  sed -e 's/\x1b\[[0-9;]*[ABCDEFGHfd]/ /g' -e 's/\x1b\[[0-9;?]*[ -/]*[@-~]//g' -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' "$log" | tr -s '\r\n ' ' ' > "$log.txt"
 }
 
 STUB_ARGS="-c model_providers.stub.name=Stub -c model_providers.stub.base_url=http://127.0.0.1:9/v1 -c model_providers.stub.env_key=OPENAI_API_KEY -c model_providers.stub.wire_api=responses -c model_provider=stub -c model=gpt-6-sol"
