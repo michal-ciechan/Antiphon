@@ -26132,6 +26132,12 @@
       ]
     },
     {
+      "path": "tests/derived-impact-index-known-os-gated.txt",
+      "classes": [
+        "DerivedImpactIndexTests"
+      ]
+    },
+    {
       "path": "tests/derived-impact-index.json",
       "classes": [
         "DerivedImpactIndexTests"
