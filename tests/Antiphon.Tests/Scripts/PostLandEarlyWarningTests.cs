@@ -988,9 +988,9 @@ public sealed class PostLandEarlyWarningTests
         public void Dispose()
         {
             if (_deleteRepo && Directory.Exists(Repo))
-                Directory.Delete(Repo, recursive: true);
+                ReadOnlyDirectory.Delete(Repo);
             if (Directory.Exists(ReceiptRoot) && !ReceiptRoot.StartsWith(DelegateScriptRunner.RepoRoot, StringComparison.Ordinal))
-                Directory.Delete(ReceiptRoot, recursive: true);
+                ReadOnlyDirectory.Delete(ReceiptRoot);
         }
 
         private void WriteClass(string ns, string name, string lane)
