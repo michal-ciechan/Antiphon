@@ -1725,9 +1725,55 @@ Services are `staging-state-init`, `staging-server`, and `staging-postgres`, so 
 
 `scripts/deploy-server2-staging-server.ps1` defaults to `-WhatIf` and does not call docker in that mode. `-Execute` runs only when this process is on the server2 host daemon. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode. Acceptance, when an operator does run it, is `http://127.0.0.1:17420/health` and `http://127.0.0.1:17420/api/version`.
 
-Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring; CARD-1744 copies that ring. Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `deploy-server2.ps1` does not deploy it. AppHost and the public vhost stay on the desktop.
+Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring. Production does not copy that ring; certificate custody is in [Production server on the server2 host (CARD-1744)](#production-server-on-the-server2-host-card-1744). Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `deploy-server2.ps1` does not deploy it. AppHost and the public vhost stay on the desktop.
 
 Nothing in this card starts the project. Rollback is to remove the compose project. Desktop production is untouched. This slice adds no cache.
+
+## Production server on the server2 host (CARD-1744)
+
+This is the topology B operating shape from the [CARD-1744 plan](superpowers/plans/2026-11-08-card-1744-cutover-plan.md). It does not record that the window has run. Topology A above remains the supported production deployment until that window. Nothing here starts a container, edits DNS, or prints a password, token, or key.
+
+The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`. `-Execute` is host-only. Once this container is the control plane, `scripts/restart-linux-server.ps1` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts/restart-apphost.ps1` is the desktop rollback path. Until the window, `scripts/restart-apphost.ps1` remains the desktop production restart.
+
+### Sidecar
+
+`server-session-runner` is the direct runner in this project. Its container is `antiphon-server2-server-server-session-runner-1`. Herdr is off. The server sets `SessionRunner__BaseUrl` to `http://server-session-runner:8080` and `SessionRunner__VerifyExecutablesOnServer` false, because the server image does not contain the agent executables. Standing agents are in [Standing agents and specialists on the sidecar (CARD-1778)](#standing-agents-and-specialists-on-the-sidecar-card-1778).
+
+### Environment key names
+
+Names only. Values live in the untracked mode-0600 env file on the host, outside the repo, or as literals already in the compose file.
+
+Host keys the compose interpolates: `SOURCE_REVISION`, `KEYRING_CERT_FILE`, `KEYRING_KEY_FILE`, `OPERATOR_TOKEN_FILE`, `POSTGRES_PASSWORD`, `ANTIPHON_PUBLIC_ORIGIN`, `PHONE_HOME_SHARED_SECRET`, `PHONE_HOME_HOST_WORKSPACE_ROOT`, `HANGFIRE_STORAGE` (default `InMemory`), and `CHANNEL_BRIDGE_ENABLED` (default false).
+
+Server keys that change behavior: `ConnectionStrings__DefaultConnection`, `SessionRunner__Enabled`, `SessionRunner__BaseUrl`, `SessionRunner__VerifyExecutablesOnServer`, `PhoneHomeRunner__Enabled`, `PhoneHomeRunner__Runners__server2__CallbackOrigin`, `PhoneHomeRunner__Runners__server2__SharedSecret`, `Delegation__ApiBaseUrl`, `Serilog__LogPath`, `AgentTui__KeyRingPath`, `AgentTui__KeyProtection__Mode`, `AgentTui__KeyProtection__CertificatePath`, `AgentTui__KeyProtection__CertificatePrivateKeyPath`, `Operator__TokenPath`, `Hangfire__ServerEnabled`, `Hangfire__Storage`, `ZombieCensus__Enabled`, `WorktreeLegacyRelease__Enabled`, `RunnerWorktreeRetention__Enabled`, `Schedules__Enabled`, `ChannelBridge__Enabled`, and `Digest__Enabled`. The compose file is the closed list, including the rest of the phone-home runner map and the agent executable names.
+
+`Hangfire__ServerEnabled` is true. `Hangfire__Storage` defaults to `InMemory` because CARD-1768 is on this tip and CARD-1774 A-1/A-2 are not. `ZombieCensus__Enabled` is false. `WorktreeLegacyRelease__Enabled` is false. `RunnerWorktreeRetention__Enabled` is true. `Digest__Enabled` is false.
+
+### Key-ring certificate custody
+
+The desktop ring under `%LOCALAPPDATA%\Antiphon\DataProtection-Keys` is wrapped with Windows DPAPI. Linux cannot read it. Production does not copy the desktop DPAPI ring. The CARD-1221 secrets row that says CARD-1744 copies or re-protects the ring is the earlier contract; this section replaces that move rule.
+
+The operator generates an installation certificate on the host. `KEYRING_CERT_FILE` and `KEYRING_KEY_FILE` are mounted read-only. `server-state-init` copies them to `/state/keyring-cert/cert.pem` and `/state/keyring-cert/key.pem` on the volume `antiphon-server2-server_server-state`, mode 0600, owned by uid 1654. The server sets `AgentTui__KeyRingPath` to `/state/keyring`, `AgentTui__KeyProtection__Mode` to `X509Certificate`, `AgentTui__KeyProtection__CertificatePath` to `/state/keyring-cert/cert.pem`, and `AgentTui__KeyProtection__CertificatePrivateKeyPath` to `/state/keyring-cert/key.pem`. One `ApiKeys` row is re-entered through `PUT /api/api-keys/{name}` after the server is up. A missing certificate leaves the protector not ready, and every protect or unprotect throws.
+
+### Operator token
+
+`OPERATOR_TOKEN_FILE` on the host is mounted read-only. `server-state-init` copies it to `/state/operator-token` on that same state volume, mode 0600, uid 1654. The server reads `Operator__TokenPath` at that path. The operator copies the value, without display, into `%LOCALAPPDATA%\Antiphon\operator-token` or the path named by `ANTIPHON_OPERATOR_TOKEN_FILE`. Scripts read the desktop file and never print it. See [ops-http.md](ops-http.md).
+
+### Rollback
+
+Do not run `scripts/restart-apphost.ps1` while the Linux server is a writer. Do not delete `antiphon_pgdata`.
+
+| Stage | What is true | Rollback |
+|---|---|---|
+| R-1 | Maintenance is entered, the desktop server is stopped, and the Linux server has not started | Re-add the AppHost user-secret `ConnectionStrings:DefaultConnection`, run `scripts/restart-apphost.ps1` from `C:\src\Antiphon`, run `scripts/set-apphost-maintenance.ps1 -Clear`, and enable the logon task `Antiphon AppHost`. |
+| R-2 | The Linux server has started and the public origin has not switched | On the host, `docker compose -p antiphon-server2-server stop`, then R-1. Restore `Project.LocalRepositoryPath` from the window's before column. |
+| R-3 | The public origin points at server2 | Switch the vhost back to the desktop first, stop the Linux project, then R-1. Sessions launched on Linux are orphaned seats. |
+
+Maintenance on the desktop is the end state after a completed window: marker present (`logs/apphost.down-on-purpose`), the AppHost logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. The state observer reports `maintenance=true` on purpose. Clearing the marker is rollback, not the steady state.
+
+### Recorded numbers
+
+The plan's central window, written 2026-11-08, is downtime 45-60 minutes and rollback about 15 minutes (vhost switch 1-5 minutes, Linux stop 30 seconds, AppHost restart 3-5 minutes, runner reconnect under 5 minutes). This checkout has no window log, so those figures are the plan's centrals, not a measured rehearsal. The window log is where the operator records the measured times. Port `17400`, project `antiphon-server2-server`, and container `antiphon-server2-server-server-1` are the compose's numbers.
 
 ## Native Windows phone-home runner
 
