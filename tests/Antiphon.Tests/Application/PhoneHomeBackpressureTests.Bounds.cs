@@ -28,6 +28,8 @@ public partial class PhoneHomeBackpressureTests
         // The socket is accepted before the runner subscribes. Publishing in that gap is lost,
         // and PendingEvents stays 0 for as long as this poll runs.
         reachedLive?.TrySetResult(h.Live);
+        await PhoneHomeHostedRunner.UntilAsync(() => h.Live.ProducerPressure is not null,
+            "sender subscribed before the held catch-up publish");
         h.Output(h.SessionId, 1, text);
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 1, "first byte-window event admitted during catch-up");
         h.Output(h.SessionId, 2, text);
