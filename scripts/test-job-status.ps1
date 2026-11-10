@@ -111,9 +111,9 @@ function Test-StaleWindow {
         $path = Join-Path $dir 'snapshot-status.json'
         $now = [datetime]::new(2026, 11, 10, 8, 0, 0, [DateTimeKind]::Utc)
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'missing status is stale' 'fresh'
-        Set-Content -LiteralPath $path -Value '{"utc":"20261109T060001Z","exit":0,"bytes":1}' -Encoding ASCII
+        Set-Content -LiteralPath $path -Value '{"utc":"20261109T060001Z","exit":0,"bytes":1,"mode":"plain"}' -Encoding ASCII
         Assert-True (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26) '25h59m success is fresh' 'stale'
-        Set-Content -LiteralPath $path -Value '{"utc":"20261109T060000Z","exit":0,"bytes":1}' -Encoding ASCII
+        Set-Content -LiteralPath $path -Value '{"utc":"20261109T060000Z","exit":0,"bytes":1,"mode":"plain"}' -Encoding ASCII
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) '26h success is stale' 'fresh'
         Set-Content -LiteralPath $path -Value '{"utc":"20261110T075000Z","exit":4,"bytes":0}' -Encoding ASCII
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'failed status is stale' 'fresh'

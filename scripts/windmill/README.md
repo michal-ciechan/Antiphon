@@ -93,10 +93,11 @@ when the copy failed or the folder is missing.
 
 `u/lndcobra/antiphon_postgres_snapshot` runs at `0 50 7 * * *` Europe/London
 (07:50) on the desktop worker. It SSHes to
-`C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`. That
-copy prefers `C:\src\Antiphon\scripts\postgres-snapshot.ps1` once the checkout
-contains this plain mode, and otherwise runs the runner copy deployed from the
-task branch. Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
+`C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`. The
+runner directory's `SOURCE-SHA` file is the sha256 of the
+`postgres-snapshot.ps1` it should run. A candidate is used only when its
+hash matches that pin, so an older checkout is not chosen ahead of the
+pinned bytes. Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
 under LocalAppData\antiphon fails the parent check on this desktop because
 that folder grants another account full control. The profile directory's
 parents pass, and the CARD-1413 check is unchanged.

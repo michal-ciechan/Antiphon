@@ -23,8 +23,12 @@
     the local file. OneDrive keeps 7 dumps. The local folder keeps 14.
     A missing OneDrive root or a missing Backups folder records
     oneDrive=missing, writes nothing in OneDrive, and still keeps the
-    local dump. The plain dump is unencrypted. This copy syncs it to the
-    cloud. The database holds tokens and transcripts. That is the
+    local dump. A symlink or junction on the OneDrive root, on Backups,
+    on the destination, or on a dump file inside it records
+    oneDrive=failed reason=link and writes or deletes nothing outside
+    the real root. A cloud-filter directory is a reparse point with an
+    empty link type and is still accepted. The plain dump is unencrypted.
+    This copy syncs it to the cloud. The database holds tokens and transcripts. That is the
     operator's explicit request on 2026-11-10. The age path is unchanged
     and this script contains no key.
     -RestoreDrill restores the newest snapshot into a labelled scratch
@@ -1385,6 +1389,110 @@ function Write-SnapshotPlainStatus {
     return (-not (Test-Path -LiteralPath $partial)) -and (Test-Path -LiteralPath $final)
 }
 
+function Test-SnapshotPlainForbiddenLink {
+    param([string]$LinkType, [bool]$ReparsePoint)
+    # An empty link type is the OneDrive cloud-filter placeholder, even when
+    # the reparse-point attribute is set. Only a symlink or junction can
+    # send a copy or a prune outside the destination.
+    $kind = [string]$LinkType
+    if ($ReparsePoint -and [string]::IsNullOrWhiteSpace($kind)) { return $false }
+    return ($kind -eq 'SymbolicLink' -or $kind -eq 'Junction')
+}
+
+function Test-SnapshotPlainDirectoryLink {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (-not $item) { return $false }
+    $reparse = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    return Test-SnapshotPlainForbiddenLink -LinkType ([string]$item.LinkType) -ReparsePoint $reparse
+}
+
+function Get-SnapshotTrimmedFullPath {
+    param([string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $root = [System.IO.Path]::GetPathRoot($full)
+    $trimmed = $full.TrimEnd($sep)
+    if ([string]::IsNullOrWhiteSpace($trimmed)) { return $root }
+    return $trimmed
+}
+
+function Resolve-SnapshotRealPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $full = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($full)
+    if ([string]::IsNullOrWhiteSpace($root)) { return '' }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $alt = [System.IO.Path]::AltDirectorySeparatorChar
+    $parts = $full.Substring($root.Length).Split(@($sep, $alt), [System.StringSplitOptions]::RemoveEmptyEntries)
+    $cursor = $root
+    foreach ($part in @($parts)) {
+        $cursor = Join-Path $cursor $part
+        $hops = 0
+        while ($hops -lt 8) {
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+            if (-not $item) { break }
+            if (-not (Test-SnapshotPlainDirectoryLink $cursor)) { break }
+            $target = $item.Target
+            if ($target -is [System.Array]) { $target = [string]$target[0] } else { $target = [string]$target }
+            if ([string]::IsNullOrWhiteSpace($target)) { return '' }
+            if (-not [System.IO.Path]::IsPathRooted($target)) {
+                $parent = [System.IO.Path]::GetDirectoryName($item.FullName)
+                if ([string]::IsNullOrWhiteSpace($parent)) { return '' }
+                $target = [System.IO.Path]::GetFullPath((Join-Path $parent $target))
+            } else {
+                $target = [System.IO.Path]::GetFullPath($target)
+            }
+            if ($target -eq $cursor) { return '' }
+            $cursor = $target
+            $hops++
+        }
+        if ($hops -ge 8) { return '' }
+    }
+    return $cursor
+}
+
+function Test-SnapshotPlainChainLinks {
+    param([string]$RootPath, [string]$FolderPath)
+    if (Test-SnapshotPlainDirectoryLink $RootPath) { return 'link' }
+    $rootFull = Get-SnapshotTrimmedFullPath $RootPath
+    $folderFull = Get-SnapshotTrimmedFullPath $FolderPath
+    if (-not (Test-SnapshotPathInside $rootFull $folderFull)) { return 'outside' }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $relative = $folderFull.Substring($rootFull.Length).TrimStart($sep)
+    $cursor = $rootFull
+    if (-not [string]::IsNullOrWhiteSpace($relative)) {
+        foreach ($part in @($relative.Split(@($sep), [System.StringSplitOptions]::RemoveEmptyEntries))) {
+            $cursor = Join-Path $cursor $part
+            if (Test-SnapshotPlainDirectoryLink $cursor) { return 'link' }
+        }
+    }
+    $realRoot = Resolve-SnapshotRealPath $rootFull
+    $realFolder = Resolve-SnapshotRealPath $folderFull
+    if ([string]::IsNullOrWhiteSpace($realRoot) -or [string]::IsNullOrWhiteSpace($realFolder)) { return 'outside' }
+    if (-not (Test-SnapshotPathInside $realRoot $realFolder)) { return 'outside' }
+    $realTrim = Get-SnapshotTrimmedFullPath $realFolder
+    $folderTrim = Get-SnapshotTrimmedFullPath $folderFull
+    if (-not $realTrim.Equals($folderTrim, [StringComparison]::OrdinalIgnoreCase)) { return 'link' }
+    return 'ok'
+}
+
+function Test-SnapshotPlainFileEscapes {
+    param([string]$DestDir, [string]$FilePath)
+    $item = Get-Item -LiteralPath $FilePath -Force -ErrorAction SilentlyContinue
+    if (-not $item) { return $true }
+    $reparse = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if (Test-SnapshotPlainForbiddenLink -LinkType ([string]$item.LinkType) -ReparsePoint $reparse) { return $true }
+    if (-not (Test-SnapshotPathInside $DestDir $FilePath)) { return $true }
+    $realDir = Resolve-SnapshotRealPath $DestDir
+    $realFile = Resolve-SnapshotRealPath $FilePath
+    if ([string]::IsNullOrWhiteSpace($realDir) -or [string]::IsNullOrWhiteSpace($realFile)) { return $true }
+    if (-not (Test-SnapshotPathInside $realDir $realFile)) { return $true }
+    return $false
+}
+
 function Update-SnapshotPlainRetention {
     param([string]$DestDir, [int]$Keep, [string]$NewName)
     $names = New-Object System.Collections.Generic.List[string]
@@ -1395,10 +1503,17 @@ function Update-SnapshotPlainRetention {
     if (-not $prune.Ok) {
         return [pscustomobject]@{ Ok = $false; Reason = $prune.Reason; Kept = 0 }
     }
+    $victims = New-Object System.Collections.Generic.List[string]
     foreach ($name in @($prune.Drop)) {
         if ($name -notmatch $script:SnapshotPlainDumpPattern -or $name -eq $NewName) { continue }
         $victim = Join-Path $DestDir $name
-        if (-not (Test-SnapshotPathInside $DestDir $victim)) {
+        if ((Test-SnapshotPlainFileEscapes -DestDir $DestDir -FilePath $victim) -or -not (Test-SnapshotPathInside $DestDir $victim)) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'outside-destination'; Kept = 0 }
+        }
+        [void]$victims.Add($victim)
+    }
+    foreach ($victim in @($victims)) {
+        if (Test-SnapshotPlainFileEscapes -DestDir $DestDir -FilePath $victim) {
             return [pscustomobject]@{ Ok = $false; Reason = 'outside-destination'; Kept = 0 }
         }
         Remove-Item -LiteralPath $victim -Force
@@ -1419,10 +1534,11 @@ function Get-SnapshotPlainOneDriveFolder {
 }
 
 function New-SnapshotOneDriveResult {
-    param([string]$State, [int64]$Bytes, [string]$Folder)
+    param([string]$State, [int64]$Bytes, [string]$Folder, [string]$Reason = '')
     $loud = 'ONEDRIVE COPY oneDrive=' + $State
     if ($State -eq 'ok') { $loud = $loud + ' bytes=' + $Bytes }
-    return [pscustomobject]@{ State = $State; Bytes = $Bytes; Folder = $Folder; Loud = $loud }
+    elseif (-not [string]::IsNullOrWhiteSpace($Reason)) { $loud = $loud + ' reason=' + $Reason }
+    return [pscustomobject]@{ State = $State; Bytes = $Bytes; Folder = $Folder; Loud = $loud; Reason = $Reason }
 }
 
 function Confirm-SnapshotPlainOneDriveFile {
@@ -1453,10 +1569,19 @@ function Confirm-SnapshotPlainOneDriveFile {
 function Invoke-SnapshotPlainOneDriveCopy {
     param([string]$LocalFile, [string]$SyncRoot, [int]$Keep = 7)
     $folder = Get-SnapshotPlainOneDriveFolder $SyncRoot
-    if ([string]::IsNullOrWhiteSpace($SyncRoot) -or -not (Test-Path -LiteralPath $SyncRoot -PathType Container)) {
+    if ([string]::IsNullOrWhiteSpace($SyncRoot) -or -not (Test-Path -LiteralPath $SyncRoot)) {
+        return New-SnapshotOneDriveResult 'missing' 0 $folder
+    }
+    if (Test-SnapshotPlainDirectoryLink $SyncRoot) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder 'link'
+    }
+    if (-not (Test-Path -LiteralPath $SyncRoot -PathType Container)) {
         return New-SnapshotOneDriveResult 'missing' 0 $folder
     }
     $backups = Join-Path $SyncRoot 'Backups'
+    if (Test-SnapshotPlainDirectoryLink $backups) {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder 'link'
+    }
     if (-not (Test-Path -LiteralPath $backups -PathType Container)) {
         return New-SnapshotOneDriveResult 'missing' 0 $folder
     }
@@ -1467,15 +1592,29 @@ function Invoke-SnapshotPlainOneDriveCopy {
     if ($name -notmatch $script:SnapshotPlainDumpPattern -or $Keep -lt 1) {
         return New-SnapshotOneDriveResult 'failed' 0 $folder
     }
+    $placement = Test-SnapshotPlainChainLinks -RootPath $SyncRoot -FolderPath $folder
+    if ($placement -ne 'ok') {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder $placement
+    }
     if (Test-Path -LiteralPath $folder) {
-        $existing = Get-Item -LiteralPath $folder -Force
-        # OneDrive cloud-filter directories are reparse points with an empty
-        # link type. A junction or symlink could send the copy outside Backups.
-        if ($existing.LinkType -eq 'SymbolicLink' -or $existing.LinkType -eq 'Junction') {
-            return New-SnapshotOneDriveResult 'failed' 0 $folder
+        if (Test-SnapshotPlainDirectoryLink $folder -or -not (Test-Path -LiteralPath $folder -PathType Container)) {
+            return New-SnapshotOneDriveResult 'failed' 0 $folder 'link'
+        }
+        foreach ($file in @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)) {
+            if ($file.Name -notmatch $script:SnapshotPlainDumpPattern) { continue }
+            if (Test-SnapshotPlainFileEscapes -DestDir $folder -FilePath $file.FullName) {
+                return New-SnapshotOneDriveResult 'failed' 0 $folder 'link'
+            }
         }
     } else {
         New-Item -ItemType Directory -Path $folder | Out-Null
+        if (Test-SnapshotPlainDirectoryLink $folder) {
+            return New-SnapshotOneDriveResult 'failed' 0 $folder 'link'
+        }
+    }
+    $placement = Test-SnapshotPlainChainLinks -RootPath $SyncRoot -FolderPath $folder
+    if ($placement -ne 'ok') {
+        return New-SnapshotOneDriveResult 'failed' 0 $folder $placement
     }
     if (-not (Test-SnapshotPathInside $backups $folder)) {
         return New-SnapshotOneDriveResult 'failed' 0 $folder

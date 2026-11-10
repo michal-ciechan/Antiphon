@@ -8,20 +8,36 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'job-status.ps1')
 
 function Resolve-PlainSnapshotScript {
+    param([string[]]$Candidates, [string]$PinFile)
     # The banner concatenates the date at runtime, so the source does not
     # contain the literal operator-decision=2026-11-10. These literals do.
+    # SOURCE-SHA is the sha256 of the postgres-snapshot.ps1 this runner copy
+    # is allowed to execute. An earlier checkout is skipped when its bytes differ.
     $switch = '[switch]$Plain'
     $decision = 'SnapshotPlainDecision'
     $onedrive = '[switch]$OneDriveCopy'
-    $candidates = @(
-        'C:\src\Antiphon\scripts\postgres-snapshot.ps1',
-        (Join-Path $PSScriptRoot 'postgres-snapshot.ps1'),
-        'C:\Antiphon\worktrees\card-task-300d724e\scripts\postgres-snapshot.ps1'
-    )
-    foreach ($path in $candidates) {
-        if (-not (Test-Path -LiteralPath $path)) { continue }
+    $script:PlainSnapshotSourceSha = ''
+    if ([string]::IsNullOrWhiteSpace($PinFile)) {
+        $PinFile = Join-Path $PSScriptRoot 'SOURCE-SHA'
+    }
+    if (-not (Test-Path -LiteralPath $PinFile -PathType Leaf)) { return '' }
+    $pinned = ([System.IO.File]::ReadAllText($PinFile)).Trim().ToLowerInvariant()
+    if ($pinned -notmatch '^[0-9a-f]{64}$') { return '' }
+    if ($null -eq $Candidates -or @($Candidates).Count -eq 0) {
+        $Candidates = @(
+            'C:\src\Antiphon\scripts\postgres-snapshot.ps1',
+            (Join-Path $PSScriptRoot 'postgres-snapshot.ps1'),
+            'C:\Antiphon\worktrees\card-task-300d724e\scripts\postgres-snapshot.ps1'
+        )
+    }
+    foreach ($path in @($Candidates)) {
+        if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
         $text = [System.IO.File]::ReadAllText($path)
-        if ($text.Contains($switch) -and $text.Contains($decision) -and $text.Contains('2026-11-10') -and $text.Contains($onedrive)) { return $path }
+        if (-not ($text.Contains($switch) -and $text.Contains($decision) -and $text.Contains('2026-11-10') -and $text.Contains($onedrive))) { continue }
+        $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne $pinned) { continue }
+        $script:PlainSnapshotSourceSha = $hash
+        return $path
     }
     return ''
 }
@@ -63,6 +79,8 @@ function Invoke-PlainSnapshotChild {
     }
 }
 
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 $snapshot = Resolve-PlainSnapshotScript
 $recordDir = 'C:\Users\lndco\antiphon-backups\job-status'
 if (-not (Test-Path -LiteralPath $recordDir)) { New-Item -ItemType Directory -Path $recordDir | Out-Null }
@@ -72,6 +90,9 @@ if ([string]::IsNullOrWhiteSpace($snapshot)) {
     Write-Output 'SNAPSHOT fail exit=1 reason=missing-script'
 } else {
     Write-Output ('snapshot-script=' + $snapshot)
+    if (-not [string]::IsNullOrWhiteSpace($script:PlainSnapshotSourceSha)) {
+        Write-Output ('source-sha=' + $script:PlainSnapshotSourceSha)
+    }
     $ran = Invoke-PlainSnapshotChild $snapshot
     $code = [int]$ran.Exit
     Write-SafeSnapshotText $ran.Out
