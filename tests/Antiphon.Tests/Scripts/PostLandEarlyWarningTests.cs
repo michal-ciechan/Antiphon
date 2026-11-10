@@ -28,6 +28,8 @@ public sealed class PostLandEarlyWarningTests
 
     private const string CheckpointsNamespace = "Antiphon.Tests.Checkpoints";
 
+    private const string WarningCulture = "en-GB";
+
     private static readonly Regex ClassLine = new(
         @"^public\s+(?:(?:sealed|static|partial|abstract)\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)\b",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -559,6 +561,33 @@ public sealed class PostLandEarlyWarningTests
     }
 
     [Test]
+    public void Readonly_git_object_disposes()
+    {
+        var repo = GitRepo.Create();
+        try
+        {
+            var loose = Directory.EnumerateFiles(
+                    Path.Combine(repo.Repo, ".git", "objects"),
+                    "*",
+                    SearchOption.AllDirectories)
+                .First(path => Path.GetFileName(path).Length == 38);
+            File.SetAttributes(loose, File.GetAttributes(loose) | FileAttributes.ReadOnly);
+            // Linux Directory.Delete ignores a read-only file. A read-only parent is the
+            // refusal this host can raise; Git for Windows sets the bit on the loose object.
+            var parent = Path.GetDirectoryName(loose)!;
+            File.SetAttributes(parent, File.GetAttributes(parent) | FileAttributes.ReadOnly);
+            repo.Dispose();
+            Directory.Exists(repo.Repo).ShouldBeFalse();
+            Directory.Exists(repo.ReceiptRoot).ShouldBeFalse();
+        }
+        finally
+        {
+            ReleaseReadOnlyTree(repo.Repo);
+            ReleaseReadOnlyTree(repo.ReceiptRoot);
+        }
+    }
+
+    [Test]
     [Timeout(60_000)]
     public async Task Zero_executed_shard_is_incomplete()
     {
@@ -629,7 +658,15 @@ public sealed class PostLandEarlyWarningTests
         start.ArgumentList.Add("-File");
         start.ArgumentList.Add(script);
         start.Environment["POST_LAND_WARNING_RECLAIM_DELAY_MS"] = delayMs.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        start.Environment["POST_LAND_WARNING_CULTURE"] = WarningCulture;
         return start;
+    }
+
+    private static void ReleaseReadOnlyTree(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        ReadOnlyDirectory.Delete(path);
     }
 
     private static async Task<RealSlotRun> RunRealSlotAsync(int buildExit, int shardExit, string trxBody)
@@ -932,6 +969,7 @@ public sealed class PostLandEarlyWarningTests
                 start.ArgumentList.Add(table);
             }
 
+            start.Environment["POST_LAND_WARNING_CULTURE"] = WarningCulture;
             return start;
         }
 

@@ -6,6 +6,14 @@ $script:PostLandProductRoot = Split-Path -Parent $script:PostLandScriptsRoot
 
 Set-StrictMode -Version 2.0
 
+# Tests set POST_LAND_WARNING_CULTURE so a desktop culture is in force before startedAt is read.
+$script:PostLandCultureName = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_CULTURE')
+if (-not [string]::IsNullOrWhiteSpace($script:PostLandCultureName)) {
+    $script:PostLandCulture = [Globalization.CultureInfo]::GetCultureInfo($script:PostLandCultureName)
+    [Threading.Thread]::CurrentThread.CurrentCulture = $script:PostLandCulture
+    [Threading.Thread]::CurrentThread.CurrentUICulture = $script:PostLandCulture
+}
+
 function New-PostLandStringList {
     $list = New-Object System.Collections.Generic.List[string]
     return ,$list
