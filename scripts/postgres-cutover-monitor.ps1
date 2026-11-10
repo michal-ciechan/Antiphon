@@ -267,7 +267,8 @@ function Test-CutoverEncodedSecret {
 #     be part of a key (R-DEF-3: '(Password=S)', 'Host=h,Password=S'). A query or fragment pair's value (led by '?',
 #     '&' or '#') stops at '&', ';' or whitespace, so the text after a URL stays; any other secret pair (connection
 #     string, free text) runs to the next ';', '&' or the end of the line (R-DEF-1: 'Host=h;Password=SE NT;' masks
-#     'SE NT'). A plain value stops at whitespace, is searched for pairs of its own (a URL inside a value, a '#'
+#     'SE NT'). A pair immediately preceded by '(' stops before the next ')' so '(Password=S)' keeps the closer
+#     (CARD-1458); a ')' inside a bare value stays part of the secret. A plain value stops at whitespace, is searched for pairs of its own (a URL inside a value, a '#'
 #     fragment) and, when it percent-decodes to a secret, masked whole.
 # -JsonText is for serialized JSON: a pair value stops at a structural '"' (an escaped quote is part of the value) and
 # the known forms are matched in their JSON-escaped spelling too. The request itself always uses the unmasked URL.
@@ -314,6 +315,12 @@ function Hide-CutoverText {
             if (-not $m.Groups['q'].Success) {
                 $valStart = $m.Index + $leadText.Length
                 $end = $valStart + $runRe.Match($t, $valStart).Length
+                # '(Password=S)': the '(' sits immediately before the match, and the ')' is the wrapper, not the
+                # secret (CARD-1458). A bare Password= value is unchanged, so a ')' inside that secret stays masked.
+                if ($m.Index -gt 0 -and $t[$m.Index - 1] -eq '(') {
+                    $close = $t.IndexOf(')', $valStart)
+                    if ($close -ge 0 -and $close -lt $end) { $end = $close }
+                }
             }
             [void]$sb.Append($leadText + '<redacted>')
         } else {
@@ -335,7 +342,13 @@ function Hide-CutoverText {
 function Hide-CutoverSecrets {
     param($Object, [int]$Depth = 0)
     if ($null -eq $Object -or $Depth -gt 12) { return $Object }
-    if ($Object -is [string]) { if (Test-CutoverSecretValue -Value $Object) { return '<redacted>' } else { return $Object } }
+    # A credential-shaped string is dropped whole. Any other string, including JSON text nested in a
+    # pool-diagnostics field, is masked before it is serialized (CARD-1458: an escaped "password" pair
+    # survived the later JSON pass).
+    if ($Object -is [string]) {
+        if (Test-CutoverSecretValue -Value $Object) { return '<redacted>' }
+        return (Hide-CutoverText -Text $Object)
+    }
     if ($Object -is [bool] -or $Object -is [int] -or $Object -is [long] -or $Object -is [double] -or $Object -is [decimal] -or $Object -is [datetime] -or $Object -is [guid]) { return $Object }
     if ($Object -is [System.Collections.IDictionary]) {
         $out = [ordered]@{}
