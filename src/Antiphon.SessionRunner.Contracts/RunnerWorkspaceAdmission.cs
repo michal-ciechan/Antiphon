@@ -4,8 +4,9 @@ namespace Antiphon.SessionRunner.Contracts;
 /// Lexical launch cwd admission for a phone-home runner. The check does not resolve
 /// <c>..</c>, follow symlinks, or touch the filesystem. A standing checkout is exactly
 /// one segment under <c>&lt;AllowedCwd&gt;/agents</c>. That segment matches
-/// <c>[A-Za-z0-9][A-Za-z0-9._-]{0,254}</c>. The Windows flag also refuses a trailing dot
-/// and a reserved device name. Launch lstats the checkout separately.
+/// <c>[A-Za-z0-9][A-Za-z0-9._-]{0,254}</c>. The Windows flag also requires the leaf's
+/// lowercase spelling, and refuses a trailing dot and a reserved device name.
+/// Launch lstats the checkout separately.
 /// </summary>
 public static class RunnerWorkspaceAdmission
 {
