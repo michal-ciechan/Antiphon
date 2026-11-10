@@ -238,8 +238,9 @@ public sealed class ChannelReplyDispatcher
     /// or null when nothing publishes from that trigger (no completed turn boundary or owning
     /// prompt, the same early returns as <see cref="OnTranscriptActionAsync"/>). The key comes
     /// from the channel rows the turn's prompt matches, settled rows included, so it survives
-    /// settlement; a turn that matches no channel row keys to the session's newest Channel
-    /// conversation, the machine follow-up target. Several distinct keys resolve to null.
+    /// settlement. A turn that matches no channel row is a machine follow-up: its key is the chat
+    /// <see cref="DispatchMachineTurnFollowUpAsync"/> publishes to, resolved once (CARD-1454).
+    /// Several distinct keys resolve to null.
     /// </summary>
     internal async Task<ChannelReplyRoute?> ResolveActionRouteAsync(Guid sessionId, long sequence, CancellationToken ct)
     {
@@ -251,7 +252,18 @@ public sealed class ChannelReplyDispatcher
         if (prompt?.Text is null) return null;
         var keys = (await MatchChannelRowsAsync(db, prompt, ct))
             .Select(m => m.ConversationKey).Distinct(StringComparer.Ordinal).ToList();
-        if (keys.Count == 0) return new ChannelReplyRoute(await NewestConversationKeyAsync(db, sessionId, ct));
+        if (keys.Count == 0)
+        {
+            var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
+            var newest = await NewestConversationKeyAsync(db, sessionId, ct);
+            if (!outbound.UnifiedRecoveryEnabled)
+                return new ChannelReplyRoute(newest);
+            var machine = await MatchUnsettledMachineRowsAsync(db, sessionId, prompt, unifiedRecovery: true, ct);
+            if (machine.Count == 0)
+                return new ChannelReplyRoute(newest);
+            var context = await FindOriginalMachineContextAsync(db, sessionId, machine, ct);
+            return new ChannelReplyRoute(string.IsNullOrEmpty(context?.ConversationKey) ? newest : context.ConversationKey);
+        }
         return new ChannelReplyRoute(keys.Count == 1 ? keys[0] : null);
     }
 
@@ -322,7 +334,8 @@ public sealed class ChannelReplyDispatcher
             .Select(m => m.ConversationKey)
             .FirstOrDefaultAsync(ct);
 
-    internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct)
+    internal async Task OnTranscriptActionAsync(Guid sessionId, long triggerSequence, CancellationToken ct,
+        string? carriedConversationKey = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -335,7 +348,7 @@ public sealed class ChannelReplyDispatcher
             throw new InvalidOperationException("Bound channel publication remains pending.");
         await DispatchFollowUpAsync(sessionId, ct);
         await DispatchDurableFollowUpsAsync(sessionId, ct);
-        await DispatchMachineTurnFollowUpAsync(sessionId, prompt, ct);
+        await DispatchMachineTurnFollowUpAsync(sessionId, prompt, ct, carriedConversationKey);
     }
 
     /// <summary>
@@ -1502,14 +1515,18 @@ public sealed class ChannelReplyDispatcher
     /// same turn follows via <see cref="DispatchFollowUpAsync"/>.
     /// </summary>
     private async Task DispatchMachineTurnFollowUpAsync(Guid sessionId,
-        TranscriptEntry? historicalPrompt, CancellationToken ct)
+        TranscriptEntry? historicalPrompt, CancellationToken ct, string? carriedConversationKey = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         // Gate 1: channel-bound. One indexed query — the only cost added to every non-channel
-        // session's turn end. Newest ConversationKey is the follow-up target.
-        var conversationKey = await NewestConversationKeyAsync(db, sessionId, ct);
+        // session's turn end. A debt row carries the target resolved with its key (CARD-1454);
+        // otherwise the newest ConversationKey is the follow-up target until unified recovery
+        // replaces it with the pre-injection context.
+        var conversationKey = string.IsNullOrEmpty(carriedConversationKey)
+            ? await NewestConversationKeyAsync(db, sessionId, ct)
+            : carriedConversationKey;
         if (conversationKey is null)
             return;
 
@@ -1535,8 +1552,6 @@ public sealed class ChannelReplyDispatcher
 
         var (_, explicitPaths) = ChannelContracts.ExtractAttachments(responseText);
 
-        var normalizedTurn = Normalize(promptText);
-
         // Gate 2: the main path already owns this turn (Channel-origin prompt match). Its
         // attachments went with it, or CARD-0071 / NO_REPLY withheld them on purpose.
         if ((await MatchChannelRowsAsync(db, userPrompt, ct)).Count > 0)
@@ -1546,41 +1561,20 @@ public sealed class ChannelReplyDispatcher
         if (ChannelPromptCorrelation.HasMarkedTransportFrame(promptText))
             return;
 
-        var candidates = await db.SessionQueuedMessages
-            .Where(m => m.AgentSessionId == sessionId
-                && (m.Origin == QueuedMessageOrigin.Delegation
-                    || m.Origin == QueuedMessageOrigin.Check
-                    || m.Origin == QueuedMessageOrigin.System
-                    || m.Origin == QueuedMessageOrigin.Scheduled)
-                && m.Status == QueuedMessageStatus.Sent
-                && m.ChannelReplySettledAt == null
-                && m.ChannelOutboundDeliveryId == null)
-            .OrderBy(m => m.Sequence)
-            .ToListAsync(ct);
         var outbound = scope.ServiceProvider.GetRequiredService<ChannelOutboundService>();
-        var ids = ChannelContracts.CollectInjectionShortIds(promptText);
-        var matches = candidates.Where(m =>
-            MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn)).ToList();
+        var matches = await MatchUnsettledMachineRowsAsync(
+            db, sessionId, userPrompt, outbound.UnifiedRecoveryEnabled, ct);
         SessionQueuedMessage? originalContext = null;
-        if (outbound.UnifiedRecoveryEnabled)
+        if (outbound.UnifiedRecoveryEnabled && matches.Count > 0)
         {
             // Task/header routing is not a delivered-prompt receipt. Historical and event
             // dispatch share the complete matcher and original attempt floors.
-            matches = MatchMachineSources(matches, userPrompt);
-            if (matches.Count > 0)
-            {
-                var first = matches.OrderBy(m => m.Sequence).First();
-                var injectionAt = first.LastDeliveryStartedAt ?? first.SentAt ?? first.CreatedAt;
-                originalContext = await db.SessionQueuedMessages.AsNoTracking()
-                    .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel
-                        && m.Status == QueuedMessageStatus.Sent && m.ConversationKey != null
-                        && m.Sequence < first.Sequence
-                        && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt) <= injectionAt)
-                    .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
-                if (originalContext is null)
-                    return;
+            originalContext = await FindOriginalMachineContextAsync(db, sessionId, matches, ct);
+            if (originalContext is null)
+                return;
+            // A carried debt key was this context at resolution time. Keep it.
+            if (string.IsNullOrEmpty(carriedConversationKey))
                 conversationKey = originalContext.ConversationKey!;
-            }
         }
         if (matches.Count == 0)
         {
@@ -1729,6 +1723,49 @@ public sealed class ChannelReplyDispatcher
             var channels = scope.ServiceProvider.GetRequiredService<ChatChannelService>();
             await channels.StampLastReplyAsync(provider, conversationId, text, ct);
         }
+    }
+
+    /// <summary>
+    /// Unsettled injection rows the machine follow-up would publish for. Unified recovery keeps
+    /// only rows with a complete delivered-prompt receipt; the default path keeps header and
+    /// task-id matches. Shared by publish and the debt-key resolver so they cannot pick
+    /// different chats.
+    /// </summary>
+    private async Task<List<SessionQueuedMessage>> MatchUnsettledMachineRowsAsync(
+        AppDbContext db, Guid sessionId, TranscriptEntry userPrompt, bool unifiedRecovery, CancellationToken ct)
+    {
+        if (userPrompt.Text is null)
+            return [];
+        var normalizedTurn = Normalize(userPrompt.Text);
+        var candidates = await db.SessionQueuedMessages
+            .Where(m => m.AgentSessionId == sessionId
+                && (m.Origin == QueuedMessageOrigin.Delegation
+                    || m.Origin == QueuedMessageOrigin.Check
+                    || m.Origin == QueuedMessageOrigin.System
+                    || m.Origin == QueuedMessageOrigin.Scheduled)
+                && m.Status == QueuedMessageStatus.Sent
+                && m.ChannelReplySettledAt == null
+                && m.ChannelOutboundDeliveryId == null)
+            .OrderBy(m => m.Sequence)
+            .ToListAsync(ct);
+        var ids = ChannelContracts.CollectInjectionShortIds(userPrompt.Text);
+        var matches = candidates.Where(m =>
+            MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn)).ToList();
+        return unifiedRecovery ? MatchMachineSources(matches, userPrompt) : matches;
+    }
+
+    /// <summary>The channel chat established before the matched injection, newest such row first.</summary>
+    private static async Task<SessionQueuedMessage?> FindOriginalMachineContextAsync(
+        AppDbContext db, Guid sessionId, IReadOnlyList<SessionQueuedMessage> matches, CancellationToken ct)
+    {
+        var first = matches.OrderBy(m => m.Sequence).First();
+        var injectionAt = first.LastDeliveryStartedAt ?? first.SentAt ?? first.CreatedAt;
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.Channel
+                && m.Status == QueuedMessageStatus.Sent && m.ConversationKey != null
+                && m.Sequence < first.Sequence
+                && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt) <= injectionAt)
+            .OrderByDescending(m => m.Sequence).FirstOrDefaultAsync(ct);
     }
 
     private List<SessionQueuedMessage> MatchMachineSources(List<SessionQueuedMessage> candidates,

@@ -252,7 +252,11 @@ confirmation and catch-up still run. A route action that reaches phase 4 while
 earlier channel debt to the same destination is owed does not dispatch: it saves
 its own debt row behind it, keyed by the turn's conversation (a turn that
 addresses several conversations, or whose late-confirm sources differ, writes a
-null key and waits for every destination). A route action with no publishable
+null key and waits for every destination). A machine-turn follow-up resolves that
+conversation once, as the chat the follow-up publishes to: unified recovery uses
+the channel context established before the injection, and the default path uses
+the newest channel chat at that resolution. The debt row carries the key, and a
+later retry publishes to it (CARD-1454). A route action with no publishable
 boundary saves no debt. Only the earliest debt row per destination runs, and only
 when due, so replies to one chat publish in transcript order while other chats'
 replies flow (CARD-1434). A failed debt retry pushes later same-destination debt
@@ -274,7 +278,8 @@ Pinned by `AgentTaskCatchUpSettlementTests.catch_up_settles_even_when_channel_re
 `SessionRuntimeActionRecoveryTests.C1435_late_confirm_publication_waits_for_an_earlier_owed_reply`,
 `SessionRuntimeActionRecoveryTests.C1434_a_failing_reply_to_one_destination_does_not_hold_another_destination`,
 `SessionRuntimeActionRecoveryTests.C1433_a_waiting_late_confirm_does_not_hold_later_queue_actions`,
-`SessionRuntimeActionRecoveryTests.C1434_exhausted_channel_debt_is_reported_lost_and_later_replies_flow`
+`SessionRuntimeActionRecoveryTests.C1434_exhausted_channel_debt_is_reported_lost_and_later_replies_flow`,
+`SessionRuntimeActionRecoveryTests.C1454_machine_turn_debt_follows_the_chat_it_publishes_to`
 and `ChannelMachineTurnTextTests.C1434_give_up_minutes_above_the_ttl_is_refused`.
 
 Implementation and qualification status, including remaining routing/recovery
