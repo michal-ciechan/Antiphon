@@ -165,12 +165,15 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         await CompareChild("wait", json => json["rows"] = null);
         await CompareChild("validate", json => json["rows"] = null);
         await CompareChild("clean", json => json["rows"]![0]!["id"] = " ");
+        await CompareChild("report", json => { });
+        await CompareChild("report-merge", json => { }, "report.json");
+        await CompareChild("status", json => json["rows"]![0]!["id"] = "", "report.json");
     }
 
-    private async Task CompareChild(string verb, Action<JsonObject> mutate)
+    private async Task CompareChild(string verb, Action<JsonObject> mutate, string file = "state.json")
     {
         var (freshRoot, freshRun) = Fixture();
-        var fresh = await MutatedChild(freshRoot, freshRun, verb, mutate);
+        var fresh = await MutatedChild(freshRoot, freshRun, verb, mutate, file);
 
         var (reusedRoot, reusedRun) = Fixture();
         var snapshot = Snapshot(reusedRun);
@@ -181,9 +184,9 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(Path.Combine(reusedRun, "debris-dir"), "nested.txt"), "y");
         File.WriteAllText(Path.Combine(reusedRun, "state.json"), "{}");
         Restore(reusedRun, snapshot);
-        var first = await MutatedChild(reusedRoot, reusedRun, verb, mutate);
+        var first = await MutatedChild(reusedRoot, reusedRun, verb, mutate, file);
         Restore(reusedRun, snapshot);
-        var second = await MutatedChild(reusedRoot, reusedRun, verb, mutate);
+        var second = await MutatedChild(reusedRoot, reusedRun, verb, mutate, file);
 
         first.Exit.ShouldBe(fresh.Exit, verb);
         first.Output.ShouldBe(fresh.Output, verb);
@@ -193,9 +196,9 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         second.Unchanged.ShouldBe(fresh.Unchanged, verb + "-again");
     }
 
-    private async Task<(int Exit, string Output, bool Unchanged)> MutatedChild(string root, string run, string verb, Action<JsonObject> mutate)
+    private async Task<(int Exit, string Output, bool Unchanged)> MutatedChild(string root, string run, string verb, Action<JsonObject> mutate, string file)
     {
-        var path = Path.Combine(run, "state.json");
+        var path = Path.Combine(run, file);
         var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
         mutate(json);
         File.WriteAllText(path, json.ToJsonString());
@@ -215,12 +218,14 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         var valid = identity == "CP-fixture";
         var failures = new List<string>();
         // Each entry gets its own complete receipt pair; only the selected identity changes.
+        var (root, run) = Fixture();
+        var snapshot = Snapshot(run);
         foreach (var receipt in new[] { "state.json", "report.json" })
         foreach (var collection in new[] { "rows", "builds" })
         foreach (var verb in new[] { "report", "report-json", "report-merge", "report-merge-json", "status", "stop", "wait", "clean", "validate" })
         {
             if (verb == "validate" && receipt == "state.json") continue; // validate accepts a report, not state.
-            var (root, run) = Fixture();
+            Restore(run, snapshot);
             var path = Path.Combine(run, receipt);
             var json = JsonNode.Parse(File.ReadAllText(path))!;
             json[collection]![0]!["id"] = identity;
