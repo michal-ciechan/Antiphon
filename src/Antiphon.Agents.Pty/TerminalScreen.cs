@@ -264,7 +264,8 @@ public sealed class TerminalScreen
 			case ']': _state = ParseState.Osc; break;
 			case 'P': case 'X': case '^': case '_': _state = ParseState.String; break;
 			case '(': case ')': case '*': case '+': _state = ParseState.Charset; break;
-			case 'M':
+			case 'M': // reverse index moves the cursor, so the owed wrap is void
+				_pendingWrap = false;
 				if (_cursorRow == _scrollTop) ScrollDown();
 				else if (_cursorRow > 0) _cursorRow--;
 				break;
