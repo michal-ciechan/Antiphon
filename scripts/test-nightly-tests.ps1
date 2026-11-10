@@ -2769,6 +2769,139 @@ function Test-C1698_SummaryJsonRecordsToolchain {
     Assert-C487 -Cond ($w.Count -eq 1 -and $w[0].tool -eq 'git' -and ([string]$w[0].message).StartsWith('WARNING: git 2.42.0 is below the minimum 2.43; lands will fail')) -Name 'C1698 Summary json on disk records the warning' -Detail $detail
 }
 
+function Test-Group4CompletedHang {
+    # session-runner all-group-4: TRX Completed and "total ran" matched the
+    # selection, then the process tree lived until the launch watchdog.
+    $root = Join-Path $ResultsDirectory 'group4-completed-hang'
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $writeTrx = {
+        param([string]$Path, [string]$Outcome, [int]$Total, [int]$Executed, [int]$NotExecuted)
+        $xml = '<?xml version="1.0" encoding="utf-8"?><TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary outcome="' + $Outcome + '"><Counters total="' + $Total + '" executed="' + $Executed + '" passed="' + $Executed + '" failed="0" notExecuted="' + $NotExecuted + '" /></ResultSummary></TestRun>'
+        [System.IO.File]::WriteAllText($Path, $xml)
+    }
+    $matchTrx = Join-Path $root 'match.trx'
+    $matchDiag = Join-Path $root 'match.diag'
+    & $writeTrx $matchTrx 'Completed' 119 119 0
+    $pad = [string]::new('x', 20000)
+    [System.IO.File]::WriteAllText($matchDiag, ($pad + "`ntotal ran: 119`nrequest execute stop`n"))
+    $finished = $false
+    $finishedError = ''
+    try { $finished = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $matchDiag) } catch { $finishedError = $_.Exception.Message }
+    Assert-C487 -Cond ($finished -and [string]::IsNullOrEmpty($finishedError)) -Name 'group4 completed trx plus matching total ran is finished' -Detail $finishedError
+
+    $lowDiag = Join-Path $root 'low.diag'
+    [System.IO.File]::WriteAllText($lowDiag, "total ran: 118`nrequest execute stop`n")
+    $low = $true
+    try { $low = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $lowDiag) } catch { $low = $true }
+    Assert-C487 -Cond (-not $low) -Name 'group4 total ran that misses the trx total is not finished'
+
+    $noStop = Join-Path $root 'nostop.diag'
+    [System.IO.File]::WriteAllText($noStop, "total ran: 119`n")
+    $stopped = $true
+    try { $stopped = [bool](Test-NightlyExecutionFinished -TrxPath $matchTrx -DiagnosticPath $noStop) } catch { $stopped = $true }
+    Assert-C487 -Cond (-not $stopped) -Name 'group4 total ran without request execute stop is not finished'
+
+    $bare = Join-Path $root 'bare.trx'
+    Write-C487Trx -Path $bare -Rows @([pscustomobject]@{ Id = '1'; ClassName = 'A'; MethodName = 'M'; Outcome = 'Passed' })
+    $bareFinished = $true
+    try { $bareFinished = [bool](Test-NightlyExecutionFinished -TrxPath $bare -DiagnosticPath $matchDiag) } catch { $bareFinished = $true }
+    Assert-C487 -Cond (-not $bareFinished) -Name 'group4 trx without ResultSummary is not finished'
+
+    $partial = Join-Path $root 'partial.trx'
+    & $writeTrx $partial 'Completed' 119 118 1
+    $partialFinished = $true
+    try { $partialFinished = [bool](Test-NightlyExecutionFinished -TrxPath $partial -DiagnosticPath $matchDiag) } catch { $partialFinished = $true }
+    Assert-C487 -Cond (-not $partialFinished) -Name 'group4 notExecuted row is not a completed hang'
+
+    $failedTrx = Join-Path $root 'failed.trx'
+    & $writeTrx $failedTrx 'Failed' 119 119 0
+    $failedFinished = $true
+    try { $failedFinished = [bool](Test-NightlyExecutionFinished -TrxPath $failedTrx -DiagnosticPath $matchDiag) } catch { $failedFinished = $true }
+    Assert-C487 -Cond (-not $failedFinished) -Name 'group4 Failed outcome is not a completed hang'
+
+    $hung = $null
+    $hungError = ''
+    try { $hung = Resolve-NightlyCompletedHang -TimedOut $true -Finished $true -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $hungError = $_.Exception.Message }
+    $hungOk = ($null -ne $hung -and [bool]$hung.CompletedButHung -and [string]$hung.Reason -eq 'completed-but-hung session-runner children=pid=42/image=git')
+    Assert-C487 -Cond $hungOk -Name 'group4 finished timeout records completed-but-hung and the child list' -Detail $hungError
+
+    $openHang = $null
+    try { $openHang = Resolve-NightlyCompletedHang -TimedOut $true -Finished $false -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $openHang = $null }
+    Assert-C487 -Cond ($null -ne $openHang -and -not [bool]$openHang.CompletedButHung -and [string]$openHang.Reason -eq 'watchdog-timeout') -Name 'group4 unfinished timeout stays watchdog-timeout'
+
+    $clean = $null
+    try { $clean = Resolve-NightlyCompletedHang -TimedOut $false -Finished $true -SuiteId 'session-runner' -Children 'pid=42/image=git' } catch { $clean = $null }
+    Assert-C487 -Cond ($null -ne $clean -and -not [bool]$clean.CompletedButHung) -Name 'group4 a finished run that exited is not a hang'
+
+    $disp = $null
+    try { $disp = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $false -CompletedButHung } catch { $disp = $null }
+    $dispOk = ($null -ne $disp -and [string]$disp.Reason -eq 'completed-but-hung' -and -not [bool]$disp.CoverageComplete -and -not [bool]$disp.TestsPassed -and [bool]$disp.Incomplete -and -not [bool]$disp.Pass)
+    Assert-C487 -Cond $dispOk -Name 'group4 completed hang stays a red test gate'
+
+    $still = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $false
+    Assert-C487 -Cond ([string]$still.Reason -eq 'watchdog-timeout' -and -not [bool]$still.TestsPassed -and -not [bool]$still.CoverageComplete) -Name 'group4 generic watchdog disposition is unchanged'
+
+    $formatted = ''
+    try { $formatted = [string](Format-NightlyHangChildren -Identities @('42:2026-11-09T22:33:18.0000000Z') -Images @('git') -RootPid 7) } catch { $formatted = '' }
+    Assert-C487 -Cond ($formatted -eq 'pid=42/image=git') -Name 'group4 hang children format pid and image' -Detail $formatted
+
+    $fallback = 'present'
+    try { $fallback = [string](Format-NightlyHangChildren -Identities @() -Images @() -RootPid 9) } catch { $fallback = 'present' }
+    Assert-C487 -Cond ($fallback -eq 'pid=9/image=') -Name 'group4 hang with no descendants names the root' -Detail $fallback
+
+    $capture = Join-Path $root 'capture.hang.txt'
+    $captureError = ''
+    try { Write-NightlyHangCapture -Path $capture -SuiteId 'session-runner' -Children 'pid=42/image=git' -RootPid 7 } catch { $captureError = $_.Exception.Message }
+    $captureText = ''
+    if (Test-Path -LiteralPath $capture) { $captureText = [System.IO.File]::ReadAllText($capture) }
+    $captureOk = ($captureText.Contains('completed-hang-capture') -and $captureText.Contains('handles=not-enumerated') -and $captureText.Contains('pid=42/image=git') -and $captureText.Contains('suite=session-runner'))
+    Assert-C487 -Cond $captureOk -Name 'group4 powershell hang capture names the tree and skips handle names' -Detail $captureError
+
+    $sleep = $null
+    $grace = $null
+    $graceError = ''
+    try {
+        $sleep = Start-Process -FilePath '/bin/sleep' -ArgumentList '30' -PassThru -ErrorAction Stop
+        try {
+            $grace = Invoke-NightlyCompletionGrace -Exited { $sleep.HasExited } -Finished { $true } -GraceMilliseconds 300 -WatchdogMilliseconds 5000 -PollMilliseconds 10
+        } catch { $graceError = $_.Exception.Message }
+        $alive = ($null -ne $sleep -and -not $sleep.HasExited)
+        $graceOk = ($null -ne $grace -and [bool]$grace.CompletedButHung -and [bool]$grace.TimedOut -and $alive -and [int]$grace.ElapsedMilliseconds -ge 250 -and [int]$grace.ElapsedMilliseconds -lt 2000)
+        $graceDetail = $graceError
+        if ($null -ne $grace) { $graceDetail = 'elapsed=' + $grace.ElapsedMilliseconds + ' hung=' + $grace.CompletedButHung + ' alive=' + $alive }
+        Assert-C487 -Cond $graceOk -Name 'group4 host must be classified hung inside the grace once total ran is reported' -Detail $graceDetail
+    } finally {
+        if ($null -ne $sleep -and -not $sleep.HasExited) {
+            Stop-Process -Id $sleep.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    $openGrace = $null
+    try {
+        $openGrace = Invoke-NightlyCompletionGrace -Exited { $false } -Finished { $false } -GraceMilliseconds 5000 -WatchdogMilliseconds 250 -PollMilliseconds 10
+    } catch { $openGrace = $null }
+    $openOk = ($null -ne $openGrace -and [bool]$openGrace.TimedOut -and -not [bool]$openGrace.CompletedButHung -and [int]$openGrace.ElapsedMilliseconds -lt 1000)
+    $openDetail = ''
+    if ($null -ne $openGrace) { $openDetail = 'elapsed=' + $openGrace.ElapsedMilliseconds + ' hung=' + $openGrace.CompletedButHung }
+    Assert-C487 -Cond $openOk -Name 'group4 unfinished run still uses the launch watchdog' -Detail $openDetail
+
+    $ownerPath = Join-Path $lib 'nightly-owned-process.cs'
+    $implPath = Join-Path $lib 'nightly-tests-impl.ps1'
+    $ownerText = [System.IO.File]::ReadAllText($ownerPath)
+    $implText = [System.IO.File]::ReadAllText($implPath)
+    $captureAt = $ownerText.IndexOf('WriteHangCapture(job, root, logPath)')
+    $killAt = $ownerText.IndexOf('TerminateJobObject(job, 1)')
+    Assert-C487 -Cond ($captureAt -ge 0 -and $killAt -gt $captureAt) -Name 'group4 hang capture is written before the job is killed' -Detail ('capture=' + $captureAt + ' kill=' + $killAt)
+    Assert-C487 -Cond ($ownerText.Contains('Observation.CompletedButHung = true')) -Name 'group4 native owner records CompletedButHung'
+    Assert-C487 -Cond ($ownerText.Contains('NtQuerySystemInformation')) -Name 'group4 hang capture lists open handles'
+    Assert-C487 -Cond (-not $ownerText.Contains('NtQueryObject')) -Name 'group4 hang capture does not query handle names'
+    Assert-C487 -Cond ($ownerText.Contains('total ran:') -and $ownerText.Contains('request execute stop')) -Name 'group4 native grace uses the same finish markers'
+    Assert-C487 -Cond ($implText.Contains('Resolve-NightlyCompletedHang')) -Name 'group4 chunk classifies a completed hang'
+    Assert-C487 -Cond ($implText.Contains("-HangCapturePath (`$logPath + '.hang.txt')") -and $implText.Contains('-ExecutionGraceMilliseconds')) -Name 'group4 chunk arms the native grace and hang capture'
+    Assert-C487 -Cond ($implText.Contains("notmatch '^process-exit-'")) -Name 'group4 completed hang drops the kill exit code reason'
+    Assert-C487 -Cond ($implText.Contains('if ($completedHang)') -and $implText.Contains("Set-NightlyOutcome TESTS") -and $implText.Contains("`$timingWhy = 'completed-but-hung'")) -Name 'group4 completed hang is a test outcome rather than a generic timeout'
+}
+
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Error ('unknown case {0}' -f $Case); exit 2 }
@@ -2782,6 +2915,7 @@ if ($Case) {
     Test-C1044_FixtureTypeName
     Test-C1044_FixtureClassChunks
     Test-C487_PrerequisiteGate
+    Test-Group4CompletedHang
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
-Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 80 })
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 105 })
