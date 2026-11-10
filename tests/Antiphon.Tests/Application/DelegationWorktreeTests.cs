@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -989,6 +990,132 @@ public partial class DelegationWorktreeTests
         (await service.ArmDenyHookAsync(task, CancellationToken.None))
             .ShouldBeFalse("whatever put that file there outranks the hook");
         (await File.ReadAllTextAsync(settingsPath)).ShouldContain("theirs");
+    }
+
+    // CARD-1225. Linux placement is the observed runner OS, else a Linux requirement when
+    // nothing was observed. The armed command is what Claude executes on that host.
+    [Test]
+    [Arguments(RequiredPlatform.Any, "linux")]
+    [Arguments(RequiredPlatform.Linux, null)]
+    [Arguments(RequiredPlatform.Linux, "linux")]
+    [Arguments(RequiredPlatform.Windows, "linux")]
+    public async Task linux_placement_deny_hook_is_pwsh_and_exits_2(
+        RequiredPlatform required, string? observed)
+    {
+        var command = await ArmAndReadDenyHookCommand(required, observed);
+        command.ShouldNotContain("powershell");
+        command.ShouldStartWith("pwsh -NoProfile -Command ");
+        command.ShouldContain(OrchestratorDenyHookMessage);
+        command.ShouldContain("exit 2");
+        await InvokeDenyHookCommand(command);
+    }
+
+    [Test]
+    [Arguments(RequiredPlatform.Any, null)]
+    [Arguments(RequiredPlatform.Windows, null)]
+    [Arguments(RequiredPlatform.Any, "windows")]
+    [Arguments(RequiredPlatform.Windows, "windows")]
+    [Arguments(RequiredPlatform.Linux, "windows")]
+    public async Task non_linux_placement_deny_hook_stays_windows_powershell(
+        RequiredPlatform required, string? observed)
+    {
+        var command = await ArmAndReadDenyHookCommand(required, observed);
+        command.ShouldBe(WindowsDenyHookCommand);
+    }
+
+    private const string OrchestratorDenyHookMessage =
+        "This session is an orchestrator: do not edit files yourself.";
+
+    private const string WindowsDenyHookCommand =
+        "powershell -NoProfile -Command \"[Console]::Error.WriteLine('This session is an orchestrator: do not edit files yourself. Delegate the change with the antiphon-delegate skill (pwsh -NoProfile -File scripts/delegate.ps1 ...) and end your turn; the report will reach you.'); exit 2\"";
+
+    private static async Task<string> ArmAndReadDenyHookCommand(RequiredPlatform required, string? observed)
+    {
+        using var repo = new ScratchGitRepo();
+        await repo.CommitFileAsync("README.md", "base\n");
+        var (service, _) = CreateService(repo);
+        var task = NewTask(repo.Path, mergeTarget: null);
+        await service.CreateForTaskAsync(task, CancellationToken.None);
+        task.RequiredPlatform = required;
+        task.ObservedPlatform = observed;
+
+        (await service.ArmDenyHookAsync(task, CancellationToken.None)).ShouldBeTrue();
+
+        var settingsPath = Path.Combine(task.WorktreePath!, ".claude", "settings.local.json");
+        using var parsed = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(settingsPath));
+        var hook = parsed.RootElement.GetProperty("hooks").GetProperty("PreToolUse")[0];
+        hook.GetProperty("matcher").GetString().ShouldBe("Edit|Write|MultiEdit|NotebookEdit");
+        var command = hook.GetProperty("hooks")[0].GetProperty("command").GetString();
+        command.ShouldNotBeNullOrWhiteSpace();
+        return command!;
+    }
+
+    private static async Task InvokeDenyHookCommand(string command)
+    {
+        using var process = StartDenyHookProcess(command);
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (Exception)
+            {
+                // The process may have exited between the timeout and the kill.
+            }
+
+            throw new TimeoutException("deny hook command did not exit within 30 seconds");
+        }
+
+        var stderr = await stderrTask;
+        var stdout = await stdoutTask;
+        process.ExitCode.ShouldBe(2, $"stdout={stdout} stderr={stderr}");
+        stderr.ShouldContain(OrchestratorDenyHookMessage);
+    }
+
+    private static Process StartDenyHookProcess(string command)
+    {
+        ProcessStartInfo start;
+        if (OperatingSystem.IsLinux())
+        {
+            // Claude runs a Linux hook command through the shell. This is that invocation.
+            start = new ProcessStartInfo("/bin/sh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(command);
+        }
+        else
+        {
+            const string prefix = "pwsh -NoProfile -Command ";
+            command.ShouldStartWith(prefix);
+            var script = command[prefix.Length..];
+            if (script.Length >= 2 && script[0] == '"' && script[^1] == '"')
+                script = script[1..^1];
+            start = new ProcessStartInfo("pwsh")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-Command");
+            start.ArgumentList.Add(script);
+        }
+
+        var process = Process.Start(start);
+        process.ShouldNotBeNull();
+        return process;
     }
 
     // ---- helpers ---------------------------------------------------------------------------
