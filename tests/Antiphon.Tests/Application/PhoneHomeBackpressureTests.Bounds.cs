@@ -1,7 +1,9 @@
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests.TestHelpers;
 using Antiphon.Tests.TestHelpers;
@@ -14,12 +16,18 @@ namespace Antiphon.Tests.Application;
 
 public partial class PhoneHomeBackpressureTests
 {
-    private static async Task ByteWindowDuringCatchupAsync()
+    private static async Task ByteWindowDuringCatchupAsync(
+        TaskCompletionSource<PhoneHomeLiveConnection>? reachedLive = null, Task? beforeEventSubscription = null)
     {
         const string text = "é😀日本語";
-        var bytes = System.Text.Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(new RunnerOutputEvent(Guid.Empty, 1, text)));
-        await using var h = await PhoneHomeHostedRunner.CreateAsync(count: 8, bytes: 2 * bytes - 1, holdCatchup: true);
+        var bytes = PhoneHomeEventPayload.Measure(PhoneHomeEventPayload.Prepare(
+            JsonSerializer.Serialize(new RunnerOutputEvent(Guid.Empty, 1, text))));
+        await using var h = await PhoneHomeHostedRunner.CreateAsync(count: 8, bytes: 2 * bytes - 1, holdCatchup: true,
+            beforeEventSubscription: beforeEventSubscription);
         h.Live.DispatchEligible.ShouldBeFalse();
+        // The socket is accepted before the runner subscribes. Publishing in that gap is lost,
+        // and PendingEvents stays 0 for as long as this poll runs.
+        reachedLive?.TrySetResult(h.Live);
         h.Output(h.SessionId, 1, text);
         await PhoneHomeHostedRunner.UntilAsync(() => h.Live.PendingEvents == 1, "first byte-window event admitted during catch-up");
         h.Output(h.SessionId, 2, text);
@@ -38,6 +46,68 @@ public partial class PhoneHomeBackpressureTests
         h.Service.WaitingForEventCredit.ShouldBeFalse();
         h.Bus.Recipient.PublishedEvents.Where(e => e.EventName == "AgentTextDelta")
             .Select(e => JsonSerializer.SerializeToElement(e.Payload).GetProperty("text").GetString()).ShouldBe(new[] { text, text });
+    }
+
+    [Test]
+    public async Task Held_catchup_admits_the_byte_window_when_subscribe_is_late()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reached = new TaskCompletionSource<PhoneHomeLiveConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var running = ByteWindowDuringCatchupAsync(reached, gate.Task);
+        try
+        {
+            var live = await reached.Task.WaitAsync(LoadTimeoutBounds.PhoneHomeSignalWait);
+            live.ProducerPressure.ShouldBeNull();
+            live.PendingEvents.ShouldBe(0);
+            gate.TrySetResult();
+            await running;
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+    }
+
+    [Test]
+    public void Early_publish_is_dropped_and_the_byte_cap_admits_one_windows_shaped_payload()
+    {
+        var hub = new SessionRunnerEventHub();
+        const string text = "é😀日本語";
+        hub.Publish(SessionRunnerEventNames.SessionOutput, new RunnerOutputEvent(Guid.Empty, 1, text));
+        var reader = hub.SubscribeBounded(8, 65536, () => { }, CancellationToken.None);
+        reader.TryRead(out _).ShouldBeFalse();
+        hub.Publish(SessionRunnerEventNames.SessionOutput, new RunnerOutputEvent(Guid.Empty, 1, text));
+        reader.TryRead(out var delivered).ShouldBeTrue();
+        delivered!.EventName.ShouldBe(SessionRunnerEventNames.SessionOutput);
+
+        var unicode = AdmittedBytes(text);
+        var windowsPath = text + @" C:\Antiphon\releases\checkout-4dd2a426";
+        var linuxPath = text + " /work/releases/checkout-4dd2a426";
+        var windows = AdmittedBytes(windowsPath);
+        var linux = AdmittedBytes(linuxPath);
+        var crlf = AdmittedBytes("line\r\nnext");
+        unicode.Admitted.ShouldBe(unicode.Prepared);
+        unicode.Admitted.ShouldBe(Encoding.UTF8.GetByteCount(unicode.DefaultJson));
+        windows.Admitted.ShouldBeGreaterThan(linux.Admitted);
+        (windows.Admitted <= 2 * linux.Admitted - 1).ShouldBeTrue(
+            "a Windows path in the same text still fits a cap measured from the Linux twin");
+        (unicode.Admitted <= 2 * unicode.Admitted - 1).ShouldBeTrue();
+        (unicode.Admitted * 2 > 2 * unicode.Admitted - 1).ShouldBeTrue();
+        (crlf.Admitted <= 2 * crlf.Admitted - 1).ShouldBeTrue();
+        unicode.Admitted.ShouldBe(111);
+    }
+
+    private readonly record struct AdmittedPayload(int Prepared, int Admitted, string DefaultJson);
+
+    private static AdmittedPayload AdmittedBytes(string text)
+    {
+        var json = JsonSerializer.Serialize(new RunnerOutputEvent(Guid.NewGuid(), 1, text));
+        var prepared = PhoneHomeEventPayload.Prepare(json);
+        var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Event, 1, Guid.Empty,
+            EventName: SessionRunnerEventNames.SessionOutput, Payload: prepared);
+        var wire = JsonSerializer.SerializeToUtf8Bytes(frame, PhoneHomeFraming.Json);
+        var parsed = JsonSerializer.Deserialize<PhoneHomeFrame>(wire, PhoneHomeFraming.Json);
+        return new(PhoneHomeEventPayload.Measure(prepared), PhoneHomeEventPayload.Measure(parsed!.Payload), json);
     }
 
     private static async Task AccountingBoundsAsync()

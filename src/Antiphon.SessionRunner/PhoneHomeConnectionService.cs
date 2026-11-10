@@ -64,6 +64,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     public PhoneHomeProducerPressure EventPressure => new(WaitingForEventCredit,
         _subscription?.PendingEvents ?? 0, _subscription?.PendingBytes ?? 0);
 
+    /// <summary>
+    /// Test seam. The socket is accepted before this connection subscribes, and a publish in
+    /// that gap is delivered to nobody. <see cref="RunConnectedAsync"/> awaits this first.
+    /// </summary>
+    internal Task? BeforeEventSubscriptionForTest { get; set; }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!_settings.Enabled)
@@ -169,6 +175,8 @@ public sealed class PhoneHomeConnectionService : BackgroundService
 
     internal async Task RunConnectedAsync(WebSocket ws, long epoch, PhoneHomeEventWindowOptions? options, CancellationToken ct)
     {
+        if (BeforeEventSubscriptionForTest is { } subscriptionGate)
+            await subscriptionGate.WaitAsync(ct);
         var window = options is null ? null : new PhoneHomeEventWindow(options);
         _eventWindow = window;
         Interlocked.Exchange(ref _epoch, epoch);
