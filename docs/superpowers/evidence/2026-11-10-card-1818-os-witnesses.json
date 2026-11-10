@@ -1,0 +1,403 @@
+{
+  "version": 1,
+  "baseSha": "72fada66545c2dc96a0710827fbc57558700dd61",
+  "headSha": "674e0d24cb8c66559c04fda88d6a419011148702",
+  "inspectedPaths": [
+    {
+      "path": "scripts/qualification/qualification-stop.ps1",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 9,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 9,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        }
+      ]
+    },
+    {
+      "path": "scripts/qualification/stop-supervisor.ps1",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/test-qualification-stop.ps1",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 1079,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 1082,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        }
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/Program.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 89,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 89,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        }
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerRepositoryActivity.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerRepositoryMaintenance.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerRepositoryMaintenanceService.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerWorkspaceParkService.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 329,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 332,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        }
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 behavior is portable. No new OS branch.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 85,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 234,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 237,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 463,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 476,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 747,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2066,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2352,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2364,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2384,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2473,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2596,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2602,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 2609,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 3142,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 3703,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 3727,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 4713,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 4816,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 5012,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "base",
+          "line": 5014,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 87,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 242,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 245,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 471,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 484,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 755,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2074,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2360,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2372,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2392,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2481,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2604,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2610,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 2617,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 3150,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 3711,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 3735,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 4721,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 4824,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 5020,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 5022,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing OS guard. CARD-1818 does not change this line."
+        }
+      ]
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/C1818GcOwnerRobustnessTests.cs",
+      "disposition": "test-only",
+      "reason": "CARD-1818 test. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/C1818RepositoryMaintenanceStatusTests.cs",
+      "disposition": "test-only",
+      "reason": "CARD-1818 test. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    }
+  ],
+  "witnesses": [],
+  "restartImpact": {
+    "required": false,
+    "paths": [],
+    "additionalPaths": [],
+    "reason": "CARD-1818 changes no startup, AppHost, or build-slot path."
+  }
+}
