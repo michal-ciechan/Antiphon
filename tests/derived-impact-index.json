@@ -723,18 +723,18 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandNotificationService.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
         "RepositoryMutationLeaseOwnerTests",
         "RolePolicyToolBundleDispatchTests",
         "ImpactedClassesSelectorTests",
+        "DerivedImpactIndexTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTaskLandReceiptWatermarkTests",
-        "ReceiptScanDestinationIntegrationTests",
-        "AgentTaskLandNotificationParkFollowUpTests"
+        "ReceiptScanDestinationIntegrationTests"
       ]
     },
     {
