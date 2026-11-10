@@ -569,7 +569,7 @@ public class TerminalScreenTests
 	public void A_non_moving_escape_keeps_a_pending_wrap()
 	{
 		var s = S(10, 3);
-		s.Feed("ABCDEFGHIJ\x1b7X");
+		s.Feed("ABCDEFGHIJ" + "\x1b" + "7X");
 		s.GetRow(0).ShouldBe("ABCDEFGHIJ");
 		s.GetRow(1).ShouldBe("X", "ESC 7 is not a cursor move, so the owed wrap is still paid");
 		s.GetRow(2).ShouldBe("");
