@@ -211,6 +211,167 @@ public class RunnerStartupStaleObservationTests
         }
     }
 
+    // Windows rc 6591e378: the second PtyHost Claude launch failed in 4.7s with
+    // observation-unknown. FakeClaude prints "Fake Claude ready" before the CSI composer
+    // paint. A quiet period can close on that banner, and the probe's first write then
+    // refuses before the composer frame arrives. Nothing may be typed while the frame
+    // is unclassified; the caller's existing budget is the bound.
+    [Test]
+    public async Task A_pre_composer_banner_is_reread_inside_the_caller_budget_before_any_keystroke()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient();
+        client.ScreenForRead = n => n == 1 ? "Fake Claude ready" : null;
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            await session.WriteStartupAsync("zz", budget.Token);
+            client.Inputs.ShouldBe(["zz"]);
+            client.Attempts.ShouldBe([("zz", ConditionalInputOutcomes.Written)]);
+            client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
+    [Test]
+    public async Task A_banner_that_never_becomes_a_composer_waits_out_the_caller_and_writes_nothing()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient();
+        using var deadline = new CancellationTokenSource();
+        client.ScreenForRead = n =>
+        {
+            if (n >= 2) deadline.Cancel();
+            return "Fake Claude ready";
+        };
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        try
+        {
+            var thrown = await Should.ThrowAsync<OperationCanceledException>(
+                () => session.WriteStartupAsync("zz", deadline.Token));
+            thrown.ShouldBeAssignableTo<OperationCanceledException>();
+            client.Inputs.ShouldBeEmpty();
+            client.Attempts.ShouldBeEmpty();
+            client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
+    [Test]
+    public async Task A_dialog_that_appears_while_the_banner_is_unclassified_is_not_typed_into()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient();
+        client.ScreenForRead = n => n == 1 ? "Fake Claude ready" : PermissionScreen;
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            var refused = await Should.ThrowAsync<ProviderDialogInputRefusedException>(
+                () => session.WriteStartupAsync("zz", budget.Token));
+            refused.Reason.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+            client.Inputs.ShouldBeEmpty();
+            client.Attempts.ShouldBeEmpty();
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
+    [Test]
+    public async Task A_dialog_key_is_not_typed_into_the_composer_that_replaces_an_unclassified_banner()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient();
+        client.ScreenForRead = n => n == 1 ? "Fake Claude ready" : null;
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            var refused = await Should.ThrowAsync<ProviderDialogInputRefusedException>(
+                () => session.WriteStartupAsync("j", budget.Token));
+            refused.Reason.ShouldBe(ConditionalInputOutcomes.StaleObservation);
+            client.Inputs.ShouldBeEmpty();
+            client.Attempts.ShouldBeEmpty();
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
+    [Test]
+    public async Task A_blocked_permission_dialog_is_refused_before_any_wait()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient { FixedScreen = PermissionScreen };
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            var refused = await Should.ThrowAsync<ProviderDialogInputRefusedException>(
+                () => session.WriteStartupAsync("zz", budget.Token));
+            refused.Reason.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+            client.Inputs.ShouldBeEmpty();
+            client.Attempts.ShouldBeEmpty();
+            client.SnapshotReads.ShouldBe(1);
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
+    [Test]
+    public async Task The_fakeclaude_startup_paint_is_a_clear_composer_and_a_mangled_rule_stays_unknown()
+    {
+        ClaudeDialogObservation.Observe(Render(FakeClaudeStartupBytes(carriageReturn: true))).State
+            .ShouldBe(ClaudeDialogState.Clear);
+        ClaudeDialogObservation.Observe(Render("Fake Claude ready\r\n")).State
+            .ShouldBe(ClaudeDialogState.Unknown);
+        ClaudeDialogObservation.Observe(PermissionScreen).State
+            .ShouldBe(ClaudeDialogState.Blocked);
+        var oemRules = FakeClaudeStartupBytes(carriageReturn: true).Replace("\u2500", "\u00C4", StringComparison.Ordinal);
+        ClaudeDialogObservation.Observe(Render(oemRules)).State
+            .ShouldBe(ClaudeDialogState.Unknown);
+        ClaudeDialogObservation.Observe(Render(FakeClaudeStartupBytes(carriageReturn: false))).State
+            .ShouldBe(ClaudeDialogState.Unknown);
+    }
+
+    private static string Render(string bytes)
+    {
+        var screen = new TerminalScreen(120, 30);
+        screen.Feed(bytes);
+        return screen.GetScreenText();
+    }
+
+    /// <summary>The bytes <c>ANTIPHON_FAKE_CLAUDE_COMPOSER=1</c> writes before its read loop.</summary>
+    private static string FakeClaudeStartupBytes(bool carriageReturn)
+    {
+        var nl = carriageReturn ? "\r\n" : "\n";
+        var rule = new string('\u2500', 60);
+        return "Fake Claude ready" + nl
+            + "\x1b]0;\u2733\x07"
+            + "\x1b[2J\x1b[H"
+            + rule + nl
+            + "\u276f " + nl
+            + rule + nl
+            + "  \u23F5\u23F5 bypass permissions on (shift+tab to cycle)" + nl;
+    }
+
     private static RunnerClaudeAdapter NewAdapter(ISessionRunnerClient client) => new(
         client,
         Options.Create(new AgentRegistrySettings
@@ -256,6 +417,13 @@ public class RunnerStartupStaleObservationTests
         /// <summary>A modal in front of the composer; null shows the composer.</summary>
         public string? FixedScreen { get; set; }
 
+        /// <summary>
+        /// One-based snapshot read. Return a screen to show that frame, or null for
+        /// <see cref="FixedScreen"/> or the composer.
+        /// </summary>
+        public Func<int, string?>? ScreenForRead { get; set; }
+
+        public int SnapshotReads { get; private set; }
         public List<string> Inputs { get; } = [];
         public List<(string Input, string Outcome)> Attempts { get; } = [];
 
@@ -275,9 +443,13 @@ public class RunnerStartupStaleObservationTests
         public Task<SessionRunnerBufferDto> GetBufferAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult(new SessionRunnerBufferDto(sessionId, "", _sequence));
 
-        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) =>
-            Task.FromResult(new SessionRunnerSnapshotDto(sessionId, Screen, Screen, _sequence, _startedAt,
-                _guard.AcceptedStartedAt, _guard.Observe(sessionId, _sequence, Screen)));
+        public Task<SessionRunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct)
+        {
+            SnapshotReads++;
+            var screen = ScreenForRead?.Invoke(SnapshotReads) ?? Screen;
+            return Task.FromResult(new SessionRunnerSnapshotDto(sessionId, screen, screen, _sequence, _startedAt,
+                _guard.AcceptedStartedAt, _guard.Observe(sessionId, _sequence, screen)));
+        }
 
         public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId,
             RunnerConditionalInputRequest request, CancellationToken ct)
