@@ -123,13 +123,31 @@ public class ComposerInputProbeTests
     {
         var composer = new FakeComposer { DeafForever = true };
 
+        // Each poll advances the probe clock by the requested interval, so the three
+        // 100ms retypes fit in the 1000ms budget. A wall-clock Delay(10) does not.
+        var result = await ComposerInputProbe.RunAsync(
+            "zzdeadbeef", composer.SnapshotAsync, composer.WriteAsync,
+            FastOptions(timeoutMs: 1000, retypeMs: 100, maxWrites: 3), null, CancellationToken.None,
+            new SteppedPollTime());
+
+        result.Outcome.ShouldBe(ComposerProbeOutcome.NeverAppeared);
+        result.Writes.ShouldBe(3, "three writes inside the budget, including the first");
+        composer.Writes.Count(w => w == "zzdeadbeef").ShouldBe(3);
+    }
+
+    [Test]
+    public async Task A_poll_that_jumps_past_the_budget_does_not_retype()
+    {
+        var composer = new FakeComposer { DeafForever = true };
+
         var result = await ComposerInputProbe.RunAsync(
             "zzdeadbeef", composer.SnapshotAsync, composer.WriteAsync,
             FastOptions(timeoutMs: 1000, retypeMs: 100, maxWrites: 3), null, CancellationToken.None,
             new OvershootingPollTime());
 
-        result.Writes.ShouldBe(3, "three writes inside the budget, including the first");
-        composer.Writes.Count(w => w == "zzdeadbeef").ShouldBe(3);
+        result.Outcome.ShouldBe(ComposerProbeOutcome.NeverAppeared);
+        result.Writes.ShouldBe(2, "the timeout check runs before another retype");
+        composer.Writes.Count(w => w == "zzdeadbeef").ShouldBe(2);
     }
 
     // A composer we cannot empty must not have a boot prompt appended to it — the body would arrive
@@ -180,6 +198,25 @@ public class ComposerInputProbeTests
     {
         var id = Guid.Parse("8eb8aa9c-2c93-481c-bba6-8ab5a4825c7f");
         ComposerInputProbe.TokenFor(id).ShouldBe("zz8eb8aa9c");
+    }
+
+    /// <summary>Advances the probe clock by the delay the probe asked for.</summary>
+    private sealed class SteppedPollTime : TimeProvider
+    {
+        private long _stamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => _stamp;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime > TimeSpan.Zero)
+                _stamp += dueTime.Ticks;
+            callback(state);
+            return new NoopTimer();
+        }
     }
 
     /// <summary>
