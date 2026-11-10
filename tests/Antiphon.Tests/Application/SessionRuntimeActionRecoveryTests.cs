@@ -559,6 +559,143 @@ public class SessionRuntimeActionRecoveryTests
         (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-1455: age is CreatedAt, and the time bound fires below the attempt cap once the
+    // row has failed. Dropping the minutes clause leaves this row retrying.
+    [Test]
+    public async Task C1455_time_bound_abandons_aged_debt_after_one_failed_attempt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string destination = "aged-recipient";
+        const string first = "[Telegram Family] Aged question";
+        const string second = "[Telegram Family] Question after the aged debt";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var settings = h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>().Value;
+        settings.ReplyDebtGiveUpMinutes.ShouldBeGreaterThan(0);
+        settings.ReplyDebtGiveUpAttempts.ShouldBeGreaterThan(1);
+        var owed = await h.SeedChannelCorrelationAsync(first, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", first), Entry(h, 2, "AssistantText", "aged answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Failures.ShouldBeGreaterThan(0, "the real producer must be reached");
+        producer.Sent.ShouldBeEmpty();
+        await AgeDebtPastGiveUpAsync(h, settings.ReplyDebtGiveUpMinutes, attempts: 1);
+
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using (var db = h.CreateObserverContext())
+        {
+            var incident = (await db.AgentIncidents
+                    .Where(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost).ToListAsync())
+                .ShouldHaveSingleItem("an aged reply is reported once, below the attempt cap");
+            incident.FailureReason.ShouldBe("PublishFailed");
+            incident.Severity.ShouldBe(AlertSeverity.Critical);
+            (await db.SessionQueuedMessages.SingleAsync(m => m.Id == owed)).ChannelReplySettledAt
+                .ShouldNotBeNull("the time bound settles the correlation");
+            (await db.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0,
+                "the aged debt row is removed");
+        }
+
+        producer.Failing = false;
+        await h.SeedChannelCorrelationAsync(second, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", second), Entry(h, 5, "AssistantText", "later answer"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["later answer"], "later replies flow once aged debt is abandoned");
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
+    }
+
+    // CARD-1455: a row that only waited is not abandoned. Attempts == 0 keeps the time bound
+    // off, so the row gets the attempt it has not had. Dropping that guard abandons it here.
+    [Test]
+    public async Task C1455_untried_aged_debt_keeps_its_one_attempt()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string destination = "waited-recipient";
+        const string prompt = "[Telegram Family] Question that waited";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var settings = h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>().Value;
+        var owed = await h.SeedChannelCorrelationAsync(prompt, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", prompt), Entry(h, 2, "AssistantText", "waited answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        await AgeDebtPastGiveUpAsync(h, settings.ReplyDebtGiveUpMinutes, attempts: 0);
+
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using var db = h.CreateObserverContext();
+        (await db.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
+            .ShouldBe(0, "waiting is not a failed attempt, so the time bound does not abandon the row");
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == owed)).ChannelReplySettledAt
+            .ShouldBeNull("the correlation stays owed for the attempt the row has not had");
+        var debt = await db.SessionRuntimeActions.SingleAsync(a => a.AgentSessionId == h.SessionId);
+        debt.TriggerKind.ShouldBe(SessionRuntimeActionCoordinator.ChannelReplyDebt);
+        debt.Attempts.ShouldBe(1, "the aged untried row is attempted once, then waits for its next due time");
+    }
+
+    // CARD-1455: abandoning a row whose correlations are already settled is a Warning.
+    // Information here is the defect: the row is removed and nothing else names it.
+    [Test]
+    public async Task C1455_abandoning_settled_debt_is_a_warning()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var producer = new RecordingProducer { Failing = true };
+        var log = new DispatcherLog();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
+            ConfigureServices = s =>
+            {
+                s.AddSingleton<IAntiphonMessagingProducer>(producer);
+                s.AddSingleton<ILogger<ChannelReplyDispatcher>>(log);
+            }
+        });
+        const string destination = "settled-recipient";
+        const string prompt = "[Telegram Family] Already settled question";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        var settings = h.Provider.GetRequiredService<IOptions<ChannelBridgeSettings>>().Value;
+        var owed = await h.SeedChannelCorrelationAsync(prompt, "telegram:" + destination);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", prompt), Entry(h, 2, "AssistantText", "settled answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using (var db = h.CreateObserverContext())
+            await db.SessionQueuedMessages.Where(m => m.Id == owed)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ChannelReplySettledAt, DateTime.UtcNow));
+        await AgeDebtPastGiveUpAsync(h, settings.ReplyDebtGiveUpMinutes, attempts: 1);
+
+        await actions.DrainPageAsync(h.SessionId, default);
+        await using var verify = h.CreateObserverContext();
+        (await verify.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId && i.Kind == AgentIncidentKind.ChannelReplyLost))
+            .ShouldBe(0, "already settled correlations are not reported lost again");
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0,
+            "the exhausted row is still removed");
+        log.Entries.ShouldContain(e => e.Level == LogLevel.Warning && e.Message.Contains("already settled", StringComparison.Ordinal)
+            && e.Message.Contains("sequence 3", StringComparison.Ordinal));
+        log.Entries.ShouldNotContain(e => e.Level == LogLevel.Information && e.Message.Contains("already settled", StringComparison.Ordinal));
+    }
+
+    private static async Task AgeDebtPastGiveUpAsync(BridgeQueueHarness h, int giveUpMinutes, int attempts)
+    {
+        await using var db = h.CreateObserverContext();
+        await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u
+            .SetProperty(a => a.CreatedAt, DateTime.UtcNow.AddMinutes(-(giveUpMinutes + 1)))
+            .SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1))
+            .SetProperty(a => a.Attempts, attempts));
+    }
+
     // CARD-1454: a machine-turn note's debt key is the chat it publishes to, resolved once
     // and carried on the debt row. With unified recovery the two chats already exist, so the
     // newest chat is not the pre-injection context. With the default off, the second chat
@@ -751,6 +888,15 @@ public class SessionRuntimeActionRecoveryTests
             Sent.Add(reply);
             if (OnSend is not null) await OnSend();
         }
+    }
+
+    private sealed class DispatcherLog : ILogger<ChannelReplyDispatcher>
+    {
+        public ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex, Func<TState, Exception?, string> format)
+            => Entries.Enqueue((level, format(state, ex)));
     }
 
     private sealed class RecordingLogger : ILogger<SessionRuntimeActionCoordinator>
