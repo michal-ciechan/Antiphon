@@ -1235,8 +1235,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         try
         {
             var head = await _git.RunAsync(worktree, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+            // TryNormalize rejects a newline anywhere, and rev-parse writes a trailing one.
+            var observed = head.Output.Trim();
             return head.Succeeded
-                && GitObjectId.TryNormalize(head.Output, out var actual)
+                && GitObjectId.TryNormalize(observed, out var actual)
                 && string.Equals(actual, expected, StringComparison.Ordinal);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
