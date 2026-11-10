@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 306,
+      "classes": 307,
       "reason": "allowlist"
     },
     {
@@ -2015,9 +2015,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 126,
+      "classes": 127,
       "reason": "cap",
-      "owed": 101,
+      "owed": 102,
       "first": [
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -5359,6 +5359,7 @@
         "DispatchConcurrencyPipelineTests",
         "MutationAdmissionTests",
         "PostLandMutationAdmissionTests",
+        "SequentialOverrideWordingTests",
         "TaskCeilingHoldTests"
       ]
     },
@@ -17321,6 +17322,12 @@
       "path": "src/Antiphon.PtyHost/HostSession.cs",
       "classes": [
         "Card1619StopIntentTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.PtyHost/PosixProcessSpawner.cs",
+      "classes": [
+        "PosixProcessSpawnerStdioAliasTests"
       ]
     },
     {
