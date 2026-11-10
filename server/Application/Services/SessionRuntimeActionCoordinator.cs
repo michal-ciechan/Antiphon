@@ -159,13 +159,25 @@ public sealed class SessionRuntimeActionCoordinator(
             // action holds this session's order, without occupying a worker between retries.
             // Channel debt holds only later channel debt to the same destination (CARD-1434): the
             // earliest due row per conversation key runs; a null key is every destination.
+            // Late-confirmed sources count too, even when the carried key is a different chat
+            // (CARD-1826).
             var now = clock.GetUtcNow().UtcDateTime;
             var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
                     && (a.TriggerKind != ChannelReplyDebt || (a.DueAt <= now
                         && !db.SessionRuntimeActions.Any(b => b.AgentSessionId == sessionId
                             && b.TriggerKind == ChannelReplyDebt && b.Sequence < a.Sequence
                             && (b.ConversationKey == null || a.ConversationKey == null
-                                || b.ConversationKey == a.ConversationKey)))))
+                                || b.ConversationKey == a.ConversationKey
+                                || db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId
+                                    && m.ConversationKey != null
+                                    && ((a.LateConfirmedChannelMessageIds.Contains(m.Id)
+                                            && m.ConversationKey == b.ConversationKey)
+                                        || (b.LateConfirmedChannelMessageIds.Contains(m.Id)
+                                            && m.ConversationKey == a.ConversationKey)
+                                        || (a.LateConfirmedChannelMessageIds.Contains(m.Id)
+                                            && db.SessionQueuedMessages.Any(n => n.AgentSessionId == sessionId
+                                                && b.LateConfirmedChannelMessageIds.Contains(n.Id)
+                                                && n.ConversationKey == m.ConversationKey)))))))))
                 .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
                 .FirstOrDefaultAsync(ct);
             if (action is null) return false;
@@ -204,12 +216,24 @@ public sealed class SessionRuntimeActionCoordinator(
                         .SetProperty(a => a.DueAt, due).SetProperty(a => a.FailureReason, reason), ct);
                 Diagnostic(ex, "Action phase retained for retry", sessionId);
                 if (action.TriggerKind != ChannelReplyDebt) return false;
-                // Later replies to this destination wait for this one; they need no wakeup
-                // before it is due. Same key predicate as head selection.
+                // Later replies to a destination this row still owes wait for this one; they need
+                // no wakeup before it is due. Same destination predicate as head selection.
                 var key = action.ConversationKey;
+                var lateIds = action.LateConfirmedChannelMessageIds ?? [];
                 await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
                         && a.TriggerKind == ChannelReplyDebt && a.Sequence > action.Sequence && a.DueAt < due
-                        && (key == null || a.ConversationKey == null || a.ConversationKey == key))
+                        && (key == null || a.ConversationKey == null || a.ConversationKey == key
+                            || db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId
+                                && lateIds.Contains(m.Id) && m.ConversationKey != null
+                                && m.ConversationKey == a.ConversationKey)
+                            || (key != null && db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId
+                                && a.LateConfirmedChannelMessageIds.Contains(m.Id)
+                                && m.ConversationKey == key))
+                            || db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId
+                                && lateIds.Contains(m.Id) && m.ConversationKey != null
+                                && db.SessionQueuedMessages.Any(n => n.AgentSessionId == sessionId
+                                    && a.LateConfirmedChannelMessageIds.Contains(n.Id)
+                                    && n.ConversationKey == m.ConversationKey))))
                     .ExecuteUpdateAsync(s => s.SetProperty(a => a.DueAt, due), ct);
             }
         }
@@ -335,7 +359,11 @@ public sealed class SessionRuntimeActionCoordinator(
             if (route is not null)
                 owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
                         && a.TriggerKind == ChannelReplyDebt && a.Sequence < action.Sequence
-                        && (key == null || a.ConversationKey == null || a.ConversationKey == key))
+                        && (key == null || a.ConversationKey == null || a.ConversationKey == key
+                            || (key != null && db.SessionQueuedMessages.Any(m =>
+                                m.AgentSessionId == action.AgentSessionId
+                                && a.LateConfirmedChannelMessageIds.Contains(m.Id)
+                                && m.ConversationKey == key))))
                     .MaxAsync(a => (DateTime?)a.DueAt, ct);
             if (owed is null)
             {
@@ -379,7 +407,11 @@ public sealed class SessionRuntimeActionCoordinator(
         var key = keys.Count == 1 ? keys[0] : null;
         var owed = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == action.AgentSessionId
                 && a.TriggerKind == ChannelReplyDebt && a.Sequence <= action.Sequence
-                && (key == null || a.ConversationKey == null || a.ConversationKey == key))
+                && (key == null || a.ConversationKey == null || a.ConversationKey == key
+                    || (key != null && db.SessionQueuedMessages.Any(m =>
+                        m.AgentSessionId == action.AgentSessionId
+                        && a.LateConfirmedChannelMessageIds.Contains(m.Id)
+                        && m.ConversationKey == key))))
             .MaxAsync(a => (DateTime?)a.DueAt, ct);
         var now = clock.GetUtcNow().UtcDateTime;
         Exception? failure = null;
@@ -398,7 +430,8 @@ public sealed class SessionRuntimeActionCoordinator(
         if (debt is not null)
         {
             debt.LateConfirmedChannelMessageIds = debt.LateConfirmedChannelMessageIds.Union(ids).ToArray();
-            if (debt.ConversationKey != key) debt.ConversationKey = null;
+            // CARD-1826: a carried key is the chat this row publishes to. Late sources for
+            // another chat must not clear it; head selection still waits for their chats.
         }
         else
             db.SessionRuntimeActions.Add(new SessionRuntimeAction { Id = Guid.NewGuid(),

@@ -749,6 +749,22 @@ public class SessionRuntimeActionRecoveryTests
             "the note stays behind the other chat while that chat's reply is still owed");
         producer.Sent.ShouldAllBe(r => r.ConversationId == chatA);
 
+        await using (var db = h.CreateObserverContext())
+        {
+            var waiting = await db.SessionRuntimeActions.AsNoTracking()
+                .Where(a => a.AgentSessionId == h.SessionId
+                    && a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .Select(a => new { a.Id, a.LateConfirmedChannelMessageIds })
+                .ToListAsync();
+            var ids = waiting.Where(a => a.LateConfirmedChannelMessageIds.Contains(late)).Select(a => a.Id).ToList();
+            ids.Count.ShouldBe(1, "the note is still owed");
+            await db.SessionRuntimeActions.Where(a => ids.Contains(a.Id))
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        }
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Sent.Select(r => r.Text).ShouldBe(["owed answer A"],
+            "the note waits for the other chat's owed reply even though its own chat is clear");
+
         await h.SeedChannelCorrelationAsync(laterPrompt, "telegram:" + chatB);
         await h.Runtime.PersistTranscriptAsync(h.SessionId,
             [Entry(h, 10, "UserPrompt", laterPrompt), Entry(h, 11, "AssistantText", "later answer"), Entry(h, 12, "TurnEnd", null)]);

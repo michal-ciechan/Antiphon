@@ -141,6 +141,16 @@ A machine-turn note takes that debt keyed by the chat it publishes to. The chat 
 resolved once and stored on the debt row: unified recovery uses the channel context
 from before the injection, and the default path uses the newest channel chat at
 resolution, so a later retry publishes there (CARD-1454).
+A late-confirmed source for a different chat can merge onto that row. The carried
+key stays the note's chat (CARD-1826); the row still waits for the late source's
+chat as well as its own.
+A machine-turn debt row saved before CARD-1454 carries whatever chat was newest
+then. Only when `ChannelOutbound:UnifiedRecoveryEnabled` is on, a retry of such a
+row uses that stored key instead of the pre-injection chat, while the reply handle
+still comes from the pre-injection chat. Rows still owed across that deploy are the
+only ones affected, and the give-up bound is 10 minutes by default. Nothing
+normalises them: they drain or expire on the key they already have. Rows saved
+after the deploy carry the chat the note publishes to.
 The debt is abandoned after `ChannelBridge:ReplyDebtGiveUpAttempts` (default 20; 0 disables)
 failed attempts, or `ChannelBridge:ReplyDebtGiveUpMinutes` (default 10; 0 disables; at most
 `PendingReplyTtlMinutes`) after the row was created once it has failed at least once. Its open

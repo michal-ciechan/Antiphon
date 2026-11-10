@@ -25,6 +25,7 @@ public sealed class SessionRuntimeAction
     /// <summary>
     /// CARD-1434: the destination (<c>{provider}:{conversationId}</c>) a channel debt row publishes to.
     /// Null means every destination: the turn addressed more than one conversation, or none is known.
+    /// Late-confirmed sources for a different chat do not clear a key the row already carries (CARD-1826).
     /// </summary>
     public string? ConversationKey { get; set; }
 }
