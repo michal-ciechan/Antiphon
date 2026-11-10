@@ -487,6 +487,32 @@ public sealed class WindowsUnitPlatformAdmissionTests
         return observed.Order(StringComparer.Ordinal).ToArray();
     }
 
+    [Test]
+    public void C1226_Pin_inspection_methods_skip_off_linux()
+    {
+        var path = Path.Combine(DelegateScriptRunner.RepoRoot,
+            "tests/Antiphon.SessionRunner.Tests/AgentPinWorkspaceStoreTests.cs");
+        var root = CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot();
+        var methods = root.DescendantNodes().OfType<MethodDeclarationSyntax>()
+            .Where(method => method.Identifier.ValueText is "V32_InspectPosixPaths" or "V13_InspectPathSafety")
+            .ToArray();
+        methods.Select(method => method.Identifier.ValueText).Order(StringComparer.Ordinal).ShouldBe(
+            new[] { "V13_InspectPathSafety", "V32_InspectPosixPaths" }, "c1226-methods");
+        var skip = SyntaxFactory.ParseStatement(
+            "Skip.Unless(OperatingSystem.IsLinux(), \"CARD-1226: CP-4a requires native Linux qualification; POSIX paths and mkfifo cannot run on Windows, so this method skips.\");");
+        var qualification = SyntaxFactory.ParseStatement(
+            "OperatingSystem.IsLinux().ShouldBeTrue(\"CP-4a requires native Linux qualification\");");
+        foreach (var method in methods)
+        {
+            var name = method.Identifier.ValueText;
+            var statements = method.Body?.Statements;
+            statements.ShouldNotBeNull("c1226-body: " + name);
+            SyntaxFactory.AreEquivalent(statements![0], skip).ShouldBeTrue("c1226-skip-first: " + name);
+            statements.Any(statement => SyntaxFactory.AreEquivalent(statement, qualification))
+                .ShouldBeTrue("c1226-linux-qualification: " + name);
+        }
+    }
+
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1210_Windows_linux_only_outcomes_are_exact(CancellationToken cancellationToken)
     {
