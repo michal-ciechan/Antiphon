@@ -146,6 +146,9 @@ internal sealed class RecordingTaskProgressGit(ITaskProgressGit inner, LeaseSpan
     /// <summary>(repository, revision) => true to fail that rev-parse with repair_source_identity_unavailable.</summary>
     public Func<string, string, bool>? FailRevParse { get; set; }
 
+    /// <summary>Pin name => true to answer <c>pin_failed</c> without calling git. CARD-1476.</summary>
+    public Func<string, bool>? FailPin { get; set; }
+
     public Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, CancellationToken ct) =>
         inner.RunAsync(repository, arguments, ct);
 
@@ -194,6 +197,8 @@ internal sealed class RecordingTaskProgressGit(ITaskProgressGit inner, LeaseSpan
     public Task<ProgressPinResult> PinBaselineAsync(string repository, Guid taskId, string name, string sha, CancellationToken ct)
     {
         log.Add($"progress:pin:{name}");
+        if (FailPin?.Invoke(name) == true)
+            return Task.FromResult(new ProgressPinResult(false, Reason: "pin_failed"));
         return inner.PinBaselineAsync(repository, taskId, name, sha, ct);
     }
 

@@ -4,6 +4,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Shouldly;
 using TUnit.Core;
 
@@ -149,5 +150,97 @@ public sealed class DispatcherLeaseSpanTests
         var leases = f.Provider.GetRequiredService<IRepositoryMutationLease>();
         await using var probe = await leases.TryAcquireAsync(f.Repo.Path, default);
         probe.ShouldNotBeNull("R is free after the failed claim: " + log.Trace);
+    }
+
+    /// <summary>
+    /// CARD-1476. A Shared claim has no cut and no baseline capture, so the Worktree-only
+    /// release must not run. R stays held through <c>dispatch-warning-claim-before-commit</c>
+    /// and is released once, before <c>dispatch-warning-claim-committed</c>. Dropping the
+    /// Worktree guard releases R before the before-commit boundary.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1476_shared_claim_keeps_the_lease_through_commit()
+    {
+        var log = new LeaseSpanLog();
+        await using var f = await SiblingInspectionFixture.CreateAsync(
+            configure: services =>
+            {
+                LeaseSpanLog.Install(services, log);
+                services.RemoveAll<LandDeliveryBoundary>();
+                services.AddSingleton<LandDeliveryBoundary>(new SpanBoundary(log));
+            });
+        await using (var write = f.Read())
+        {
+            var row = await write.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+            row.Workspace = WorkspaceMode.Shared;
+            await write.SaveChangesAsync();
+        }
+
+        var tick = await f.TickAsync();
+
+        tick.Dispatched.ShouldBe(1, log.Trace);
+        await using (var read = f.Read())
+        {
+            var task = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            task.Workspace.ShouldBe(WorkspaceMode.Shared);
+            task.AgentSessionId.ShouldNotBeNull();
+            task.ProgressBaselineJson.ShouldBeNullOrEmpty("a Shared claim has no baseline capture");
+        }
+
+        var before = log.IndexOf("boundary:dispatch-warning-claim-before-commit");
+        var released = log.IndexOf(LeaseSpanLog.DispatchReleased);
+        var committed = log.IndexOf("boundary:dispatch-warning-claim-committed");
+        log.IndexOf(LeaseSpanLog.DispatchAcquired).ShouldBeGreaterThanOrEqualTo(0, "the Shared claim took R: " + log.Trace);
+        before.ShouldBeGreaterThanOrEqualTo(0, "the claim reached the pre-commit boundary: " + log.Trace);
+        released.ShouldBeGreaterThan(before, "R was released before the claim commit: " + log.Trace);
+        committed.ShouldBeGreaterThan(released, "the post-commit boundary did not follow the release: " + log.Trace);
+        log.Count(LeaseSpanLog.DispatchReleased).ShouldBe(1, "the later disposal is idempotent: " + log.Trace);
+        log.Count(LeaseSpanLog.Pin).ShouldBe(0, "a Shared claim does not pin a baseline: " + log.Trace);
+    }
+
+    /// <summary>
+    /// CARD-1476. <c>CaptureProgressBaselineAsync</c> used to ignore <c>PinBaselineAsync</c>.
+    /// A failed pin is a warning on the claim. The claim still captures its source identity
+    /// and launches: the branch tip keeps the object reachable.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C1476_failed_baseline_pin_is_reported()
+    {
+        var log = new LeaseSpanLog();
+        await using var f = await SiblingInspectionFixture.CreateAsync(
+            configure: services => LeaseSpanLog.Install(services, log,
+                git => git.FailPin = name => name == "primary-local"));
+
+        await f.ObserveAsync();
+        var tick = await f.TickAsync();
+
+        tick.Dispatched.ShouldBe(1, log.Trace);
+        await using (var read = f.Read())
+        {
+            var task = await read.AgentTasks.SingleAsync(t => t.Id == f.Task.Id);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
+            task.ProgressBaselineJson.ShouldNotBeNullOrEmpty("a failed pin does not drop the captured identity");
+            var warnings = await read.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Warning)
+                .Select(e => e.Detail)
+                .ToListAsync();
+            warnings.ShouldContain(d => d.Contains(
+                "baseline pin failed: primary-local reason=pin_failed", StringComparison.Ordinal),
+                log.Trace + " warnings=[" + string.Join(" | ", warnings) + "]");
+        }
+
+        log.Count(LeaseSpanLog.Pin + "primary-local").ShouldBeGreaterThan(0, log.Trace);
+    }
+
+    private sealed class SpanBoundary(LeaseSpanLog log) : LandDeliveryBoundary
+    {
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            log.Add("boundary:" + boundary);
+            return Task.CompletedTask;
+        }
     }
 }
