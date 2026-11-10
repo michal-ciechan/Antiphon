@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Application.C0824RefOnlyCleanupTests.Remote_cleanup_still_uses_its_binding_and_generation",
+      "reasonPrefix": "S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.RemoteScriptContractTests.C1105_Resume_extraction_is_closed",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests.C1008_Host_proof_admits_only_an_authenticated_private_origin",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests.C1008_Host_proof_file_omits_credentials",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Recheck_target_refuses_a_changed_fingerprint",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Valid_token_refuses_protected_names_and_keeps_host_state",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.State_volume_named_in_the_plan_is_refused_before_delete",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Manual_apply_refuses_until_the_operation_token_matches",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Refused_apply_keeps_the_ready_preview",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Scripted_apply_refuses_until_the_operation_token_matches",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Resume_refuses_until_the_operation_token_matches",
+      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.SessionRunner.Tests.RunnerChildClaudeTokenInheritanceTests.Claude_launch_seeds_trust_in_the_runner_config_dir",
+      "reasonPrefix": "Claude trust spawn uses a claude symlink to sh."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+      "reasonPrefix": "20 missing-context"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Application.C0824RefOnlySyncTests.Reported_tip_and_mirror_publication_keep_existing_contract",
+      "reasonPrefix": "S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Checkpoints.CheckpointColdBuildTests.C1734_Cold_build_preserves_native_obj_and_terminal_receipt",
+      "reasonPrefix": "Exec target builds the Linux native helper"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Checkpoints.CheckpointColdBuildTests.C1734_Real_tampering_keeps_a_red_terminal_report",
+      "reasonPrefix": "Exec target builds the Linux native helper"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Application.LandGraphEvaluationTests.EvaluationBudgetRefusesSlowDotnet",
+      "reasonPrefix": "The slow evaluator is a PATH shim named dotnet; Windows process start resolves dotnet.exe."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B2_ReusedInodeIsANewDirectoryIdentity",
+      "reasonPrefix": "Inode reuse is the Linux identity; Windows file ids are a separate native witness."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_BytesChangedDuringTheWalkAreKept",
+      "reasonPrefix": "The mid-walk receipt checks are the Linux no-follow deleter; Windows needs a native witness."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_LateRepositoryMarkerAboveTheWalkStopsIt",
+      "reasonPrefix": "The late-marker walk is the Linux no-follow deleter."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_LateRepositoryMarkerStopsTheWalk",
+      "reasonPrefix": "The late-marker walk is the Linux no-follow deleter."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_NameAddedToAnUnwalkedDirectoryHolds",
+      "reasonPrefix": "The mid-walk receipt checks are the Linux no-follow deleter; Windows needs a native witness."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_NameAddedToTheWalkedDirectoryHolds",
+      "reasonPrefix": "The mid-walk receipt checks are the Linux no-follow deleter; Windows needs a native witness."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_B3_WriteThroughAnOpenHandleDuringTheHashIsKept",
+      "reasonPrefix": "The inotify-timed writer is Linux; the Windows deny-write hash is C1717_B3_WindowsOpenWriterRefusesTheDelete."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_D5_ExchangedSymlinkDoesNotDeleteOutsideFiles",
+      "reasonPrefix": "The ancestor exchange uses Linux renameat2."
+    }
+  ]
+}
