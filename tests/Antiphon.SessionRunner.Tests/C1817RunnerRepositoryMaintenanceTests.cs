@@ -404,6 +404,47 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
     }
 
     [Test]
+    public void C1817_forced_windows_fixture_uses_no_posix_tool()
+    {
+        MaintenanceFixture.ForceWindows = true;
+        try
+        {
+            Path.GetFileName(MaintenanceFixture.SleepStart(30).FileName).ShouldBe("cmd.exe");
+            Path.GetFileName(MaintenanceFixture.TrueStart().FileName).ShouldBe("cmd.exe");
+            MaintenanceFixture.HolderStart("packed-refs.lock").FileName.ShouldNotContain("/bin/");
+            MaintenanceFixture.IdentityKind.ShouldBe("content");
+            var junctionCalled = false;
+            Exception? thrown = null;
+            try
+            {
+                MaintenanceFixture.LinkDirectory("link", "target",
+                    (_, _) => throw new IOException("symlink privilege"),
+                    (_, _) => junctionCalled = true);
+            }
+            catch (Exception ex) { thrown = ex; }
+            junctionCalled.ShouldBeTrue(thrown?.Message);
+        }
+        finally { MaintenanceFixture.ForceWindows = null; }
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public void C1817_commit_fixture_pins_identity_and_disables_signing()
+    {
+        var root = Temp("id");
+        try
+        {
+            var repo = Repo(root, "antiphon", 1);
+            var config = File.ReadAllText(Path.Combine(repo, ".git", "config"));
+            config.ShouldContain("name = c1817");
+            config.ShouldContain("email = c1817@example.com");
+            config.ShouldContain("gpgsign = false");
+            config.ShouldContain("hooksPath = " + (OperatingSystem.IsWindows() ? "NUL" : "/dev/null"));
+        }
+        finally { Delete(root); }
+    }
+
+    [Test]
     public void C1817_status_omits_a_null_maintenance_result()
     {
         var sample = new RunnerRepositoryMaintenanceStatus(DateTimeOffset.UnixEpoch, []);
