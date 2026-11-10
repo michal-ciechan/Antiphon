@@ -6111,6 +6111,7 @@ public sealed partial class AgentTaskDispatcher
         // no capture; it keeps R through its commit so a land's writer search
         // (AgentTaskLandService.FindWriterAsync) still reads it under the same lease.
         // DispatcherLeaseSpanTests.C1430_lease_is_released_before_the_baseline_capture.
+        // DispatcherLeaseSpanTests.C1476_shared_claim_keeps_the_lease_through_commit.
         if (claimed.Workspace == WorkspaceMode.Worktree && repositoryLease is not null)
             await repositoryLease.DisposeAsync();
 
@@ -8058,6 +8059,7 @@ public sealed partial class AgentTaskDispatcher
 
         ProgressSourceBaseline? repair = null;
         string? warning = null;
+        var pinNotes = new List<string>();
         if (task.RepairSourceTaskId is Guid ownerId)
         {
             var owner = await _db.AgentTasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == ownerId, ct);
@@ -8072,17 +8074,30 @@ public sealed partial class AgentTaskDispatcher
                 warning = $"progress=unavailable; reason={ownerRemote.Reason ?? "source_remote_unreadable"}";
             repair = new ProgressSourceBaseline(
                 repo, common, owner.Id, owner.WorktreePath, ownerRef, ownerSha.Sha, ownerRemote);
-            await _progressGit.PinBaselineAsync(repo, task.Id, "repair-local", ownerSha.Sha, ct);
+            await RecordPinAsync("repair-local", ownerSha.Sha);
             if (ownerRemote is { State: ProgressRemoteState.Present, Sha: { } ownerRemoteSha })
-                await _progressGit.PinBaselineAsync(repo, task.Id, "repair-remote", ownerRemoteSha, ct);
+                await RecordPinAsync("repair-remote", ownerRemoteSha);
         }
 
-        await _progressGit.PinBaselineAsync(repo, task.Id, "primary-local", primarySha.Sha, ct);
+        await RecordPinAsync("primary-local", primarySha.Sha);
         if (primaryRemote is { State: ProgressRemoteState.Present, Sha: { } primaryRemoteSha })
-            await _progressGit.PinBaselineAsync(repo, task.Id, "primary-remote", primaryRemoteSha, ct);
+            await RecordPinAsync("primary-remote", primaryRemoteSha);
+
+        if (pinNotes.Count > 0)
+        {
+            var pinWarning = string.Join("; ", pinNotes);
+            warning = warning is null ? pinWarning : $"{warning}; {pinWarning}";
+        }
 
         var snapshot = new ProgressBaselineSnapshot(1, capturedAt, capturedAt, primary, repair);
         return new(TaskProgressJson.SerializeBaseline(snapshot), warning, null);
+
+        async Task RecordPinAsync(string name, string sha)
+        {
+            var pinned = await _progressGit.PinBaselineAsync(repo, task.Id, name, sha, ct);
+            if (!pinned.Succeeded)
+                pinNotes.Add($"baseline pin failed: {name} reason={pinned.Reason ?? "pin_failed"}");
+        }
     }
 
     private async Task<ProgressRemoteBaseline> ObserveRemoteForBaselineAsync(
