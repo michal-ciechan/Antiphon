@@ -136,7 +136,9 @@ internal sealed class RunnerTerminalSession
     internal async Task WriteStartupAsync(string input, CancellationToken ct)
     {
         ClaudeDialogInputIntent? firstIntent = null;
-        for (var attempt = 1; ; attempt++)
+        var heldUnclassified = false;
+        var attempt = 0;
+        while (true)
         {
             var snapshot = await GetSnapshotAsync(ct);
             var screen = snapshot.RenderedScreen;
@@ -149,6 +151,24 @@ internal sealed class RunnerTerminalSession
                         ClaudeEffortOption.Switch => ClaudeDialogInputIntent.StartupEffortSwitch,
                         _ => ClaudeDialogInputIntent.None
                     } : ClaudeDialogInputIntent.None;
+            // A pre-composer banner (or any frame the reader cannot classify yet) is not a
+            // refusal and not a stale-observation attempt. Write nothing and re-read inside
+            // the caller's probe budget. Custody failures and a Blocked dialog still refuse
+            // immediately below.
+            if (intent == ClaudeDialogInputIntent.None && UnclassifiedCustodyHolds(snapshot.Dialog))
+            {
+                heldUnclassified = true;
+                await Task.Delay(StartupStaleObservationRetryDelay, ct);
+                continue;
+            }
+            if (heldUnclassified && (intent != ClaudeDialogInputIntent.None
+                || snapshot.Dialog?.State == ProviderDialogState.Blocked))
+                throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ModalBlocked);
+            // A dialog key whose dialog was already gone on the first snapshot must not be
+            // typed into the composer that replaces the banner. The probe token is the input
+            // this wait exists for.
+            if (heldUnclassified && !IsComposerProbeToken(input))
+                throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.StaleObservation);
             // The caller chose this input for the screen it saw. A re-observed screen that now
             // calls for another intent (a trust dialog gone, an effort menu moved) is not the
             // screen the input answers, so it keeps the refusal instead of re-sending.
@@ -159,9 +179,11 @@ internal sealed class RunnerTerminalSession
                 throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
             var request = ProviderDialogObservationService.Request(snapshot.Dialog, _sessionId, generation, input, intent);
             var result = await _client.SendConditionalInputAsync(_sessionId, request, ct);
+            attempt++;
             // StaleObservation guarantees ZERO backend bytes, so the same input may be re-sent
             // against a fresh snapshot, within the caller's readiness deadline. Written/Unknown and
             // every other result are terminal: never replay a keystroke that may have arrived.
+            // Unclassified-frame waits above do not increment this count.
             if (result.Outcome != ConditionalInputOutcomes.StaleObservation || attempt >= StartupStaleObservationAttempts)
             {
                 ProviderDialogObservationService.RequireWritten(result);
@@ -169,6 +191,34 @@ internal sealed class RunnerTerminalSession
             }
             await Task.Delay(StartupStaleObservationRetryDelay, ct);
         }
+    }
+
+    /// <summary>
+    /// Custody is valid and the frame is neither Clear nor Blocked. A null observation,
+    /// a foreign session, an empty runtime epoch, unknown input history, or a generation
+    /// mismatch is a real observation-unknown and must not wait.
+    /// </summary>
+    private bool UnclassifiedCustodyHolds(ProviderDialogObservation? observation)
+    {
+        if (_acceptedGeneration is not { } generation)
+            return false;
+        if (observation is null || observation.SessionId != _sessionId || observation.RuntimeEpoch == Guid.Empty
+            || !observation.InputHistoryKnown
+            || !SessionGeneration.Equal(observation.AcceptedStartedAt, generation))
+            return false;
+        return observation.State != ProviderDialogState.Clear && observation.State != ProviderDialogState.Blocked;
+    }
+
+    private static bool IsComposerProbeToken(string input)
+    {
+        if (input.Length < 2)
+            return false;
+        foreach (var c in input)
+        {
+            if (!char.IsAsciiLetterOrDigit(c))
+                return false;
+        }
+        return true;
     }
 
     internal async Task SendGuardedLineAsync(string line, CancellationToken ct)
