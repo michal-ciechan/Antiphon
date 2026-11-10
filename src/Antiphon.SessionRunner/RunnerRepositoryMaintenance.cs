@@ -75,11 +75,15 @@ public sealed class RunnerRepositoryMaintenance
     /// <summary>Arguments of the last gc the pass started. Tests read this; production logs the counts.</summary>
     internal IReadOnlyList<string>? LastArguments { get; private set; }
 
+    /// <summary>CARD-1818. Runs once per pass, before any repository. Production leaves it unset.</summary>
+    internal Action? BeforePass { get; set; }
+
     public static bool IsDue(DateTimeOffset now, int looseObjects, int threshold, DateTimeOffset? lastRunUtc, TimeSpan interval) =>
         looseObjects >= threshold || lastRunUtc is { } last && now - last >= interval;
 
     public async Task<RunnerRepositoryMaintenanceStatus> RunAsync(CancellationToken ct, bool force = false)
     {
+        BeforePass?.Invoke();
         var now = _clock.GetUtcNow();
         var repos = Discover(_root);
         var reports = new List<RunnerRepositoryMaintenanceReport>(repos.Count);

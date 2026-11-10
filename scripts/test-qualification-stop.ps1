@@ -486,6 +486,90 @@ function C1507_CommandLineIdentity {
         'a blank recorded command line does not change the pid and start-time check' ($blankCommandResult.detail + ' calls=' + $calls.Count)
 }
 
+function C1507_PostKillReusedSkipsTheCensus {
+    foreach ($later in @('reused', 'unknown')) {
+        $laterStatus = [string]$later
+        $seen = @{ n = 0 }
+        $world = New-C1507World
+        $world.map['4100'] = 'alive'
+        $world.map['4200'] = 'alive'
+        $world.children = @{ '4100' = @() }
+        $observe = {
+            param($Record)
+            $seen.n++
+            $key = [string][int]$Record.pid
+            $status = $world.map[$key]
+            if (-not $status) { $status = 'absent' }
+            return [pscustomobject]@{ status = $status; reason = $status }
+        }.GetNewClosure()
+        $stop = {
+            param([int]$ProcessId)
+            $world.calls.Add($ProcessId)
+            if ($ProcessId -eq 4100) {
+                $world.map['4100'] = 'absent'
+                $world.map['4200'] = $laterStatus
+            }
+            return [pscustomobject]@{ ok = $true; reason = 'stopped'; command = (Get-QualificationWindowsTreeStopCommand -ProcessId $ProcessId) }
+        }.GetNewClosure()
+        $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } @{ pid = 4200; processStartedAt = '2026-11-09T00:00:01.0000000Z' } @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $result = Invoke-QualificationRecordedStop -TaskRoot $fixture.Task -CoordinationRoot $fixture.Coord -RunId $fixture.RunId -Reason 'operator replacement' -Platform 'Windows' -CensusMilliseconds 4000 -Observe $observe -StopTree $stop
+        $sw.Stop()
+        Assert-C1507 ($result.exitCode -eq 3 -and $result.outcome -eq 'incomplete' -and $result.lockAction -eq 'not-attempted' -and @($result.kills).Count -eq 1 -and $seen.n -le 6 -and $sw.ElapsedMilliseconds -lt 2500) `
+            ('post-kill ' + $laterStatus + ' skips the census') ($result.detail + ' n=' + $seen.n + ' ms=' + $sw.ElapsedMilliseconds)
+    }
+}
+
+function C1507_FaultAfterKillKeepsTheKillList {
+    $entry = [IO.File]::ReadAllText($script:stopScript)
+    Assert-C1507 ($entry -notmatch 'log-unwritten') 'stop-supervisor does not call a later fault log-unwritten' 'still says log-unwritten'
+    $world = New-C1507World
+    $world.map['4100'] = 'alive'
+    $world.children = @{}
+    $observe = New-C1507Observe $world
+    $stop = New-C1507Stop $world
+    $fixture = New-C1507Fixture @{ pid = 4100; processStartedAt = '2026-11-09T00:00:00.0000000Z' } $null @{ pid = 4300; processStartedAt = '2026-11-09T00:00:02.0000000Z'; runId = 'c1507run' }
+    $evidence = Join-Path $fixture.Task 'evidence-file'
+    [IO.File]::WriteAllText($evidence, 'not-a-directory')
+    $lockPath = Join-Path $fixture.Coord 'native-run.lock'
+    $lockBefore = Get-C1507Hash $lockPath
+    $threw = $false
+    $result = $null
+    $thrown = ''
+    try {
+        $result = Invoke-QualificationRecordedStop -TaskRoot $fixture.Task -CoordinationRoot $fixture.Coord -RunId $fixture.RunId -Reason 'operator replacement' -Platform 'Windows' -CensusMilliseconds 0 -Observe $observe -StopTree $stop -EvidenceRoot $evidence
+    } catch {
+        $threw = $true
+        $thrown = [string]$_.Exception.Message
+    }
+    $log = Join-Path $fixture.Task 'supervisor.log'
+    $logText = ''
+    if ([IO.File]::Exists($log)) { $logText = [IO.File]::ReadAllText($log) }
+    $detail = ''
+    $exit = -1
+    $kills = 0
+    $phase = ''
+    $lockAction = ''
+    if (-not $threw) {
+        $detail = [string]$result.detail
+        $exit = [int]$result.exitCode
+        $kills = @($result.kills).Count
+        if ($kills -ge 1) { $phase = [string]$result.kills[0].phase }
+        $lockAction = [string]$result.lockAction
+    }
+    $shown = $thrown
+    if (-not $threw) { $shown = $detail + ' lock=' + $lockAction + ' log=' + $logText }
+    Assert-C1507 (-not $threw -and $exit -eq 3 -and $kills -eq 1 -and $phase -eq 'supervisor' -and $detail -match 'stop-fault' -and $detail -notmatch 'log-unwritten' -and $lockAction -eq 'not-attempted' -and (Get-C1507Hash $lockPath) -ceq $lockBefore -and $logText -match 'killed=supervisor:4100') `
+        'a fault after the kill keeps the kill list and the lock' $shown
+}
+
+function C1507_OwedNativeWindowsStop {
+    $path = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs/release-gates.md'
+    $text = [IO.File]::ReadAllText($path)
+    Assert-C1507 ($text.Contains('Win32_Process.CommandLine') -and $text.Contains('taskkill-exit-N') -and $text.Contains('No current producer writes commandLine')) `
+        'the owed native Windows stop is named and not claimed' 'missing owed sentence'
+}
+
 function C1507_EntryRefusesOffWindows {
     $platform = Get-QualificationStopPlatform
     if ($platform -cne 'Unix') {
@@ -517,6 +601,9 @@ try {
         'C1507_LogWriteFailure',
         'C1507_CommandLineIdentity',
         'C1507_WindowsTreeStopRefusesOffWindows',
+        'C1507_PostKillReusedSkipsTheCensus',
+        'C1507_FaultAfterKillKeepsTheKillList',
+        'C1507_OwedNativeWindowsStop',
         'C1507_EntryRefusesOffWindows'
     )
     if ($Case -ne 'Smoke') {
