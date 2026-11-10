@@ -55,6 +55,35 @@ public class SessionHealthTests
     }
 
     [Test]
+    public async Task Unavailable_connection_count_does_not_record_rc_degraded()
+    {
+        var tempRoot = NewTempRoot();
+        try
+        {
+            await using var harness = BuildHarness(tempRoot);
+            var (agent, sessionId) = await CreateSupervisedRunningAgentAsync(harness, tempRoot);
+            harness.Runner.Sessions = [RunnerDto(sessionId, pid: 4242, lastSeq: 10)];
+            harness.Probe.Armed = false;
+            harness.Probe.StateFileFound = false;
+            harness.Probe.Connections = 0;
+            harness.Probe.ConnectionCountMeasured = false;
+
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            (await harness.Health().TickAsync(CancellationToken.None)).ShouldBe(0);
+            harness.Actions.AutomaticArms.ShouldBeEmpty();
+            harness.Actions.KilledSessions.ShouldBeEmpty();
+
+            await using var verify = CreateContext();
+            (await verify.AgentIncidents.AnyAsync(
+                i => i.AgentId == agent.Id && i.Kind == AgentIncidentKind.RcDegraded)).ShouldBeFalse();
+        }
+        finally
+        {
+            await CleanupAsync(tempRoot);
+        }
+    }
+
+    [Test]
     public async Task C514_Repeated_rc_degradation_never_kills()
     {
         var tempRoot = NewTempRoot();
@@ -576,6 +605,9 @@ public class SessionHealthTests
 
         /// <summary>False models an unreadable/absent session file — the probe knows nothing.</summary>
         public bool StateFileFound { get; set; } = true;
+
+        /// <summary>False means <see cref="Connections"/> is not a count. Not forwarded until the omission lands.</summary>
+        public bool ConnectionCountMeasured { get; set; } = true;
 
         public RcProbeResult Probe(int pid) => new(Armed, Connections, StateFileFound);
     }

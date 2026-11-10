@@ -23,6 +23,13 @@ public sealed class WindowsRcBridgeProbe : IRcBridgeProbe
         return new RcProbeResult(armed, connections, found);
     }
 
+    // S1 seam: the bool is ignored so today's body still returns a measured count.
+    internal RcProbeResult Probe(int pid, bool platformCanCount)
+    {
+        _ = platformCanCount;
+        return Probe(pid);
+    }
+
     private static (bool Armed, bool Found) ReadArmedState(int pid)
     {
         try
