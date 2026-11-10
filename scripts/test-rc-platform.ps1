@@ -74,6 +74,7 @@ function Test-C1323_PlatformPolicy {
     $authorityPolicy = ConvertFrom-ReleaseAuthorityPolicyBytes $bytes
     $expectedSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e', 'markdown-pdf')
     if ($policy.suites.observability) { $expectedSuites += 'observability' }
+    if ($policy.suites.PSObject.Properties.Name -contains 'server-git') { $expectedSuites += 'server-git' }
     $observabilityRequired = $true
     if ($policy.suites.observability) {
         $missing = Copy-C1323Object $policy

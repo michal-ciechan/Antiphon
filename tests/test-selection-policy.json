@@ -96,6 +96,15 @@
     },
     {
       "partition": "",
+      "pattern": "^(src/Antiphon\\.Server\\.Git/|tests/Antiphon\\.Server\\.Git\\.Tests/).*$",
+      "sets": [
+        "server.git"
+      ],
+      "full": false,
+      "id": "P-SERVER-GIT"
+    },
+    {
+      "partition": "",
       "pattern": "^client/.*$",
       "sets": [
         "client",
@@ -3105,6 +3114,136 @@
         "browser": false,
         "docker": false
       }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"
+      ],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+        "tests/Antiphon.Tests/Application/GitIndexLockPathTests.cs"
+      ],
+      "reason": "CARD-1546: edits under the Git project or its mirror select the covering tests that stayed in Antiphon.Tests. The mirrored project is the remainder.",
+      "owner": "CARD-1546",
+      "members": [
+        {
+          "method": "C1432_land_git_reads_gc_auto_zero",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_append_preserves_existing_entries",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_invalid_count_throws",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_every_server_git_start_site_disables_auto_maintenance",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_scanner_accepts_a_non_launching_probe_and_two_guarded_launches",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_scanner_names_each_unguarded_launch",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_scanner_rejects_a_third_unguarded_launch",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_scanner_rejects_guards_that_do_not_protect_the_launch",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1432_scanner_rejects_a_launching_probe",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1776_scanner_accepts_the_land_probe_identity_helper",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1776_scanner_rejects_an_identity_helper_that_launches_or_escapes",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1776_scanner_rejects_an_identity_helper_it_cannot_inspect",
+          "class": "Antiphon.Tests.Infrastructure.ServerGitProcessTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs",
+          "script": ""
+        },
+        {
+          "method": "Path_resolves_main_and_linked_worktree",
+          "class": "Antiphon.Tests.Application.GitIndexLockPathTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/GitIndexLockPathTests.cs",
+          "script": ""
+        },
+        {
+          "method": "Missing_checkout_returns_path_error",
+          "class": "Antiphon.Tests.Application.GitIndexLockPathTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/GitIndexLockPathTests.cs",
+          "script": ""
+        }
+      ],
+      "prerequisites": [],
+      "id": "server.git",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "vendorExecutable": "none",
+        "interaction": "none",
+        "api": "none",
+        "browser": false,
+        "desktopUi": false,
+        "nativePty": false,
+        "postgres": false,
+        "docker": false,
+        "broker": false
+      }
     }
   ],
   "edges": [
@@ -3146,7 +3285,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "c62da85de8c20bbbde124e9449d318d6ea335b49827802bb6d25d312552ba2c2",
+  "catalogHash": "b0dfba6df314cf57bc89631806a29dbc1fb366def500fb77662710349c54742b",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",
