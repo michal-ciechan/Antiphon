@@ -79,6 +79,34 @@ public sealed class LandingSourceOptionalLockTests
         File.Exists(Path.Combine(gitDir, "index.lock")).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Git for Windows' system gitconfig sets <c>core.autocrlf</c>. This assembly points libgit2 at an
+    /// empty config directory, so a child that still reads that file disagrees and the status falls back
+    /// to git. The land read's child has to match the isolated library: a clean tree stays in process.
+    /// </summary>
+    [Test]
+    public async Task C1453_WindowsSystemAutocrlfStillAnswersInProcess()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var source = fixture.Source;
+        var gitDir = (await new LandingGit().RunAsync(source, ["rev-parse", "--absolute-git-dir"], CancellationToken.None))
+            .Output.Trim();
+        var system = Path.Combine(fixture.Root, "git-for-windows.gitconfig");
+        await File.WriteAllTextAsync(system, "[core]\n\tautocrlf = true\n");
+        MakeStatDirty(Path.Combine(source, "keep.txt"), Path.Combine(gitDir, "index"));
+        var git = new WindowsSystemAutocrlfGit(system);
+        var watched = await WatchAsync(gitDir, async () =>
+        {
+            var status = await git.StatusVerdictAsync(source, SourceStatus, CancellationToken.None);
+            status.Succeeded.ShouldBeTrue(status.Diagnostic);
+            status.Output.ShouldBeEmpty();
+        });
+        git.StatusSpawns.ShouldBe(0, "a clean tree is answered in process when the child matches isolated libgit2");
+        watched.LockCreated.ShouldBeFalse("the in-process source status creates no index.lock");
+        watched.IndexRewritten.ShouldBeFalse("the in-process source status does not refresh the task index");
+    }
+
     private static void MakeStatDirty(string file, string index)
     {
         File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(-5));
@@ -143,7 +171,7 @@ public sealed class LandingSourceOptionalLockTests
         protected override void ConfigureProcess(ProcessStartInfo start) => start.Environment.Remove("GIT_OPTIONAL_LOCKS");
     }
 
-    private sealed class SpawnCountingGit : LandingGit
+    private class SpawnCountingGit : LandingGit
     {
         public int StatusSpawns;
 
@@ -151,6 +179,20 @@ public sealed class LandingSourceOptionalLockTests
         {
             if (start.ArgumentList.Contains("status")) StatusSpawns++;
             return base.StartProcess(start);
+        }
+    }
+
+    /// <summary>The Windows runner's child: a system gitconfig sets <c>core.autocrlf</c>, then the suite isolation runs.</summary>
+    private sealed class WindowsSystemAutocrlfGit : SpawnCountingGit
+    {
+        private readonly string _systemFile;
+
+        public WindowsSystemAutocrlfGit(string systemFile) => _systemFile = systemFile;
+
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            start.Environment["GIT_CONFIG_SYSTEM"] = _systemFile;
+            base.ConfigureProcess(start);
         }
     }
 }
