@@ -18,8 +18,10 @@ namespace Antiphon.PtyHost;
 /// timeout (investigation 2026-09-22, section 3.1). Whoever makes those duplicates — the CLR's
 /// PAL <c>dup</c>s stdio during startup before <c>Main</c>, and a non-CLOEXEC copy inherited
 /// across <c>exec</c> would look the same — they are recognisable by what they point at, so the
-/// release below closes every descriptor above 2 that still aliases the original 0/1/2 by
-/// <c>readlink</c> identity. Deliberately not a blind <c>closefrom(3)</c>: that would also close
+/// release below closes every descriptor above 2 that still aliases the original 0/1/2 by a
+/// <c>pipe:[</c> or <c>socket:[</c> <c>readlink</c> identity (CARD-0608). A file path is not
+/// closed, so another descriptor on the same path stays open. Deliberately not a blind
+/// <c>closefrom(3)</c>: that would also close
 /// descriptors the running CoreCLR owns (diagnostics IPC socket, image handles, the
 /// System.Native signal pipe) with undefined consequences.</para>
 /// </summary>
@@ -111,9 +113,10 @@ internal static class PosixProcessSpawner
     }
 
     /// <summary>
-    /// Closes every descriptor above 2 that still points at one of <paramref name="stdioIdentity"/>
-    /// — the launcher's redirect pipes, whatever fd number they landed on. Descriptors that
-    /// vanish mid-scan (the enumeration's own, most often) read back null and are skipped.
+    /// Closes every descriptor above 2 whose <c>readlink</c> target is one of
+    /// <paramref name="stdioIdentity"/> and starts with <c>pipe:[</c> or <c>socket:[</c>.
+    /// A same-path file descriptor is not an alias of the launcher's redirect pipe
+    /// (CARD-0608). Descriptors that vanish mid-scan read back null and are skipped.
     /// </summary>
     private static void CloseStdioAliases(HashSet<string> stdioIdentity)
     {
@@ -138,10 +141,18 @@ internal static class PosixProcessSpawner
                 continue;
 
             var target = ReadLinkOrNull($"/proc/self/fd/{fd}");
-            if (target is not null && stdioIdentity.Contains(target))
+            if (target is not null && IsPipeOrSocketIdentity(target) && stdioIdentity.Contains(target))
                 Close(fd);
         }
     }
+
+    /// <summary>
+    /// CARD-0608: only <c>pipe:[</c> and <c>socket:[</c> identities may be closed.
+    /// A file path can be shared with a CLR-owned descriptor, and closing that descriptor is collateral.
+    /// </summary>
+    private static bool IsPipeOrSocketIdentity(string identity) =>
+        identity.StartsWith("pipe:[", StringComparison.Ordinal)
+        || identity.StartsWith("socket:[", StringComparison.Ordinal);
 
     /// <summary>
     /// The raw <c>readlink(2)</c> target, or null when the link is gone or the target does not
