@@ -638,6 +638,7 @@ public sealed class DerivedImpactIndexTests
     public async Task undeclared_class_with_an_os_token_stays_on_both_lanes()
     {
         var probe = await SelectDeclarationAsync("UndeclaredOsTokenTests", """
+            [Category("Unit")]
             public sealed class UndeclaredOsTokenTests
             {
                 [Test]
@@ -657,6 +658,7 @@ public sealed class DerivedImpactIndexTests
     public async Task linux_only_methods_stay_off_the_windows_filter()
     {
         var probe = await SelectDeclarationAsync("AllLinuxOnlyTests", """
+            [Category("Unit")]
             public sealed class AllLinuxOnlyTests
             {
                 [Test]
@@ -681,6 +683,7 @@ public sealed class DerivedImpactIndexTests
     public async Task has_windows_specifics_stays_on_both_lanes()
     {
         var probe = await SelectDeclarationAsync("WindowsSpecificsTests", """
+            [Category("Unit")]
             public sealed class WindowsSpecificsTests
             {
                 [Test]
@@ -702,6 +705,7 @@ public sealed class DerivedImpactIndexTests
     {
         var probe = await SelectDeclarationAsync("ClassLinuxOnlyTests", """
             [LinuxOnly("class shorthand")]
+            [Category("Unit")]
             public sealed class ClassLinuxOnlyTests
             {
                 [Test]
@@ -721,6 +725,7 @@ public sealed class DerivedImpactIndexTests
     public async Task override_list_forces_an_undeclared_class_onto_windows()
     {
         var probe = await SelectDeclarationAsync("OverrideTargetTests", """
+            [Category("Unit")]
             public sealed class OverrideTargetTests
             {
                 [Test]
@@ -777,6 +782,7 @@ public sealed class DerivedImpactIndexTests
 
         Agree(ClassifyOne("""
             [LinuxOnly("class")]
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 public void One() { }
@@ -784,6 +790,7 @@ public sealed class DerivedImpactIndexTests
             """), [new PlatformMember(true, PlatformDeclaration.LinuxOnly)], "class shorthand");
         Agree(ClassifyOne("""
             [LinuxOnly("class")]
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 [WindowsOnly("method")]
@@ -791,6 +798,7 @@ public sealed class DerivedImpactIndexTests
             }
             """), [new PlatformMember(true, PlatformDeclaration.LinuxOnly)], "class wins");
         Agree(ClassifyOne("""
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 public void One() { }
@@ -801,6 +809,7 @@ public sealed class DerivedImpactIndexTests
             """), [new PlatformMember(true, PlatformDeclaration.Unannotated)], "helper ignored");
         Agree(ClassifyOne("""
             [WindowsOnly("class")]
+            [Category("Unit")]
             public sealed class ProbeTests {
                 public void Helper() { }
             }
@@ -808,6 +817,7 @@ public sealed class DerivedImpactIndexTests
         Agree(ClassifyOne("""
             [LinuxOnly("a")]
             [WindowsOnly("b")]
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 public void One() { }
@@ -815,12 +825,14 @@ public sealed class DerivedImpactIndexTests
             """), [new PlatformMember(true, PlatformDeclaration.Unannotated)], "class conflict");
         Agree(ClassifyOne("""
             [HasWindowsSpecifics("class")]
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 public void One() { }
             }
             """), [new PlatformMember(true, PlatformDeclaration.HasWindowsSpecifics)], "specifics shorthand");
         Agree(ClassifyOne("""
+            [Category("Unit")]
             public sealed class ProbeTests {
                 [Test]
                 [LinuxOnlyAttribute("suffix")]
@@ -856,6 +868,7 @@ public sealed class DerivedImpactIndexTests
 
         var forced = DerivedImpactIndexBuilder.ClassifyTexts(
             [("tests/Antiphon.Tests/ProbeTests.cs", """
+                [Category("Unit")]
                 public sealed class ProbeTests {
                     [Test]
                     [LinuxOnly("declared")]
