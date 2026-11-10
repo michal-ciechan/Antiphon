@@ -64,6 +64,15 @@ describe('endpointFromDraft userinfo', () => {
     ['a space inside a scheme-shaped prefix', `endpoint: https://u:${SENTINEL}@proxy.test/v1`],
     ['an uppercase scheme-shaped prefix', `BASEURL: HTTPS://u:${SENTINEL}@PROXY.TEST/V1`],
     ['a percent-encoded colon behind a scheme-shaped prefix', `baseUrl: https%3A//u:${SENTINEL}@proxy.test/v1`],
+    // CARD-1822 D-2: a prefix in front of one slash, or a slash mixed with a backslash,
+    // hides the authority from both new URL and the literal // scan.
+    ['a prefix and one slash, because the credential is still in the request', 'endpoint: https:/u:pw@h/v1'],
+    ['a one-letter scheme and one slash', 'x:https:/u:pw@h/v1'],
+    ['a BASE_URL= prefix and one slash', 'BASE_URL=https:/u:pw@h/v1'],
+    ['a prefix and a slash then a backslash', 'endpoint: https:/\\u:pw@h/v1'],
+    ['a prefix and a backslash then a slash', 'endpoint: https:\\/u:pw@h/v1'],
+    ['a BASE_URL= prefix and a slash then a backslash', 'BASE_URL=https:/\\u:pw@h/v1'],
+    ['a prefix and a slash then a backslash with no path', 'endpoint: https:/\\u:pw@h'],
   ])('refuses %s and does not return the URL', (_name, baseUrl) => {
     const result = endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)
     expect(result.endpoint).toBeNull()
@@ -72,6 +81,7 @@ describe('endpointFromDraft userinfo', () => {
     expect(result.error).not.toContain('@')
     expect(result.error).not.toContain('proxy.test')
     expect(JSON.stringify(result)).not.toContain(SENTINEL)
+    expect(JSON.stringify(result)).not.toContain('u:pw')
   })
 
   it('reports userinfo before a missing required key name', () => {
