@@ -143,6 +143,9 @@ internal static class TaskReportTurnSelector
                     && IsEndTurnSiblingPhantom(end, notificationOwner, continuation.NextRealPromptSequence, toolRows))
                 {
                     skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
+                    // The unfinished owner blocks older boundaries, same as a real prompt.
+                    RememberPhantomBarrier(
+                        raw, notificationOwner, end.Sequence, ref phantomBarrier, ref phantomBarrierBoundary);
                     continue;
                 }
 
@@ -153,9 +156,12 @@ internal static class TaskReportTurnSelector
             {
                 // Compaction and local-command records share the brief's turn. The
                 // TurnEnd belongs to that brief, including when the only compaction
-                // record is the continuation prompt.
+                // record is the continuation prompt. A sibling phantom is not a
+                // finished turn, so it does not hide that brief from a newer boundary.
+                var floor = PhantomTransparentFloor(
+                    boundaries, index, raw, toolRows, task, rulesIds, invoked, sessionKind);
                 var owned = RealOwnerOfSkippedTurn(
-                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
+                    end, floor, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
                 if (owned is not null)
                 {
                     // CARD-1821: compaction and local-command records share the brief's turn,
@@ -167,6 +173,8 @@ internal static class TaskReportTurnSelector
                         && IsEndTurnSiblingPhantom(end, housekeepingOwner, owned.NextRealPromptSequence, toolRows))
                     {
                         skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
+                        RememberPhantomBarrier(
+                            raw, housekeepingOwner, end.Sequence, ref phantomBarrier, ref phantomBarrierBoundary);
                         continue;
                     }
 
@@ -508,6 +516,85 @@ internal static class TaskReportTurnSelector
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The newest older TurnEnd that still closes ownership. An <c>end_turn</c> that
+    /// this span would skip as a sibling phantom is transparent, so a newer housekeeping
+    /// boundary keeps the marked brief behind it. <c>max_tokens</c> and <c>cancelled</c>
+    /// stay opaque.
+    /// </summary>
+    private static long? PhantomTransparentFloor(
+        IReadOnlyList<BoundaryRow> boundaries,
+        int index,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlyList<ToolSiblingRow> tools,
+        AgentTask task,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        AgentKind sessionKind)
+    {
+        long? floor = null;
+        for (var i = boundaries.Count - 1; i > index; i--)
+        {
+            var candidate = boundaries[i];
+            if (IsTransparentSiblingPhantom(candidate, floor, raw, tools, task, rulesIds, invoked, sessionKind))
+                continue;
+            floor = candidate.Sequence;
+        }
+
+        return floor;
+    }
+
+    private static bool IsTransparentSiblingPhantom(
+        BoundaryRow candidate,
+        long? floor,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlyList<ToolSiblingRow> tools,
+        AgentTask task,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        AgentKind sessionKind)
+    {
+        if (!string.Equals(candidate.StopReason, TranscriptKinds.StopReasons.EndTurn, StringComparison.Ordinal))
+            return false;
+        if (string.IsNullOrEmpty(candidate.ApiCallId))
+            return false;
+
+        var owner = NewestRealBetween(raw, floor, candidate.Sequence, sessionKind, rulesIds, invoked);
+        if (owner is null || !IsTimeEligible(owner, task.DispatchedAt))
+            return false;
+        if (task.RepliedAtSequence is long watermark && owner.Sequence <= watermark)
+            return false;
+        if (owner.Text is not string text
+            || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
+            return false;
+
+        var nextReal = NextRealPromptSequence(raw, owner.Sequence, sessionKind, rulesIds, invoked);
+        return IsEndTurnSiblingPhantom(candidate, owner.Sequence, nextReal, tools);
+    }
+
+    /// <summary>
+    /// The real prompt that owns a skipped sibling phantom. Older prompts sit behind
+    /// it, matching the real-prompt path. The first skipped phantom wins.
+    /// </summary>
+    private static void RememberPhantomBarrier(
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        long ownerSequence,
+        long boundarySequence,
+        ref TranscriptPromptSpan.PromptRow? barrier,
+        ref long barrierBoundary)
+    {
+        if (barrier is not null)
+            return;
+        foreach (var row in raw)
+        {
+            if (row.Sequence != ownerSequence)
+                continue;
+            barrier = row;
+            barrierBoundary = boundarySequence;
+            return;
+        }
     }
 
     private static bool IsEndTurnSiblingPhantom(
