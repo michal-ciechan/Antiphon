@@ -559,6 +559,97 @@ public class SessionRuntimeActionRecoveryTests
         (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
     }
 
+    // CARD-1454: a machine-turn note's debt key is the chat it publishes to, resolved once
+    // and carried on the debt row. With unified recovery the two chats already exist, so the
+    // newest chat is not the pre-injection context. With the default off, the second chat
+    // arrives while the note waits, and the retry must keep the chat resolved at the start.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1454_machine_turn_debt_follows_the_chat_it_publishes_to(bool unifiedRecovery)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        const string chatA = "owed-chat";
+        const string chatB = "later-chat";
+        var producer = new RecordingProducer { FailingConversations = { chatA } };
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            ConnectionString = schema.ConnectionString,
+            Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = unifiedRecovery },
+            ConfigureServices = s => s.AddSingleton<IAntiphonMessagingProducer>(producer)
+        });
+        const string owedPrompt = "[Telegram Family] Question for the owed chat";
+        const string notePrompt = "[check] publish this machine note";
+        const string laterPrompt = "[Telegram Work] Question for the later chat";
+        var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
+        await h.SeedChannelCorrelationAsync(owedPrompt, "telegram:" + chatA);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 1, "UserPrompt", owedPrompt), Entry(h, 2, "AssistantText", "owed answer"), Entry(h, 3, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+        producer.Failures.ShouldBeGreaterThan(0, "the owed reply must reach the producer");
+        producer.Sent.ShouldBeEmpty();
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.Where(a => a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddHours(1)));
+        producer.FailingConversations.Clear();
+
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        await h.SeedPendingMessageAsync(notePrompt, status: QueuedMessageStatus.Sent,
+            origin: QueuedMessageOrigin.Check,
+            deliveryAttempts: unifiedRecovery ? 1 : 0,
+            baselineSequence: unifiedRecovery ? floor : null,
+            lastDeliveryStartedAt: unifiedRecovery ? h.Now : null,
+            legacyNullGeneration: true);
+        if (unifiedRecovery)
+            await h.SeedChannelCorrelationAsync("A later chat is now the newest", "telegram:" + chatB);
+        await h.Runtime.PersistTranscriptAsync(h.SessionId,
+            [Entry(h, 4, "UserPrompt", notePrompt), Entry(h, 5, "AssistantText", "machine note"), Entry(h, 6, "TurnEnd", null)]);
+        await actions.DrainPageAsync(h.SessionId, default);
+
+        producer.Sent.ShouldBeEmpty("the machine note waits behind the owed reply to the chat it will enter");
+        await using (var db = h.CreateObserverContext())
+        {
+            var debts = await db.SessionRuntimeActions.AsNoTracking()
+                .Where(a => a.AgentSessionId == h.SessionId
+                    && a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
+                .OrderBy(a => a.Sequence).ToListAsync();
+            debts.Count.ShouldBe(2, "the owed reply and the machine note are both debt");
+            debts[0].Sequence.ShouldBe(3);
+            debts[0].ConversationKey.ShouldBe("telegram:" + chatA);
+            debts[1].Sequence.ShouldBe(6);
+            debts[1].Attempts.ShouldBe(0, "the note is waiting, not failing");
+            debts[1].ConversationKey.ShouldBe("telegram:" + chatA,
+                "the debt key is the chat the note publishes to");
+        }
+
+        if (!unifiedRecovery)
+        {
+            await h.SeedChannelCorrelationAsync(laterPrompt, "telegram:" + chatB);
+            await h.Runtime.PersistTranscriptAsync(h.SessionId,
+                [Entry(h, 7, "UserPrompt", laterPrompt), Entry(h, 8, "AssistantText", "later answer"), Entry(h, 9, "TurnEnd", null)]);
+            await actions.DrainPageAsync(h.SessionId, default);
+            producer.Sent.Select(r => r.Text).ShouldBe(["later answer"],
+                "a reply to the other chat publishes while the note waits");
+            producer.Sent.ShouldAllBe(r => r.ConversationId == chatB);
+        }
+
+        await using (var db = h.CreateObserverContext())
+            await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddSeconds(-1)));
+        await actions.DrainPageAsync(h.SessionId, default);
+        if (unifiedRecovery)
+        {
+            producer.Sent.Select(r => r.Text).ShouldBe(["owed answer", "machine note"]);
+            producer.Sent.ShouldAllBe(r => r.ConversationId == chatA);
+        }
+        else
+        {
+            producer.Sent.Select(r => r.Text).ShouldBe(["later answer", "owed answer", "machine note"]);
+            producer.Sent.Select(r => r.ConversationId).ShouldBe([chatB, chatA, chatA]);
+        }
+        await using var verify = h.CreateObserverContext();
+        (await verify.SessionRuntimeActions.CountAsync(a => a.AgentSessionId == h.SessionId)).ShouldBe(0);
+    }
+
     [Test]
     public async Task C1259_queue_prune_holds_the_transcript_mutation_lease()
     {
