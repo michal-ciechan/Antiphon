@@ -274,7 +274,7 @@ public sealed class ChannelReplyDispatcher
     /// (<see cref="LossReason.PublishFailed"/>), the originating chat is notified best-effort,
     /// and true tells the coordinator to remove the row so later replies to that chat flow. A
     /// row whose correlations are already settled (TTL or a concurrent publication) is abandoned
-    /// with an information log naming the sequence; nothing is dropped silently. The time bound
+    /// with a warning naming the sequence; nothing is dropped silently. The time bound
     /// needs at least one failed attempt: a row that only waited behind another has not been
     /// tried, and gets its one attempt before the bound applies.
     /// </summary>
@@ -310,7 +310,7 @@ public sealed class ChannelReplyDispatcher
         }
         if (lost.Count == 0)
         {
-            _logger.LogInformation(
+            _logger.LogWarning(
                 "Channel debt at sequence {Sequence} for session {SessionId} abandoned after {Attempts} attempt(s): its correlations are already settled",
                 sequence, sessionId, state.Attempts);
             return true;
@@ -318,7 +318,7 @@ public sealed class ChannelReplyDispatcher
         var recorded = await ReportLostAsync(sessionId, lost.Values.OrderBy(m => m.Sequence).ToList(),
             LossReason.PublishFailed, ct, debt: state);
         if (!recorded)
-            _logger.LogInformation(
+            _logger.LogWarning(
                 "Channel debt at sequence {Sequence} for session {SessionId} abandoned after {Attempts} attempt(s): its correlations settled concurrently",
                 sequence, sessionId, state.Attempts);
         return true;

@@ -265,10 +265,13 @@ wait for channel debt. A late-confirm publication that finds same-destination
 debt owed at or below its sequence, or that fails, becomes debt at its own
 sequence carrying the late-confirmed ids, so later queue actions proceed
 (CARD-1433). A debt row that reaches `ChannelBridge:ReplyDebtGiveUpAttempts` or
-`ReplyDebtGiveUpMinutes` (the time bound after at least one failed attempt) is
+`ReplyDebtGiveUpMinutes` (the time bound after at least one failed attempt,
+counted from row creation) is
 abandoned: its open correlations are settled with a Critical `ChannelReplyLost`
 (`PublishFailed`) and the row is removed so later replies to that chat flow
-(CARD-1434); `PendingReplyTtlMinutes` remains the backstop. Retention excludes a
+(CARD-1434). A row whose correlations are already settled is still removed, with
+a Warning that names the sequence (CARD-1455). `PendingReplyTtlMinutes` remains
+the backstop. Retention excludes a
 session only while such a row exists. Replay stays idempotent through the
 dispatcher's existing claim and pending-range rules.
 Pinned by `AgentTaskCatchUpSettlementTests.catch_up_settles_even_when_channel_reply_dispatch_throws`,
@@ -279,7 +282,10 @@ Pinned by `AgentTaskCatchUpSettlementTests.catch_up_settles_even_when_channel_re
 `SessionRuntimeActionRecoveryTests.C1434_a_failing_reply_to_one_destination_does_not_hold_another_destination`,
 `SessionRuntimeActionRecoveryTests.C1433_a_waiting_late_confirm_does_not_hold_later_queue_actions`,
 `SessionRuntimeActionRecoveryTests.C1434_exhausted_channel_debt_is_reported_lost_and_later_replies_flow`,
-`SessionRuntimeActionRecoveryTests.C1454_machine_turn_debt_follows_the_chat_it_publishes_to`
+`SessionRuntimeActionRecoveryTests.C1454_machine_turn_debt_follows_the_chat_it_publishes_to`,
+`SessionRuntimeActionRecoveryTests.C1455_time_bound_abandons_aged_debt_after_one_failed_attempt`,
+`SessionRuntimeActionRecoveryTests.C1455_untried_aged_debt_keeps_its_one_attempt`,
+`SessionRuntimeActionRecoveryTests.C1455_abandoning_settled_debt_is_a_warning`
 and `ChannelMachineTurnTextTests.C1434_give_up_minutes_above_the_ttl_is_refused`.
 
 Implementation and qualification status, including remaining routing/recovery
