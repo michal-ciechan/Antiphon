@@ -257,9 +257,12 @@ stamps and claim matching use the raw observation before this display projection
 The drive-prefix rule masks an ASCII `[A-Za-z]:` at the start of a value or
 after any character except an ASCII letter or digit. This includes drive-relative
 paths such as `C:secret-home` after punctuation, Unicode quotes, or non-ASCII
-characters. A letter-preceded form such as `xC:secret-home` remains visible:
-masking it would also mask safe labels such as `Review: notes`. The same residual
-applies after an ASCII digit, such as `1C:secret-home`.
+characters. A form glued to a preceding ASCII letter or digit, such as
+`xC:secret-home` or `1C:secret-home`, is also masked when the colon is followed
+by a character other than a space or an ASCII digit (CARD-0919). That includes
+`agent:claude`, `Review:notes` and `dir:name`. A glued colon followed by a space
+or an ASCII digit stays visible, including `Review: notes`, `fix: retry` and
+`build:1`.
 Unicode look-alike separators U+FF3C and U+2215 and bidi format character U+202E
 are kept because they are not path syntax on any OS.
 This text policy applies on Windows and Unix, including refused previews; it does
