@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "baseSha": "a6cdc4101fcaec7db97f217342c038ecd12e127d",
+  "headSha": "674e0d24cb8c66559c04fda88d6a419011148702",
+  "inspectedPaths": [
+    {
+      "path": "src/Antiphon.SessionRunner/RunnerRepositoryMaintenance.cs",
+      "disposition": "portable",
+      "reason": "CARD-1818 leaves packed-refs.lock in place on every OS. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/C1818GcOwnerRobustnessTests.cs",
+      "disposition": "test-only",
+      "reason": "CARD-1818 lock-leave witnesses. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    }
+  ],
+  "witnesses": [],
+  "restartImpact": {
+    "required": false,
+    "paths": [],
+    "additionalPaths": [],
+    "reason": "CARD-1818 changes no startup, AppHost, or build-slot path."
+  }
+}
