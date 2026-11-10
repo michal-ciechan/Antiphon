@@ -1,11 +1,9 @@
 using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LandingAdmissionControlTests
 {
     [Test]
