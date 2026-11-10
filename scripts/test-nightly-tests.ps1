@@ -2769,6 +2769,179 @@ function Test-C1698_SummaryJsonRecordsToolchain {
     Assert-C487 -Cond ($w.Count -eq 1 -and $w[0].tool -eq 'git' -and ([string]$w[0].message).StartsWith('WARNING: git 2.42.0 is below the minimum 2.43; lands will fail')) -Name 'C1698 Summary json on disk records the warning' -Detail $detail
 }
 
+function Test-Group4NativeTrxReader {
+    # Loads scripts/lib/nightly-owned-process.cs with Add-Type and calls the
+    # real ExecutionEvidenceFinished. A closing-tag search returns false for
+    # every completed TRX, so the positives below are red at 89fd55cef.
+    $root = Join-Path $ResultsDirectory 'group4-native-trx-reader'
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $ownerPath = Join-Path $lib 'nightly-owned-process.cs'
+    $loadError = ''
+    try { Add-Type -Path $ownerPath -ErrorAction Stop } catch {
+        if (-not ('Antiphon.Nightly.NativeProcessOwner' -as [type])) { $loadError = $_.Exception.Message }
+    }
+    Assert-C487 -Cond ([string]::IsNullOrEmpty($loadError)) -Name 'group4 native owner compiles under Add-Type' -Detail $loadError
+    $type = $null
+    try { $type = [Antiphon.Nightly.NativeProcessOwner] } catch { $type = $null }
+    $find = {
+        param($Target, [string]$Name, [int]$Count)
+        if ($null -eq $Target) { return $null }
+        $flags = [Reflection.BindingFlags]'Public,NonPublic,Static'
+        foreach ($method in @($Target.GetMethods($flags))) {
+            if ($method.Name -ne $Name) { continue }
+            if (@($method.GetParameters()).Count -eq $Count) { return $method }
+        }
+        return $null
+    }
+    $reader = & $find $type 'ExecutionEvidenceFinished' 2
+    $aged = & $find $type 'ExecutionEvidenceFinished' 3
+    Assert-C487 -Cond ($null -ne $reader) -Name 'group4 native reader method is loaded'
+    $writeTrx = {
+        param([string]$Path, [string]$Outcome, [int]$Total, [int]$Executed, [int]$NotExecuted, [int]$Failed = 0)
+        $passed = $Executed - $Failed
+        if ($passed -lt 0) { $passed = 0 }
+        $xml = '<?xml version="1.0" encoding="utf-8"?><TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary outcome="' + $Outcome + '"><Counters total="' + $Total + '" executed="' + $Executed + '" passed="' + $passed + '" failed="' + $Failed + '" notExecuted="' + $NotExecuted + '" /></ResultSummary></TestRun>'
+        [System.IO.File]::WriteAllText($Path, $xml)
+    }
+    $writeDiag = {
+        param([string]$Path, [int]$Ran, [switch]$NoStop)
+        $pad = [string]::new('x', 20000)
+        $body = $pad + "`ntotal ran: " + $Ran + "`n"
+        if (-not $NoStop) { $body = $body + "request execute stop`n" }
+        [System.IO.File]::WriteAllText($Path, $body)
+    }
+    $call = {
+        param($Method, [string]$Trx, [string]$Diag, $NotBefore)
+        if ($null -eq $Method) { return [pscustomobject]@{ Finished = $false; Error = 'method-missing' } }
+        try {
+            $invokeArgs = @([string]$Trx, [string]$Diag)
+            if (@($Method.GetParameters()).Count -ge 3) { $invokeArgs += $NotBefore }
+            $value = [bool]$Method.Invoke($null, $invokeArgs)
+            return [pscustomobject]@{ Finished = $value; Error = '' }
+        } catch {
+            return [pscustomobject]@{ Finished = $false; Error = $_.Exception.Message }
+        }
+    }
+    $matchTrx = Join-Path $root 'match.trx'
+    $matchDiag = Join-Path $root 'match.diag'
+    & $writeTrx $matchTrx 'Completed' 119 119 0 0
+    & $writeDiag $matchDiag 119
+    $case = & $call $reader $matchTrx $matchDiag $null
+    Assert-C487 -Cond ($case.Finished -and [string]::IsNullOrEmpty($case.Error)) -Name 'group4 native reader accepts the case trx shape' -Detail ('finished=' + $case.Finished + ' error=' + $case.Error)
+
+    $realPath = Join-Path $repo (Join-Path 'scripts' (Join-Path 'fixtures' (Join-Path 'nightly' (Join-Path 'c487-probe' 'all.trx'))))
+    $realText = [System.IO.File]::ReadAllText($realPath)
+    $shaped = $realText.Replace('total="8"', 'total="119"').Replace('executed="8"', 'executed="119"').Replace('passed="8"', 'passed="119"')
+    $shapeOk = ($shaped.Contains('total="119"') -and $shaped.Contains('executed="119"') -and $shaped.Contains('outcome="Completed"') -and -not $shaped.Contains('total="8"'))
+    Assert-C487 -Cond $shapeOk -Name 'group4 real c487-probe shape was rewritten to 119/119'
+    $realTrx = Join-Path $root 'real-shape.trx'
+    [System.IO.File]::WriteAllText($realTrx, $shaped)
+    $real = & $call $reader $realTrx $matchDiag $null
+    Assert-C487 -Cond ($real.Finished -and [string]::IsNullOrEmpty($real.Error)) -Name 'group4 native reader accepts the real c487-probe trx shape' -Detail ('finished=' + $real.Finished + ' error=' + $real.Error)
+
+    $nsPath = Join-Path $root 'ns.trx'
+    $nsXml = '<?xml version="1.0" encoding="utf-8"?><TestRun xmlns:t="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><t:ResultSummary outcome=''Completed''><t:Counters notExecuted=''0'' failed=''0'' executed=''119'' total=''119'' /></t:ResultSummary></TestRun>'
+    [System.IO.File]::WriteAllText($nsPath, $nsXml)
+    $ns = & $call $reader $nsPath $matchDiag $null
+    Assert-C487 -Cond ($ns.Finished -and [string]::IsNullOrEmpty($ns.Error)) -Name 'group4 native reader accepts a prefixed summary and single quotes' -Detail ('finished=' + $ns.Finished + ' error=' + $ns.Error)
+
+    $notExec = Join-Path $root 'not-executed.trx'
+    & $writeTrx $notExec 'Completed' 119 119 1 0
+    $notExecResult = & $call $reader $notExec $matchDiag $null
+    Assert-C487 -Cond (-not $notExecResult.Finished) -Name 'group4 native reader rejects notExecuted above zero' -Detail ('finished=' + $notExecResult.Finished)
+
+    $lowDiag = Join-Path $root 'low.diag'
+    & $writeDiag $lowDiag 118
+    $low = & $call $reader $matchTrx $lowDiag $null
+    Assert-C487 -Cond (-not $low.Finished) -Name 'group4 native reader rejects total ran below the trx total' -Detail ('finished=' + $low.Finished)
+
+    $failedPath = Join-Path $root 'failed-count.trx'
+    & $writeTrx $failedPath 'Completed' 119 119 0 3
+    $failedCount = & $call $reader $failedPath $matchDiag $null
+    Assert-C487 -Cond (-not $failedCount.Finished) -Name 'group4 native reader rejects failed above zero' -Detail ('finished=' + $failedCount.Finished)
+
+    $failedOutcome = Join-Path $root 'failed-outcome.trx'
+    & $writeTrx $failedOutcome 'Failed' 119 119 0 0
+    $failedOutcomeResult = & $call $reader $failedOutcome $matchDiag $null
+    Assert-C487 -Cond (-not $failedOutcomeResult.Finished) -Name 'group4 native reader rejects outcome Failed' -Detail ('finished=' + $failedOutcomeResult.Finished)
+
+    $missing = Join-Path $root 'missing.trx'
+    [System.IO.File]::WriteAllText($missing, '<?xml version="1.0" encoding="utf-8"?><TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"></TestRun>')
+    $missingResult = & $call $reader $missing $matchDiag $null
+    Assert-C487 -Cond (-not $missingResult.Finished) -Name 'group4 native reader rejects a trx with no ResultSummary' -Detail ('finished=' + $missingResult.Finished)
+
+    $truncated = Join-Path $root 'truncated.trx'
+    [System.IO.File]::WriteAllText($truncated, '<?xml version="1.0" encoding="utf-8"?><TestRun><ResultSummary outcome="Completed"><Counters total="119" executed="119" failed="0" notExecuted="0"')
+    $truncatedResult = & $call $reader $truncated $matchDiag $null
+    Assert-C487 -Cond (-not $truncatedResult.Finished) -Name 'group4 native reader rejects a truncated trx' -Detail ('finished=' + $truncatedResult.Finished)
+
+    Assert-C487 -Cond ($null -ne $aged) -Name 'group4 native reader has a process-start age check'
+    $old = New-Object System.DateTime 2020, 1, 1, 0, 0, 0, ([System.DateTimeKind]::Utc)
+    $newer = New-Object System.DateTime 2026, 11, 10, 12, 0, 0, ([System.DateTimeKind]::Utc)
+    $before = New-Object System.DateTime 2026, 11, 10, 11, 0, 0, ([System.DateTimeKind]::Utc)
+    [System.IO.File]::SetLastWriteTimeUtc($matchTrx, $old)
+    [System.IO.File]::SetLastWriteTimeUtc($matchDiag, $newer)
+    $staleTrx = & $call $aged $matchTrx $matchDiag $before
+    Assert-C487 -Cond (-not $staleTrx.Finished) -Name 'group4 native reader ignores a trx older than the process start' -Detail ('finished=' + $staleTrx.Finished + ' error=' + $staleTrx.Error)
+    [System.IO.File]::SetLastWriteTimeUtc($matchTrx, $newer)
+    [System.IO.File]::SetLastWriteTimeUtc($matchDiag, $old)
+    $staleDiag = & $call $aged $matchTrx $matchDiag $before
+    Assert-C487 -Cond (-not $staleDiag.Finished) -Name 'group4 native reader ignores a diagnostic older than the process start' -Detail ('finished=' + $staleDiag.Finished + ' error=' + $staleDiag.Error)
+    [System.IO.File]::SetLastWriteTimeUtc($matchTrx, $newer)
+    [System.IO.File]::SetLastWriteTimeUtc($matchDiag, $newer)
+    $sameAge = & $call $aged $matchTrx $matchDiag $newer
+    Assert-C487 -Cond (-not $sameAge.Finished) -Name 'group4 native reader ignores evidence timestamped at the process start' -Detail ('finished=' + $sameAge.Finished + ' error=' + $sameAge.Error)
+    $freshAge = & $call $aged $matchTrx $matchDiag $before
+    Assert-C487 -Cond ($freshAge.Finished -and [string]::IsNullOrEmpty($freshAge.Error)) -Name 'group4 native reader accepts evidence newer than the process start' -Detail ('finished=' + $freshAge.Finished + ' error=' + $freshAge.Error)
+
+    $graceType = $null
+    try { $graceType = [Antiphon.Nightly.NightlyCompletionGrace] } catch { $graceType = $null }
+    $graceValue = -1
+    if ($null -ne $graceType) { $graceValue = [int]$graceType::DefaultMilliseconds }
+    Assert-C487 -Cond ($graceValue -eq 60000 -and $script:NightlyCompletionGraceMilliseconds -eq $graceValue) -Name 'group4 grace constant is the unmeasured 60000 ms placeholder' -Detail ('csharp=' + $graceValue + ' powershell=' + $script:NightlyCompletionGraceMilliseconds)
+    $ownerText = [System.IO.File]::ReadAllText($ownerPath)
+    Assert-C487 -Cond ($ownerText.Contains('NightlyCompletionGrace.Wait(') -and $ownerText.Contains('2x') -and $ownerText.Contains('p95')) -Name 'group4 native loop waits on the named grace constant'
+    $admissionPath = Join-Path $lib 'nightly-watchdog-admission.ps1'
+    $admissionText = [System.IO.File]::ReadAllText($admissionPath)
+    Assert-C487 -Cond (-not $admissionText.Contains('function Invoke-NightlyCompletionGrace')) -Name 'group4 powershell grace copy is not a second implementation'
+
+    $measured = -1.0
+    $measureError = ''
+    try {
+        $stamp = New-Object System.DateTime 2026, 11, 10, 0, 0, 0, ([System.DateTimeKind]::Utc)
+        $exitAt = $stamp.AddSeconds(5)
+        [System.IO.File]::SetLastWriteTimeUtc($matchDiag, $stamp)
+        $measured = [double]$graceType::MeasureFileStopToExitSeconds($matchDiag, $exitAt)
+    } catch { $measureError = $_.Exception.Message }
+    $measuredOk = ($measureError -eq '' -and [math]::Abs($measured - 5.0) -lt 0.05)
+    Assert-C487 -Cond $measuredOk -Name 'group4 stop-to-exit seconds use the diagnostic write and the process exit' -Detail ('seconds=' + $measured + ' error=' + $measureError)
+    $linePath = Join-Path $root 'chunk.log'
+    [System.IO.File]::WriteAllText($linePath, "host-output`n")
+    $lineError = ''
+    try { [void]$graceType::AppendStopToExitLine($linePath, 5.0) } catch { $lineError = $_.Exception.Message }
+    $lineText = ''
+    if (Test-Path -LiteralPath $linePath) { $lineText = [System.IO.File]::ReadAllText($linePath) }
+    Assert-C487 -Cond ($lineError -eq '' -and $lineText.Contains('execution-stop-to-exit-seconds=5.000')) -Name 'group4 chunk log records stop-to-exit seconds' -Detail ($lineError + $lineText)
+    $skipPath = Join-Path $root 'skip.log'
+    [System.IO.File]::WriteAllText($skipPath, "host-output`n")
+    try { [void]$graceType::AppendStopToExitLine($skipPath, -1) } catch { }
+    $skipText = [System.IO.File]::ReadAllText($skipPath)
+    Assert-C487 -Cond (-not $skipText.Contains('execution-stop-to-exit-seconds=')) -Name 'group4 chunk log omits stop-to-exit when the markers were absent' -Detail $skipText
+
+    $hangField = $null
+    $hangError = ''
+    try { $hangField = [string](Get-NightlyHarnessHangField -CompletedButHung) } catch { $hangError = $_.Exception.Message }
+    Assert-C487 -Cond ($hangField -eq 'completed-but-hung') -Name 'group4 summary harnessHang reason is completed-but-hung' -Detail $hangError
+    $clearField = 'present'
+    try { $clearField = [string](Get-NightlyHarnessHangField) } catch { $clearField = 'present' }
+    Assert-C487 -Cond ($clearField -eq '') -Name 'group4 summary harnessHang is empty when the chunk is not a hang' -Detail $clearField
+    $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
+    Assert-C487 -Cond ($implText.Contains('harnessHang =') -and $implText.Contains('Get-NightlyHarnessHangField')) -Name 'group4 summary records harnessHang beside the red result'
+    $notePath = Join-Path $repo (Join-Path 'docs' (Join-Path 'investigations' '2026-11-10-why-missed-session-runner-group4-post-completion-hang.md'))
+    $noteText = [System.IO.File]::ReadAllText($notePath)
+    Assert-C487 -Cond ($noteText.Contains('publicationTerminal') -and $noteText.Contains('failed-run') -and $noteText.Contains('<ResultSummary')) -Name 'group4 note records the opening-tag reader and publicationTerminal failed-run'
+}
+
 function Test-Group4CompletedHang {
     # session-runner all-group-4: TRX Completed and "total ran" matched the
     # selection, then the process tree lived until the launch watchdog.
@@ -2916,6 +3089,7 @@ if ($Case) {
     Test-C1044_FixtureClassChunks
     Test-C487_PrerequisiteGate
     Test-Group4CompletedHang
+    Test-Group4NativeTrxReader
 }
 Write-C487Evidence -ResultsDirectory $ResultsDirectory -Case 'tests-summary' -Body @{ passed = $script:C487Passed; failed = $script:C487Failed; rows = $script:C487Rows }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows $(if ($Case) { 0 } else { 105 })
