@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Antiphon.Checkpoints;
 using Antiphon.Server.Application.Services;
 using Shouldly;
 using TUnit.Core;
@@ -173,5 +174,71 @@ public sealed class CheckpointManifestDocumentationTests
                      "missing row", "zero count", "unlisted build/test run without a reason", "cannot go red",
                  })
             review.ShouldContain(phrase, Case.Insensitive, "server/Bundles/stage-review.md");
+    }
+
+    /// <summary>
+    /// CARD-0620: <c>Min</c> is the executed-test floor and <c>EstimatedMinutes</c> is the time
+    /// budget. The schema rows stay mutually exclusive, and the owner doc's sample table imports
+    /// those two cells into different fields.
+    /// </summary>
+    [Test]
+    public void min_count_and_estimated_minutes_stay_distinct_columns()
+    {
+        const string sampleHeader = "| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |";
+        var doc = ReadRepoFile("docs", "testing-and-build.md");
+        var lines = doc.ReplaceLineEndings("\n").Split('\n');
+
+        var min = SchemaRow(lines, "Min");
+        min.ShouldContain("a floor on **TUnit executed test results**, and nothing else", Case.Sensitive, "Min schema");
+        min.ShouldNotContain("minute", Case.Insensitive, "Min is a count");
+
+        var estimate = SchemaRow(lines, "EstimatedMinutes");
+        estimate.ShouldContain("Estimated wall-clock **minutes**", Case.Sensitive, "EstimatedMinutes schema");
+        estimate.ShouldNotContain("executed test", Case.Insensitive, "EstimatedMinutes is a time");
+        estimate.ShouldNotContain("MinExecuted", Case.Sensitive, "EstimatedMinutes is a time");
+
+        var collapsed = Collapse(doc);
+        collapsed.ShouldContain(
+            "`Min` is a count and `EstimatedMinutes` is a time; neither is derived from the other, and a row carries both.",
+            Case.Sensitive,
+            DocRelativePath);
+        collapsed.ShouldContain("`Min` on CP-1 is **3**", Case.Sensitive, DocRelativePath);
+        collapsed.ShouldContain("not 9, which is how many minutes the row is budgeted", Case.Sensitive, DocRelativePath);
+        collapsed.ShouldContain("Cost's ordinary floor for this pair is 9 + 2 = 11 minutes.", Case.Sensitive, DocRelativePath);
+        collapsed.ShouldContain("a time, never the `Min` counts", Case.Sensitive, DocRelativePath);
+
+        lines.Count(line => line.Trim() == sampleHeader).ShouldBe(1, "one sample checkpoint table");
+        var headerAt = Array.FindIndex(lines, line => line.Trim() == sampleHeader);
+        var table = new List<string>();
+        for (var i = headerAt; i < lines.Length && lines[i].TrimStart().StartsWith('|'); i++)
+            table.Add(lines[i]);
+        table.Count.ShouldBe(4, "header, separator, CP-1, CP-2");
+
+        var imported = PlanTableImporter.ImportMarkdown("### Checkpoints\n\n" + string.Join('\n', table) + "\n");
+        imported.ExitCode.ShouldBe(0, imported.Error);
+        var manifest = imported.Manifest.ShouldNotBeNull();
+        var cp1 = manifest.Checkpoints.Single(row => row.Id == "CP-1");
+        cp1.MinExecuted.ShouldBe(3, "Min is the executed-test floor");
+        cp1.EstimatedMinutes.ShouldBe(9, "EstimatedMinutes is the time budget");
+        var cp2 = manifest.Checkpoints.Single(row => row.Id == "CP-2");
+        cp2.MinExecuted.ShouldBeNull("a non-TUnit row has no execution floor");
+        cp2.EstimatedMinutes.ShouldBe(2, "EstimatedMinutes stays the time budget when Min is n/a");
+
+        var bundle = ReadRepoFile("server", "Bundles", "stage-test-design.md");
+        bundle.ShouldContain(sampleHeader, Case.Sensitive, "server/Bundles/stage-test-design.md");
+        bundle.ShouldContain("Min=-MinExecuted. EstimatedMinutes target 2x p95.", Case.Sensitive, "server/Bundles/stage-test-design.md");
+
+        ReadCollapsed("docs", "orchestration-loop.md").ShouldContain(
+            "`EstimatedMinutes` column (a time budget, not the `Min` execution counts)",
+            Case.Sensitive,
+            "docs/orchestration-loop.md");
+    }
+
+    private static string SchemaRow(string[] lines, string column)
+    {
+        var prefix = "| `" + column + "` |";
+        var matches = lines.Where(line => line.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+        matches.Length.ShouldBe(1, column + " schema row");
+        return matches[0];
     }
 }
