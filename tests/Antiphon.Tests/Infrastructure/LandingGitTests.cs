@@ -1027,19 +1027,16 @@ public sealed class LandingGitTests
 
         string? path = null;
         RepositoryChildJournal.ChildRecord? record = null;
-        using (var poll = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        var watch = Stopwatch.StartNew();
+        while (record?.ProcessId is null && watch.Elapsed < TimeSpan.FromSeconds(8))
         {
-            poll.CancelAfter(TimeSpan.FromSeconds(8));
-            while (record?.ProcessId is null)
-            {
-                if (Directory.Exists(children))
-                    path = Directory.EnumerateFiles(children, "*.json").FirstOrDefault();
-                if (path is not null)
-                    record = await RepositoryChildJournalReader.ReadAsync(path, ct);
-                if (record?.ProcessId is not null) break;
-                if (deleting.IsCompleted) await deleting;
-                await Task.Delay(50, poll.Token);
-            }
+            if (Directory.Exists(children))
+                path = Directory.EnumerateFiles(children, "*.json").FirstOrDefault();
+            if (path is not null)
+                record = await RepositoryChildJournalReader.ReadAsync(path, ct);
+            if (record?.ProcessId is not null) break;
+            if (deleting.IsCompleted) await deleting;
+            await Task.Delay(50, ct);
         }
 
         record.ShouldNotBeNull("a fencing record exists while the batch runs");
