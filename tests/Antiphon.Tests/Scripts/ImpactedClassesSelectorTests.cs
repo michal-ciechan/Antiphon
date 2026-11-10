@@ -218,13 +218,15 @@ public sealed partial class ImpactedClassesSelectorTests
             "TestTimingOperationLabelTests");
         await AssertKinds(
             root, "c6eee1a0713a0c43238a23993acad8e20c0242f2", ["spawn-limit-rosters", "task-load-window", "timing-labels"], "TestTimingOperationLabelTests");
-        // CARD-1820. The index selects RemoteScriptContractTests as a class, so the method row is
-        // dropped and those five deploy cases run inside the class filter.
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
             ["remote-scripts"],
-            "RemoteScriptContractTests");
+            "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
+            "C0995_Deploy_temp_checks_host_absence_before_checkout",
+            "C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
+            "C849_Deploy_ordering_contract_is_pinned",
+            "C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo");
         await AssertKinds(
             root,
             "43d819da7189349c548b07ebd2677e6be086d95b",
@@ -363,6 +365,22 @@ public sealed partial class ImpactedClassesSelectorTests
         "ReceiptScanDestinationIntegrationTests",
     ];
 
+    // CARD-1820. The hand nine stay, and the capped index adds the classes it kept for this file.
+    private const string LandNotificationDerivedFilter =
+        "/*/*/(AgentTaskCommitEndpointTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandHeldNotificationTests*)"
+        + "|(AgentTaskLandMonitoringTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
+        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
+        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
+        + "|(AgentTaskLandQueueAgingTests*)|(AgentTaskLandQueuedReceiptTests*)|(AgentTaskLandReceiptTests*)"
+        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
+        + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)"
+        + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(CapacityRecoveryTaskTests*)"
+        + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)"
+        + "|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)|(LandEvidenceWarningDeliveryTests*)"
+        + "|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)|(PostLandMutationDeliveryTests*)"
+        + "|(PreDispatchFailureDeliveryTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(VerificationRoundDeliveryTests*)|(WorktreeLandingCleanupRetryTests*)/*";
+
     // The C1432 roster: every server file that starts a git process.
     private static readonly string[] ServerGitStartSites =
     [
@@ -382,34 +400,43 @@ public sealed partial class ImpactedClassesSelectorTests
         "StandingSpecialistRoutingMigrationTests", "WorktreeBaseSelectionTests",
     ];
 
+    // CARD-1820. windowsOnly classes join the hand windows lane. WindowsUnitPlatformAdmissionTests,
+    // LandWorkspaceTests, and AgentTaskLandPublicationTests are the measured additions.
     private const string WindowsTestsFilter =
-        "/*/*/(C0824WorkspaceSlotRoleGateTests*)|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)"
-        + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)/*";
+        "/*/*/(AgentTaskLandPublicationTests*)|(C0824WorkspaceSlotRoleGateTests*)|(Card1761RunnerReadPollTests*)"
+        + "|(LandGraphLandRefreshTests*)|(LandWorkspaceTests*)|(ServerImagePushCredentialTests*)"
+        + "|(ServerRepositoryMirrorScriptTests*)|(WindowsUnitPlatformAdmissionTests*)/*";
 
-    // CARD-1820. Declaration plus uncapped index edges widen the non-merge rows. The windows lane
-    // stays the five hand classes above.
+    // CARD-1820. The non-merge row keeps every hand class and the capped index's kept classes.
+    // WindowsUnitPlatformAdmissionTests and LandWorkspaceTests moved to WindowsTestsFilter.
     private const string WhyMissedTestsFilter =
-        "/*/*/(AdvisoryChangePolicyTests*)|(AgentSessionServiceIntegrationTests*)|(AgentTaskDeliveryWatchdogTests*)"
-        + "|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandBoundaryTests*)"
-        + "|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
-        + "|(AgentTaskLandNotificationPersistenceTests*)|(AgentTaskLandNotificationReconcileLoadTests*)"
-        + "|(AgentTaskLandNotificationRecoveryTests*)|(AgentTaskLandNotificationRescanTests*)"
-        + "|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
-        + "|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)|(C0824TransportGitTests*)"
-        + "|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)"
-        + "|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
-        + "|(C1677RetentionServerTests*)|(Card1761RunnerReadPollTests*)|(DelegateBranchNameTests*)"
-        + "|(DelegationTestServicesTests*)|(DelegationWorktreeTests*)|(ExternalTrackerSyncIdentifierTests*)"
-        + "|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)|(LandGraphLandRefreshTests*)"
-        + "|(LandWorkspaceTests*)|(MergeHighRadiusSubsetTests*)|(PhaseJournalKillDiagnosticTests*)"
-        + "|(PostLandMutationWorktreeTests*)|(ProcessSpawnLimitTests*)|(ReceiptScanDestinationIntegrationTests*)"
+        "/*/*/(AdvisoryChangePolicyTests*)|(AgentSessionServiceIntegrationTests*)|(AgentTaskCommitEndpointTests*)"
+        + "|(AgentTaskDeliveryWatchdogTests*)|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandApprovalRequestTests*)"
+        + "|(AgentTaskLandBoundaryTests*)|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandMonitoringTests*)"
+        + "|(AgentTaskLandNotificationParkFollowUpTests*)|(AgentTaskLandNotificationPersistenceTests*)"
+        + "|(AgentTaskLandNotificationReconcileLoadTests*)|(AgentTaskLandNotificationRecoveryTests*)"
+        + "|(AgentTaskLandNotificationRescanTests*)|(AgentTaskLandQueueAgingTests*)|(AgentTaskLandQueuedReceiptTests*)"
+        + "|(AgentTaskLandReceiptTests*)|(AgentTaskLandReceiptWatermarkSafetyTests*)|(AgentTaskLandReceiptWatermarkTests*)"
+        + "|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)|(AgentTaskReplyIntegrationTests*)"
+        + "|(AgentTaskWorktreeLockOutcomeTests*)|(BlockedTaskParkDeliveryTests*)|(C0824RefOnlyLandingTests*)"
+        + "|(C0824RefOnlyReceiptTests*)|(C0824TransportGitTests*)|(C0824WorkspaceSlotRoleGateTests*)"
+        + "|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)|(C1514HostLoadHistoryTests*)"
+        + "|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)|(C1677RetentionServerTests*)"
+        + "|(CapacityRecoveryTaskTests*)|(Card1761RunnerReadPollTests*)|(CheckNoteDeliveryHandoffTests*)"
+        + "|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)"
+        + "|(DelegationTestServicesTests*)|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)"
+        + "|(DispatchHoldVisibilityTests*)|(ExternalTrackerSyncIdentifierTests*)|(ImpactedClassesSelectorTests*)"
+        + "|(InProcessGitCommandsTests*)|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)"
+        + "|(LegacyCheckNotePublicationTests*)|(MergeHighRadiusSubsetTests*)|(PendingSettlementDeliveryTests*)"
+        + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)|(PostLandMutationWorktreeTests*)"
+        + "|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)|(ReceiptScanDestinationIntegrationTests*)"
         + "|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
         + "|(RunnerTerminalSessionInputEncodingTests*)|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
         + "|(SessionTerminationSourcePersistenceTests*)|(TestSelectionTests*)|(TimeoutAuditTests*)"
-        + "|(WindowsUnitPlatformAdmissionTests*)|(WorktreeBaseSelectionTests*)|(WorktreeManagerGitIntegrationTests*)"
-        + "|(WorktreeManagerSafetyTests*)|(WorktreeManagerStartRefLocalOnlyTests*)|(WorktreeManagerTests*)"
-        + "|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
+        + "|(VerificationRoundDeliveryTests*)|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
+        + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)|(WorktreeManagerStartRefLocalOnlyTests*)"
+        + "|(WorktreeManagerTests*)|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
 
     private const string WhyMissedSessionRunnerFilter =
         "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)|(HostStatsStoreTests*)"
@@ -485,7 +512,6 @@ public sealed partial class ImpactedClassesSelectorTests
     public async Task C1801_non_merge_land_notification_filter_names_every_class()
     {
         var root = Root();
-        var expected = "/*/*/" + string.Join("|", LandNotificationClasses.Select(name => "(" + name + "*)")) + "/*";
         // CARD-1819 repair: AgentTaskLandDeliveryE2ETests asserts Windows in LandDeliveryFixture
         // and must not be on the Linux filter. The probe stays the Linux half.
         const string e2e = "/*/*/(LandDeliveryFixtureProbeTests*)/*";
@@ -494,18 +520,21 @@ public sealed partial class ImpactedClassesSelectorTests
 
         var text = await RunAsync(root, "-Path", path);
         text.Exit.ShouldBe(0, text.Text);
-        text.Stdout.Replace("\r\n", "\n").Split('\n')
+        var lines = text.Stdout.Replace("\r\n", "\n").Split('\n')
             .Where(line => line.StartsWith("treenodeFilter=", StringComparison.Ordinal))
-            .ShouldBe(["treenodeFilter=" + expected]);
+            .ToArray();
+        lines.ShouldBe(["treenodeFilter=" + LandNotificationDerivedFilter]);
+        foreach (var name in LandNotificationClasses)
+            lines[0].ShouldContain("(" + name + "*)", Case.Sensitive, name);
 
         var ran = await RunAsync(root, "-Path", path, "-Json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
-        json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(expected);
+        json.RootElement.GetProperty("treenodeFilter").GetString().ShouldBe(LandNotificationDerivedFilter);
         // The printed treenodeFilter stays the Antiphon.Tests row; the E2E row is the Linux probe only.
         FilterRows(json.RootElement, "filters").ShouldBe([
             ("tests/Antiphon.E2E", e2e),
-            ("tests/Antiphon.Tests", expected),
+            ("tests/Antiphon.Tests", LandNotificationDerivedFilter),
         ]);
         FilterRows(json.RootElement, "windowsFilters").ShouldBe([
             ("tests/Antiphon.E2E", windowsE2e),
