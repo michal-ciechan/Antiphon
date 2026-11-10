@@ -95,11 +95,10 @@ public sealed class CheckpointManifestDocumentationTests
         lines[headerAt + 1].Trim().ShouldBe("|---|---|", "schema separator follows the header");
         var exampleAt = Array.FindIndex(lines, headerAt + 2, line => line.Trim().StartsWith("|---|---|---|", StringComparison.Ordinal));
         exampleAt.ShouldBeGreaterThan(headerAt, "worked-example separator stays in the section");
-        var mutatedLines = lines.Where((_, index) => index != headerAt + 1).ToArray();
-        mutatedLines[headerAt].Trim().ShouldBe("| `CP` | `CP-1`, `CP-2`, ... in run order. |",
-            "the schema body now follows the header with no separator");
-        var mutated = string.Join('\n', mutatedLines);
-        mutated.ShouldContain("| CP | After | Build |", Case.Sensitive, "the later table is still present");
+        var mutated = string.Join('\n', lines.Where((_, index) => index != headerAt + 1));
+        const string joined = "| Column | Meaning |\n| `CP` |";
+        mutated.ShouldContain(joined, Case.Sensitive, "the schema body now follows the header with no separator");
+        mutated.ShouldContain(lines[exampleAt], Case.Sensitive, "the worked-example separator stays");
 
         InterimVerificationPolicy.HasSelectionRows(mutated, section)
             .ShouldBeFalse("a later worked-example table must not satisfy a schema table with no separator");
