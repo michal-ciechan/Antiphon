@@ -355,16 +355,16 @@ public sealed class HerdrPaneDisposalRedactionTests
     }
 
     [Test]
-    [Arguments("Review: notes")][Arguments("agent:claude")][Arguments("fix: retry")]
+    [Arguments("Review: notes")][Arguments("fix: retry")]
     [Arguments("build:1")][Arguments("CARD-0866 12:30")]
     [Arguments("Å:notes")][Arguments("Review： notes")]
     [Arguments("Review＼ notes")][Arguments("Review∕ notes")][Arguments("Review\u202e notes")]
-    // ASCII letters and digits before the candidate drive letter are part of ordinary display text.
-    [Arguments("xC:secret-home")][Arguments("XC:secret-home")][Arguments("xc:secret-home")]
-    [Arguments("0C:secret-home")][Arguments("1C:secret-home")][Arguments("2C:secret-home")]
-    [Arguments("3C:secret-home")][Arguments("4C:secret-home")][Arguments("5C:secret-home")]
-    [Arguments("6C:secret-home")][Arguments("7C:secret-home")][Arguments("8C:secret-home")]
-    [Arguments("9C:secret-home")][Arguments("1c:secret-home")]
+    // CARD-0919: a letter- or digit-glued colon stays visible when a space or an ASCII digit follows it.
+    // A non-ASCII letter plus a colon is not an ASCII drive prefix.
+    [Arguments("xC: secret")][Arguments("1C: secret")]
+    [Arguments("xC:1")][Arguments("1C:9")]
+    [Arguments("xC:")][Arguments("1C:")]
+    [Arguments("\u0421:secret")][Arguments("\u0391:secret")][Arguments("\uFF23:secret")]
     public async Task Redaction_preserves_non_drive_display_text(string value)
     {
         await AssertDisplayValueAsync(value, value, "preserved");
@@ -404,6 +404,16 @@ public sealed class HerdrPaneDisposalRedactionTests
     // Separator-bearing variants remain whole-value masked regardless of the drive boundary.
     [Arguments(@"=C:\Users\secret-home")][Arguments("foo/C:/Users/secret-home")]
     [Arguments(@"name:C:\Users\secret-home")][Arguments(@"a,C:\secret-home")]
+    // CARD-0919: letter- or digit-glued ASCII drive prefixes mask when the colon is followed
+    // by a character that is neither a space nor an ASCII digit.
+    [Arguments("xC:secret-home")][Arguments("XC:secret-home")][Arguments("xc:secret-home")]
+    [Arguments("0C:secret-home")][Arguments("1C:secret-home")][Arguments("2C:secret-home")]
+    [Arguments("3C:secret-home")][Arguments("4C:secret-home")][Arguments("5C:secret-home")]
+    [Arguments("6C:secret-home")][Arguments("7C:secret-home")][Arguments("8C:secret-home")]
+    [Arguments("9C:secret-home")][Arguments("1c:secret-home")]
+    [Arguments("repoC:secret")][Arguments("workdirC:secret")][Arguments("123C:secret")]
+    [Arguments("xC::x")]
+    [Arguments("agent:claude")][Arguments("Review:notes")][Arguments("dir:name")]
     public async Task Redaction_masks_drive_prefix_at_boundary(string value)
     {
         await AssertDisplayValueAsync(value, Mask, "drive-boundary");
