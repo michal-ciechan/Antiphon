@@ -59,4 +59,29 @@ public class ClaudeDialogObservationTests
         permission.CanCancel.ShouldBe(true);
         ClaudeDialogObservation.Observe("Do you want to proceed?\n1. Yes\n2. No").CanCancel.ShouldBeNull();
     }
+
+    // Claude 2.1.322, Antiphon-Decisions session 7b80d3e0, 2026-11-10: typing /remote-control
+    // opens a slash autocomplete under the composer and covers the hint bar. The draft is still
+    // the command. A choice menu (numbered answers) under the box stays unreadable.
+    [Test]
+    public void C1833_SlashAutocompleteUnderComposerIsClear()
+    {
+        var rule = new string('─', 40);
+        var screen = string.Join('\n',
+            rule,
+            ">\u00A0/remote-control",
+            rule,
+            "  > /remote-control                        Control this session from your phone or claude.ai/code",
+            "    /rc-status                             Show remote-control (bridge) health",
+            "                                           / DROPPED / NO-RC (user)",
+            "    /launch-remote                         Launch a new Claude Code remote-control session");
+
+        ClaudeScreen.TryReadComposer(screen, out var content).ShouldBeTrue();
+        content.ShouldBe("/remote-control");
+        ClaudeDialogObservation.Observe(screen).State.ShouldBe(ClaudeDialogState.Clear);
+
+        var choiceUnderBox = string.Join('\n',
+            rule, "> ", rule, "  1. Yes", "  2. No", "Enter to confirm · Esc to cancel");
+        ClaudeScreen.TryReadComposer(choiceUnderBox, out _).ShouldBeFalse();
+    }
 }
