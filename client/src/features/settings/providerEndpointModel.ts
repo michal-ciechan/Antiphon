@@ -65,7 +65,11 @@ const SPECIAL_URL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file'
  * again. Slashes, backslashes, whitespace, controls, and zero-width marks after its
  * colon are only a separator, including one slash and a run of none.
  * An `@` only in the path, query, or fragment, and `http://@host` (empty userinfo),
- * are not credentials.
+ * are not credentials. CARD-1827: path-embedded userinfo is accepted path text.
+ * `https://proxy/https%3A//u:pw@real/v1`, `https://proxy/https%3A%2F%2Fu:pw@h`,
+ * `https://proxy/http%3a/u:pw@h`, `https://proxy/socks5://u:pw@real:1080` and
+ * `https://proxy/redis://u:pw@h` leave the username and password empty.
+ * A literal special scheme with userinfo anywhere in the text stays refused.
  */
 function baseUrlCarriesUserInfo(baseUrl: string): boolean {
   const scheme = schemeOf(baseUrl)

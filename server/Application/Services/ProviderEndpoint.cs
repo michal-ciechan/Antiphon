@@ -117,6 +117,8 @@ public sealed record ProviderEndpoint(string BaseUrl, string? ApiKeyName)
     /// it stores is refused at launch (Review e4b591eb D2). Throws 422 under <paramref name="urlField"/>
     /// with a <c>provider_endpoint_base_url_*</c> or <c>provider_endpoint_placeholder</c> code; the
     /// URL itself is never quoted in the message.
+    /// CARD-1827: path-embedded userinfo is accepted path text. UserInfo stays empty when the @ is
+    /// only in the path, including a percent-encoded or non-special nested URL.
     /// </summary>
     public static string ValidateBaseUrl(string? value, string urlField)
     {
