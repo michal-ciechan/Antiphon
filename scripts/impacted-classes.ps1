@@ -1200,6 +1200,15 @@ foreach ($kind in $matched) {
     Add-KindSelection $kind $whole $methodsByClass $fileSet
 }
 Apply-Derived $derivedSelection $whole $methodsByClass $windowsWhole
+# A hand row can name a class the index has since classified windowsOnly. The Linux
+# filter still has to drop it; -MergeSubset already returned above and stays the hand subset.
+$laneIndex = Get-DerivedIndex
+foreach ($className in @($whole)) {
+    if ($laneIndex.WindowsOnly.Contains([string]$className)) {
+        [void]$whole.Remove([string]$className)
+        [void]$windowsWhole.Add([string]$className)
+    }
+}
 
 $rows = New-FilterRows $whole $methodsByClass '' $null
 $windowsRows = New-FilterRows $windowsWhole $windowsMethods '' $null

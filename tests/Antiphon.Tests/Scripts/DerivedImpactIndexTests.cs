@@ -878,7 +878,7 @@ public sealed class DerivedImpactIndexTests
             @"\b(?!\w*Tests\b)(?:\w*(?:Windows|Linux)\w*(?:Gate|Skip|Guard)\w*|\w*(?:Gate|Skip|Guard)\w*(?:Windows|Linux)\w*)\b",
             RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-        private static readonly Regex Declaration = new(
+        private static readonly Regex TypeHeader = new(
             @"^\s*(?:(?:public|internal|private|protected|file|sealed|static|abstract|partial|readonly)\s+)*(?:class|record)\s+(\w+)",
             RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
@@ -896,7 +896,7 @@ public sealed class DerivedImpactIndexTests
                 if (relative.Split('/').Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.Ordinal)))
                     continue;
                 var text = File.ReadAllText(file);
-                foreach (Match match in Declaration.Matches(text))
+                foreach (Match match in TypeHeader.Matches(text))
                 {
                     var name = match.Groups[1].Value;
                     var header = text.Substring(match.Index, Math.Min(400, text.Length - match.Index));
