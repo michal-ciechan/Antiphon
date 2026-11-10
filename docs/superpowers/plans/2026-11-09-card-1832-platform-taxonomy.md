@@ -19,7 +19,7 @@ Four sealed attributes in `tests/Shared/PlatformTaxonomy.cs`, namespace `Antipho
 | `HasLinuxSpecificsAttribute` | `HasLinuxSpecifics` | both lanes |
 | `HasWindowsSpecificsAttribute` | `HasWindowsSpecifics` | both lanes |
 
-`AttributeUsage` is Method or Class, `AllowMultiple = false`, `Inherited = false`. The constructor requires a nonempty reason, stored on the attribute for the diff and the census. The reason is not the filter value. The filter value stays the closed four-word set. No attribute subclasses `SkipAttribute`.
+TUnit 1.44's TUnit0028 analyzer rejects a second `AttributeUsage` on a `PropertyAttribute` subclass, so these four inherit `PropertyAttribute`'s usage: Assembly, Class, and Method, `AllowMultiple = true`, `Inherited = true`. The planned Method-or-Class, `AllowMultiple = false`, `Inherited = false` usage cannot be declared. The constructor requires a nonempty reason, stored on the attribute for the diff and the census. The reason is not the filter value. The filter value stays the closed four-word set. No attribute subclasses `SkipAttribute`. S1 does not add the census that later forbids two `Platform` values on one method.
 
 Class-level application is shorthand for every test method in that class. TUnit copies a class property onto each discovered test (`DiscoveredTestContext.AddProperty` in `TUnit.Engine` 1.44.0). A method attribute beside a class attribute is a census failure. There is no override.
 
@@ -118,7 +118,7 @@ The mechanical script annotates only explicit gates: a line whose trimmed text s
 
 Rejected: more `[Category("LinuxOnly")]` values. Rejected: keeping `[NativeLinuxOnly]` as the skip and adding a trait beside it. Rejected: a Roslyn analyzer that fails the build on every current gate. The suite cannot be annotated in one slice, and an analyzer would make the intermediate commits unbuildable. The census test is the ratchet, with a baseline of current hits.
 
-S1 proves a `PropertyAttribute` subclass is visible to `--treenode-filter`. If CP-1 executes zero tests, stop. Do not fall back to a skip attribute. The repair is to register the property the way that witness shows TUnit 1.44 requires.
+S1 proves a `PropertyAttribute` subclass is visible to `--treenode-filter`. If CP-1 executes zero tests, stop. Do not fall back to a skip attribute. The repair is to register the property the way that witness shows TUnit 1.44 requires: omit `AttributeUsage` (analyzer TUnit0028) and inherit `PropertyAttribute`'s usage.
 
 ### D-2. Shared file now, Support project later
 
@@ -206,7 +206,7 @@ A new test that only compares constants is a stub. V-1 reads the attribute base 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1832-s1/` | s1-include | `/*/*/(PlatformTaxonomyFilterTests*)\|(PlatformTaxonomyClassFilterTests*)/*[Platform=LinuxOnly]` | V-1, V-2 | 2 executed, 0 failed, 0 skipped | 2 | 8 | false | `ANTIPHON_PLATFORM_FILTER=include` |
-| CP-2 | S1 | `CP-1` | s1-exclude | `/*/*/(PlatformTaxonomyFilterTests*)\|(PlatformTaxonomyClassFilterTests*)/*[Platform!=LinuxOnly]` | V-2 | 1 executed, 0 failed, 0 skipped | 1 | 3 | false | `ANTIPHON_PLATFORM_FILTER=exclude` |
+| CP-2 | S1 | `CP-1` | s1-exclude | `/*/*/PlatformTaxonomyFilterTests*/*[Platform!=LinuxOnly]` | V-2 | 1 executed, 0 failed, 0 skipped | 1 | 3 | false | `ANTIPHON_PLATFORM_FILTER=exclude` |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1832-s2/` | s2-derive | `/*/*/PlatformTaxonomyDerivationTests/*` | V-3 | 0 failed | 7 | 8 | false | n/a |
 | CP-4 | S3 | `tests/Antiphon.Tests -> bin-c1832-s3/` | s3-census | `/*/*/(PlatformTaxonomyCensusTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4, R-2 | 0 failed | 6 | 8 | false | n/a |
 | CP-5 | S4 | `tests/Antiphon.Tests -> bin-c1832-s4/` | s4-selector | `/*/*/PlatformTaxonomySelectorTests/*` | V-5 | 0 failed | 5 | 8 | true | n/a |
@@ -218,6 +218,8 @@ A new test that only compares constants is a stub. V-1 reads the attribute base 
 | CP-11 | S9 | `tests/Antiphon.Tests -> bin-c1832-s9/` | s9-cutover | `/*/*/(PlatformTaxonomyCensusTests*)\|(NativeLinuxPolicyWitnessTests*)\|(ReleaseGatePlatformTests*)/*` | V-7, R-3 | 0 failed | 14 | 12 | false | n/a |
 
 Suffix check: `PlatformTaxonomyFilterTests` is not a prefix of `PlatformTaxonomyClassFilterTests`. Census, derivation, lane, and selector names do not prefix each other. No row name contains `Land`. No output name contains `ref`.
+
+CP-2 names only `PlatformTaxonomyFilterTests`. The checkpoint roster requires every parenthesized `(Class*)` token to execute or skip. `PlatformTaxonomyClassFilterTests` is entirely `LinuxOnly`, so naming it on `[Platform!=LinuxOnly]` is a roster miss even when the unannotated sibling passes and nothing is skipped. The class shorthand is proved by CP-1. `PlatformTaxonomyFilterTests*` does not match `PlatformTaxonomyClassFilterTests`.
 
 `ImpactedClassesSelectorTests` is 28 `[Test]` methods. `malformed_table_is_refused` has 13 `[Arguments]` rows. Executed count is 40, which matches the CARD-1820 round-2 measurement of this class. CP-6 Min is 40. CP-3 Min is the seven methods named under V-3. CP-4 Min is five census methods plus the one `TestLaneCategoryGuardTests` method. CP-7 Min is four lane methods (Linux suffix, Windows suffix, omit `WindowsOnly` class, do not launch an all-excluded chunk). CP-10 adds the five `WindowsUnitPlatformAdmissionTests` methods. CP-11 adds three `NativeLinuxPolicyWitnessTests` and six `ReleaseGatePlatformTests`.
 
@@ -253,7 +255,7 @@ Each slice is one Code task, 60-120 minutes, its own commit, its checkpoint row 
 
 ### S1. Attributes and the filter proof
 
-Add `tests/Shared/PlatformTaxonomy.cs` and the csproj link. Add `PlatformTaxonomyFilterTests` (one `[LinuxOnly("witness")]` method and one unannotated method) and `PlatformTaxonomyClassFilterTests` (`[LinuxOnly("class shorthand")]` on the class, one method). Both Linux-only bodies pass only when `ANTIPHON_PLATFORM_FILTER=include`. The unannotated body passes only when the value is `exclude`. Run CP-1 and CP-2.
+Add `tests/Shared/PlatformTaxonomy.cs` and the csproj link. Add `PlatformTaxonomyFilterTests` (one `[LinuxOnly("witness")]` method and one unannotated method) and `PlatformTaxonomyClassFilterTests` (`[LinuxOnly("class shorthand")]` on the class, one method). Both Linux-only bodies pass only when `ANTIPHON_PLATFORM_FILTER=include`. The unannotated body passes only when the value is `exclude`. Run CP-1 and CP-2. CP-2's filter names only `PlatformTaxonomyFilterTests`, for the roster reason under Checkpoints.
 
 ### S2. Derivation
 
