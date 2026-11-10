@@ -408,6 +408,63 @@ public sealed class WorktreeResidueSweepTests
         manager.RemoveCalls.ShouldBe(0);
     }
 
+    /// <summary>CARD-1459. The daily residue job runs the abandoned-landing reconciler before the sweep.</summary>
+    [Test]
+    public async Task C1459_daily_job_invokes_the_reconciler()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var taskId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var updated = Now.AddDays(-8);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "C1459", Goal = "C1459",
+            Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code, Workspace = WorkspaceMode.Worktree,
+            WorkingDirectory = "/repo", RepoPath = "/repo", Status = AgentTaskStatus.Succeeded,
+            ReplyTo = AgentTaskReplyTo.None, CreatedAt = Now.AddDays(-40), CompletedAt = Now.AddDays(-31),
+            CurrentLandRequestId = requestId, LandRequestedAt = Now.AddDays(-31),
+        });
+        db.AgentTaskLandRequests.Add(new AgentTaskLandRequest
+        {
+            Id = requestId, TaskId = taskId, RequestedAt = Now.AddDays(-31),
+            LastEvaluatedAt = Now.AddDays(-31), LastProgressAt = Now.AddDays(-31),
+            State = LandRequestState.Completed, IsPending = false, ExpectedSourceSha = new string('a', 40),
+        });
+        var op = new AgentTaskLanding
+        {
+            Id = Guid.NewGuid(), TaskId = taskId, SchemaVersion = 3, Active = true, Phase = LandPhase.PushStarted,
+            Publication = LandPublicationOutcome.Unconfirmed, LastReason = "push_rejected",
+            ApprovalLandRequestId = Guid.NewGuid(), ReviewedSourceSha = new string('a', 40),
+            ApprovalKind = LandApprovalKind.ExplicitCaller, PushExitCode = 1, PushStartedAt = updated,
+            RepositoryPath = "/repo", WorktreePath = "/trees/x", LandWorktreePath = "/trees/land/x",
+            CommonDirectory = "/repo/.git", GitDirectory = "/repo/.git", SourceFullRef = "refs/heads/feat/x",
+            TargetFullRef = "refs/heads/master", DestinationFullRef = "refs/heads/master",
+            OriginalSourceSha = new string('a', 40), TargetBeforeSha = new string('b', 40),
+            SourceLocalSha = new string('a', 40), LocalTargetBeforeSha = new string('b', 40),
+            CreatedAt = updated.AddHours(-1), UpdatedAt = updated,
+        };
+        db.AgentTaskLandings.Add(op);
+        await db.SaveChangesAsync();
+
+        var clock = new FakeTimeProvider(new DateTimeOffset(Now, TimeSpan.Zero));
+        var reconciler = new AbandonedLandingReconciler(
+            db, Options.Create(new WorktreeResidueSettings { AbandonedLandingDays = 7 }), clock,
+            NullLogger<AbandonedLandingReconciler>.Instance);
+        var service = new WorktreeResidueSweepService(
+            db, new RecordingResidueWorktrees(), Options.Create(new WorktreeResidueSettings { Execute = false }),
+            Options.Create(new GitSettings { DefaultBranch = "master" }), clock,
+            NullLogger<WorktreeResidueSweepService>.Instance);
+        var job = new WorktreeResidueJob(service, new ListLogger<WorktreeResidueJob>(), reconciler);
+
+        await job.ExecuteAsync(CancellationToken.None);
+
+        var stored = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == op.Id);
+        stored.Phase.ShouldBe(LandPhase.Refused);
+        stored.Publication.ShouldBe(LandPublicationOutcome.Refused);
+        stored.LastReason.ShouldBe("landing_abandoned:push_rejected");
+    }
+
     private static async Task<AgentTask> SeedWorktreeTaskAsync(
         AppDbContext db, WorktreeManager manager, ScratchGitRepo repo, string title)
     {
