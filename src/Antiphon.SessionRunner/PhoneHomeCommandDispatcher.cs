@@ -201,6 +201,9 @@ public sealed class PhoneHomeCommandDispatcher
     /// <summary>CARD-0824 S1 test seam: a scratch workspace service (and its pool) for wire tests.</summary>
     internal void UseWorkspace(RunnerWorkspaceService workspace) => _workspace = workspace;
 
+    /// <summary>CARD-1818. The workspace <see cref="Workspace"/> builds, including its repository activity.</summary>
+    internal RunnerWorkspaceService WorkspaceForTest() => Workspace();
+
     private RunnerWorkspaceSlotPool SlotPool() =>
         Workspace().SlotPool ?? throw new PhoneHomeAdmissionException(
             PhoneHomeProblemTypes.UnsupportedTarget, WorkspaceSlotCodes.Disabled, 409);

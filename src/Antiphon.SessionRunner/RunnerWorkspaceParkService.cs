@@ -12,6 +12,9 @@ public sealed class RunnerWorkspaceParkService
 {
     private readonly RunnerWorkspaceService? _workspace;
     public RunnerWorkspaceParkService(RunnerWorkspaceService workspace) => _workspace = workspace;
+
+    /// <summary>CARD-1818. The workspace this park service pushes through.</summary>
+    internal RunnerWorkspaceService? Workspace => _workspace;
     // Local verification has no configured repository/root: the runtime supplies its own checkout.
     public RunnerWorkspaceParkService() { }
     internal Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> StartProcess { get; init; } =

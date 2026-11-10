@@ -61,6 +61,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
     private readonly SessionRunnerSettings _settings;
     private readonly RunnerWorkspaceParkService? _workspacePark;
+    /// <summary>CARD-1818. The park workspace this runtime constructed, when phone-home created one.</summary>
+    internal RunnerWorkspaceService? ParkWorkspaceForTest { get; private set; }
     public bool SupportsWorkspacePark => _workspacePark is not null;
     internal RunnerWorkspaceParkService? LocalWorkspaceVerifier { get; set; }
     public bool SupportsWorkspaceSourceModes => _workspacePark is not null || LocalWorkspaceVerifier is not null;
@@ -208,7 +210,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         CodexCliVersionProbe? codexCliProbe = null,
         IOptions<PhoneHomeSettings>? phoneHomeSettings = null,
         RunnerWorkspaceParkService? workspaceParkService = null,
-        ILinuxCustodyRecovery? linuxRecovery = null)
+        ILinuxCustodyRecovery? linuxRecovery = null,
+        RunnerRepositoryActivity? repositoryActivity = null)
     {
         _settings = settings.Value;
         _linuxRecovery = linuxRecovery;
@@ -216,7 +219,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
             _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
+        _ = repositoryActivity;
         if (_workspacePark is null) LocalWorkspaceVerifier = new();
+        ParkWorkspaceForTest = _workspacePark?.Workspace;
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));
         CodexCliProbe = codexCliProbe;
         _custody = new(() => new RunnerCustodyLedger(
