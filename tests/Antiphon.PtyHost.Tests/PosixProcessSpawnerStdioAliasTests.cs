@@ -84,7 +84,7 @@ public sealed class PosixProcessSpawnerStdioAliasTests
     private static void CloseAliases(HashSet<string> identities)
     {
         var method = typeof(PosixProcessSpawner).GetMethod(
-            "CloseStdioAliases",
+            CloseStdioAliases,
             BindingFlags.Static | BindingFlags.NonPublic,
             null,
             [typeof(HashSet<string>)],
@@ -176,6 +176,7 @@ public sealed class PosixProcessSpawnerStdioAliasTests
             throw new InvalidOperationException("close failed: " + Marshal.GetLastPInvokeError());
     }
 
+    private const string CloseStdioAliases = "CloseStdioAliases";
     private const int ORdwr = 2;
     private const int AfUnix = 1;
     private const int SockStream = 1;
