@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Antiphon.Server.Git</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Antiphon.Server" />
+    <InternalsVisibleTo Include="Antiphon.Server.Git.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ServerGitProcess.Span calls Antiphon.Observability.AntiphonTrace. Not the server. -->
+    <ProjectReference Include="..\Antiphon.Observability\Antiphon.Observability.csproj" />
+  </ItemGroup>
+
+</Project>

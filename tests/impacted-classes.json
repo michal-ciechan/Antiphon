@@ -155,10 +155,13 @@
         "server/Application/Services/DelegationWorkspaceResolver.cs",
         "server/Application/Services/OrchestratorWorkspaceLayout.cs",
         "server/Application/Services/AgentTaskReplyService.cs",
-        "server/Infrastructure/ExternalChanges/ChangeDetectionService.cs"
+        "server/Infrastructure/ExternalChanges/ChangeDetectionService.cs",
+        "src/Antiphon.Server.Git/**"
       ],
       "classes": [
-        "ServerGitProcessTests"
+        "ServerGitProcessTests",
+        "GitIndexLockTests",
+        "ServerGitAssemblyTests"
       ]
     },
     {
