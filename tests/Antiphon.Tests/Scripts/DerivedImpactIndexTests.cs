@@ -277,11 +277,13 @@ public sealed class DerivedImpactIndexTests
         var ran = await SelectAsync(RepoRoot(), "-Path", MigrationPath, "-Json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var json = JsonDocument.Parse(ran.Stdout);
-        Strings(json.RootElement, "kinds").ShouldBe(["migrations"]);
+        Strings(json.RootElement, "kinds").ShouldBe(["migration-generated-sql-text", "migrations"]);
         var classes = Strings(json.RootElement, "classes");
         foreach (var name in HandMigrationClasses)
             classes.ShouldContain(name);
         classes.ShouldContain("AgentTuiSecretMigratorTests");
+        classes.ShouldContain("Card1773TranscriptPromptStampMigrationTests");
+        classes.ShouldContain("TranscriptHotPathMigrationTests");
         AssertEmptyIds(json.RootElement);
     }
 
@@ -421,7 +423,11 @@ public sealed class DerivedImpactIndexTests
             if (required.Contains(row.Id))
                 selectedName.ShouldBeTrue("replay " + row.Id + " " + row.ClassName);
             if (row.Id == "1")
-                selectedName.ShouldBeFalse("replay 1");
+            {
+                // CARD-1819's e2e-land-delivery kind is windows-only. The derived index still has no Linux edge.
+                classes.ShouldNotContain(row.ClassName!, "replay 1 linux");
+                windows.ShouldContain(row.ClassName!, "replay 1 windows");
+            }
             if (row.Id == "10")
                 skipped.ShouldContain("Antiphon.sln");
         }
