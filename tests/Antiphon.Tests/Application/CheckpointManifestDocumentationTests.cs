@@ -74,7 +74,8 @@ public sealed class CheckpointManifestDocumentationTests
     public void the_doc_section_is_a_selection_readable_table()
     {
         // The same validator the server runs over an Interim verificationSelection
-        // (InterimVerificationPolicy.HasSelectionRows): a heading, a separator row, >= 2 table rows.
+        // (InterimVerificationPolicy.HasSelectionRows): the section's first contiguous
+        // table has a separator and at least two rows. A later table does not count.
         InterimVerificationPolicy.HasSelectionRows(
             ReadRepoFile("docs", "testing-and-build.md"), "Checkpoint manifest (CARD-0585)")
             .ShouldBeTrue($"{DocRelativePath} section must hold a markdown table the selection validator accepts");
