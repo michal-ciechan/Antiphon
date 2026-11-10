@@ -2094,6 +2094,15 @@ function Test-PlainOneDriveLink {
     }
 }
 
+function Test-SnapshotFakeHostPath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    # A Windows drive path is a host file. docker cp into a container is name:remote.
+    if ($Path -match '^[A-Za-z]:[\\/]') { return $true }
+    if ($Path.IndexOf(':') -ge 0) { return $false }
+    return $true
+}
+
 function Test-PlainPublishPruneOrder {
     if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainPublishPruneOrder script exists' $scriptPath; return }
     . $scriptPath
@@ -2153,7 +2162,7 @@ function Test-PlainPublishPruneOrder {
                 if ($classified -match '^/') {
                     $classified = 'C:' + ($classified -replace '/', '\')
                 }
-                if ($classified -notmatch ':') {
+                if (Test-SnapshotFakeHostPath $classified) {
                     $buffer = New-Object byte[] ([int]$script:PlainDumpBytes)
                     [System.IO.File]::WriteAllBytes($writePath, $buffer)
                     $script:PlainExpectedHash = (Get-FileHash -LiteralPath $writePath -Algorithm SHA256).Hash

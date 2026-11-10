@@ -93,11 +93,22 @@ when the copy failed or the folder is missing.
 
 `u/lndcobra/antiphon_postgres_snapshot` runs at `0 50 7 * * *` Europe/London
 (07:50) on the desktop worker. It SSHes to
-`C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`. The
-runner directory's `SOURCE-SHA` file is the sha256 of the
-`postgres-snapshot.ps1` it should run. A candidate is used only when its
-hash matches that pin, so an older checkout is not chosen ahead of the
-pinned bytes. Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
+`C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`.
+
+Refresh that runner directory by copying only these four files from the
+checkout that should run: `scripts/postgres-snapshot.ps1`,
+`scripts/windmill/invoke-postgres-snapshot.ps1`,
+`scripts/windmill/invoke-postgres-snapshot-stale.ps1`, and
+`scripts/windmill/job-status.ps1`. There is no refresh script.
+Write SOURCE-SHA in that directory as the sha256 of the copied
+`postgres-snapshot.ps1`: 64 lowercase hex digits, ASCII, no BOM, and no
+trailing newline. The resolver reads SOURCE-SHA only. A candidate is used
+only when its hash matches that pin, so an older checkout is not chosen
+ahead of the pinned bytes.
+Delete SOURCE-SHA.txt if it is present, and do not write SOURCE-SHA.txt again.
+That stale file was a 40-hex git id. A pin left in it does not select a script.
+
+Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
 under LocalAppData\antiphon fails the parent check on this desktop because
 that folder grants another account full control. The profile directory's
 parents pass, and the CARD-1413 check is unchanged.
