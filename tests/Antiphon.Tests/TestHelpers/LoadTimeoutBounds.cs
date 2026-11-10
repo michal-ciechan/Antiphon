@@ -31,7 +31,8 @@ public static class LoadTimeoutBounds
 
     /// <summary>
     /// Phone-home signal bound. Was 5s. Measured whole-test passes were 7-19s,
-    /// so 20s covers that latency. A longer cap only slows the known Finite_stall red.
+    /// so 20s covers that latency. A publish before the sender subscribes is
+    /// dropped; a longer cap does not admit it.
     /// </summary>
     public static readonly TimeSpan PhoneHomeSignalWait = TimeSpan.FromSeconds(20);
 

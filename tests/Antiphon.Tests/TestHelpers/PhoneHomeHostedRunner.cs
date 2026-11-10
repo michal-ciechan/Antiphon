@@ -49,7 +49,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
     public PhoneHomeRecoveryPump Pump { get; private set; } = null!;
     public AppDbContext Db() => Bridge.CreateObserverContext();
 
-    public static async Task<PhoneHomeHostedRunner> CreateAsync(int count = 4, int bytes = 32768, int runnerCount = 8, bool holdCatchup = false, bool observeCompletion = true, bool legacyServer = false)
+    public static async Task<PhoneHomeHostedRunner> CreateAsync(int count = 4, int bytes = 32768, int runnerCount = 8, bool holdCatchup = false, bool observeCompletion = true, bool legacyServer = false, Task? beforeEventSubscription = null)
     {
         var h = new PhoneHomeHostedRunner();
         try
@@ -117,6 +117,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             h.Service = new PhoneHomeConnectionService(Options.Create(settings), new PhoneHomeAdoptionGate(),
                 new PhoneHomeCommandDispatcher(h.Commands, settings), h.Runtime, new HttpFactory(legacyServer),
                 TimeProvider.System, h._loggers.CreateLogger<PhoneHomeConnectionService>());
+            h.Service.BeforeEventSubscriptionForTest = beforeEventSubscription;
             h._connection = h.Service.RunConnectionAsync(h._stop.Token);
             h.Live = await h.Host.WaitLiveAsync(TimeSpan.FromSeconds(10));
             if (!holdCatchup) await UntilAsync(() => h.Live.DispatchEligible, "hosted catch-up establishes eligibility");
