@@ -96,12 +96,16 @@ public sealed class StandingRunnerCwdTests
             Expect(cwd, Root, windows: true, admitted: false, standing: false);
         }
 
-        foreach (var name in new[] { "a", "Z", "9agent", "slides_server2", "slides-server2", "slides.server2" })
+        foreach (var name in new[] { "a", "z", "9agent", "slides_server2", "slides-server2", "slides.server2" })
         {
             var cwd = "/work/agents/" + name;
             Expect(cwd, Root, windows: false, admitted: true, standing: true);
             Expect(cwd, Root, windows: true, admitted: true, standing: true);
         }
+
+        // A single uppercase letter is a Windows alias of its lowercase form (CARD-1834).
+        Expect("/work/agents/Z", Root, windows: false, admitted: true, standing: true);
+        Expect("/work/agents/Z", Root, windows: true, admitted: false, standing: false);
     }
 
     [Test]
