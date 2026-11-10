@@ -75,7 +75,13 @@ checklist does not apply.
   after the capture; a capture failure still fails the claim for a Code task (`:5847-5852`). The
   baseline's own remote observation may now take R itself for a fetch when the advertised object is
   not local (T-7); that is the CARD-1082 D-3 path working as written. *Rejected:* moving the capture
-  off the tick (CARD-0657 D-3 requires the identity before the claim commits).
+  off the tick (CARD-0657 D-3 requires the identity before the claim commits). CARD-1476: the
+  residual window named in the S3 code report, a follow-up adopting a kept worktree while its owner
+  lands, cannot occur. `FindWriterAsync` returns a Worktree candidate only when that candidate's
+  worktree path equals the landing task's worktree path. Every cut is its own `card-task-<short>`
+  directory. Adoption matches `task-<that task's short id>` only, so a claim adopts its own earlier
+  checkout. A Shared claim keeps R through the claim commit; a Worktree claim releases R before the
+  baseline capture. A failed baseline pin is reported on the claim and does not fail it.
 - **D-5 Measure the hold, not the hope.** `LandingGitProfile` gains `leaseHeldSeconds` (sum of R
   intervals), `windowSeconds` and `reacquireSeconds`; the `Land git profile` line prints them. The lease
   scope opens a read scope while a window is open so processes under a window are counted and the
