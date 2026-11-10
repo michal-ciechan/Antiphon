@@ -17,7 +17,10 @@ public sealed class DispatchHoldLedger
         Dominant = dominant;
     }
 
-    /// <summary>The class with the most time; <see cref="DispatchHoldClass.Lease"/> wins a tie. Null with no rows.</summary>
+    /// <summary>
+    /// The class with the most time. An equal total goes to the class whose latest interval
+    /// ends latest. Null with no rows.
+    /// </summary>
     public DispatchHoldClass? Dominant { get; }
 
     /// <summary>Whole seconds spent in <paramref name="holdClass"/>.</summary>
@@ -41,21 +44,34 @@ public sealed class DispatchHoldLedger
     {
         var rows = heldRows.Where(r => r.At > floor).OrderBy(r => r.At).ToList();
         var seconds = new Dictionary<DispatchHoldClass, double>();
+        var latestEnd = new Dictionary<DispatchHoldClass, DateTime>();
         for (var i = 0; i < rows.Count; i++)
         {
             var end = i + 1 < rows.Count ? rows[i + 1].At : now;
             var stint = Math.Max(0, (end - rows[i].At).TotalSeconds);
             var holdClass = DispatchHoldDetails.ClassOf(rows[i].Detail);
             seconds[holdClass] = (seconds.TryGetValue(holdClass, out var sum) ? sum : 0) + stint;
+            if (!latestEnd.TryGetValue(holdClass, out var ended) || end > ended)
+                latestEnd[holdClass] = end;
         }
 
         DispatchHoldClass? dominant = null;
+        var best = double.NegativeInfinity;
+        var bestEnded = DateTime.MinValue;
         foreach (var holdClass in Enum.GetValues<DispatchHoldClass>())
         {
-            // Enum order breaks ties, and Lease is first: lease starvation is what this names.
-            if (seconds.TryGetValue(holdClass, out var value)
-                && (dominant is null || value > seconds[dominant.Value]))
+            // CARD-1835: the greater total wins. An equal total names the class whose latest
+            // interval ends latest, so SiblingInspection is not dropped for being declared last.
+            // Enum order remains only when those end instants are equal.
+            if (!seconds.TryGetValue(holdClass, out var value))
+                continue;
+            var ended = latestEnd[holdClass];
+            if (dominant is null || value > best || (value == best && ended > bestEnded))
+            {
                 dominant = holdClass;
+                best = value;
+                bestEnded = ended;
+            }
         }
 
         return new DispatchHoldLedger(seconds, dominant);

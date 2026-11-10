@@ -239,23 +239,34 @@ public static class DispatchHoldDetails
 
     /// <summary>
     /// CARD-1431: an escalation names its dominant class in the <c>class=</c> token that precedes
-    /// <c>reason=</c>. A title inside the latest sentence cannot supply that token.
+    /// <c>reason=</c>. CARD-1835: that token is only the escalation header
+    /// (<see cref="WarningPrefix"/> or <see cref="ErrorPrefix"/>, then <c>class=&lt;name&gt;; reason=</c>
+    /// as the first <c>reason=</c>). A title inside a hold sentence cannot supply it.
     /// </summary>
     private static bool TryReportedLedgerClass(string? detail, out DispatchHoldClass holdClass)
     {
         holdClass = default;
         if (string.IsNullOrEmpty(detail))
             return false;
-        var classAt = detail.IndexOf("class=", StringComparison.Ordinal);
-        var reasonAt = detail.IndexOf("reason=", StringComparison.Ordinal);
-        if (classAt < 0 || reasonAt < 0 || classAt > reasonAt)
+        if (!detail.StartsWith(WarningPrefix, StringComparison.Ordinal)
+            && !detail.StartsWith(ErrorPrefix, StringComparison.Ordinal))
             return false;
-        var start = classAt + "class=".Length;
+
+        const string classMarker = "class=";
+        const string headerTail = "; reason=";
+        var classAt = detail.IndexOf(classMarker, StringComparison.Ordinal);
+        if (classAt < 0)
+            return false;
+        var start = classAt + classMarker.Length;
         var end = start;
         while (end < detail.Length && char.IsAsciiLetter(detail[end]))
             end++;
-        if (end == start || end >= detail.Length || detail[end] != ';')
+        if (end == start || !detail.AsSpan(end).StartsWith(headerTail, StringComparison.Ordinal))
             return false;
+        var reasonAt = end + headerTail.IndexOf("reason=", StringComparison.Ordinal);
+        if (detail.IndexOf("reason=", StringComparison.Ordinal) != reasonAt)
+            return false;
+
         var name = detail[start..end];
         foreach (var value in Enum.GetValues<DispatchHoldClass>())
         {
