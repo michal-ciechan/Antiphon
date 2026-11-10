@@ -1,5 +1,7 @@
 #requires -Version 5.1
 # CARD-1836 S1. Schema antiphon-rc-ledger-v1: read, write, validate, and carry decisions.
+# Read-RcLedger is default-deny. Duplicate names (case-insensitive), names outside the
+# closed schema, and JSON values of the wrong type throw ledger-invalid before any carry.
 # ASCII-only. Pure: no network, no git, no process launch. Windows PowerShell 5.1.
 
 if ($script:RcLedgerLoaded) { return }
@@ -657,11 +659,335 @@ function Write-RcLedger {
     [System.IO.File]::WriteAllText($Path, $json, $encoding)
 }
 
+function New-RcFieldMap {
+    return (New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::Ordinal))
+}
+
+function Initialize-RcLedgerSchema {
+    if ($script:RcSchemaReady) { return }
+    $document = New-RcFieldMap
+    $document.Add('format', 's')
+    $document.Add('platform', 's')
+    $document.Add('repository', 's')
+    $document.Add('candidateId', 's')
+    $document.Add('candidateSha', 's')
+    $document.Add('baselineSha', 'sn')
+    $document.Add('baselineRef', 'sn')
+    $document.Add('runId', 's')
+    $document.Add('attempt', 'n')
+    $document.Add('contract', 'o:contract')
+    $document.Add('forcedFull', 'as')
+    $document.Add('identities', 'ai')
+    $document.Add('chunks', 'ac')
+    $contract = New-RcFieldMap
+    $contract.Add('policyHash', 's')
+    $contract.Add('catalogHash', 's')
+    $contract.Add('selectorHash', 's')
+    $contract.Add('runtimeHash', 's')
+    $identity = New-RcFieldMap
+    $identity.Add('suite', 's')
+    $identity.Add('className', 's')
+    $identity.Add('method', 's')
+    $identity.Add('boundary', 's')
+    $identity.Add('inputDigest', 's')
+    $identity.Add('outcome', 's')
+    $identity.Add('durationSeconds', 'nn')
+    $identity.Add('carriedFrom', 'on:carried')
+    $chunk = New-RcFieldMap
+    $chunk.Add('chunkId', 's')
+    $chunk.Add('boundary', 's')
+    $chunk.Add('suite', 's')
+    $chunk.Add('identityKeys', 'as')
+    $chunk.Add('inputDigest', 's')
+    $chunk.Add('outcome', 's')
+    $chunk.Add('durationSeconds', 'nn')
+    $carried = New-RcFieldMap
+    $carried.Add('candidateId', 's')
+    $carried.Add('runId', 's')
+    $carried.Add('candidateSha', 's')
+    $carried.Add('chunkId', 's')
+    $carried.Add('inputDigest', 's')
+    $script:RcSchemaDocument = $document
+    $script:RcSchemaContract = $contract
+    $script:RcSchemaIdentity = $identity
+    $script:RcSchemaChunk = $chunk
+    $script:RcSchemaCarried = $carried
+    $script:RcSchemaReady = $true
+}
+
+function Get-RcKindSchema {
+    param([string]$Kind)
+    Initialize-RcLedgerSchema
+    if ($Kind -ceq 'document') { return $script:RcSchemaDocument }
+    if ($Kind -ceq 'contract') { return $script:RcSchemaContract }
+    if ($Kind -ceq 'identity') { return $script:RcSchemaIdentity }
+    if ($Kind -ceq 'chunk') { return $script:RcSchemaChunk }
+    if ($Kind -ceq 'carried') { return $script:RcSchemaCarried }
+    throw 'ledger-invalid: type'
+}
+
+function Read-RcLedgerText {
+    param([string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { $offset = 3 }
+    $encoding = New-Object System.Text.UTF8Encoding $false, $true
+    try {
+        return $encoding.GetString($bytes, $offset, ($bytes.Length - $offset))
+    } catch {
+        throw 'ledger-invalid: json'
+    }
+}
+
 function Read-RcLedger {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not [System.IO.File]::Exists($Path)) { throw 'ledger-missing' }
-    $parsed = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    $text = Read-RcLedgerText -Path $Path
+    Test-RcLedgerJsonText -Text $text
+    try { $parsed = $text | ConvertFrom-Json }
+    catch { throw 'ledger-invalid: json' }
     $check = Test-RcLedgerDocument -Document $parsed
     if (-not $check.valid) { throw ('ledger-invalid: ' + ($check.errors -join '; ')) }
     return $parsed
+}
+
+function ConvertFrom-RcScanString {
+    param([string]$Raw)
+    $body = $Raw.Substring(1, ($Raw.Length - 2))
+    if ($body.IndexOf([char]92) -lt 0) { return $body }
+    $sb = New-Object System.Text.StringBuilder
+    $i = 0
+    while ($i -lt $body.Length) {
+        $ch = $body[$i]
+        $i++
+        if ($ch -ne '\') { [void]$sb.Append($ch); continue }
+        if ($i -ge $body.Length) { throw 'ledger-invalid: json' }
+        $esc = $body[$i]
+        $i++
+        if ($esc -eq '"') { [void]$sb.Append('"') }
+        elseif ($esc -eq '\') { [void]$sb.Append('\') }
+        elseif ($esc -eq '/') { [void]$sb.Append('/') }
+        elseif ($esc -eq 'b') { [void]$sb.Append([char]8) }
+        elseif ($esc -eq 'f') { [void]$sb.Append([char]12) }
+        elseif ($esc -eq 'n') { [void]$sb.Append([char]10) }
+        elseif ($esc -eq 'r') { [void]$sb.Append([char]13) }
+        elseif ($esc -eq 't') { [void]$sb.Append([char]9) }
+        elseif ($esc -eq 'u') {
+            if (($i + 4) -gt $body.Length) { throw 'ledger-invalid: json' }
+            $value = 0
+            for ($hex = 0; $hex -lt 4; $hex++) {
+                $digit = [int]$body[$i]
+                $i++
+                if ($digit -ge 48 -and $digit -le 57) { $value = ($value * 16) + ($digit - 48) }
+                elseif ($digit -ge 97 -and $digit -le 102) { $value = ($value * 16) + ($digit - 87) }
+                elseif ($digit -ge 65 -and $digit -le 70) { $value = ($value * 16) + ($digit - 55) }
+                else { throw 'ledger-invalid: json' }
+            }
+            [void]$sb.Append([char]$value)
+        }
+        else { throw 'ledger-invalid: json' }
+    }
+    return $sb.ToString()
+}
+
+function Test-RcScanNumber {
+    param([string]$Raw)
+    $number = 0.0
+    $ok = [double]::TryParse($Raw, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$number)
+    if (-not $ok) { throw 'ledger-invalid: json' }
+    if ([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw 'ledger-invalid: json' }
+}
+
+function New-RcScanObject {
+    param([string]$Kind)
+    return [pscustomobject]@{
+        K = 'object'
+        Step = 0
+        AllowClose = $true
+        Schema = (Get-RcKindSchema $Kind)
+        Expect = ''
+        Element = ''
+        Fold = (New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase))
+        Exact = (New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal))
+    }
+}
+
+function New-RcScanArray {
+    param([string]$ElementType)
+    return [pscustomobject]@{
+        K = 'array'
+        Step = 0
+        AllowClose = $true
+        Schema = $null
+        Expect = ''
+        Element = $ElementType
+        Fold = $null
+        Exact = $null
+    }
+}
+
+function Complete-RcScanValue {
+    param($Frames)
+    $parent = $Frames[$Frames.Count - 1]
+    if ($parent.K -ceq 'root') { $parent.Step = 1; return }
+    if ($parent.K -ceq 'object') { $parent.Step = 3; $parent.AllowClose = $true; return }
+    $parent.Step = 1
+    $parent.AllowClose = $true
+}
+
+function Open-RcScanValue {
+    param($Frames, [string]$Type, [string]$Raw)
+    if ($Frames.Count -gt 12) { throw 'ledger-invalid: json' }
+    if ($Raw -ceq '{') {
+        if ($Type -ceq 'o:document') { $Frames.Add((New-RcScanObject 'document')); return $true }
+        if ($Type -ceq 'o:contract') { $Frames.Add((New-RcScanObject 'contract')); return $true }
+        if ($Type -ceq 'o:identity') { $Frames.Add((New-RcScanObject 'identity')); return $true }
+        if ($Type -ceq 'o:chunk') { $Frames.Add((New-RcScanObject 'chunk')); return $true }
+        if ($Type -ceq 'o:carried') { $Frames.Add((New-RcScanObject 'carried')); return $true }
+        if ($Type -ceq 'on:carried') { $Frames.Add((New-RcScanObject 'carried')); return $true }
+        throw 'ledger-invalid: type'
+    }
+    if ($Raw -ceq '[') {
+        if ($Type -ceq 'as') { $Frames.Add((New-RcScanArray 's')); return $true }
+        if ($Type -ceq 'ai') { $Frames.Add((New-RcScanArray 'o:identity')); return $true }
+        if ($Type -ceq 'ac') { $Frames.Add((New-RcScanArray 'o:chunk')); return $true }
+        throw 'ledger-invalid: type'
+    }
+    return $false
+}
+
+function Test-RcScanScalar {
+    param([string]$Type, [string]$Raw)
+    $isString = $Raw.Length -ge 2 -and $Raw[0] -eq [char]34
+    $isNull = $Raw -ceq 'null'
+    $isBool = ($Raw -ceq 'true') -or ($Raw -ceq 'false')
+    if ($Type -ceq 's') {
+        if (-not $isString) { throw 'ledger-invalid: type' }
+        if ($Raw.IndexOf([char]92) -ge 0) { $null = ConvertFrom-RcScanString $Raw }
+        return
+    }
+    if ($Type -ceq 'sn') {
+        if ($isNull) { return }
+        if (-not $isString) { throw 'ledger-invalid: type' }
+        if ($Raw.IndexOf([char]92) -ge 0) { $null = ConvertFrom-RcScanString $Raw }
+        return
+    }
+    if ($Type -ceq 'n' -or $Type -ceq 'nn') {
+        if ($Type -ceq 'nn' -and $isNull) { return }
+        if ($isString -or $isNull -or $isBool) { throw 'ledger-invalid: type' }
+        Test-RcScanNumber $Raw
+        return
+    }
+    if ($Type -ceq 'on:carried' -and $isNull) { return }
+    throw 'ledger-invalid: type'
+}
+
+function Close-RcScanObject {
+    param($Frames, $Frame)
+    foreach ($required in @($Frame.Schema.Keys)) {
+        if (-not $Frame.Exact.Contains([string]$required)) { throw ('ledger-invalid: missing:' + $required) }
+    }
+    $Frames.RemoveAt($Frames.Count - 1)
+    Complete-RcScanValue $Frames
+}
+
+function Test-RcLedgerJsonText {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { throw 'ledger-invalid: json' }
+    Initialize-RcLedgerSchema
+    if ($null -eq $script:RcLedgerToken) {
+        $pattern = '"(?:\\.|[^"\\])*"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+\-]?[0-9]+)?|true|false|null|[{}\[\]:,]'
+        $script:RcLedgerToken = New-Object System.Text.RegularExpressions.Regex $pattern, ([System.Text.RegularExpressions.RegexOptions]::Compiled)
+    }
+    $scan = $Text
+    if ([int]$scan[0] -eq 0xFEFF) { $scan = $scan.Substring(1) }
+    $matches = $script:RcLedgerToken.Matches($scan)
+    $frames = New-Object System.Collections.Generic.List[object]
+    $frames.Add([pscustomobject]@{
+        K = 'root'; Step = 0; AllowClose = $false; Schema = $null; Expect = 'o:document'; Element = ''; Fold = $null; Exact = $null
+    })
+    $cursor = 0
+    foreach ($match in $matches) {
+        if ($match.Index -gt $cursor) {
+            $gap = $scan.Substring($cursor, ($match.Index - $cursor))
+            if ($gap.Trim().Length -ne 0) { throw 'ledger-invalid: json' }
+        }
+        $cursor = $match.Index + $match.Length
+        $raw = $match.Value
+        $frame = $frames[$frames.Count - 1]
+        if ($frame.K -ceq 'root') {
+            if ($frame.Step -ne 0) { throw 'ledger-invalid: json' }
+            $opened = Open-RcScanValue $frames $frame.Expect $raw
+            if ($opened) { continue }
+            Test-RcScanScalar $frame.Expect $raw
+            $frame.Step = 1
+            continue
+        }
+        if ($frame.K -ceq 'object') {
+            if ($frame.Step -eq 0) {
+                if ($raw -ceq '}') {
+                    if (-not $frame.AllowClose) { throw 'ledger-invalid: json' }
+                    Close-RcScanObject $frames $frame
+                    continue
+                }
+                if ($raw.Length -lt 2 -or $raw[0] -ne [char]34) { throw 'ledger-invalid: json' }
+                $name = ConvertFrom-RcScanString $raw
+                $added = $frame.Fold.Add($name)
+                if (-not $added) { throw ('ledger-invalid: duplicate-property:' + $name) }
+                if (-not $frame.Schema.ContainsKey($name)) { throw ('ledger-invalid: unknown-property:' + $name) }
+                [void]$frame.Exact.Add($name)
+                $frame.Expect = [string]$frame.Schema[$name]
+                $frame.Step = 1
+                continue
+            }
+            if ($frame.Step -eq 1) {
+                if ($raw -cne ':') { throw 'ledger-invalid: json' }
+                $frame.Step = 2
+                continue
+            }
+            if ($frame.Step -eq 2) {
+                $opened = Open-RcScanValue $frames $frame.Expect $raw
+                if ($opened) { continue }
+                Test-RcScanScalar $frame.Expect $raw
+                $frame.Step = 3
+                $frame.AllowClose = $true
+                continue
+            }
+            if ($raw -ceq '}') {
+                Close-RcScanObject $frames $frame
+                continue
+            }
+            if ($raw -cne ',') { throw 'ledger-invalid: json' }
+            $frame.Step = 0
+            $frame.AllowClose = $false
+            continue
+        }
+        if ($frame.Step -eq 0) {
+            if ($raw -ceq ']') {
+                if (-not $frame.AllowClose) { throw 'ledger-invalid: json' }
+                $frames.RemoveAt($frames.Count - 1)
+                Complete-RcScanValue $frames
+                continue
+            }
+            $opened = Open-RcScanValue $frames $frame.Element $raw
+            if ($opened) { continue }
+            Test-RcScanScalar $frame.Element $raw
+            $frame.Step = 1
+            $frame.AllowClose = $true
+            continue
+        }
+        if ($raw -ceq ']') {
+            $frames.RemoveAt($frames.Count - 1)
+            Complete-RcScanValue $frames
+            continue
+        }
+        if ($raw -cne ',') { throw 'ledger-invalid: json' }
+        $frame.Step = 0
+        $frame.AllowClose = $false
+    }
+    if ($cursor -lt $scan.Length) {
+        $tail = $scan.Substring($cursor)
+        if ($tail.Trim().Length -ne 0) { throw 'ledger-invalid: json' }
+    }
+    if ($frames.Count -ne 1 -or [int]$frames[0].Step -ne 1) { throw 'ledger-invalid: json' }
 }
