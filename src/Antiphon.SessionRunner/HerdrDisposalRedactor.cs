@@ -38,13 +38,17 @@ internal static class HerdrDisposalRedactor
         for (var i = 0; i < value.Length - 1; i++)
         {
             var c = value[i];
-            if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
-                && value[i + 1] == ':'
-                && (i == 0 || !IsAsciiLetterOrDigit(value[i - 1])))
+            if ((c < 'A' || c > 'Z') && (c < 'a' || c > 'z')) continue;
+            if (value[i + 1] != ':') continue;
+            if (i == 0 || !IsAsciiLetterOrDigit(value[i - 1])) return true;
+            // Glued to a letter or digit: mask when the next character is neither a space nor an ASCII digit.
+            if (i + 2 < value.Length && value[i + 2] != ' ' && !IsAsciiDigit(value[i + 2]))
                 return true;
         }
         return false;
     }
+
+    private static bool IsAsciiDigit(char c) => c >= '0' && c <= '9';
 
     private static bool IsAsciiLetterOrDigit(char c) =>
         (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
