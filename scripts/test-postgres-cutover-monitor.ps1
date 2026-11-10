@@ -919,6 +919,48 @@ function Test-C1423_BareUsernameKeepsNumbersReadable {
     Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# CARD-1458: a pool-diagnostics field whose string value is JSON text (a password pair inside that text) was
+# kept verbatim. Hide-CutoverSecrets only whole-redacts a string Test-CutoverSecretValue recognises, and the
+# later JSON pass sees the pair with its quotes escaped, so the sentinel reached the baseline and result JSON.
+function Test-C1458_NestedJsonInPoolStringMasked {
+    $root = New-C1408Scratch
+    $note = '{"password":"SENTNEST1458","n":1}'
+    $hidden = Hide-CutoverSecrets -Object ([pscustomobject]@{ note = $note; MaxPoolSize = 100 })
+    $noteOut = [string]$hidden['note']
+    Assert-C1408 -Cond ($noteOut -notmatch 'SENTNEST1458' -and $noteOut -eq '{"password":"<redacted>","n":1}' -and $hidden['MaxPoolSize'] -eq 100) -Name 'a pool string that is JSON text masks the password pair and keeps the plain field' -Detail $noteOut
+    $benign = '{"host":"db.example","n":1}'
+    $kept = Hide-CutoverSecrets -Object ([pscustomobject]@{ note = $benign })
+    Assert-C1408 -Cond ([string]$kept['note'] -eq $benign) -Name 'a pool string of plain JSON is kept' -Detail ([string]$kept['note'])
+    $urlNote = Hide-CutoverSecrets -Object ([pscustomobject]@{ note = 'http://u:SENTURL1458@h/x' })
+    Assert-C1408 -Cond ([string]$urlNote['note'] -eq '<redacted>') -Name 'a pool string that is a URL with userinfo is still dropped whole' -Detail ([string]$urlNote['note'])
+    $diag = '{"pool":{"NoResetOnClose":true,"note":"{\"password\":\"SENTNEST1458\",\"n\":1}"}}'
+    $bp = Join-Path $root 'baseline.json'
+    $b = Invoke-PostgresCutoverMonitor -Mode Baseline -Execute -ServerBaseUrl 'http://fake.invalid' -ProjectId 'p1' -BaselinePath $bp -ResultPath (Join-Path $root 'b-result.json') -SampleCount 3 -HttpGet (New-C1408FakeHttp -DiagBody $diag) -TcpConnectMs (New-C1408FakeTcp) -Now $script:FixedNow
+    $all = ''
+    foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter '*.json')) { $all += (Get-Content -LiteralPath $f.FullName -Raw) }
+    $maskedPair = [regex]::Escape('\"password\":\"<redacted>\"')
+    Assert-C1408 -Cond ($b.ExitCode -eq 0 -and $all -notmatch 'SENTNEST1458' -and $all -match '"NoResetOnClose": true' -and $all -match $maskedPair) -Name 'nested JSON inside a pool-diagnostics string is masked in the baseline and result JSON and the plain flag is kept' -Detail ('b=' + $b.ExitCode + ' ' + [regex]::Match($all, '.{0,80}SENTNEST1458.{0,40}').Value)
+    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# CARD-1458: a non-query secret pair runs to the next ';' or '&' or the end of the line, so '(Password=S)' lost
+# its closing paren and the text after it. A pair immediately preceded by '(' now stops before the closer.
+# A bare Password= value still runs through a ')' to the end of the line (a ')' inside the secret stays masked).
+function Test-C1458_ParenthesisedPairKeepsCloser {
+    $paren = Hide-CutoverText -Text '(Password=SENTOM1458)'
+    Assert-C1408 -Cond ($paren -eq '(Password=<redacted>)') -Name 'a parenthesised Password= pair keeps its closing paren' -Detail $paren
+    $short = Hide-CutoverText -Text '(Password=S)'
+    Assert-C1408 -Cond ($short -eq '(Password=<redacted>)') -Name 'a one-character parenthesised password keeps its closing paren' -Detail $short
+    $tail = Hide-CutoverText -Text '(Password=SENTOM1458) medianMs=5000'
+    Assert-C1408 -Cond ($tail -eq '(Password=<redacted>) medianMs=5000') -Name 'text after the closing paren stays readable' -Detail $tail
+    $bare = Hide-CutoverText -Text 'Password=SENT)TAIL1458'
+    Assert-C1408 -Cond ($bare -eq 'Password=<redacted>' -and $bare -notmatch 'TAIL1458') -Name 'a bare Password= value still runs through a paren to the end of the line' -Detail $bare
+    $cs = Hide-CutoverText -Text 'Host=h;Password=SE NTCS1458;Database=kept'
+    Assert-C1408 -Cond ($cs -eq 'Host=h;Password=<redacted>;Database=kept') -Name 'a connection-string value with a space still stops at the next semicolon' -Detail $cs
+    $json = Hide-CutoverText -Text '{"note":"(Password=SENTOM1458)"}' -JsonText
+    Assert-C1408 -Cond ($json -eq '{"note":"(Password=<redacted>)"}') -Name 'a parenthesised pair inside JSON text keeps the closer' -Detail $json
+}
+
 $cases = @(
     'C1408_RollbackAboveFloorAndRatio',
     'C1408_FloorHoldsUnderOneSecond',
@@ -951,7 +993,9 @@ $cases = @(
     'C1423_PairLeadCharactersMasked',
     'C1423_SchemeAfterWordCharacterMasked',
     'C1423_DecodeBoundPinnedFromBothSides',
-    'C1423_BareUsernameKeepsNumbersReadable'
+    'C1423_BareUsernameKeepsNumbersReadable',
+    'C1458_NestedJsonInPoolStringMasked',
+    'C1458_ParenthesisedPairKeepsCloser'
 )
 
 if (-not (Test-Path -LiteralPath $monitor)) {
