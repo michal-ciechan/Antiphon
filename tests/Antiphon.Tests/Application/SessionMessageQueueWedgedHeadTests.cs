@@ -328,6 +328,104 @@ public class SessionMessageQueueWedgedHeadTests
         (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
     }
 
+    // CARD-1505. A large paste collapses to "[Pasted text #N +M lines]". The body head is not on
+    // the rendered screen, but the composer box still holds that paste. The head match treats the
+    // paste as gone and retypes it, so the same body is delivered twice.
+    private const string CollapsedBody =
+        "CARD-1505-collapsed-paste-body-that-is-not-on-the-rendered-screen";
+    private const string CollapsedPlaceholder = "[Pasted text #1 +40 lines]";
+
+    private static void ShowCollapsedPaste(BridgeQueueHarness h)
+    {
+        h.Adapter.PrimeComposer(CollapsedBody);
+        h.Adapter.RenderedScreenOverride = ClaudeDialogFixture.ComposerScreen(draft: CollapsedPlaceholder);
+    }
+
+    [Test]
+    public async Task C1505_Pending_retry_of_a_collapsed_paste_presses_enter_without_retyping()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(CollapsedBody, deliveryAttempts: 1, baselineSequence: baseline);
+        ShowCollapsedPaste(h);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["\r"],
+            "the collapsed paste is still in the composer — Enter only, the body is not retyped");
+        h.Adapter.SubmittedBodies.ShouldBe([CollapsedBody]);
+        await AssertUserPromptsAsync(h, [CollapsedBody]);
+        var message = await MessageAsync(id);
+        message.Status.ShouldBe(QueuedMessageStatus.Sent);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        message.DeliveryAttempts.ShouldBe(1, "Enter-only finishes the original attempt");
+    }
+
+    [Test]
+    public async Task C1505_Interrupted_collapsed_paste_presses_enter_without_retyping()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(CollapsedBody, deliveryAttempts: 1, baselineSequence: baseline,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: DateTime.UtcNow - TimeSpan.FromMinutes(4));
+        ShowCollapsedPaste(h);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe(["\r"],
+            "interrupted recovery uses the same composer-box judgement and does not retype the paste");
+        h.Adapter.SubmittedBodies.ShouldBe([CollapsedBody]);
+        await AssertUserPromptsAsync(h, [CollapsedBody]);
+        var message = await MessageAsync(id);
+        message.Status.ShouldBe(QueuedMessageStatus.Sent);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        message.DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task C1505_Parked_collapsed_paste_holds_the_next_message()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(CollapsedBody, deliveryAttempts: 3, baselineSequence: baseline);
+        const string nextBody = "the next live queue message";
+        var nextId = await h.SeedPendingMessageAsync(nextBody);
+        ShowCollapsedPaste(h);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBeEmpty(
+            "a parked collapsed paste still occupies the composer, so the next row is not typed");
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        await AssertUserPromptsAsync(h, []);
+        (await MessageAsync(id)).DeliveryAttempts.ShouldBe(3);
+        var next = await MessageAsync(nextId);
+        next.Status.ShouldBe(QueuedMessageStatus.Pending);
+        next.DeliveryAttempts.ShouldBe(0);
+        next.DeliveryVerdict.ShouldBeNull();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    // The release stays an empty composer. A clear box may retype; the hold must not become "any
+    // prior attempt blocks the queue".
+    [Test]
+    public async Task C1505_Empty_composer_still_retypes_a_pending_row()
+    {
+        await using var h = await CreateAsync();
+        var baseline = await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        var id = await h.SeedPendingMessageAsync(CollapsedBody, deliveryAttempts: 1, baselineSequence: baseline);
+        h.Adapter.PrimeComposer("");
+
+        await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
+
+        h.Adapter.Inputs.ShouldBe([CollapsedBody, "\r"]);
+        h.Adapter.SubmittedBodies.ShouldBe([CollapsedBody]);
+        await AssertUserPromptsAsync(h, [CollapsedBody]);
+        var message = await MessageAsync(id);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        message.DeliveryAttempts.ShouldBe(2);
+    }
+
     // A parked row whose typing predates the CURRENT generation cannot be in this composer, so it
     // must not hold anything — the no-regression twin of the two cases above.
     [Test]
