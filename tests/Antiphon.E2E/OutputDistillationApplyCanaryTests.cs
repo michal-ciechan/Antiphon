@@ -14,6 +14,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,18 +33,20 @@ namespace Antiphon.E2E;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class OutputDistillationApplyCanaryTests
 {
+    // ModernPtyReplyInlineMaxChars applies to PtyBackend.ModernConPty only (DelegationSettings.CeilingsFor).
+    private const string NativeWindowsReason = "CARD-0588: the C419 apply canary pins the modern ConPTY reply ceiling (ReplyInlineMaxChars 14400), which is Windows-only.";
     private const string Middle = "The violet lantern marks the distinctive middle of this report.";
 
     [Test]
     public async Task Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup()
     {
+        NativeWindowsGate.Require(NativeWindowsReason);
         DistillerCanaryGuard.ValidateOptIns(Environment.GetEnvironmentVariable("ANTIPHON_HEADED_TESTS"),
             Environment.GetEnvironmentVariable("ANTIPHON_DISTILLER_APPLY_CANARY"));
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
         var ct = deadline.Token;
         var approval = await DistillerCanaryApproval.ReadAsync(
             Environment.GetEnvironmentVariable("ANTIPHON_DISTILLER_CANARY_APPROVAL_FILE"), DateTimeOffset.UtcNow, ct);
-        OperatingSystem.IsWindows().ShouldBeTrue();
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
         var root = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0419", Guid.NewGuid().ToString("N"));
         var options = new DistillerCanaryOptions(root, "c419-" + Guid.NewGuid().ToString("N"), approval);

@@ -23,6 +23,8 @@ namespace Antiphon.E2E.Fixtures;
 /// <summary>Real Program/runner/queue/native FakeGrok. The parent owns resources across child server death.</summary>
 public sealed partial class LandDeliveryFixture : IAsyncDisposable
 {
+    // ConPtyRedistributable stages win-x64 only and the fixture stages fakegrok.exe; a Linux variant is unbuilt.
+    private const string NativeWindowsReason = "CARD-0588: the C467 land-delivery fixture drives the native fakegrok.exe through the shipped Windows ConPTY pair.";
     public string Root { get; } = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0467", Guid.NewGuid().ToString("N"));
     private readonly string _suffix = "";
     private readonly bool _shared;
@@ -56,7 +58,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
 
     public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false, string completionForm = "raw")
     {
-        OperatingSystem.IsWindows().ShouldBeTrue();
+        NativeWindowsGate.Require(NativeWindowsReason);
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
         File.Exists(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe")).ShouldBeTrue("native FakeGrok must be staged");
         Directory.CreateDirectory(Repository);

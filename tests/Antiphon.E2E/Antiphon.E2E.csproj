@@ -40,6 +40,7 @@
     <Compile Include="..\Shared\ProgressAwareWait.cs" Link="TestSupport\ProgressAwareWait.cs" />
     <Compile Include="..\Shared\DispatchWaitDiagnostic.cs" Link="TestSupport\DispatchWaitDiagnostic.cs" />
     <Compile Include="..\Shared\TestAppHostPath.cs" Link="TestSupport\TestAppHostPath.cs" />
+    <Compile Include="..\Shared\NativeWindowsGate.cs" Link="TestSupport\NativeWindowsGate.cs" />
     <Compile Include="..\Shared\TestClassificationGuardTests.cs" Link="TestSupport\TestClassificationGuardTests.cs" />
     <None Include="slow-tests-allowlist.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
