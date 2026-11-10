@@ -150,6 +150,10 @@ public sealed class PhoneHomeSettings
         if (string.IsNullOrWhiteSpace(StoreIdPath))
             throw new InvalidOperationException("PhoneHome:StoreIdPath must not be empty.");
         // A Linux container uses POSIX paths; a native Windows runner uses drive-rooted ones.
+        // CARD-1825: "/" (and "C:/") trims to an empty root, so the agents prefix becomes "/agents/"
+        // and admits /agents/<name>. An empty value does the same. Refuse both before launch.
+        if (string.IsNullOrWhiteSpace(AllowedCwd) || RunnerPathForm.IsFilesystemRoot(AllowedCwd))
+            throw new InvalidOperationException("PhoneHome:AllowedCwd must not be empty or a filesystem root.");
         if (!RunnerPathForm.IsAbsolute(AllowedCwd))
             throw new InvalidOperationException("PhoneHome:AllowedCwd must be a POSIX absolute path or a drive-rooted Windows path.");
         if (!RunnerPathForm.IsAbsolute(RunnerRepository))

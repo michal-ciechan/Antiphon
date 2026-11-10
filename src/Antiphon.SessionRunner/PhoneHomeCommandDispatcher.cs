@@ -978,6 +978,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeProblemTypes.UnsupportedTarget,
                 $"cwd must be '{_settings.AllowedCwd}' or a worktree directly under '{_settings.AllowedCwd}/worktrees/' or a standing checkout directly under '{_settings.AllowedCwd}/agents/<segment>'.",
                 409);
+        RejectLinkedStandingCheckout(launch.Cwd);
         if (!string.Equals(launch.Backend, SessionBackends.PtyHost, StringComparison.OrdinalIgnoreCase)
             && launch.Backend is not null)
             throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget, "Herdr and unknown backends are refused.", 409);
@@ -1080,6 +1081,28 @@ public sealed class PhoneHomeCommandDispatcher
 
     internal bool IsAdmittedCwd(string? cwd) =>
         RunnerWorkspaceCwd.IsAdmitted(cwd, _settings.AllowedCwd, OperatingSystem.IsWindows());
+
+    /// <summary>
+    /// CARD-1825. A standing launch lstats <c>&lt;AllowedCwd&gt;/agents</c> and the leaf.
+    /// A symlink or junction at either path is refused, as is a leaf that is not a real directory.
+    /// Worktree and root launches are not inspected.
+    /// </summary>
+    private void RejectLinkedStandingCheckout(string? cwd)
+    {
+        if (!RunnerWorkspaceAdmission.TryGetStandingCheckout(
+                cwd, _settings.AllowedCwd, OperatingSystem.IsWindows(), out var agentsDirectory, out var checkout))
+            return;
+        if (StandingCheckoutLink.IsSymlinkOrJunction(agentsDirectory))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget,
+                $"standing agents directory '{agentsDirectory}' must be a real directory, not a symlink or junction.",
+                409);
+        if (!StandingCheckoutLink.IsRealDirectory(checkout))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget,
+                $"standing checkout '{checkout}' must be a real directory, not a symlink, junction, or other file.",
+                409);
+    }
 
     private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)
     {
