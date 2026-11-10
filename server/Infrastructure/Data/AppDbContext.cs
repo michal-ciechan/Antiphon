@@ -141,6 +141,7 @@ public partial class AppDbContext : DbContext
     public DbSet<PipelineHandoffObservation> PipelineHandoffObservations => Set<PipelineHandoffObservation>();
     public DbSet<CardCompletionAcceptance> CardCompletionAcceptances => Set<CardCompletionAcceptance>();
     public DbSet<CardCompletionReceipt> CardCompletionReceipts => Set<CardCompletionReceipt>();
+    public DbSet<CardCompletionShadowEvent> CardCompletionShadowEvents => Set<CardCompletionShadowEvent>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -265,6 +266,20 @@ public partial class AppDbContext : DbContext
             entity.HasIndex(x => new { x.CardId, x.OperationId, x.AcceptanceRevision }).IsUnique()
                 .HasDatabaseName("IX_CardCompletionReceipts_Card_Operation_Acceptance");
             entity.HasOne<CardCompletionAcceptance>().WithMany().HasForeignKey(x => x.AcceptanceId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<CardCompletionShadowEvent>(entity =>
+        {
+            entity.ToTable("CardCompletionShadowEvents");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Actor).HasMaxLength(200);
+            entity.Property(x => x.Adjudicator).HasMaxLength(200);
+            entity.HasIndex(x => x.AcceptanceId).IsUnique()
+                .HasDatabaseName("IX_CardCompletionShadowEvents_AcceptanceId");
+            entity.HasIndex(x => x.CardId).HasDatabaseName("IX_CardCompletionShadowEvents_CardId");
+            entity.HasOne<CardCompletionAcceptance>().WithMany().HasForeignKey(x => x.AcceptanceId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<AgentTaskLanding>().WithMany().HasForeignKey(x => x.OperationId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<AgentTaskPark>(entity =>

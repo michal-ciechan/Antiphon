@@ -4295,6 +4295,59 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("CardCompletionReceipts");
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardCompletionShadowEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AcceptanceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Actor")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("AdjudicatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Adjudicator")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("CardId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool?>("ExpectedClose")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("ProposedClose")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcceptanceId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CardCompletionShadowEvents_AcceptanceId");
+
+                    b.HasIndex("CardId")
+                        .HasDatabaseName("IX_CardCompletionShadowEvents_CardId");
+
+                    b.HasIndex("OperationId");
+
+                    b.ToTable("CardCompletionShadowEvents", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardRelationship", b =>
                 {
                     b.Property<Guid>("Id")
@@ -11451,6 +11504,21 @@ namespace Antiphon.Server.Migrations
                     b.HasOne("Antiphon.Server.Domain.Entities.CardCompletionAcceptance", null)
                         .WithMany()
                         .HasForeignKey("AcceptanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.CardCompletionShadowEvent", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.CardCompletionAcceptance", null)
+                        .WithMany()
+                        .HasForeignKey("AcceptanceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentTaskLanding", null)
+                        .WithMany()
+                        .HasForeignKey("OperationId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

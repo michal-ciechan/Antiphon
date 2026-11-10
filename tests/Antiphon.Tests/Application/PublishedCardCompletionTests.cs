@@ -388,6 +388,89 @@ public sealed class PublishedCardCompletionTests
             $"review-checkpoint-and-tracker-close checkpoints={checkpoints} pushes={pushes} state={state}");
     }
 
+    [Test]
+    public async Task C1294_ShadowCloseRecordsProposal()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        w.Settings.PublishedClose = PublishedCloseMode.Shadow;
+        (await w.CloseAsync()).Disposition.ShouldBe("shadow", "shadow-close-does-not-complete");
+        await using (var read = w.Db())
+        {
+            var rows = await read.CardCompletionShadowEvents.Where(e => e.CardId == w.CardId).ToListAsync();
+            rows.Count.ShouldBe(1, "shadow-proposal-recorded");
+            var row = rows[0];
+            var acceptance = await read.CardCompletionAcceptances.SingleAsync(a => a.CardId == w.CardId);
+            row.AcceptanceId.ShouldBe(acceptance.Id, "shadow-proposal-binds-the-acceptance");
+            row.OperationId.ShouldBe(acceptance.OperationId!.Value, "shadow-proposal-binds-the-publication");
+            row.ProposedClose.ShouldBeTrue("shadow-proposes-close");
+            row.ExpectedClose.ShouldBeNull("shadow-proposal-is-unadjudicated");
+            row.Adjudicator.ShouldBeNull("shadow-proposal-has-no-adjudicator");
+            row.AdjudicatedAt.ShouldBeNull("shadow-proposal-has-no-adjudication-time");
+            row.Actor.ShouldBe("operator", "shadow-proposal-records-the-authenticated-actor");
+            row.RecordedAt.ShouldNotBe(default, "shadow-proposal-is-stamped");
+            (await read.Cards.SingleAsync(c => c.Id == w.CardId)).Status.ShouldBe(CardStatus.Review, "shadow-leaves-the-card-in-review");
+            (await read.CardCompletionReceipts.CountAsync(r => r.CardId == w.CardId)).ShouldBe(0, "shadow-writes-no-receipt");
+            (await read.CardRevisions.CountAsync(r => r.CardId == w.CardId && r.Kind == CardRevisionKind.Move))
+                .ShouldBe(0, "shadow-writes-no-done-move");
+        }
+        (await w.CloseAsync()).Disposition.ShouldBe("shadow", "second-shadow-close-is-idempotent");
+        await using var again = w.Db();
+        (await again.CardCompletionShadowEvents.CountAsync(e => e.CardId == w.CardId))
+            .ShouldBe(1, "second-shadow-close-does-not-insert-again");
+    }
+
+    [Test]
+    public async Task C1294_DurableCohortQualifiesWithoutSettings()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        w.Settings.PublishedCloseShadowObservations.Clear();
+        await using (var db = w.Db())
+        {
+            var cohort = await db.CardCompletionAcceptances.AsNoTracking()
+                .Where(a => a.CardId != w.CardId && a.OperationId != null).ToListAsync();
+            cohort.Count.ShouldBe(30, "seeded-publication-events");
+            foreach (var acceptance in cohort)
+                db.CardCompletionShadowEvents.Add(new CardCompletionShadowEvent
+                {
+                    Id = Guid.NewGuid(), CardId = acceptance.CardId, AcceptanceId = acceptance.Id,
+                    OperationId = acceptance.OperationId!.Value, ProposedClose = true, ExpectedClose = true,
+                    Adjudicator = "independent-operator", AdjudicatedAt = acceptance.RecordedAt,
+                    Actor = "operator", RecordedAt = acceptance.RecordedAt,
+                });
+            var own = await db.CardCompletionAcceptances.AsNoTracking().SingleAsync(a => a.CardId == w.CardId);
+            db.CardCompletionShadowEvents.Add(new CardCompletionShadowEvent
+            {
+                Id = Guid.NewGuid(), CardId = w.CardId, AcceptanceId = own.Id,
+                OperationId = own.OperationId!.Value, ProposedClose = true,
+                Actor = "operator", RecordedAt = own.RecordedAt,
+            });
+            await db.SaveChangesAsync();
+        }
+        (await w.CloseAsync()).Disposition.ShouldBe("completed", "adjudicated-durable-cohort-enables-close");
+    }
+
+    [Test]
+    public async Task C1294_DurableObservationMustAgreeWithSettings()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        var last = w.Settings.PublishedCloseShadowObservations[^1];
+        await using (var db = w.Db())
+        {
+            db.CardCompletionShadowEvents.Add(new CardCompletionShadowEvent
+            {
+                Id = Guid.NewGuid(), CardId = w.CardId, AcceptanceId = last.AcceptanceId,
+                OperationId = last.OperationId, ProposedClose = last.ProposedClose, ExpectedClose = !last.ExpectedClose,
+                Adjudicator = last.Adjudicator, AdjudicatedAt = last.AdjudicatedAt,
+                Actor = "operator", RecordedAt = last.AdjudicatedAt,
+            });
+            await db.SaveChangesAsync();
+        }
+        await w.RefusedAsync(await w.ProposeAsync(), "shadow_unqualified", "durable-cohort-must-agree");
+    }
+
     private sealed class InjectedFailure : Exception { }
     private sealed class Boundary : LandDeliveryBoundary
     {

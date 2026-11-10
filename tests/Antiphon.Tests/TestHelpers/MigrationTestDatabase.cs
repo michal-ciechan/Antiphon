@@ -32,6 +32,7 @@ internal static class MigrationTestDatabase
     public static Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default) =>
         db.Database.ExecuteSqlRawAsync(
             """
+            DROP TABLE IF EXISTS "CardCompletionShadowEvents";
             DROP TABLE IF EXISTS "HostLoadRetentionStates";
             DROP TABLE IF EXISTS "HostLoadTaskMetricBuckets";
             DROP TABLE IF EXISTS "AgentTaskLoadWindows";
@@ -53,7 +54,8 @@ internal static class MigrationTestDatabase
                 '20261107034430_HostLoadTelemetryS1',
                 '20261107040142_HostLoadSnapshotMembership',
                 '20261107104114_HostLoadRetentionCatchup',
-                '20261108121426_Card1773TranscriptPromptStampIndex');
+                '20261108121426_Card1773TranscriptPromptStampIndex',
+                '20261110213738_Card1294ShadowCohort');
             """, ct);
 
     public static async Task<IsolatedTestSchema> CreateAsync(string migration, CancellationToken ct)
