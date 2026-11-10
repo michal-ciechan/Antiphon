@@ -1,3 +1,4 @@
+using System.Globalization;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Services;
@@ -21,6 +22,17 @@ public static class DispatchHoldDetails
 
     public static string ConcurrencyCap(int max) =>
         $"Held: concurrency cap reached ({max} process-spawning tasks running); waiting for a slot.";
+
+    /// <summary>
+    /// CARD-1478. Exact text is the dedupe key. A stale or missing sample says availableMb=unknown
+    /// rather than repeating a number that is not a current reading.
+    /// </summary>
+    public static string DesktopLaunchMemory(string freshness, DateTimeOffset? sampleAt, long? availableMb, int floorMb)
+    {
+        var at = sampleAt is { } observed ? observed.ToString("O") : "unknown";
+        var available = availableMb is long mb ? mb.ToString(CultureInfo.InvariantCulture) : "unknown";
+        return $"desktop_launch_memory: freshness={freshness} sampleAt={at} availableMb={available} floorMb={floorMb.ToString(CultureInfo.InvariantCulture)}";
+    }
 
     public static string LeaseHeldByLand(
         string holderShort, string holderTitle, string requestShort, DateTime startedAt)
