@@ -46,21 +46,22 @@ public sealed class CodexRunnerImageContractTests
     public void Document_extractors_use_lf_on_every_platform()
     {
         var stage = DockerStackDocuments.Stages("FROM base AS sample\r\nRUN echo ready\r\n")
-            .Single().Body;
+            .Single();
         var service = DockerStackDocuments.Service("services:\r\n  sample:\r\n    image: sample\r\n", "sample");
-        stage.ShouldBe("RUN echo ready\n\n");
+        stage.Body.ShouldBe("RUN echo ready\n\n");
         service.ShouldBe("    image: sample\n\n");
-        stage.ShouldNotContain('\r');
+        stage.Body.ShouldNotContain('\r');
         service.ShouldNotContain('\r');
 
-        // AppendLine emits LF on Linux but CRLF on Windows; pin the cross-platform rule here.
+        // AppendLine is LF on Linux and CRLF on Windows. Closure must join with the same explicit
+        // LF as Stages and Service. Injected CRLF dockerfile text must not survive, and the helper
+        // must contain no AppendLine at all: slicing Stages then Service by method order missed Closure.
+        var closure = DockerStackDocuments.Closure(new[] { stage }, "sample");
+        closure.ShouldBe("base\nRUN echo ready\n\n\n");
+        closure.ShouldNotContain('\r');
+
         var helper = DockerStackDocuments.Read("tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs");
-        var stagesSource = helper[helper.IndexOf("public static IReadOnlyList<DockerStage> Stages(", StringComparison.Ordinal)..
-            helper.IndexOf("public static string Closure(", StringComparison.Ordinal)];
-        var serviceSource = helper[helper.IndexOf("public static string Service(", StringComparison.Ordinal)..
-            helper.IndexOf("public static string Env(", StringComparison.Ordinal)];
-        stagesSource.ShouldNotContain(".AppendLine(");
-        serviceSource.ShouldNotContain(".AppendLine(");
+        helper.ShouldNotContain(".AppendLine(");
     }
 
     [Test]
