@@ -1520,6 +1520,198 @@ function Test-WindowsAclRules {
     }
 }
 
+function Test-PlainOffByDefault {
+    $fx = New-Fixture
+    try {
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-RecipientFile', $fx.Recipient, '-Destination', $fx.Dest,
+            '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($plan.Exit -eq 0) 'PlainOffByDefault exits 0' "exit=$($plan.Exit) $($plan.Out)"
+        Assert-True ($plan.Out -match 'step encrypt:') 'PlainOffByDefault still encrypts' $plan.Out
+        Assert-True ($plan.Out -notmatch 'PLAIN UNENCRYPTED') 'PlainOffByDefault is not the plain banner' $plan.Out
+        Assert-True ($plan.Out -notmatch 'operator-decision=2026-11-10') 'PlainOffByDefault is not the plain decision' $plan.Out
+        Assert-NoSecret $plan $fx 'PlainOffByDefault'
+        Assert-NoDocker $plan 'PlainOffByDefault'
+        Assert-DestUntouched $fx 'PlainOffByDefault'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainPlan {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($plan.Exit -eq 0) 'PlainPlan exits 0' "exit=$($plan.Exit) $($plan.Err) $($plan.Out)"
+        Assert-True ($plan.Out -match 'PLAIN UNENCRYPTED') 'PlainPlan is loud' $plan.Out
+        Assert-True ($plan.Out -match 'operator-decision=2026-11-10') 'PlainPlan names the operator decision' $plan.Out
+        Assert-True ($plan.Out -match 'encryption=none') 'PlainPlan names encryption=none' $plan.Out
+        Assert-True ($plan.Out -match 'outside-onedrive=yes') 'PlainPlan destination is outside OneDrive' $plan.Out
+        Assert-True ($plan.Out -match 'step acl: user-only') 'PlainPlan checks user-only ACL' $plan.Out
+        Assert-True ($plan.Out -match 'directory=absent') 'PlainPlan does not create the destination' $plan.Out
+        Assert-True ($plan.Out -match 'keep 14') 'PlainPlan keeps 14' $plan.Out
+        Assert-True ($plan.Out -match 'prune only after the new file is verified') 'PlainPlan prunes only after verify' $plan.Out
+        Assert-True ($plan.Out -match 'pg_restore --list') 'PlainPlan verifies with pg_restore --list' $plan.Out
+        Assert-True ($plan.Out -match '\.partial') 'PlainPlan writes partial then renames' $plan.Out
+        Assert-True ($plan.Out -notmatch 'step encrypt:') 'PlainPlan does not encrypt' $plan.Out
+        Assert-NoSecret $plan $fx 'PlainPlan'
+        Assert-NoDocker $plan 'PlainPlan'
+        Assert-True (-not (Test-Path -LiteralPath $dest)) 'PlainPlan writes nothing' $dest
+        Assert-DestUntouched $fx 'PlainPlan'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainInsideOneDrive {
+    $fx = New-Fixture
+    try {
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($plan.Exit -ne 0) 'PlainInsideOneDrive exits non-zero' "exit=$($plan.Exit)"
+        Assert-True ($plan.Out -match 'reason=destination-inside-onedrive') 'PlainInsideOneDrive names the reason' $plan.Out
+        Assert-True ($plan.Out -match 'outside-onedrive=no') 'PlainInsideOneDrive says the destination is inside' $plan.Out
+        Assert-NoSecret $plan $fx 'PlainInsideOneDrive'
+        Assert-NoDocker $plan 'PlainInsideOneDrive'
+        Assert-DestUntouched $fx 'PlainInsideOneDrive'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainMissingOneDrive {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $missing = Join-Path $fx.Root 'missing-onedrive'
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $missing, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($plan.Exit -eq 0) 'PlainMissingOneDrive exits 0' "exit=$($plan.Exit) $($plan.Out)"
+        Assert-True ($plan.Out -match 'outside-onedrive=yes') 'PlainMissingOneDrive still checks the path' $plan.Out
+        Assert-NoDocker $plan 'PlainMissingOneDrive'
+        Assert-True (-not (Test-Path -LiteralPath $dest)) 'PlainMissingOneDrive writes nothing' $dest
+        Assert-True (-not (Test-Path -LiteralPath $missing)) 'PlainMissingOneDrive does not create OneDrive' $missing
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainAclOpen {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'open-backups'
+        New-Item -ItemType Directory -Path $dest | Out-Null
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($plan.Exit -ne 0) 'PlainAclOpen exits non-zero' "exit=$($plan.Exit) $($plan.Out)"
+        Assert-True ($plan.Out -match 'reason=destination-acl') 'PlainAclOpen names the reason' $plan.Out
+        Assert-True ($plan.Out -match 'step acl: user-only') 'PlainAclOpen prints the ACL check' $plan.Out
+        Assert-True ($plan.Out -match 'acl=open') 'PlainAclOpen reports the directory is open' $plan.Out
+        Assert-NoDocker $plan 'PlainAclOpen'
+        Assert-True (Test-Path -LiteralPath $dest) 'PlainAclOpen does not remove the directory' $dest
+        Assert-DestUntouched $fx 'PlainAclOpen'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainRetention {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainRetention script exists' $scriptPath; return }
+    . $scriptPath
+    $cmd = Get-Command Get-SnapshotPruneSet -ErrorAction SilentlyContinue
+    if (-not $cmd -or -not $cmd.Parameters.ContainsKey('NamePattern')) {
+        Write-Fail 'PlainRetention pattern' 'Get-SnapshotPruneSet -NamePattern missing'
+        return
+    }
+    if (-not (Get-Variable -Name SnapshotPlainDumpPattern -Scope Script -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainRetention plain pattern' 'SnapshotPlainDumpPattern missing'
+        return
+    }
+    $names = @(1..16 | ForEach-Object { 'antiphon-202610{0:d2}T000000Z.dump' -f $_ })
+    $newest = 'antiphon-20261016T000000Z.dump'
+    $kept = Get-SnapshotPruneSet -Names $names -Retain 14 -NewName $newest -Verified $true -NamePattern $script:SnapshotPlainDumpPattern
+    Assert-True ($kept.Ok -eq $true) 'plain retention prunes when verified' $kept.Reason
+    $drop = @($kept.Drop)
+    Assert-True ($drop.Count -eq 2) 'plain retention keeps 14' ("count=$($drop.Count) " + ($drop -join ','))
+    Assert-True ($drop -notcontains $newest) 'plain retention keeps the new file' ($drop -join ',')
+    $unverified = Get-SnapshotPruneSet -Names $names -Retain 14 -NewName $newest -Verified $false -NamePattern $script:SnapshotPlainDumpPattern
+    Assert-True ($unverified.Ok -eq $true -and @($unverified.Drop).Count -eq 0) 'plain retention skips an unverified file' $unverified.Reason
+    $age = @($names | ForEach-Object { $_ + '.age' })
+    $ignored = Get-SnapshotPruneSet -Names $age -Retain 14 -NewName ($newest + '.age') -Verified $true -NamePattern $script:SnapshotPlainDumpPattern
+    Assert-True ($ignored.Ok -eq $false -and @($ignored.Drop).Count -eq 0) 'plain retention ignores ciphertext names' $ignored.Reason
+}
+
+function Test-PlainVerifyBeforePrune {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainVerify script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Test-SnapshotPlainVerified -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainVerify function' 'Test-SnapshotPlainVerified missing'
+        return
+    }
+    $names = @(1..16 | ForEach-Object { 'antiphon-202610{0:d2}T000000Z.dump' -f $_ })
+    $newest = 'antiphon-20261016T000000Z.dump'
+    $pattern = $script:SnapshotPlainDumpPattern
+    $noTable = Test-SnapshotPlainVerified -Lines @('10; 1259 1 TABLE public item owner') -Bytes 2000000 -MinimumBytes 1048576
+    Assert-True ($noTable -eq $false) 'plain verify refuses a list without TABLE DATA' "verified=$noTable"
+    $tiny = Test-SnapshotPlainVerified -Lines @('10; 0 1 TABLE DATA public item owner') -Bytes 10 -MinimumBytes 1048576
+    Assert-True ($tiny -eq $false) 'plain verify refuses a tiny dump' "verified=$tiny"
+    $blocked = Get-SnapshotPruneSet -Names $names -Retain 14 -NewName $newest -Verified $false -NamePattern $pattern
+    Assert-True (@($blocked.Drop).Count -eq 0) 'plain verify failure prunes nothing' ($blocked.Drop -join ',')
+    $ready = Test-SnapshotPlainVerified -Lines @('10; 0 1 TABLE DATA public item owner', '11; 0 2 TABLE DATA public other owner') -Bytes 2000000 -MinimumBytes 1048576
+    Assert-True ($ready -eq $true) 'plain verify accepts TABLE DATA and size' "verified=$ready"
+    $tables = Get-SnapshotPlainTableCount -Lines @('10; 0 1 TABLE DATA public item owner', '11; 0 2 TABLE DATA public other owner', '12; 1259 1 TABLE public item owner')
+    Assert-True ($tables -eq 2) 'plain table count is TABLE DATA rows' "tables=$tables"
+    $pruned = Get-SnapshotPruneSet -Names $names -Retain 14 -NewName $newest -Verified $true -NamePattern $pattern
+    Assert-True ($pruned.Ok -eq $true -and @($pruned.Drop).Count -eq 2) 'plain verify success may prune' $pruned.Reason
+}
+
+function Test-PlainStatusNoSecret {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainStatus script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Write-SnapshotPlainStatus -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainStatus writer' 'Write-SnapshotPlainStatus missing'
+        return
+    }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1405-status-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        $wrote = Write-SnapshotPlainStatus -Dir $dir -Utc '20261110T075000Z' -Code 0 -Bytes 1234 -Sha256Prefix 'abcdef123456' -DurationSec 7 -Tables 4
+        Assert-True ($wrote -eq $true) 'PlainStatus writes' "wrote=$wrote"
+        $final = Join-Path $dir 'snapshot-status.json'
+        $partial = Join-Path $dir 'snapshot-status.json.partial'
+        Assert-True (Test-Path -LiteralPath $final) 'PlainStatus renames into place' $final
+        Assert-True (-not (Test-Path -LiteralPath $partial)) 'PlainStatus leaves no partial' $partial
+        $json = [System.IO.File]::ReadAllText($final)
+        Assert-True ($json -match '"utc":"20261110T075000Z"') 'PlainStatus has utc' $json
+        Assert-True ($json -match '"exit":0') 'PlainStatus has exit' $json
+        Assert-True ($json -match '"bytes":1234') 'PlainStatus has bytes' $json
+        Assert-True ($json -match '"sha256":"abcdef123456"') 'PlainStatus has a sha256 prefix' $json
+        Assert-True ($json -match '"duration":7') 'PlainStatus has duration' $json
+        Assert-True ($json -match '"tables":4') 'PlainStatus has table count' $json
+        Assert-True ($json -match '"mode":"plain"') 'PlainStatus is loud about plain mode' $json
+        Assert-True ($json -match '"encryption":"none"') 'PlainStatus is loud about encryption' $json
+        Assert-True ($json -match '"operatorDecision":"2026-11-10"') 'PlainStatus records the operator decision' $json
+        Assert-True ($json -notmatch '(?i)password\s*=') 'PlainStatus has no password' $json
+        Assert-True ($json -notmatch '(?i)host\s*=') 'PlainStatus has no host' $json
+        Assert-True ($json -notmatch '(?i)postgres://') 'PlainStatus has no connection string' $json
+        Assert-True ($json -notmatch 'CANARY') 'PlainStatus has no canary' $json
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-PlainDrillRefused {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-RestoreDrill', '-Destination', $dest,
+            '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage, '-IdentityFile', $fx.Identity
+        )
+        Assert-True ($plan.Exit -ne 0) 'PlainDrillRefused exits non-zero' "exit=$($plan.Exit) $($plan.Out)"
+        Assert-True ($plan.Out -match 'reason=plain-drill-unsupported') 'PlainDrillRefused names the reason' $plan.Out
+        Assert-NoDocker $plan 'PlainDrillRefused'
+        Assert-True (-not (Test-Path -LiteralPath $dest)) 'PlainDrillRefused writes nothing' $dest
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1531,7 +1723,9 @@ $all = @(
     'StagingRefusesLink', 'StagingOutsideDestination', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned', 'StagingRefusesForeignRoot',
     'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
-    'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules'
+    'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules',
+    'PlainOffByDefault', 'PlainPlan', 'PlainInsideOneDrive', 'PlainMissingOneDrive', 'PlainAclOpen',
+    'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
