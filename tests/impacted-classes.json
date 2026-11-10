@@ -299,6 +299,18 @@
       ]
     },
     {
+      "id": "repository-lease-windows-boundary",
+      "globs": [
+        "server/Infrastructure/Git/LandingGit.cs",
+        "server/Infrastructure/Git/RepositoryMutationLease.cs",
+        "tests/Antiphon.Tests/TestHelpers/RepositoryLeaseCrashWorker.cs"
+      ],
+      "classes": [
+        "RepositoryLeaseWindowsBoundaryTests"
+      ],
+      "windows": "only"
+    },
+    {
       "id": "land-graph-precheck",
       "globs": [
         "tools/Antiphon.LandGraphAudit.Core/**",
