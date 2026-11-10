@@ -636,6 +636,7 @@ describe('TaskCard', () => {
       {},
     ],
     ['hostBudget', 'waiting: runner host at its budget', { heldBy: [] }, {}],
+    ['siblingInspection', 'waiting: same-card base inspection', { heldBy: [] }, {}],
   ])('prints the %s queue-reason line', (reason, line, queuedExtras, stageExtras) => {
     const queued = item({
       source: 'Delegation',

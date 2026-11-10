@@ -352,6 +352,10 @@ describe('compactQueueReason', () => {
     expect(compactQueueReason(queued({ queueReason: 'hostBudget', heldBy: [] }), empty, cap)).toBe('host full')
   })
 
+  it('collapses siblingInspection to inspect', () => {
+    expect(compactQueueReason(queued({ queueReason: 'siblingInspection', heldBy: [] }), empty, cap)).toBe('inspect')
+  })
+
   it('renders an unknown future reason as queued without throwing or echoing it', () => {
     const line = compactQueueReason(
       queued({

@@ -1763,11 +1763,12 @@ public sealed partial class AgentTaskDispatcher
         _logger.Log(
             level,
             "Task {ShortId} held aged: {Detail} (leaseWait={LeaseWaitSeconds} prepWait={PrepWaitSeconds} "
-            + "runnerWait={RunnerWaitSeconds} capWait={CapWaitSeconds} otherWait={OtherWaitSeconds} class={HoldClass})",
+            + "runnerWait={RunnerWaitSeconds} capWait={CapWaitSeconds} otherWait={OtherWaitSeconds} "
+            + "inspectionWait={InspectionWaitSeconds} class={HoldClass})",
             DelegationReportFormatter.Short(taskId), detail,
             ledger.SecondsFor(DispatchHoldClass.Lease), ledger.SecondsFor(DispatchHoldClass.RemotePrep),
             ledger.SecondsFor(DispatchHoldClass.Runner), ledger.SecondsFor(DispatchHoldClass.Cap),
-            ledger.OtherSeconds, ledger.DominantName);
+            ledger.OtherSeconds, ledger.SecondsFor(DispatchHoldClass.SiblingInspection), ledger.DominantName);
 
     /// <summary>
     /// Re-walk a queued chain task whose snapshot alias cannot run. Returns

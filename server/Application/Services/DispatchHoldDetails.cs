@@ -144,10 +144,12 @@ public static class DispatchHoldDetails
         DispatchHoldLedger? ledger = null)
     {
         var occupants = string.Join(",", occupantShorts.Take(8));
-        // CARD-0672 D-3: the ledger follows occupants= so ExtractEscalationReason, which cuts at
-        // "; running=", still returns the hold sentence alone.
+        // CARD-1431: class= names the dominant stint before reason=. reason= stays the latest
+        // sentence so ExtractEscalationReason, which cuts at "; running=", still returns it alone.
+        // CARD-0672 D-3: the per-class totals follow occupants=.
+        var named = ledger is null ? "" : $"class={ledger.DominantName}; ";
         var wait = ledger is null ? "" : "; " + ledger.Describe();
-        return $"{prefix} dispatch held {seconds}s since {heldSince:O}; created {createdAt:O}; reason={lastHeldDetail}; running={running} of {max}; occupants={occupants}{wait}.";
+        return $"{prefix} dispatch held {seconds}s since {heldSince:O}; created {createdAt:O}; {named}reason={lastHeldDetail}; running={running} of {max}; occupants={occupants}{wait}.";
     }
 
     /// <summary>
@@ -184,6 +186,8 @@ public static class DispatchHoldDetails
     /// </summary>
     public static DispatchHoldClass ClassOf(string? detail)
     {
+        if (TryReportedLedgerClass(detail, out var reported))
+            return reported;
         var reason = Reason(detail);
         if (reason.StartsWith("Held: dispatch concurrency parallel limit", StringComparison.Ordinal))
             return DispatchHoldClass.Parallel;
@@ -215,7 +219,42 @@ public static class DispatchHoldDetails
         if (reason.StartsWith(RoutingPinPrefix, StringComparison.Ordinal)
             || reason.EndsWith(" is held; dispatch paused for that model.", StringComparison.Ordinal))
             return DispatchHoldClass.Routing;
+        if (reason.StartsWith("Held: same-card base inspection", StringComparison.Ordinal)
+            || reason.StartsWith(SiblingIntegrationUnknown, StringComparison.Ordinal))
+            return DispatchHoldClass.SiblingInspection;
         return DispatchHoldClass.Other;
+    }
+
+    /// <summary>
+    /// CARD-1431: an escalation names its dominant class in the <c>class=</c> token that precedes
+    /// <c>reason=</c>. A title inside the latest sentence cannot supply that token.
+    /// </summary>
+    private static bool TryReportedLedgerClass(string? detail, out DispatchHoldClass holdClass)
+    {
+        holdClass = default;
+        if (string.IsNullOrEmpty(detail))
+            return false;
+        var classAt = detail.IndexOf("class=", StringComparison.Ordinal);
+        var reasonAt = detail.IndexOf("reason=", StringComparison.Ordinal);
+        if (classAt < 0 || reasonAt < 0 || classAt > reasonAt)
+            return false;
+        var start = classAt + "class=".Length;
+        var end = start;
+        while (end < detail.Length && char.IsAsciiLetter(detail[end]))
+            end++;
+        if (end == start || end >= detail.Length || detail[end] != ';')
+            return false;
+        var name = detail[start..end];
+        foreach (var value in Enum.GetValues<DispatchHoldClass>())
+        {
+            if (string.Equals(DispatchHoldLedger.NameOf(value), name, StringComparison.Ordinal))
+            {
+                holdClass = value;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The hold sentence itself, unwrapped from a <see cref="Escalation"/> row when it is one.</summary>
@@ -315,4 +354,4 @@ public static class DispatchHoldDetails
 /// CARD-0672 D-3: which kind of wait a queued task's hold was. Separate from
 /// <see cref="ExpectationHoldClass"/>, which says whether a hold is expected at all.
 /// </summary>
-public enum DispatchHoldClass { Lease, RemotePrep, Runner, Cap, Scope, Agent, Landing, Routing, Other, Parallel }
+public enum DispatchHoldClass { Lease, RemotePrep, Runner, Cap, Scope, Agent, Landing, Routing, Other, Parallel, SiblingInspection }

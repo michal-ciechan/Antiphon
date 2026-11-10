@@ -44,8 +44,13 @@ public sealed class AgentTaskPipelineStatusService
     internal const string QueueReasonRepositoryLease = "repositoryLease";
     /// <summary>
     /// CARD-1076 D-6: the latest current-stint Held row is remote preparation.
+    /// CARD-1431: the current stint's dominant class is remote preparation.
     /// </summary>
     internal const string QueueReasonRemotePrep = "remotePrep";
+    /// <summary>
+    /// CARD-1431: the current stint's dominant class is same-card base inspection.
+    /// </summary>
+    internal const string QueueReasonSiblingInspection = "siblingInspection";
     internal const string PlanDeliverablePrefix = "docs/superpowers/plans/";
 
     private static readonly AgentTaskRole[] VisibleRoles = Enum.GetValues<AgentTaskRole>()
@@ -621,24 +626,37 @@ public sealed class AgentTaskPipelineStatusService
         // a Held row whose timestamp equals the Dispatched timestamp: such a row can be
         // retained by the dedupe yet omitted from this queue reason and the ledger. No Git.
         // A live shared-checkout holder, a sibling land, and a dated pin already outrank this row.
+        // CARD-1431: the held-row reason is the stint's dominant class, not the latest sentence.
+        // A prepared workspace (ReadyHold, including the in-flight sentence rewritten once the
+        // path is saved) stays awaitingDispatch even when earlier prep time dominates.
         if (queueReason == QueueReasonAwaitingDispatch
-            && dispatchHolds.CurrentStintHeld.TryGetValue(task.Id, out var heldDetail))
+            && dispatchHolds.CurrentStintHeld.TryGetValue(task.Id, out var heldDetail)
+            && dispatchHolds.CurrentStintRows.TryGetValue(task.Id, out var heldRows))
         {
-            switch (DispatchHoldDetails.ClassOf(RemoteWorkspaceReadiness.CurrentDetail(task.Status, task.RemoteWorktreePath, heldDetail)))
+            var current = RemoteWorkspaceReadiness.CurrentDetail(task.Status, task.RemoteWorktreePath, heldDetail);
+            if (current != RemoteWorkspaceReadiness.ReadyHold)
             {
-                case DispatchHoldClass.Lease:
-                    queueReason = QueueReasonRepositoryLease;
-                    heldBy = LeaseHolders(task, heldDetail, dispatchHolds);
-                    break;
-                case DispatchHoldClass.RemotePrep:
-                    queueReason = QueueReasonRemotePrep;
-                    // CARD-1100: heldBy is the BehindTaskId captured with the title lookup.
-                    // A later Progress read can name a different gate holder and leave the title empty.
-                    // BehindTaskId is read from the preparer's Progress at read time (CARD-1093).
-                    // While this task waits for its push turn, BehindTaskId names the task currently holding the gate.
-                    dispatchHolds.RemotePrepBehind.TryGetValue(task.Id, out var prepBehind);
-                    heldBy = OneHolder(prepBehind, dispatchHolds.Titles);
-                    break;
+                switch (DispatchHoldLedger.FromRows(heldRows, DateTime.MinValue, asOf).Dominant)
+                {
+                    case DispatchHoldClass.Lease:
+                        queueReason = QueueReasonRepositoryLease;
+                        var leaseDetail = heldRows.Last(row =>
+                            DispatchHoldDetails.ClassOf(row.Detail) == DispatchHoldClass.Lease).Detail;
+                        heldBy = LeaseHolders(task, leaseDetail, dispatchHolds);
+                        break;
+                    case DispatchHoldClass.RemotePrep:
+                        queueReason = QueueReasonRemotePrep;
+                        // CARD-1100: heldBy is the BehindTaskId captured with the title lookup.
+                        // A later Progress read can name a different gate holder and leave the title empty.
+                        // BehindTaskId is read from the preparer's Progress at read time (CARD-1093).
+                        // While this task waits for its push turn, BehindTaskId names the task currently holding the gate.
+                        dispatchHolds.RemotePrepBehind.TryGetValue(task.Id, out var prepBehind);
+                        heldBy = OneHolder(prepBehind, dispatchHolds.Titles);
+                        break;
+                    case DispatchHoldClass.SiblingInspection:
+                        queueReason = QueueReasonSiblingInspection;
+                        break;
+                }
             }
         }
 
@@ -781,6 +799,7 @@ public sealed class AgentTaskPipelineStatusService
             .ToListAsync(ct);
 
         var currentHeld = new Dictionary<Guid, string>();
+        var currentRows = new Dictionary<Guid, List<(DateTime At, string Detail)>>();
         foreach (var group in rows.GroupBy(e => e.AgentTaskId))
         {
             var floor = DateTime.MinValue;
@@ -790,13 +809,15 @@ public sealed class AgentTaskPipelineStatusService
                     floor = row.At;
             }
 
-            var latest = group
+            var held = group
                 .Where(e => e.Type == AgentTaskEventType.Held && e.At > floor && e.Detail != null)
-                .OrderByDescending(e => e.At)
-                .ThenByDescending(e => e.Id)
-                .FirstOrDefault();
-            if (latest?.Detail is not null)
-                currentHeld[group.Key] = latest.Detail;
+                .OrderBy(e => e.At)
+                .ThenBy(e => e.Id)
+                .ToList();
+            if (held.Count == 0)
+                continue;
+            currentRows[group.Key] = held.Select(e => (e.At, e.Detail!)).ToList();
+            currentHeld[group.Key] = held[^1].Detail!;
         }
 
         var landRows = await (
@@ -817,24 +838,27 @@ public sealed class AgentTaskPipelineStatusService
         var prepBehind = new Dictionary<Guid, Guid?>();
         foreach (var task in queued)
         {
-            if (!currentHeld.TryGetValue(task.Id, out var detail))
+            if (!currentRows.TryGetValue(task.Id, out var heldRows))
                 continue;
-            switch (DispatchHoldDetails.ClassOf(detail))
+            foreach (var row in heldRows)
             {
-                case DispatchHoldClass.Lease:
-                    var owner = DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.Reason(detail));
-                    if (owner is Guid ownerId)
-                        holderIds.Add(ownerId);
-                    else if (runningLands.TryGetValue(
-                        ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory), out var land))
-                        holderIds.Add(land.TaskId);
-                    break;
-                case DispatchHoldClass.RemotePrep:
-                    var behind = _remotePrep?.Progress(task.Id)?.BehindTaskId;
-                    prepBehind[task.Id] = behind;
-                    if (behind is Guid behindId)
-                        holderIds.Add(behindId);
-                    break;
+                switch (DispatchHoldDetails.ClassOf(row.Detail))
+                {
+                    case DispatchHoldClass.Lease:
+                        var owner = DispatchHoldDetails.LeaseOwnerTaskId(DispatchHoldDetails.Reason(row.Detail));
+                        if (owner is Guid ownerId)
+                            holderIds.Add(ownerId);
+                        else if (runningLands.TryGetValue(
+                            ScopeResolver.KeyFor(task.RepoPath, task.WorkingDirectory), out var land))
+                            holderIds.Add(land.TaskId);
+                        break;
+                    case DispatchHoldClass.RemotePrep:
+                        var behind = _remotePrep?.Progress(task.Id)?.BehindTaskId;
+                        prepBehind[task.Id] = behind;
+                        if (behind is Guid behindId)
+                            holderIds.Add(behindId);
+                        break;
+                }
             }
         }
 
@@ -846,7 +870,7 @@ public sealed class AgentTaskPipelineStatusService
                 .Select(t => new { t.Id, t.Title })
                 .ToDictionaryAsync(t => t.Id, t => t.Title, ct);
 
-        return new QueuedDispatchHolds(currentHeld, runningLands, titles, prepBehind);
+        return new QueuedDispatchHolds(currentHeld, currentRows, runningLands, titles, prepBehind);
     }
 
     /// <summary>
@@ -956,12 +980,14 @@ public sealed class AgentTaskPipelineStatusService
 
     private sealed record QueuedDispatchHolds(
         Dictionary<Guid, string> CurrentStintHeld,
+        Dictionary<Guid, List<(DateTime At, string Detail)>> CurrentStintRows,
         Dictionary<string, RunningLandHolder> RunningLands,
         Dictionary<Guid, string> Titles,
         Dictionary<Guid, Guid?> RemotePrepBehind)
     {
         public static QueuedDispatchHolds Empty { get; } = new(
             new Dictionary<Guid, string>(),
+            new Dictionary<Guid, List<(DateTime At, string Detail)>>(),
             new Dictionary<string, RunningLandHolder>(StringComparer.Ordinal),
             new Dictionary<Guid, string>(),
             new Dictionary<Guid, Guid?>());

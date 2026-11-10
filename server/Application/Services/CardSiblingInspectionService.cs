@@ -102,7 +102,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         if (task.RepoPath is null || !Directory.Exists(task.RepoPath) || task.CardId is null)
             return SiblingBaseGuard.Proceed;
         var operationId = Guid.NewGuid();
-        _logger.LogDebug("Sibling inspection {OperationId} started for task {TaskId} card {CardId} attempt {Attempt}",
+        _logger.LogInformation("Sibling inspection {OperationId} started for task {TaskId} card {CardId} attempt {Attempt}",
             operationId, task.Id, task.CardId, task.Attempt);
         var warnings = new List<UnlandedSibling>();
         var frozen = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -121,7 +121,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 0, "detail unavailable", row.CreatedAt, sha, state);
         SiblingBaseGuard Result(UnlandedSibling? hold = null, string? reason = null)
         {
-            _logger.LogDebug("Sibling inspection {OperationId} finished: raw={RawRows} candidates={Candidates} inspected={Inspected} omitted={Omitted} commands={GitCommands} elapsedMs={ElapsedMs} commandKind={CommandKind}",
+            _logger.LogInformation("Sibling inspection {OperationId} finished: raw={RawRows} candidates={Candidates} inspected={Inspected} omitted={Omitted} commands={GitCommands} elapsedMs={ElapsedMs} commandKind={CommandKind}",
                 operationId, raw, expensive, inspected, omitted, inspection.Commands, inspection.Elapsed.TotalMilliseconds, inspection.CommandKind);
             if (reason is "inspection_timeout" or "candidate_limit" or "git_command_limit" or "git_inspection_error")
                 _logger.LogWarning("Sibling inspection {OperationId} task {TaskId} attempt {Attempt} incomplete: {ReasonCode}; raw={RawRows} candidates={Candidates} inspected={Inspected} omitted={Omitted} commands={GitCommands}",

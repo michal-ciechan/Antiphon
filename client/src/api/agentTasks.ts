@@ -547,6 +547,7 @@ export type AgentTaskPipelineQueueReason =
   | 'routingPinNotBefore'
   | 'repositoryLease'
   | 'remotePrep'
+  | 'siblingInspection'
   | 'hostBudget'
   | 'awaitingDispatch'
 

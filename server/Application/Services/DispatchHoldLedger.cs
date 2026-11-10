@@ -27,7 +27,7 @@ public sealed class DispatchHoldLedger
     /// <summary>Whole seconds in every class the ledger does not name on its own (scope, agent, landing, routing, other).</summary>
     public int OtherSeconds => (int)Math.Floor(_seconds
         .Where(p => p.Key is not (DispatchHoldClass.Lease or DispatchHoldClass.RemotePrep
-            or DispatchHoldClass.Runner or DispatchHoldClass.Cap))
+            or DispatchHoldClass.Runner or DispatchHoldClass.Cap or DispatchHoldClass.SiblingInspection))
         .Sum(p => p.Value));
 
     /// <summary>The dominant class as the API names it: lower-case, or <c>none</c>.</summary>
@@ -67,7 +67,7 @@ public sealed class DispatchHoldLedger
     public string Describe() =>
         $"leaseWait={SecondsFor(DispatchHoldClass.Lease)}s; prepWait={SecondsFor(DispatchHoldClass.RemotePrep)}s; "
         + $"runnerWait={SecondsFor(DispatchHoldClass.Runner)}s; capWait={SecondsFor(DispatchHoldClass.Cap)}s; "
-        + $"otherWait={OtherSeconds}s; class={DominantName}";
+        + $"otherWait={OtherSeconds}s; inspectionWait={SecondsFor(DispatchHoldClass.SiblingInspection)}s; class={DominantName}";
 
     public static string NameOf(DispatchHoldClass holdClass) => holdClass.ToString().ToLowerInvariant();
 }
