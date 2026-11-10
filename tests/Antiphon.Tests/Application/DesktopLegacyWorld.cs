@@ -101,16 +101,29 @@ internal sealed class DesktopLegacyWorld : IAsyncDisposable
         if (shape is "pushed" or "unpushed" or "pushed-then-commit")
             await CommitAsync(handle, handle.Id8 + ".txt");
         if (shape is "pushed" or "pushed-then-commit")
-            await Fixture.RequiredAsync(Fixture.Repository, "push", "origin", handle.FullRef);
+            Push(handle.FullRef);
         if (shape == "pushed-then-commit")
             await CommitAsync(handle, handle.Id8 + "-local.txt");
     }
 
+    // Setup commits and pushes run in process (LibGit2Sharp) with the fixture git's identity: the same commit and
+    // the same remote branch as "git add/commit" and "git push origin <ref>", without three git processes (a local
+    // push alone was ~0.4 s). The worktree itself is still made by "git worktree add", so its metadata is git's.
+    private static readonly LibGit2Sharp.Identity FixtureIdentity = new("C448 Fixture", "fixture@example.invalid");
+
     public async Task CommitAsync(Handle handle, string file, string? content = null)
     {
         await File.WriteAllTextAsync(System.IO.Path.Combine(handle.Path, file), content ?? file + "\n");
-        await Fixture.RequiredAsync(handle.Path, "add", "--", file);
-        await Fixture.RequiredAsync(handle.Path, "commit", "-m", "c0824 " + file);
+        using var repo = new LibGit2Sharp.Repository(handle.Path);
+        LibGit2Sharp.Commands.Stage(repo, file);
+        var signature = new LibGit2Sharp.Signature(FixtureIdentity, DateTimeOffset.Now);
+        repo.Commit("c0824 " + file, signature, signature, new LibGit2Sharp.CommitOptions());
+    }
+
+    private void Push(string fullRef)
+    {
+        using var repo = new LibGit2Sharp.Repository(Fixture.Repository);
+        repo.Network.Push(repo.Network.Remotes["origin"], fullRef + ":" + fullRef);
     }
 
     public DateTime Now => Clock.GetUtcNow().UtcDateTime;
