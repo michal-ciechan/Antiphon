@@ -251,16 +251,23 @@ with the action's phase advance, so review routing, task settlement, refinement
 confirmation and catch-up still run. A route action that reaches phase 4 while
 earlier channel debt to the same destination is owed does not dispatch: it saves
 its own debt row behind it, keyed by the turn's conversation (a turn that
-addresses several conversations, or whose late-confirm sources differ, writes a
-null key and waits for every destination). A machine-turn follow-up resolves that
-conversation once, as the chat the follow-up publishes to: unified recovery uses
-the channel context established before the injection, and the default path uses
-the newest channel chat at that resolution. The debt row carries the key, and a
-later retry publishes to it (CARD-1454). A route action with no publishable
+addresses several conversations writes a null key and waits for every
+destination). A machine-turn follow-up resolves that conversation once, as the
+chat the follow-up publishes to: unified recovery uses the channel context
+established before the injection, and the default path uses the newest channel
+chat at that resolution. The debt row carries the key, and a later retry
+publishes to it (CARD-1454). Late-confirmed sources for a different chat merge
+onto that row and do not clear its key; the row still waits for those sources'
+destinations as well as its own (CARD-1826). A row written before CARD-1454
+still carries the chat that was newest at the time. With unified recovery on,
+a retry of that pre-deploy row uses the stored key rather than the pre-injection
+chat, while the reply handle still comes from the pre-injection chat. Only rows
+live across the deploy are affected (give-up default 10 minutes); they drain or
+expire, and nothing rewrites them. A route action with no publishable
 boundary saves no debt. Only the earliest debt row per destination runs, and only
 when due, so replies to one chat publish in transcript order while other chats'
-replies flow (CARD-1434). A failed debt retry pushes later same-destination debt
-to its new due time and does not end the drain page. The queue phase does not
+replies flow (CARD-1434). A failed debt retry pushes later debt for a destination
+it still owes to its new due time and does not end the drain page. The queue phase does not
 wait for channel debt. A late-confirm publication that finds same-destination
 debt owed at or below its sequence, or that fails, becomes debt at its own
 sequence carrying the late-confirmed ids, so later queue actions proceed
@@ -283,6 +290,7 @@ Pinned by `AgentTaskCatchUpSettlementTests.catch_up_settles_even_when_channel_re
 `SessionRuntimeActionRecoveryTests.C1433_a_waiting_late_confirm_does_not_hold_later_queue_actions`,
 `SessionRuntimeActionRecoveryTests.C1434_exhausted_channel_debt_is_reported_lost_and_later_replies_flow`,
 `SessionRuntimeActionRecoveryTests.C1454_machine_turn_debt_follows_the_chat_it_publishes_to`,
+`SessionRuntimeActionRecoveryTests.C1826_mixed_source_machine_note_keeps_its_own_chat`,
 `SessionRuntimeActionRecoveryTests.C1455_time_bound_abandons_aged_debt_after_one_failed_attempt`,
 `SessionRuntimeActionRecoveryTests.C1455_untried_aged_debt_keeps_its_one_attempt`,
 `SessionRuntimeActionRecoveryTests.C1455_abandoning_settled_debt_is_a_warning`
