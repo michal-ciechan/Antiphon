@@ -245,6 +245,54 @@ public sealed partial class SessionMessageQueueService
         return await TypedBodiesBlockComposerAsync(sessionId, kind, unrecorded, "expectation nudge", ct);
     }
 
+    private enum TypedComposerFinding
+    {
+        NoSnapshot,
+        Clear,
+        GhostEmpty,
+        BoxOccupied,
+        Unreadable,
+        HeadOccupied,
+    }
+
+    private readonly record struct TypedComposerReading(TypedComposerFinding Finding, Guid BodyId);
+
+    // Shared CARD-0650 screen judgement: Claude's box must read empty twice; a hidden or
+    // unreadable box holds even when a collapsed paste has no visible body head. CARD-1505
+    // uses the same reading for the F1 hold and for Enter-only retry.
+    private async Task<TypedComposerReading> ClassifyTypedComposerAsync(
+        Guid sessionId, AgentKind kind, IReadOnlyList<(Guid Id, string Body)> bodies, CancellationToken ct)
+    {
+        if (bodies.Count == 0)
+            return new(TypedComposerFinding.Clear, Guid.Empty);
+        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
+            return new(TypedComposerFinding.NoSnapshot, bodies[0].Id);
+
+        if (TryReadComposerRegion(kind, snapshot.RenderedScreen, out var composer))
+        {
+            if (!ClaudeScreen.ComposerContentIsEmpty(composer))
+                return new(TypedComposerFinding.BoxOccupied, bodies[0].Id);
+            return await ComposerStaysEmptyAsync(kind, sessionId, ct)
+                ? new(TypedComposerFinding.Clear, bodies[0].Id)
+                : new(TypedComposerFinding.GhostEmpty, bodies[0].Id);
+        }
+
+        if (kind == AgentKind.ClaudeCode)
+            return new(TypedComposerFinding.Unreadable, bodies[0].Id);
+
+        foreach (var body in bodies)
+        {
+            if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
+                    snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(body.Body.Trim())))
+                return new(TypedComposerFinding.HeadOccupied, body.Id);
+        }
+
+        return new(TypedComposerFinding.Clear, bodies[0].Id);
+    }
+
+    private static bool ComposerStillHoldsTypedBody(TypedComposerFinding finding) =>
+        finding is TypedComposerFinding.BoxOccupied or TypedComposerFinding.HeadOccupied;
+
     // Shared CARD-0650 screen judgement: Claude's box must read empty twice; a hidden or
     // unreadable box holds even when a collapsed paste has no visible body head.
     private async Task<bool> TypedBodiesBlockComposerAsync(
@@ -261,54 +309,44 @@ public sealed partial class SessionMessageQueueService
         var release = what == "expectation nudge"
             ? ExpectationHoldAudit.ReleaseRoute(sessionId)
             : "a later submitted UserPrompt, a cleared composer, or a new session generation";
-        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
+        var reading = await ClassifyTypedComposerAsync(sessionId, kind, bodies, ct);
+        switch (reading.Finding)
         {
-            _logger.LogInformation(
-                "Holding input to session {SessionId}: {Count} {What}(s) of this generation, starting "
-                + "with {BodyId}, no transcript release evidence, and no rendered snapshot to show the composer empty",
-                sessionId, bodies.Count, what, bodies[0].Id);
-            return true;
-        }
-
-        if (TryReadComposerRegion(kind, snapshot.RenderedScreen, out var composer))
-        {
-            if (ClaudeScreen.ComposerContentIsEmpty(composer))
-            {
-                if (await ComposerStaysEmptyAsync(kind, sessionId, ct))
-                    return false;
+            case TypedComposerFinding.NoSnapshot:
+                _logger.LogInformation(
+                    "Holding input to session {SessionId}: {Count} {What}(s) of this generation, starting "
+                    + "with {BodyId}, no transcript release evidence, and no rendered snapshot to show the composer empty",
+                    sessionId, bodies.Count, what, reading.BodyId);
+                return true;
+            case TypedComposerFinding.Clear:
+                return false;
+            case TypedComposerFinding.GhostEmpty:
                 _logger.LogWarning(
                     "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
                     + "evidence, and the composer read empty on one snapshot but not on the next. Release: {Release}",
-                    sessionId, what, bodies[0].Id, release);
+                    sessionId, what, reading.BodyId, release);
                 return true;
-            }
-            _logger.LogWarning(
-                "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
-                + "evidence, and the composer is not empty. Release: {Release}",
-                sessionId, what, bodies[0].Id, release);
-            return true;
+            case TypedComposerFinding.BoxOccupied:
+                _logger.LogWarning(
+                    "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                    + "evidence, and the composer is not empty. Release: {Release}",
+                    sessionId, what, reading.BodyId, release);
+                return true;
+            case TypedComposerFinding.Unreadable:
+                _logger.LogWarning(
+                    "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                    + "evidence, and Claude's composer cannot be read to show it empty. Release: {Release}",
+                    sessionId, what, reading.BodyId, release);
+                return true;
+            case TypedComposerFinding.HeadOccupied:
+                _logger.LogWarning(
+                    "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
+                    + "evidence, and is still visible whole on screen. Release: {Release}",
+                    sessionId, what, reading.BodyId, release);
+                return true;
+            default:
+                return false;
         }
-        if (kind == AgentKind.ClaudeCode)
-        {
-            _logger.LogWarning(
-                "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
-                + "evidence, and Claude's composer cannot be read to show it empty. Release: {Release}",
-                sessionId, what, bodies[0].Id, release);
-            return true;
-        }
-
-        var standing = bodies
-            .Where(n => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(
-                snapshot.RenderedScreen, PtyInputEncoding.NormalizeBody(n.Body.Trim())))
-            .Select(n => (Guid?)n.Id)
-            .FirstOrDefault();
-        if (standing is not { } standingId)
-            return false;
-        _logger.LogWarning(
-            "Holding input to session {SessionId}: {What} {BodyId} has no transcript release "
-            + "evidence, and is still visible whole on screen. Release: {Release}",
-            sessionId, what, standingId, release);
-        return true;
     }
 
     /// <summary>

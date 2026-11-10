@@ -1103,8 +1103,12 @@ isolates each item and reports errors after processing the remaining batch.
 
 - **A queue retry must belong to the composer that took the typing (CARD-0501).**
   `LastDeliveryGeneration` records the normalized accepted generation before each typed attempt.
-  Both Pending retry and interrupted Sent recovery require that generation and the entire
-  normalized head before pressing Enter only. A changed generation bypasses screen history;
+  Both Pending retry and interrupted Sent recovery require that generation, then the same
+  composer reading as the F1 hold, before pressing Enter only (CARD-1505). A readable Claude
+  box that is not empty, including a collapsed `[Pasted text #N]` placeholder whose body head
+  is off screen, is Enter-only and is not retyped. An empty box on two settled reads, or a
+  kind with no readable box whose normalized head is absent, may retype. A missing snapshot
+  or an unreadable Claude box defers and does not retype. A changed generation bypasses screen history;
   legacy null generations use a launch-after-typing clock check. Transcript late-confirm still
   precedes retry. Successful Enter-only recovery finishes the original attempt; failed recovery
   charges an attempt without moving the typing timestamp, baseline or generation. Parking bounds
@@ -1120,10 +1124,11 @@ isolates each item and reports errors after processing the remaining batch.
   and parking deliberately does not restart the session — may still be standing unsubmitted in
   the composer. Nothing may be typed on top of it: the terminal would receive both bodies as one
   prompt and the containment matcher would mark the innocent row `Delivered`. The flush therefore
-  holds while any held-back row was typed in the current generation and the whole normalized head
-  of its body is still on the rendered screen — the same predicate pair the Enter-only recovery
-  uses to conclude the body is in the composer, so the two can never disagree. An unreadable
-  snapshot holds too. Release is a late-confirm (the ordinary exit), a demonstrably cleared
+  holds while any held-back row was typed in the current generation and the CARD-0650 composer
+  reading says that composer is not clear — the same reading Enter-only recovery uses, so the
+  two cannot disagree (CARD-1505). For Claude a non-empty box holds even when the body's head
+  is off screen, which is what a collapsed paste looks like, and an unreadable box holds too.
+  Kinds with no readable box keep the whole normalized head. An unreadable snapshot holds too. Release is a late-confirm (the ordinary exit), a demonstrably cleared
   composer, or a new generation. Cancellation is bookkeeping and never a release: a canceled
   typed row of this generation with no `SentAt` holds the queue flush and expectation direct
   send until any later `UserPrompt` above its typing floor, a composer shown empty, or a new

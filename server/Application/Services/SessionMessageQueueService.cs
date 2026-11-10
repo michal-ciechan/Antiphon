@@ -2138,14 +2138,13 @@ public sealed partial class SessionMessageQueueService
 
     // True when a Pending row that this flush is NOT going to deliver may still be holding the
     // composer: it was typed at least once, its typing belongs to the CURRENT generation, and the
-    // whole head of its body is still on the rendered screen. Deliberately the same predicate pair
-    // (<see cref="DeliveryGenerationChanged"/> + HeadFragmentIsVisibleWhole) the Enter-only
-    // recovery uses to decide "that body is standing in the composer" — the two must agree, or the
-    // queue would re-press Enter for a body it simultaneously believed was gone.
+    // CARD-0650 composer reading says the box is not clear. That is the same reading Enter-only
+    // recovery uses, so the two cannot disagree. A collapsed paste occupies the Claude box as
+    // "[Pasted text #N]" with the body head off screen; the head match used to call that empty.
     //
-    // An unreadable snapshot holds too: "the composer cannot be shown empty" is the same answer
-    // RecoverDeliveryRunLockedAsync gives, and guessing empty is the direction that corrupts a
-    // delivery rather than delaying one.
+    // An unreadable snapshot or an unreadable Claude box holds too: "the composer cannot be shown
+    // empty" is the same answer RecoverDeliveryRunLockedAsync gives, and guessing empty is the
+    // direction that corrupts a delivery rather than delaying one.
     private async Task<bool> HeldBackTypingBlocksTheComposerAsync(
         Guid sessionId,
         AgentKind kind,
@@ -2165,27 +2164,8 @@ public sealed partial class SessionMessageQueueService
 
         if (heldBack.Any(m => IsCodexPointer(kind, m))) return true;
 
-        if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
-        {
-            _logger.LogInformation(
-                "Holding delivery to session {SessionId}: {Count} held-back message(s) were typed in "
-                + "this generation and the rendered snapshot is unavailable, so the composer cannot "
-                + "be shown empty",
-                sessionId, heldBack.Count);
-            return true;
-        }
-
-        var standing = heldBack.FirstOrDefault(
-            m => ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(snapshot.RenderedScreen, m.Body));
-        if (standing is null)
-            return false;
-
-        _logger.LogWarning(
-            "Holding delivery to session {SessionId}: message {MessageId} ({Attempts} attempt(s)) is "
-            + "still standing whole in the composer, so nothing may be typed on top of it. Release is "
-            + "a cleared composer, a late-confirm, or a new session generation",
-            sessionId, standing.Id, standing.DeliveryAttempts);
-        return true;
+        return await TypedBodiesBlockComposerAsync(
+            sessionId, kind, heldBack.Select(m => (m.Id, m.Body)).ToArray(), "held-back message", ct);
     }
 
     // CARD-0266: cancellation changes queue bookkeeping, never the terminal's composer. Any
@@ -2751,7 +2731,8 @@ public sealed partial class SessionMessageQueueService
             await RestageCommittedSpillAsync(db, sessionId, run, completionRows, committedWire, ct);
 
         // CARD-0340 S3 / CARD-0342: a previously typed body still standing in the composer gets
-        // Enter only in the process that took the typing, with the whole head visible (CARD-0501).
+        // Enter only in the process that took the typing (CARD-0501). Claude uses the composer
+        // box, so a collapsed paste whose head is off screen is still standing (CARD-1505).
         // A new generation proves the old composer gone even when history shows the same body.
         if (await RecoverPointerAsync(db, sessionId, run, ceilings, sessionKind, ct) is { } pointerRecovery)
             return pointerRecovery;
@@ -2760,17 +2741,16 @@ public sealed partial class SessionMessageQueueService
             && run.Where(m => m.DeliveryAttempts > 0)
                 .All(m => !DeliveryGenerationChanged(m, sessionGeneration)))
         {
-            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } retrySnap)
+            var retryReading = await ClassifyTypedComposerAsync(sessionId, sessionKind, [(head.Id, body)], ct);
+            if (ComposerStillHoldsTypedBody(retryReading.Finding))
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
+            if (retryReading.Finding != TypedComposerFinding.Clear)
             {
                 _logger.LogInformation(
-                    "Deferring redelivery to session {SessionId}: rendered snapshot is unavailable, "
-                    + "so the composer cannot be shown empty",
+                    "Deferring redelivery to session {SessionId}: the composer cannot be shown empty",
                     sessionId);
                 return FlushResult.Nothing;
             }
-
-            if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(retrySnap.RenderedScreen, body))
-                return await EnterOnlyConfirmLockedAsync(db, sessionId, run, body, ct, ceilings);
         }
 
         // Recheck after composing the run, while the delivery lock is still held and before an
@@ -3359,9 +3339,10 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>
-    /// CARD-0340 S3 / CARD-0342 shared recovery: transcript first, then Enter-only if the
-    /// composed body is still on screen, otherwise revert a <c>Sent</c> run to Pending with
-    /// attempts kept. Never claims the composer is empty when a snapshot cannot be read.
+    /// CARD-0340 S3 / CARD-0342 shared recovery: transcript first, then Enter-only when the
+    /// composer-box reading says the typed body is still there, otherwise revert a <c>Sent</c>
+    /// run to Pending with attempts kept. Never claims the composer is empty when a snapshot
+    /// cannot be read or Claude's box cannot be read.
     /// </summary>
     private async Task<FlushResult> RecoverDeliveryRunLockedAsync(
         AppDbContext db,
@@ -3420,17 +3401,20 @@ public sealed partial class SessionMessageQueueService
             if (await RecoverPointerAsync(db, sessionId, remaining, ceilings, ct) is { } pointerRecovery)
                 return pointerRecovery;
             var body = ReconstructRunBody(remaining);
-            if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } snapshot)
+            var kind = await TryGetSessionKindAsync(sessionId, ct);
+            if (kind is not { } sessionKind)
+                return FlushResult.Nothing;
+            var reading = await ClassifyTypedComposerAsync(sessionId, sessionKind, [(remaining[0].Id, body)], ct);
+            if (ComposerStillHoldsTypedBody(reading.Finding))
+                return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+            if (reading.Finding != TypedComposerFinding.Clear)
             {
                 _logger.LogInformation(
-                    "Leaving interrupted delivery on session {SessionId} untouched: rendered snapshot "
-                    + "is unavailable, so the composer cannot be shown empty",
+                    "Leaving interrupted delivery on session {SessionId} untouched: the composer "
+                    + "cannot be shown empty",
                     sessionId);
                 return FlushResult.Nothing;
             }
-
-            if (ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(snapshot.RenderedScreen, body))
-                return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
         }
 
         foreach (var message in remaining.Where(m => m.Status == QueuedMessageStatus.Sent))
@@ -3446,7 +3430,7 @@ public sealed partial class SessionMessageQueueService
             remaining.Count, sessionId,
             atCap ? $"a message in the run has already been charged {MaxAttempts} attempt(s)"
                 : generationChanged ? "delivery generation changed"
-                : "the whole body head is not on screen",
+                : "the composer is clear of the typed body",
             atCap ? "it parks for a human rather than consuming another attempt"
                 : "the ordinary path may re-type");
         return FlushResult.Nothing;
@@ -3508,8 +3492,8 @@ public sealed partial class SessionMessageQueueService
         }
 
         _logger.LogInformation(
-            "Enter-only recovery for {Count} message(s) on session {SessionId}: the body head is "
-            + "visible on screen, so nothing is re-typed",
+            "Enter-only recovery for {Count} message(s) on session {SessionId}: the composer still "
+            + "holds the typed body, so nothing is re-typed",
             run.Count, sessionId);
 
         DeliveryOutcome outcome;
