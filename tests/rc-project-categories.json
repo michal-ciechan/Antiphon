@@ -153,6 +153,9 @@
     "tests/Antiphon.ScriptHarnessHost/Antiphon.ScriptHarnessHost.csproj": [
       "test-support"
     ],
+    "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj": [
+      "git-operations"
+    ],
     "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj": [
       "claude-runner",
       "codex-runner",

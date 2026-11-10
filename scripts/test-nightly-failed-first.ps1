@@ -811,7 +811,7 @@ function Test-FFAuthorityConservation {
     $here=$PSScriptRoot;$repoRoot=$repo;$ResultsDirectory=Join-Path $root 'authority-fixture';[void][IO.Directory]::CreateDirectory($ResultsDirectory)
     $script:CandidateId='rc-20260923T083000Z';$script:CandidateRef='release/rc-20260923T083000Z'
     $script:C599RepoPolicyPath=Join-Path $repo 'tests/test-execution-policy.json';$script:C599IntentId='intent-20260923T083000Z';$script:C599RunId='rc-run-1'
-    $script:C599NativeSuites=@('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability')
+    $script:C599NativeSuites=@('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability','server-git')
     $script:C599Rosters=@{client=@('lint','build','vitest');scripts=@('test-release-gate.ps1','test-nightly.ps1')}
     $script:C599ABasePolicy=$null;$script:C599PolicyClones=[Collections.Generic.List[string]]::new();$script:C599ReleaseCardId='5b0e6c1e-8f1c-4c3e-9a55-0c5990c5990a'
     $script:C599Now=[datetime]'2026-09-23T10:00:00Z';$script:C599CardStub=$null

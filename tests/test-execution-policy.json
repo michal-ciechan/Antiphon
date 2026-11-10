@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "fdc043758617a5e8c21735126539c559faf9dad95abe5f1122a6d5780ee9df4d",
+  "policyHash": "568aae96ca07d5fb5cb5c54e62a5a4a02b1159ae6fd287de18ca9e8f2c0f2a52",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -9,7 +9,8 @@
     "messaging",
     "client",
     "scripts",
-    "observability"
+    "observability",
+    "server-git"
   ],
   "profiles": {
     "nightly": {
@@ -21,7 +22,8 @@
         "messaging",
         "client",
         "scripts",
-        "observability"
+        "observability",
+        "server-git"
       ],
       "description": "The unattended suites, including the standalone CARD-1564 observability assembly. E2E stays out; OptIn/Explicit still excludes.",
       "exclusions": []
@@ -37,7 +39,8 @@
         "scripts",
         "e2e",
         "markdown-pdf",
-        "observability"
+        "observability",
+        "server-git"
       ],
       "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
       "exclusions": [
@@ -1604,7 +1607,8 @@
     "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
     "tests/Antiphon.Tests/Antiphon.Tests.csproj",
     "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
-    "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj"
+    "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
+    "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"
   ],
   "suites": {
     "antiphon": {
@@ -1684,6 +1688,13 @@
       "name": "Antiphon.Observability.Tests",
       "processGroup": "native-dotnet",
       "assembly": "Antiphon.Observability.Tests",
+      "mode": "unattended"
+    },
+    "server-git": {
+      "project": "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
+      "name": "Antiphon.Server.Git.Tests",
+      "processGroup": "native-dotnet",
+      "assembly": "Antiphon.Server.Git.Tests",
       "mode": "unattended"
     }
   },
@@ -1944,10 +1955,16 @@
       "consumers": [],
       "project": "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
       "reason": "Standalone CARD-1564 test assembly owns live startup and external-call observability qualification; required by nightly and rc profiles. The 180-second watchdog is provisional from the CARD-1564 Linux startup sample (66.992 seconds, n=1, not p95); collect Windows suite timings in the next qualification and replace with measured CARD-1404 costs."
+    },
+    {
+      "role": "primary",
+      "consumers": [],
+      "project": "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
+      "reason": "CARD-1546 mirrored test assembly for Antiphon.Server.Git. The Git project must not reference the server, and these tests are their own nightly and rc suite."
     }
   ],
   "selectionCatalog": {
-    "hash": "c62da85de8c20bbbde124e9449d318d6ea335b49827802bb6d25d312552ba2c2",
+    "hash": "b0dfba6df314cf57bc89631806a29dbc1fb366def500fb77662710349c54742b",
     "path": "tests/test-selection-policy.json"
   }
 }
