@@ -422,14 +422,8 @@ public class AgentTaskLandDeliveryE2ETests
         await using var f = new LandDeliveryFixture();
         await f.InitializeAsync();
         // Settlement and queue workers must be owned by a killable process at the cut.
-        // The child reconciles every due note. Hold the two enqueue throws for the review,
-        // or an earlier note consumes them and the review never sits at two failures.
-        if (cut == "enqueue-exception")
-            await File.WriteAllTextAsync(Path.Combine(f.Root, "enqueue-errors-task.txt"), Guid.NewGuid().ToString("N"));
         await f.UseChildAsync(ReviewCut(cut));
         await f.StartReviewDelegateAsync("raw");
-        if (cut == "enqueue-exception")
-            await File.WriteAllTextAsync(Path.Combine(f.Root, "enqueue-errors-task.txt"), f.ReviewTaskId.ToString("N"));
         await f.ReleaseReviewReportAsync();
         if (cut == "enqueue-exception")
         {
