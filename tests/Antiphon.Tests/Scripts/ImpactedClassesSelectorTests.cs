@@ -2,6 +2,9 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -755,6 +758,48 @@ public sealed partial class ImpactedClassesSelectorTests
             windows: false);
     }
 
+    // CARD-1819 round 2. A kind that is not windows:only or windows:required runs on Linux.
+    // A method that skips or asserts Windows there makes the checkpoint row red (Skipped != 0).
+    // A skip that runs only off Linux stays allowed: it does not fire on this host.
+    [Test]
+    public async Task C1819_linux_kind_classes_do_not_skip_off_windows()
+    {
+        const string windowsSkip = """
+            void M() { if (!OperatingSystem.IsWindows()) throw new SkipTestException("windows"); }
+            """;
+        const string skipCall = """
+            void M() { if (!OperatingSystem.IsWindows()) { Skip.Test("windows"); return; } }
+            """;
+        const string assertsWindows = """
+            void M() { OperatingSystem.IsWindows().ShouldBeTrue(); }
+            """;
+        const string unixMode = """
+            void M() { if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(path, UnixFileMode.UserRead); }
+            """;
+        const string linuxOnly = """
+            void M() { if (OperatingSystem.IsWindows()) throw new SkipTestException("linux"); }
+            """;
+        const string linuxSkip = """
+            void M() { if (!OperatingSystem.IsLinux()) Skip.Test("linux"); }
+            """;
+
+        SkipsOffWindows(windowsSkip).ShouldBeTrue();
+        SkipsOffWindows(skipCall).ShouldBeTrue();
+        SkipsOffWindows(assertsWindows).ShouldBeTrue();
+        SkipsOffWindows(unixMode).ShouldBeFalse();
+        SkipsOffWindows(linuxOnly).ShouldBeFalse();
+        SkipsOffWindows(linuxSkip).ShouldBeFalse();
+
+        var blinded = windowsSkip.Replace("SkipTestException", "Exception", StringComparison.Ordinal);
+        blinded.ShouldNotBe(windowsSkip);
+        Should.Throw<ShouldAssertException>(() => SkipsOffWindows(blinded).ShouldBeTrue());
+
+        var root = Root();
+        var table = await File.ReadAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"));
+        var violations = FindLinuxKindWindowsSkips(root, table);
+        violations.ShouldBeEmpty(string.Join(", ", violations));
+    }
+
     [Test]
     public async Task C1819_land_graph_core_selects_the_evaluation_class()
     {
@@ -1045,5 +1090,168 @@ public sealed partial class ImpactedClassesSelectorTests
         File.WriteAllText(file, after);
         Git(dir, "-c", "user.name=impacted", "-c", "user.email=impacted@example.invalid", "-c", "commit.gpgsign=false",
             "commit", "-q", "-am", "after");
+    }
+
+    private static List<string> FindLinuxKindWindowsSkips(string root, string tableText)
+    {
+        using var json = JsonDocument.Parse(tableText);
+        var whole = new HashSet<string>(StringComparer.Ordinal);
+        var methods = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var kind in json.RootElement.GetProperty("kinds").EnumerateArray())
+        {
+            var lane = kind.TryGetProperty("windows", out var windows) ? windows.GetString() : null;
+            if (lane is "only" or "required")
+                continue;
+            foreach (var name in Strings(kind, "classes"))
+                whole.Add(name);
+            foreach (var entry in Strings(kind, "methods"))
+            {
+                var slash = entry.IndexOf('/');
+                if (slash <= 0 || slash >= entry.Length - 1)
+                    continue;
+                var className = entry[..slash];
+                if (whole.Contains(className))
+                    continue;
+                if (!methods.TryGetValue(className, out var named))
+                    methods[className] = named = new HashSet<string>(StringComparer.Ordinal);
+                named.Add(entry[(slash + 1)..]);
+            }
+        }
+
+        var wanted = new HashSet<string>(whole, StringComparer.Ordinal);
+        foreach (var name in methods.Keys)
+            wanted.Add(name);
+        var violations = new List<string>();
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in TestSourceFiles(root))
+        {
+            var text = File.ReadAllText(file);
+            if (!wanted.Any(name => text.Contains("class " + name, StringComparison.Ordinal)))
+                continue;
+            var tree = CSharpSyntaxTree.ParseText(text);
+            foreach (var declaration in tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>())
+            {
+                var name = declaration.Identifier.ValueText;
+                var checkAll = whole.Contains(name);
+                var checkNamed = methods.TryGetValue(name, out var named);
+                if (!checkAll && !checkNamed)
+                    continue;
+                found.Add(name);
+                foreach (var method in declaration.Members.OfType<MethodDeclarationSyntax>())
+                {
+                    if (!checkAll && !named!.Contains(method.Identifier.ValueText))
+                        continue;
+                    if (!MethodSkipsOffWindows(method))
+                        continue;
+                    violations.Add(name + "/" + method.Identifier.ValueText);
+                }
+            }
+        }
+
+        foreach (var name in wanted.Where(name => !found.Contains(name)).Order(StringComparer.Ordinal))
+            violations.Add(name + " (no source declaration)");
+        violations.Sort(StringComparer.Ordinal);
+        return violations;
+    }
+
+    private static IEnumerable<string> TestSourceFiles(string root)
+    {
+        var tests = Path.Combine(root, "tests");
+        foreach (var file in Directory.EnumerateFiles(tests, "*.cs", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (relative.Split('/').Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.Ordinal)))
+                continue;
+            yield return file;
+        }
+    }
+
+    private static bool SkipsOffWindows(string method)
+    {
+        var tree = CSharpSyntaxTree.ParseText("class ProbeTests { " + method + " }");
+        var declaration = tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>().Single();
+        return MethodSkipsOffWindows(declaration);
+    }
+
+    private static bool MethodSkipsOffWindows(MethodDeclarationSyntax method)
+    {
+        foreach (var ifStatement in method.DescendantNodes().OfType<IfStatementSyntax>())
+        {
+            if (NegatesWindows(ifStatement.Condition) && BranchSkips(ifStatement.Statement))
+                return true;
+            if (ifStatement.Else is { } elseClause
+                && IsWindowsCheck(Unwrap(ifStatement.Condition))
+                && BranchSkips(elseClause.Statement))
+                return true;
+        }
+
+        return AssertsWindows(method);
+    }
+
+    private static bool NegatesWindows(ExpressionSyntax condition)
+    {
+        foreach (var node in condition.DescendantNodesAndSelf())
+        {
+            if (node is PrefixUnaryExpressionSyntax prefix
+                && prefix.IsKind(SyntaxKind.LogicalNotExpression)
+                && IsWindowsCheck(Unwrap(prefix.Operand)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
+    {
+        while (expression is ParenthesizedExpressionSyntax paren)
+            expression = paren.Expression;
+        return expression;
+    }
+
+    private static bool IsWindowsCheck(SyntaxNode node)
+    {
+        if (node is IdentifierNameSyntax identifier)
+            return identifier.Identifier.ValueText == "IsWindows";
+        if (node is not InvocationExpressionSyntax call)
+            return false;
+        var name = call.Expression.ToString();
+        if (name.EndsWith("IsWindows", StringComparison.Ordinal))
+            return true;
+        return name.EndsWith("IsOSPlatform", StringComparison.Ordinal)
+            && call.ArgumentList.ToString().Contains("Windows", StringComparison.Ordinal);
+    }
+
+    private static bool BranchSkips(StatementSyntax statement)
+    {
+        foreach (var node in statement.DescendantNodesAndSelf())
+        {
+            if (node is ThrowStatementSyntax or ThrowExpressionSyntax
+                && node.ToString().Contains("SkipTestException", StringComparison.Ordinal))
+                return true;
+            if (node is InvocationExpressionSyntax call && call.Expression.ToString() is "Skip.Test")
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool AssertsWindows(MethodDeclarationSyntax method)
+    {
+        foreach (var call in method.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (call.Expression is MemberAccessExpressionSyntax member && IsWindowsCheck(Unwrap(member.Expression)))
+            {
+                var called = member.Name.Identifier.ValueText;
+                if (called == "ShouldBeTrue")
+                    return true;
+                if (called == "ShouldBe" && call.ArgumentList.Arguments.FirstOrDefault()?.ToString() == "true")
+                    return true;
+            }
+            if (call.Expression.ToString() is "Should.BeTrue" or "Assert.True" or "Assert.IsTrue"
+                && call.ArgumentList.Arguments.Any(argument => argument.DescendantNodesAndSelf().Any(IsWindowsCheck)))
+                return true;
+        }
+
+        return false;
     }
 }
