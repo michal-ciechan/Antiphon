@@ -169,3 +169,69 @@ Same filter, `/*/*/CheckpointReceiptSafetyTests/malformed_collection_and_string_
 Process-spawn count after, from the phase journal (`processes` on the complete record, and `exclusive.process`): 0, 0, 0. Fixture teardown on those journals was 30ms, 12ms, and 15ms. Before had no local journal. The RC record for this test also had an empty `processes` array. The optimized method calls `Program.RunAsync` in-process. `Child()` on the other methods of the class still launches `dotnet exec`.
 
 `reused_receipt_fixture_matches_a_fresh_fixture_refusal` failed at `ee77f13ae81e3ec3c588029e4bd1671ae6775f9e` because the restore omitted `report.md` (1 failed, duration 6s 981ms) and passed at `1f9273f75a8da7c353c708c08f4bee2eb8a12590` (1 passed, duration 8s 494ms).
+
+## Round 2 (task 5301664b)
+
+Branch `feat/card-task-5301664b` starts at the round-1 tip `9e9fed149b0ec96987df57455afe4a1ba55aab4a`. The same timing root and the same chunk TRX were read again. The top-15 chunk order and the top-30 test order above are unchanged. Host for the new timings: DESKTOP-KTLKPIF, Windows 10.0.19045, .NET 9.0.22. Every build and run went through `scripts/build-slot.ps1` with `-p:UseAppHost=false` and the worktree's default output. This class does not launch a runner.
+
+### Setup that is paid per iteration
+
+Of the top 30, the rows whose wall is the work under test stay as they are: the e2e crash matrices, `Windows_SamplerOverheadStaysWithinBudget`, `CheckpointRepeatBuildIsolationTests.repeat_two_then_default_then_three_rebuilds_the_same_project` (a real FilterHost build plus three stub `run-checkpoint.ps1` launches), and `PlanCoverageBindingTests.historical_plans_bind_without_suppression` (in-process `CoverageCommand.Run` plus Roslyn). The round-1 method is already one fixture.
+
+The remaining repeated-setup rows are both in `CheckpointReceiptSafetyTests`, chunk antiphon/all-profile-1475, and both call `Child()` (`dotnet exec` of `Antiphon.Checkpoints.dll`, 4s kill bound). That process stays. The repeated cost is `Fixture()` (`TempDir`, `MarkRun`, `RunStateStore.Write`, `ReportWriter.WriteFiles`) once per mutation.
+
+| Test | RC s | Iterations | Estimated fixture saving |
+|---|---:|---:|---|
+| `malformed_state_shape_by_verb_table_matches_documented_exits` | 163.16 | 90 `Child()` (2 collections x 5 shapes x 9 verbs) | about 89 x 1.5s, roughly two minutes |
+| `receipt_row_and_build_identities_refuse_blank_without_writing` | (inside the same profile; four theory rows) | 34 `Child()` per row (2 receipts x 2 collections x 9 verbs, skipping `validate` on `state.json`) | about 33 x 1.5s, roughly 50s per row |
+| `symlink_and_directory_receipts_refuse_within_four_seconds` | 33.03 | about 18 `Fixture()` + `Child()` | about 27s, under the 30s stop |
+
+`Child()` does not call `TestTiming.BeginProcess`, so the phase journal `processes` array stays empty. Spawn count is a 30ms sample of `dotnet` command lines containing `Antiphon.Checkpoints.dll` and ` exec `. The source loop count is the authority when the sample misses a short process.
+
+### Choice
+
+Fix the two sibling loops, one at a time. Build the receipt pair once, snapshot the top-level file bytes, and `Restore` before each mutation. Assertions, documented exits, the 4s kill bound, and `ParallelLimiter<CheckpointToolSpawnLimit>` stay. `reused_state_fixture_matches_a_fresh_child_refusal` compares a fresh `Fixture()` with two restores of a second fixture (debris file and subdirectory wiped by `Restore`). It checks exit, output with the temp root replaced by `<root>`, and whether the pre-child file bytes stayed unchanged. Both sides may write on a successful verb; they have to write the same way.
+
+Covered verbs: `status`, `wait`, and `validate` with `rows` null on `state.json`; `clean` with a blank row id; `report` rewriting `state.json`; `report-merge` rewriting `report.json`; `status` with a blank row id on `report.json`.
+
+### State-shape result
+
+Filter `/*/*/CheckpointReceiptSafetyTests/malformed_state_shape_by_verb_table_matches_documented_exits`. Before is `9e9fed149b0ec96987df57455afe4a1ba55aab4a` (one `Fixture()` per iteration). After is `966f20c5a69cdd64b3bbfadd469ad5ef0bd0dba7`. Each run executed 1, failed 0. Duration is the TRX `UnitTestResult`. p50 is the middle of three. p95 is the slowest of three.
+
+| Run | Before | After |
+|---|---:|---:|
+| 1 | 172.931s | 52.391s |
+| 2 | 178.187s | 50.782s |
+| 3 | 179.275s | 52.027s |
+| p50 | 178.187s | 52.027s |
+| p95 | 179.275s | 52.391s |
+
+p50 saving 126.160s. Sampled checkpoint exec 90, 90, 90 before and 90, 90, 90 after. Journal `processes` empty both ways. Before run 1 exclusive fixture teardown 863ms, remainder 172955ms. After teardown 28ms, 31ms, 32ms (remainder 52412, 50807, 52053). The witness at `70677bbe4d3533c2f8e0bfe540e4f56e3f38e7c0` passed 1, failed 0, before the loop change.
+
+### Receipt-row result
+
+Filter `/*/*/CheckpointReceiptSafetyTests/receipt_row_and_build_identities_refuse_blank_without_writing*`. Before is the same `966f20c5a69cdd64b3bbfadd469ad5ef0bd0dba7` binary (still one `Fixture()` per iteration). After is `78be31af5e703e10b2d88b5648d465195b05f9be`. Four theory rows, each run failed 0. Sampled checkpoint exec before 134, 136, 135 (source count 136). After 136, 136, 136.
+
+| Argument | Before runs s | After runs s | Before p50 / p95 | After p50 / p95 | p50 saving |
+|---|---|---|---|---|---:|
+| `""` | 64.692, 63.011, 67.839 | 23.802, 24.049, 41.978 | 64.692 / 67.839 | 24.049 / 41.978 | 40.643s |
+| `" \t\r\n"` | 65.571, 63.123, 67.322 | 27.592, 23.787, 29.439 | 65.571 / 67.322 | 27.592 / 29.439 | 37.979s |
+| null | 62.457, 63.105, 73.388 | 27.385, 26.245, 29.206 | 63.105 / 73.388 | 27.385 / 29.206 | 35.720s |
+| `CP-fixture` | 76.650, 76.021, 88.039 | 40.131, 42.271, 47.970 | 76.650 / 88.039 | 42.271 / 47.970 | 34.379s |
+
+The empty-string after p95 is run 3 (41.978s) against two runs near 24s. All three passed. Journal `processes` empty. Exclusive fixture teardown before was 239-1368ms per row (34 roots). After it was 9-105ms (one root). The extended witness, including the successful `report` and `report-merge` paths, passed 1, failed 0, duration 48s 868ms, on the bytes committed as `78be31af5e703e10b2d88b5648d465195b05f9be`.
+
+Scratch journals and TRX stay under `C:\Users\lndco\AppData\Local\Temp\5301664b-trace`. They are not committed.
+
+### Stop
+
+Each remaining candidate saves under 30s on one run, so round 2 stops. No timeout, skip, assertion, or coverage change. `Child()` still spawns: 90 execs in the state-shape method, 34 per receipt theory row.
+
+## Next card-sized chunks after round 2
+
+| Chunk | What to change | Expected saving | Leave alone |
+|---|---|---|---|
+| `symlink_and_directory_receipts_refuse_within_four_seconds` in the same class | One snapshot restored before each `Child()`, with the existing child witness extended to a symlink refusal | About 27s if the local measure matches the 1.5s `Fixture()`. Under the 30s line until a trace shows more | `Child()`, the 4s kill bound, the refusal text |
+| antiphon/all-group-108 fixture git inside `CheckpointFixtureGitEnvironment.Git` for init/add/commit | LibGit2Sharp commit of the fixture tree, witnessed by `git rev-parse HEAD^{tree}` and `git status --porcelain` matching the CLI | 41.3s summed across the chunk, a few seconds inside each 45-80s row. Per-test saving is under 30s | `run-checkpoint.ps1`, validate-receipt pwsh, dotnet build, git whose stdout the test asserts |
+| antiphon/all-group-109 | Trace the 24 dotnet processes (70.2s) before caching anything | Unknown until that trace. The 184.65s historical-plan bind is the work | `CoverageCommand.Run` and the Roslyn bind |
+| antiphon/all-group-11 | In-process reads already covered by `InProcessGitReads` | 9.4s over 1285 git processes | Recovery and worktree-add commands |
