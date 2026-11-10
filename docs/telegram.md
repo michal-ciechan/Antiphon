@@ -137,6 +137,10 @@ three-attempt cap and the original obligation's `PendingReplyTtlMinutes` age bou
 
 A reply whose direct publication keeps failing is owed as channel debt per destination
 (CARD-1434): replies to other chats flow, and replies to the same chat keep transcript order.
+A machine-turn note takes that debt keyed by the chat it publishes to. The chat is
+resolved once and stored on the debt row: unified recovery uses the channel context
+from before the injection, and the default path uses the newest channel chat at
+resolution, so a later retry publishes there (CARD-1454).
 The debt is abandoned after `ChannelBridge:ReplyDebtGiveUpAttempts` (default 20; 0 disables)
 failed attempts, or `ChannelBridge:ReplyDebtGiveUpMinutes` (default 10; 0 disables; at most
 `PendingReplyTtlMinutes`) after the row was created once it has failed at least once. Its open

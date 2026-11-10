@@ -472,10 +472,11 @@ public sealed partial class AgentSessionRuntime
     internal static bool RoutesReplies(SessionRuntimeAction action, TranscriptEntry? row) =>
         action.TurnBoundary || row?.Kind == TranscriptKinds.AssistantText;
 
-    internal async Task ExecuteActionChannelReplyAsync(Guid sessionId, long sequence, CancellationToken ct)
+    internal async Task ExecuteActionChannelReplyAsync(Guid sessionId, long sequence, CancellationToken ct,
+        string? carriedConversationKey = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        await ExecuteChannelReplyAsync(scope.ServiceProvider, sessionId, sequence, ct);
+        await ExecuteChannelReplyAsync(scope.ServiceProvider, sessionId, sequence, ct, carriedConversationKey);
     }
 
     /// <summary>CARD-1434: the destination the route action at <paramref name="sequence"/> publishes to; null when nothing publishes.</summary>
@@ -496,10 +497,11 @@ public sealed partial class AgentSessionRuntime
     }
 
     private static async Task ExecuteChannelReplyAsync(
-        IServiceProvider services, Guid sessionId, long sequence, CancellationToken ct)
+        IServiceProvider services, Guid sessionId, long sequence, CancellationToken ct,
+        string? carriedConversationKey = null)
     {
         if (services.GetService<ChannelReplyDispatcher>() is { } channel)
-            await channel.OnTranscriptActionAsync(sessionId, sequence, ct);
+            await channel.OnTranscriptActionAsync(sessionId, sequence, ct, carriedConversationKey);
     }
 
     private async Task RearmInterruptedAttemptAsync(

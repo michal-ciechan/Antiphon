@@ -240,7 +240,8 @@ public sealed class SessionRuntimeActionCoordinator(
                 new ChannelReplyDebtState(action.Attempts, action.CreatedAt, action.FailureReason), ct);
             if (!exhausted)
             {
-                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct,
+                    action.ConversationKey);
                 // CARD-1433: a debt row that carries late-confirmed sources publishes them too.
                 if (action.LateConfirmedChannelMessageIds.Length > 0)
                     await runtime.ExecuteActionLateConfirmAsync(action, ct);
@@ -339,7 +340,7 @@ public sealed class SessionRuntimeActionCoordinator(
             if (owed is null)
             {
                 // No route: nothing publishes from this trigger, so a completed dispatch owes nothing.
-                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct);
+                await runtime.ExecuteActionChannelReplyAsync(action.AgentSessionId, action.Sequence, ct, key);
                 return;
             }
         }
