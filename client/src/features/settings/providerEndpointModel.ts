@@ -61,6 +61,9 @@ const SPECIAL_URL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file'
  * and no `//` stays a server scheme refusal. Text with no recognised scheme,
  * and a recognised scheme that is not followed by `//`, is still checked for
  * userinfo between the first `//` and the next delimiter.
+ * A special scheme anywhere in the text (http, https, ws, wss, ftp, file) is checked
+ * again. Slashes, backslashes, whitespace, controls, and zero-width marks after its
+ * colon are only a separator, including one slash and a run of none.
  * An `@` only in the path, query, or fragment, and `http://@host` (empty userinfo),
  * are not credentials.
  */
@@ -69,6 +72,7 @@ function baseUrlCarriesUserInfo(baseUrl: string): boolean {
   if (scheme === 'mailto') return mailtoCarriesPasswordOrSlashes(baseUrl)
   if (parsedUrlCarriesCredential(baseUrl)) return true
   if (rawAuthorityCarriesCredential(baseUrl)) return true
+  if (embeddedSpecialAuthorityCarriesCredential(baseUrl)) return true
   return (scheme === null || !baseUrl.startsWith('//', scheme.length + 1))
     && doubleSlashAuthorityCarriesCredential(baseUrl)
 }
@@ -93,6 +97,26 @@ function doubleSlashAuthorityCarriesCredential(value: string): boolean {
   const slash = value.indexOf('//')
   if (slash < 0) return false
   return userinfoIsCredential(segmentBeforeDelimiter(value, slash + 2, false))
+}
+
+/** CARD-1822 D-2: one slash, a backslash, or no slash after a prefixed special scheme still carries userinfo. */
+function embeddedSpecialAuthorityCarriesCredential(value: string): boolean {
+  for (const match of value.matchAll(/(?:https?|wss?|ftp|file):/gi)) {
+    let start = match.index + match[0].length
+    while (start < value.length && isEmbeddedAuthoritySeparator(value[start])) start++
+    if (userinfoIsCredential(segmentBeforeDelimiter(value, start, true))) return true
+  }
+  return false
+}
+
+function isEmbeddedAuthoritySeparator(c: string): boolean {
+  if (c === '/' || c === '\\') return true
+  const code = c.charCodeAt(0)
+  if (code <= 0x20 || code === 0x7f) return true
+  if (code === 0x00a0 || code === 0x1680 || code === 0x180e) return true
+  if (code >= 0x2000 && code <= 0x200d) return true
+  if (code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x2060) return true
+  return code === 0x3000 || code === 0xfeff
 }
 
 function schemeOf(value: string): string | null {
