@@ -214,6 +214,37 @@ function Test-RegisterPreview {
     Assert-True ($out2 -notmatch '(?i)bearer |token=') 'preview prints no token' $out2
 }
 
+function Test-CloudSuffix {
+    if (-not (Import-JobStatus)) { return }
+    $readmePath = Join-Path $here 'windmill\README.md'
+    $invokePath = Join-Path $here 'windmill\invoke-postgres-snapshot.ps1'
+    $readmeText = ''
+    $invokeText = ''
+    if (Test-Path -LiteralPath $readmePath) { $readmeText = [System.IO.File]::ReadAllText($readmePath) }
+    if (Test-Path -LiteralPath $invokePath) { $invokeText = [System.IO.File]::ReadAllText($invokePath) }
+    Assert-True ($readmeText -match 'oneDrive=missing') 'readme names oneDrive=missing' 'missing'
+    Assert-True ($readmeText -match '\+cloud') 'readme names the +cloud suffix' 'missing'
+    Assert-True ($readmeText -match 'no cloud copy') 'readme names the no-cloud warning' 'missing'
+    Assert-True ($readmeText -match 'unencrypted') 'readme says the cloud copy is unencrypted' 'missing'
+    if ($invokeText -notmatch '-OneDriveCopy') {
+        Write-Fail 'scheduled job names OneDriveCopy' 'flag missing'
+        return
+    }
+    if (-not (Get-Command New-PlainBackupCloudRecord -ErrorAction SilentlyContinue)) {
+        Write-Fail 'cloud record exists' 'New-PlainBackupCloudRecord missing'
+        return
+    }
+    $ok = New-PlainBackupCloudRecord -Bytes 530395357 -OneDrive 'ok'
+    Assert-True ((Format-JobStatusLine $ok) -eq 'DB backup: OK 0.5 GB +cloud') 'success line has +cloud' (Format-JobStatusLine $ok)
+    $missing = New-PlainBackupCloudRecord -Bytes 530395357 -OneDrive 'missing'
+    Assert-True ((Format-JobStatusLine $missing) -eq 'DB backup: WARN 0.5 GB no cloud copy') 'missing cloud line warns' (Format-JobStatusLine $missing)
+    $failed = New-PlainBackupCloudRecord -Bytes 531543585 -OneDrive 'failed'
+    Assert-True ((Format-JobStatusLine $failed) -eq 'DB backup: WARN 0.5 GB no cloud copy') 'failed cloud line warns' (Format-JobStatusLine $failed)
+    $localOnly = New-PlainBackupCloudRecord -Bytes 530395357 -OneDrive ''
+    Assert-True ((Format-JobStatusLine $localOnly) -eq 'DB backup: OK 0.5 GB') 'empty cloud state stays the local line' (Format-JobStatusLine $localOnly)
+    Assert-True ([string]$ok.detail -notmatch '(?i)password\s*=|postgres://|Host\s*=') 'cloud line has no secret' ([string]$ok.detail)
+}
+
 function Test-HelperAscii {
     foreach ($needed in @($helperPath, $schemaPath, $registerPath)) {
         if (-not (Test-Path -LiteralPath $needed)) {
@@ -226,7 +257,7 @@ function Test-HelperAscii {
     }
 }
 
-$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'HelperAscii')
+$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'HelperAscii')
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }

@@ -1733,6 +1733,190 @@ function Test-PlainStatusNoSecret {
     }
 }
 
+function Test-PlainOneDriveCopy {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainOneDrive script exists' $scriptPath; return }
+    . $scriptPath
+    foreach ($fn in @('Invoke-SnapshotPlainOneDriveCopy', 'Confirm-SnapshotPlainOneDriveFile')) {
+        if (-not (Get-Command $fn -ErrorAction SilentlyContinue)) {
+            Write-Fail 'OneDrive copy function' "$fn missing"
+            return
+        }
+    }
+    $statusCmd = Get-Command Write-SnapshotPlainStatus -ErrorAction SilentlyContinue
+    if (-not $statusCmd -or -not $statusCmd.Parameters.ContainsKey('OneDrive')) {
+        Write-Fail 'PlainStatus oneDrive field' 'OneDrive parameter missing'
+        return
+    }
+    if (-not (Get-Variable -Name SnapshotOneDriveRetain -Scope Script -ErrorAction SilentlyContinue)) {
+        Write-Fail 'OneDrive retain' 'SnapshotOneDriveRetain missing'
+        return
+    }
+    Assert-True ([int]$script:SnapshotOneDriveRetain -eq 7) 'OneDrive retention default is 7' ([string]$script:SnapshotOneDriveRetain)
+
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-od-' + [guid]::NewGuid().ToString('N'))
+    $sync = Join-Path $root 'OneDrive'
+    $local = Join-Path $root 'antiphon-backups'
+    $outside = Join-Path $root 'outside'
+    $missingRoot = Join-Path $root 'missing-onedrive'
+    $statusDir = Join-Path $root 'status'
+    New-Item -ItemType Directory -Path $sync, $local, $outside, $statusDir | Out-Null
+    try {
+        $localName = 'antiphon-20261110T104159Z.dump'
+        $localFile = Join-Path $local $localName
+        Set-Content -LiteralPath $localFile -Value 'PLAIN-DUMP-BYTES' -Encoding ASCII
+        $canary = Join-Path $outside 'canary.txt'
+        Set-Content -LiteralPath $canary -Value 'CANARY password=secret postgres://user Host=db' -Encoding ASCII
+        $expectedFolder = Join-Path (Join-Path $missingRoot 'Backups') 'antiphon-postgres'
+
+        $missing = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $missingRoot -Keep 7
+        Assert-True ([string]$missing.State -eq 'missing') 'missing sync root is oneDrive=missing' ([string]$missing.State)
+        Assert-True ([string]$missing.Loud -match 'oneDrive=missing') 'missing sync root is loud' ([string]$missing.Loud)
+        Assert-True (-not (Test-Path -LiteralPath $missingRoot)) 'missing sync root is not created' $missingRoot
+        Assert-True (-not (Test-Path -LiteralPath $expectedFolder)) 'missing sync root writes no OneDrive child' $expectedFolder
+        Assert-True (Test-Path -LiteralPath $localFile) 'missing sync root keeps the local dump' $localFile
+        Assert-True (Test-Path -LiteralPath $canary) 'missing sync root leaves the outside file' $canary
+        Assert-True ([string]$missing.Loud -notmatch '(?i)password\s*=|postgres://|Host\s*=') 'missing sync root stdout has no secret' ([string]$missing.Loud)
+
+        $noBackups = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        Assert-True ([string]$noBackups.State -eq 'missing') 'missing Backups folder is oneDrive=missing' ([string]$noBackups.State)
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $sync 'Backups'))) 'missing Backups folder is not created' $sync
+        Assert-True (Test-Path -LiteralPath $localFile) 'missing Backups keeps the local dump' $localFile
+        $syncTop = @(Get-ChildItem -LiteralPath $sync -Force | Select-Object -ExpandProperty Name)
+        Assert-True ($syncTop.Count -eq 0) 'missing Backups writes nothing under the sync root' ($syncTop -join ',')
+
+        $backups = Join-Path $sync 'Backups'
+        $hermes = Join-Path $backups 'Hermes'
+        $openclaw = Join-Path $backups 'openclaw'
+        New-Item -ItemType Directory -Path $hermes, $openclaw | Out-Null
+        $hermesFile = Join-Path $hermes 'keep.txt'
+        $openclawFile = Join-Path $openclaw 'keep.txt'
+        Set-Content -LiteralPath $hermesFile -Value 'keep-hermes' -Encoding ASCII
+        Set-Content -LiteralPath $openclawFile -Value 'keep-openclaw' -Encoding ASCII
+        $child = Join-Path $backups 'antiphon-postgres'
+        New-Item -ItemType Directory -Path $child | Out-Null
+        $badPartial = Join-Path $child ($localName + '.partial')
+        $badFinal = Join-Path $child $localName
+        Set-Content -LiteralPath $badPartial -Value 'DIFFERENT-BYTES' -Encoding ASCII
+        $confirmed = Confirm-SnapshotPlainOneDriveFile -SourceFile $localFile -PartialFile $badPartial -FinalFile $badFinal
+        Assert-True ($confirmed -eq $false) 'hash mismatch does not publish' "confirmed=$confirmed"
+        Assert-True (-not (Test-Path -LiteralPath $badPartial)) 'hash mismatch removes the partial' $badPartial
+        Assert-True (-not (Test-Path -LiteralPath $badFinal)) 'hash mismatch does not leave a final name' $badFinal
+
+        $copied = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        Assert-True ([string]$copied.State -eq 'ok') 'verified copy is oneDrive=ok' ([string]$copied.State)
+        $final = Join-Path $child $localName
+        $partial = $final + '.partial'
+        Assert-True (Test-Path -LiteralPath $final) 'copy renames onto the final name' $final
+        Assert-True (-not (Test-Path -LiteralPath $partial)) 'copy leaves no partial' $partial
+        $localHash = (Get-FileHash -LiteralPath $localFile -Algorithm SHA256).Hash.ToLowerInvariant()
+        $cloudHash = (Get-FileHash -LiteralPath $final -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-True ($localHash -eq $cloudHash) 'copy hash equals the local dump' $cloudHash
+        $finalInfo = [System.IO.FileInfo]::new($final)
+        Assert-True ([int64]$copied.Bytes -eq $finalInfo.Length) 'oneDriveBytes matches the file' ([string]$copied.Bytes)
+        Assert-True ([System.IO.Path]::GetFullPath([string]$copied.Folder) -eq [System.IO.Path]::GetFullPath($child)) 'oneDrive folder is the child' ([string]$copied.Folder)
+        Assert-True ((Get-Content -LiteralPath $hermesFile -Raw) -eq "keep-hermes`r`n" -or (Get-Content -LiteralPath $hermesFile -Raw) -eq "keep-hermes`n") 'copy leaves Hermes unchanged' (Get-Content -LiteralPath $hermesFile -Raw)
+        Assert-True ((Get-Content -LiteralPath $openclawFile -Raw) -match 'keep-openclaw') 'copy leaves openclaw unchanged' $openclawFile
+        Assert-True (Test-Path -LiteralPath $canary) 'copy leaves the outside file' $canary
+        $topAfter = @(Get-ChildItem -LiteralPath $sync -Force | Select-Object -ExpandProperty Name)
+        Assert-True (($topAfter.Count -eq 1) -and ($topAfter[0] -eq 'Backups')) 'copy writes nothing beside Backups' ($topAfter -join ',')
+        Assert-True ([string]$copied.Loud -notmatch '(?i)password\s*=|postgres://|Host\s*=|CANARY') 'copy stdout has no secret' ([string]$copied.Loud)
+
+        Remove-Item -LiteralPath $final -Force
+        foreach ($day in 1..8) {
+            $oldName = 'antiphon-202611{0:d2}T000000Z.dump' -f $day
+            Set-Content -LiteralPath (Join-Path $child $oldName) -Value 'old' -Encoding ASCII
+        }
+        foreach ($day in 1..14) {
+            $extra = Join-Path $local ('antiphon-202610{0:d2}T000000Z.dump' -f $day)
+            Set-Content -LiteralPath $extra -Value 'local-old' -Encoding ASCII
+        }
+        $newest = Join-Path $local 'antiphon-20261110T120000Z.dump'
+        Set-Content -LiteralPath $newest -Value 'NEW-DUMP' -Encoding ASCII
+        $localBefore = @(Get-ChildItem -LiteralPath $local -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        $kept = Invoke-SnapshotPlainOneDriveCopy -LocalFile $newest -SyncRoot $sync -Keep 7
+        Assert-True ([string]$kept.State -eq 'ok') 'retention copy is oneDrive=ok' ([string]$kept.State)
+        $cloudLeft = @(Get-ChildItem -LiteralPath $child -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($cloudLeft.Count -eq 7) 'OneDrive keeps 7' ("count=$($cloudLeft.Count)")
+        Assert-True (Test-Path -LiteralPath (Join-Path $child 'antiphon-20261110T120000Z.dump')) 'OneDrive keeps the new file' 'missing'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $child 'antiphon-20261101T000000Z.dump'))) 'OneDrive drops the oldest' 'still present'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $child 'antiphon-20261102T000000Z.dump'))) 'OneDrive drops the next oldest' 'still present'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $child 'antiphon-20261110T120000Z.dump.partial'))) 'retention copy leaves no partial' 'partial remains'
+        $localAfter = @(Get-ChildItem -LiteralPath $local -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($localAfter.Count -eq $localBefore.Count) 'OneDrive prune does not change the local 14-cap folder' ("before=$($localBefore.Count) after=$($localAfter.Count)")
+        Assert-True ($localAfter.Count -gt 7) 'local retention stays above the OneDrive cap' ("count=$($localAfter.Count)")
+
+        $wrote = Write-SnapshotPlainStatus -Dir $statusDir -Utc '20261110T120000Z' -Code 0 -Bytes 18 -Sha256Prefix 'abcdef123456' -DurationSec 3 -Tables 2 -OneDrive 'ok' -OneDriveBytes 18 -OneDriveFolder $child
+        Assert-True ($wrote -eq $true) 'status with oneDrive writes' "wrote=$wrote"
+        $statusPath = Join-Path $statusDir 'snapshot-status.json'
+        $statusJson = [System.IO.File]::ReadAllText($statusPath)
+        $statusObj = $statusJson | ConvertFrom-Json
+        Assert-True ([string]$statusObj.oneDrive -eq 'ok') 'status oneDrive=ok' $statusJson
+        Assert-True ([int64]$statusObj.oneDriveBytes -eq 18) 'status oneDriveBytes' $statusJson
+        Assert-True ([string]$statusObj.oneDriveFolder -eq $child) 'status oneDriveFolder' ([string]$statusObj.oneDriveFolder)
+        Assert-True ($statusJson -notmatch '(?i)password\s*=|postgres://|Host\s*=|CANARY') 'status has no secret' $statusJson
+        Assert-True (-not (Test-Path -LiteralPath ($statusPath + '.partial'))) 'status leaves no partial' $statusPath
+        $wroteMissing = Write-SnapshotPlainStatus -Dir $statusDir -Utc '20261110T120002Z' -Code 0 -Bytes 18 -Sha256Prefix 'abcdef123456' -DurationSec 3 -Tables 2 -OneDrive 'missing' -OneDriveBytes 0 -OneDriveFolder $child
+        Assert-True ($wroteMissing -eq $true) 'status missing writes' "wrote=$wroteMissing"
+        $missingObj = ([System.IO.File]::ReadAllText($statusPath)) | ConvertFrom-Json
+        Assert-True ([string]$missingObj.oneDrive -eq 'missing') 'status oneDrive=missing' ([string]$missingObj.oneDrive)
+        $wroteFailed = Write-SnapshotPlainStatus -Dir $statusDir -Utc '20261110T120003Z' -Code 0 -Bytes 18 -Sha256Prefix 'abcdef123456' -DurationSec 3 -Tables 2 -OneDrive 'failed' -OneDriveBytes 0 -OneDriveFolder $child
+        Assert-True ($wroteFailed -eq $true) 'status failed writes' "wrote=$wroteFailed"
+        $failedObj = ([System.IO.File]::ReadAllText($statusPath)) | ConvertFrom-Json
+        Assert-True ([string]$failedObj.oneDrive -eq 'failed') 'status oneDrive=failed' ([string]$failedObj.oneDrive)
+        $wrotePlain = Write-SnapshotPlainStatus -Dir $statusDir -Utc '20261110T120004Z' -Code 0 -Bytes 18 -Sha256Prefix 'abcdef123456' -DurationSec 3 -Tables 2
+        Assert-True ($wrotePlain -eq $true) 'status without OneDrive still writes' "wrote=$wrotePlain"
+        $plainJson = [System.IO.File]::ReadAllText($statusPath)
+        Assert-True ($plainJson -notmatch 'oneDrive') 'ad-hoc status omits oneDrive' $plainJson
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-PlainOneDrivePlan {
+    $source = ''
+    if (Test-Path -LiteralPath $scriptPath) { $source = [System.IO.File]::ReadAllText($scriptPath) }
+    if ($source -notmatch '\[switch\]\$OneDriveCopy') {
+        Write-Fail 'OneDriveCopy switch' 'switch missing'
+        return
+    }
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $backups = Join-Path $fx.Sync 'Backups'
+        New-Item -ItemType Directory -Path $backups | Out-Null
+        $hermes = Join-Path $backups 'Hermes'
+        New-Item -ItemType Directory -Path $hermes | Out-Null
+        Set-Content -LiteralPath (Join-Path $hermes 'keep.txt') -Value 'keep-hermes' -Encoding ASCII
+        $on = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-OneDriveCopy', '-Destination', $dest,
+            '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($on.Exit -eq 0) 'OneDrive plan exits 0' "exit=$($on.Exit) $($on.Out)"
+        Assert-True ($on.Out -match 'outside-onedrive=yes') 'OneDrive plan keeps the local destination outside OneDrive' $on.Out
+        Assert-True ($on.Out -notmatch 'reason=destination-inside-onedrive') 'OneDrive plan does not trip the primary guard' $on.Out
+        Assert-True ($on.Out -match 'step onedrive:') 'OneDrive plan names the copy step' $on.Out
+        Assert-True ($on.Out -match '\.partial') 'OneDrive plan writes a partial' $on.Out
+        Assert-True ($on.Out -match 'sha256') 'OneDrive plan checks the hash' $on.Out
+        Assert-True ($on.Out -match 'keep 7') 'OneDrive plan keeps 7' $on.Out
+        Assert-True ($on.Out -match 'unencrypted') 'OneDrive plan says the cloud copy is unencrypted' $on.Out
+        $child = Join-Path $backups 'antiphon-postgres'
+        Assert-True (-not (Test-Path -LiteralPath $child)) 'OneDrive plan does not create the child' $child
+        Assert-True (-not (Test-Path -LiteralPath $dest)) 'OneDrive plan does not create the local destination' $dest
+        Assert-True (Test-Path -LiteralPath (Join-Path $hermes 'keep.txt')) 'OneDrive plan leaves Hermes' $hermes
+        Assert-NoSecret $on $fx 'OneDrive plan'
+        Assert-NoDocker $on 'OneDrive plan'
+        Remove-Item -LiteralPath $fx.Marker -Force -ErrorAction SilentlyContinue
+        $off = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        )
+        Assert-True ($off.Exit -eq 0) 'ad-hoc plain plan exits 0' "exit=$($off.Exit) $($off.Out)"
+        Assert-True ($off.Out -notmatch 'step onedrive:') 'ad-hoc plain plan does not copy to OneDrive' $off.Out
+        Assert-True ($off.Out -notmatch 'keep 7') 'ad-hoc plain plan does not keep 7' $off.Out
+        Assert-True (-not (Test-Path -LiteralPath $child)) 'ad-hoc plain plan writes nothing in OneDrive' $child
+        Assert-NoDocker $off 'ad-hoc plain plan'
+    } finally { Remove-Fixture $fx }
+}
+
 function Test-PlainDrillRefused {
     $fx = New-Fixture
     try {
@@ -1761,7 +1945,8 @@ $all = @(
     'StagingSkipsLiveRun', 'DrillPicksExactSnapshot',
     'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules',
     'PlainOffByDefault', 'PlainPlan', 'PlainInsideOneDrive', 'PlainMissingOneDrive', 'PlainAclOpen',
-    'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused'
+    'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused',
+    'PlainOneDriveCopy', 'PlainOneDrivePlan'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
