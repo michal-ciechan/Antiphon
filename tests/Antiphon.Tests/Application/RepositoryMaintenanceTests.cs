@@ -1,9 +1,11 @@
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 using TUnit.Core;
@@ -145,6 +147,83 @@ public sealed class RepositoryMaintenanceTests
         Directory.EnumerateFiles(children).ShouldBeEmpty();
         var gone = await fixture.Git.RunAsync(fixture.Repository, ["show-ref", "--verify", pin], ct);
         gone.Succeeded.ShouldBeFalse("the batch applied");
+    }
+
+    /// <summary>CARD-1442 (CARD-1432 F-2). Retirement and start-ref-probe refs are never deleted.
+    /// A ref whose loose file (or reflog, when one exists) is older than 24 hours is reported;
+    /// a younger one, and a name that only shares the probe prefix, is not.</summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task C1442_sweep_reports_stale_retirement_and_start_ref_probe_without_deleting()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var terminal = SeedTask(db, fixture.TaskId, AgentTaskStatus.Succeeded, fixture.Repository);
+        await db.SaveChangesAsync();
+
+        var staleRetirement = $"refs/antiphon/retirement/{Guid.NewGuid():N}/source";
+        var freshRetirement = $"refs/antiphon/retirement/{Guid.NewGuid():N}/cleanup-observed";
+        const string staleProbe = "refs/antiphon/start-ref-probe";
+        const string unrelated = "refs/antiphon/start-ref-probe-other";
+        var dropped = $"refs/antiphon/land/{terminal.Id:N}/{Guid.NewGuid():N}/source";
+        const string keptHead = "refs/heads/feat/c1442-keep";
+        foreach (var name in new[] { staleRetirement, freshRetirement, staleProbe, unrelated, dropped, keptHead })
+            await fixture.RequiredAsync(fixture.Repository, "update-ref", name, fixture.SeedSha);
+        await AgeRefAsync(fixture, staleRetirement, TimeSpan.FromHours(25));
+        await AgeRefAsync(fixture, freshRetirement, TimeSpan.FromHours(1));
+        await AgeRefAsync(fixture, staleProbe, TimeSpan.FromHours(25));
+        await AgeRefAsync(fixture, unrelated, TimeSpan.FromHours(25));
+
+        var logger = new RecordingLogger();
+        var deleted = await new RepositoryMaintenanceService(db, fixture.Git, logger)
+            .SweepRefsAsync(fixture.Repository, CancellationToken.None);
+
+        deleted.ShouldNotBeNull().ShouldBe([dropped]);
+        var remaining = await ListAsync(fixture, "refs/antiphon/");
+        remaining.ShouldContain(staleRetirement);
+        remaining.ShouldContain(freshRetirement);
+        remaining.ShouldContain(staleProbe);
+        remaining.ShouldContain(unrelated);
+        remaining.ShouldNotContain(dropped);
+        (await ListAsync(fixture, keptHead)).ShouldBe([keptHead]);
+        logger.Lines.Where(line => line.StartsWith("Repository maintenance transient refs ", StringComparison.Ordinal))
+            .ShouldHaveSingleItem()
+            .ShouldBe("Repository maintenance transient refs retirement=2 staleRetirement=1 startRefProbe=1 staleStartRefProbe=1 ageUnknown=0");
+        logger.Lines.ShouldContain($"Repository maintenance stale transient ref {staleRetirement}");
+        logger.Lines.ShouldContain($"Repository maintenance stale transient ref {staleProbe}");
+        logger.Lines.ShouldNotContain(line => line.Contains(freshRetirement, StringComparison.Ordinal));
+        logger.Lines.ShouldNotContain(line => line.Contains(unrelated, StringComparison.Ordinal));
+    }
+
+    /// <summary>Backdate the loose ref and, when git wrote one, its reflog. These namespaces do not
+    /// get a reflog unless <c>core.logAllRefUpdates</c> is <c>always</c>, so the file time is the age.</summary>
+    private static async Task AgeRefAsync(LandingGitFixture fixture, string fullRef, TimeSpan age)
+    {
+        var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
+        var when = DateTimeOffset.UtcNow - age;
+        var loose = Path.Combine(common, fullRef);
+        File.Exists(loose).ShouldBeTrue(fullRef);
+        var reflog = Path.Combine(common, "logs", fullRef);
+        if (File.Exists(reflog))
+        {
+            var lines = (await File.ReadAllTextAsync(reflog)).Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+            var match = Regex.Match(lines[^1], @"^(?<head>.+\s)(?<unix>\d+)(?<tail>\s[+-]\d{4}\t.*)$");
+            match.Success.ShouldBeTrue(lines[^1]);
+            lines[^1] = match.Groups["head"].Value + when.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture) + match.Groups["tail"].Value;
+            await File.WriteAllTextAsync(reflog, string.Join('\n', lines) + "\n");
+        }
+        File.SetLastWriteTimeUtc(loose, when.UtcDateTime);
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Lines { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Lines.Add(formatter(state, exception));
     }
 
     private static async Task<string[]> ListAsync(LandingGitFixture fixture, string prefix) =>
