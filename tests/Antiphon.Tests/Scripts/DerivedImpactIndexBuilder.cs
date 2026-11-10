@@ -53,6 +53,31 @@ internal static class DerivedImpactIndexBuilder
         @"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    // A test class is windowsOnly when its file, a base, or a tests/ helper it reaches
+    // within this many hops contains an OS-gate token. Over-classification stays on Windows.
+    private const int OsGateReferenceDepth = 2;
+
+    private static readonly string[] OsGateTokens =
+    [
+        "IsWindows",
+        "IsOSPlatform",
+        "OSPlatform.Windows",
+        "RuntimeInformation",
+        "Skip.Test",
+        "Skip.When",
+        "Skip.Unless",
+        "SkipTestException",
+        "[Skip",
+        "[Windows",
+        "[Linux",
+        "Environment.OSVersion",
+        "PlatformID",
+    ];
+
+    private static readonly Regex OsGateHelperName = new(
+        @"\b(?!\w*Tests\b)(?:\w*(?:Windows|Linux)\w*(?:Gate|Skip|Guard)\w*|\w*(?:Gate|Skip|Guard)\w*(?:Windows|Linux)\w*)\b",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     internal static DerivedImpactIndex Build(string repoRoot)
     {
         var tracked = TrackedPaths(repoRoot);
@@ -148,12 +173,8 @@ internal static class DerivedImpactIndexBuilder
             }
         }
 
-        var windowsOnly = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var scan in scans)
-        {
-            foreach (var name in scan.WindowsOnly)
-                windowsOnly.Add(name);
-        }
+        var windowsOnly = ClassifyWindowsOnly(scans);
+        Console.WriteLine("derived-impact windowsOnly count=" + windowsOnly.Count.ToString());
 
         var allow = new HashSet<string>(Allowlist, StringComparer.Ordinal);
         var handByPath = HandClassesByPath(repoRoot, hits.Keys);
@@ -441,6 +462,9 @@ internal static class DerivedImpactIndexBuilder
         var text = File.ReadAllText(full);
         var root = CSharpSyntaxTree.ParseText(text, ParseOptions, relative).GetRoot();
         var scan = new FileScan(relative);
+        var testsFile = relative.StartsWith("tests/", StringComparison.Ordinal);
+        if (testsFile)
+            scan.SourceHasOsGate = SourceHasOsGate(text);
         var fullNames = new Dictionary<TypeDeclarationSyntax, string>();
         foreach (var type in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
@@ -452,8 +476,8 @@ internal static class DerivedImpactIndexBuilder
                 || relative.StartsWith("server/", StringComparison.Ordinal);
             var simple = type.Identifier.ValueText;
             scan.Decls.Add(new Decl(simple, name, relative, production));
-            if (simple.EndsWith("Tests", StringComparison.Ordinal) && IsWindowsSkipped(type))
-                scan.WindowsOnly.Add(simple);
+            if (testsFile)
+                scan.Gates.Add(CollectTypeGate(type, simple, name, relative));
         }
 
         foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
@@ -631,82 +655,208 @@ internal static class DerivedImpactIndexBuilder
         return false;
     }
 
-    private static bool IsWindowsSkipped(TypeDeclarationSyntax type)
+    private static bool SourceHasOsGate(string text)
     {
-        foreach (var node in type.DescendantNodes())
+        foreach (var token in OsGateTokens)
         {
-            switch (node)
+            if (text.Contains(token, StringComparison.Ordinal))
+                return true;
+        }
+
+        if (text.Contains("DirectorySeparatorChar == '\\\\'", StringComparison.Ordinal))
+            return true;
+        return OsGateHelperName.IsMatch(text);
+    }
+
+    private static TypeGate CollectTypeGate(TypeDeclarationSyntax type, string simple, string full, string file)
+    {
+        var bases = new List<string>();
+        if (type.BaseList is not null)
+        {
+            foreach (var baseType in type.BaseList.Types)
             {
-                case ThrowStatementSyntax thrown when IsSkipException(thrown.Expression) && IsNonWindowsGuard(thrown):
-                case ThrowExpressionSyntax thrownExpression when IsSkipException(thrownExpression.Expression) && IsNonWindowsGuard(thrownExpression):
-                    return true;
-                case InvocationExpressionSyntax invocation when IsSkipTestCall(invocation) && IsNonWindowsGuard(invocation):
-                    return true;
-                case InvocationExpressionSyntax invocation when AssertsIsWindows(invocation):
-                    return true;
+                var name = SimpleTypeName(baseType.Type);
+                if (name is null || name == simple)
+                    continue;
+                bases.Add(name);
             }
         }
 
-        return false;
+        var helpers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in type.DescendantNodes())
+        {
+            if (IsInsideNestedType(node, type))
+                continue;
+            if (node is AttributeSyntax attribute)
+            {
+                var name = SimpleTypeName(attribute.Name);
+                if (name is null || name == simple || name.EndsWith("Tests", StringComparison.Ordinal))
+                    continue;
+                helpers.Add(name);
+                continue;
+            }
+
+            if (node is not IdentifierNameSyntax ident
+                || ident.Parent is not MemberAccessExpressionSyntax member
+                || member.Expression != ident)
+                continue;
+            var target = ident.Identifier.ValueText;
+            if (target.Length < 3 || target == simple || target.EndsWith("Tests", StringComparison.Ordinal))
+                continue;
+            helpers.Add(target);
+        }
+
+        return new TypeGate(
+            simple,
+            full,
+            file,
+            simple.EndsWith("Tests", StringComparison.Ordinal),
+            bases,
+            helpers);
     }
 
-    private static bool IsNonWindowsGuard(SyntaxNode node)
+    private static bool IsInsideNestedType(SyntaxNode node, TypeDeclarationSyntax owner)
     {
-        for (var current = node.Parent; current is not null; current = current.Parent)
+        for (var current = node.Parent; current is not null && current != owner; current = current.Parent)
         {
-            if (current is IfStatementSyntax statement && ConditionIsNonWindows(statement.Condition))
-                return true;
             if (current is TypeDeclarationSyntax)
-                return false;
+                return true;
         }
 
         return false;
     }
 
-    private static bool ConditionIsNonWindows(ExpressionSyntax condition)
+    private static string? SimpleTypeName(TypeSyntax type)
     {
-        var text = condition.ToString();
-        if (!text.Contains("OperatingSystem.IsWindows()", StringComparison.Ordinal))
-            return false;
-        return text.Contains('!') || text.Contains("false", StringComparison.Ordinal);
-    }
-
-    private static bool IsSkipException(ExpressionSyntax? expression)
-    {
-        if (expression is not ObjectCreationExpressionSyntax created)
-            return false;
-        var name = created.Type.ToString();
-        return name == "SkipTestException"
-            || name.EndsWith(".SkipTestException", StringComparison.Ordinal);
-    }
-
-    private static bool IsSkipTestCall(InvocationExpressionSyntax invocation)
-    {
-        if (invocation.Expression is not MemberAccessExpressionSyntax member)
-            return false;
-        if (member.Name.Identifier.ValueText != "Test")
-            return false;
-        var target = member.Expression.ToString();
-        return target == "Skip" || target.EndsWith(".Skip", StringComparison.Ordinal);
-    }
-
-    private static bool AssertsIsWindows(InvocationExpressionSyntax invocation)
-    {
-        if (invocation.Expression is not MemberAccessExpressionSyntax member)
-            return false;
-        var name = member.Name.Identifier.ValueText;
-        if (name is not ("ShouldBe" or "ShouldBeTrue" or "ShouldBeFalse"))
-            return false;
-        return ContainsIsWindows(member.Expression);
-    }
-
-    private static bool ContainsIsWindows(SyntaxNode node)
-    {
-        foreach (var invocation in node.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        switch (type)
         {
-            if (invocation.Expression is MemberAccessExpressionSyntax member
-                && member.Name.Identifier.ValueText == "IsWindows"
-                && member.Expression.ToString() == "OperatingSystem")
+            case IdentifierNameSyntax ident:
+                return ident.Identifier.ValueText;
+            case GenericNameSyntax generic:
+                return generic.Identifier.ValueText;
+            case QualifiedNameSyntax qualified:
+                return qualified.Right.Identifier.ValueText;
+            case AliasQualifiedNameSyntax alias:
+                return alias.Name.Identifier.ValueText;
+            case NullableTypeSyntax nullable:
+                return SimpleTypeName(nullable.ElementType);
+            default:
+                return null;
+        }
+    }
+
+    private static SortedSet<string> ClassifyWindowsOnly(IEnumerable<FileScan> scans)
+    {
+        var gates = new List<TypeGate>();
+        var gatedFull = new HashSet<string>(StringComparer.Ordinal);
+        var bySimple = new Dictionary<string, List<TypeGate>>(StringComparer.Ordinal);
+        foreach (var scan in scans)
+        {
+            foreach (var gate in scan.Gates)
+            {
+                gates.Add(gate);
+                if (!bySimple.TryGetValue(gate.Simple, out var same))
+                {
+                    same = [];
+                    bySimple[gate.Simple] = same;
+                }
+
+                same.Add(gate);
+                if (scan.SourceHasOsGate)
+                    gatedFull.Add(gate.Full);
+            }
+        }
+
+        for (var depth = 0; depth < OsGateReferenceDepth; depth++)
+        {
+            var next = new List<string>();
+            foreach (var gate in gates)
+            {
+                if (gatedFull.Contains(gate.Full))
+                    continue;
+                if (ReferencesOsGate(gate, bySimple, gatedFull))
+                    next.Add(gate.Full);
+            }
+
+            if (next.Count == 0)
+                break;
+            foreach (var full in next)
+                gatedFull.Add(full);
+        }
+
+        var windowsOnly = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var gate in gates)
+        {
+            if (gate.TestClass && gatedFull.Contains(gate.Full))
+                windowsOnly.Add(gate.Simple);
+        }
+
+        return windowsOnly;
+    }
+
+    private static bool ReferencesOsGate(
+        TypeGate gate,
+        Dictionary<string, List<TypeGate>> bySimple,
+        HashSet<string> gatedFull)
+    {
+        foreach (var name in gate.Bases)
+        {
+            if (AnyDeclGated(name, bySimple, gatedFull))
+                return true;
+        }
+
+        foreach (var name in gate.Helpers)
+        {
+            if (UniqueOrSameFileGated(gate, name, bySimple, gatedFull))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool AnyDeclGated(
+        string name,
+        Dictionary<string, List<TypeGate>> bySimple,
+        HashSet<string> gatedFull)
+    {
+        if (!bySimple.TryGetValue(name, out var decls))
+            return false;
+        foreach (var decl in decls)
+        {
+            if (gatedFull.Contains(decl.Full))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool UniqueOrSameFileGated(
+        TypeGate gate,
+        string name,
+        Dictionary<string, List<TypeGate>> bySimple,
+        HashSet<string> gatedFull)
+    {
+        if (!bySimple.TryGetValue(name, out var decls))
+            return false;
+        string? full = null;
+        var unique = true;
+        foreach (var decl in decls)
+        {
+            if (full is null)
+                full = decl.Full;
+            else if (!string.Equals(full, decl.Full, StringComparison.Ordinal))
+            {
+                unique = false;
+                break;
+            }
+        }
+
+        if (unique && full is not null)
+            return gatedFull.Contains(full);
+
+        foreach (var decl in decls)
+        {
+            if (decl.File == gate.File && gatedFull.Contains(decl.Full))
                 return true;
         }
 
@@ -744,10 +894,19 @@ internal static class DerivedImpactIndexBuilder
         public List<string> Strings { get; } = [];
         public List<OwnedText> DirectStrings { get; } = [];
         public List<OwnedText> Idents { get; } = [];
-        public List<string> WindowsOnly { get; } = [];
+        public bool SourceHasOsGate { get; set; }
+        public List<TypeGate> Gates { get; } = [];
     }
 
     private readonly record struct Decl(string Simple, string Full, string File, bool Production);
+
+    private readonly record struct TypeGate(
+        string Simple,
+        string Full,
+        string File,
+        bool TestClass,
+        List<string> Bases,
+        HashSet<string> Helpers);
 
     private readonly record struct OwnedText(string TestFull, string TestSimple, string Text, bool Created);
 
