@@ -16,6 +16,7 @@ public class AgentPinWorkspaceStoreTests
     [Test]
     public async Task V32_InspectPosixPaths()
     {
+        Skip.Unless(OperatingSystem.IsLinux(), "CARD-1226: CP-4a requires native Linux qualification; POSIX paths and mkfifo cannot run on Windows, so this method skips.");
         OperatingSystem.IsLinux().ShouldBeTrue("CP-4a requires native Linux qualification");
         using var fixture = new Fixture();
         var upper = fixture.Directory("Case");
@@ -51,6 +52,7 @@ public class AgentPinWorkspaceStoreTests
     [Test]
     public async Task V13_InspectPathSafety()
     {
+        Skip.Unless(OperatingSystem.IsLinux(), "CARD-1226: CP-4a requires native Linux qualification; POSIX paths and mkfifo cannot run on Windows, so this method skips.");
         OperatingSystem.IsLinux().ShouldBeTrue("CP-4a requires native Linux qualification");
         using var fixture = new Fixture();
         var owner = Guid.NewGuid();
