@@ -94,6 +94,10 @@ owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
 > their own cold outputs. A mutant loop re-leases PER MUTANT BUILD, never one lease around a loop
 > (CARD-1627).
 
+Paste this sentence into Code and Review briefs that name the guard batch:
+
+> GUARD-COUNT RULE: The six-class Antiphon.Tests subset is 53 results. Do not describe that subset as 78. 78 is only the nine-class union that also includes MechanicalPcContractTests, TaskPlatformGuidanceTests, C1729LayeringGuardTests and the SessionRunner copies of the layering and policy classes. The six-class subset is TestClassificationPolicyTests, TestClassificationGuardTests, SlowTestRegistryMergeTests, SlowTestTripwireTests, NativeLinuxPolicyWitnessTests and TestLaneCategoryGuardTests (CARD-1827).
+
 Migration changes (`server/Migrations/**`) follow the operator rule (2026-11-07, reaffirmed 2026-11-08): "Migrations should be additive; Down must fail safely." Each new migration is sorted after master's latest migration. The Code brief runs the migration and model classes and the downgrade selector (grep `tests/` for `MigrateAsync(<target>)`, `GetService<IMigrator>().MigrateAsync(`, `MigrationTestDatabase.CreateAsync`, `.Down(`, or `CreateIsolatedSchemaAsync` then migrate backwards) and must report red/green counts. The Review brief blast radius check runs that selector and reports its count. A reviewer who only reruns the new migration tests has not reviewed the migration. Plan and TestDesign require an Existing tests affected row for migrations, public DTOs/routes, operation labels, remote script functions and statement budgets, pointing at the impacted-classes table (CARD-1782).
 
 ## 2. A delegate's base is chosen at dispatch; it stays on its own branch

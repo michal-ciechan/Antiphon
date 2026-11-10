@@ -193,7 +193,7 @@ Saving an unknown name succeeds with a `warnings` entry; launch then refuses `ap
 until the key exists. Deleting a referenced key is not a clear operation.
 
 URLs must be absolute HTTP(S), at most 2,000 characters, without userinfo, query, fragment,
-whitespace, control characters, quotes, backslashes or invalid ports. Trailing slashes normalize;
+whitespace, control characters, quotes, backslashes or invalid ports. CARD-1827: path-embedded userinfo is accepted path text. A path may contain `@`, including `https://proxy/https%3A//u:pw@real/v1`, `https://proxy/https%3A%2F%2Fu:pw@h`, `https://proxy/http%3a/u:pw@h`, `https://proxy/socks5://u:pw@real:1080` and `https://proxy/redis://u:pw@h`. Neither the client nor the server reads that text as userinfo. Trailing slashes normalize;
 loopback is allowed. Neither field accepts a `{{key:` marker. Save-time failures are 422;
 unsupported kinds use `provider_endpoint_unsupported_kind`, and missing Codex names use
 `provider_endpoint_key_required`. No save/launch reachability probe runs: the CLI reports a

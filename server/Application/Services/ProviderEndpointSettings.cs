@@ -80,6 +80,9 @@ public static class ProviderEndpointSettings
     /// Absolute http/https, no userinfo, no query, no fragment, no placeholder, at most
     /// <see cref="MaxBaseUrlLength"/> characters; the trailing slash is trimmed. A loopback host is
     /// fine (local key proxies are the norm). The refused value is never part of the message.
+    /// CARD-1827: path-embedded userinfo is accepted path text. A path that embeds a second URL,
+    /// including a percent-encoded scheme or a non-special scheme such as socks5 or redis, has an
+    /// empty UserInfo and is stored. Example: https://proxy/https%3A//u:pw@real/v1.
     /// <para>Review e4b591eb D2: after these rules (whose codes and messages the S2 API tests pin),
     /// the launch path's own rules run (<see cref="ProviderEndpoint.ValidateBaseUrl"/>: Unicode
     /// whitespace and C1 controls, quotes and backslashes, the port range), under their own
