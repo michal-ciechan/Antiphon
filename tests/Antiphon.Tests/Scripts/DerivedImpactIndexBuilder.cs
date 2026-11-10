@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -18,6 +19,14 @@ internal static class DerivedImpactIndexBuilder
 {
     internal const int Cap = 25;
     internal const int ByteLimit = 2_000_000;
+    internal const int OwedFirstNames = 8;
+
+    // A direct type use outranks a path or dotted script literal, which outranks a one-hop project reference.
+    // Object creation is the strongest type use. Hand-listed classes yield cap slots to the others.
+    private const int RankHop = 1;
+    private const int RankPath = 2;
+    private const int RankType = 3;
+    private const int RankSpecific = 4;
 
     internal static readonly string[] Allowlist =
     [
@@ -27,12 +36,17 @@ internal static class DerivedImpactIndexBuilder
         "global.json",
     ];
 
+    // Tests inject CRLF here. Serialization still writes LF; the value is only observed.
+    internal static Func<string> NewLineSource { get; set; } = static () => Environment.NewLine;
+
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Preview, DocumentationMode.None);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        NewLine = "\n",
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     private static readonly Regex DottedToken = new(
@@ -91,7 +105,7 @@ internal static class DerivedImpactIndexBuilder
 
         var uniqueBySimple = UniqueSimpleNames(bySimple);
         var productionNames = new HashSet<string>(productionFiles.Keys, StringComparer.Ordinal);
-        var hits = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var hits = new Dictionary<string, Dictionary<string, Hit>>(StringComparer.Ordinal);
         var hops = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var scan in scans)
         {
@@ -100,12 +114,13 @@ internal static class DerivedImpactIndexBuilder
                 if (!uniqueBySimple.TryGetValue(use.Text, out var decls))
                     continue;
                 filesByFull.TryGetValue(use.TestFull, out var ownFiles);
+                var rank = use.Created ? RankSpecific : RankType;
                 foreach (var decl in decls)
                 {
                     RememberHop(hops, use.TestSimple, decl.File);
                     if (ownFiles is not null && ownFiles.Contains(decl.File))
                         continue;
-                    AddHit(hits, decl.File, use.TestSimple);
+                    AddHit(hits, decl.File, use.TestSimple, rank);
                 }
             }
 
@@ -129,24 +144,48 @@ internal static class DerivedImpactIndexBuilder
                 if (!stringHitsByFile.TryGetValue(file, out var targets))
                     continue;
                 foreach (var target in targets)
-                    AddHit(hits, target, hop.Key);
+                    AddHit(hits, target, hop.Key, RankHop);
             }
         }
 
+        var windowsOnly = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var scan in scans)
+        {
+            foreach (var name in scan.WindowsOnly)
+                windowsOnly.Add(name);
+        }
+
         var allow = new HashSet<string>(Allowlist, StringComparer.Ordinal);
+        var handByPath = HandClassesByPath(repoRoot, hits.Keys);
         var capped = new List<CappedPath>();
         var edges = new List<ImpactEdge>();
         foreach (var path in hits.Keys.Order(StringComparer.Ordinal))
         {
-            var names = hits[path].Order(StringComparer.Ordinal).ToArray();
-            if (allow.Contains(path) || names.Length > Cap)
+            handByPath.TryGetValue(path, out var hand);
+            var ranked = hits[path]
+                .Select(pair => (Name: pair.Key, pair.Value.Rank, pair.Value.Count))
+                .OrderBy(item => hand is not null && hand.Contains(item.Name) ? 1 : 0)
+                .ThenByDescending(item => item.Rank)
+                .ThenByDescending(item => item.Count)
+                .ThenBy(item => item.Name, StringComparer.Ordinal)
+                .ToArray();
+            if (allow.Contains(path))
             {
-                var reason = allow.Contains(path) ? "allowlist" : "cap";
-                capped.Add(new CappedPath(path, names.Length, reason));
+                capped.Add(new CappedPath(path, ranked.Length, "allowlist", 0, null));
                 continue;
             }
 
-            edges.Add(new ImpactEdge(path, names));
+            if (ranked.Length > Cap)
+            {
+                var kept = ranked.Take(Cap).Select(item => item.Name).Order(StringComparer.Ordinal).ToArray();
+                var remainder = ranked.Skip(Cap).Select(item => item.Name).ToArray();
+                var first = remainder.Take(OwedFirstNames).ToArray();
+                edges.Add(new ImpactEdge(path, kept));
+                capped.Add(new CappedPath(path, ranked.Length, "cap", remainder.Length, first));
+                continue;
+            }
+
+            edges.Add(new ImpactEdge(path, ranked.Select(item => item.Name).Order(StringComparer.Ordinal).ToArray()));
         }
 
         var document = new IndexDocument
@@ -155,11 +194,14 @@ internal static class DerivedImpactIndexBuilder
             cap = Cap,
             byteLimit = ByteLimit,
             allowlist = Allowlist,
+            windowsOnly = windowsOnly.ToArray(),
             cappedPaths = capped.Select(row => new CappedDocument
             {
                 path = row.Path,
                 classes = row.Classes,
                 reason = row.Reason,
+                owed = row.Reason == "cap" ? row.Owed : null,
+                first = row.Reason == "cap" ? row.First : null,
             }).ToArray(),
             edges = edges.Select(row => new EdgeDocument
             {
@@ -167,12 +209,14 @@ internal static class DerivedImpactIndexBuilder
                 classes = row.Classes.ToArray(),
             }).ToArray(),
         };
+        if (NewLineSource() is null)
+            throw new InvalidOperationException("newline source returned null.");
         var utf8 = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(document, JsonOptions) + "\n");
         if (utf8.Length > ByteLimit)
             throw new InvalidOperationException(
                 "derived-impact index is " + utf8.Length.ToString() + " bytes, over the " + ByteLimit.ToString() + " limit.");
 
-        return new DerivedImpactIndex(1, Cap, Allowlist, capped, edges, utf8);
+        return new DerivedImpactIndex(1, Cap, Allowlist, windowsOnly.ToArray(), capped, edges, utf8);
     }
 
     internal static void Write(string repoRoot, DerivedImpactIndex index)
@@ -183,7 +227,7 @@ internal static class DerivedImpactIndexBuilder
     }
 
     private static void AddStringHits(
-        Dictionary<string, HashSet<string>> hits,
+        Dictionary<string, Dictionary<string, Hit>> hits,
         string raw,
         string testSimple,
         HashSet<string> tracked,
@@ -193,7 +237,7 @@ internal static class DerivedImpactIndexBuilder
         var found = new HashSet<string>(StringComparer.Ordinal);
         CollectStringTargets(found, raw, tracked, productionFiles, productionNames);
         foreach (var path in found)
-            AddHit(hits, path, testSimple);
+            AddHit(hits, path, testSimple, RankPath);
     }
 
     private static void CollectStringTargets(
@@ -247,15 +291,117 @@ internal static class DerivedImpactIndexBuilder
         files.Add(file);
     }
 
-    private static void AddHit(Dictionary<string, HashSet<string>> hits, string path, string testSimple)
+    private static void AddHit(Dictionary<string, Dictionary<string, Hit>> hits, string path, string testSimple, int rank)
     {
         if (!hits.TryGetValue(path, out var names))
         {
-            names = new HashSet<string>(StringComparer.Ordinal);
+            names = new Dictionary<string, Hit>(StringComparer.Ordinal);
             hits[path] = names;
         }
 
-        names.Add(testSimple);
+        if (!names.TryGetValue(testSimple, out var current))
+            names[testSimple] = new Hit(rank, 1);
+        else
+            names[testSimple] = new Hit(Math.Max(current.Rank, rank), current.Count + 1);
+    }
+
+    // A hand row already selects its classes. Cap slots stay for classes the table does not name.
+    private static Dictionary<string, HashSet<string>> HandClassesByPath(string repoRoot, IEnumerable<string> paths)
+    {
+        var covered = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var table = Path.Combine(repoRoot, "tests", "impacted-classes.json");
+        if (!File.Exists(table))
+            return covered;
+        using var document = JsonDocument.Parse(File.ReadAllText(table));
+        if (!document.RootElement.TryGetProperty("kinds", out var kinds) || kinds.ValueKind != JsonValueKind.Array)
+            return covered;
+        var matchers = new List<(Regex Pattern, string[] Classes)>();
+        foreach (var kind in kinds.EnumerateArray())
+        {
+            var names = new List<string>();
+            if (kind.TryGetProperty("classes", out var classes) && classes.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in classes.EnumerateArray())
+                {
+                    if (item.GetString() is { Length: > 0 } name)
+                        names.Add(name);
+                }
+            }
+
+            if (kind.TryGetProperty("methods", out var methods) && methods.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in methods.EnumerateArray())
+                {
+                    var text = item.GetString();
+                    if (string.IsNullOrEmpty(text))
+                        continue;
+                    var slash = text.IndexOf('/');
+                    names.Add(slash > 0 ? text[..slash] : text);
+                }
+            }
+
+            if (!kind.TryGetProperty("globs", out var globs) || globs.ValueKind != JsonValueKind.Array)
+                continue;
+            var distinct = names.Distinct(StringComparer.Ordinal).ToArray();
+            foreach (var glob in globs.EnumerateArray())
+            {
+                var pattern = glob.GetString();
+                if (string.IsNullOrEmpty(pattern))
+                    continue;
+                matchers.Add((new Regex(GlobToRegex(pattern), RegexOptions.CultureInvariant | RegexOptions.Compiled), distinct));
+            }
+        }
+
+        foreach (var path in paths)
+        {
+            HashSet<string>? hand = null;
+            foreach (var (pattern, classes) in matchers)
+            {
+                if (!pattern.IsMatch(path))
+                    continue;
+                hand ??= new HashSet<string>(StringComparer.Ordinal);
+                foreach (var name in classes)
+                    hand.Add(name);
+            }
+
+            if (hand is not null)
+                covered[path] = hand;
+        }
+
+        return covered;
+    }
+
+    private static string GlobToRegex(string glob)
+    {
+        var sb = new StringBuilder("^");
+        for (var i = 0; i < glob.Length;)
+        {
+            if (i + 2 < glob.Length && glob.Substring(i, 3) == "**/")
+            {
+                sb.Append("(?:.*/)?");
+                i += 3;
+                continue;
+            }
+
+            if (i + 1 < glob.Length && glob.Substring(i, 2) == "**")
+            {
+                sb.Append(".*");
+                i += 2;
+                continue;
+            }
+
+            var c = glob[i];
+            if (c == '*')
+                sb.Append("[^/]*");
+            else if (@"\.+()[]{}|^$?".Contains(c))
+                sb.Append('\\').Append(c);
+            else
+                sb.Append(c);
+            i++;
+        }
+
+        sb.Append('$');
+        return sb.ToString();
     }
 
     private static bool IsWalkedSource(string path) =>
@@ -304,7 +450,10 @@ internal static class DerivedImpactIndexBuilder
             fullNames[type] = name;
             var production = relative.StartsWith("src/", StringComparison.Ordinal)
                 || relative.StartsWith("server/", StringComparison.Ordinal);
-            scan.Decls.Add(new Decl(type.Identifier.ValueText, name, relative, production));
+            var simple = type.Identifier.ValueText;
+            scan.Decls.Add(new Decl(simple, name, relative, production));
+            if (simple.EndsWith("Tests", StringComparison.Ordinal) && IsWindowsSkipped(type))
+                scan.WindowsOnly.Add(simple);
         }
 
         foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
@@ -319,7 +468,7 @@ internal static class DerivedImpactIndexBuilder
             scan.Strings.Add(value);
             if (!TryOwner(literal, fullNames, out var ownerFull, out var ownerSimple))
                 continue;
-            scan.DirectStrings.Add(new OwnedText(ownerFull, ownerSimple, value));
+            scan.DirectStrings.Add(new OwnedText(ownerFull, ownerSimple, value, false));
         }
 
         foreach (var ident in root.DescendantNodes().OfType<IdentifierNameSyntax>())
@@ -333,7 +482,7 @@ internal static class DerivedImpactIndexBuilder
                 continue;
             if (value == ownerSimple)
                 continue;
-            scan.Idents.Add(new OwnedText(ownerFull, ownerSimple, value));
+            scan.Idents.Add(new OwnedText(ownerFull, ownerSimple, value, IsObjectCreation(ident)));
         }
 
         return scan;
@@ -470,6 +619,100 @@ internal static class DerivedImpactIndexBuilder
         return false;
     }
 
+    private static bool IsObjectCreation(SyntaxNode node)
+    {
+        for (var current = node; current is not null; current = current.Parent)
+        {
+            if (current.Parent is QualifiedNameSyntax or AliasQualifiedNameSyntax)
+                continue;
+            return current.Parent is ObjectCreationExpressionSyntax created && created.Type == current;
+        }
+
+        return false;
+    }
+
+    private static bool IsWindowsSkipped(TypeDeclarationSyntax type)
+    {
+        foreach (var node in type.DescendantNodes())
+        {
+            switch (node)
+            {
+                case ThrowStatementSyntax thrown when IsSkipException(thrown.Expression) && IsNonWindowsGuard(thrown):
+                case ThrowExpressionSyntax thrownExpression when IsSkipException(thrownExpression.Expression) && IsNonWindowsGuard(thrownExpression):
+                    return true;
+                case InvocationExpressionSyntax invocation when IsSkipTestCall(invocation) && IsNonWindowsGuard(invocation):
+                    return true;
+                case InvocationExpressionSyntax invocation when AssertsIsWindows(invocation):
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsNonWindowsGuard(SyntaxNode node)
+    {
+        for (var current = node.Parent; current is not null; current = current.Parent)
+        {
+            if (current is IfStatementSyntax statement && ConditionIsNonWindows(statement.Condition))
+                return true;
+            if (current is TypeDeclarationSyntax)
+                return false;
+        }
+
+        return false;
+    }
+
+    private static bool ConditionIsNonWindows(ExpressionSyntax condition)
+    {
+        var text = condition.ToString();
+        if (!text.Contains("OperatingSystem.IsWindows()", StringComparison.Ordinal))
+            return false;
+        return text.Contains('!') || text.Contains("false", StringComparison.Ordinal);
+    }
+
+    private static bool IsSkipException(ExpressionSyntax? expression)
+    {
+        if (expression is not ObjectCreationExpressionSyntax created)
+            return false;
+        var name = created.Type.ToString();
+        return name == "SkipTestException"
+            || name.EndsWith(".SkipTestException", StringComparison.Ordinal);
+    }
+
+    private static bool IsSkipTestCall(InvocationExpressionSyntax invocation)
+    {
+        if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            return false;
+        if (member.Name.Identifier.ValueText != "Test")
+            return false;
+        var target = member.Expression.ToString();
+        return target == "Skip" || target.EndsWith(".Skip", StringComparison.Ordinal);
+    }
+
+    private static bool AssertsIsWindows(InvocationExpressionSyntax invocation)
+    {
+        if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            return false;
+        var name = member.Name.Identifier.ValueText;
+        if (name is not ("ShouldBe" or "ShouldBeTrue" or "ShouldBeFalse"))
+            return false;
+        return ContainsIsWindows(member.Expression);
+    }
+
+    private static bool ContainsIsWindows(SyntaxNode node)
+    {
+        foreach (var invocation in node.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>())
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax member
+                && member.Name.Identifier.ValueText == "IsWindows"
+                && member.Expression.ToString() == "OperatingSystem")
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool IsClassLike(TypeDeclarationSyntax type)
     {
         if (type is ClassDeclarationSyntax)
@@ -501,11 +744,14 @@ internal static class DerivedImpactIndexBuilder
         public List<string> Strings { get; } = [];
         public List<OwnedText> DirectStrings { get; } = [];
         public List<OwnedText> Idents { get; } = [];
+        public List<string> WindowsOnly { get; } = [];
     }
 
     private readonly record struct Decl(string Simple, string Full, string File, bool Production);
 
-    private readonly record struct OwnedText(string TestFull, string TestSimple, string Text);
+    private readonly record struct OwnedText(string TestFull, string TestSimple, string Text, bool Created);
+
+    private readonly record struct Hit(int Rank, int Count);
 
     private sealed class IndexDocument
     {
@@ -513,6 +759,7 @@ internal static class DerivedImpactIndexBuilder
         public int cap { get; set; }
         public int byteLimit { get; set; }
         public string[] allowlist { get; set; } = [];
+        public string[] windowsOnly { get; set; } = [];
         public CappedDocument[] cappedPaths { get; set; } = [];
         public EdgeDocument[] edges { get; set; } = [];
     }
@@ -522,6 +769,8 @@ internal static class DerivedImpactIndexBuilder
         public string path { get; set; } = "";
         public int classes { get; set; }
         public string reason { get; set; } = "";
+        public int? owed { get; set; }
+        public string[]? first { get; set; }
     }
 
     private sealed class EdgeDocument
@@ -531,7 +780,7 @@ internal static class DerivedImpactIndexBuilder
     }
 }
 
-internal readonly record struct CappedPath(string Path, int Classes, string Reason);
+internal readonly record struct CappedPath(string Path, int Classes, string Reason, int Owed, string[]? First);
 
 internal readonly record struct ImpactEdge(string Path, IReadOnlyList<string> Classes);
 
@@ -539,6 +788,7 @@ internal sealed record DerivedImpactIndex(
     int Schema,
     int Cap,
     IReadOnlyList<string> Allowlist,
+    IReadOnlyList<string> WindowsOnly,
     IReadOnlyList<CappedPath> CappedPaths,
     IReadOnlyList<ImpactEdge> Edges,
     byte[] Utf8);
