@@ -15,8 +15,14 @@ public static class CodexAccountBootstrap
     public const int DiagnosticMaxChars = 240;
     public const int OutcomeMaxChars = 500;
 
-    public static bool IsFatal(string? rendered, string? raw) =>
-        ContainsAll(Flatten(rendered)) || ContainsAll(Flatten(raw));
+    public static bool IsFatal(string? rendered, string? raw)
+    {
+        // A live composer, or ready chrome that already drew its banner and footer,
+        // is a session. Quoting the sentence there is not the pre-prompt failure.
+        if (CodexStartupScreen.IsLiveSession(rendered))
+            return false;
+        return ContainsAll(Flatten(rendered)) || ContainsAll(Flatten(raw));
+    }
 
     /// <summary>
     /// The account/read sentence only. A welcome banner, cwd, or other screen text stays out.
@@ -80,6 +86,7 @@ public static class CodexAccountBootstrap
     {
         if (string.IsNullOrEmpty(text))
             return "";
+        text = AnsiStripper.Clean(text) ?? "";
         var sb = new StringBuilder(text.Length);
         var pendingSpace = false;
         foreach (var c in text)
