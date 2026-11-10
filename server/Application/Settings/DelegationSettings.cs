@@ -37,6 +37,14 @@ public sealed class DelegationSettings
     public int MaxConcurrentTasks { get; set; } = 2;
 
     /// <summary>
+    /// CARD-1478. Available physical memory, in MiB, required before a new local desktop worker
+    /// process starts. Zero (the default) disables the gate. A positive value is operator-owned
+    /// and is not activated here. Equality admits. The reading is the fresh cached desktop
+    /// <c>MemoryAvailableBytes</c> sample, not a reservation and not the Windows commit charge.
+    /// </summary>
+    public int DesktopLaunchMemoryFloorMb { get; set; }
+
+    /// <summary>
     /// CARD-0147: absolute create-time cap on non-specialist tasks in Queued, Dispatched, or
     /// Working, per project scope (<c>AgentTask.ProjectId</c>; tasks with no project scope form
     /// their own bucket). Distinct from <see cref="MaxConcurrentTasks"/> (the desktop
@@ -1361,6 +1369,9 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         {
             failures.Add("Delegation:MaxOpenTasks must be a positive integer.");
         }
+
+        if (options.DesktopLaunchMemoryFloorMb < 0)
+            failures.Add("Delegation:DesktopLaunchMemoryFloorMb must be zero or positive.");
 
         if (!string.IsNullOrWhiteSpace(options.DefaultRunnerId)
             && RunnerRequestIntent.DescribeInvalid(options.DefaultRunnerId.Trim()) is { } runnerProblem)
