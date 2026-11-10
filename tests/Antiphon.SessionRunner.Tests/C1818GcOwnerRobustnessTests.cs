@@ -28,12 +28,7 @@ public sealed class C1818GcOwnerRobustnessTests
             {
                 if (psi.WorkingDirectory.Contains("badrepo", StringComparison.Ordinal))
                     throw new Exception("unreadable-objects");
-                return Process.Start(new ProcessStartInfo("/bin/true")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                });
+                return MaintenanceFixture.StartTrue();
             });
 
             var status = await maintenance.RunAsync(CancellationToken.None, force: true);
@@ -107,13 +102,14 @@ public sealed class C1818GcOwnerRobustnessTests
                 Process child;
                 if (psi.WorkingDirectory.Contains($"{Path.DirectorySeparatorChar}childrepo", StringComparison.Ordinal))
                 {
-                    child = StartShell(psi.WorkingDirectory, "printf '' > .git/packed-refs.lock; exec sleep 30");
-                    WaitUntil(() => File.Exists(childLock), "gc child did not write packed-refs.lock");
-                    childIdentity = Identity(childLock);
+                    // The start delegate runs after the pass stamps its start, so this mtime is during the pass.
+                    File.WriteAllText(childLock, "c1818-child-lock");
+                    childIdentity = MaintenanceFixture.Identity(childLock);
+                    child = MaintenanceFixture.StartSleep(30);
                 }
                 else
                 {
-                    child = StartShell(psi.WorkingDirectory, "exec sleep 30");
+                    child = MaintenanceFixture.StartSleep(30);
                 }
                 children.Add(child);
                 return child;
@@ -123,7 +119,7 @@ public sealed class C1818GcOwnerRobustnessTests
 
             File.Exists(oldLock).ShouldBeTrue();
             File.Exists(childLock).ShouldBeTrue();
-            Identity(childLock).ShouldBe(childIdentity);
+            MaintenanceFixture.Identity(childLock).ShouldBe(childIdentity);
             status.Repositories.ShouldContain(report =>
                 report.Repository.EndsWith($"{Path.DirectorySeparatorChar}oldrepo", StringComparison.Ordinal)
                 && report.Outcome == "failed" && report.Reason == "budget");
@@ -164,12 +160,13 @@ public sealed class C1818GcOwnerRobustnessTests
             {
                 if (psi.WorkingDirectory.Contains($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal))
                 {
-                    var outside = StartHolder(heldLock);
+                    File.WriteAllText(heldLock, "c1818-held-lock");
+                    var outside = MaintenanceFixture.StartHolder(heldLock);
                     holder = outside;
                     WaitUntil(() => HolderHasLock(outside, heldLock), "outside process did not hold packed-refs.lock");
-                    heldIdentity = Identity(heldLock);
+                    heldIdentity = MaintenanceFixture.Identity(heldLock);
                 }
-                var child = StartShell(psi.WorkingDirectory, "exec sleep 30");
+                var child = MaintenanceFixture.StartSleep(30);
                 gcPid = child.Id;
                 children.Add(child);
                 return child;
@@ -181,9 +178,9 @@ public sealed class C1818GcOwnerRobustnessTests
             holder!.HasExited.ShouldBeFalse();
             HolderHasLock(holder, heldLock).ShouldBeTrue();
             File.Exists(heldLock).ShouldBeTrue();
-            Identity(heldLock).ShouldBe(heldIdentity);
+            MaintenanceFixture.Identity(heldLock).ShouldBe(heldIdentity);
             gcPid.ShouldBeGreaterThan(0);
-            Directory.Exists("/proc/" + gcPid).ShouldBeFalse();
+            MaintenanceFixture.ProcessGone(gcPid).ShouldBeTrue();
             status.Repositories.ShouldContain(report =>
                 report.Repository.EndsWith($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal)
                 && report.Outcome == "failed" && report.Reason == "packed_refs_lock_left");
@@ -211,7 +208,7 @@ public sealed class C1818GcOwnerRobustnessTests
             var mirror = Path.Combine(root, "mirror");
             Directory.CreateDirectory(mirror);
             var link = Path.Combine(mirror, ".git");
-            File.CreateSymbolicLink(link, Path.Combine(real, ".git"));
+            MaintenanceFixture.LinkDirectory(link, Path.Combine(real, ".git"));
             Directory.Exists(link).ShouldBeTrue();
 
             var found = RunnerRepositoryMaintenance.Discover(root);
@@ -296,35 +293,6 @@ public sealed class C1818GcOwnerRobustnessTests
             new RunnerRepositoryMaintenanceOptions { LooseObjectThreshold = 6700, BudgetSeconds = budget },
             Path.Combine(root, "repository-maintenance.json"), start);
 
-    private static Process StartShell(string workingDirectory, string command)
-    {
-        var psi = new ProcessStartInfo("/bin/sh")
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add(command);
-        return Process.Start(psi) ?? throw new InvalidOperationException("shell did not start");
-    }
-
-    private static Process StartHolder(string lockPath)
-    {
-        var psi = new ProcessStartInfo("/bin/sh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("exec 3>\"$1\"; exec sleep 120");
-        psi.ArgumentList.Add("holder");
-        psi.ArgumentList.Add(lockPath);
-        return Process.Start(psi) ?? throw new InvalidOperationException("holder did not start");
-    }
-
     private static void WaitUntil(Func<bool> ready, string failure)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -337,6 +305,19 @@ public sealed class C1818GcOwnerRobustnessTests
     {
         if (holder.HasExited)
             return false;
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                using var stream = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                return false;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return true;
+            }
+        }
+
         var fdDir = "/proc/" + holder.Id + "/fd";
         if (!Directory.Exists(fdDir))
             return false;
@@ -353,32 +334,16 @@ public sealed class C1818GcOwnerRobustnessTests
         return false;
     }
 
-    private static string Identity(string path)
-    {
-        var psi = new ProcessStartInfo("stat")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("%d:%i:%s");
-        psi.ArgumentList.Add(path);
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("stat did not start");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException("stat " + path + " -> " + stderr);
-        return stdout.Trim();
-    }
-
     private static string Repo(string parent, string name)
     {
         var path = Path.Combine(parent, name);
         Directory.CreateDirectory(path);
         Git(path, "init", "-q");
         Git(path, "config", "gc.auto", "0");
+        Git(path, "config", "user.name", "c1818");
+        Git(path, "config", "user.email", "c1818@example.com");
+        Git(path, "config", "commit.gpgsign", "false");
+        Git(path, "config", "core.hooksPath", OperatingSystem.IsWindows() ? "NUL" : "/dev/null");
         File.WriteAllText(Path.Combine(path, "f.txt"), "body");
         Git(path, "add", "--", "f.txt");
         Git(path, "commit", "-q", "-m", "c");
