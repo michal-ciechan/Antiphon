@@ -145,7 +145,8 @@ public static class DispatchHoldDetails
     {
         var occupants = string.Join(",", occupantShorts.Take(8));
         // CARD-1431: class= names the dominant stint before reason=. reason= stays the latest
-        // sentence so ExtractEscalationReason, which cuts at "; running=", still returns it alone.
+        // sentence so ExtractEscalationReason, which cuts a Warning: or Error: header at
+        // "; running=", still returns it alone. A title's reason= is not a header.
         // CARD-0672 D-3: the per-class totals follow occupants=.
         var named = ledger is null ? "" : $"class={ledger.DominantName}; ";
         var wait = ledger is null ? "" : "; " + ledger.Describe();
@@ -339,13 +340,19 @@ public static class DispatchHoldDetails
 
     private static string? ExtractEscalationReason(string text)
     {
+        // CARD-1835: only an escalation header unwraps. A title that contains reason= is not one.
+        if (!text.StartsWith(WarningPrefix, StringComparison.Ordinal)
+            && !text.StartsWith(ErrorPrefix, StringComparison.Ordinal))
+            return null;
         const string marker = "reason=";
         var start = text.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0)
             return null;
         start += marker.Length;
         var end = text.IndexOf("; running=", start, StringComparison.Ordinal);
-        return (end < 0 ? text[start..] : text[start..end]).Trim();
+        if (end < 0)
+            return null;
+        return text[start..end].Trim();
     }
 
     private static bool IsOrdinaryWait(string text) =>
