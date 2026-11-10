@@ -2,6 +2,7 @@
 # census recorded 177 identities. C467_RetainedEvidenceCompletesCleanup is the later case (178).
 # rc-0b05506b adds three land-verifier progress probes (186); CARD-1703 adds two verifier wiring/tie probes (188).
 # CARD-1795/1797 add three host-path cases and 906533773 adds the land-clock probe (192).
+# e2e-split-7 adds two enqueue-error probes on LandDeliveryFixtureProbeTests (194).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
@@ -128,6 +129,8 @@ Antiphon.E2E.LandDeliveryFixtureProbeTests|Verifier_evidence_heartbeats_in_fligh
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Fixture_wraps_the_registered_verifier_and_forwards_its_correlation|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Stalled_receipt_names_the_last_verifier_record_when_write_times_tie|
 Antiphon.E2E.LandDeliveryFixtureProbeTests|Notification_scan_reads_the_land_clock|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|Enqueue_errors_count_only_the_named_task|
+Antiphon.E2E.LandDeliveryFixtureProbeTests|Enqueue_errors_still_count_the_first_two_when_unnamed|
 Antiphon.E2E.OrchestratorE2ETests|Orchestrator_user_can_view_snapshot_and_pause_resume|
 Antiphon.E2E.OutputDistillationApplyCanaryTests|Real_apply_and_long_fallback_reach_parent_and_files_survive_cleanup|
 Antiphon.E2E.OutputDistillationCanaryGuardTests|Configuration_refuses_unowned_resources_before_start|"absent"

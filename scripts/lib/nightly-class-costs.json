@@ -92,7 +92,7 @@
       "nodes": 3,
       "seconds": 900,
       "basis": "conservative-bound",
-      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: expanded source census 192 total, seven Windows rc policy exclusions, 185 required. CARD-1795/1797 host-path cases use that same 300 s default; no native run in this task."
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: expanded source census 194 total, seven Windows rc policy exclusions, 187 required. CARD-1795/1797 host-path cases use that same 300 s default; no native run in this task."
     },
     "Antiphon.E2E.Fixtures.IsolatedSessionRunnerTeardownTests": {
       "nodes": 2,
@@ -107,10 +107,10 @@
       "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
     "Antiphon.E2E.LandDeliveryFixtureProbeTests": {
-      "nodes": 12,
-      "seconds": 120,
+      "nodes": 14,
+      "seconds": 140,
       "basis": "conservative-bound",
-      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task. C459 queued-outcome witnesses keep that provisional 10 s price; not a measured p95. rc-0b05506b land-verifier progress probes and CARD-1703 verifier wiring/tie probes keep the same provisional 10 s price. The a6410818 land-clock probe Notification_scan_reads_the_land_clock keeps the same provisional 10 s price."
+      "source": "CARD-1584: unmeasured local metadata/guard/protocol-record class without app or browser startup; explicit provisional 10 s per expanded case. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task. C459 queued-outcome witnesses keep that provisional 10 s price; not a measured p95. rc-0b05506b land-verifier progress probes and CARD-1703 verifier wiring/tie probes keep the same provisional 10 s price. The a6410818 land-clock probe Notification_scan_reads_the_land_clock keeps the same provisional 10 s price. The e2e-split-7 probes Enqueue_errors_count_only_the_named_task and Enqueue_errors_still_count_the_first_two_when_unnamed keep the same provisional 10 s price."
     },
     "Antiphon.E2E.OrchestratorE2ETests": {
       "nodes": 1,
