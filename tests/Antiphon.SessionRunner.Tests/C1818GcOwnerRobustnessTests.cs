@@ -159,6 +159,7 @@ public sealed class C1818GcOwnerRobustnessTests
             var heldRepo = Repo(root, "heldrepo");
             var heldLock = Path.Combine(heldRepo, ".git", "packed-refs.lock");
             string? heldIdentity = null;
+            var gcPid = 0;
             var maintenance = Build(root, budget: 1, log, start: psi =>
             {
                 if (psi.WorkingDirectory.Contains($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal))
@@ -169,6 +170,7 @@ public sealed class C1818GcOwnerRobustnessTests
                     heldIdentity = Identity(heldLock);
                 }
                 var child = StartShell(psi.WorkingDirectory, "exec sleep 30");
+                gcPid = child.Id;
                 children.Add(child);
                 return child;
             });
@@ -180,7 +182,8 @@ public sealed class C1818GcOwnerRobustnessTests
             HolderHasLock(holder, heldLock).ShouldBeTrue();
             File.Exists(heldLock).ShouldBeTrue();
             Identity(heldLock).ShouldBe(heldIdentity);
-            Directory.Exists("/proc/" + children[0].Id).ShouldBeFalse();
+            gcPid.ShouldBeGreaterThan(0);
+            Directory.Exists("/proc/" + gcPid).ShouldBeFalse();
             status.Repositories.ShouldContain(report =>
                 report.Repository.EndsWith($"{Path.DirectorySeparatorChar}heldrepo", StringComparison.Ordinal)
                 && report.Outcome == "failed" && report.Reason == "packed_refs_lock_left");

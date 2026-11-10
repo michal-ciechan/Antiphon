@@ -266,10 +266,10 @@ public sealed class RunnerRepositoryMaintenance
                 try { started.Kill(entireProcessTree: true); } catch { /* already gone */ }
                 try { await started.WaitForExitAsync(CancellationToken.None); } catch { /* reaped */ }
                 try { await Task.WhenAll(stdout, stderr); } catch { /* cancelled with the budget */ }
-                ReleasePackedRefsLock(gitDir, startedUtc);
+                var lockReason = ReportPackedRefsLock(repo, gitDir, startedUtc);
                 if (ct.IsCancellationRequested)
                     throw;
-                return Row(repo, "failed", "budget", loose, CountLoose(gitDir), packs, CountPacks(gitDir));
+                return Row(repo, "failed", lockReason ?? "budget", loose, CountLoose(gitDir), packs, CountPacks(gitDir));
             }
 
             try { await Task.WhenAll(stdout, stderr); }
@@ -334,23 +334,33 @@ public sealed class RunnerRepositoryMaintenance
     }
 
     /// <summary>
-    /// A budget or shutdown kill inside pack-refs can leave packed-refs.lock. Remove one this
-    /// pass created. A lock that already existed is left for the next git command.
+    /// A budget or shutdown kill can leave packed-refs.lock. The pass does not delete it:
+    /// mtime does not show which process wrote it, and another git may hold the file.
+    /// A lock written during this pass is left in place and reported.
     /// </summary>
-    private void ReleasePackedRefsLock(string gitDir, DateTimeOffset startedUtc)
+    private string? ReportPackedRefsLock(string repo, string gitDir, DateTimeOffset startedUtc)
     {
         var path = Path.Combine(gitDir, "packed-refs.lock");
         try
         {
             if (!File.Exists(path))
-                return;
-            if (File.GetLastWriteTimeUtc(path) < startedUtc.UtcDateTime.AddSeconds(-1))
-                return;
-            File.Delete(path);
-            _logger.LogInformation("Repository maintenance removed packed-refs.lock at {Path}", path);
+                return null;
+            var written = File.GetLastWriteTimeUtc(path);
+            if (written < startedUtc.UtcDateTime.AddSeconds(-1))
+                return null;
+            var ageSeconds = Math.Max(0L, (long)(DateTime.UtcNow - written).TotalSeconds);
+            _logger.LogWarning(
+                "Repository maintenance left packed-refs.lock repo={Repository} lock={LockPath} ageSeconds={AgeSeconds}",
+                repo, path, ageSeconds);
+            return "packed_refs_lock_left";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { _logger.LogWarning(ex, "Repository maintenance could not remove packed-refs.lock."); }
+        {
+            _logger.LogWarning(ex,
+                "Repository maintenance left packed-refs.lock repo={Repository} lock={LockPath} ageSeconds=unknown",
+                repo, path);
+            return "packed_refs_lock_left";
+        }
     }
 
     private static string? ResolveChild(string root, string child)
