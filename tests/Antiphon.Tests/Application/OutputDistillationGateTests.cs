@@ -17,6 +17,7 @@ public class OutputDistillationGateTests
     private const string Count = "3 failed";
     private const string Path = "server/Application/Services/Foo.cs:40";
     private const string AttachPath = "docs/tmp/f.md";
+    private const string LiveUrl = "https://slides.desktop.codeperf.net/";
 
     [Test]
     public void empty_distilled_is_degraded_empty()
@@ -277,6 +278,55 @@ public class OutputDistillationGateTests
         var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll() + " " + omitted));
         result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
         result.MissingAnchors.ShouldBe(new[] { "sha:" + sha });
+    }
+
+    // CARD-0529: https?://[^\s]+ keeps a markdown wrapper. The clean citation must satisfy it.
+    [Test]
+    [Arguments("`" + LiveUrl + "`", LiveUrl)]
+    [Arguments("`" + LiveUrl + "`.", LiveUrl)]
+    [Arguments("<" + LiveUrl + ">", LiveUrl)]
+    [Arguments("*" + LiveUrl + "*", LiveUrl)]
+    [Arguments("\"" + LiveUrl + "\"", LiveUrl)]
+    [Arguments("'" + LiveUrl + "'", LiveUrl)]
+    public void a_markdown_wrapped_url_matches_its_clean_citation(string wrapped, string clean)
+    {
+        var raw = LongRaw(body: "See " + wrapped + " for the deck.");
+        var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll() + " " + clean));
+        result.Passed.ShouldBeTrue(string.Join(",", result.MissingAnchors));
+        result.MissingAnchors.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void omitting_a_backtick_wrapped_url_names_the_clean_url()
+    {
+        var raw = LongRaw(body: "See `" + LiveUrl + "` for the deck.");
+        var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll()));
+        result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
+        result.MissingAnchors.ShouldBe(new[] { "url:" + LiveUrl });
+    }
+
+    // CARD-0529: path:/p and a fragment that trims down to it are not path anchors.
+    [Test]
+    [Arguments("/p")]
+    [Arguments("/p.")]
+    [Arguments("/q,")]
+    public void a_one_or_two_character_path_fragment_is_not_an_anchor(string fragment)
+    {
+        var raw = LongRaw(body: "The note points at " + fragment + " only.");
+        var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll()));
+        result.Passed.ShouldBeTrue(string.Join(",", result.MissingAnchors));
+        result.MissingAnchors.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments("/ab")]
+    [Arguments("./x")]
+    public void a_three_character_path_remains_an_anchor(string path)
+    {
+        var raw = LongRaw(body: "The note points at " + path + " only.");
+        var result = OutputDistillationGate.Evaluate(raw, Pad(200, KeepAll()));
+        result.Verdict.ShouldBe(DistillationGateVerdict.RejectedOverCompressed);
+        result.MissingAnchors.ShouldContain("path:" + path);
     }
 
     [Test]
