@@ -90,6 +90,7 @@ public static partial class ClaudeScreen
         var below = 0;
         var suggestions = 0;
         var inSuggestion = false;
+        var descriptionColumn = -1;
         for (var r = bottom + 1; r < rows.Length; r++)
         {
             if (rows[r].Trim().Length == 0)
@@ -103,9 +104,20 @@ public static partial class ClaudeScreen
             {
                 inSuggestion = true;
                 suggestions++;
+                var column = SlashDescriptionColumn(rows[r]);
+                if (column >= 0)
+                    descriptionColumn = column;
                 continue;
             }
-            if (inSuggestion && (IsSlashSuggestionCommand(rows[r]) || IsSlashSuggestionContinuation(rows[r])))
+            if (inSuggestion && IsSlashSuggestionCommand(rows[r]))
+            {
+                suggestions++;
+                var column = SlashDescriptionColumn(rows[r]);
+                if (column >= 0)
+                    descriptionColumn = column;
+                continue;
+            }
+            if (inSuggestion && IsSlashSuggestionContinuation(rows[r], descriptionColumn))
             {
                 suggestions++;
                 continue;
@@ -201,14 +213,149 @@ public static partial class ClaudeScreen
         return indent <= 6 && IsSlashCommandToken(row.TrimStart());
     }
 
-    /// <summary>A wrapped description line under a slash command. It stays indented and is not itself a command.</summary>
-    private static bool IsSlashSuggestionContinuation(string row)
+    /// <summary>
+    /// The command Enter would select on an open slash palette: the highlighted row's token.
+    /// False when the first non-hint row under the composer is not that highlight.
+    /// </summary>
+    public static bool TryReadHighlightedSlashCommand(string screen, out string command)
     {
+        command = string.Empty;
+        if (string.IsNullOrEmpty(screen))
+            return false;
+        var rows = screen.ReplaceLineEndings("\n").Split('\n');
+        var bottom = LastRuleRow(rows, rows.Length - 1);
+        if (bottom < 0)
+            return false;
+        for (var r = bottom + 1; r < rows.Length; r++)
+        {
+            if (rows[r].Trim().Length == 0)
+                continue;
+            if (IsComposerHintRow(rows[r]))
+                continue;
+            if (!IsSlashSuggestionHighlight(rows[r]))
+                return false;
+            return TrySlashCommandToken(rows[r].TrimStart()[1..].TrimStart(), out command);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// A slash palette is not the only thing on this screen. A blocking detector hit, or a
+    /// dialog shape the detector does not name (rate limit, login, trust, update, sign-in),
+    /// means Enter would be aimed at something other than the typed command.
+    /// </summary>
+    public static bool SlashPaletteCarriesAnotherDialog(string screen)
+    {
+        if (ClaudeBlockingPromptDetector.Detect(screen) is not null)
+            return true;
+        var compact = Compact(screen);
+        return compact.Contains("youvehit", StringComparison.Ordinal)
+            || compact.Contains("sessionlimit", StringComparison.Ordinal)
+            || compact.Contains("loginexpired", StringComparison.Ordinal)
+            || compact.Contains("pleaserunlogin", StringComparison.Ordinal)
+            || compact.Contains("trustthisfolder", StringComparison.Ordinal)
+            || compact.Contains("updateavailable", StringComparison.Ordinal)
+            || compact.Contains("signinwithchatgpt", StringComparison.Ordinal)
+            || compact.Contains("disconnectthissession", StringComparison.Ordinal)
+            || compact.Contains("bypasspermissionsenabled", StringComparison.Ordinal);
+    }
+
+    /// <summary>A wrapped description under a slash command, aligned with that command's description.</summary>
+    private static bool IsSlashSuggestionContinuation(string row, int descriptionColumn)
+    {
+        if (descriptionColumn < 0 || IsBlockingDialogRow(row) || IsRuleRow(row))
+            return false;
         var indent = 0;
         while (indent < row.Length && row[indent] == ' ')
             indent++;
-        return indent >= 8 && row.Trim().Length > 0 && !IsRuleRow(row);
+        if (indent < descriptionColumn || indent >= row.Length)
+            return false;
+        var text = row.Trim();
+        return text.Length > 0 && text[0] != '>' && text.Any(char.IsLetter);
     }
+
+    /// <summary>Index of the description that follows a slash token and its separating spaces.</summary>
+    private static int SlashDescriptionColumn(string row)
+    {
+        var i = 0;
+        while (i < row.Length && row[i] == ' ')
+            i++;
+        if (i < row.Length && row[i] == '>')
+        {
+            i++;
+            while (i < row.Length && row[i] == ' ')
+                i++;
+        }
+        if (i >= row.Length || row[i] != '/' || !IsSlashCommandToken(row[i..]))
+            return -1;
+        i++;
+        while (i < row.Length && (char.IsLetterOrDigit(row[i]) || row[i] is '-' or '_'))
+            i++;
+        if (i >= row.Length || !char.IsWhiteSpace(row[i]))
+            return -1;
+        while (i < row.Length && char.IsWhiteSpace(row[i]))
+            i++;
+        return i < row.Length ? i : -1;
+    }
+
+    private static bool TrySlashCommandToken(string text, out string command)
+    {
+        command = string.Empty;
+        if (!IsSlashCommandToken(text))
+            return false;
+        var i = 1;
+        while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] is '-' or '_'))
+            i++;
+        command = text[..i];
+        return command.Length > 1;
+    }
+
+    /// <summary>A choice, Yes/No option, "Do you want" row, or confirm/cancel footer. Not palette prose.</summary>
+    private static bool IsBlockingDialogRow(string row)
+    {
+        var text = row.Trim().Trim('│').Trim();
+        if (text.Length == 0)
+            return false;
+        if (text[0] is '❯' or '>')
+            text = text[1..].Trim();
+        if (text.Length == 0)
+            return false;
+        if (IsNumberedChoice(text) || StartsOption(text, "Yes") || StartsOption(text, "No"))
+            return true;
+        var compact = Compact(text);
+        if (compact.Contains("doyouwant", StringComparison.Ordinal))
+            return true;
+        return compact.Length <= 80
+            && (compact.Contains("enterto", StringComparison.Ordinal)
+                || compact.Contains("escto", StringComparison.Ordinal)
+                || compact.Contains("spacetoselect", StringComparison.Ordinal));
+    }
+
+    private static bool IsNumberedChoice(string text)
+    {
+        if (text.Length > 2 && text[0] is '(' or '[')
+        {
+            var close = text[0] == '(' ? ')' : ']';
+            var i = 1;
+            if (!char.IsDigit(text[i]))
+                return false;
+            while (i < text.Length && char.IsDigit(text[i]))
+                i++;
+            return i < text.Length && text[i] == close;
+        }
+        if (text.Length > 1 && char.IsDigit(text[0]))
+        {
+            var i = 0;
+            while (i < text.Length && char.IsDigit(text[i]))
+                i++;
+            return i < text.Length && text[i] == '.';
+        }
+        return false;
+    }
+
+    private static bool StartsOption(string text, string word) =>
+        text.StartsWith(word, StringComparison.OrdinalIgnoreCase)
+        && (text.Length == word.Length || !char.IsLetterOrDigit(text[word.Length]));
 
     private static bool IsSlashCommandToken(string text)
     {
