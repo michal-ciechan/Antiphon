@@ -170,11 +170,15 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\PlatformTaxonomy.cs" Link="TestSupport\PlatformTaxonomy.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
     <Compile Include="..\..\tools\Antiphon.NativeLinuxMigrationAudit\NativeLinuxWindowsReasonAudit.cs" Link="TestSupport\NativeLinuxWindowsReasonAudit.cs" />
     <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
       <LogicalName>Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\Shared\PlatformTaxonomy.cs">
+      <LogicalName>Antiphon.TestSupport.PlatformTaxonomy.cs</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="..\Shared\NativeLinuxWindowsBaseline.json">
       <LogicalName>Antiphon.TestSupport.NativeLinuxWindowsBaseline.json</LogicalName>
