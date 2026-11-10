@@ -80,6 +80,29 @@ public sealed class CheckpointManifestDocumentationTests
             .ShouldBeTrue($"{DocRelativePath} section must hold a markdown table the selection validator accepts");
     }
 
+    /// <summary>
+    /// CARD-0592: the schema table is the selection. Deleting its separator must fail even
+    /// though the worked-example table later in the same section still has a separator and two rows.
+    /// </summary>
+    [Test]
+    public void a_deleted_schema_separator_is_not_rescued_by_the_worked_example()
+    {
+        const string section = "Checkpoint manifest (CARD-0585)";
+        var doc = ReadRepoFile("docs", "testing-and-build.md");
+        var lines = doc.ReplaceLineEndings("\n").Split('\n');
+        var headerAt = Array.FindIndex(lines, line => line.Trim() == "| Column | Meaning |");
+        headerAt.ShouldBeGreaterThanOrEqualTo(0, "schema header");
+        lines[headerAt + 1].Trim().ShouldBe("|---|---|", "schema separator follows the header");
+        var exampleAt = Array.FindIndex(lines, headerAt + 2, line => line.Trim().StartsWith("|---|---|---|", StringComparison.Ordinal));
+        exampleAt.ShouldBeGreaterThan(headerAt, "worked-example separator stays in the section");
+        var mutated = string.Join('\n', lines.Where((_, index) => index != headerAt + 1));
+        mutated.ShouldContain("| CP | After | Build |", Case.Sensitive, "the later table is still present");
+        mutated.ShouldNotContain("\n|---|---|\n", Case.Sensitive, "only the schema separator is removed");
+
+        InterimVerificationPolicy.HasSelectionRows(mutated, section)
+            .ShouldBeFalse("a later worked-example table must not satisfy a schema table with no separator");
+    }
+
     [Test]
     public void the_code_recipe_carries_the_checkpoints_pointer()
     {
