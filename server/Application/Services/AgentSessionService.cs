@@ -62,6 +62,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     /// </summary>
     private LaunchCleanupKill? _pendingCleanupKill;
 
+    /// <summary>
+    /// CARD-1508. Copied off the adapter before dispose. Null leaves the process-exit sentence unchanged.
+    /// </summary>
+    private string? _pendingStartupFailureOutcome;
+
     private readonly record struct LaunchCleanupKill(
         bool KilledThisGeneration,
         DateTime Generation,
@@ -424,6 +429,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // a queued-launch alert attached to the newer generation.
             var cleanupKill = _pendingCleanupKill;
             _pendingCleanupKill = null;
+            var startupFailure = _pendingStartupFailureOutcome;
+            _pendingStartupFailureOutcome = null;
             if (session.StartedAt != generation) return;
             session.RestartFailureKind = new RestartFailurePolicy().Classify(ex);
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromLaunchFailure(ex));
@@ -455,6 +462,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                     session.TerminationSource = SessionTerminationSource.Unknown;
                 SessionTermination.Record(session, SessionTerminationSource.SystemRequest);
             }
+
+            if (!string.IsNullOrWhiteSpace(startupFailure))
+            {
+                session.FailureReason = ColumnText.Clip(
+                    CodexAccountBootstrap.MergeFailureReason(session.FailureReason, startupFailure, session.ExitCode),
+                    2000);
+            }
+
             if (ex is AgentLaunchBlockedException blocked)
             {
                 session.LaunchBlock = GrokSignInIncident.ToSessionBlock(blocked.Block.Kind);
@@ -708,6 +723,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 && resumeMode == AgentSessionResumeMode.Resume
                 && (IsClaudeSessionNotFound(adapter, ex)
                     || ex is ConflictException { Code: HerdrProblemTypes.GrokNativeSessionMissing });
+            _pendingStartupFailureOutcome = adapter?.StartupFailureOutcome;
             if (adapter is not null)
                 _pendingCleanupKill = await KillAndDisposeAsync(adapter, acceptedGeneration, session);
 
