@@ -32,6 +32,9 @@ public sealed class DispatchHoldLedgerTests
         yield return () => ("routing pin not before 2099-01-01T00:00:00Z; dispatch paused (wait).", DispatchHoldClass.Routing);
         yield return () => ("fable is held; dispatch paused for that model.", DispatchHoldClass.Routing);
         yield return () => ("Held: running task abcd1234 \"a writer\" is already writing in this shared checkout (Shared/Shared; no intersecting scope).", DispatchHoldClass.Scope);
+        yield return () => (DispatchHoldDetails.SiblingInspectionPending, DispatchHoldClass.SiblingInspection);
+        yield return () => (DispatchHoldDetails.SiblingInspectionCapacity, DispatchHoldClass.SiblingInspection);
+        yield return () => (DispatchHoldDetails.SiblingIntegrationUnknown, DispatchHoldClass.SiblingInspection);
         yield return () => (DispatchHoldDetails.Escalation(DispatchHoldDetails.WarningPrefix, 400, T0, T0,
             DispatchHoldDetails.RunnerAtCapacity("server2", 1, 1), 2, 6, ["abcd1234"]), DispatchHoldClass.Runner);
         yield return () => ("something nobody writes", DispatchHoldClass.Other);
@@ -75,7 +78,7 @@ public sealed class DispatchHoldLedgerTests
         ledger.SecondsFor(DispatchHoldClass.Cap).ShouldBe(0);
         ledger.OtherSeconds.ShouldBe(0);
         ledger.Dominant.ShouldBe(DispatchHoldClass.Lease);
-        ledger.Describe().ShouldBe("leaseWait=270s; prepWait=30s; runnerWait=40s; capWait=0s; otherWait=0s; class=lease");
+        ledger.Describe().ShouldBe("leaseWait=270s; prepWait=30s; runnerWait=40s; capWait=0s; otherWait=0s; inspectionWait=0s; class=lease");
     }
 
     [Test]

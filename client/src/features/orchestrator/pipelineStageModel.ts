@@ -226,6 +226,8 @@ export function compactQueueReason(
       const first = row.heldBy[0]
       return first ? `prep ~${first.shortId}` : 'prep'
     }
+    case 'siblingInspection':
+      return 'inspect'
     case 'hostBudget':
       return 'host full'
     case 'awaitingDispatch':

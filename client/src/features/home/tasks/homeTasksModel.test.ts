@@ -557,6 +557,7 @@ describe('queueReasonFor', () => {
   it('labels repositoryLease, remotePrep and hostBudget', () => {
     expect(QUEUE_REASON_LABEL.repositoryLease).toBe('waiting: repository lease held by')
     expect(QUEUE_REASON_LABEL.remotePrep).toBe('waiting: remote workspace preparation')
+    expect(QUEUE_REASON_LABEL.siblingInspection).toBe('waiting: same-card base inspection')
     expect(QUEUE_REASON_LABEL.hostBudget).toBe('waiting: runner host at its budget')
   })
 

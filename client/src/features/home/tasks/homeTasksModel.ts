@@ -241,6 +241,7 @@ export const QUEUE_REASON_LABEL: Record<AgentTaskPipelineQueueReason, string> = 
   routingPinNotBefore: 'waiting: not before',
   repositoryLease: 'waiting: repository lease held by',
   remotePrep: 'waiting: remote workspace preparation',
+  siblingInspection: 'waiting: same-card base inspection',
   hostBudget: 'waiting: runner host at its budget',
   awaitingDispatch: 'queued — next dispatch tick',
 }
@@ -312,6 +313,8 @@ function queueReasonLine(
         ? `${QUEUE_REASON_LABEL.remotePrep} (behind task-${first.shortId} — ${first.title})`
         : `${QUEUE_REASON_LABEL.remotePrep} (branch push and mirror)`
     }
+    case 'siblingInspection':
+      return QUEUE_REASON_LABEL.siblingInspection
     case 'hostBudget':
       return QUEUE_REASON_LABEL.hostBudget
     case 'awaitingDispatch':
