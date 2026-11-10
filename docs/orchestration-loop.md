@@ -2570,8 +2570,8 @@ is not swept on the next run. Raise the Windows pass floor by editing
 `EvaluationBudget.WindowsPassFloorSeconds`, the Linux copy measurement by editing
 `EvaluationBudget.MeasuredCopyP95Milliseconds`, and the provisional Windows multiplier by
 editing `EvaluationBudget.WindowsCopyMeasurementMultiplier`, all in
-`tools/Antiphon.LandGraphAudit/EvaluationBudget.cs`, from a fresh measurement. The script
-waits for the tool's printed `ceiling`, which adds only `EvaluationBudget.StartupGraceSeconds`
+`tools/Antiphon.LandGraphAudit.Core/EvaluationBudget.cs`, from a fresh measurement. The audit
+(`LandGraphAuditGate`) waits for the evaluator's `ceiling`, which adds only `EvaluationBudget.StartupGraceSeconds`
 (60). A timeout still exits 2. `not-built` lines
 stay informational and do not refuse. A landing batch whose own records drifted runs scripts/land-graph-land-refresh.ps1 before land: it refreshes once, commits only the land-graph files, re-runs -Check, and never asks. A bare `-Update` outside that land path stays forbidden. This policy
 adds zero land-time runtime work: land still compares the embedded manifest only.

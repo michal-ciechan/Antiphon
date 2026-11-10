@@ -107,8 +107,7 @@ public sealed partial class LandGraphEvaluationTests
         var root = RepoRoot();
         var files = Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit"), "*.cs")
             .Concat(Directory.GetFiles(Path.Combine(root, "tools", "Antiphon.LandGraphAudit.Core"), "*.cs"))
-            .Append(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"))
-            .Append(Path.Combine(root, "scripts", "lib", "land-graph-canary-removal.ps1"));
+            .Append(Path.Combine(root, "scripts", "audit-land-verification-graph.ps1"));
         foreach (var file in files)
         {
             var text = await File.ReadAllTextAsync(file);

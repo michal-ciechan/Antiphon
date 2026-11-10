@@ -364,7 +364,10 @@ public sealed class LandGraphLandRefreshTests
         audit.ShouldContain("-LandRefresh");
         audit.ShouldContain("only for scripts/land-graph-land-refresh.ps1");
         audit.ShouldContain("commit source and pins before auditing");
-        audit.ShouldContain("$PinsPath = Join-Path $RepoRoot $PinsRelative");
+        // The pending pins a land refresh stages are hashed from the working tree (the script's body is C# now).
+        var gate = File.ReadAllText(Path.Combine(root, "tools", "Antiphon.LandGraphAudit.Core", "LandGraphAuditGate.cs"));
+        gate.ShouldContain("private string PinsPath => PsPath.Join(_repoRoot, PinsRelative);");
+        gate.ShouldContain("? GetGitValue(\"hash-object\", PinsPath)");
     }
 
     /// <summary>

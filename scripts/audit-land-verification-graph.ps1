@@ -9,18 +9,27 @@
 # with -Update. It lets that script stage pins beside the manifest for one
 # land-graph commit. Without -Update the script refuses. A bare -Update still
 # refuses with "commit source and pins before auditing".
+#
+# The audit itself is compiled C#: tools/Antiphon.LandGraphAudit.Core/LandGraphAuditGate.cs, a port of this
+# script's former body with the same steps in the same order, the same refusal messages and exit codes, and the
+# canary removal of the former scripts/lib/land-graph-canary-removal.ps1 (LandGraphCanaryRemoval.cs). This
+# wrapper resolves the built tool and runs its 'audit' command, which writes straight to this script's output
+# and error streams; the pre-check runs inside that process and the MSBuild evaluation is its child process.
+# The tool's exit 0 is the only approval this script passes on. Exit 1 is passed on as is; any other exit
+# (an older build without 'audit' exits 64) and a tool that does not start refuse with exit 1.
 # The default DLL (bin-land-audit/Release/net10.0) is rebuilt automatically when it is missing or its
 # sources changed (scripts/lib/land-audit-tool.ps1); a failed rebuild refuses. A supplied -ToolPath is used
 # as given. No pre-check-only mode. Any evaluation error refuses (exit 1).
-# The evaluator's own clocks bound each solution pass and the canary copy. This script's
-# wait is the tool's printed ceiling (phase total plus EvaluationBudget.StartupGraceSeconds).
-# That grace constant lives only in the tool. -EvaluationBudgetSeconds overrides that wait
-# and is exact: it never skips evaluation and never approves by itself. A killed tool's
-# canary is removed from the recorded path by scripts/lib/land-graph-canary-removal.ps1.
-# That function is called on the kill, tool-watchdog, timeout and exception paths. It is
-# not a parameter. Exit 0 means both evaluation passes, the canary copy and the comparison
-# approved. Any other tool exit, including the api-probe code 3, refuses. A canary left
-# behind when this process dies is not swept on the next run.
+# When the tool is current, the tool runs the whole audit. Otherwise this script first runs the audit's
+# opening checks itself (the switches, HEAD, and the source check below), because the audit always ran them
+# before resolving the tool: a dirty tree refuses before any rebuild, and a missing tool is reported only after
+# them. It then passes the HEAD it read to the tool, which starts at the pre-check.
+# The evaluator's own clocks bound each solution pass and the canary copy. The tool's wait is the evaluator's
+# ceiling (phase total plus EvaluationBudget.StartupGraceSeconds). -EvaluationBudgetSeconds overrides that wait
+# and is exact: it never skips evaluation and never approves by itself. A killed evaluator's canary is removed
+# from the recorded path on the kill, tool-watchdog, timeout and exception paths; that removal is not a
+# parameter. A canary left behind when this process dies is not swept on the next run. The tool exits when
+# this script's process does.
 # ASCII-only and Windows PowerShell 5.1 compatible.
 [CmdletBinding()]
 param(
@@ -31,25 +40,12 @@ param(
     [int]$EvaluationBudgetSeconds = 0)
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot 'lib/land-graph-canary-removal.ps1')
 . (Join-Path $PSScriptRoot 'lib/land-audit-tool.ps1')
 
-$script:AuditCanaryRecord = ''
-$script:AuditCanaryRepo = ''
-
-function Clear-AuditCanary {
-    if ([string]::IsNullOrEmpty($script:AuditCanaryRecord)) { return }
-    Remove-RecordedCanary $script:AuditCanaryRecord $script:AuditCanaryRepo
-}
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$RecordDirectory = Join-Path $RepoRoot 'server/Application/Services'
 $ManifestRelative = 'server/Application/Services/LandVerificationBuildGraph.manifest.txt'
 $EvaluationRelative = 'server/Application/Services/LandVerificationBuildGraph.evaluation.txt'
 $PinsRelative = 'server/Application/Services/LandVerificationBuildGraph.pins.txt'
-$ManifestPath = Join-Path $RepoRoot $ManifestRelative
-$EvaluationPath = Join-Path $RepoRoot $EvaluationRelative
-$PinsPath = Join-Path $RepoRoot $PinsRelative
-$StableSdkPattern = '\A[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.[1-9][0-9]{2,}\z'
 
 function ConvertTo-NativeArgument([string]$Value) {
     # ProcessStartInfo.Arguments is also available on Windows PowerShell 5.1.
@@ -58,44 +54,38 @@ function ConvertTo-NativeArgument([string]$Value) {
     return '"' + $escaped + '"'
 }
 
-function Invoke-AuditChild([string]$Executable, [string[]]$Arguments, [int]$TimeoutMs = 300000, [switch]$EvaluationTimeout) {
+function New-AuditStart([string]$Executable, [string[]]$Arguments) {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $Executable
     $start.Arguments = (($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ')
     $start.WorkingDirectory = $RepoRoot
     $start.UseShellExecute = $false
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
     # dotnet run/test parents must not steer SDK discovery in the author-time evaluator.
     foreach ($key in @($start.EnvironmentVariables.Keys)) {
         if ($key.StartsWith('MSBuild', [StringComparison]::OrdinalIgnoreCase)) {
             $start.EnvironmentVariables.Remove($key)
         }
     }
+    return $start
+}
+
+# The audit's git calls before the tool is resolved (the same calls, waits and messages as LandGraphAuditGate).
+function Invoke-AuditGit([string[]]$Arguments) {
+    $TimeoutMs = 300000
+    $start = New-AuditStart 'git' $Arguments
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $start
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        if (-not $process.Start()) { throw "could not start $Executable" }
+        if (-not $process.Start()) { throw 'could not start git' }
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMs)) {
-            if ($EvaluationTimeout) {
-                $seconds = [int]($TimeoutMs / 1000)
-                $note = 'evaluation-failed: evaluating Antiphon.sln exceeded ' + $seconds + ' s'
-                try { $process.Kill($true) } catch { try { $process.Kill() } catch { } }
-                try { [void]$process.WaitForExit(10000) } catch { }
-                Clear-AuditCanary
-                $partial = ''
-                try { if ($stdout.Wait(5000)) { $partial = $stdout.Result } } catch { }
-                try { if ($stderr.Wait(5000)) { $partial = $partial + $stderr.Result } } catch { }
-                return [pscustomobject]@{ Code = 2; Text = (($partial, $note) -join "`n") }
-            }
-            throw "subprocess exceeded $([int]($TimeoutMs / 1000)) s: $Executable"
-        }
+        if (-not $process.WaitForExit($TimeoutMs)) { throw "subprocess exceeded $([int]($TimeoutMs / 1000)) s: git" }
         $remaining = [int][Math]::Max(1, $TimeoutMs - $clock.ElapsedMilliseconds)
         if (-not [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($stdout, $stderr), $remaining)) {
-            throw "subprocess output exceeded $([int]($TimeoutMs / 1000)) s: $Executable"
+            throw "subprocess output exceeded $([int]($TimeoutMs / 1000)) s: git"
         }
         return [pscustomobject]@{ Code = $process.ExitCode; Text = $stdout.Result + $stderr.Result }
     } finally {
@@ -103,37 +93,15 @@ function Invoke-AuditChild([string]$Executable, [string[]]$Arguments, [int]$Time
             if (-not $process.HasExited) {
                 try { $process.Kill($true) } catch { $process.Kill() }
                 [void]$process.WaitForExit(10000)
-                Clear-AuditCanary
             }
         } finally { $process.Dispose() }
     }
 }
 
 function Get-GitValue([string[]]$Arguments) {
-    $run = Invoke-AuditChild 'git' $Arguments
+    $run = Invoke-AuditGit $Arguments
     if ($run.Code -ne 0) { throw ('git failed: ' + $run.Text.Trim()) }
     return $run.Text.Trim()
-}
-
-function Assert-SelectableSdk([string]$Version) {
-    $candidate = $null
-    if ($Version -cnotmatch $StableSdkPattern -or -not [version]::TryParse($Version, [ref]$candidate)) {
-        throw 'evaluation record has invalid SDK provenance'
-    }
-    # Admit stable SDK releases under the committed policy only. A new policy or
-    # a prerelease pin needs explicit qualification rather than a permissive fallback.
-    $policy = (Get-GitValue @('show', 'HEAD:global.json') | ConvertFrom-Json).sdk
-    $minimum = $null
-    if ($policy.version -cnotmatch $StableSdkPattern -or
-        -not [version]::TryParse($policy.version, [ref]$minimum) -or
-        $policy.rollForward -cne 'latestMinor') {
-        throw 'SDK provenance requires a stable pin with rollForward latestMinor'
-    }
-    # latestMinor can advance minor, feature band and patch, but never major or
-    # select a version below the pin (including an earlier patch in its band).
-    if ($candidate.Major -ne $minimum.Major -or $candidate -lt $minimum) {
-        throw 'evaluation record SDK provenance is outside committed roll-forward policy'
-    }
 }
 
 function Assert-HeadSource([string]$Head, [bool]$AllowPendingPins = $false) {
@@ -143,125 +111,59 @@ function Assert-HeadSource([string]$Head, [bool]$AllowPendingPins = $false) {
     # Pending pins are allowed only for scripts/land-graph-land-refresh.ps1.
     $exclude = @(':(exclude)' + $ManifestRelative, (':(exclude)' + $EvaluationRelative))
     if ($AllowPendingPins) { $exclude += (':(exclude)' + $PinsRelative) }
-    $run = Invoke-AuditChild 'git' (@('diff', '--quiet', 'HEAD', '--', '.') + $exclude)
+    $run = Invoke-AuditGit (@('diff', '--quiet', 'HEAD', '--', '.') + $exclude)
     if ($run.Code -ne 0) { throw 'source differs from HEAD; commit source and pins before auditing' }
 }
 
-function Get-EvaluatorBudgetSeconds([string]$EvaluatorPath) {
-    if ($EvaluationBudgetSeconds -lt 0) { throw 'evaluation budget must be positive' }
-    if ($EvaluationBudgetSeconds -gt 0) { return $EvaluationBudgetSeconds }
-    $probe = Invoke-AuditChild 'dotnet' @([System.IO.Path]::GetFullPath($EvaluatorPath), '--print-budget')
-    if ($probe.Code -ne 0) { throw ('evaluation budget probe failed: ' + $probe.Text.Trim()) }
-    foreach ($line in ($probe.Text -split "`r?`n")) {
-        $trimmed = $line.Trim()
-        if ($trimmed.StartsWith('ceiling=')) { return [int]$trimmed.Substring(8) }
-    }
-    throw 'evaluation budget probe did not report ceiling'
-}
-
-function Assert-EvaluatedGraph([string]$EvaluatorPath) {
-    if ([string]::IsNullOrEmpty($EvaluatorPath)) {
-        $EvaluatorPath = Join-Path $RepoRoot 'tools/Antiphon.LandGraphAudit/bin-land-audit/Release/net10.0/Antiphon.LandGraphAudit.dll'
-    }
-    if (-not [System.IO.File]::Exists($EvaluatorPath)) { throw ('built evaluator missing: ' + $EvaluatorPath) }
-    $budget = Get-EvaluatorBudgetSeconds $EvaluatorPath
-    # The printed ceiling already includes the tool's one startup grace. An explicit budget is exact.
-    $timeoutMs = $budget * 1000
-    $record = Join-Path ([System.IO.Path]::GetTempPath()) ('antiphon-landgraph-canary-record-' + [Guid]::NewGuid().ToString('N') + '.txt')
-    $script:AuditCanaryRecord = $record
-    $script:AuditCanaryRepo = $RepoRoot
-    $toolArguments = @([System.IO.Path]::GetFullPath($EvaluatorPath), '--repo', $RepoRoot, '--solution', 'Antiphon.sln', '--canary-record', $record)
+function Invoke-LandAuditTool([string]$Tool, [string]$Head) {
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    $arguments = @([System.IO.Path]::GetFullPath($Tool), 'audit', '--repo', $RepoRoot, '--tool-path', $Tool,
+        '--evaluation-budget-seconds', $EvaluationBudgetSeconds.ToString($invariant), '--parent-pid', $PID.ToString($invariant))
+    if ($Check) { $arguments += '--check' }
+    if ($Update) { $arguments += '--update' }
+    if ($LandRefresh) { $arguments += '--land-refresh' }
+    if (-not [string]::IsNullOrEmpty($Head)) { $arguments += @('--head', $Head) }
+    # No redirection: the tool writes to this script's own output and error streams.
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = New-AuditStart 'dotnet' $arguments
     try {
-        $evaluation = Invoke-AuditChild 'dotnet' $toolArguments -TimeoutMs $timeoutMs -EvaluationTimeout
-        # The tool watchdog exits the child on its own ceiling. Drop the recorded canary here too.
-        if ($evaluation.Text.IndexOf('the audit exceeded') -ge 0) { Clear-AuditCanary }
-        if ($evaluation.Text.Length -gt 0) { Write-Output $evaluation.Text.TrimEnd() }
-        if ($evaluation.Code -ne 0) { throw ('land graph evaluation refused (exit ' + $evaluation.Code + ')') }
+        if (-not $process.Start()) { throw 'could not start dotnet' }
+        $process.WaitForExit()
+        return $process.ExitCode
+    } catch {
+        [Console]::Error.WriteLine('audit refused: land graph audit tool did not start: ' + $_.Exception.Message)
+        return $null
     } finally {
-        Clear-AuditCanary
-        if (-not [string]::IsNullOrEmpty($record) -and [System.IO.File]::Exists($record)) {
-            [System.IO.File]::Delete($record)
-        }
-        $script:AuditCanaryRecord = ''
+        $process.Dispose()
     }
 }
 
-function Publish-Record([string]$Source, [string]$Destination) {
-    if ([System.IO.File]::Exists($Destination)) {
-        [System.IO.File]::Replace($Source, $Destination, [NullString]::Value)
-    } else {
-        [System.IO.File]::Move($Source, $Destination)
-    }
-}
-
-$temporaryManifest = $null
-$temporaryEvaluation = $null
-try {
-    if ($Check -and $Update) { throw 'Specify -Check or -Update, not both.' }
-    if ($LandRefresh -and -not $Update) { throw '-LandRefresh requires -Update.' }
-    $head = Get-GitValue @('rev-parse', 'HEAD')
-    $allowPendingPins = $Update.IsPresent -and $LandRefresh.IsPresent
-    Assert-HeadSource $head $allowPendingPins
-    # The pre-check runs in the same built tool as the evaluation below, called directly (no child
-    # PowerShell); scripts/audit-land-verification-precheck.ps1 is the same call for standalone use.
-    $tool = Resolve-LandAuditTool $RepoRoot $ToolPath
-    if ($tool.ContainsKey('Error')) {
-        [Console]::Error.WriteLine([string]$tool.Error)
-        throw 'land graph pre-check refused'
-    }
-    $ToolPath = [string]$tool.Path
-    $arguments = @([System.IO.Path]::GetFullPath($ToolPath), 'precheck', '--repo', $RepoRoot)
-    if ($Update) {
-        [void][System.IO.Directory]::CreateDirectory($RecordDirectory)
-        $temporaryManifest = Join-Path $RecordDirectory ('.land-manifest-' + [Guid]::NewGuid().ToString('N'))
-        $arguments += @('--update', '--manifest-path', $temporaryManifest)
-    } else { $arguments += '--check' }
-    $pre = Invoke-AuditChild 'dotnet' $arguments
-    if ($pre.Text.Length -gt 0) { Write-Output $pre.Text.TrimEnd() }
-    if ($pre.Code -ne 0) { throw 'land graph pre-check refused' }
-
-    if ($allowPendingPins) { $pins = Get-GitValue @('hash-object', $PinsPath) }
-    else { $pins = Get-GitValue @('rev-parse', ('HEAD:' + $PinsRelative)) }
-    if ($pins -cnotmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$') { throw 'pins blob SHA is invalid' }
-    $sdkRun = Invoke-AuditChild 'dotnet' @('--version')
-    if ($sdkRun.Code -ne 0 -or $sdkRun.Text.Trim() -cnotmatch $StableSdkPattern) {
-        throw ('SDK resolution failed: ' + $sdkRun.Text.Trim())
-    }
-    $sdk = $sdkRun.Text.Trim()
-    $selectedManifest = $ManifestPath
-    if ($Update) { $selectedManifest = $temporaryManifest }
-    $manifest = [System.IO.File]::ReadAllLines($selectedManifest)
-    $expected = @($manifest[0], $sdk, $pins)
-
-    if ($Update) {
-        Assert-EvaluatedGraph $ToolPath
-        Assert-HeadSource $head $allowPendingPins
-        $temporaryEvaluation = Join-Path $RecordDirectory ('.land-evaluation-' + [Guid]::NewGuid().ToString('N'))
-        [System.IO.File]::WriteAllText($temporaryEvaluation, ($expected -join "`n") + "`n", [System.Text.Encoding]::ASCII)
-        # Publish the manifest last: an interrupted write cannot approve a new graph early.
-        Publish-Record $temporaryEvaluation $EvaluationPath
-        Publish-Record $temporaryManifest $ManifestPath
-    } else {
-        if (-not [System.IO.File]::Exists($EvaluationPath)) { throw 'evaluation record missing; run -Update' }
-        $record = [System.IO.File]::ReadAllLines($EvaluationPath)
-        if ($record.Length -ne 3) { throw 'evaluation record must be three lines' }
-        foreach ($i in @(0, 2)) {
-            if ($record[$i] -cne $expected[$i]) { throw ('evaluation record mismatch: ' + @('digest', 'SDK', 'pins SHA')[$i]) }
+$tool = $null
+try { $tool = Resolve-LandAuditTool $RepoRoot $ToolPath -NoRebuild } catch { $tool = $null }
+if ($null -ne $tool -and $tool.ContainsKey('Path')) {
+    $code = Invoke-LandAuditTool ([string]$tool.Path) ''
+} else {
+    try {
+        if ($Check -and $Update) { throw 'Specify -Check or -Update, not both.' }
+        if ($LandRefresh -and -not $Update) { throw '-LandRefresh requires -Update.' }
+        $head = Get-GitValue @('rev-parse', 'HEAD')
+        Assert-HeadSource $head ($Update.IsPresent -and $LandRefresh.IsPresent)
+        $tool = Resolve-LandAuditTool $RepoRoot $ToolPath
+        if ($tool.ContainsKey('Error')) {
+            [Console]::Error.WriteLine([string]$tool.Error)
+            throw 'land graph pre-check refused'
         }
-        # global.json is part of the exact graph digest and owns SDK selection/roll-forward.
-        # SDK provenance never replaces evaluation: even a host-equal record must
-        # not approve imports, items or globs without checking the actual graph.
-        Assert-SelectableSdk $record[1]
-        Assert-EvaluatedGraph $ToolPath
-        Assert-HeadSource $head
+    } catch {
+        [Console]::Error.WriteLine('audit refused: ' + $_.Exception.Message)
+        exit 1
     }
-} catch {
-    Clear-AuditCanary
-    [Console]::Error.WriteLine('audit refused: ' + $_.Exception.Message)
+    $code = Invoke-LandAuditTool ([string]$tool.Path) $head
+}
+if ($null -eq $code) { exit 1 }
+if ($code -ne 0) {
+    if ($code -ne 1) {
+        [Console]::Error.WriteLine('audit refused: land graph audit tool failed (exit ' + $code + ')')
+    }
     exit 1
-} finally {
-    foreach ($path in @($temporaryManifest, $temporaryEvaluation)) {
-        if ($path -and [System.IO.File]::Exists($path)) { [System.IO.File]::Delete($path) }
-    }
 }
 exit 0

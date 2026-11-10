@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -40,6 +41,10 @@ public static class Program
         // The emulation pre-check (scripts/audit-land-verification-precheck.ps1 runs it). It loads no MSBuild,
         // evaluates nothing and is not an approval: the graph script still requires the evaluation below.
         if (args.Length > 0 && args[0] == "precheck") return Precheck(args);
+        // The graph audit (scripts/audit-land-verification-graph.ps1 runs it): LandGraphAuditGate, with the pre-check
+        // in this process and the evaluation below as a child process of this one. Dispatched before MSBuild is located;
+        // its exit 0 is the gate's approval after the child's evaluation approved, never an evaluation of its own.
+        if (args.Length > 0 && args[0] == "audit") return Audit(args);
         // A command word this build does not know means the calling script is newer than this build (or
         // older): say so with its own exit code instead of an argument error that reads like a usage fault.
         if (args.Length > 0 && args[0].Length > 0 && !args[0].StartsWith('-'))
@@ -172,6 +177,85 @@ public static class Program
         }
 
         return LandGraphPrecheck.Run(repo, check, update, manifest, stdout, stderr);
+    }
+
+    /// <summary>
+    /// <c>audit --repo &lt;dir&gt; --tool-path &lt;dll&gt; [--check] [--update] [--land-refresh]
+    /// [--evaluation-budget-seconds &lt;n&gt;] [--head &lt;sha&gt;] [--parent-pid &lt;pid&gt;]</c>: the graph script's
+    /// body, <see cref="LandGraphAuditGate.Run"/> (0 approved, 1 refused), writing to this process's own streams.
+    /// The script passes its switches as given (the gate refuses bad combinations with the script's messages),
+    /// the resolved tool DLL as the evaluator, and its own process id: when that process ends, this one ends too,
+    /// as the script's own body did.
+    /// </summary>
+    private static int Audit(string[] args)
+    {
+        // pwsh reads a redirected child and writes its own output in the console code page; so does the gate.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        string? repo = null;
+        string? toolPath = null;
+        string? head = null;
+        var check = false;
+        var update = false;
+        var landRefresh = false;
+        var budget = 0;
+        int? parent = null;
+        for (var i = 1; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--repo" when i + 1 < args.Length: repo = args[++i]; break;
+                case "--tool-path" when i + 1 < args.Length: toolPath = args[++i]; break;
+                case "--head" when i + 1 < args.Length: head = args[++i]; break;
+                case "--evaluation-budget-seconds" when i + 1 < args.Length
+                    && int.TryParse(args[i + 1], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var seconds):
+                    budget = seconds;
+                    i++;
+                    break;
+                case "--parent-pid" when i + 1 < args.Length
+                    && int.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var pid):
+                    parent = pid;
+                    i++;
+                    break;
+                case "--check": check = true; break;
+                case "--update": update = true; break;
+                case "--land-refresh": landRefresh = true; break;
+                default:
+                    Console.Error.WriteLine($"audit refused: unknown or incomplete argument '{args[i]}'");
+                    return LandGraphAuditGate.Refused;
+            }
+        }
+
+        if (repo is null || toolPath is null)
+        {
+            Console.Error.WriteLine("audit refused: usage: audit --repo <dir> --tool-path <dll> (--check | --update) [--land-refresh]");
+            return LandGraphAuditGate.Refused;
+        }
+
+        if (parent is int parentId) EndWithParent(parentId);
+        return LandGraphAuditGate.Run(new LandGraphAuditGate.Options(repo, check, update, landRefresh, toolPath, budget, head),
+            Console.Out, Console.Error);
+    }
+
+    // The audit ran inside the script's process before: once that process was gone, no later step ran.
+    private static void EndWithParent(int parentId)
+    {
+        Process parent;
+        try
+        {
+            parent = Process.GetProcessById(parentId);
+        }
+        catch (ArgumentException)
+        {
+            Environment.Exit(LandGraphAuditGate.Refused);
+            return;
+        }
+
+        new Thread(() =>
+        {
+            try { parent.WaitForExit(); }
+            catch (Exception) { }
+            Environment.Exit(LandGraphAuditGate.Refused);
+        }) { IsBackground = true }.Start();
     }
 
     private static bool PrintBudget(string[] args, out int exitCode)

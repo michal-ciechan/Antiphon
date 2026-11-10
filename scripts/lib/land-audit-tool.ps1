@@ -1,7 +1,8 @@
 # The built land-graph audit tool (tools/Antiphon.LandGraphAudit), kept current with its sources.
 # ASCII-only and Windows PowerShell 5.1 compatible.
 #
-# Resolve-LandAuditTool returns @{ Path = <dll> } or @{ Error = <message> }. An explicit -ToolPath is used as
+# Resolve-LandAuditTool returns @{ Path = <dll> } or @{ Error = <message> }. With -NoRebuild it returns
+# @{ Rebuild = $true } where it would rebuild, and changes nothing. An explicit -ToolPath is used as
 # given. Otherwise the default bin-land-audit DLL is used when its stamp (land-audit.source-hash beside it)
 # equals the SHA-256 of the tool's sources: every .cs and .csproj under tools/Antiphon.LandGraphAudit and
 # tools/Antiphon.LandGraphAudit.Core (bin and obj folders excluded) plus the repository's shared build files.
@@ -45,7 +46,7 @@ function Test-LandAuditToolCurrent([string]$Dll, [string]$Stamp, [string]$Hash) 
     return ([System.IO.File]::ReadAllText($Stamp).Trim() -ceq $Hash)
 }
 
-function Resolve-LandAuditTool([string]$RepoRoot, [string]$ToolPath) {
+function Resolve-LandAuditTool([string]$RepoRoot, [string]$ToolPath, [switch]$NoRebuild) {
     $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd([char]92, [char]47)
     if (-not [string]::IsNullOrEmpty($ToolPath)) {
         $explicit = [System.IO.Path]::GetFullPath($ToolPath)
@@ -63,6 +64,7 @@ function Resolve-LandAuditTool([string]$RepoRoot, [string]$ToolPath) {
     $stampName = 'land-audit.source-hash'
     $hash = Get-LandAuditSourceHash $RepoRoot
     if (Test-LandAuditToolCurrent $dll ([System.IO.Path]::Combine($out, $stampName)) $hash) { return @{ Path = $dll } }
+    if ($NoRebuild) { return @{ Rebuild = $true } }
 
     [void][System.IO.Directory]::CreateDirectory($root)
     $lockPath = [System.IO.Path]::Combine($root, 'rebuild.lock')

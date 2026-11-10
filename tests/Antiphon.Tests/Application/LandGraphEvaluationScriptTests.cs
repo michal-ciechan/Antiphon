@@ -325,11 +325,15 @@ public sealed partial class LandGraphEvaluationTests
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
         host.Grace.ShouldBe(60);
         host.Ceiling.ShouldBe(host.Total + host.Grace);
+        // The audit's wait is the evaluator's own ceiling (the sum --print-budget prints as ceiling=), never a grace of its own.
+        var gate = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit.Core", "LandGraphAuditGate.cs"));
+        gate.ShouldContain("return EvaluationBudget.ToolCeilingSeconds;", Case.Sensitive);
+        gate.ShouldNotContain("grace = 30", Case.Sensitive);
+        gate.ShouldNotContain("WitnessClock", Case.Sensitive);
         var script = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts", "audit-land-verification-graph.ps1"));
-        script.ShouldContain("StartsWith('ceiling=')", Case.Sensitive);
         script.ShouldNotContain("$grace = 30", Case.Sensitive);
         script.ShouldNotContain("WitnessClock", Case.Sensitive);
-        var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit", "EvaluationBudget.cs"));
+        var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit.Core", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
         budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 30;", Case.Sensitive);
         budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
@@ -415,7 +419,7 @@ public sealed partial class LandGraphEvaluationTests
             await process.WaitForExitAsync();
             try { await stderr; } catch (Exception) { }
             Directory.Exists(canary).ShouldBeTrue("SIGKILL leaves the canary for the script");
-            var cleanup = await RemoveRecordedCanaryAsync(CanaryRemovalLibrary(), canary!, moved);
+            var cleanup = await RemoveRecordedCanaryAsync(null, canary!, moved);
             cleanup.ExitCode.ShouldBe(0, cleanup.Text);
             Directory.Exists(canary).ShouldBeFalse(canary);
             Directory.GetFileSystemEntries(parent).OrderBy(path => path, StringComparer.Ordinal).ToArray().ShouldBe(before);
@@ -512,7 +516,9 @@ public sealed partial class LandGraphEvaluationTests
             throw;
         }
 
-        return new ToolRun(process.ExitCode, await stdout + await stderr);
+        var outText = await stdout;
+        var errText = await stderr;
+        return new ToolRun(process.ExitCode, outText + errText) { StandardOutput = outText, StandardError = errText };
     }
 
     private static async Task<(int Pass, int Copy, int Total, int Grace, int Ceiling)> PrintBudgetAsync(int? passMs, int? copyMs, bool? windows)
@@ -559,8 +565,8 @@ public sealed partial class LandGraphEvaluationTests
         var shimDir = Path.Combine(Path.GetTempPath(), "c1483-dotnet-" + Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(shimDir);
         var shim = Path.Combine(shimDir, "dotnet");
-        // The pre-check wrapper hosts the C# tool as `dotnet <dll> precheck`. That launch is not
-        // the evaluator. Forward it to the real dotnet and keep every other invocation slow.
+        // The graph script hosts its body as `dotnet <dll> audit` (the pre-check runs inside it). That launch is
+        // not the evaluator. Forward it to the real dotnet and keep every other invocation slow.
         var sleep = sleepSeconds.ToString(CultureInfo.InvariantCulture);
         var shimBody = """
             #!/bin/sh
@@ -569,7 +575,7 @@ public sealed partial class LandGraphEvaluationTests
               exit 0
             fi
             for arg in "$@"; do
-              if [ "$arg" = "precheck" ]; then
+              if [ "$arg" = "audit" ]; then
                 selfdir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
                 rest=$PATH
                 real=
@@ -638,7 +644,6 @@ public sealed partial class LandGraphEvaluationTests
     {
         files[PinsFile] = "";
         files["scripts/audit-land-verification-graph.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/audit-land-verification-graph.ps1"));
-        files["scripts/lib/land-graph-canary-removal.ps1"] = await File.ReadAllTextAsync(CanaryRemovalLibrary());
         files["scripts/lib/land-audit-tool.ps1"] = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "scripts/lib/land-audit-tool.ps1"));
         var precheck = Path.Combine(RepoRoot(), "scripts/audit-land-verification-precheck.ps1");
         if (File.Exists(precheck)) files["scripts/audit-land-verification-precheck.ps1"] = await File.ReadAllTextAsync(precheck);
@@ -691,20 +696,68 @@ public sealed partial class LandGraphEvaluationTests
         return repo;
     }
 
+    // The graph script's body runs in process: LandGraphAuditGate is the code scripts/audit-land-verification-graph.ps1
+    // runs through the LandGraphAudit tool's 'audit' command, with the pre-check in process and the MSBuild evaluation as a
+    // child process (the staged tool DLL). The wrapper only resolves the tool and passes the gate's output and exit code
+    // through, so a call whose tool the wrapper would rebuild or fail to find runs the real wrapper through pwsh instead,
+    // as do the end-to-end tests (RunGraphScriptAsync, the kill, timeout and land-refresh tests).
     internal static async Task<ToolRun> RunScriptAsync(string root, string mode,
         string script = "audit-land-verification-graph.ps1", params string[] extra)
+    {
+        if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
+        if (extra.Length != 0 && (extra.Length != 2 || extra[0] is not ("-ManifestPath" or "-ToolPath")))
+            throw new ArgumentException("unsupported script arguments");
+        var scriptPath = Path.GetFullPath(Path.Combine(root, "scripts", script));
+        var toolPath = extra.Length == 2 && extra[0] == "-ToolPath" ? extra[1] : null;
+        var tool = script == "audit-land-verification-graph.ps1" && (extra.Length == 0 || toolPath is not null)
+            ? CurrentToolWithoutRebuild(root, toolPath)
+            : null;
+        if (tool is null) return await RunScriptProcessAsync(root, mode, script, extra);
+        return await RunGateAsync(scriptPath, mode, tool);
+    }
+
+    private static async Task<ToolRun> RunGateAsync(string scriptPath, string mode, string tool)
+    {
+        // $RepoRoot = Split-Path -Parent $PSScriptRoot.
+        var repoRoot = Path.GetDirectoryName(Path.GetDirectoryName(scriptPath))!;
+        return await Task.Run(() =>
+        {
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            var code = Antiphon.LandGraphAudit.LandGraphAuditGate.Run(
+                new(repoRoot, mode == "-Check", mode == "-Update", LandRefresh: false, tool), stdout, stderr);
+            return new ToolRun(code, stdout.ToString() + stderr.ToString())
+            {
+                StandardOutput = stdout.ToString(),
+                StandardError = stderr.ToString(),
+            };
+        }).WaitAsync(TimeSpan.FromSeconds(360));
+    }
+
+    // Resolve-LandAuditTool's answer where it needs no rebuild: an explicit DLL that exists, or (a fixture, which has no
+    // tool project) the copied bin-land-audit DLL. Anything else is the wrapper's to resolve.
+    private static string? CurrentToolWithoutRebuild(string root, string? toolPath)
+    {
+        var repoRoot = Path.GetFullPath(root).TrimEnd('\\', '/');
+        if (!string.IsNullOrEmpty(toolPath))
+        {
+            var explicitPath = Path.GetFullPath(toolPath);
+            return File.Exists(explicitPath) ? explicitPath : null;
+        }
+
+        if (File.Exists(Path.Combine(repoRoot, "tools", "Antiphon.LandGraphAudit", "Antiphon.LandGraphAudit.csproj"))) return null;
+        var dll = Path.Combine(repoRoot, "tools", "Antiphon.LandGraphAudit", "bin-land-audit", "Release", "net10.0", "Antiphon.LandGraphAudit.dll");
+        return File.Exists(dll) ? dll : null;
+    }
+
+    private static async Task<ToolRun> RunScriptProcessAsync(string root, string mode, string script, string[] extra)
     {
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var key in start.Environment.Keys.Where(k => k.StartsWith("MSBuild", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
         // Exercise absent/empty/value wrapper inputs under strict PowerShell semantics too.
         static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
-        if (mode is not ("-Update" or "-Check")) throw new ArgumentOutOfRangeException(nameof(mode));
         var command = "Set-StrictMode -Version Latest; & " + Quote(Path.Combine(root, "scripts", script)) + " " + mode;
-        if (extra.Length != 0)
-        {
-            if (extra.Length != 2 || extra[0] is not ("-ManifestPath" or "-ToolPath")) throw new ArgumentException("unsupported script arguments");
-            command += " " + extra[0] + " " + Quote(extra[1]);
-        }
+        if (extra.Length != 0) command += " " + extra[0] + " " + Quote(extra[1]);
         foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command", command }) start.ArgumentList.Add(arg);
         using var process = Process.Start(start)!;
         var stdout = process.StandardOutput.ReadToEndAsync();
@@ -712,6 +765,8 @@ public sealed partial class LandGraphEvaluationTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(360));
         try { await process.WaitForExitAsync(deadline.Token); }
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
-        return new ToolRun(process.ExitCode, await stdout + await stderr);
+        var outText = await stdout;
+        var errText = await stderr;
+        return new ToolRun(process.ExitCode, outText + errText) { StandardOutput = outText, StandardError = errText };
     }
 }
