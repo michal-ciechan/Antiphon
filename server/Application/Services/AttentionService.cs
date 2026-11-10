@@ -1558,12 +1558,12 @@ public sealed partial class AttentionService
                 && (now - (request.HeldSince ?? request.LastProgressAt)).TotalSeconds < _delegation.LandWarningSeconds)
                 continue;
             var task = await _db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.TaskId, ct);
-            // CARD-1467 red: the live memory wait is visible here and still not named.
-            _ = _landWaits?.Find(request.Id);
+            var progress = _landWaits?.Find(request.Id)?.Describe()
+                ?? $"no progress for {(int)age}s";
             var item = new AttentionItemDto(request.State == LandRequestState.Held ? AttentionKind.LandHeld : AttentionKind.LandNoProgress,
                 age >= _delegation.LandErrorSeconds ? AlertSeverity.Error : AlertSeverity.Warning,
                 task.Id, request.ParentSessionId, task.AgentId, null, task.Title,
-                $"Land {request.State}; attempt {request.Attempt}; no progress for {(int)age}s",
+                $"Land {request.State}; attempt {request.Attempt}; {progress}",
                 $"request={request.Id:N}; requested={request.RequestedAt:O}; reason={request.HoldReasonCode}; "
                     + $"holder={request.HoldingTaskId:N} ({request.HoldingTaskStatus}); heldSince={request.HeldSince:O}; {request.HoldDetail}; {request.ReconciliationError}",
                 request.HeldSince ?? request.LastProgressAt, null, [AttentionAction.OpenDrawer], task.CardId,

@@ -392,7 +392,10 @@ function TaskDetail({ detail, onClose }: { detail: AgentTaskDetailDto; onClose: 
         {detail.legacyLandReceipt && <Text size="sm">Legacy receipt: {detail.legacyLandReceipt.state}; event {detail.legacyLandReceipt.eventId}</Text>}
         {detail.landRequest ? <>
           <Text size="sm">Land: {detail.landRequest.state}; attempt {detail.landRequest.attempt}</Text>
-          <Text size="xs">Requested {detail.landRequest.requestedAt}; no progress for {Math.floor(detail.landRequest.noProgressSeconds)}s</Text>
+          <Text size="xs" data-testid="land-progress">
+            Requested {detail.landRequest.requestedAt}; {detail.landRequest.verificationWait?.description
+              ?? `no progress for ${Math.floor(detail.landRequest.noProgressSeconds)}s`}
+          </Text>
           {detail.landRequest.sourceRefusalReason && <Text size="sm" c="red" data-testid="source-refusal">
             Source refusal: {detail.landRequest.sourceRefusalReason}
             {detail.landRequest.sourceRefusalReason === 'status_untrusted'
