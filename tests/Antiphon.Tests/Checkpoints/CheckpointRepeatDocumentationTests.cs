@@ -47,7 +47,9 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // CARD-1753 restores the minimal-testing, activation, and rc-pick clauses and states
         // Own land-graph drift refreshes, never asks: #land-graph-refresh.
         // Normalised body 11,494 of 11,500.
+        // CARD-0569 replaces the opt-in -Worktree collision sentence with the worktree tool default.
+        // Normalised body 11,472 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("7ba48dec8ed008ad1e525771b9b30bddc741923229e741cff9c4d1c8bbede96f", "orchestrator-approved-bytes");
+            .ShouldBe("c1ee24b37dd9497ebe099045791dfcff2101b1a46191111540885161ad524b45", "orchestrator-approved-bytes");
     }
 }

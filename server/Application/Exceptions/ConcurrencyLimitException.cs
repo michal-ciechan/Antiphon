@@ -12,8 +12,8 @@ public sealed class ConcurrencyLimitException : HttpException
     public const string ErrorCode = "concurrency_limit";
     public const string OverrideFlag = "ignoreConcurrencyLimit";
     public const string Coda =
-        "Prefer working through these sequentially before starting more. Re-send with "
-        + "ignoreConcurrencyLimit=true if the user asked for parallel work this turn.";
+        "Re-send with ignoreConcurrencyLimit=true only when axis=absolute and no listed "
+        + "occupant is in the stage you are dispatching; a same-stage collision defers.";
 
     public const int OccupantListCap = 12;
 

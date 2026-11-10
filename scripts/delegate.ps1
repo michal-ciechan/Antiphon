@@ -10,12 +10,11 @@
 # ASCII-only on purpose: daemon/agent scripts must parse under Windows PowerShell 5.1, which reads
 # a no-BOM .ps1 as CP1252 and mangles non-ASCII characters.
 #
-# CARD-0147 / CARD-0366 / CARD-0505: create is sequential-by-default. A 409 concurrency_limit
-# names the population (open or queued), axis, occupants and cap. Re-send with
-# -IgnoreConcurrencyLimit only when population is open, canOverride is true, and the axis is
-# absolute with no occupant in the stage you are dispatching. A queued population, canOverride
-# false, or a same-stage collision never justifies the flag. Read the scoped pipeline or
-# scripts/dispatch-concurrency.ps1 before raising a durable limit.
+# CARD-0147 / CARD-0366 / CARD-0505: a 409 concurrency_limit names the population (open or
+# queued), axis, occupants and cap. Re-send with -IgnoreConcurrencyLimit only when population
+# is open, canOverride is true, and the axis is absolute with no occupant in the stage you are dispatching.
+# A queued population, canOverride false, or a same-stage collision never justifies the flag.
+# Read the scoped pipeline or scripts/dispatch-concurrency.ps1 before raising a durable limit.
 #
 # CARD-0527: settlement commits a Shared task's own footprint unless you pass -NoCommit.
 # That is the only opt-out an instruction can carry; prose in -Goal is an advisory, not a
