@@ -41,6 +41,6 @@ $params = @{
 if (-not [string]::IsNullOrWhiteSpace($EvidenceRoot)) { $params.EvidenceRoot = $EvidenceRoot }
 $result = $null
 try { $result = Invoke-QualificationRecordedStop @params }
-catch { $result = New-QualificationStopResult 3 'incomplete' 'log-unwritten' $null 'not-attempted' $null $null }
+catch { $result = New-QualificationStopResult 3 'incomplete' 'stop-fault' $null 'not-attempted' $null $null }
 Write-Output ($result | ConvertTo-Json -Compress -Depth 6)
 exit $result.exitCode

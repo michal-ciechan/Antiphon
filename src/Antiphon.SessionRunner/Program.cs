@@ -90,6 +90,7 @@ builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
     {
         var workspace = new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd);
         workspace.WorkspaceUseGate = runtime.WorkspaceUseGate;
+        workspace.Activity = sp.GetRequiredService<RunnerRepositoryActivity>();
         retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe());
         // CARD-1677 S2: /tmp, registered families only; it acts only on a server TempSweep request, which ships off
         // (RunnerWorktreeRetention:TempSweep:Enabled=false, Execute=false).

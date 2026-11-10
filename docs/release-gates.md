@@ -126,6 +126,15 @@ not a failed stop. It is Windows-only and requires `-Confirm`. Without
 nothing. Manual steps 3 and 4 remain the proof when the script refuses.
 Agents do not point it at a live qualification.
 
+The owed native Windows stop, which Linux does not discharge, records four facts
+the offline witnesses cannot: taskkill /T /F exit code when one descendant fails
+(the reason is taskkill-exit-N, the stop stays exit 3, and the lock is kept); a
+commandLine record checked against Win32_Process.CommandLine from the same source
+a future producer must use; a reused or unknown observation after a kill, which
+is an immediate incomplete stop rather than the census; and a PowerShell 5.1 run.
+No current producer writes commandLine. A record without one keeps the pid and
+start-time check.
+
 ```powershell
 pwsh -NoProfile -File scripts/rc-qualification-status.ps1 `
     -CandidateId $candidateId -RunId $runId `

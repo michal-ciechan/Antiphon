@@ -35,7 +35,8 @@ public sealed class RunnerRepositoryMaintenanceOptions
 /// <summary>
 /// CARD-1817. One bounded <c>git gc --prune=2.weeks.ago</c> for each repository directly under
 /// the runner repository root. Skips a repository while the lease is held, a worktree add or land
-/// is in flight, or a task git call is in flight. A task git call that starts after that check,
+/// is in flight, or a git call on the dispatcher, retention, or park workspace is in flight.
+/// Git an agent runs itself inside a worktree is not counted. A git call that starts after that check,
 /// while gc is already running, is not blocked: the pass does not take the lease it skips for.
 /// Never follows a linked child and never enters <c>antiphon_pgdata</c>. Never uses
 /// <c>gc --auto</c> or <c>--prune=now</c>.
@@ -90,40 +91,52 @@ public sealed class RunnerRepositoryMaintenance
         var persist = false;
         foreach (var repo in repos)
         {
-            ct.ThrowIfCancellationRequested();
-            var gitDir = Path.Combine(repo, ".git");
-            var loose = CountLoose(gitDir);
-            var packs = CountPacks(gitDir);
-            if (BlockReason() is { } blocked)
+            try
             {
-                reports.Add(Row(repo, "skipped", blocked, loose, loose, packs, packs));
-                continue;
-            }
-
-            var last = ReadLastRun();
-            var due = IsDue(now, loose, _options.LooseObjectThreshold, last, TimeSpan.FromDays(_options.IntervalDays));
-            if (!force && !due)
-            {
-                if (last is null)
+                ct.ThrowIfCancellationRequested();
+                var gitDir = Path.Combine(repo, ".git");
+                var loose = CountLoose(gitDir);
+                var packs = CountPacks(gitDir);
+                if (BlockReason() is { } blocked)
                 {
-                    persist = true;
-                    reports.Add(Row(repo, "armed", "week_started", loose, loose, packs, packs));
+                    reports.Add(Row(repo, "skipped", blocked, loose, loose, packs, packs));
+                    continue;
                 }
-                else
-                    reports.Add(Row(repo, "skipped", "not_due", loose, loose, packs, packs));
-                continue;
-            }
 
-            if (BlockReason() is { } again)
+                var last = ReadLastRun();
+                var due = IsDue(now, loose, _options.LooseObjectThreshold, last, TimeSpan.FromDays(_options.IntervalDays));
+                if (!force && !due)
+                {
+                    if (last is null)
+                    {
+                        persist = true;
+                        reports.Add(Row(repo, "armed", "week_started", loose, loose, packs, packs));
+                    }
+                    else
+                        reports.Add(Row(repo, "skipped", "not_due", loose, loose, packs, packs));
+                    continue;
+                }
+
+                if (BlockReason() is { } again)
+                {
+                    reports.Add(Row(repo, "skipped", again, loose, loose, packs, packs));
+                    continue;
+                }
+
+                var report = await GcAsync(repo, gitDir, loose, packs, ct);
+                reports.Add(report);
+                if (report.Outcome == "ran")
+                    persist = true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                reports.Add(Row(repo, "skipped", again, loose, loose, packs, packs));
-                continue;
+                throw;
             }
-
-            var report = await GcAsync(repo, gitDir, loose, packs, ct);
-            reports.Add(report);
-            if (report.Outcome == "ran")
-                persist = true;
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Repository maintenance repo={Repository} outcome=failed reason=error", repo);
+                reports.Add(Row(repo, "failed", "error", 0, 0, 0, 0));
+            }
         }
 
         if (repos.Count == 0)
@@ -230,6 +243,7 @@ public sealed class RunnerRepositoryMaintenance
 
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromSeconds(_options.BudgetSeconds));
+        var startedUtc = DateTimeOffset.UtcNow;
         Process? started;
         try { started = _start(psi); }
         catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -252,6 +266,7 @@ public sealed class RunnerRepositoryMaintenance
                 try { started.Kill(entireProcessTree: true); } catch { /* already gone */ }
                 try { await started.WaitForExitAsync(CancellationToken.None); } catch { /* reaped */ }
                 try { await Task.WhenAll(stdout, stderr); } catch { /* cancelled with the budget */ }
+                ReleasePackedRefsLock(gitDir, startedUtc);
                 if (ct.IsCancellationRequested)
                     throw;
                 return Row(repo, "failed", "budget", loose, CountLoose(gitDir), packs, CountPacks(gitDir));
@@ -307,9 +322,35 @@ public sealed class RunnerRepositoryMaintenance
     private static bool IsRepository(string path)
     {
         var git = Path.Combine(path, ".git");
-        try { return Directory.Exists(git); }
+        try
+        {
+            // Directory.Exists follows a symlink. File.GetAttributes reports the link itself.
+            if (!Directory.Exists(git) || (File.GetAttributes(git) & FileAttributes.ReparsePoint) != 0)
+                return false;
+            return true;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { return false; }
+    }
+
+    /// <summary>
+    /// A budget or shutdown kill inside pack-refs can leave packed-refs.lock. Remove one this
+    /// pass created. A lock that already existed is left for the next git command.
+    /// </summary>
+    private void ReleasePackedRefsLock(string gitDir, DateTimeOffset startedUtc)
+    {
+        var path = Path.Combine(gitDir, "packed-refs.lock");
+        try
+        {
+            if (!File.Exists(path))
+                return;
+            if (File.GetLastWriteTimeUtc(path) < startedUtc.UtcDateTime.AddSeconds(-1))
+                return;
+            File.Delete(path);
+            _logger.LogInformation("Repository maintenance removed packed-refs.lock at {Path}", path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { _logger.LogWarning(ex, "Repository maintenance could not remove packed-refs.lock."); }
     }
 
     private static string? ResolveChild(string root, string child)

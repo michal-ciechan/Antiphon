@@ -218,8 +218,11 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         _processLiveness = processLiveness ?? new SystemProcessLivenessProbe();
         _workspacePark = workspaceParkService;
         if (_workspacePark is null && phoneHomeSettings?.Value is { Enabled: true } phoneHome)
-            _workspacePark = new(new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd));
-        _ = repositoryActivity;
+        {
+            var parkWorkspace = new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd);
+            parkWorkspace.Activity = repositoryActivity;
+            _workspacePark = new(parkWorkspace);
+        }
         if (_workspacePark is null) LocalWorkspaceVerifier = new();
         ParkWorkspaceForTest = _workspacePark?.Workspace;
         _backendDecision = new(() => BackendResolver(_settings.PtyBackend));

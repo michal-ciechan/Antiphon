@@ -310,6 +310,7 @@ function Invoke-QualificationRecordedStop {
     $driverStep = [pscustomobject]@{ phase = 'driver'; record = $driverRecord; status = [string]$driverObs.status }
     $kills = New-Object System.Collections.Generic.List[object]
     $failed = $false
+    try {
     foreach ($step in @($supervisorStep, $driverStep)) {
         if ($failed) { break }
         if (-not $step.record -or $step.status -cne 'alive') { continue }
@@ -421,4 +422,15 @@ function Invoke-QualificationRecordedStop {
     try { Write-QualificationSupervisorLine -Path $logPath -Text $line }
     catch { }
     return (New-QualificationStopResult $exit $outcome $line $kills.ToArray() $lockAction $retained $logPath)
+    } catch {
+        $phases = @()
+        foreach ($kill in $kills) { $phases += ($kill.phase + ':' + [string]$kill.pid) }
+        $detail = 'stop-fault'
+        if ($phases.Count -gt 0) { $detail = $detail + ' killed=' + ($phases -join ',') }
+        $faultLine = 'STOP reason="' + (Format-QualificationStopReason $Reason) + '" outcome=incomplete lock=not-attempted detail=stop-fault'
+        if ($phases.Count -gt 0) { $faultLine = $faultLine + ' killed=' + ($phases -join ',') }
+        try { Write-QualificationSupervisorLine -Path $logPath -Text $faultLine }
+        catch { }
+        return (New-QualificationStopResult 3 'incomplete' $detail $kills.ToArray() 'not-attempted' $null $logPath)
+    }
 }
