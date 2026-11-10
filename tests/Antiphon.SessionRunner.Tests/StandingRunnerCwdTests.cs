@@ -6,8 +6,9 @@ using TUnit.Core;
 namespace Antiphon.SessionRunner.Tests;
 
 /// <summary>
-/// CARD-1695 S1. Lexical admission of one segment under <c>&lt;AllowedCwd&gt;/agents</c>.
-/// The production root in these cases is <c>/work</c>. Nothing here touches a live runner.
+/// CARD-1695 S1 lexical admission, plus CARD-1825 witnesses for the standing-name allow-list,
+/// launch-time symlink refusal, and a filesystem-root <c>AllowedCwd</c>. The production root
+/// in the lexical cases is <c>/work</c>. Nothing here touches a live runner.
 /// </summary>
 [Category("Unit")]
 public sealed class StandingRunnerCwdTests
@@ -58,12 +59,158 @@ public sealed class StandingRunnerCwdTests
             Expect(cwd, Root, windows: true, admitted: false, standing: false);
         }
 
-        // The Windows flag adds the worktree segment rules: trailing dot, trailing space, colon.
+        // A trailing dot stays a Windows-only refusal. A space is outside the standing-name
+        // allow-list, so both flags refuse it (CARD-1825). A colon is outside that list too.
         Expect("/work/agents/slides-server2.", Root, windows: true, admitted: false, standing: false);
         Expect("/work/agents/slides-server2 ", Root, windows: true, admitted: false, standing: false);
         Expect("/work/agents/slides:server2", Root, windows: true, admitted: false, standing: false);
         Expect("/work/agents/slides-server2.", Root, windows: false, admitted: true, standing: true);
-        Expect("/work/agents/slides-server2 ", Root, windows: false, admitted: true, standing: true);
+        Expect("/work/agents/slides-server2 ", Root, windows: false, admitted: false, standing: false);
+    }
+
+    [Test]
+    public void Agent_name_allow_list_refuses_metacharacters_leading_marks_and_dot_runs()
+    {
+        foreach (var name in new[]
+                 {
+                     "$(id)",
+                     "`id`",
+                     "~",
+                     "~root",
+                     "-x",
+                     "-rf",
+                     ".hidden",
+                     "...",
+                     "....",
+                     "a b",
+                     "x*",
+                     "'x'",
+                     "slides-server2 ",
+                     "_leading",
+                 })
+        {
+            var cwd = "/work/agents/" + name;
+            Expect(cwd, Root, windows: false, admitted: false, standing: false);
+            Expect(cwd, Root, windows: true, admitted: false, standing: false);
+        }
+
+        foreach (var name in new[] { "a", "Z", "9agent", "slides_server2", "slides-server2", "slides.server2" })
+        {
+            var cwd = "/work/agents/" + name;
+            Expect(cwd, Root, windows: false, admitted: true, standing: true);
+            Expect(cwd, Root, windows: true, admitted: true, standing: true);
+        }
+    }
+
+    [Test]
+    public void Windows_device_names_are_refused_only_on_the_windows_flag()
+    {
+        foreach (var name in new[] { "CON", "con", "PRN", "AUX", "NUL", "COM1", "com9", "LPT1", "Lpt9", "NUL.txt", "CON.agent" })
+        {
+            var cwd = "/work/agents/" + name;
+            Expect(cwd, Root, windows: false, admitted: true, standing: true);
+            Expect(cwd, Root, windows: true, admitted: false, standing: false);
+        }
+
+        foreach (var name in new[] { "console", "COM10", "COM", "LPT", "PRINTER" })
+        {
+            var cwd = "/work/agents/" + name;
+            Expect(cwd, Root, windows: false, admitted: true, standing: true);
+            Expect(cwd, Root, windows: true, admitted: true, standing: true);
+        }
+    }
+
+    [Test]
+    public void Worktree_names_keep_the_wider_segment_rule()
+    {
+        foreach (var cwd in new[]
+                 {
+                     "/work/worktrees/$(id)",
+                     "/work/worktrees/~root",
+                     "/work/worktrees/-x",
+                     "/work/worktrees/CON",
+                 })
+        {
+            Expect(cwd, Root, windows: false, admitted: true, standing: false);
+            Expect(cwd, Root, windows: true, admitted: true, standing: false);
+        }
+
+        // A trailing dot is the existing Windows worktree refusal. The agents allow-list must not move it.
+        Expect("/work/worktrees/...", Root, windows: false, admitted: true, standing: false);
+        Expect("/work/worktrees/...", Root, windows: true, admitted: false, standing: false);
+    }
+
+    [Test]
+    public void Symlinked_or_non_directory_standing_checkout_is_refused_at_launch()
+    {
+        var root = Path.Combine("/tmp", "c1825-link-" + Guid.NewGuid().ToString("N"));
+        var agentsRoot = Path.Combine("/tmp", "c1825-agentslink-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(agentsRoot);
+        var linked = Path.Combine(root, "agents", "linked-agent");
+        var agentsLink = Path.Combine(agentsRoot, "agents");
+        try
+        {
+            var agents = Path.Combine(root, "agents");
+            var real = Path.Combine(agents, "real-agent");
+            var outside = Path.Combine(root, "outside");
+            Directory.CreateDirectory(real);
+            Directory.CreateDirectory(outside);
+            var dispatcher = NewDispatcher(root);
+
+            Should.NotThrow(() => dispatcher.RejectUnsupportedLaunch(Launch(real)));
+            var absentWorktree = Path.Combine(root, "worktrees", "task-absent");
+            Should.NotThrow(() => dispatcher.RejectUnsupportedLaunch(Launch(absentWorktree)));
+
+            Directory.CreateSymbolicLink(linked, outside);
+            var linkRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
+                dispatcher.RejectUnsupportedLaunch(Launch(linked)));
+            linkRefusal.Message.Contains("symlink", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(linkRefusal.Message);
+            linkRefusal.Message.Contains("cwd must be", StringComparison.Ordinal).ShouldBeFalse(linkRefusal.Message);
+
+            var fileLeaf = Path.Combine(agents, "file-agent");
+            File.WriteAllText(fileLeaf, "not-a-directory");
+            Should.Throw<PhoneHomeAdmissionException>(() => dispatcher.RejectUnsupportedLaunch(Launch(fileLeaf)));
+
+            var absent = Path.Combine(agents, "absent-agent");
+            Should.Throw<PhoneHomeAdmissionException>(() => dispatcher.RejectUnsupportedLaunch(Launch(absent)));
+
+            // The leaf inside the link target is a real directory. lstat of that leaf follows
+            // the agents directory, so only an lstat of the agents directory itself refuses this.
+            var target = Path.Combine(agentsRoot, "target-agents");
+            Directory.CreateDirectory(Path.Combine(target, "ok-agent"));
+            Directory.CreateSymbolicLink(agentsLink, target);
+            var agentsRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
+                NewDispatcher(agentsRoot).RejectUnsupportedLaunch(Launch(Path.Combine(agentsLink, "ok-agent"))));
+            agentsRefusal.Message.Contains("agents", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(agentsRefusal.Message);
+            agentsRefusal.Message.Contains("symlink", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(agentsRefusal.Message);
+            agentsRefusal.Message.Contains("cwd must be", StringComparison.Ordinal).ShouldBeFalse(agentsRefusal.Message);
+        }
+        finally
+        {
+            if (File.Exists(linked) || Directory.Exists(linked))
+                File.Delete(linked);
+            if (File.Exists(agentsLink) || Directory.Exists(agentsLink))
+                File.Delete(agentsLink);
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(agentsRoot, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Filesystem_root_allowed_cwd_is_refused_at_startup()
+    {
+        Should.NotThrow(() => EnabledSettings("/work").Validate());
+        Should.NotThrow(() => EnabledSettings("C:/Antiphon/runner/work").Validate());
+        var relative = Should.Throw<InvalidOperationException>(() => EnabledSettings("work").Validate());
+        relative.Message.Contains("POSIX absolute", StringComparison.Ordinal).ShouldBeTrue(relative.Message);
+
+        foreach (var root in new[] { "/", "", "   ", "//", "///", "C:/", @"C:\" })
+        {
+            var ex = Should.Throw<InvalidOperationException>(() => EnabledSettings(root).Validate(), root);
+            ex.Message.Contains("PhoneHome:AllowedCwd", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
+            ex.Message.Contains("filesystem root", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
+        }
     }
 
     [Test]
@@ -272,11 +419,18 @@ public sealed class StandingRunnerCwdTests
         RunnerWorkspaceAdmission.IsStandingCheckout(cwd, root, windows).ShouldBe(standing, label);
     }
 
-    private static PhoneHomeCommandDispatcher NewDispatcher() =>
+    private static PhoneHomeSettings EnabledSettings(string allowedCwd) => new()
+    {
+        Enabled = true,
+        ServerOrigin = "https://example.test",
+        AllowedCwd = allowedCwd,
+    };
+
+    private static PhoneHomeCommandDispatcher NewDispatcher(string? allowedCwd = null) =>
         new(new IdleRuntime(), new PhoneHomeSettings
         {
             Enabled = true,
-            AllowedCwd = Root,
+            AllowedCwd = allowedCwd ?? Root,
             CapacityStatePath = Path.Combine("/tmp", "c1695-capacity-" + Guid.NewGuid().ToString("N")),
         });
 
