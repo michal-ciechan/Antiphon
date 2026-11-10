@@ -175,6 +175,18 @@ public sealed class LandingSourceOptionalLockTests
     {
         public int StatusSpawns;
 
+        /// <summary>
+        /// LibGit2ConfigIsolation hides the machine gitconfig from libgit2. A child that still reads it
+        /// (Git for Windows sets core.autocrlf) disagrees and the status falls back to git.
+        /// </summary>
+        protected override void ConfigureProcess(ProcessStartInfo start)
+        {
+            start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            start.Environment["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+            start.Environment["XDG_CONFIG_HOME"] = LibGit2ConfigIsolation.EmptyDirectory;
+            start.Environment.Remove("GIT_CONFIG_SYSTEM");
+        }
+
         protected override Process? StartProcess(ProcessStartInfo start)
         {
             if (start.ArgumentList.Contains("status")) StatusSpawns++;
