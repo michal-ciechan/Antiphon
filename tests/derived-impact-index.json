@@ -47,9 +47,9 @@
   "cappedPaths": [
     {
       "path": ".claude/skills/antiphon-delegate/SKILL.md",
-      "classes": 178,
+      "classes": 179,
       "reason": "cap",
-      "owed": 153,
+      "owed": 154,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandActiveSourceClaimTests",
@@ -95,9 +95,9 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 216,
+      "classes": 217,
       "reason": "cap",
-      "owed": 191,
+      "owed": 192,
       "first": [
         "CommitOnSettleDocumentationTests",
         "DockerStackDocumentationTests",
@@ -111,14 +111,14 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 303,
+      "classes": 306,
       "reason": "allowlist"
     },
     {
       "path": "CLAUDE.md",
-      "classes": 189,
+      "classes": 190,
       "reason": "cap",
-      "owed": 164,
+      "owed": 165,
       "first": [
         "AgentTaskDispatchFailureTests",
         "AgentTaskInputSpillTests",
@@ -158,25 +158,25 @@
     },
     {
       "path": "antiphon.areas.json",
-      "classes": 347,
+      "classes": 349,
       "reason": "cap",
-      "owed": 322,
+      "owed": 324,
       "first": [
+        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDetailBlockedContextTests",
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskDispatchFailureTests",
         "AgentTaskEffectiveModelChipTests",
         "AgentTaskInputFallbackTests",
         "AgentTaskInputSpillTests",
-        "AgentTaskInternalDecisionLifecycleTests",
-        "AgentTaskLandActiveSourceClaimTests"
+        "AgentTaskInternalDecisionLifecycleTests"
       ]
     },
     {
       "path": "docs/agent-card-lifecycle.md",
-      "classes": 173,
+      "classes": 174,
       "reason": "cap",
-      "owed": 148,
+      "owed": 149,
       "first": [
         "AgentTaskMidTurnRefineTests",
         "AgentTaskPoolTests",
@@ -190,9 +190,9 @@
     },
     {
       "path": "docs/ops-http.md",
-      "classes": 176,
+      "classes": 177,
       "reason": "cap",
-      "owed": 151,
+      "owed": 152,
       "first": [
         "AgentTaskLandAdmissionControlledTests",
         "AgentTaskLandAdmissionTests",
@@ -206,9 +206,9 @@
     },
     {
       "path": "docs/orchestration-loop.md",
-      "classes": 186,
+      "classes": 187,
       "reason": "cap",
-      "owed": 161,
+      "owed": 162,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
@@ -243,18 +243,18 @@
     },
     {
       "path": "server/Application/Core/DelegationReportFormatter.cs",
-      "classes": 168,
+      "classes": 169,
       "reason": "cap",
-      "owed": 143,
+      "owed": 144,
       "first": [
+        "ClosingReportNudgeLifecycleTests",
         "RunnerTaskSettlementTests",
         "AgentTaskConcurrencyLimitTests",
         "CodexDelegateDispatchTests",
         "DelegationBriefCeilingPtyTests",
         "ModelLevelAliasDisplayTests",
         "TaskParkPublicationTests",
-        "AgentTaskReuseEnqueueTests",
-        "AgentTaskStandingAgentDispatchTests"
+        "AgentTaskReuseEnqueueTests"
       ]
     },
     {
@@ -275,9 +275,9 @@
     },
     {
       "path": "server/Application/Dtos/AgentLaunchSpec.cs",
-      "classes": 135,
+      "classes": 137,
       "reason": "cap",
-      "owed": 110,
+      "owed": 112,
       "first": [
         "OpenCodeAdapterTests",
         "PhoneHomeLaunchTransportTests",
@@ -449,18 +449,18 @@
     },
     {
       "path": "server/Application/Interfaces/IRepositoryMutationLease.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
         "LandVerificationWindowNativeTests",
         "RunnerSettlementSyncTests",
         "SettledWorktreeRemovalTests",
         "AgentTaskLandRemovalMatrixTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "LandRefRetentionTests",
         "LandVerificationLeaseWindowTests",
-        "RepairSourceDispatchTests",
-        "RepairSourceSettlementTests"
+        "RepairSourceDispatchTests"
       ]
     },
     {
@@ -496,9 +496,9 @@
     },
     {
       "path": "server/Application/Services/AgentRegistry.cs",
-      "classes": 92,
+      "classes": 93,
       "reason": "cap",
-      "owed": 67,
+      "owed": 68,
       "first": [
         "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskDispatchFailureTests",
@@ -528,9 +528,9 @@
     },
     {
       "path": "server/Application/Services/AgentSessionLaunchQueue.cs",
-      "classes": 103,
+      "classes": 104,
       "reason": "cap",
-      "owed": 78,
+      "owed": 79,
       "first": [
         "MutationDispatchTests",
         "PinnedCodexProfileDispatchLaunchTests",
@@ -544,9 +544,9 @@
     },
     {
       "path": "server/Application/Services/AgentSessionRuntime.ReceiptReadiness.cs",
-      "classes": 146,
+      "classes": 147,
       "reason": "cap",
-      "owed": 121,
+      "owed": 122,
       "first": [
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskPoolTests",
@@ -560,9 +560,9 @@
     },
     {
       "path": "server/Application/Services/AgentSessionRuntime.cs",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskPoolTests",
@@ -592,9 +592,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.BootStall.cs",
-      "classes": 124,
+      "classes": 125,
       "reason": "cap",
-      "owed": 99,
+      "owed": 100,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -608,9 +608,25 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.CeilingHold.cs",
-      "classes": 124,
+      "classes": 125,
       "reason": "cap",
-      "owed": 99,
+      "owed": 100,
+      "first": [
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests",
+        "CodexCliObservationTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
+      "classes": 125,
+      "reason": "cap",
+      "owed": 100,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -624,9 +640,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
-      "classes": 124,
+      "classes": 125,
       "reason": "cap",
-      "owed": 99,
+      "owed": 100,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -640,9 +656,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs",
-      "classes": 124,
+      "classes": 125,
       "reason": "cap",
-      "owed": 99,
+      "owed": 100,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -656,9 +672,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -736,9 +752,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskService.cs",
-      "classes": 204,
+      "classes": 205,
       "reason": "cap",
-      "owed": 179,
+      "owed": 180,
       "first": [
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
@@ -930,9 +946,9 @@
     },
     {
       "path": "server/Application/Services/DelegationWorkspaceResolver.cs",
-      "classes": 140,
+      "classes": 141,
       "reason": "cap",
-      "owed": 115,
+      "owed": 116,
       "first": [
         "AgentNamePinTests",
         "AgentTaskAgentKindTests",
@@ -1032,10 +1048,11 @@
     },
     {
       "path": "server/Application/Services/RemoteWorkspaceService.cs",
-      "classes": 32,
+      "classes": 33,
       "reason": "cap",
-      "owed": 7,
+      "owed": 8,
       "first": [
+        "PhoneHomeMirrorJoinTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "RepairSourceDispatchTests",
         "RoutingExhaustedPlacementTests",
@@ -1058,9 +1075,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.CheckPublication.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1074,9 +1091,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.CodexPointers.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1090,9 +1107,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.DialogAdmission.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1106,9 +1123,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.DispatchBrief.cs",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
         "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
@@ -1122,9 +1139,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Expectations.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1138,9 +1155,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.ResumeReceipt.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1154,9 +1171,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Supervision.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1170,9 +1187,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1202,9 +1219,9 @@
     },
     {
       "path": "server/Application/Settings/AgentRegistrySettings.cs",
-      "classes": 148,
+      "classes": 150,
       "reason": "cap",
-      "owed": 123,
+      "owed": 125,
       "first": [
         "AgentTaskDispatchBaseGuardTests",
         "AgentTuiProfileConcurrencyTests",
@@ -1234,9 +1251,9 @@
     },
     {
       "path": "server/Application/Settings/ChannelBridgeSettings.cs",
-      "classes": 97,
+      "classes": 98,
       "reason": "cap",
-      "owed": 72,
+      "owed": 73,
       "first": [
         "AgentTaskLandAdmissionTests",
         "AgentTaskMidTurnRefineTests",
@@ -1262,9 +1279,9 @@
     },
     {
       "path": "server/Application/Settings/DelegationSettings.cs",
-      "classes": 349,
+      "classes": 351,
       "reason": "cap",
-      "owed": 324,
+      "owed": 326,
       "first": [
         "InstructionBundleTests",
         "PostLandMutationWorktreeTests",
@@ -1278,9 +1295,9 @@
     },
     {
       "path": "server/Application/Settings/GitSettings.cs",
-      "classes": 127,
+      "classes": 128,
       "reason": "cap",
-      "owed": 102,
+      "owed": 103,
       "first": [
         "WorktreeRetirementRaceTests",
         "AdvisoryChangePolicyTests",
@@ -1310,9 +1327,9 @@
     },
     {
       "path": "server/Application/Settings/SupervisionSettings.cs",
-      "classes": 169,
+      "classes": 170,
       "reason": "cap",
-      "owed": 144,
+      "owed": 145,
       "first": [
         "CapacityRecoveryTaskTests",
         "ChannelBridgeTests",
@@ -1326,9 +1343,9 @@
     },
     {
       "path": "server/Domain/Entities/Agent.cs",
-      "classes": 194,
+      "classes": 195,
       "reason": "cap",
-      "owed": 169,
+      "owed": 170,
       "first": [
         "ChannelOutboundIsolatedTests",
         "CodexCliObservationTests",
@@ -1358,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 270,
+      "classes": 271,
       "reason": "cap",
-      "owed": 245,
+      "owed": 246,
       "first": [
         "SessionDeliveryProfileTests",
         "SessionGenerationExitTests",
@@ -1374,9 +1391,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 415,
+      "classes": 417,
       "reason": "cap",
-      "owed": 390,
+      "owed": 392,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -1604,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 593,
+      "classes": 594,
       "reason": "cap",
-      "owed": 568,
+      "owed": 569,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1620,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 593,
+      "classes": 594,
       "reason": "cap",
-      "owed": 568,
+      "owed": 569,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1753,9 +1770,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 100,
+      "classes": 101,
       "reason": "cap",
-      "owed": 75,
+      "owed": 76,
       "first": [
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
@@ -1769,9 +1786,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 71,
+      "classes": 72,
       "reason": "cap",
-      "owed": 46,
+      "owed": 47,
       "first": [
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeStrandedQueueTests",
@@ -1817,18 +1834,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 425,
+      "classes": 426,
       "reason": "cap",
-      "owed": 400,
+      "owed": 401,
       "first": [
+        "HerdrStatusPushTests",
         "PermissionWaitTests",
         "PhoneHomeConnectionTests",
         "AgentSessionLaunchFailureTests",
         "C1677TempSweepDispatchTests",
         "Card1619RunnerExitTests",
         "ProviderQuotaRefusalAcceptanceTests",
-        "RunnerCapacityCountTests",
-        "CodexProviderAuthRoutingTests"
+        "RunnerCapacityCountTests"
       ]
     },
     {
@@ -1898,11 +1915,11 @@
       "reason": "cap",
       "owed": 19,
       "first": [
+        "RunnerMultilinePromptDeliveryTests",
         "RunnerReadJsonTests",
         "TranscriptSinceReadTests",
         "UnixPtyArgvAdmissionTests",
         "RunnerWorkspaceServiceTests",
-        "StandingRunnerCwdTests",
         "CompletedCardWorkspaceRemovalTests",
         "LegacyWorkspaceRemovalGateTests",
         "C0824WorkspaceSlotOverflowTests"
@@ -1948,11 +1965,11 @@
       "first": [
         "ClaudeDialogInputGuardTests",
         "HerdrEventPumpTests",
+        "PhoneHomeBackpressureTests",
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerEventHubTests",
         "GrokRulesRunnerRefusalTests",
-        "PhoneHomeBackpressureTests",
         "RunnerPlatformLaunchTests"
       ]
     },
@@ -1998,9 +2015,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 124,
+      "classes": 126,
       "reason": "cap",
-      "owed": 99,
+      "owed": 101,
       "first": [
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -2078,9 +2095,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 54,
+      "classes": 55,
       "reason": "cap",
-      "owed": 29,
+      "owed": 30,
       "first": [
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
@@ -2094,10 +2111,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 31,
+      "classes": 32,
       "reason": "cap",
-      "owed": 6,
+      "owed": 7,
       "first": [
+        "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
         "RcFullWatchdogHarnessTests",
         "RcQualificationStatusTests",
@@ -2188,9 +2206,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 558,
+      "classes": 560,
       "reason": "cap",
-      "owed": 533,
+      "owed": 535,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2211,11 +2229,11 @@
         "GitIndexLockPathTests",
         "GitPushUrlCacheTests",
         "LandingGitBatchingTests",
+        "LandingSourceOptionalLockTests",
         "RepositoryLeaseWindowsBoundaryTests",
         "ReviewEvidenceRebindingTests",
         "ServerGitProcessTests",
-        "TestTimingChokePointTests",
-        "AdvisoryChangePolicyTests"
+        "TestTimingChokePointTests"
       ]
     },
     {
@@ -2252,9 +2270,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MockEventBus.cs",
-      "classes": 222,
+      "classes": 223,
       "reason": "cap",
-      "owed": 197,
+      "owed": 198,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandQueueAgingTests",
@@ -2284,18 +2302,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/RecordingSessionStopper.cs",
-      "classes": 136,
+      "classes": 137,
       "reason": "cap",
-      "owed": 111,
+      "owed": 112,
       "first": [
+        "ClaudeEffortByRoleDispatchTests",
         "ClosedCardSweepTests",
         "CodexDelegateDispatchTests",
         "ComplexityDispatcherTests",
         "DefaultRunnerPinTests",
         "LaunchEnvLayersIntegrationTests",
         "MutationAdmissionTests",
-        "PhoneHomeTaskCreateTests",
-        "PinnedAgentKindTests"
+        "PhoneHomeTaskCreateTests"
       ]
     },
     {
@@ -2316,9 +2334,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 506,
+      "classes": 507,
       "reason": "cap",
-      "owed": 481,
+      "owed": 482,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -2622,6 +2640,7 @@
         "AgentLaunchEnvTests",
         "AgentNamePinTests",
         "AgentReportStoreTests",
+        "AgentSessionLaunchFailureTests",
         "AgentStartRecoveryTests",
         "AgentSupervisionTests",
         "AgentSystemPromptLaunchTests",
@@ -2637,7 +2656,6 @@
         "AgentTaskCommitEndpointTests",
         "AgentTaskConcurrencyLimitTests",
         "AgentTaskDeadSessionReconciliationTests",
-        "AgentTaskDeliveryWatchdogTests",
         "AreaMapLoaderTests"
       ]
     },
@@ -4170,6 +4188,7 @@
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskInputSpillTests",
         "AgentTaskLandApprovalRequestTests",
+        "AgentTaskLandStageOutcomeTests",
         "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskServiceIntegrationTests",
@@ -4179,7 +4198,6 @@
         "BlockedTaskParkReplyAdmissionTests",
         "ChannelMachineTurnMatchTests",
         "CheckCompactionFactEquivalenceTests",
-        "ClosingReportNudgeLifecycleTests",
         "DelegateBindRefusalRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DelegationReportFormatterTests",
@@ -4276,6 +4294,7 @@
       "classes": [
         "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskLandDispatchYieldTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "DispatchHoldVisibilityTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "LeaseTurnScenarioTests",
@@ -6425,6 +6444,36 @@
       ]
     },
     {
+      "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
+      "classes": [
+        "AgentLaunchEnvTests",
+        "AgentTaskDeliveryWatchdogTests",
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskPoolTests",
+        "AgentTaskSettlementRaceTests",
+        "BootStallDetectionTests",
+        "CapacityAdmissionLifecycleTests",
+        "CapacityLockOrderTests",
+        "ClaudeEffortByRoleDispatchTests",
+        "CodexDelegateDispatchTests",
+        "DelegateBundleLaunchTests",
+        "DelegationDenyHookPolicyTests",
+        "DelegationScopeLeaseTests",
+        "DispatchBaseNotificationTests",
+        "DispatchConcurrencyDispatchTests",
+        "DispatcherSiblingInspectionSchedulingTests",
+        "DispatcherSweepLifetimeTests",
+        "GrokDelegateDispatchTests",
+        "GrokDelegateEndToEndTests",
+        "LaunchEnvLayersIntegrationTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "PoolClaudeEffortTests",
+        "PostLandMutationWorktreeTests",
+        "PtyDeliveryCeilingsTests",
+        "ReceiptFailureDeliveryTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
       "classes": [
         "AgentLaunchEnvTests",
@@ -8412,6 +8461,12 @@
       ]
     },
     {
+      "path": "server/Application/Services/DesktopLaunchMemoryAdmission.cs",
+      "classes": [
+        "DesktopLaunchMemoryAdmissionTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/DesktopLegacyReleasePolicyService.cs",
       "classes": [
         "C0824DesktopLegacyReleasePolicyTests",
@@ -8960,6 +9015,7 @@
       "path": "server/Application/Services/HostStatsCache.cs",
       "classes": [
         "C1677DiskAlarmTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "HostStatsCacheTests",
         "HostStatsEndpointTests",
         "HostStatsPollServiceTests"
@@ -9971,8 +10027,8 @@
         "CardWorktreeMirrorBindingTests",
         "DefaultRunnerPinTests",
         "DelegateBranchDeliveryTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "DispatcherRemotePrepStarvationTests",
-        "PhoneHomeMirrorJoinTests",
         "PhoneHomeRollingRunnerTests",
         "RemoteWorkspacePreparerTests",
         "RemoteWorkspaceReadinessTests",
@@ -14413,6 +14469,12 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Agents/SessionRunner/CodexStartupCaptureStore.cs",
+      "classes": [
+        "CodexAccountBootstrapFailureTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Agents/SessionRunner/CodexSubmitConfirmation.cs",
       "classes": [
         "RunnerCodexAdapterSubmitConfirmTests"
@@ -14574,6 +14636,7 @@
       "classes": [
         "AgentProtocolAdapterFactoryTests",
         "Card1761RunnerReadPollTests",
+        "CodexAccountBootstrapFailureTests",
         "CodexAdapterIntegrationTests",
         "CodexCommandLengthSessionTests",
         "CodexResponseAnalyzerTests",
@@ -15813,7 +15876,8 @@
         "ClaudeDialogDeliveryTests",
         "ClaudeDialogObservationTests",
         "ClaudeDialogWatchdogCanaryTests",
-        "QualificationGroupTwoRegressionTests"
+        "QualificationGroupTwoRegressionTests",
+        "RunnerStartupStaleObservationTests"
       ]
     },
     {
@@ -15850,6 +15914,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.Agents.Pty/CodexAccountBootstrap.cs",
+      "classes": [
+        "CodexAccountBootstrapTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.Agents.Pty/CodexDetectors.cs",
       "classes": [
         "CodexBootWedgeProbeTests",
@@ -15869,12 +15939,15 @@
     {
       "path": "src/Antiphon.Agents.Pty/CodexPointerComposerEvidence.cs",
       "classes": [
+        "CodexAccountBootstrapTests",
         "CodexBootWedgeProbeTests"
       ]
     },
     {
       "path": "src/Antiphon.Agents.Pty/CodexStartupReadiness.cs",
       "classes": [
+        "CodexAccountBootstrapFailureTests",
+        "CodexAccountBootstrapTests",
         "CodexBootWedgeProbeTests",
         "CodexReadyTrackerTests",
         "CodexReadyWaitTests",
@@ -16160,6 +16233,7 @@
         "FakeClaudeContractTests",
         "GrokStartupReadinessTests",
         "GrokStartupSizeTests",
+        "RunnerStartupStaleObservationTests",
         "SessionMessageQueueCodexPointerTests",
         "TerminalScreenTests"
       ]
@@ -17594,6 +17668,7 @@
     {
       "path": "src/Antiphon.SessionRunner.Contracts/HerdrPaneDisposalContracts.cs",
       "classes": [
+        "HerdrDisposalRedactorTests",
         "HerdrPaneDisposalApplicationTests",
         "HerdrPaneDisposalEndpointTests",
         "HerdrPaneDisposalGuardedLiveTests",
@@ -17763,6 +17838,7 @@
       "classes": [
         "C1677DiskAlarmTests",
         "DesktopCapabilitiesSnapshotTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "MultiRunnerDirectoryTests",
         "RoutingExhaustedPlacementTests",
         "RunnerCatalogueTests",
@@ -17843,7 +17919,7 @@
         "HerdrNamedTabPlacementTests",
         "HerdrPlacementCheckRouteTests",
         "HerdrRunnerSessionTests",
-        "HerdrStatusPushTests",
+        "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
         "PhoneHomeQueuedTurnTests",
@@ -18212,6 +18288,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/HerdrDisposalRedactor.cs",
+      "classes": [
+        "HerdrDisposalRedactorTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/HerdrEventPumpService.cs",
       "classes": [
         "HerdrAdoptionSweepTests",
@@ -18545,8 +18627,8 @@
         "RunnerAbsenceEvidencePhoneHomeTests",
         "RunnerCapacityCountTests",
         "RunnerCodexCliEvidenceTests",
-        "RunnerMultilinePromptDeliveryTests",
-        "RunnerWorkspaceBindingTests"
+        "RunnerWorkspaceBindingTests",
+        "StandingRunnerCwdTests"
       ]
     },
     {
@@ -19491,6 +19573,7 @@
       "path": "tests/Antiphon.Agents.Pty.Tests/CodexStartupFixtures.cs",
       "classes": [
         "ClaudeDialogObservationTests",
+        "CodexAccountBootstrapTests",
         "CodexAdapterLocalShellTests",
         "CodexReadyTrackerTests",
         "CodexReadyWaitTests",
@@ -19946,6 +20029,7 @@
         "DispatchBaseWarningDeliveryE2ETests",
         "LandDeliveryFixtureProbeTests",
         "LandDeliveryWaitRoutingTests",
+        "NativeWindowsFixtureGateTests",
         "WorktreeRetirementDeliveryE2ETests"
       ]
     },
@@ -19986,6 +20070,12 @@
       "path": "tests/Antiphon.E2E/Fixtures/SharedApp.cs",
       "classes": [
         "ContractSnapshotTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.E2E/OutputDistillationApplyCanaryTests.cs",
+      "classes": [
+        "NativeWindowsFixtureGateTests"
       ]
     },
     {
@@ -20052,6 +20142,12 @@
         "ParentDeathSpikeTests",
         "PipeTestClientDiagnosticsTests",
         "PtyHostLauncherTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/AgentPinWorkspaceStoreTests.cs",
+      "classes": [
+        "WindowsUnitPlatformAdmissionTests"
       ]
     },
     {
@@ -20504,6 +20600,13 @@
       "classes": [
         "RunnerCustodyCrashTests",
         "RunnerSessionGenerationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/MaintenanceFixture.cs",
+      "classes": [
+        "C1817RunnerRepositoryMaintenanceTests",
+        "C1818GcOwnerRobustnessTests"
       ]
     },
     {
@@ -21012,6 +21115,7 @@
     {
       "path": "tests/Antiphon.Tests/Agents/ScriptedCodexRunnerClient.cs",
       "classes": [
+        "CodexAccountBootstrapFailureTests",
         "CodexResponseAnalyzerTests",
         "CodexStartupDeliveryTests",
         "OpenCodeAdapterTests",
@@ -21596,6 +21700,12 @@
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskWorktreeBaseResolverTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/ApiErrorRecoveryServiceTests.cs",
+      "classes": [
+        "Grok47RoutingNameCensusTests"
       ]
     },
     {
@@ -22337,6 +22447,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/GrokLaunchArgsTests.cs",
+      "classes": [
+        "Grok47RoutingNameCensusTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/GrokRulesCompactionRecoveryTests.cs",
       "classes": [
         "GrokRulesTransactionTests"
@@ -22544,6 +22660,12 @@
       "path": "tests/Antiphon.Tests/Application/MatrixDefaultComplexitySettingsTests.cs",
       "classes": [
         "MatrixDefaultComplexityRoutingTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/ModelAvailabilityCreateTests.cs",
+      "classes": [
+        "Grok47RoutingNameCensusTests"
       ]
     },
     {
@@ -23384,6 +23506,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Infrastructure/WorktreeLockDiagnosticsWindowsTests.cs",
+      "classes": [
+        "NativeWindowsFixtureGateTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Infrastructure/WorktreeManagerTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -23650,10 +23778,10 @@
         "LiveLaneRunnerTests",
         "NightlyCoreTests",
         "NightlyProbeSupervisorTests",
-        "ProcessSpawnLimitTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
+        "RcIncrementalLedgerTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionHopSeedTests",
@@ -24325,6 +24453,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/DispatchConcurrencyTestHost.cs",
       "classes": [
+        "DesktopLaunchMemoryAdmissionTests",
         "DispatchConcurrencyAdmissionTests",
         "DispatchConcurrencyDispatchTests",
         "DispatchConcurrencyMigrationTests",
@@ -24802,6 +24931,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LibGit2ConfigIsolation.cs",
       "classes": [
+        "LandingSourceOptionalLockTests",
         "LibGit2VsGitWorkingTreeVerdictTests"
       ]
     },
@@ -25178,9 +25308,9 @@
         "ChannelOutboundDeadlineTests",
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundDispatchIntegrationTests",
-        "ClaudeEffortByRoleDispatchTests",
         "DefaultRunnerRerouteTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "DesktopLaunchMemoryAdmissionTests",
         "GhostSeatReleaseTests",
         "GrokDelegateDispatchTests",
         "HeldModelEscalationTests",
@@ -26043,6 +26173,14 @@
       ]
     },
     {
+      "path": "tests/Shared/NativeWindowsGate.cs",
+      "classes": [
+        "NativeWindowsFixtureGateTests",
+        "OutputDistillationApplyCanaryTests",
+        "WorktreeLockDiagnosticsWindowsTests"
+      ]
+    },
+    {
       "path": "tests/Shared/PlatformTaxonomy.cs",
       "classes": [
         "DerivedImpactIndexTests",
@@ -26065,6 +26203,7 @@
         "AgentTaskLandBareRepositoryCleanupTests",
         "CompletedCardWorkspaceRemovalTests",
         "LandGraphAuditCleanupTests",
+        "PostLandEarlyWarningTests",
         "QualificationCheckoutSourceTests",
         "ReportBudgetWorkspacePortabilityTests",
         "TestTimingChokePointTests",
