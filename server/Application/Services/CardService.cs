@@ -1159,6 +1159,8 @@ public sealed class CardService : IScheduledCardActions
         }
         var acceptance = await completion.ValidateAsync(card, proposal, ct);
         var mode = await completion.ModeAsync(ct);
+        if (mode == PublishedCloseMode.Shadow)
+            await completion.RecordShadowProposalAsync(acceptance, actor, ct);
         if (mode != PublishedCloseMode.Enabled)
         {
             await transaction.CommitAsync(ct);
@@ -1175,6 +1177,8 @@ public sealed class CardService : IScheduledCardActions
         // Track explicitly before copying that key into the durable close receipt.
         _db.CardRevisions.Add(move);
         await completion.Boundary.ReachedAsync("completion-after-move", card.Id, acceptance.Id, ct);
+        // Dequeue clears AssignedAgentId. Capture it first, matching MoveAsync.
+        var checkpointAgentId = card.AssignedAgentId;
         var queueRemoval = await CardLifecycleTransitions.DequeueFinishedCardAsync(_db, card, UtcNow(), ct);
         card.AutoDispatchHeldAt = null;
         await completion.Boundary.ReachedAsync("completion-after-dequeue", card.Id, acceptance.Id, ct);
@@ -1183,6 +1187,7 @@ public sealed class CardService : IScheduledCardActions
             var run = await _db.CardWorkflowRuns.SingleAsync(r => r.Id == runId, ct);
             await _db.Entry(run).ReloadAsync(ct);
             run.Status = CardWorkflowRunStatus.Completed; run.CompletedAt = UtcNow(); run.UpdatedAt = UtcNow();
+            card.ActiveWorkflowRunId = null;
         }
         var receipt = new CardCompletionReceipt
         {
@@ -1199,6 +1204,10 @@ public sealed class CardService : IScheduledCardActions
         await completion.Boundary.ReachedAsync("completion-before-commit", card.Id, receipt.Id, ct);
         await transaction.CommitAsync(ct);
         await completion.Boundary.ReachedAsync("completion-committed", card.Id, receipt.Id, ct);
+        if (checkpointAgentId is Guid agentId && _reviewCheckpoints is not null)
+            await _reviewCheckpoints.CaptureAsync(agentId, $"Card {card.Identifier} completed", ct);
+        if (card.ExternalIssueRef is not null && _trackerStatePush is not null)
+            await _trackerStatePush.PushForCardAsync(card.Id, ct);
         if (queueRemoval is not null) await CardLifecycleTransitions.PublishQueueRemovalAsync(_eventBus, queueRemoval, ct);
         await _eventBus.PublishToAllAsync("CardChanged", new { boardId = card.BoardId, cardId = card.Id }, ct);
         return new("completed", receipt);

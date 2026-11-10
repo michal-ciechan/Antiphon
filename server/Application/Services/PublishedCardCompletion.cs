@@ -39,7 +39,7 @@ public sealed class PublishedCardCompletion(AppDbContext db, IOptions<CardWorkTr
         var mode = settings.Value.PublishedClose;
         if (!Enum.IsDefined(mode)) throw Refuse("mode_invalid");
         if (mode != PublishedCloseMode.Enabled) return mode;
-        var observations = settings.Value.PublishedCloseShadowObservations.ToArray();
+        var observations = await QualifiedObservationsAsync(ct);
         if (observations.Length < 30 || observations.Any(o => o.ProposedClose != o.ExpectedClose
                 || string.IsNullOrWhiteSpace(o.Adjudicator) || o.AdjudicatedAt == default
                 || o.AdjudicatedAt > clock.GetUtcNow().UtcDateTime)
@@ -56,8 +56,54 @@ public sealed class PublishedCardCompletion(AppDbContext db, IOptions<CardWorkTr
                 || acceptance.DecisionRevision != settings.Value.PublishedCloseDecisionRevision
                 || acceptance.RecordedAt > observation.AdjudicatedAt || !new AgentTaskLandingState().HasPublication(operation))
                 throw Refuse("shadow_evidence_missing");
+            if (string.Equals(observation.Adjudicator, acceptance.Actor, StringComparison.Ordinal))
+                throw Refuse("shadow_adjudicator_dependent");
         }
         return mode;
+    }
+
+    /// <summary>
+    /// Settings observations plus adjudicated durable rows, one per operation.
+    /// An unadjudicated proposal does not count. A pair for the same operation must agree.
+    /// </summary>
+    private async Task<PublishedCloseShadowObservation[]> QualifiedObservationsAsync(CancellationToken ct)
+    {
+        var configured = settings.Value.PublishedCloseShadowObservations.ToArray();
+        var stored = await db.CardCompletionShadowEvents.AsNoTracking()
+            .Where(e => e.ExpectedClose != null && e.AdjudicatedAt != null && e.Adjudicator != null)
+            .ToListAsync(ct);
+        var merged = new List<PublishedCloseShadowObservation>(configured);
+        foreach (var row in stored)
+        {
+            if (string.IsNullOrWhiteSpace(row.Adjudicator) || row.ExpectedClose is not bool expected
+                || row.AdjudicatedAt is not DateTime adjudicated)
+                continue;
+            var durable = new PublishedCloseShadowObservation(row.AcceptanceId, row.OperationId, row.ProposedClose,
+                expected, row.Adjudicator, adjudicated);
+            var sameOperation = configured.Where(c => c.OperationId == row.OperationId).ToArray();
+            if (sameOperation.Length > 0)
+            {
+                if (sameOperation.Any(c => c.AcceptanceId != durable.AcceptanceId || c.ProposedClose != durable.ProposedClose
+                        || c.ExpectedClose != durable.ExpectedClose
+                        || !string.Equals(c.Adjudicator, durable.Adjudicator, StringComparison.Ordinal)))
+                    throw Refuse("shadow_unqualified");
+                continue;
+            }
+            merged.Add(durable);
+        }
+        return merged.ToArray();
+    }
+
+    internal async Task RecordShadowProposalAsync(CardCompletionAcceptance acceptance, string actor, CancellationToken ct)
+    {
+        if (await db.CardCompletionShadowEvents.AnyAsync(e => e.AcceptanceId == acceptance.Id, ct)) return;
+        db.CardCompletionShadowEvents.Add(new CardCompletionShadowEvent
+        {
+            Id = Guid.NewGuid(), CardId = acceptance.CardId, AcceptanceId = acceptance.Id,
+            OperationId = acceptance.OperationId!.Value, ProposedClose = true, Actor = actor,
+            RecordedAt = clock.GetUtcNow().UtcDateTime,
+        });
+        await db.SaveChangesAsync(ct);
     }
 
     internal async Task<CardCompletionAcceptance> ValidateAsync(Card card, PublishedCardCompletionProposal proposal, CancellationToken ct)
@@ -95,6 +141,20 @@ public sealed class PublishedCardCompletion(AppDbContext db, IOptions<CardWorkTr
             && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
                 || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
             throw Refuse("open_task");
+        var siblingIds = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.CardId == card.Id && t.Id != acceptance.ImplementationTaskId
+                && t.Role == AgentTaskRole.Code && t.Status == AgentTaskStatus.Succeeded)
+            .Select(t => t.Id)
+            .ToListAsync(ct);
+        if (siblingIds.Count > 0)
+        {
+            var landings = await db.AgentTaskLandings.AsNoTracking()
+                .Where(l => siblingIds.Contains(l.TaskId))
+                .ToListAsync(ct);
+            var publication = new AgentTaskLandingState();
+            if (siblingIds.Any(id => !landings.Any(l => l.TaskId == id && publication.HasPublication(l))))
+                throw Refuse("unlanded_sibling");
+        }
         CompletionItem[] items, deployments;
         EmptyCompletionDecision? empty;
         CompletionCompanion? companion;

@@ -7,8 +7,8 @@ namespace Antiphon.Server.Application.Settings;
 /// </summary>
 public sealed class CardWorkTransitionSettings
 {
-    // CARD-1281: separate from the established dispatch/settle sweep. S6 wires the explicit API;
-    // an operator supplies the adjudicated Q-4 cohort before enabling publication closes.
+    // CARD-1281: separate from the established dispatch/settle sweep. S6 wires the explicit API.
+    // Enablement reads configured observations plus adjudicated CardCompletionShadowEvent rows.
     public PublishedCloseMode PublishedClose { get; set; } = PublishedCloseMode.Disabled;
     public string PublishedClosePolicyRevision { get; set; } = "";
     public string PublishedCloseDecisionRevision { get; set; } = "";

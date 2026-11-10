@@ -175,20 +175,30 @@ decision and any same-board pending companion are recorded before close. A fresh
 revision must bind O/L after pre-publication readiness; readiness is metadata while the card
 stays Review.
 
-`CardTransitions:PublishedClose` accepts Disabled, Shadow or Enabled. Enablement additionally
-requires matching `PublishedClosePolicyRevision` / `PublishedCloseDecisionRevision` and at
-least 30 distinct publication events in `PublishedCloseShadowObservations`, with retained
-acceptance/publication bindings and independent actor/time adjudications. Any disagreement
-refuses enablement and subsequent closes. Test fixtures do not qualify this live Q-4 cohort.
+`CardTransitions:PublishedClose` accepts Disabled, Shadow or Enabled. Shadow writes one
+`CardCompletionShadowEvent` for the acceptance (proposed close, no expected close and no
+adjudicator) and leaves the card in Review. Enablement requires matching
+`PublishedClosePolicyRevision` / `PublishedCloseDecisionRevision` and at least 30 distinct
+publication events. The cohort is `PublishedCloseShadowObservations` plus adjudicated durable
+rows, one per operation. When both exist for an operation they must agree on acceptance,
+proposed close, expected close, and adjudicator. Each event still needs its retained
+acceptance and publication. The adjudicator must differ from that acceptance's actor by an
+ordinal comparison. Any disagreement refuses enablement. Test fixtures do not qualify this
+live Q-4 cohort.
 The explicit acceptance PUT/GET and complete-published POST authenticate operators or scoped
 orchestrators; supplied actor fields confer no authority. They add no new board column or
 automatic dispatcher. S6 owns registration and HTTP integration qualification.
 
 The completion transaction locks card, workflow and sorted Review/owner task rows in that
 order, rechecks the original token and acceptance/workflow/policy revisions, and commits the
-Done move, dequeue and unique close receipt together. A newer human move or hold wins through
-the token fence. CardChanged follows commit; after a lost response or event failure, authorized
-GET returns the durable receipt. Cleanup debt and pending PCs remain recorded independently.
+Done move, dequeue, completed workflow run, cleared active-run pointer, and unique close
+receipt together. A succeeded Code task on the same card, other than the acceptance owner,
+blocks the close until that sibling has its own published landing. A succeeded task in another
+role does not. After commit, the close captures the assigned agent's review checkpoint and
+pushes a linked external tracker the same way a manual move to Done does. A newer human move
+or hold wins through the token fence. CardChanged follows those writes; after a lost response
+or event failure, authorized GET returns the durable receipt. Cleanup debt and pending PCs
+remain recorded independently.
 
 ## Diff Review Comments
 
