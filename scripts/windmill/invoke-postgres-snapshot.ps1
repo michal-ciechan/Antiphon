@@ -9,18 +9,19 @@ $ErrorActionPreference = 'Stop'
 
 function Resolve-PlainSnapshotScript {
     # The banner concatenates the date at runtime, so the source does not
-    # contain the literal operator-decision=2026-11-10. These two literals do.
+    # contain the literal operator-decision=2026-11-10. These literals do.
     $switch = '[switch]$Plain'
     $decision = 'SnapshotPlainDecision'
+    $onedrive = '[switch]$OneDriveCopy'
     $candidates = @(
         'C:\src\Antiphon\scripts\postgres-snapshot.ps1',
         (Join-Path $PSScriptRoot 'postgres-snapshot.ps1'),
-        'C:\Antiphon\worktrees\card-task-2524f46e\scripts\postgres-snapshot.ps1'
+        'C:\Antiphon\worktrees\card-task-300d724e\scripts\postgres-snapshot.ps1'
     )
     foreach ($path in $candidates) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $text = [System.IO.File]::ReadAllText($path)
-        if ($text.Contains($switch) -and $text.Contains($decision) -and $text.Contains('2026-11-10')) { return $path }
+        if ($text.Contains($switch) -and $text.Contains($decision) -and $text.Contains('2026-11-10') -and $text.Contains($onedrive)) { return $path }
     }
     return ''
 }
@@ -48,7 +49,7 @@ function Invoke-PlainSnapshotChild {
         # parent fails CARD-1413. This profile directory's parents pass.
         $staging = 'C:\Users\lndco\antiphon-snapshot-staging'
         $proc = Start-Process -FilePath $exe -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute',
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute', '-OneDriveCopy',
             '-StagingPath', $staging
         ) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         $stdout = ''
@@ -80,9 +81,11 @@ if ([string]::IsNullOrWhiteSpace($snapshot)) {
 $detail = 'exit ' + $code
 $icon = 'FAIL'
 $statusName = 'fail'
+$record = $null
 if ($code -eq 0) {
     $statusPath = 'C:\Users\lndco\antiphon-backups\snapshot-status.json'
     $bytes = -1L
+    $obj = $null
     if (Test-Path -LiteralPath $statusPath) {
         try {
             $obj = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -90,12 +93,17 @@ if ($code -eq 0) {
         } catch { $bytes = -1L }
     }
     if ($bytes -ge 0) {
-        $detail = Format-SnapshotSize $bytes
-        $icon = 'OK'
-        $statusName = 'ok'
+        $oneDrive = ''
+        if ($null -ne $obj) {
+            $names = @($obj.PSObject.Properties.Name)
+            if ($names -contains 'oneDrive') { $oneDrive = [string]$obj.oneDrive }
+        }
+        $record = New-PlainBackupCloudRecord -Bytes $bytes -OneDrive $oneDrive
     }
 }
-$record = New-JobStatusRecord -Job 'db-backup' -Icon $icon -Status $statusName -Detail $detail
+if ($null -eq $record) {
+    $record = New-JobStatusRecord -Job 'db-backup' -Icon $icon -Status $statusName -Detail $detail
+}
 if ($null -eq $record) { Write-Output 'JOB STATUS bad-record'; exit 1 }
 [void](Write-JobStatusRecord -Record $record -Path $recordPath)
 $line = Format-JobStatusLine $record

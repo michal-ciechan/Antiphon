@@ -79,9 +79,22 @@ function Write-JobStatusRecord {
 function Format-SnapshotSize {
     param([int64]$Bytes)
     $culture = [System.Globalization.CultureInfo]::InvariantCulture
-    if ($Bytes -ge 1GB) { return [string]::Format($culture, '{0:0.0} GB', ($Bytes / 1GB)) }
+    # This database dumps at about half a GiB. Show tenths of a GB from 100 MiB up.
+    if ($Bytes -ge 100MB) { return [string]::Format($culture, '{0:0.0} GB', ($Bytes / 1GB)) }
     if ($Bytes -ge 1MB) { return [string]::Format($culture, '{0:0.0} MB', ($Bytes / 1MB)) }
     return [string]::Format($culture, '{0} B', $Bytes)
+}
+
+function New-PlainBackupCloudRecord {
+    param([int64]$Bytes, [string]$OneDrive = '')
+    $size = Format-SnapshotSize $Bytes
+    if ($OneDrive -eq 'ok') {
+        return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail ($size + ' +cloud')
+    }
+    if ($OneDrive -eq 'missing' -or $OneDrive -eq 'failed') {
+        return New-JobStatusRecord -Job 'db-backup' -Icon 'WARN' -Status 'warn' -Detail ($size + ' no cloud copy')
+    }
+    return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail $size
 }
 
 function ConvertFrom-SnapshotUtcStamp {

@@ -1,7 +1,7 @@
 {
   "path": "u/lndcobra/antiphon_postgres_snapshot",
   "summary": "Daily plain compressed Postgres snapshot. Desktop tag. 07:50 Europe/London.",
-  "description": "SSH-bridge wrapper. Runs postgres-snapshot.ps1 -Plain -Execute into C:\\Users\\lndco\\antiphon-backups and posts one short status line. Age encryption stays the default of the script; this job names -Plain. Operator decision 2026-11-10. The schedule is enabled because the operator asked for the daily job.",
+  "description": "SSH-bridge wrapper. Runs postgres-snapshot.ps1 -Plain -Execute -OneDriveCopy into C:\\Users\\lndco\\antiphon-backups and copies the verified plain dump into OneDrive\\Backups\\antiphon-postgres. The dump is unencrypted and syncs to the cloud because the operator asked for that folder on 2026-11-10. Age encryption stays the default of the script; this job names -Plain. The schedule is enabled because the operator asked for the daily job.",
   "language": "bash",
   "tag": "desktop",
   "schema": {

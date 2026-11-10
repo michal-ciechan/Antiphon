@@ -862,6 +862,10 @@ function Test-StagingHygiene {
         Set-Content -LiteralPath (Join-Path $prior 'antiphon-20261021T010101Z.dump') -Value 'owned' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'notes.txt') -Value 'keep' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $prior 'dev-backup-20261020.dump') -Value 'keep' -Encoding ASCII
+        if (-not (Set-SnapshotPlainDirectoryAcl $prior)) {
+            Write-Fail 'owned run directory' 'acl'
+            return
+        }
         (Get-Item -LiteralPath $prior -Force).LastWriteTimeUtc = [datetime]::UtcNow.AddHours(-8)
         $ok = Initialize-SnapshotStaging $dir
         Assert-True ($ok -eq $true) 'staging mode applied' "ok=$ok"
@@ -1238,11 +1242,19 @@ function Test-StagingSkipsLiveRun {
         New-Item -ItemType Directory -Path $stale | Out-Null
         if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $stale '700' }
         Set-Content -LiteralPath (Join-Path $stale $dumpName) -Value 'stale' -Encoding ASCII
+        if (-not (Set-SnapshotPlainDirectoryAcl $stale)) {
+            Write-Fail 'stale run directory' 'acl'
+            return
+        }
         (Get-Item -LiteralPath $stale -Force).LastWriteTimeUtc = $old
         $live = Join-Path $dir ('run-' + ('bb' * 16))
         New-Item -ItemType Directory -Path $live | Out-Null
         if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $live '700' }
         Set-Content -LiteralPath (Join-Path $live $dumpName) -Value 'live' -Encoding ASCII
+        if (-not (Set-SnapshotPlainDirectoryAcl $live)) {
+            Write-Fail 'locked run directory' 'acl'
+            return
+        }
         $lock = [System.IO.File]::Open((Join-Path $live 'run.lock'), [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         (Get-Item -LiteralPath $live -Force).LastWriteTimeUtc = $old
         $fresh = Join-Path $dir ('run-' + ('cc' * 16))
@@ -1254,6 +1266,10 @@ function Test-StagingSkipsLiveRun {
         if ($env:OS -ne 'Windows_NT') { Set-SnapshotHarnessMode $mixed '700' }
         Set-Content -LiteralPath (Join-Path $mixed $dumpName) -Value 'mixed' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $mixed 'notes.txt') -Value 'keep' -Encoding ASCII
+        if (-not (Set-SnapshotPlainDirectoryAcl $mixed)) {
+            Write-Fail 'mixed run directory' 'acl'
+            return
+        }
         (Get-Item -LiteralPath $mixed -Force).LastWriteTimeUtc = $old
         $ok = Initialize-SnapshotStaging $dir
         Assert-True ($ok -eq $true) 'live staging opens' "ok=$ok"
@@ -1567,11 +1583,13 @@ function Test-PlainInsideOneDrive {
     $fx = New-Fixture
     try {
         $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
-            '-WhatIf', '-Plain', '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+            '-WhatIf', '-Plain', '-OneDriveCopy', '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
         )
         Assert-True ($plan.Exit -ne 0) 'PlainInsideOneDrive exits non-zero' "exit=$($plan.Exit)"
         Assert-True ($plan.Out -match 'reason=destination-inside-onedrive') 'PlainInsideOneDrive names the reason' $plan.Out
         Assert-True ($plan.Out -match 'outside-onedrive=no') 'PlainInsideOneDrive says the destination is inside' $plan.Out
+        Assert-True ($plan.Out -notmatch 'step onedrive:') 'PlainInsideOneDrive does not start the OneDrive copy' $plan.Out
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $fx.Sync 'Backups'))) 'PlainInsideOneDrive writes nothing in OneDrive' $fx.Sync
         Assert-NoSecret $plan $fx 'PlainInsideOneDrive'
         Assert-NoDocker $plan 'PlainInsideOneDrive'
         Assert-DestUntouched $fx 'PlainInsideOneDrive'
