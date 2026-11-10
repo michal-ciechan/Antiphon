@@ -798,6 +798,10 @@ public sealed class PhoneHomeCommandDispatcher
                     PhoneHomeProblemTypes.Capacity,
                     $"Phone-home capacity is {_capacity.Capacity} session(s).",
                     409);
+            // CARD-1834. RejectUnsupportedLaunch lstats the standing checkout before the sign-in
+            // probes. Re-check here, still before the generation is consumed and before the
+            // process starts, so a symlink that replaced the leaf in between is refused.
+            RejectLinkedStandingCheckout(launch.Cwd);
             // Durable before the process exists: a crash between the two can only refuse a re-send.
             if (launch.AcceptedStartedAt is { } accepting)
                 _launchGenerations.Record(launch.SessionId, accepting);

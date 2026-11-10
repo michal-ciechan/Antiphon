@@ -28,9 +28,10 @@ public sealed class StandingRunnerCwdTests
         Expect("/WORK/agents/slides-server2", Root, windows: true, admitted: true, standing: true);
         Expect("/work/Agents/slides-server2", Root, windows: false, admitted: false, standing: false);
         Expect("/work/Agents/slides-server2", Root, windows: true, admitted: true, standing: true);
-        // The leaf is an opaque segment. Case there is not a separator, so both flags admit it.
+        // Linux keeps a mixed-case leaf: case is not a separator there. Windows folds it,
+        // so only the lowercase spelling is admitted (CARD-1834).
         Expect("/work/agents/Slides-Server2", Root, windows: false, admitted: true, standing: true);
-        Expect("/work/agents/Slides-Server2", Root, windows: true, admitted: true, standing: true);
+        Expect("/work/agents/Slides-Server2", Root, windows: true, admitted: false, standing: false);
         Expect("/work/agents/slides.server2", Root, windows: false, admitted: true, standing: true);
         Expect("/work/agents/slides.server2", Root, windows: true, admitted: true, standing: true);
     }
@@ -113,11 +114,19 @@ public sealed class StandingRunnerCwdTests
             Expect(cwd, Root, windows: true, admitted: false, standing: false);
         }
 
-        foreach (var name in new[] { "console", "COM10", "COM", "LPT", "PRINTER" })
+        foreach (var name in new[] { "console", "com10", "com", "lpt", "printer" })
         {
             var cwd = "/work/agents/" + name;
             Expect(cwd, Root, windows: false, admitted: true, standing: true);
             Expect(cwd, Root, windows: true, admitted: true, standing: true);
+        }
+
+        // Upper case is a Windows alias of the lowercase leaf, not a second directory (CARD-1834).
+        foreach (var name in new[] { "COM10", "COM", "LPT", "PRINTER" })
+        {
+            var cwd = "/work/agents/" + name;
+            Expect(cwd, Root, windows: false, admitted: true, standing: true);
+            Expect(cwd, Root, windows: true, admitted: false, standing: false);
         }
     }
 
