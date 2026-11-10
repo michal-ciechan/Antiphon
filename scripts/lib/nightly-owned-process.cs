@@ -20,6 +20,10 @@ namespace Antiphon.Nightly
         public string[] Barriers { get; set; } = Array.Empty<string>();
         public bool FailAssignment { get; set; }
         public bool ZeroCountAtRootWait { get; set; }
+        public string TrxPath { get; set; } = "";
+        public string DiagnosticDirectory { get; set; } = "";
+        public int ExecutionGraceMilliseconds { get; set; } = 60000;
+        public string HangCapturePath { get; set; } = "";
         internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
         {
             if (!Barriers.Contains(phase)) return;
@@ -59,6 +63,10 @@ namespace Antiphon.Nightly
         public string[] DescendantExitedAtUtc { get; set; } = Array.Empty<string>();
         public int[] MissedDescendantPids { get; set; } = Array.Empty<int>();
         public bool JobEmptyObserved { get; set; }
+        public bool CompletedButHung { get; set; }
+        public string HangCapturePath { get; set; } = "";
+        public string HangCaptureError { get; set; } = "";
+        public long ExecutionFinishedAtMilliseconds { get; set; } = -1;
     }
 
     public sealed class NativeProcessOwner
@@ -173,6 +181,10 @@ namespace Antiphon.Nightly
                 Close(ref thread);
                 Observation.LaunchMilliseconds = clock.Elapsed.TotalMilliseconds;
                 var execution = Stopwatch.StartNew();
+                long finishedAt = -1;
+                long lastProbe = -500;
+                int grace = _hooks.ExecutionGraceMilliseconds > 0 ? _hooks.ExecutionGraceMilliseconds : 60000;
+                bool watchEvidence = !string.IsNullOrEmpty(_hooks.TrxPath) && !string.IsNullOrEmpty(_hooks.DiagnosticDirectory);
                 while (true)
                 {
                     int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
@@ -181,13 +193,32 @@ namespace Antiphon.Nightly
                     bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
                     Observation.ChildrenExited = rootExited && active == 0;
                     if (Observation.ChildrenExited) break;
-                    if (execution.ElapsedMilliseconds >= timeout) { Observation.TimedOut = true; break; }
+                    long now = execution.ElapsedMilliseconds;
+                    // Same markers as Test-NightlyExecutionFinished: total ran plus request execute stop.
+                    if (watchEvidence && finishedAt < 0 && now - lastProbe >= 500)
+                    {
+                        lastProbe = now;
+                        if (ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory))
+                        {
+                            finishedAt = now;
+                            Observation.ExecutionFinishedAtMilliseconds = now;
+                        }
+                    }
+                    if (finishedAt >= 0 && now - finishedAt >= grace)
+                    {
+                        Observation.TimedOut = true;
+                        Observation.CompletedButHung = true;
+                        break;
+                    }
+                    if (now >= timeout) { Observation.TimedOut = true; break; }
                     Thread.Sleep(10);
                 }
                 Observation.ExecutionMilliseconds = execution.Elapsed.TotalMilliseconds;
                 var cleanup = Stopwatch.StartNew();
                 if (Observation.TimedOut)
                 {
+                    try { WriteHangCapture(job, root, logPath); }
+                    catch (Exception captureEx) { Observation.HangCaptureError = captureEx.Message; }
                     Observation.TerminationRequested = true;
                     Observation.TerminationSucceeded = TerminateJobObject(job, 1);
                     Check(Observation.TerminationSucceeded, "TerminateJobObject");
@@ -407,6 +438,225 @@ namespace Antiphon.Nightly
                 finally { Marshal.FreeHGlobal(buffer); }
             }
         }
+        private void WriteHangCapture(IntPtr job, IntPtr root, string logPath)
+        {
+            string path = _hooks.HangCapturePath ?? "";
+            if (path.Length == 0)
+            {
+                // Callers that did not ask for a hang file keep the timeout fixture quiet.
+                if (logPath == null) Observation.HangCaptureError = "";
+                return;
+            }
+            var text = new StringBuilder();
+            text.AppendLine("completed-hang-capture");
+            bool rootExited = false;
+            try { rootExited = root != IntPtr.Zero && RootExited(root); } catch (Exception) { rootExited = false; }
+            int active = -1;
+            try { if (job != IntPtr.Zero) active = Count(job); } catch (Exception) { active = -1; }
+            text.Append("root pid=").Append(Observation.Pid).Append(" exited=").Append(rootExited ? "true" : "false").Append(" active=").Append(active).AppendLine();
+            var pids = new HashSet<int>();
+            if (Observation.Pid > 0) pids.Add(Observation.Pid);
+            try { if (job != IntPtr.Zero) CaptureDescendants(job); } catch (Exception) { }
+            foreach (var process in _descendants.Values)
+            {
+                string image = "";
+                bool exited = false;
+                int handles = -1;
+                try { image = process.ProcessName ?? ""; } catch (Exception) { image = ""; }
+                try { exited = process.HasExited; } catch (Exception) { exited = false; }
+                try { if (!exited) handles = process.HandleCount; } catch (Exception) { handles = -1; }
+                pids.Add(process.Id);
+                text.Append("descendant pid=").Append(process.Id).Append(" image=").Append(image)
+                    .Append(" exited=").Append(exited ? "true" : "false")
+                    .Append(" handles=").Append(handles).AppendLine();
+            }
+            AppendOpenHandles(text, pids);
+            try
+            {
+                string directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+                File.WriteAllText(path, text.ToString());
+                Observation.HangCapturePath = path;
+            }
+            catch (Exception ex) { Observation.HangCaptureError = ex.Message; }
+        }
+
+        // SystemExtendedHandleInformation only. Resolving a handle name can block on a pipe, so names stay unlisted.
+        private static void AppendOpenHandles(StringBuilder text, HashSet<int> pids)
+        {
+            const int SystemExtendedHandleInformation = 64;
+            const int StatusInfoLengthMismatch = unchecked((int)0xC0000004);
+            const int cap = 400;
+            int bytes = 1 << 20;
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                while (true)
+                {
+                    if (bytes <= 0 || bytes > (64 << 20))
+                    {
+                        text.AppendLine("handles=unavailable reason=buffer-cap");
+                        return;
+                    }
+                    buffer = Marshal.AllocHGlobal(bytes);
+                    int returned;
+                    int status = NtQuerySystemInformation(SystemExtendedHandleInformation, buffer, bytes, out returned);
+                    if (status == StatusInfoLengthMismatch)
+                    {
+                        Marshal.FreeHGlobal(buffer);
+                        buffer = IntPtr.Zero;
+                        bytes *= 2;
+                        continue;
+                    }
+                    if (status != 0)
+                    {
+                        text.Append("handles=unavailable reason=status-").Append(status.ToString("X8")).AppendLine();
+                        return;
+                    }
+                    break;
+                }
+                long count = Marshal.ReadIntPtr(buffer).ToInt64();
+                long stride = Marshal.SizeOf<HandleEntry>();
+                long header = IntPtr.Size * 2L;
+                if (count < 0 || stride <= 0 || header + count * stride > bytes)
+                {
+                    text.AppendLine("handles=unavailable reason=truncated");
+                    return;
+                }
+                var seen = new Dictionary<int, int>();
+                int listed = 0;
+                for (long i = 0; i < count; i++)
+                {
+                    IntPtr slot = IntPtr.Add(buffer, (int)(header + i * stride));
+                    HandleEntry row = Marshal.PtrToStructure<HandleEntry>(slot);
+                    int pid = unchecked((int)row.UniqueProcessId.ToInt64());
+                    if (!pids.Contains(pid)) continue;
+                    int already;
+                    seen.TryGetValue(pid, out already);
+                    seen[pid] = already + 1;
+                    if (already >= cap) continue;
+                    long handle = row.HandleValue.ToInt64();
+                    text.Append("handle pid=").Append(pid)
+                        .Append(" value=0x").Append(handle.ToString("X"))
+                        .Append(" type=").Append(row.ObjectTypeIndex).AppendLine();
+                    listed++;
+                }
+                foreach (var pair in seen)
+                {
+                    if (pair.Value > cap)
+                        text.Append("handles-truncated pid=").Append(pair.Key).Append(" omitted=").Append(pair.Value - cap).AppendLine();
+                }
+                if (listed == 0) text.AppendLine("handles=none");
+            }
+            catch (Exception ex)
+            {
+                text.Append("handles=unavailable reason=").Append(ex.GetType().Name).AppendLine();
+            }
+            finally
+            {
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        private static bool ExecutionEvidenceFinished(string trxPath, string diagnosticDirectory)
+        {
+            int total, executed, notExecuted;
+            string outcome;
+            if (!TryReadTrxSummary(trxPath, out outcome, out total, out executed, out notExecuted)) return false;
+            if (!string.Equals(outcome, "Completed", StringComparison.Ordinal)) return false;
+            if (executed != total || notExecuted != 0) return false;
+            string tail = ReadSharedTail(LatestDiagnosticFile(diagnosticDirectory), 16384);
+            if (string.IsNullOrEmpty(tail)) return false;
+            if (tail.IndexOf("request execute stop", StringComparison.Ordinal) < 0) return false;
+            const string marker = "total ran:";
+            int at = tail.LastIndexOf(marker, StringComparison.Ordinal);
+            if (at < 0) return false;
+            int i = at + marker.Length;
+            while (i < tail.Length && (tail[i] == ' ' || tail[i] == '\t')) i++;
+            int j = i;
+            while (j < tail.Length && tail[j] >= '0' && tail[j] <= '9') j++;
+            int ran;
+            if (j == i || !int.TryParse(tail.Substring(i, j - i), out ran)) return false;
+            return ran == total;
+        }
+
+        private static bool TryReadTrxSummary(string path, out string outcome, out int total, out int executed, out int notExecuted)
+        {
+            outcome = "";
+            total = -1;
+            executed = -1;
+            notExecuted = -1;
+            try
+            {
+                string text = ReadSharedTail(path, 2 << 20);
+                if (string.IsNullOrEmpty(text)) return false;
+                int summary = text.LastIndexOf("ResultSummary", StringComparison.Ordinal);
+                if (summary < 0) return false;
+                int summaryEnd = text.IndexOf('>', summary);
+                if (summaryEnd < 0) return false;
+                outcome = XmlAttr(text.Substring(summary, summaryEnd - summary), "outcome");
+                int counters = text.IndexOf("Counters", summary, StringComparison.Ordinal);
+                if (counters < 0 || counters > summaryEnd + 4096) return false;
+                int countersEnd = text.IndexOf('>', counters);
+                if (countersEnd < 0) return false;
+                string open = text.Substring(counters, countersEnd - counters);
+                return int.TryParse(XmlAttr(open, "total"), out total)
+                    && int.TryParse(XmlAttr(open, "executed"), out executed)
+                    && int.TryParse(XmlAttr(open, "notExecuted"), out notExecuted);
+            }
+            catch (Exception) { return false; }
+        }
+
+        private static string XmlAttr(string open, string name)
+        {
+            string key = name + "=\"";
+            int start = open.IndexOf(key, StringComparison.Ordinal);
+            if (start < 0) return "";
+            start += key.Length;
+            int end = open.IndexOf('"', start);
+            if (end < 0) return "";
+            return open.Substring(start, end - start);
+        }
+
+        private static string LatestDiagnosticFile(string directory)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory)) return "";
+                string best = "";
+                DateTime bestTime = DateTime.MinValue;
+                foreach (string file in Directory.GetFiles(directory))
+                {
+                    if (!file.EndsWith(".diag", StringComparison.OrdinalIgnoreCase)) continue;
+                    DateTime stamp = File.GetLastWriteTimeUtc(file);
+                    if (best.Length == 0 || stamp >= bestTime) { best = file; bestTime = stamp; }
+                }
+                return best;
+            }
+            catch (Exception) { return ""; }
+        }
+
+        private static string ReadSharedTail(string path, int byteCount)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || byteCount <= 0 || !File.Exists(path)) return "";
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    long length = stream.Length;
+                    if (length <= 0) return "";
+                    int take = byteCount;
+                    if (take > length) take = (int)length;
+                    stream.Seek(length - take, SeekOrigin.Begin);
+                    var buffer = new byte[take];
+                    int read = stream.Read(buffer, 0, take);
+                    if (read <= 0) return "";
+                    return Encoding.UTF8.GetString(buffer, 0, read);
+                }
+            }
+            catch (Exception) { return ""; }
+        }
+
         private static int Count(IntPtr job)
         {
             int size = Marshal.SizeOf<Accounting>(); IntPtr buffer = Marshal.AllocHGlobal(size);
@@ -451,5 +701,7 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool GetExitCodeProcess(IntPtr process, out uint code);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool GetProcessTimes(IntPtr process, out long creation, out long exit, out long kernel, out long user);
         [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+        [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int cls, IntPtr buffer, int length, out int returned);
+        [StructLayout(LayoutKind.Sequential)] private struct HandleEntry { public IntPtr Object; public IntPtr UniqueProcessId; public IntPtr HandleValue; public uint GrantedAccess; public ushort CreatorBackTraceIndex; public ushort ObjectTypeIndex; public uint HandleAttributes; public uint Reserved; }
     }
 }
