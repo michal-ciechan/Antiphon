@@ -65,10 +65,12 @@ public static partial class ClaudeScreen
     /// that can be read: the rows between the last two horizontal rules (or the last rounded box),
     /// the first of them carrying the prompt glyph, with at most a few hint rows under the lower
     /// rule. The glyph, box sides and surrounding blanks are removed. False when no such region is
-    /// on screen (a mid-redraw frame, a menu open under the composer, a composer taller than the
+    /// on screen (a mid-redraw frame, a choice menu open under the composer, a composer taller than the
     /// screen); the caller then has no composer evidence and must not treat the composer as empty.
+    /// A slash-command autocomplete directly under the box is still that composer.
     /// <para>Repair 4 (review 8adb4cd6): the box must be the live one at the bottom of the screen.
-    /// Every non-blank row under it is Claude's hint bar (at least one, all recognised), so an older
+    /// Every non-blank row under it is Claude's hint bar (at least one, all recognised) or one
+    /// slash-command autocomplete opened by the draft, so an older
     /// frame in a scrolled view, a dialog, or a ghost frame with the body's tail under it is not read;
     /// and both rules are the same width, so a partial ghost border does not pair with a real one.</para>
     /// <para>Repair 5 (review 97ea55ef): one read is a single frame. A stale ghost box at the bottom
@@ -86,15 +88,38 @@ public static partial class ClaudeScreen
         if (bottom < 0)
             return false;
         var below = 0;
+        var suggestions = 0;
+        var inSuggestion = false;
         for (var r = bottom + 1; r < rows.Length; r++)
         {
             if (rows[r].Trim().Length == 0)
                 continue;
-            if (!IsComposerHintRow(rows[r]))
-                return false;
-            below++;
+            if (!inSuggestion && IsComposerHintRow(rows[r]))
+            {
+                below++;
+                continue;
+            }
+            if (!inSuggestion && IsSlashSuggestionHighlight(rows[r]))
+            {
+                inSuggestion = true;
+                suggestions++;
+                continue;
+            }
+            if (inSuggestion && (IsSlashSuggestionCommand(rows[r]) || IsSlashSuggestionContinuation(rows[r])))
+            {
+                suggestions++;
+                continue;
+            }
+            return false;
         }
-        if (below == 0 || below > MaxHintRowsBelowComposer)
+        if (suggestions > MaxSlashSuggestionRows)
+            return false;
+        if (below == 0)
+        {
+            if (suggestions == 0)
+                return false;
+        }
+        else if (below > MaxHintRowsBelowComposer)
             return false;
         var top = LastRuleRow(rows, bottom - 1);
         if (top < 0 || bottom - top < 2 || rows[top].Trim().Length != rows[bottom].Trim().Length)
@@ -127,6 +152,9 @@ public static partial class ClaudeScreen
     /// <summary>The hint bar, and at most a usage banner, an effort row and a wrapped badge row, sit under the composer.</summary>
     private const int MaxHintRowsBelowComposer = 4;
 
+    /// <summary>A slash autocomplete that replaced the hint bar. Longer than this is conversation, not a palette.</summary>
+    private const int MaxSlashSuggestionRows = 12;
+
     /// <summary>
     /// A row of the hint bar under Claude's composer: the permission-mode line, the shortcuts hint,
     /// the auto-compact meter, the effort row or the usage banner. Anything else under the lower rule
@@ -153,6 +181,46 @@ public static partial class ClaudeScreen
                     || compact.Contains("high", StringComparison.Ordinal)
                     || compact.Contains("max", StringComparison.Ordinal)))
             || IsWrappedHintCommandRow(row);
+    }
+
+    /// <summary>The highlighted first row of Claude's slash autocomplete: <c>&gt; /remote-control …</c>.</summary>
+    private static bool IsSlashSuggestionHighlight(string row)
+    {
+        var text = row.TrimStart();
+        if (text.Length == 0 || text[0] != '>')
+            return false;
+        return IsSlashCommandToken(text[1..].TrimStart());
+    }
+
+    /// <summary>Another command row in that palette, kept near the left margin so a wrapped <c>/ DROPPED</c> is not one.</summary>
+    private static bool IsSlashSuggestionCommand(string row)
+    {
+        var indent = 0;
+        while (indent < row.Length && row[indent] == ' ')
+            indent++;
+        return indent <= 6 && IsSlashCommandToken(row.TrimStart());
+    }
+
+    /// <summary>A wrapped description line under a slash command. It stays indented and is not itself a command.</summary>
+    private static bool IsSlashSuggestionContinuation(string row)
+    {
+        var indent = 0;
+        while (indent < row.Length && row[indent] == ' ')
+            indent++;
+        return indent >= 8 && row.Trim().Length > 0 && !IsRuleRow(row);
+    }
+
+    private static bool IsSlashCommandToken(string text)
+    {
+        if (text.Length < 2 || text[0] != '/')
+            return false;
+        var i = 1;
+        if (!char.IsLetter(text[i]))
+            return false;
+        i++;
+        while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] is '-' or '_'))
+            i++;
+        return i == text.Length || char.IsWhiteSpace(text[i]);
     }
 
     /// <summary>
