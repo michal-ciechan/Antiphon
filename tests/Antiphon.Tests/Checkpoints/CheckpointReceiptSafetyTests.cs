@@ -68,6 +68,8 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
     public async Task malformed_collection_and_string_shapes_return_named_refusals()
     {
         var failures = new List<string>();
+        var (root, run) = Fixture();
+        var snapshot = Snapshot(run);
         var fields = new Dictionary<string, string[]>
         {
             ["report.json"] = ["outputPaths", "builds", "rows", "unlisted", "cleanupRefusals", "outputNames",
@@ -85,7 +87,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         foreach (var verb in new[] { "report", "report-json", "stop", "status" })
         {
             if (shape == "empty-required-string" && field is not ("runId" or "toolOwner" or "phase" or "verdict" or "markdownSha256" or "source.state" or "source.buildSource" or "source.start.captureStatus" or "source.end.captureStatus")) continue;
-            var (root, run) = Fixture();
+            Restore(run, snapshot);
             var path = Path.Combine(run, pair.Key);
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             var parts = field.Split('.');
@@ -111,7 +113,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         foreach (var verb in new[] { "report", "report-json", "stop" })
         {
             if (variant != "null-element" && field != "outputPaths") continue;
-            var (root, run) = Fixture();
+            Restore(run, snapshot);
             var path = Path.Combine(run, "report.json");
             var json = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
             json[field] = variant == "null-element" ? new JsonArray((JsonNode?)null)
@@ -258,14 +260,12 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         return snapshot;
     }
 
-    // report.md is omitted until the snapshot restore is complete. The witness fails on that gap.
     private static void Restore(string run, IReadOnlyDictionary<string, byte[]> snapshot)
     {
         foreach (var entry in Directory.EnumerateFileSystemEntries(run).ToArray())
         {
             var name = Path.GetFileName(entry)!;
-            var drop = name == "report.md" || !snapshot.ContainsKey(name) || Directory.Exists(entry);
-            if (!drop)
+            if (snapshot.ContainsKey(name) && File.Exists(entry))
                 continue;
             if (Directory.Exists(entry))
                 Directory.Delete(entry, recursive: true);
@@ -274,11 +274,7 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
         }
 
         foreach (var pair in snapshot)
-        {
-            if (pair.Key == "report.md")
-                continue;
             File.WriteAllBytes(Path.Combine(run, pair.Key), pair.Value);
-        }
     }
 
     private static string[] EntryNames(string run) =>
