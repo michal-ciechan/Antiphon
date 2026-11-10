@@ -86,12 +86,10 @@ internal static class TaskReportTurnSelector
             .ToListAsync(ct);
 
         // Stored tool rows only. A tool that has not been ingested yet is not proof.
-        var toolRows = await db.TranscriptEntries.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.ToolCall
-                && t.ApiCallId != null)
-            .Select(t => new ToolSiblingRow(t.Sequence, t.ApiCallId!))
-            .ToListAsync(ct);
+        // CARD-1821: an end_turn is the only sibling phantom, and a tool at or before
+        // the first eligible prompt is outside every owner span. The sequence floor
+        // keeps the (AgentSessionId, Kind, Sequence) index.
+        var toolRows = await LoadSiblingToolsAsync(db, sessionId, raw, boundaries, task.DispatchedAt, ct);
 
         var skipped = new List<TaskReportSkip>();
         TranscriptPromptSpan.PromptRow? phantomBarrier = null;
@@ -137,6 +135,17 @@ internal static class TaskReportTurnSelector
                     continue;
                 }
 
+                // CARD-1821: a notification answer that shares its end_turn with a stored
+                // tool has not finished. The span is the walked-back owner through the
+                // next real prompt. Uncorrelated and interrupted results stay as they are.
+                if (continuation.Kind == TaskReportSelectionKind.Selected
+                    && continuation.EffectiveOwnerSequence is long notificationOwner
+                    && IsEndTurnSiblingPhantom(end, notificationOwner, continuation.NextRealPromptSequence, toolRows))
+                {
+                    skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
+                    continue;
+                }
+
                 return continuation with { Skipped = skipped };
             }
 
@@ -148,7 +157,22 @@ internal static class TaskReportTurnSelector
                 var owned = RealOwnerOfSkippedTurn(
                     end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
                 if (owned is not null)
+                {
+                    // CARD-1821: compaction and local-command records share the brief's turn,
+                    // but an end_turn that shares its ApiCallId with a stored tool in that
+                    // span is still a sibling phantom. max_tokens and cancelled stay on the
+                    // owned result. The tool span is the owner through the next real prompt.
+                    if (owned.Kind == TaskReportSelectionKind.Selected
+                        && owned.EffectiveOwnerSequence is long housekeepingOwner
+                        && IsEndTurnSiblingPhantom(end, housekeepingOwner, owned.NextRealPromptSequence, toolRows))
+                    {
+                        skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
+                        continue;
+                    }
+
                     return owned with { Skipped = skipped };
+                }
+
                 skipped.Add(new TaskReportSkip(end.Sequence, "inert-housekeeping"));
                 continue;
             }
@@ -174,7 +198,7 @@ internal static class TaskReportTurnSelector
             // other stop reasons stay terminal. A different response id does not count,
             // and a newer real prompt remains the attribution barrier.
             var nextReal = NextRealPromptSequence(raw, rawPrompt.Sequence, sessionKind, rulesIds, invoked);
-            if (IsEndTurnSiblingPhantom(end, rawPrompt, nextReal, toolRows))
+            if (IsEndTurnSiblingPhantom(end, rawPrompt.Sequence, nextReal, toolRows))
             {
                 skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
                 if (phantomBarrier is null)
@@ -488,7 +512,7 @@ internal static class TaskReportTurnSelector
 
     private static bool IsEndTurnSiblingPhantom(
         BoundaryRow end,
-        TranscriptPromptSpan.PromptRow rawPrompt,
+        long ownerSequence,
         long? nextRealPrompt,
         IReadOnlyList<ToolSiblingRow> tools)
     {
@@ -501,7 +525,7 @@ internal static class TaskReportTurnSelector
         {
             if (!string.Equals(tool.ApiCallId, end.ApiCallId, StringComparison.Ordinal))
                 continue;
-            if (tool.Sequence <= rawPrompt.Sequence)
+            if (tool.Sequence <= ownerSequence)
                 continue;
             if (nextRealPrompt is long cap && tool.Sequence >= cap)
                 continue;
@@ -509,6 +533,54 @@ internal static class TaskReportTurnSelector
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Tool rows that can prove an <c>end_turn</c> sibling. Empty when no boundary can
+    /// match. The floor is the first time-eligible prompt, so the read stays on
+    /// <c>(AgentSessionId, Kind, Sequence)</c>.
+    /// </summary>
+    private static async Task<List<ToolSiblingRow>> LoadSiblingToolsAsync(
+        AppDbContext db,
+        Guid sessionId,
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        IReadOnlyList<BoundaryRow> boundaries,
+        DateTime? dispatchedAt,
+        CancellationToken ct)
+    {
+        long? floor = null;
+        foreach (var row in raw)
+        {
+            if (!IsTimeEligible(row, dispatchedAt))
+                continue;
+            floor = row.Sequence;
+            break;
+        }
+
+        if (floor is not long start)
+            return [];
+
+        var needed = false;
+        foreach (var boundary in boundaries)
+        {
+            if (string.Equals(boundary.StopReason, TranscriptKinds.StopReasons.EndTurn, StringComparison.Ordinal)
+                && !string.IsNullOrEmpty(boundary.ApiCallId))
+            {
+                needed = true;
+                break;
+            }
+        }
+
+        if (!needed)
+            return [];
+
+        return await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == sessionId
+                && t.Kind == TranscriptKinds.ToolCall
+                && t.ApiCallId != null
+                && t.Sequence > start)
+            .Select(t => new ToolSiblingRow(t.Sequence, t.ApiCallId!))
+            .ToListAsync(ct);
     }
 
     /// <summary>
