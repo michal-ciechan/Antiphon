@@ -1469,7 +1469,9 @@ function Invoke-SnapshotPlainOneDriveCopy {
     }
     if (Test-Path -LiteralPath $folder) {
         $existing = Get-Item -LiteralPath $folder -Force
-        if ($existing.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        # OneDrive cloud-filter directories are reparse points with an empty
+        # link type. A junction or symlink could send the copy outside Backups.
+        if ($existing.LinkType -eq 'SymbolicLink' -or $existing.LinkType -eq 'Junction') {
             return New-SnapshotOneDriveResult 'failed' 0 $folder
         }
     } else {
