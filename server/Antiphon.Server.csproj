@@ -79,6 +79,7 @@
   <ItemGroup>
     <ProjectReference Include="..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
     <ProjectReference Include="..\src\Antiphon.GitInProcess\Antiphon.GitInProcess.csproj" />
+    <ProjectReference Include="..\src\Antiphon.Server.Git\Antiphon.Server.Git.csproj" />
     <ProjectReference Include="..\src\Antiphon.Messaging\Antiphon.Messaging.csproj" />
     <ProjectReference Include="..\src\Antiphon.Messaging.Client\Antiphon.Messaging.Client.csproj" />
     <ProjectReference Include="..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />

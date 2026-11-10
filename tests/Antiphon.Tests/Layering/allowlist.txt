@@ -102,16 +102,10 @@ server/Application/Services/ProjectSetupService.cs -> OrchestratorWorkspaceState
 
 # slice P0-C5
 server/Application/Services/LandingVerifier.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
-server/Application/Services/AgentTaskLandService.cs -> GitIndexLock @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentTaskLandService.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
 server/Application/Services/AgentTaskLandService.cs -> LandWorkspace @ server/Infrastructure/Git/LandWorkspace.cs
-server/Application/Services/AgentTaskLandingProtocol.cs -> GitIndexLock @ server/Application/Services/GitIndexLock.cs
 server/Application/Services/AgentTaskLandingProtocol.cs -> LandVerificationArtifacts @ server/Infrastructure/Git/LandVerificationArtifacts.cs
 server/Application/Services/AgentTaskLandingProtocol.cs -> LandWorkspace @ server/Infrastructure/Git/LandWorkspace.cs
-server/Application/Services/AgentTaskReplyService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
-server/Application/Services/DelegationWorkspaceResolver.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
-server/Application/Services/DelegationWorktreeService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
-server/Infrastructure/ExternalChanges/ChangeDetectionService.cs -> ServerGitProcess @ server/Application/Services/ServerGitProcess.cs
 
 # slice P0-E
 

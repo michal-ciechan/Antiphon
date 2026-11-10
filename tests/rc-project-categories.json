@@ -89,6 +89,9 @@
     "src/Antiphon.Resilience/Antiphon.Resilience.csproj": [
       "shared-runtime"
     ],
+    "src/Antiphon.Server.Git/Antiphon.Server.Git.csproj": [
+      "git-operations"
+    ],
     "src/Antiphon.SessionRunner.Contracts/Antiphon.SessionRunner.Contracts.csproj": [
       "claude-runner",
       "codex-runner",

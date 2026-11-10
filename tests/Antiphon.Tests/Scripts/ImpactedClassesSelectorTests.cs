@@ -367,7 +367,7 @@ public sealed partial class ImpactedClassesSelectorTests
         "ReceiptScanDestinationIntegrationTests",
     ];
 
-    // The C1432 roster: every server file that starts a git process.
+    // The C1432 roster: every server file that starts a git process, plus the CARD-1546 project.
     private static readonly string[] ServerGitStartSites =
     [
         "server/Infrastructure/Git/LandingGit.cs", "server/Infrastructure/Git/GitService.cs",
@@ -375,6 +375,7 @@ public sealed partial class ImpactedClassesSelectorTests
         "server/Application/Services/GitWorkspaceService.cs", "server/Application/Services/DelegationWorktreeService.cs",
         "server/Application/Services/DelegationWorkspaceResolver.cs", "server/Application/Services/OrchestratorWorkspaceLayout.cs",
         "server/Application/Services/AgentTaskReplyService.cs", "server/Infrastructure/ExternalChanges/ChangeDetectionService.cs",
+        "src/Antiphon.Server.Git/**",
     ];
 
     // Downgrade callers the notes name. The derive scan finds them today; the explicit list keeps
