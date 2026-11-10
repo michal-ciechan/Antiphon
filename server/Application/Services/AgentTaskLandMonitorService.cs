@@ -114,9 +114,9 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             ? DescribePersistedHolder(request)
             : await DescribePredecessorAsync(request, snapshot, ct);
         who = await AppendLeaseOwnerAsync(request, who, ct);
-        // CARD-1467 red: the live memory wait is visible to the monitor and still not named.
-        _ = _verificationWaits?.Find(request.Id);
-        return $"{request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
+        var progress = _verificationWaits?.Find(request.Id)?.Describe()
+            ?? $"no progress since {request.LastProgressAt:O}";
+        return $"{request.State}; requested {request.RequestedAt:O}; {progress}; "
             + $"attempt={request.Attempt}; request={request.Id:N}; reason={reason}; {queueClause}; {who}.";
     }
 

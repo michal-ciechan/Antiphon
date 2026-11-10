@@ -6,7 +6,7 @@ namespace Antiphon.Server.Application.Services;
 
 /// <summary>
 /// CARD-1470/1467: the land verifier's live build-slot memory state per land request, read by the
-/// land status. Process-local like <see cref="AgentTaskLandQueue"/>: the verifier sets it while it
+/// land status, the LandAged warning, and the attention headline. Process-local like <see cref="AgentTaskLandQueue"/>: the verifier sets it while it
 /// waits on the memory floor or builds with the fallback, and clears it when it holds a slot or ends.
 /// The durable record is the land operation's <c>build-slot=</c> note.
 /// </summary>

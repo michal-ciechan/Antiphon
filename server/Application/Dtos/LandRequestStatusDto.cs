@@ -80,6 +80,9 @@ public sealed record LandVerificationWaitDto(LandVerificationWaitKind Kind, long
     public string Describe() => Kind == LandVerificationWaitKind.WaitingForMemory
         ? $"waiting for memory (available {AvailableMb} MB, floor {FloorMb} MB, waited {(int)(WaitedSeconds / 60)} min)"
         : $"memory-floor fallback at -maxcpucount:{MaxCpuCount} (available {AvailableMb} MB, floor {FloorMb} MB, waited {(int)(WaitedSeconds / 60)} min)";
+
+    /// <summary>The same sentence as <see cref="Describe"/>, serialized on the land status.</summary>
+    public string Description => Describe();
 }
 
 public sealed record LandNotificationStatusDto(Guid Id, LandNotificationKind Kind, LandNotificationState State,
