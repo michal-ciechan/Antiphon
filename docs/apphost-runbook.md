@@ -276,6 +276,10 @@ rolled back.
   watchdog operation. Directly disabling **Antiphon AppHost Watchdog** also stops
   recovery, but the state observer reports it as unintentional. Postgres stays up.
 
+## Maintenance is the end state after topology B (CARD-1744)
+
+Once the CARD-1744 window has completed, maintenance on the desktop is the end state: marker present (`logs/apphost.down-on-purpose`), the logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. `scripts/set-apphost-maintenance.ps1 -EnterIfAbsent` is what records that marker and disables the watchdog. The state observer reports that maintenance on purpose. `scripts/restart-apphost.ps1` is the rollback path back to the desktop server, not the production restart. Clearing the marker while the Linux server is the writer would let the watchdog start a second server. Until the window, the deliberate-downtime steps above are unchanged: enter maintenance only for a stop you intend to leave. The operating detail is [Production server on the server2 host (CARD-1744)](docker-stack.md#production-server-on-the-server2-host-card-1744).
+
 ## What was measured when doing this wrong
 
 1. AppHost launched inside an agent Job Object was healthy, then vanished when
