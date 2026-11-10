@@ -46,6 +46,12 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public Task<AgentExitObservation> Completion => _terminal.Completion;
     public int? Pid => _terminal.Pid;
     public AgentExitReason ExitReason => _terminal.ExitReason;
+
+    /// <summary>
+    /// CARD-1508. Bounded clause when the last not-ready frame is a fatal account-bootstrap
+    /// error. Null for every other frame, including sign-in. The log line stays the reason name.
+    /// </summary>
+    public string? StartupFailureOutcome { get; private set; }
     public string? AuditDirectory => null;
     public event Action<string>? OnTextDelta
     {
@@ -145,6 +151,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     public async Task<bool> WaitForReadyAsync(CancellationToken ct)
     {
         EnsureStarted();
+        StartupFailureOutcome = null;
         string? notReadyDiagnostic = null;
         return await CodexReadyWait.WaitAsync(
             async token =>
@@ -178,7 +185,16 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                             "Session {SessionId} {Message}", _terminal.SessionId, message);
                     }
                 },
-                OnNotReadyFrame = frame => StoreStartupCapture(frame, notReadyDiagnostic),
+                OnNotReadyFrame = frame =>
+                {
+                    var path = StoreStartupCapture(frame, notReadyDiagnostic);
+                    StartupFailureOutcome = CodexAccountBootstrap.TryOutcome(
+                        frame?.RenderedScreen,
+                        frame?.RawOutput,
+                        notReadyDiagnostic,
+                        path,
+                        CompletedExitCode());
+                },
                 OnBootStatusThreshold = ms => _logger?.LogWarning(
                     "Session {SessionId} Codex MCP still observed after {Ms}ms; continuing the positive gate",
                     _terminal.SessionId,
@@ -194,7 +210,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
     /// cannot be written is logged and never changes the readiness verdict. Only the path is
     /// logged (CARD-0574 R-56).
     /// </summary>
-    private void StoreStartupCapture(CodexStartupSnapshot? frame, string? diagnostic)
+    private string? StoreStartupCapture(CodexStartupSnapshot? frame, string? diagnostic)
     {
         try
         {
@@ -209,6 +225,7 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                 "Session {SessionId} codex-startup capture stored at {CapturePath}",
                 _terminal.SessionId,
                 path);
+            return path;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -216,7 +233,14 @@ public sealed class RunnerCodexAdapter : IAgentProtocolAdapter, IAttachableProto
                 "Session {SessionId} codex-startup capture could not be stored: {Error}",
                 _terminal.SessionId,
                 ex.Message);
+            return null;
         }
+    }
+
+    private int? CompletedExitCode()
+    {
+        var completion = _terminal.Completion;
+        return completion.IsCompletedSuccessfully ? completion.Result.ExitCode : null;
     }
 
     /// <summary>

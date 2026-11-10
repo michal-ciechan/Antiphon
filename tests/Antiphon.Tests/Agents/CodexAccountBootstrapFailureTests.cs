@@ -35,7 +35,7 @@ public class CodexAccountBootstrapFailureTests
         body.ShouldContain("classifiedAs: AccountBootstrap");
         body.ShouldContain("elapsedMs=43954");
         body.ShouldContain($"({CodexStartupCaptureStore.RawTailChars} of {raw.Length} chars");
-        body.ShouldNotContain(new string('x', 80));
+        body.ShouldNotContain(new string('x', CodexStartupCaptureStore.RawTailChars));
     }
 
     [Test]

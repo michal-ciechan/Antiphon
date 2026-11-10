@@ -14,6 +14,7 @@ public enum CodexStartupReason
     BlockingUpdate,
     Sandbox,
     SignIn,
+    AccountBootstrap,
 }
 
 public readonly record struct CodexStartupObservation(
@@ -59,16 +60,20 @@ public static class CodexStartupScreen
         }
 
         var lines = NormalizeLines(renderedScreen);
-        if (lines.Length == 0)
-            return CodexStartupObservation.NotReady(CodexStartupReason.Unknown);
-
         var text = string.Join('\n', lines);
-        var mcpVisible = CodexMcpBoot.IsVisible(text);
+        var mcpVisible = lines.Length == 0 ? false : CodexMcpBoot.IsVisible(text);
 
         if (CodexTrustPromptDetector.IsVisibleOnCurrentScreen(text))
             return CodexStartupObservation.NotReady(CodexStartupReason.Trust, mcpVisible: mcpVisible);
         if (ContainsSignIn(text))
             return CodexStartupObservation.NotReady(CodexStartupReason.SignIn, mcpVisible: mcpVisible);
+        // CARD-1508. After sign-in, before the empty-screen Unknown return, so a raw-only
+        // fatal frame is named and a rendered sign-in still wins.
+        if (CodexAccountBootstrap.IsFatal(renderedScreen, rawOutput))
+            return CodexStartupObservation.NotReady(CodexStartupReason.AccountBootstrap);
+        if (lines.Length == 0)
+            return CodexStartupObservation.NotReady(CodexStartupReason.Unknown);
+
         if (ContainsSandboxOrInputDisabled(text))
             return CodexStartupObservation.NotReady(CodexStartupReason.Sandbox, mcpVisible: mcpVisible);
         if (ContainsBlockingUpdate(text))
