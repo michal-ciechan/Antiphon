@@ -1311,6 +1311,13 @@ function Invoke-NightlyScheduledChunk {
             -Platform $platform -ExpectedSkipRoster $expectedSkipRoster
         if ($nativeVerdict.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$nativeVerdict.processExitTolerated) {
             $exitTolerated = $true
+            $row.processExitTolerated = $true
+        }
+        if ($nativeVerdict.PSObject.Properties.Name -contains 'toleratedSkips') {
+            foreach ($toleratedSkip in @($nativeVerdict.toleratedSkips)) {
+                if ($null -eq $toleratedSkip) { continue }
+                $toleratedSkipRows += ,$toleratedSkip
+            }
         }
         if ($nativeVerdict.PSObject.Properties.Name -contains 'warnings') {
             foreach ($skipWarning in @($nativeVerdict.warnings)) {
@@ -1498,6 +1505,14 @@ function Complete-NightlySuiteExecution {
             $reasons += ('missing-expanded-row union {0}' -f ($union.Missing -join ','))
         }
     }
+    if ($isNative -and $null -ne $profileDiscovery -and -not [string]::IsNullOrWhiteSpace([string]$profileDiscoveryPath) -and @($suiteDiscoveryNodes).Count -gt 0 -and @($expectedSkipRoster).Count -gt 0) {
+        $discoveryKnown = @(Get-NightlyDiscoveryKnownIdentities -Nodes @($suiteDiscoveryNodes))
+        foreach ($discoveryStale in @(Get-NightlyExpectedSkipStaleWarnings -Platform ([string]$platform) -Entries $expectedSkipRoster -KnownTestIdentities $discoveryKnown)) {
+            $discoveryStaleText = [string]$discoveryStale
+            if ([string]::IsNullOrWhiteSpace($discoveryStaleText)) { continue }
+            if ($expectedSkipWarnings -notcontains $discoveryStaleText) { $expectedSkipWarnings += $discoveryStaleText }
+        }
+    }
     $CompletionSuiteState.Completed = $true
 }
 
@@ -1578,6 +1593,7 @@ function Invoke-AntiphonNightlyTests {
     $reasons = @()
     $expectedSkipWarnings = @()
     $expectedSkipRoster = @()
+    $toleratedSkipRows = @()
     $harnessHangReason = ''
     $nativeActiveMax = 0
     $dispatchSchedule = $null
@@ -1892,6 +1908,17 @@ function Invoke-AntiphonNightlyTests {
             $gapWarning = 'stale-roster:' + [string]$gap
             if ($expectedSkipWarnings -notcontains $gapWarning) { $expectedSkipWarnings += $gapWarning }
         }
+        foreach ($reasonGap in @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster)) {
+            $reasonWarning = 'skip-reason:' + [string]$reasonGap
+            if ($expectedSkipWarnings -notcontains $reasonWarning) { $expectedSkipWarnings += $reasonWarning }
+        }
+        $rosterDrift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $RepoRoot -Entries $expectedSkipRoster
+        foreach ($driftId in @($rosterDrift.Mismatches)) {
+            $driftText = [string]$driftId
+            if ([string]::IsNullOrWhiteSpace($driftText)) { continue }
+            $driftWarning = 'roster-drift:' + $driftText
+            if ($expectedSkipWarnings -notcontains $driftWarning) { $expectedSkipWarnings += $driftWarning }
+        }
     }
 
     $coverageScope = 'Full'
@@ -1935,6 +1962,10 @@ function Invoke-AntiphonNightlyTests {
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
     }
+    $expectedSkipRosterDigest = ''
+    if (@($expectedSkipRoster).Count -gt 0) {
+        $expectedSkipRosterDigest = [string](Get-NightlyExpectedSkipRosterDigest -Entries $expectedSkipRoster)
+    }
     $summary = [ordered]@{
         startedAt = $startedAt.ToString('o')
         completedAt = $completedAt.ToString('o')
@@ -1963,6 +1994,8 @@ function Invoke-AntiphonNightlyTests {
         policyHash = $policyHash
         reasons = $reasons
         warnings = @($expectedSkipWarnings)
+        expectedSkipRosterDigest = $expectedSkipRosterDigest
+        toleratedSkips = @($toleratedSkipRows)
         nativeActiveMax = $nativeActiveMax
         preflight = $preflight
         builds = $buildResults

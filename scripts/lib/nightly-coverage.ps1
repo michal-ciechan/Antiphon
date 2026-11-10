@@ -1164,9 +1164,664 @@ function Get-NightlyExpectedSkipRoster {
         if ($platformName -cnotin @('windows', 'linux')) { throw ('expected-skip roster platform {0}' -f $platformName) }
         if ([string]::IsNullOrWhiteSpace($test) -or $test.IndexOf('.') -lt 1) { throw ('expected-skip roster test {0}' -f $test) }
         if ([string]::IsNullOrWhiteSpace($prefix)) { throw ('expected-skip roster reason {0}' -f $test) }
+        [void](Get-NightlyExpectedSkipReasonClass -Entry $entry)
     }
     if ($useDefault) { $script:NightlyExpectedSkipRosterCache = $entries }
     return $entries
+}
+
+function Get-NightlyExpectedSkipReasonClass {
+    param($Entry)
+    $value = ''
+    if ($null -ne $Entry -and $Entry.PSObject.Properties.Name -contains 'reasonClass') {
+        $value = [string]$Entry.reasonClass
+    }
+    if ([string]::IsNullOrWhiteSpace($value)) { return 'platform' }
+    if ($value -cne 'platform' -and $value -cne 'live-context') {
+        throw ('expected-skip roster reasonClass {0}' -f $value)
+    }
+    return $value
+}
+
+function Get-NightlyExpectedSkipRosterDigest {
+    param($Entries)
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        $className = Get-NightlyExpectedSkipReasonClass -Entry $entry
+        $line = ([string]$entry.platform) + "`n" + ([string]$entry.test) + "`n" + $className + "`n" + ([string]$entry.reasonPrefix)
+        [void]$lines.Add($line)
+    }
+    $sorted = $lines.ToArray()
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    $text = ''
+    if ($sorted.Length -gt 0) { $text = [string]::Join("`n", $sorted) }
+    return (Get-NightlySha256Text -Text $text)
+}
+
+function Get-NightlyExpectedSkipStaleWarnings {
+    param([string]$Platform, $Entries, [string[]]$KnownTestIdentities = $null)
+    if ($null -eq $KnownTestIdentities) { return @() }
+    $knownTests = [System.Collections.Generic.Dictionary[string,bool]]::new([System.StringComparer]::Ordinal)
+    foreach ($knownId in @($KnownTestIdentities)) {
+        $knownText = [string]$knownId
+        if (-not [string]::IsNullOrWhiteSpace($knownText)) { $knownTests[$knownText] = $true }
+    }
+    $warnings = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        if ([string]$entry.platform -cne $Platform) { continue }
+        $entryTest = [string]$entry.test
+        if (-not $knownTests.ContainsKey($entryTest)) {
+            [void]$warnings.Add('stale-roster:' + $entryTest)
+        }
+    }
+    return $warnings.ToArray()
+}
+
+function Get-NightlyDiscoveryKnownIdentities {
+    param($Nodes)
+    $ids = New-Object System.Collections.Generic.List[string]
+    foreach ($node in @($Nodes)) {
+        if ($null -eq $node) { continue }
+        $className = ''
+        $method = ''
+        if ($node.PSObject.Properties.Name -contains 'ClassName') { $className = [string]$node.ClassName }
+        if ($node.PSObject.Properties.Name -contains 'Method') { $method = [string]$node.Method }
+        if ([string]::IsNullOrWhiteSpace($className) -or [string]::IsNullOrWhiteSpace($method)) { continue }
+        [void]$ids.Add($className + '.' + $method)
+    }
+    return $ids.ToArray()
+}
+
+function ConvertFrom-NightlyCsStringLiteral {
+    param([string]$Raw)
+    $sb = New-Object System.Text.StringBuilder
+    $i = 0
+    while ($i -lt $Raw.Length) {
+        if ($Raw[$i] -eq '\' -and ($i + 1) -lt $Raw.Length) {
+            $nch = $Raw[$i + 1]
+            if ($nch -eq 'n') { [void]$sb.Append("`n") }
+            elseif ($nch -eq 'r') { [void]$sb.Append("`r") }
+            elseif ($nch -eq 't') { [void]$sb.Append("`t") }
+            elseif ($nch -eq '"') { [void]$sb.Append('"') }
+            elseif ($nch -eq '\') { [void]$sb.Append('\') }
+            else { [void]$sb.Append($nch) }
+            $i += 2
+            continue
+        }
+        [void]$sb.Append($Raw[$i])
+        $i++
+    }
+    return $sb.ToString()
+}
+
+function ConvertTo-NightlyCsStructuralMask {
+    # Strings and comments keep their newlines and lose every other character, so braces inside them are not structural.
+    param([string]$Text)
+    $n = $Text.Length
+    if ($n -eq 0) { return '' }
+    $chars = $Text.ToCharArray()
+    $i = 0
+    while ($i -lt $n) {
+        $c = $chars[$i]
+        if ($c -eq '/' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '/') {
+            while ($i -lt $n -and $chars[$i] -ne "`n") { $chars[$i] = ' '; $i++ }
+            continue
+        }
+        if ($c -eq '/' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '*') {
+            $chars[$i] = ' '; $i++
+            if ($i -lt $n) { $chars[$i] = ' '; $i++ }
+            while ($i -lt $n) {
+                if ($chars[$i] -eq '*' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '/') {
+                    $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
+                    break
+                }
+                if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
+                $i++
+            }
+            continue
+        }
+        if ($c -eq "'") {
+            $chars[$i] = ' '; $i++
+            while ($i -lt $n) {
+                $q = $chars[$i]
+                $chars[$i] = ' '
+                $i++
+                if ($q -eq '\') {
+                    if ($i -lt $n) { $chars[$i] = ' '; $i++ }
+                    continue
+                }
+                if ($q -eq "'" -or $q -eq "`n") { break }
+            }
+            continue
+        }
+        if ($c -eq '@' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '"') {
+            $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
+            while ($i -lt $n) {
+                if ($chars[$i] -eq '"') {
+                    if (($i + 1) -lt $n -and $chars[$i + 1] -eq '"') {
+                        $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
+                        continue
+                    }
+                    $chars[$i] = ' '; $i++
+                    break
+                }
+                if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
+                $i++
+            }
+            continue
+        }
+        $dollars = 0
+        $k = $i
+        if ($c -eq '$') {
+            while ($k -lt $n -and $chars[$k] -eq '$') { $dollars++; $k++ }
+        }
+        if ($k -lt $n -and $chars[$k] -eq '"') {
+            $qcount = 0
+            while ($k -lt $n -and $chars[$k] -eq '"') { $qcount++; $k++ }
+            if ($qcount -eq 2 -and $dollars -eq 0) {
+                $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
+                continue
+            }
+            if ($qcount -ge 3 -or $qcount -eq 1) {
+                while ($i -lt $k) { $chars[$i] = ' '; $i++ }
+                if ($qcount -ge 3) {
+                    while ($i -lt $n) {
+                        if ($chars[$i] -eq '"') {
+                            $run = 0
+                            $r = $i
+                            while ($r -lt $n -and $chars[$r] -eq '"') { $run++; $r++ }
+                            if ($run -ge $qcount) {
+                                while ($i -lt $r) { $chars[$i] = ' '; $i++ }
+                                break
+                            }
+                        }
+                        if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
+                        $i++
+                    }
+                    continue
+                }
+                while ($i -lt $n) {
+                    $q = $chars[$i]
+                    $chars[$i] = ' '
+                    $i++
+                    if ($q -eq '\') {
+                        if ($i -lt $n) { $chars[$i] = ' '; $i++ }
+                        continue
+                    }
+                    if ($q -eq '"' -or $q -eq "`n") { break }
+                }
+                continue
+            }
+        }
+        $i++
+    }
+    return -join $chars
+}
+
+function Get-NightlyCsMatchEnd {
+    param([string]$Mask, [int]$Open, [char]$OpenChar, [char]$CloseChar)
+    $depth = 0
+    $i = $Open
+    $n = $Mask.Length
+    while ($i -lt $n) {
+        $ch = $Mask[$i]
+        if ($ch -eq $OpenChar) { $depth++ }
+        elseif ($ch -eq $CloseChar) {
+            $depth--
+            if ($depth -eq 0) { return $i }
+        }
+        $i++
+    }
+    return -1
+}
+
+function Initialize-NightlyCsMethodIndex {
+    param([string]$RepoRoot)
+    if ($script:NightlyCsMethodIndexRoot -eq $RepoRoot -and $null -ne $script:NightlyCsMethodIndex) {
+        return $script:NightlyCsMethodIndex
+    }
+    $script:NightlyCsMethodIndexRoot = $RepoRoot
+    $script:NightlyCsMethodIndex = @{
+        ClassFiles = @{}
+        Methods = @{}
+        Parsed = @{}
+        Mapped = $false
+    }
+    return $script:NightlyCsMethodIndex
+}
+
+function Update-NightlyCsClassFiles {
+    param($Index, [string]$RepoRoot)
+    if ($Index.Mapped) { return }
+    $testsRoot = Join-Path $RepoRoot 'tests'
+    $classRx = [regex]'\b(?:class|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)\b'
+    if (Test-Path -LiteralPath $testsRoot -PathType Container) {
+        $pending = New-Object 'System.Collections.Generic.Stack[string]'
+        $pending.Push($testsRoot)
+        while ($pending.Count -gt 0) {
+            $dir = $pending.Pop()
+            $name = [System.IO.Path]::GetFileName($dir)
+            if ($name -eq 'bin' -or $name -eq 'obj' -or $name.StartsWith('bin-', [System.StringComparison]::Ordinal)) { continue }
+            foreach ($sub in [System.IO.Directory]::EnumerateDirectories($dir)) { $pending.Push($sub) }
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($dir, '*.cs')) {
+                $text = [System.IO.File]::ReadAllText($file)
+                foreach ($match in $classRx.Matches($text)) {
+                    $className = $match.Groups[1].Value
+                    if (-not $Index.ClassFiles.ContainsKey($className)) {
+                        $Index.ClassFiles[$className] = New-Object System.Collections.Generic.List[string]
+                    }
+                    if (-not $Index.ClassFiles[$className].Contains($file)) {
+                        [void]$Index.ClassFiles[$className].Add($file)
+                    }
+                }
+            }
+        }
+    }
+    $Index.Mapped = $true
+}
+
+function Add-NightlyCsMethodRecord {
+    param($Index, $Record)
+    $key = [string]$Record.Class + '.' + [string]$Record.Method
+    if (-not $Index.Methods.ContainsKey($key)) {
+        $Index.Methods[$key] = New-Object System.Collections.Generic.List[object]
+    }
+    [void]$Index.Methods[$key].Add($Record)
+}
+
+function Import-NightlyCsFileMethods {
+    param($Index, [string]$Path)
+    if ($Index.Parsed.ContainsKey($Path)) { return }
+    $Index.Parsed[$Path] = $true
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+    $text = [System.IO.File]::ReadAllText($Path)
+    $mask = ConvertTo-NightlyCsStructuralMask -Text $text
+    $n = $mask.Length
+    $namespaces = New-Object System.Collections.Generic.List[object]
+    $nsRx = [regex]'\bnamespace\s+([A-Za-z_][A-Za-z0-9_\.]*)'
+    foreach ($match in $nsRx.Matches($mask)) {
+        $nsName = $match.Groups[1].Value
+        $j = $match.Index + $match.Length
+        while ($j -lt $n -and [char]::IsWhiteSpace($mask[$j])) { $j++ }
+        if ($j -ge $n) { continue }
+        if ($mask[$j] -eq ';') {
+            $start = $j
+            $end = $n - 1
+            foreach ($prior in $namespaces.ToArray()) {
+                if ($prior.FileScoped -and $prior.End -ge $start) { $prior.End = $start - 1 }
+            }
+            [void]$namespaces.Add([pscustomobject]@{ Name = $nsName; Start = $start; End = $end; FileScoped = $true })
+        } elseif ($mask[$j] -eq '{') {
+            $end = Get-NightlyCsMatchEnd -Mask $mask -Open $j -OpenChar '{' -CloseChar '}'
+            if ($end -lt 0) { $end = $n - 1 }
+            [void]$namespaces.Add([pscustomobject]@{ Name = $nsName; Start = $j; End = $end; FileScoped = $false })
+        }
+    }
+    $classes = New-Object System.Collections.Generic.List[object]
+    $classRx = [regex]'\b(?:class|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)\b'
+    foreach ($match in $classRx.Matches($mask)) {
+        $className = $match.Groups[1].Value
+        $j = $match.Index + $match.Length
+        $paren = 0
+        $angle = 0
+        $bodyOpen = -1
+        while ($j -lt $n) {
+            $ch = $mask[$j]
+            if ($ch -eq '(') { $paren++ }
+            elseif ($ch -eq ')') { if ($paren -gt 0) { $paren-- } }
+            elseif ($ch -eq '<') { $angle++ }
+            elseif ($ch -eq '>') { if ($angle -gt 0) { $angle-- } }
+            elseif ($ch -eq '{' -and $paren -eq 0 -and $angle -eq 0) { $bodyOpen = $j; break }
+            elseif ($ch -eq ';' -and $paren -eq 0 -and $angle -eq 0) { break }
+            $j++
+        }
+        if ($bodyOpen -lt 0) { continue }
+        $bodyEnd = Get-NightlyCsMatchEnd -Mask $mask -Open $bodyOpen -OpenChar '{' -CloseChar '}'
+        if ($bodyEnd -lt 0) { continue }
+        $ns = ''
+        $nsStart = -1
+        foreach ($item in $namespaces.ToArray()) {
+            if ($match.Index -ge $item.Start -and $match.Index -le $item.End -and $item.Start -ge $nsStart) {
+                $ns = [string]$item.Name
+                $nsStart = $item.Start
+            }
+        }
+        [void]$classes.Add([pscustomobject]@{ Name = $className; Namespace = $ns; Open = $bodyOpen; End = $bodyEnd })
+    }
+    $mod = 'public|private|internal|protected|static|async|override|virtual|sealed|new|unsafe|partial|extern|required|file'
+    $methodRx = [regex]::new('(?m)^[ \t]*(?:\[[^\]]*\][ \t\r\n]*)*(?:(?:' + $mod + ')[ \t]+)+', 'Compiled')
+    foreach ($match in $methodRx.Matches($mask)) {
+        $owner = $null
+        $ownerOpen = -1
+        foreach ($classInfo in $classes.ToArray()) {
+            if ($match.Index -gt $classInfo.Open -and $match.Index -lt $classInfo.End -and $classInfo.Open -ge $ownerOpen) {
+                $owner = $classInfo
+                $ownerOpen = $classInfo.Open
+            }
+        }
+        if ($null -eq $owner) { continue }
+        $pos = $match.Index + $match.Length
+        $limit = $pos + 8000
+        if ($limit -gt $n) { $limit = $n }
+        $parenAt = -1
+        $sigParen = 0
+        $sigAngle = 0
+        while ($pos -lt $limit) {
+            $ch = $mask[$pos]
+            if ($ch -eq '(' -and $sigAngle -eq 0) { $parenAt = $pos; break }
+            if ($ch -eq '<') { $sigAngle++ }
+            elseif ($ch -eq '>') { if ($sigAngle -gt 0) { $sigAngle-- } }
+            elseif (($ch -eq '{' -or $ch -eq ';' -or $ch -eq '=') -and $sigAngle -eq 0 -and $sigParen -eq 0) { break }
+            $pos++
+        }
+        if ($parenAt -lt 0) { continue }
+        $j = $parenAt - 1
+        while ($j -ge 0 -and [char]::IsWhiteSpace($mask[$j])) { $j-- }
+        if ($j -ge 0 -and $mask[$j] -eq '>') {
+            $angle = 1
+            $j--
+            while ($j -ge 0 -and $angle -gt 0) {
+                if ($mask[$j] -eq '>') { $angle++ }
+                elseif ($mask[$j] -eq '<') { $angle-- }
+                $j--
+            }
+            while ($j -ge 0 -and [char]::IsWhiteSpace($mask[$j])) { $j-- }
+        }
+        if ($j -lt 0) { continue }
+        $nameEnd = $j
+        while ($j -ge 0 -and ([char]::IsLetterOrDigit($mask[$j]) -or $mask[$j] -eq '_')) { $j-- }
+        if ($nameEnd -le $j) { continue }
+        $methodName = $mask.Substring($j + 1, $nameEnd - $j)
+        if ($methodName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
+        $closeParen = Get-NightlyCsMatchEnd -Mask $mask -Open $parenAt -OpenChar '(' -CloseChar ')'
+        if ($closeParen -lt 0) { continue }
+        $k = $closeParen + 1
+        while ($k -lt $n -and [char]::IsWhiteSpace($mask[$k])) { $k++ }
+        $bodyStart = $k
+        $bodyEnd = $k
+        if ($k -lt $n -and $mask[$k] -eq '{') {
+            $braceEnd = Get-NightlyCsMatchEnd -Mask $mask -Open $k -OpenChar '{' -CloseChar '}'
+            if ($braceEnd -lt 0) { continue }
+            $bodyEnd = $braceEnd + 1
+        } elseif ($k + 1 -lt $n -and $mask[$k] -eq '=' -and $mask[$k + 1] -eq '>') {
+            $bodyStart = $k
+            $pDepth = 0
+            $bDepth = 0
+            while ($k -lt $n) {
+                $ch = $mask[$k]
+                if ($ch -eq '(') { $pDepth++ }
+                elseif ($ch -eq ')') { if ($pDepth -gt 0) { $pDepth-- } }
+                elseif ($ch -eq '{') { $bDepth++ }
+                elseif ($ch -eq '}') { if ($bDepth -gt 0) { $bDepth-- } }
+                elseif ($ch -eq ';' -and $pDepth -eq 0 -and $bDepth -eq 0) { $bodyEnd = $k + 1; break }
+                $k++
+            }
+            if ($bodyEnd -le $bodyStart) { continue }
+        } elseif ($k -lt $n -and $mask[$k] -eq ';') {
+            $bodyEnd = $k + 1
+        } else {
+            continue
+        }
+        $sliceEnd = $bodyEnd
+        if ($sliceEnd -gt $text.Length) { $sliceEnd = $text.Length }
+        $record = [pscustomobject]@{
+            Namespace = [string]$owner.Namespace
+            Class = [string]$owner.Name
+            Method = $methodName
+            File = $Path
+            Text = $text.Substring($match.Index, $sliceEnd - $match.Index)
+            Body = $text.Substring($bodyStart, $sliceEnd - $bodyStart)
+            BodyMask = $mask.Substring($bodyStart, $sliceEnd - $bodyStart)
+        }
+        Add-NightlyCsMethodRecord -Index $Index -Record $record
+    }
+}
+
+function Get-NightlyCsMethods {
+    param($Index, [string]$RepoRoot, [string]$ClassName, [string]$MethodName, [string]$Namespace = '')
+    Update-NightlyCsClassFiles -Index $Index -RepoRoot $RepoRoot
+    if ($Index.ClassFiles.ContainsKey($ClassName)) {
+        foreach ($file in $Index.ClassFiles[$ClassName].ToArray()) {
+            Import-NightlyCsFileMethods -Index $Index -Path ([string]$file)
+        }
+    }
+    $key = $ClassName + '.' + $MethodName
+    if (-not $Index.Methods.ContainsKey($key)) { return @() }
+    $all = $Index.Methods[$key].ToArray()
+    if ([string]::IsNullOrWhiteSpace($Namespace)) { return $all }
+    $matched = @($all | Where-Object { $_.Namespace -ceq $Namespace })
+    return $matched
+}
+
+function Get-NightlyCsSkipLiterals {
+    param([string]$Text, [bool]$FoldRefusal)
+    $found = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrEmpty($Text)) { return @() }
+    $rx = [regex]'Skip\.Test\(\s*"((?:\\.|[^"\\])*)"|SkipTestException\(\s*"((?:\\.|[^"\\])*)"|NativeLinuxGate\.Require\(\s*"((?:\\.|[^"\\])*)"|NativeLinuxOnly\(\s*"((?:\\.|[^"\\])*)"|new\s+LiveClaudeRefusal\(\s*"((?:\\.|[^"\\])*)"'
+    foreach ($match in $rx.Matches($Text)) {
+        $group = 0
+        if ($match.Groups[1].Success) { $group = 1 }
+        elseif ($match.Groups[2].Success) { $group = 2 }
+        elseif ($match.Groups[3].Success) { $group = 3 }
+        elseif ($match.Groups[4].Success) { $group = 4 }
+        elseif ($match.Groups[5].Success) { $group = 5 }
+        if ($group -eq 0) { continue }
+        $literal = ConvertFrom-NightlyCsStringLiteral -Raw $match.Groups[$group].Value
+        if ($group -eq 5) {
+            if ($FoldRefusal) { [void]$found.Add('20 ' + $literal) }
+        } else {
+            [void]$found.Add($literal)
+        }
+    }
+    return $found.ToArray()
+}
+
+function Test-NightlyLiveClaudeRefusalFolds {
+    param([string]$RepoRoot)
+    if ($null -ne $script:NightlyLiveClaudeRefusalFolds -and $script:NightlyLiveClaudeRefusalRoot -eq $RepoRoot) {
+        return [bool]$script:NightlyLiveClaudeRefusalFolds
+    }
+    $path = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Shared' (Join-Path 'LiveClaude' 'LiveClaudeLaunchContext.cs')))
+    $folds = $false
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $source = [System.IO.File]::ReadAllText($path)
+        if ($source.Contains('"20 " + reason')) { $folds = $true }
+    }
+    $script:NightlyLiveClaudeRefusalRoot = $RepoRoot
+    $script:NightlyLiveClaudeRefusalFolds = $folds
+    return $folds
+}
+
+function Get-NightlyCsCalls {
+    param([string]$BodyMask)
+    $calls = New-Object System.Collections.Generic.List[object]
+    if ([string]::IsNullOrEmpty($BodyMask)) { return @() }
+    $keywords = @{
+        if = $true; for = $true; while = $true; switch = $true; catch = $true; using = $true
+        lock = $true; return = $true; new = $true; throw = $true; foreach = $true; sizeof = $true
+        typeof = $true; nameof = $true; when = $true; fixed = $true; checked = $true; unchecked = $true
+    }
+    $n = $BodyMask.Length
+    for ($i = 0; $i -lt $n; $i++) {
+        if ($BodyMask[$i] -ne '(') { continue }
+        $j = $i - 1
+        while ($j -ge 0 -and [char]::IsWhiteSpace($BodyMask[$j])) { $j-- }
+        if ($j -ge 0 -and $BodyMask[$j] -eq '>') {
+            $depth = 1
+            $j--
+            while ($j -ge 0 -and $depth -gt 0) {
+                if ($BodyMask[$j] -eq '>') { $depth++ }
+                elseif ($BodyMask[$j] -eq '<') { $depth-- }
+                $j--
+            }
+            while ($j -ge 0 -and [char]::IsWhiteSpace($BodyMask[$j])) { $j-- }
+        }
+        if ($j -lt 0 -or -not ([char]::IsLetterOrDigit($BodyMask[$j]) -or $BodyMask[$j] -eq '_')) { continue }
+        $end = $j
+        while ($j -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$j]) -or $BodyMask[$j] -eq '_')) { $j-- }
+        $name = $BodyMask.Substring($j + 1, $end - $j)
+        if ($keywords.ContainsKey($name)) { continue }
+        $qual = ''
+        $k = $j
+        while ($k -ge 0 -and [char]::IsWhiteSpace($BodyMask[$k])) { $k-- }
+        if ($k -ge 0 -and $BodyMask[$k] -eq '.') {
+            $k--
+            while ($k -ge 0 -and [char]::IsWhiteSpace($BodyMask[$k])) { $k-- }
+            if ($k -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$k]) -or $BodyMask[$k] -eq '_')) {
+                $qEnd = $k
+                while ($k -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$k]) -or $BodyMask[$k] -eq '_')) { $k-- }
+                $qual = $BodyMask.Substring($k + 1, $qEnd - $k)
+            }
+        }
+        if ($qual -eq 'this') { $qual = '' }
+        [void]$calls.Add([pscustomobject]@{ Name = $name; Qualifier = $qual })
+    }
+    return $calls.ToArray()
+}
+
+function Get-NightlyReachableSkipTexts {
+    param([string]$RepoRoot, [string]$Identity)
+    $index = Initialize-NightlyCsMethodIndex -RepoRoot $RepoRoot
+    $methodDot = $Identity.LastIndexOf('.')
+    if ($methodDot -lt 1) { return @() }
+    $method = $Identity.Substring($methodDot + 1)
+    $head = $Identity.Substring(0, $methodDot)
+    $classDot = $head.LastIndexOf('.')
+    if ($classDot -lt 1) { return @() }
+    $className = $head.Substring($classDot + 1)
+    $namespace = $head.Substring(0, $classDot)
+    $starts = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName $className -MethodName $method -Namespace $namespace)
+    $fold = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
+    $texts = New-Object System.Collections.Generic.List[string]
+    $visited = @{}
+    $queue = New-Object System.Collections.Generic.Queue[object]
+    foreach ($start in @($starts)) {
+        if ($null -eq $start) { continue }
+        $queue.Enqueue([pscustomobject]@{ Method = $start; Depth = 0 })
+    }
+    # Same-class helpers and gate calls (Require*, Resolve, CreateAsync) keep a separate
+    # budget so a long test body cannot crowd out the skip chain. Other calls stay at 12.
+    $followedOther = 0
+    $followedSame = 0
+    $followedGate = 0
+    while ($queue.Count -gt 0) {
+        $item = $queue.Dequeue()
+        $current = $item.Method
+        if ($null -eq $current) { continue }
+        $visit = [string]$current.File + '|' + [string]$current.Namespace + '|' + [string]$current.Class + '|' + [string]$current.Method + '|' + [string]$current.Text.Length
+        if ($visited.ContainsKey($visit)) { continue }
+        $visited[$visit] = $true
+        foreach ($literal in @(Get-NightlyCsSkipLiterals -Text ([string]$current.Text) -FoldRefusal $fold)) {
+            [void]$texts.Add([string]$literal)
+        }
+        if ([int]$item.Depth -ge 3) { continue }
+        foreach ($call in @(Get-NightlyCsCalls -BodyMask ([string]$current.BodyMask))) {
+            $callName = [string]$call.Name
+            $sameClass = [string]::IsNullOrWhiteSpace([string]$call.Qualifier)
+            $gate = $false
+            if ($callName -ceq 'Resolve' -or $callName -ceq 'CreateAsync' -or $callName.StartsWith('Require')) { $gate = $true }
+            if ($sameClass) {
+                if ($followedSame -ge 24) { continue }
+            } elseif ($gate) {
+                if ($followedGate -ge 12) { continue }
+            } else {
+                if ($followedOther -ge 12) { continue }
+            }
+            $targets = @()
+            if ($sameClass) {
+                $targets = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName ([string]$current.Class) -MethodName $callName -Namespace ([string]$current.Namespace))
+            } else {
+                $targets = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName ([string]$call.Qualifier) -MethodName $callName -Namespace '')
+            }
+            foreach ($target in @($targets)) {
+                if ($null -eq $target) { continue }
+                if ($sameClass) {
+                    if ($followedSame -ge 24) { break }
+                    $followedSame++
+                } elseif ($gate) {
+                    if ($followedGate -ge 12) { break }
+                    $followedGate++
+                } else {
+                    if ($followedOther -ge 12) { break }
+                    $followedOther++
+                }
+                $queue.Enqueue([pscustomobject]@{ Method = $target; Depth = ([int]$item.Depth + 1) })
+            }
+        }
+    }
+    return $texts.ToArray()
+}
+
+function Get-NightlyExpectedSkipReasonGaps {
+    # The named method's reachable skip text must equal reasonPrefix. Existence stays on Get-NightlyExpectedSkipSourceGaps.
+    param([string]$RepoRoot, [string]$Platform, $Entries = $null)
+    if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
+    $gaps = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        if ([string]$entry.platform -cne $Platform) { continue }
+        $test = [string]$entry.test
+        $prefix = [string]$entry.reasonPrefix
+        $texts = @(Get-NightlyReachableSkipTexts -RepoRoot $RepoRoot -Identity $test)
+        $found = $false
+        foreach ($candidate in @($texts)) {
+            if ([string]$candidate -ceq $prefix) { $found = $true; break }
+        }
+        if (-not $found) { [void]$gaps.Add($test) }
+    }
+    return $gaps.ToArray()
+}
+
+function Get-NightlyExpectedSkipRosterDrift {
+    param([string]$RepoRoot, $Entries)
+    $path = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.Tests' (Join-Path 'Scripts' 'WindowsUnitSkipRoster.cs')))
+    $reasonsById = @{}
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $text = [System.IO.File]::ReadAllText($path)
+        $constants = @{}
+        $constRx = [regex]'const string ([A-Za-z_][A-Za-z0-9_]*) = "((?:\\.|[^"\\])*)"'
+        foreach ($match in $constRx.Matches($text)) {
+            $constants[$match.Groups[1].Value] = ConvertFrom-NightlyCsStringLiteral -Raw $match.Groups[2].Value
+        }
+        $newRx = [regex]'new\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*-?\d+\s*,\s*(?:([A-Za-z_][A-Za-z0-9_]*)|"((?:\\.|[^"\\])*)")'
+        foreach ($match in $newRx.Matches($text)) {
+            $id = $match.Groups[1].Value + '.' + $match.Groups[2].Value + '.' + $match.Groups[3].Value
+            $reason = ''
+            if ($match.Groups[4].Success -and -not [string]::IsNullOrWhiteSpace($match.Groups[4].Value)) {
+                $token = $match.Groups[4].Value
+                if ($constants.ContainsKey($token)) { $reason = [string]$constants[$token] }
+            } elseif ($match.Groups[5].Success) {
+                $reason = ConvertFrom-NightlyCsStringLiteral -Raw $match.Groups[5].Value
+            }
+            if (-not $reasonsById.ContainsKey($id)) {
+                $reasonsById[$id] = New-Object System.Collections.Generic.List[string]
+            }
+            [void]$reasonsById[$id].Add($reason)
+        }
+    }
+    $overlap = New-Object System.Collections.Generic.List[string]
+    $mismatches = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        $id = [string]$entry.test
+        if ([string]::IsNullOrWhiteSpace($id) -or $seen.ContainsKey($id)) { continue }
+        if (-not $reasonsById.ContainsKey($id)) { continue }
+        $seen[$id] = $true
+        [void]$overlap.Add($id)
+        $prefix = [string]$entry.reasonPrefix
+        $hit = $false
+        foreach ($reason in $reasonsById[$id].ToArray()) {
+            if ([string]$reason -ceq $prefix) { $hit = $true; break }
+        }
+        if (-not $hit) { [void]$mismatches.Add($id) }
+    }
+    return [pscustomobject]@{
+        Overlap = $overlap.ToArray()
+        Mismatches = $mismatches.ToArray()
+    }
 }
 
 function Get-NightlyExpectedSkipSourceGaps {
@@ -1234,25 +1889,29 @@ function Get-NightlyExpectedSkipSourceGaps {
     return $gaps
 }
 
-function Test-NightlyRowIsExpectedSkip {
+function Find-NightlyExpectedSkipEntry {
     param($Row, [string]$Platform, [object[]]$Entries)
-    if ($null -eq $Row -or [string]::IsNullOrWhiteSpace($Platform)) { return $false }
-    if ((ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$Row.Outcome)) -cne 'NotExecuted') { return $false }
+    if ($null -eq $Row -or [string]::IsNullOrWhiteSpace($Platform)) { return $null }
+    if ((ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$Row.Outcome)) -cne 'NotExecuted') { return $null }
     $trace = ''
     if ($Row.PSObject.Properties.Name -contains 'DebugTrace') { $trace = [string]$Row.DebugTrace }
-    if (-not $trace.StartsWith('Skipped:', [System.StringComparison]::Ordinal)) { return $false }
-    $body = $trace.Substring(8)
-    if ($body.StartsWith(' ', [System.StringComparison]::Ordinal)) { $body = $body.Substring(1) }
     $identity = [string]$Row.Identity
     foreach ($entry in @($Entries)) {
         if ($null -eq $entry) { continue }
-        if ([string]$entry.platform -cne $Platform) { continue }
         if ([string]$entry.test -cne $identity) { continue }
-        $prefix = [string]$entry.reasonPrefix
-        if ([string]::IsNullOrEmpty($prefix)) { continue }
-        if ($body.StartsWith($prefix, [System.StringComparison]::Ordinal)) { return $true }
+        $reasonClass = Get-NightlyExpectedSkipReasonClass -Entry $entry
+        $entryPlatform = [string]$entry.platform
+        if ($entryPlatform -cne 'windows' -and $entryPlatform -cne 'linux') { continue }
+        if ($reasonClass -ceq 'platform' -and $entryPlatform -cne $Platform) { continue }
+        $expected = 'Skipped: ' + [string]$entry.reasonPrefix
+        if ($trace -ceq $expected) { return $entry }
     }
-    return $false
+    return $null
+}
+
+function Test-NightlyRowIsExpectedSkip {
+    param($Row, [string]$Platform, [object[]]$Entries)
+    return ($null -ne (Find-NightlyExpectedSkipEntry -Row $Row -Platform $Platform -Entries $Entries))
 }
 
 function ConvertTo-NightlyCoverageVerdict {
@@ -1308,9 +1967,15 @@ function ConvertTo-NightlyCoverageVerdict {
     elseif (-not [string]::IsNullOrWhiteSpace($Platform)) { $rosterEntries = @(Get-NightlyExpectedSkipRoster) }
     $expectedSkipRows = New-Object System.Collections.Generic.List[object]
     $stillUnexecuted = New-Object System.Collections.Generic.List[object]
+    $toleratedSkips = New-Object System.Collections.Generic.List[object]
     foreach ($row in @($unexecuted)) {
-        if (Test-NightlyRowIsExpectedSkip -Row $row -Platform $Platform -Entries $rosterEntries) {
+        $matchedEntry = Find-NightlyExpectedSkipEntry -Row $row -Platform $Platform -Entries $rosterEntries
+        if ($null -ne $matchedEntry) {
             [void]$expectedSkipRows.Add($row)
+            [void]$toleratedSkips.Add([pscustomobject]@{
+                identity = [string]$row.Identity
+                reasonClass = (Get-NightlyExpectedSkipReasonClass -Entry $matchedEntry)
+            })
         } else {
             [void]$stillUnexecuted.Add($row)
         }
@@ -1365,22 +2030,8 @@ function ConvertTo-NightlyCoverageVerdict {
     if ($null -eq $passedCount) {
         $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
     }
-    $skipWarnings = New-Object System.Collections.Generic.List[string]
-    if ($null -ne $KnownTestIdentities) {
-        $knownTests = [System.Collections.Generic.Dictionary[string,bool]]::new([System.StringComparer]::Ordinal)
-        foreach ($knownId in @($KnownTestIdentities)) {
-            $knownText = [string]$knownId
-            if (-not [string]::IsNullOrWhiteSpace($knownText)) { $knownTests[$knownText] = $true }
-        }
-        foreach ($entry in @($rosterEntries)) {
-            if ($null -eq $entry) { continue }
-            if ([string]$entry.platform -cne $Platform) { continue }
-            $entryTest = [string]$entry.test
-            if (-not $knownTests.ContainsKey($entryTest)) {
-                [void]$skipWarnings.Add('stale-roster:' + $entryTest)
-            }
-        }
-    }
+    $skipWarnings = @(Get-NightlyExpectedSkipStaleWarnings -Platform $Platform -Entries $rosterEntries -KnownTestIdentities $KnownTestIdentities)
+    $rosterDigest = Get-NightlyExpectedSkipRosterDigest -Entries $rosterEntries
     return [pscustomobject]@{
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
@@ -1392,8 +2043,10 @@ function ConvertTo-NightlyCoverageVerdict {
         skippedIdentities = @($skipped | ForEach-Object { $_.Identity })
         failedIdentities = @($failed | ForEach-Object { $_.Identity })
         expectedSkips = $expectedSkipRows.Count
-        warnings = $skipWarnings.ToArray()
+        warnings = @($skipWarnings)
         processExitTolerated = [bool]$processExitTolerated
+        toleratedSkips = @($toleratedSkips.ToArray())
+        rosterDigest = [string]$rosterDigest
     }
 }
 
@@ -1684,6 +2337,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         census = $censusOut
         processExitTolerated = [bool]$verdict.processExitTolerated
         warnings = @($verdict.warnings)
+        toleratedSkips = @($verdict.toleratedSkips)
+        rosterDigest = [string]$verdict.rosterDigest
     }
 }
 

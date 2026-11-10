@@ -482,6 +482,11 @@ function Format-CountLine {
     }
     $code = $Suite.exitCode
     if ($null -eq $code) { $code = '?' }
+    $tolerated = $false
+    if ($Suite.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$Suite.processExitTolerated) { $tolerated = $true }
+    $resultText = ''
+    if ($Suite.PSObject.Properties.Name -contains 'result') { $resultText = [string]$Suite.result }
+    if ($tolerated -or ($resultText -ceq 'pass' -and "$code" -eq '8')) { return 'expected skips tolerated' }
     return ('exit {0}, counts unparsed - see log' -f $code)
 }
 
@@ -538,6 +543,33 @@ function New-RunSection {
             else { $result = 'FAIL' }
         }
         $lines += ('| {0} | {1} | {2} |' -f [string]$s.name, $result, (Format-CountLine $s))
+    }
+    if ($SummaryObject.PSObject.Properties.Name -contains 'expectedSkipRosterDigest' -or $SummaryObject.PSObject.Properties.Name -contains 'toleratedSkips') {
+        $digestText = ''
+        if ($SummaryObject.PSObject.Properties.Name -contains 'expectedSkipRosterDigest') {
+            $digestText = [string]$SummaryObject.expectedSkipRosterDigest
+        }
+        $lines += ''
+        $lines += ('Expected skip roster: {0}' -f $digestText)
+        $shown = @()
+        if ($SummaryObject.PSObject.Properties.Name -contains 'toleratedSkips') {
+            foreach ($skipRow in @($SummaryObject.toleratedSkips)) {
+                if ($null -eq $skipRow) { continue }
+                $skipId = ''
+                if ($skipRow.PSObject.Properties.Name -contains 'identity') { $skipId = [string]$skipRow.identity }
+                if ([string]::IsNullOrWhiteSpace($skipId)) { continue }
+                $skipClass = 'platform'
+                if ($skipRow.PSObject.Properties.Name -contains 'reasonClass' -and -not [string]::IsNullOrWhiteSpace([string]$skipRow.reasonClass)) {
+                    $skipClass = [string]$skipRow.reasonClass
+                }
+                $shown += ('- {0} ({1})' -f $skipId, $skipClass)
+            }
+        }
+        if (@($shown).Count -eq 0) { $lines += 'Tolerated skips: none' }
+        else {
+            $lines += 'Tolerated skips:'
+            foreach ($shownLine in @($shown)) { $lines += $shownLine }
+        }
     }
 
     $currNames = @(Get-FailedNamesFromSummary $SummaryObject)
@@ -637,7 +669,10 @@ function New-NightlyTitle {
         } elseif ($s.timedOut) {
             $bits += ('{0} TIMEOUT' -f [string]$s.name)
         } elseif (-not $s.skipped -and $s.exitCode -ne 0) {
-            $bits += ('{0} exit {1}' -f [string]$s.name, $s.exitCode)
+            $exempt = $false
+            if ($s.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$s.processExitTolerated) { $exempt = $true }
+            elseif ([string]$s.result -ceq 'pass' -and "$($s.exitCode)" -eq '8') { $exempt = $true }
+            if (-not $exempt) { $bits += ('{0} exit {1}' -f [string]$s.name, $s.exitCode) }
         }
     }
     foreach ($b in @($SummaryObject.builds)) {

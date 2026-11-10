@@ -64,7 +64,8 @@
     {
       "platform": "windows",
       "test": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
-      "reasonPrefix": "20 missing-context"
+      "reasonPrefix": "20 missing-context",
+      "reasonClass": "live-context"
     },
     {
       "platform": "windows",
