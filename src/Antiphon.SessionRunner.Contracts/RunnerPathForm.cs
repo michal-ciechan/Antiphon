@@ -30,10 +30,57 @@ public static class RunnerPathForm
     public static bool HasParentSegment(string path) =>
         path.Replace('\\', '/').Split('/').Contains("..");
 
+    /// <summary>True when a segment is <c>.</c>. A trailing slash is not a segment.</summary>
+    public static bool HasDotSegment(string path) =>
+        path.Replace('\\', '/').Split('/').Contains(".");
+
     /// <summary>True for <c>/</c> or a bare drive root such as <c>C:/</c>.</summary>
     public static bool IsFilesystemRoot(string path)
     {
         var normalized = Normalize(path);
         return normalized.Length == 0 || (normalized.Length == 2 && IsWindowsAbsolute(normalized + "/"));
+    }
+
+    /// <summary>
+    /// CARD-1834. <c>PhoneHome:AllowedCwd</c> spellings that are empty, a filesystem root,
+    /// a <c>.</c> or <c>..</c> segment, or a Windows extended prefix that collapses to a
+    /// drive root (<c>//?/C:/</c>). Lexical only: <c>.</c> and <c>..</c> are collapsed here
+    /// and are not resolved against the filesystem.
+    /// </summary>
+    public static bool IsRejectedAllowedCwd(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return true;
+        if (IsFilesystemRoot(path) || HasParentSegment(path) || HasDotSegment(path))
+            return true;
+        return CollapsesToFilesystemRoot(path);
+    }
+
+    // //?/C:/ and \\?\C:\ become the drive root. Other dot segments are refused by HasDotSegment.
+    private static bool CollapsesToFilesystemRoot(string path)
+    {
+        var form = path.Replace('\\', '/');
+        if (form.StartsWith("//?/", StringComparison.Ordinal))
+            form = form[4..];
+        var absolutePosix = form.StartsWith('/');
+        var stack = new List<string>();
+        foreach (var segment in form.Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".")
+                continue;
+            if (segment == "..")
+            {
+                if (stack.Count > 0)
+                    stack.RemoveAt(stack.Count - 1);
+                continue;
+            }
+
+            stack.Add(segment);
+        }
+
+        var resolved = absolutePosix
+            ? "/" + string.Join('/', stack)
+            : string.Join('/', stack);
+        return IsFilesystemRoot(resolved);
     }
 }

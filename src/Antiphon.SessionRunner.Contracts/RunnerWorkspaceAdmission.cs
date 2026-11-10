@@ -108,6 +108,11 @@ public static class RunnerWorkspaceAdmission
 
         if (!windows)
             return true;
+        // CARD-1834. Windows folds leaf case, so Foo and foo are one directory. Only the
+        // lowercase spelling is admitted; Linux keeps both because they are different directories.
+        // The AllowedCwd prefix stays case-insensitive (/WORK/agents/foo).
+        if (!string.Equals(name, name.ToLowerInvariant(), StringComparison.Ordinal))
+            return false;
         if (name.EndsWith('.'))
             return false;
         return !IsWindowsReservedDevice(name);
