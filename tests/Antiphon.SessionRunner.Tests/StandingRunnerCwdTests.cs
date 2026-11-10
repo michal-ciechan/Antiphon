@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Shouldly;
@@ -210,6 +211,73 @@ public sealed class StandingRunnerCwdTests
             var ex = Should.Throw<InvalidOperationException>(() => EnabledSettings(root).Validate(), root);
             ex.Message.Contains("PhoneHome:AllowedCwd", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
             ex.Message.Contains("filesystem root", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
+        }
+    }
+
+    [Test]
+    public void Root_normalising_allowed_cwd_spellings_are_refused()
+    {
+        Should.NotThrow(() => EnabledSettings("/work/agents").Validate());
+        Should.NotThrow(() => EnabledSettings("C:/Antiphon/runner/work/").Validate());
+
+        foreach (var root in new[]
+                 {
+                     "/.", "/./", "/../", "/work/..", "/./work",
+                     "C:/.", @"C:\.", "C:/Antiphon/..", @"C:\Antiphon\..", "C:/./", "C:/..",
+                     "//?/C:/",
+                 })
+        {
+            var ex = Should.Throw<InvalidOperationException>(() => EnabledSettings(root).Validate(), root);
+            ex.Message.Contains("PhoneHome:AllowedCwd", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
+            ex.Message.Contains("filesystem root", StringComparison.Ordinal).ShouldBeTrue(ex.Message);
+        }
+    }
+
+    [Test]
+    public void Windows_mixed_case_standing_leaf_is_refused()
+    {
+        // Linux keeps both spellings: they are different directories. Windows folds case,
+        // so only the lowercase leaf is one directory and the other spelling is refused.
+        Expect("/work/agents/Foo", Root, windows: false, admitted: true, standing: true);
+        Expect("/work/agents/foo", Root, windows: false, admitted: true, standing: true);
+        Expect("/work/agents/Foo", Root, windows: true, admitted: false, standing: false);
+        Expect("/work/agents/foo", Root, windows: true, admitted: true, standing: true);
+        Expect("/WORK/agents/foo", Root, windows: true, admitted: true, standing: true);
+        Expect("/WORK/agents/Foo", Root, windows: true, admitted: false, standing: false);
+    }
+
+    [Test]
+    public async Task Standing_symlink_swapped_before_start_is_refused()
+    {
+        var root = Path.Combine("/tmp", "c1834-swap-" + Guid.NewGuid().ToString("N"));
+        var agents = Path.Combine(root, "agents");
+        var kept = Path.Combine(agents, "kept-agent");
+        var leaf = Path.Combine(agents, "real-agent");
+        var outside = Path.Combine(root, "outside");
+        Directory.CreateDirectory(kept);
+        Directory.CreateDirectory(leaf);
+        Directory.CreateDirectory(outside);
+        try
+        {
+            var keptRuntime = new IdleRuntime();
+            var keptReply = await DispatchStanding(keptRuntime, root, kept, swapLeaf: null, swapTarget: null);
+            keptRuntime.StartCalls.ShouldBe(1);
+            keptReply.ErrorDetail.ShouldBe("start reached");
+
+            var swapped = new IdleRuntime();
+            var reply = await DispatchStanding(swapped, root, leaf, leaf, outside);
+            swapped.StartCalls.ShouldBe(0);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+            reply.ErrorDetail!.Contains("symlink", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(reply.ErrorDetail);
+            reply.ErrorDetail.Contains("cwd must be", StringComparison.Ordinal).ShouldBeFalse(reply.ErrorDetail);
+        }
+        finally
+        {
+            var link = new DirectoryInfo(leaf);
+            if (link.Exists && link.LinkTarget is not null)
+                File.Delete(leaf);
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
         }
     }
 
@@ -434,6 +502,24 @@ public sealed class StandingRunnerCwdTests
             CapacityStatePath = Path.Combine("/tmp", "c1695-capacity-" + Guid.NewGuid().ToString("N")),
         });
 
+    private static Task<PhoneHomeFrame> DispatchStanding(
+        IdleRuntime runtime, string allowedCwd, string cwd, string? swapLeaf, string? swapTarget)
+    {
+        IProviderAuthProbe? probe = swapLeaf is null
+            ? new SignedInProbe()
+            : new SwapLeafProbe(swapLeaf, swapTarget!);
+        var dispatcher = new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
+        {
+            Enabled = true,
+            AllowedCwd = allowedCwd,
+            CapacityStatePath = Path.Combine("/tmp", "c1834-capacity-" + Guid.NewGuid().ToString("N")),
+        }, probe);
+        var frame = new PhoneHomeFrame(
+            PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
+            JsonSerializer.SerializeToElement(Launch(cwd), PhoneHomeFraming.Json));
+        return dispatcher.DispatchAsync(frame, CancellationToken.None);
+    }
+
     private static RunnerLaunchRequest Launch(string cwd) =>
         new(Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), cwd, 80, 24);
 
@@ -441,9 +527,14 @@ public sealed class StandingRunnerCwdTests
     {
         public RunnerCapabilitiesDto Capabilities() => throw new NotImplementedException();
         public string Health() => throw new NotImplementedException();
-        public IReadOnlyList<RunnerSessionDto> List() => throw new NotImplementedException();
+        public int StartCalls { get; private set; }
+        public IReadOnlyList<RunnerSessionDto> List() => [];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotImplementedException();
-        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct) => throw new NotImplementedException();
+        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
+        {
+            StartCalls++;
+            throw new InvalidOperationException("start reached");
+        }
         public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotImplementedException();
         public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotImplementedException();
         public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotImplementedException();
@@ -455,5 +546,21 @@ public sealed class StandingRunnerCwdTests
         public Task<RunnerKillGenerationResult> KillGenerationAsync(
             Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) => throw new NotImplementedException();
         public int OwnedSessionCount => 0;
+    }
+
+    private sealed class SignedInProbe : IProviderAuthProbe
+    {
+        public Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct) =>
+            Task.FromResult(new RunnerProviderAuthDto(provider, true, "test", null, DateTimeOffset.UtcNow, null));
+    }
+
+    private sealed class SwapLeafProbe(string leaf, string outside) : IProviderAuthProbe
+    {
+        public Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct)
+        {
+            Directory.Delete(leaf, recursive: true);
+            Directory.CreateSymbolicLink(leaf, outside);
+            return Task.FromResult(new RunnerProviderAuthDto(provider, true, "test", null, DateTimeOffset.UtcNow, null));
+        }
     }
 }
