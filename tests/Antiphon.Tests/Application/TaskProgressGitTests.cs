@@ -295,4 +295,49 @@ public class TaskProgressGitTests
             fetches.ShouldBe(3);
         }
     }
+
+    /// <summary>
+    /// CARD-1484. <see cref="TaskProgressGit.PinBaselineAsync"/> creates the baseline ref first.
+    /// A second pin of the same id succeeds; a different id is <c>recovery_ref_collision</c> and
+    /// leaves the ref on the first id. <c>show-ref</c> runs only after git refuses the create.
+    /// </summary>
+    [Test]
+    public async Task C1484_SameShaRepeatSucceedsAndOtherShaCollides()
+    {
+        using var repo = new ScratchGitRepo("c1484-pin");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var first = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        await repo.CommitFileAsync("next.md", "next\n");
+        var other = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+        other.ShouldNotBe(first);
+        var taskId = Guid.NewGuid();
+        var pin = $"{TaskProgressGit.ProgressRefPrefix}{taskId:N}/baseline-local";
+        var git = new ControlledTaskProgressGit();
+
+        git.Trace.Clear();
+        var created = await git.PinBaselineAsync(repo.Path, taskId, "local", first, default);
+        created.Succeeded.ShouldBeTrue();
+        created.RefName.ShouldBe(pin);
+        created.Reason.ShouldBeNull();
+        git.Trace.Select(a => a[0]).ShouldBe(["check-ref-format", "update-ref"]);
+        git.Trace.Single(a => a[0] == "update-ref").ShouldBe(
+            new[] { "update-ref", pin, first, new string('0', first.Length) });
+        (await repo.GitReadAsync("rev-parse", pin)).Trim().ShouldBe(first);
+
+        git.Trace.Clear();
+        var repeat = await git.PinBaselineAsync(repo.Path, taskId, "local", first, default);
+        repeat.Succeeded.ShouldBeTrue(repeat.Reason);
+        repeat.RefName.ShouldBe(pin);
+        repeat.Reason.ShouldBeNull();
+        git.Trace.Select(a => a[0]).ShouldBe(["check-ref-format", "update-ref", "show-ref"]);
+        (await repo.GitReadAsync("rev-parse", pin)).Trim().ShouldBe(first);
+
+        git.Trace.Clear();
+        var collision = await git.PinBaselineAsync(repo.Path, taskId, "local", other, default);
+        collision.Succeeded.ShouldBeFalse();
+        collision.RefName.ShouldBe(pin);
+        collision.Reason.ShouldBe("recovery_ref_collision");
+        git.Trace.Select(a => a[0]).ShouldBe(["check-ref-format", "update-ref", "show-ref"]);
+        (await repo.GitReadAsync("rev-parse", pin)).Trim().ShouldBe(first);
+    }
 }
