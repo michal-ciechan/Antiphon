@@ -52,8 +52,8 @@ The checker and `scripts/check-evidence-diff.ps1` are unlisted. Their SHAs are t
 
 Repository is not shallow.
 
-- `ab28a6ca73be3e39cabc98cce3c78926367a5625..HEAD` commits=2 violations=0, exit 0.
-- `84bc17576287fb43cf2dc04395970a8bc52e2d76..HEAD` commits=3 violations=0, exit 0.
+- `ab28a6ca73be3e39cabc98cce3c78926367a5625..b30340f87315596aa2df0fdf23d335330b5f07ad` commits=2 violations=0, exit 0.
+- `84bc17576287fb43cf2dc04395970a8bc52e2d76..b30340f87315596aa2df0fdf23d335330b5f07ad` commits=3 violations=0, exit 0.
 
 `git fetch origin master` resolved `ef7afd44927206f6c03547670a5add84130bdce9`. `git merge-tree --write-tree origin/master HEAD` wrote `f465ea76babfe655d0fda3877d32a02811d7e600`, exit 0. The branch was not merged.
 
