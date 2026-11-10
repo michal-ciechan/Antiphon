@@ -77,7 +77,10 @@ dumps on 2026-11-10 because age and a recipient are not set up.
 `C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`. That
 copy prefers `C:\src\Antiphon\scripts\postgres-snapshot.ps1` once the checkout
 contains this plain mode, and otherwise runs the runner copy deployed from the
-task branch.
+task branch. Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
+under LocalAppData\antiphon fails the parent check on this desktop because
+that folder grants another account full control. The profile directory's
+parents pass, and the CARD-1413 check is unchanged.
 
 `u/lndcobra/antiphon_postgres_snapshot_stale` runs at `0 0 8 * * *`
 Europe/London. It posts only when no plain dump and no exit-0 status is newer
