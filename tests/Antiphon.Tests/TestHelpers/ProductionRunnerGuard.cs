@@ -51,6 +51,7 @@ public class ProductionRunnerGuard
     public const string DiagnoseEnvVar = "Delegation__DiagnoseEnabled";
     public const string OutputDistillerEnvVar = "Delegation__OutputDistillerEnabled";
     public const string HangfireServerEnabledEnvVar = "Hangfire__ServerEnabled";
+    public const string ZombieCensusEnabledEnvVar = "ZombieCensus__Enabled";
 
     /// <summary>What this process inherited, kept so the log can name it.</summary>
     public static string? InheritedBaseUrl { get; private set; }
@@ -64,6 +65,7 @@ public class ProductionRunnerGuard
         Environment.SetEnvironmentVariable(DiagnoseEnvVar, "false");
         Environment.SetEnvironmentVariable(OutputDistillerEnvVar, "false");
         Environment.SetEnvironmentVariable(HangfireServerEnabledEnvVar, "false");
+        Environment.SetEnvironmentVariable(ZombieCensusEnabledEnvVar, "false");
         Console.WriteLine(
             $"[CARD-0204] {BaseUrlEnvVar}={DeadRunnerBaseUrl}, {CheckInterpreterEnvVar}=false, "
             + $"{DiagnoseEnvVar}=false and {OutputDistillerEnvVar}=false for every Program boot in "
@@ -72,6 +74,9 @@ public class ProductionRunnerGuard
         Console.WriteLine(
             $"[CARD-0298] {HangfireServerEnabledEnvVar}=false for every Program boot in this assembly "
             + "- test hosts never start a Hangfire worker (no WMI census, no production-runner list).");
+        Console.WriteLine(
+            $"[CARD-1222] {ZombieCensusEnabledEnvVar}=false for every Program boot in this assembly "
+            + "- ZombieCensus:Enabled true off Windows fails startup validation.");
     }
 }
 
@@ -190,6 +195,9 @@ public class ProductionRunnerGuardTests
         Environment.GetEnvironmentVariable(ProductionRunnerGuard.HangfireServerEnabledEnvVar)
             .ShouldBe("false",
                 "CARD-0298: AddHangfireServer must not run in a Program boot in this assembly");
+        Environment.GetEnvironmentVariable(ProductionRunnerGuard.ZombieCensusEnabledEnvVar)
+            .ShouldBe("false",
+                "CARD-1222: ZombieCensus:Enabled true off Windows fails startup validation");
 
         var uri = new Uri(ProductionRunnerGuard.DeadRunnerBaseUrl);
         using var socket = new TcpClient();
