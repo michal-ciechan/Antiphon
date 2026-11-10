@@ -255,13 +255,13 @@ Existing tests affected: `ImpactedClassesSelectorTests` (the hand table and the 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1820-s1/` | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-3, R-4 | 0 failed | 37 | 8 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1820-s1/` | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | V-1, V-2, V-3, V-4, V-5, V-6, R-1, R-3, R-4 | 0 failed | 41 | 15 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1820-s2/` | keyword-guards | `/*/*/(KeywordTriggerTests*)\|(GeneratedTextNewlineGuardTests*)\|(DpapiPlatformGuardTests*)/*` | V-7, V-8, V-9 | 0 failed | 6 | 8 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c1820-s3/` | rosters | `/*/*/(RosterRegistryTests*)\|(LandGraphAuditProjectShapeTests*)/*` | V-10, V-11, V-12 | 0 failed | 5 | 8 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c1820-s4/` | what-ran | `/*/*/(WhatRanReceiptContractTests*)/*` | V-13, R-2 | 0 failed | 2 | 8 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1820-s5/` | ledger | `/*/*/(WhyMissedLedgerTests*)\|(WhyMissedWriteUpContractTests*)/*` | V-14, V-15 | 0 failed | 3 | 8 | true |
 
-`ImpactedClassesSelectorTests` is 12 methods plus 13 arguments on `malformed_table_is_refused` (25 executions) at this tree. CP-1 Min is that floor. Later rows' Min values are the floors of the witnesses named above. Code raises Min when the class has more tests. It does not lower it.
+`ImpactedClassesSelectorTests` is 12 methods plus 13 arguments on `malformed_table_is_refused` (25 executions). `DerivedImpactIndexTests` is 16 methods after the S1 repair. CP-1 Min is 41, that sum. The S1 class run measured 12m 17s for those two classes plus `MergeHighRadiusSubsetTests`, so the CP-1 estimate is 15 minutes. Later rows' Min values are the floors of the witnesses named above. Code raises Min when the class has more tests. It does not lower it.
 
 Suffix check: none of these class names is a prefix of another. `LandGraphAuditProjectShapeTests` contains `Land` once, under the four-class warning.
 
