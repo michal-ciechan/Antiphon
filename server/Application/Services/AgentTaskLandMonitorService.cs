@@ -10,8 +10,11 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider clock,
     IOptions<DelegationSettings> settings, IEventBus events, AgentTaskLandQueue? queue = null,
-    IRepositoryMutationLease? leases = null)
+    IRepositoryMutationLease? leases = null,
+    // CARD-1467: optional. Absent, an aged land still says "no progress".
+    LandVerificationWaits? verificationWaits = null)
 {
+    private readonly LandVerificationWaits? _verificationWaits = verificationWaits;
     public async Task SweepAsync(CancellationToken ct)
     {
         var ids = await db.AgentTaskLandRequests.AsNoTracking().Where(r => r.IsPending)
@@ -111,6 +114,8 @@ public sealed class AgentTaskLandMonitorService(AppDbContext db, TimeProvider cl
             ? DescribePersistedHolder(request)
             : await DescribePredecessorAsync(request, snapshot, ct);
         who = await AppendLeaseOwnerAsync(request, who, ct);
+        // CARD-1467 red: the live memory wait is visible to the monitor and still not named.
+        _ = _verificationWaits?.Find(request.Id);
         return $"{request.State}; requested {request.RequestedAt:O}; no progress since {request.LastProgressAt:O}; "
             + $"attempt={request.Attempt}; request={request.Id:N}; reason={reason}; {queueClause}; {who}.";
     }

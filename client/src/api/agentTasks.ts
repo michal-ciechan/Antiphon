@@ -361,6 +361,15 @@ export interface AgentTaskDetailDto {
     sourceDiagnosticExitCode?: number | null
     sourceDiagnosticCode?: string | null
     sourceDiagnosticExceptionType?: string | null
+    verificationWait?: {
+      kind: 'WaitingForMemory' | 'MemoryFloorFallback'
+      availableMb: number
+      floorMb: number
+      waitedSeconds: number
+      maxCpuCount: number
+      observedAt: string
+      description: string
+    } | null
     notifications: Array<{
       id: string; kind: string; state: string; destinationSessionId: string | null
       queueMessageId: string | null; lastErrorCode: string | null; confirmedAt: string | null
