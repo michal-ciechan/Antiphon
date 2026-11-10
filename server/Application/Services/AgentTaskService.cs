@@ -811,10 +811,7 @@ public sealed class AgentTaskService
             ct);
 
         var proposedCardState = binding.CardId is Guid proposedCardId
-            ? await _db.Cards.AsNoTracking().Where(c => c.Id == proposedCardId)
-                .Select(c => new CardAdmissionState(c.Status, c.ArchivedAt, c.BoardId, c.Identifier,
-                    c.ActiveWorkflowRunId, c.RequiredPlatform, c.CodeVerificationPolicy, c.ReviewVerificationPolicy))
-                .SingleAsync(ct)
+            ? await ReadCardAdmissionStateAsync(proposedCardId, ct)
             : null;
 
         if (caller.BoardId is Guid capabilityBoard && binding.CardId is Guid boundCardId)
@@ -1641,7 +1638,11 @@ public sealed class AgentTaskService
         DelegationOpenGate.Snapshot? openSnapshot = null;
         // The preview is advisory and dispatch recomputes it. Ordinary Git inspection
         // must not hold the card row or concurrency gate while subprocesses run.
+        // CARD-1300: a closed or admission-changed card stops before that preview and
+        // before BaseTask git errors. The locked recheck still covers a change during git.
         var prepareBeforeLocks = handoffActionId is null && task.SourceLandingOperationId is null;
+        if (prepareBeforeLocks && task.CardId is Guid preparationCardId && IsImplementationAdmission(task.Role))
+            RefuseImplementationAdmission(proposedCardState, await ReadCardAdmissionStateAsync(preparationCardId, ct));
         if (prepareBeforeLocks && gateCreate)
             await _openGate!.PreviewCanCreateAsync(projectId, request.Role, request.IgnoreConcurrencyLimit, ct);
         CardWorktreeBaseSelection? basePreview = prepareBeforeLocks
@@ -1740,16 +1741,7 @@ public sealed class AgentTaskService
                         false, "handoff child", ct);
             }
             if (admissionCard is not null && IsImplementationAdmission(task.Role))
-            {
-                if (admissionCard.Status is CardStatus.Done or CardStatus.Canceled || admissionCard.ArchivedAt is not null)
-                    throw new ConflictException("Implementation work requires an open card.", "card_implementation_closed");
-                // CARD-1303 R4: decide from the locked row when a sweep moves an open
-                // card or the active workflow run changes. Other fence fields still refuse.
-                var lockedCardState = CardAdmissionState.From(admissionCard);
-                if (lockedCardState != proposedCardState
-                    && (proposedCardState is not { } observed || !IsBenignAdmissionTransition(observed, lockedCardState)))
-                    throw new ConflictException("The card changed during admission; request a fresh decision.", "card_admission_changed");
-            }
+                RefuseImplementationAdmission(proposedCardState, CardAdmissionState.From(admissionCard));
             if (task.SourceLandingOperationId is Guid sourceOperation)
             {
                 if (_sourceLanding is null)
@@ -1901,6 +1893,23 @@ public sealed class AgentTaskService
         public static CardAdmissionState From(Card card) => new(card.Status, card.ArchivedAt,
             card.BoardId, card.Identifier, card.ActiveWorkflowRunId, card.RequiredPlatform,
             card.CodeVerificationPolicy, card.ReviewVerificationPolicy);
+    }
+
+    private async Task<CardAdmissionState> ReadCardAdmissionStateAsync(Guid cardId, CancellationToken ct) =>
+        await _db.Cards.AsNoTracking().Where(c => c.Id == cardId)
+            .Select(c => new CardAdmissionState(c.Status, c.ArchivedAt, c.BoardId, c.Identifier,
+                c.ActiveWorkflowRunId, c.RequiredPlatform, c.CodeVerificationPolicy, c.ReviewVerificationPolicy))
+            .SingleAsync(ct);
+
+    // Closed wins over a concurrent fence change. CARD-1303 R4 admits a sweep move among
+    // open columns, and an active workflow run change, from the locked row.
+    private static void RefuseImplementationAdmission(CardAdmissionState? proposed, CardAdmissionState locked)
+    {
+        if (locked.Status is CardStatus.Done or CardStatus.Canceled || locked.ArchivedAt is not null)
+            throw new ConflictException("Implementation work requires an open card.", "card_implementation_closed");
+        if (locked != proposed
+            && (proposed is not { } observed || !IsBenignAdmissionTransition(observed, locked)))
+            throw new ConflictException("The card changed during admission; request a fresh decision.", "card_admission_changed");
     }
 
     private static bool IsBenignAdmissionTransition(CardAdmissionState observed, CardAdmissionState locked) =>
