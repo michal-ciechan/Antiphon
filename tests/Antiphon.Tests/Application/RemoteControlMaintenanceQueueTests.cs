@@ -384,6 +384,45 @@ public class RemoteControlMaintenanceQueueTests
         row.MaintenanceEvidence.ShouldContain("modal-blocked");
     }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task C1833_Enter_is_withheld_when_the_highlighted_command_is_not_remote_control(CancellationToken ct)
+    {
+        await using var h = await RemoteControlRecoveryHarness.CreateAsync();
+        var generation = h.Generation;
+        var resume = C1833ResumePalette();
+        h.Runner.SnapshotOverride = sessionId =>
+        {
+            if (h.Adapter.ConditionalInputs.Contains("/remote-control"))
+                h.Adapter.RenderedScreenOverride = resume;
+            return Task.FromResult(new SessionRunnerSnapshotDto(sessionId,
+                h.Adapter.SnapshotRawOutput(), h.Adapter.SnapshotRenderedScreen(),
+                h.Adapter.SnapshotSequence, generation, generation));
+        };
+
+        (await h.ReserveAndExecuteAsync(ct: ct)).ShouldBe(RemoteControlArmResult.ArmUnconfirmed);
+        h.Adapter.ConditionalInputs.ShouldBe(["/remote-control"]);
+        h.Adapter.SubmittedBodies.ShouldBeEmpty();
+        h.Runner.RawInputs.ShouldBeEmpty();
+    }
+
+    private static string C1833ResumePalette()
+    {
+        var rule = new string('─', 40);
+        const string highlighted = "/resume";
+        var prefix = "  > " + highlighted;
+        var highlight = prefix + new string(' ', Math.Max(2, 41 - prefix.Length))
+            + "Control this session from your phone or claude.ai/code";
+        return string.Join('\n',
+            rule,
+            ">\u00A0/remote-control",
+            rule,
+            highlight,
+            "    /rc-status                             Show remote-control (bridge) health",
+            "                                           / DROPPED / NO-RC (user)",
+            "    /launch-remote                         Launch a new Claude Code remote-control session");
+    }
+
 
     [Test]
     // Includes cold DI/EF setup: two narrow-run first cases exhausted 10s before recovery.
