@@ -11,6 +11,8 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
+// CARD-1439: no child process. The 60s hook still assumes one historical clone at a time.
+[NotInParallel(nameof(C0824RefOnlySnapshotMigrationTests))]
 [Timeout(60_000)] // CARD-0824 provisional: isolated clone and subject-specific migration round trips.
 public sealed class C0824RefOnlySnapshotMigrationTests
 {
