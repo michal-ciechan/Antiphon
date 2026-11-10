@@ -261,6 +261,14 @@ function Test-RunnerSourceSha {
         Write-Fail 'runner copy pins SOURCE-SHA' 'pin missing'
         return
     }
+    $readmePath = Join-Path $here 'windmill\README.md'
+    $readmeText = ''
+    if (Test-Path -LiteralPath $readmePath) { $readmeText = [System.IO.File]::ReadAllText($readmePath) }
+    Assert-True ($readmeText.Contains('Write SOURCE-SHA')) 'readme says to write SOURCE-SHA' 'missing'
+    Assert-True ($readmeText.Contains('Delete SOURCE-SHA.txt')) 'readme says to delete SOURCE-SHA.txt' 'missing'
+    Assert-True ($readmeText.Contains('do not write SOURCE-SHA.txt')) 'readme says to stop writing SOURCE-SHA.txt' 'missing'
+    Assert-True ($text.Contains("Join-Path `$PSScriptRoot 'SOURCE-SHA'")) 'resolver reads SOURCE-SHA' 'missing'
+    Assert-True ($text.IndexOf('SOURCE-SHA.txt') -lt 0) 'resolver does not name SOURCE-SHA.txt' 'named'
     $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-pin-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     try {
@@ -293,6 +301,14 @@ function Test-RunnerSourceSha {
         $first = Resolve-PlainSnapshotScript -Candidates @($earlySame, $late) -PinFile $pin
         Assert-True ([string]$first -eq $earlySame) 'runner pin keeps an earlier copy when the hash matches' ([string]$first)
         Assert-True ([string]$script:PlainSnapshotSourceSha -eq $lateHash) 'runner pin records the source sha' ([string]$script:PlainSnapshotSourceSha)
+        $staleTxt = Join-Path $root 'SOURCE-SHA.txt'
+        Set-Content -LiteralPath $staleTxt -Value 'd6f4584376cd3fa7fca1b86fb9ded06eb9b09838' -Encoding ASCII
+        Set-Content -LiteralPath $pin -Value $lateHash -Encoding ASCII
+        $withStale = Resolve-PlainSnapshotScript -Candidates @($late) -PinFile $pin
+        Assert-True ([string]$withStale -eq $late) 'stale SOURCE-SHA.txt does not replace SOURCE-SHA' ([string]$withStale)
+        Remove-Item -LiteralPath $pin -Force
+        $txtOnly = Resolve-PlainSnapshotScript -Candidates @($late) -PinFile $pin
+        Assert-True ([string]$txtOnly -eq '') 'a pin in SOURCE-SHA.txt is not read' ([string]$txtOnly)
     } finally {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }

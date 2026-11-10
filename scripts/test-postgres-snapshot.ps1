@@ -2146,10 +2146,17 @@ function Test-PlainPublishPruneOrder {
             }
             if ($ArgumentList.Count -ge 1 -and [string]$ArgumentList[0] -eq 'cp') {
                 $destArg = [string]$ArgumentList[$ArgumentList.Count - 1]
-                if ($destArg -notmatch ':') {
+                $writePath = $destArg
+                $classified = $destArg
+                # A POSIX host path has no drive letter. Classify the Windows
+                # form so this witness hits the same seam as C:\ on the desktop.
+                if ($classified -match '^/') {
+                    $classified = 'C:' + ($classified -replace '/', '\')
+                }
+                if ($classified -notmatch ':') {
                     $buffer = New-Object byte[] ([int]$script:PlainDumpBytes)
-                    [System.IO.File]::WriteAllBytes($destArg, $buffer)
-                    $script:PlainExpectedHash = (Get-FileHash -LiteralPath $destArg -Algorithm SHA256).Hash
+                    [System.IO.File]::WriteAllBytes($writePath, $buffer)
+                    $script:PlainExpectedHash = (Get-FileHash -LiteralPath $writePath -Algorithm SHA256).Hash
                 }
                 return [pscustomobject]@{ Exit = 0; Lines = @() }
             }
