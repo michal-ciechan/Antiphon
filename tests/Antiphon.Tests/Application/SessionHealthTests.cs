@@ -606,10 +606,10 @@ public class SessionHealthTests
         /// <summary>False models an unreadable/absent session file — the probe knows nothing.</summary>
         public bool StateFileFound { get; set; } = true;
 
-        /// <summary>False means <see cref="Connections"/> is not a count. Not forwarded until the omission lands.</summary>
+        /// <summary>False means <see cref="Connections"/> is not a count.</summary>
         public bool ConnectionCountMeasured { get; set; } = true;
 
-        public RcProbeResult Probe(int pid) => new(Armed, Connections, StateFileFound);
+        public RcProbeResult Probe(int pid) => new(Armed, Connections, StateFileFound, ConnectionCountMeasured);
     }
 
     private sealed class RecordingHealthActions : ISessionHealthActions

@@ -346,7 +346,7 @@ outside `TranscriptTailer`.
   session list. A failed or unknown `/remote-control` degrades (`RcDegraded` / `RemoteControlArmSuppressed` /
   `RemoteControlMonitoringDegraded`); it never fails the launch. CARD-0514: never type it into an
   already-armed child; a standing management menu is an open `RemoteControlModalEpisode` (Attention:
-  "Remote Control menu blocks input"), not a reason to restart.
+  "Remote Control menu blocks input"), not a reason to restart. Claude RC connection count is a supported omission off Windows. A missing count is not zero connections.
 - `--append-system-prompt` is supported.
 - Manual `/compact` is a turn **end**; auto-compaction is mid-turn housekeeping. Both need the
   CARD-0041 handling — see AGENTS.md / CLAUDE.md gotchas.
