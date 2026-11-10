@@ -692,16 +692,16 @@ public class LandingGit : ILandingGit
             TaskScheduler.Default);
     }
 
-    /// <summary>
-    /// True only for a start failure that definitely created no child: CreateProcess (Windows) or
-    /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
-    /// </summary>
     /// <summary>A subcommand that may write the repository. Its child carries a standing
     /// <see cref="RepositoryChildJournal"/> record from before <c>Process.Start</c> until its
     /// redirected streams have closed after the root exited.</summary>
     internal static bool IsMutating(IReadOnlyList<string> arguments) => arguments.Any(a => a is "rebase" or "merge" or "push" or "fetch" or "update-ref"
         or "add" or "remove" or "commit" or "checkout" or "checkout-index" or "restore" or "reset");
 
+    /// <summary>
+    /// True only for a start failure that definitely created no child: CreateProcess (Windows) or
+    /// exec (Unix, whose failed child has already exited) refusing the executable or its directory.
+    /// </summary>
     internal static bool CreatedNoChild(Exception ex) => ex is System.ComponentModel.Win32Exception win32
         && (OperatingSystem.IsWindows()
             ? win32.NativeErrorCode is 2 or 3 or 5 or 193 or 267 // FILE/PATH_NOT_FOUND, ACCESS_DENIED, BAD_EXE_FORMAT, DIRECTORY
