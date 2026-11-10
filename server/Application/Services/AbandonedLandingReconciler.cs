@@ -14,7 +14,8 @@ namespace Antiphon.Server.Application.Services;
 /// <see cref="WorktreeResidueSettings.AbandonedLandingDays"/> with a terminal task and no
 /// pending request, the daily job marks it <c>Refused</c> so the next explicit <c>-Land</c>
 /// starts a fresh operation (<c>CanReplaceRefused</c>). A push that returned 0 but was never
-/// confirmed is <c>push_unconfirmed</c>; only a human resolves it, so it is logged and kept.
+/// confirmed, or whose exit was never recorded, is kept for a human: exit 0 is logged
+/// <c>push_unconfirmed</c>, and a null exit is logged as no push exit.
 /// One transaction per operation under the task row lock, the same lock
 /// <c>RequestCleanupRetryCoreAsync</c> takes.
 /// </summary>
@@ -73,61 +74,82 @@ public sealed class AbandonedLandingReconciler(
 
     private async Task<bool> RefuseAsync(Guid id, DateTime now, DateTime cutoff, int days, CancellationToken ct)
     {
-        db.ChangeTracker.Clear();
-        var snapshot = await db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == id, ct);
-        if (snapshot is null) return false;
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {snapshot.TaskId} FOR UPDATE", ct);
-        var op = await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == id, ct);
-        if (op is null || !IsCandidate(op, cutoff)) return false;
-        if (op.Phase == LandPhase.PushStarted && op.PushExitCode == 0)
+        try
         {
-            logger.LogWarning(
-                "Landing {OperationId} for task {TaskId} is push_unconfirmed (push exit 0, never confirmed) since {UpdatedAt:O}; kept for a human",
-                op.Id, op.TaskId, op.UpdatedAt);
-            return false;
-        }
+            db.ChangeTracker.Clear();
+            var snapshot = await db.AgentTaskLandings.AsNoTracking().SingleOrDefaultAsync(o => o.Id == id, ct);
+            if (snapshot is null) return false;
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {snapshot.TaskId} FOR UPDATE", ct);
+            var op = await db.AgentTaskLandings.SingleOrDefaultAsync(o => o.Id == id, ct);
+            if (op is null || !IsCandidate(op, cutoff)) return false;
+            // A push that returned 0, or that stopped before an exit was stored, stays for a human.
+            // Any other exit, including 1, is still abandoned. Other resumable phases are unchanged.
+            if (op.Phase == LandPhase.PushStarted && op.PushExitCode is null or 0)
+            {
+                if (op.PushExitCode is null)
+                {
+                    logger.LogWarning(
+                        "Landing {OperationId} for task {TaskId} has no push exit (in progress or stopped before an exit was recorded) since {UpdatedAt:O}; kept for a human",
+                        op.Id, op.TaskId, op.UpdatedAt);
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "Landing {OperationId} for task {TaskId} is push_unconfirmed (push exit 0, never confirmed) since {UpdatedAt:O}; kept for a human",
+                        op.Id, op.TaskId, op.UpdatedAt);
+                }
 
-        var task = await db.AgentTasks.AsNoTracking()
-            .Where(t => t.Id == op.TaskId)
-            .Select(t => new { t.Status, t.CurrentLandRequestId })
-            .SingleOrDefaultAsync(ct);
-        if (task is null || !TerminalTask.Contains(task.Status)) return false;
-        if (await db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == op.TaskId && r.IsPending, ct)) return false;
-        if (task.CurrentLandRequestId is Guid current)
-        {
-            var state = await db.AgentTaskLandRequests.AsNoTracking()
-                .Where(r => r.Id == current).Select(r => (LandRequestState?)r.State).SingleOrDefaultAsync(ct);
-            if (state is not null
-                && state is not (LandRequestState.Completed or LandRequestState.Superseded or LandRequestState.Canceled))
                 return false;
-        }
+            }
 
-        var previousReason = op.LastReason;
-        var previousPhase = op.Phase;
-        var previousUpdatedAt = op.UpdatedAt;
-        op.Publication = LandPublicationOutcome.Refused;
-        op.LastReason = Clip("landing_abandoned:" + previousReason);
-        _state.Transition(op, LandPhase.Refused, now);
-        db.AgentTaskEvents.Add(new AgentTaskEvent
+            var task = await db.AgentTasks.AsNoTracking()
+                .Where(t => t.Id == op.TaskId)
+                .Select(t => new { t.Status, t.CurrentLandRequestId })
+                .SingleOrDefaultAsync(ct);
+            if (task is null || !TerminalTask.Contains(task.Status)) return false;
+            if (await db.AgentTaskLandRequests.AnyAsync(r => r.TaskId == op.TaskId && r.IsPending, ct)) return false;
+            if (task.CurrentLandRequestId is Guid current)
+            {
+                var state = await db.AgentTaskLandRequests.AsNoTracking()
+                    .Where(r => r.Id == current).Select(r => (LandRequestState?)r.State).SingleOrDefaultAsync(ct);
+                if (state is not null
+                    && state is not (LandRequestState.Completed or LandRequestState.Superseded or LandRequestState.Canceled))
+                    return false;
+            }
+
+            var previousReason = op.LastReason;
+            var previousPhase = op.Phase;
+            var previousUpdatedAt = op.UpdatedAt;
+            op.Publication = LandPublicationOutcome.Refused;
+            op.LastReason = Clip("landing_abandoned:" + previousReason);
+            _state.Transition(op, LandPhase.Refused, now);
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(),
+                AgentTaskId = op.TaskId,
+                Type = AgentTaskEventType.Warning,
+                Detail = $"landing_abandoned: operation {op.Id:N} refused {previousReason ?? "(none)"} at {previousPhase} on {previousUpdatedAt:O}; no resume within {days} days; the next -Land starts a fresh operation",
+                At = now,
+                LandingOperationId = op.Id,
+                LandingPublication = LandPublicationOutcome.Refused,
+                LandingCleanup = op.Cleanup,
+                LandingMode = op.Mode,
+            });
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            logger.LogInformation(
+                "Landing {OperationId} for task {TaskId} abandoned at {Phase} ({Reason}) since {UpdatedAt:O}; marked Refused",
+                op.Id, op.TaskId, previousPhase, previousReason, previousUpdatedAt);
+            return true;
+        }
+        finally
         {
-            Id = Guid.NewGuid(),
-            AgentTaskId = op.TaskId,
-            Type = AgentTaskEventType.Warning,
-            Detail = $"landing_abandoned: operation {op.Id:N} refused {previousReason ?? "(none)"} at {previousPhase} on {previousUpdatedAt:O}; no resume within {days} days; the next -Land starts a fresh operation",
-            At = now,
-            LandingOperationId = op.Id,
-            LandingPublication = LandPublicationOutcome.Refused,
-            LandingCleanup = op.Cleanup,
-            LandingMode = op.Mode,
-        });
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        logger.LogInformation(
-            "Landing {OperationId} for task {TaskId} abandoned at {Phase} ({Reason}) since {UpdatedAt:O}; marked Refused",
-            op.Id, op.TaskId, previousPhase, previousReason, previousUpdatedAt);
-        return true;
+            // The residue sweep shares this context. A failed save must not stay tracked, or the
+            // sweep's next save writes the refusal outside the task lock.
+            db.ChangeTracker.Clear();
+        }
     }
 
     private bool IsCandidate(AgentTaskLanding op, DateTime cutoff) =>

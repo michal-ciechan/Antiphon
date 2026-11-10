@@ -1223,6 +1223,33 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         }
     }
 
+    /// <summary>
+    /// CARD-1459. True when <paramref name="worktree"/> <c>HEAD</c> is the full
+    /// <paramref name="sourceSha"/>. A missing path or a Git failure is not a match.
+    /// The log names the exception type only.
+    /// </summary>
+    internal async Task<bool> CheckoutHeadMatchesAsync(string? worktree, string? sourceSha, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(worktree) || !GitObjectId.TryNormalize(sourceSha, out var expected))
+            return false;
+        try
+        {
+            var head = await _git.RunAsync(worktree, ["rev-parse", "--verify", "HEAD^{commit}"], ct);
+            return head.Succeeded
+                && GitObjectId.TryNormalize(head.Output, out var actual)
+                && string.Equals(actual, expected, StringComparison.Ordinal);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Desktop HEAD observation failed ({Type})", ex.GetType().Name);
+            return false;
+        }
+    }
+
     private static bool PathsEqual(string left, string right) => string.Equals(
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
