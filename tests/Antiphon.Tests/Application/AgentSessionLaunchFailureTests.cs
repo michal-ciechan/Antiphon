@@ -2670,6 +2670,83 @@ public class AgentSessionLaunchFailureTests
         recorded.ShouldNotContain(sentinel);
     }
 
+    /// <summary>
+    /// CARD-1508. A natural process exit keeps its code. The fatal pre-prompt clause is appended
+    /// onto that sentence and then into the task reason and the caller note. It is not a sign-in
+    /// or quota hold, and the ready failure still throws the generic not-ready sentence.
+    /// </summary>
+    [Test]
+    [Timeout(60_000)]
+    public async Task Fatal_account_bootstrap_outcome_is_kept_on_the_failed_session_and_caller_note(
+        CancellationToken cancellationToken)
+    {
+        const string outcome =
+            "AccountBootstrap: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code -32603); elapsedMs=43954; capture=/tmp/antiphon-codex-startup/codex-startup-example.txt; exitCode=1";
+        var adapter = new FakeAgentProtocolAdapter
+        {
+            ReadyResult = false,
+            StartupFailureOutcome = outcome,
+        };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var crashedAt = DateTime.UtcNow.AddMinutes(-1);
+        const string crash = "Process exited (ProcessExited, code 1).";
+        await using (var seed = LaunchFixture.CreateContext())
+        {
+            var row = await seed.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+            row.TerminationSource = SessionTerminationSource.ProcessExit;
+            row.FailureReason = crash;
+            row.ExitCode = 1;
+            row.EndedAt = crashedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        var thrown = await Should.ThrowAsync<Exception>(() => fixture.LaunchInteractiveAsync(ct: cancellationToken));
+        thrown.GetBaseException().Message.ShouldContain(AgentSessionService.NotReadyBase);
+
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == fixture.SessionId);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.ProcessExit);
+        session.ExitCode.ShouldBe(1);
+        session.LaunchBlock.ShouldBeNull();
+        session.EndedAt.ShouldNotBeNull();
+        session.EndedAt!.Value.ShouldBe(crashedAt, TimeSpan.FromSeconds(1));
+        session.FailureReason.ShouldNotBeNull();
+        session.FailureReason.ShouldStartWith(crash);
+        session.FailureReason.ShouldContain("AccountBootstrap:");
+        session.FailureReason.ShouldContain("workspace routing discovery timed out (code -32603)");
+        session.FailureReason.ShouldContain("elapsedMs=43954");
+        session.FailureReason.ShouldContain("capture=/tmp/antiphon-codex-startup/codex-startup-example.txt");
+        session.FailureReason.ShouldContain("code 1");
+        session.FailureReason.ShouldNotContain("quota");
+        session.FailureReason.ShouldNotContain("usage limit");
+        session.FailureReason.ShouldNotContain("Please sign in");
+
+        var verdict = AgentTaskLiveness.ClassifyFailure(
+            fixture.SessionId,
+            new AgentTaskLiveness.SessionSnapshot(
+                session.Status, session.EndedAt, session.FailureReason,
+                session.TerminationSource, session.ExitCode, session.LaunchBlock),
+            hasTranscriptEntries: false);
+        verdict.FailureCode.ShouldNotBe(AgentTaskFailureCode.AuthenticationRequired);
+        verdict.FailureCode.ShouldBeNull();
+        verdict.Reason.ShouldContain("workspace routing discovery timed out (code -32603)");
+        verdict.Reason.ShouldContain("code 1");
+        verdict.Reason.ShouldContain("elapsedMs=43954");
+
+        var task = new AgentTask
+        {
+            Id = Guid.NewGuid(),
+            Title = "CARD-1508",
+            Status = AgentTaskStatus.Failed,
+            FailureReason = verdict.Reason,
+        };
+        var note = DelegationReportFormatter.BuildCompletionNote(task, new DelegationSettings(), verdict.Reason);
+        note.Body.ShouldContain("workspace routing discovery timed out (code -32603)");
+        note.Body.ShouldContain("elapsedMs=43954");
+        note.Body.ShouldContain("capture=/tmp/antiphon-codex-startup/codex-startup-example.txt");
+        note.Body.ShouldNotContain("AuthenticationRequired");
+    }
+
     private static async Task<string> PostUnmappedLaunchAsync(string message, CancellationToken ct)
     {
         var root = Path.Combine(Path.GetTempPath(), "c2dec24ba-srv-" + Guid.NewGuid().ToString("N"));
