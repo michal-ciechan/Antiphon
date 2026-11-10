@@ -80,7 +80,7 @@ public static class OutputDistillationGate
         foreach (Match match in CardPattern.Matches(raw))
             Require(distilled, match.Value, missing, "card:");
         foreach (Match match in UrlPattern.Matches(raw))
-            Require(distilled, match.Value.TrimEnd(").,;".ToCharArray()), missing, "url:");
+            Require(distilled, match.Value.TrimEnd(UrlTrailingMarkdownAndProse), missing, "url:");
         foreach (Match match in AttachPattern.Matches(raw))
             Require(distilled, match.Value, missing, "attach:");
         foreach (Match match in AmountPattern.Matches(raw))
@@ -97,6 +97,10 @@ public static class OutputDistillationGate
         foreach (Match match in PathPattern.Matches(raw))
         {
             var path = match.Value.TrimEnd(").,;[]".ToCharArray());
+            // CARD-0529: a 1- or 2-character fragment such as /p is not a path anchor.
+            // Measure after trailing-punctuation trim so "/p." does not survive as "/p".
+            if (path.Length < MinimumPathAnchorLength)
+                continue;
             if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -186,6 +190,13 @@ public static class OutputDistillationGate
     private static readonly Regex UrlPattern = new(
         @"https?://[^\s]+",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // CARD-0529: [^\s]+ keeps markdown wrappers. Strip them with the prose punctuation
+    // so a backtick, autolink, emphasis marker or quote still matches the clean URL.
+    private static readonly char[] UrlTrailingMarkdownAndProse =
+        ['`', '>', ')', '.', ',', ';', '*', '"', '\''];
+
+    private const int MinimumPathAnchorLength = 3;
 
     private static readonly Regex AttachPattern = new(
         @"\[\[attach:",
