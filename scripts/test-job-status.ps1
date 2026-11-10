@@ -39,12 +39,17 @@ function Assert-True {
     if ($Cond) { Write-Pass $Name } else { Write-Fail $Name $Detail }
 }
 
+$script:JobStatusLoaded = $false
+if (Test-Path -LiteralPath $helperPath) {
+    . $helperPath
+    $script:JobStatusLoaded = $true
+}
+
 function Import-JobStatus {
-    if (-not (Test-Path -LiteralPath $helperPath)) {
+    if (-not $script:JobStatusLoaded) {
         Write-Fail 'job-status script exists' $helperPath
         return $false
     }
-    . $helperPath
     return $true
 }
 
@@ -57,6 +62,8 @@ function Test-RenderLines {
     $ok = New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail '0.6 GB'
     Assert-True ($null -ne $ok) 'ok record is accepted' 'null'
     Assert-True ((Format-JobStatusLine $ok) -eq 'DB backup: OK 0.6 GB') 'ok line is short' (Format-JobStatusLine $ok)
+    Assert-True ((Format-SnapshotSize 1073741824) -eq '1.0 GB') 'size formats gibibytes' (Format-SnapshotSize 1073741824)
+    Assert-True ((Format-SnapshotSize 1048576) -eq '1.0 MB') 'size formats mebibytes' (Format-SnapshotSize 1048576)
     $fail = New-JobStatusRecord -Job 'db-backup' -Icon 'FAIL' -Status 'fail' -Detail 'exit 3'
     Assert-True ((Format-JobStatusLine $fail) -eq 'DB backup: FAIL exit 3') 'fail line is loud and short' (Format-JobStatusLine $fail)
     $stale = New-JobStatusRecord -Job 'db-backup' -Icon 'STALE' -Status 'stale'
@@ -102,7 +109,7 @@ function Test-StaleWindow {
     New-Item -ItemType Directory -Path $dir | Out-Null
     try {
         $path = Join-Path $dir 'snapshot-status.json'
-        $now = [datetime]::SpecifyKind([datetime]::ParseExact('20261110T080000Z', 'yyyyMMddTHHmmssZ', $null), [DateTimeKind]::Utc)
+        $now = [datetime]::new(2026, 11, 10, 8, 0, 0, [DateTimeKind]::Utc)
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'missing status is stale' 'fresh'
         Set-Content -LiteralPath $path -Value '{"utc":"20261109T060001Z","exit":0,"bytes":1}' -Encoding ASCII
         Assert-True (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26) '25h59m success is fresh' 'stale'
@@ -112,6 +119,23 @@ function Test-StaleWindow {
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'failed status is stale' 'fresh'
         Set-Content -LiteralPath $path -Value '{"utc":"not-a-time","exit":0}' -Encoding ASCII
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'bad utc is stale' 'fresh'
+        if (-not (Get-Command Test-SnapshotDumpFresh -ErrorAction SilentlyContinue)) {
+            Write-Fail 'dump freshness exists' 'Test-SnapshotDumpFresh missing'
+            return
+        }
+        Assert-True (-not (Test-SnapshotDumpFresh -Dir $dir -NowUtc $now -MaxAgeHours 26)) 'directory with no dump is stale' 'fresh'
+        $cipher = Join-Path $dir 'antiphon-20261110T075000Z.dump.age'
+        Set-Content -LiteralPath $cipher -Value 'cipher' -Encoding ASCII
+        (Get-Item -LiteralPath $cipher).LastWriteTimeUtc = $now.AddHours(-1)
+        Assert-True (-not (Test-SnapshotDumpFresh -Dir $dir -NowUtc $now -MaxAgeHours 26)) 'ciphertext does not count as a plain success' 'fresh'
+        $oldDump = Join-Path $dir 'antiphon-20261108T000000Z.dump'
+        Set-Content -LiteralPath $oldDump -Value 'old' -Encoding ASCII
+        (Get-Item -LiteralPath $oldDump).LastWriteTimeUtc = $now.AddHours(-30)
+        Assert-True (-not (Test-SnapshotDumpFresh -Dir $dir -NowUtc $now -MaxAgeHours 26)) '30h dump is stale' 'fresh'
+        $newDump = Join-Path $dir 'antiphon-20261110T075000Z.dump'
+        Set-Content -LiteralPath $newDump -Value 'new' -Encoding ASCII
+        (Get-Item -LiteralPath $newDump).LastWriteTimeUtc = $now.AddHours(-1)
+        Assert-True (Test-SnapshotDumpFresh -Dir $dir -NowUtc $now -MaxAgeHours 26) '1h dump is fresh' 'stale'
     } finally {
         Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_postgres_snapshot_stale",
+  "summary": "08:00 stale check for the plain Postgres snapshot. Desktop tag.",
+  "description": "SSH-bridge wrapper. Posts DB backup: STALE when no plain success is newer than 26 hours. A fresh 07:50 success posts nothing from this job. Operator decision 2026-11-10.",
+  "language": "bash",
+  "tag": "desktop",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -uo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\lndco\\antiphon-snapshot-runner\\invoke-postgres-snapshot-stale.ps1\"\nexit $?\n"
+}

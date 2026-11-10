@@ -1,0 +1,11 @@
+{
+  "path": "u/lndcobra/antiphon_postgres_snapshot",
+  "schedule": "0 50 7 * * *",
+  "timezone": "Europe/London",
+  "script_path": "u/lndcobra/antiphon_postgres_snapshot",
+  "is_flow": false,
+  "args": {},
+  "enabled": true,
+  "tag": "desktop",
+  "on_failure": null
+}

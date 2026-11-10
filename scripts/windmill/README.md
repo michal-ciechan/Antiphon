@@ -47,3 +47,72 @@ Reduced dispatch verification stays **inactive** until
 result is healthy.
 
 See `docs/testing-and-build.md` (Nightly), `docs/nightly-watchdog.md` and `docs/release-gates.md`.
+
+## Daily plain Postgres snapshot (operator 2026-11-10)
+
+CARD-1405 planned `scripts/windmill/antiphon-postgres-snapshot.json`, the matching
+schedule payload, and `scripts/register-postgres-snapshot.ps1`. Those files were
+never committed. `git log --all --diff-filter=A` shows no addition of them. The
+name `antiphon_postgres_snapshot` appears in the CARD-1401 plan (`719725f04`)
+and not in a script commit. CARD-1405 commit `222610db8` added
+`scripts/postgres-snapshot.ps1` only. CARD-1413 hardened that script. The card
+closed as a script, with the schedule left disabled until a person enabled it.
+
+`-Plain` on `scripts/postgres-snapshot.ps1` is off unless named. The age path is
+unchanged and still fails closed without a recipient. `-Plain` writes a
+compressed `pg_dump -Fc` file, with no age step, to
+`C:\Users\lndco\antiphon-backups` (outside OneDrive, user-only ACL). It keeps 14
+plain dumps and prunes only after `pg_restore --list` accepts the new file.
+`snapshot-status.json` records utc, exit, bytes, a 12-character sha256 prefix,
+duration seconds, table count, `mode=plain`, `encryption=none`, and
+`operatorDecision=2026-11-10`. The operator asked for unencrypted compressed
+dumps on 2026-11-10 because age and a recipient are not set up.
+
+`-EnableSchedule` is that human enable. Preview writes nothing.
+`-EnableSchedule` without `-Apply` refuses. The checked-in schedule payload is
+`enabled: true` because the operator asked for the daily job.
+
+`u/lndcobra/antiphon_postgres_snapshot` runs at `0 50 7 * * *` Europe/London
+(07:50) on the desktop worker. It SSHes to
+`C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1`. That
+copy prefers `C:\src\Antiphon\scripts\postgres-snapshot.ps1` once the checkout
+contains this plain mode, and otherwise runs the runner copy deployed from the
+task branch.
+
+`u/lndcobra/antiphon_postgres_snapshot_stale` runs at `0 0 8 * * *`
+Europe/London. It posts only when no plain dump and no exit-0 status is newer
+than 26 hours. A healthy 07:50 run does not send a second message.
+
+### Status line
+
+`scripts/windmill/job-status.ps1` and `job-status.schema.json`. A job writes one
+JSON object with `job`, `icon`, and `status` (`ok`, `warn`, `fail`, `stale`)
+and an optional `detail`. The renderer prints one line, for example
+`DB backup: OK 0.6 GB`, `DB backup: FAIL exit 3`, or `DB backup: STALE`.
+This job writes `C:\Users\lndco\antiphon-backups\job-status\db-backup.json`.
+Tests call the renderer only. The live post uses `scripts/tg-send.cs` on the
+messaging bus, to Mike's DM, and only the invoke script does that.
+
+### How jobs notify today
+
+These jobs are not changed here.
+
+- `u/lndcobra/antiphon_nightly_tests` stores a JSON result. Telegram for that
+  lane is the watchdog outside Windmill.
+- `u/lndcobra/antiphon_nightly_readiness` writes the local monitor file. It
+  does not post to Telegram.
+- `u/lndcobra/antiphon_release_candidates` is not registered. Its payload stays
+  disabled.
+- `u/lndcobra/telegram_notify` is the shared Windmill DM helper.
+- `u/lndcobra/desktop_heartbeat` runs at 08:00 and proves the desktop worker.
+- `u/lndcobra/antiphon_build_junk_cleanup` is weekly and does not post from the
+  script in this repo.
+- `u/lndcobra/browser_overnight_close` runs at 04:00 and does not post from the
+  script in this repo.
+
+### Later digest
+
+An 08:00 digest can read each `job-status/*.json` file and post one message of
+`Format-JobStatusLine` rows. Until that exists, this backup posts its own line
+at 07:50. The 08:00 stale check stays the second signal and stays quiet when a
+success is newer than 26 hours.
