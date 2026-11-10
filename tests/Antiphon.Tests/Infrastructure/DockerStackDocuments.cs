@@ -76,8 +76,8 @@ internal static class DockerStackDocuments
             var current = stack.Pop();
             if (!seen.Add(current) || !map.TryGetValue(current, out var stage))
                 continue;
-            text.AppendLine(stage.From);
-            text.AppendLine(stage.Body);
+            text.Append(stage.From).Append('\n');
+            text.Append(stage.Body).Append('\n');
             if (map.ContainsKey(stage.From))
                 stack.Push(stage.From);
         }
