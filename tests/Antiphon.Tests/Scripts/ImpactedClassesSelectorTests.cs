@@ -755,7 +755,9 @@ public sealed partial class ImpactedClassesSelectorTests
             "server/Infrastructure/Git/LandingGit.cs",
             "repository-lease-reflected-constructors",
             "RepositoryMutationLeaseTests",
-            windows: false);
+            windows: false,
+            also: "RepositoryLeaseWindowsBoundaryTests",
+            alsoWindowsOnly: true);
     }
 
     // CARD-1819 round 2. A kind that is not windows:only or windows:required runs on Linux.
@@ -999,6 +1001,15 @@ public sealed partial class ImpactedClassesSelectorTests
         var windowsHit = root.GetProperty("windowsFilters").EnumerateArray()
             .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(needle, StringComparison.Ordinal));
         windowsHit.ShouldBe(windows, kind + " windows lane " + needle);
+        // The primary class can stay on Linux while its partner is windows-only.
+        if (also is not null && alsoWindowsOnly && !windowsOnly)
+        {
+            LinuxFilters(root).Any(filter => filter.Contains(also, StringComparison.Ordinal))
+                .ShouldBeFalse(kind + " linux filter " + also);
+            root.GetProperty("windowsFilters").EnumerateArray()
+                .Any(row => (row.GetProperty("treenodeFilter").GetString() ?? "").Contains(also, StringComparison.Ordinal))
+                .ShouldBeTrue(kind + " windows lane " + also);
+        }
         if (!windowsOnly)
             return;
 
