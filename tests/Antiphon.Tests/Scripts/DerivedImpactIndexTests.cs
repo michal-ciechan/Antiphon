@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -21,6 +20,10 @@ public sealed class DerivedImpactIndexTests
     private const string LeakSweepPath = "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs";
 
     private const string LandingGitPath = "server/Infrastructure/Git/LandingGit.cs";
+
+    private const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
+
+    private const string MasterSelector = "9e050cf9600aef15b77d67957fc0cd68826d6b35";
 
     private const string PrecheckPath = "scripts/audit-land-verification-precheck.ps1";
 
@@ -56,6 +59,16 @@ public sealed class DerivedImpactIndexTests
         "TestTimingOperationLabelTests",
     ];
 
+    private static readonly string?[] MergeRanges =
+    [
+        null,
+        "ff7cceaf4f65bed039f5b7f11dd726d27e762607",
+        "dcb973d896f1d12776a796b71466977b22737b79",
+        "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
+        "ae5b545d9ac9091f42847734b88bf8e202cf2814",
+        "dff78584d636fa49eca37652f2c3f14a48002a92",
+    ];
+
     private static readonly (string Id, string Sha, string? ClassName)[] Replay =
     [
         ("1", "4d91773c122186930a3da485dd2a3221a1e960cd", "AgentTaskLandDeliveryE2ETests"),
@@ -77,10 +90,6 @@ public sealed class DerivedImpactIndexTests
         ("17", "c8fc4a413cafc76f5e52c2262ba9419794f196ad", "TestLaneCategoryGuardTests"),
     ];
 
-    private static readonly Regex ClassDeclaration = new(
-        @"^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b",
-        RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
     [Test]
     public async Task committed_index_matches_the_builder()
     {
@@ -101,11 +110,15 @@ public sealed class DerivedImpactIndexTests
         foreach (var broad in DerivedImpactIndexBuilder.Allowlist)
             index.Edges.Any(edge => edge.Path == broad).ShouldBeFalse(broad);
 
-        // D-3. LandingGit.cs and PtyHostLeakSweep.cs are named by more than 25 test classes, so the
-        // reverse edge is omitted. The fixture witnesses still select those classes on a small repo.
+        committed.Any(b => b == (byte)'\r').ShouldBeFalse("committed index contains CR");
+
+        // A capped path keeps its 25 most specific classes. The remainder is owed, not dropped.
         Capped(index, LandingGitPath);
         Capped(index, LeakSweepPath);
-        index.Edges.Any(edge => edge.Path == LandingGitPath || edge.Path == LeakSweepPath).ShouldBeFalse();
+        Capped(index, NotificationServicePath);
+        Edge(index, LandingGitPath).ShouldContain("RepositoryMutationLeaseTests");
+        Edge(index, NotificationServicePath).ShouldContain("PreDispatchFailureDeliveryTests");
+        Edge(index, LeakSweepPath).ShouldContain("C1677TempFamilyRegistryTests");
         Edge(index, PrecheckPath).ShouldContain("LandGraphEvaluationTests");
     }
 
@@ -197,10 +210,14 @@ public sealed class DerivedImpactIndexTests
         fixture.Add("shared/fixture-path.txt", "fixture\n");
         fixture.Commit();
         var index = DerivedImpactIndexBuilder.Build(fixture.Root);
-        index.Edges.Any(edge => edge.Path == "shared/fixture-path.txt").ShouldBeFalse();
+        var edge = index.Edges.Single(row => row.Path == "shared/fixture-path.txt");
+        edge.Classes.Count.ShouldBe(DerivedImpactIndexBuilder.Cap);
+        edge.Classes.ShouldBe(Enumerable.Range(0, 25).Select(i => "Cap" + i.ToString("00") + "Tests").ToArray());
         var capped = index.CappedPaths.Single(row => row.Path == "shared/fixture-path.txt");
         capped.Classes.ShouldBe(26);
         capped.Reason.ShouldBe("cap");
+        capped.Owed.ShouldBe(1);
+        capped.First.ShouldBe(["Cap25Tests"]);
     }
 
     [Test]
@@ -282,7 +299,11 @@ public sealed class DerivedImpactIndexTests
         foreach (var name in FixedClasses)
             classes.ShouldContain(name);
         classes.ShouldContain("ReleaseGatePlatformTests");
-        AssertEmptyIds(json.RootElement);
+        json.RootElement.TryGetProperty("keywordIds", out _).ShouldBeFalse();
+        json.RootElement.TryGetProperty("rosterIds", out _).ShouldBeFalse();
+        json.RootElement.TryGetProperty("derivedClasses", out _).ShouldBeFalse();
+        json.RootElement.TryGetProperty("skippedByCap", out _).ShouldBeFalse();
+        json.RootElement.TryGetProperty("owed", out _).ShouldBeFalse();
     }
 
     [Test]
@@ -342,19 +363,16 @@ public sealed class DerivedImpactIndexTests
         var indexPath = Path.Combine(root, "tests", "derived-impact-index.json");
         File.Exists(indexPath).ShouldBeTrue(indexPath);
         using var index = JsonDocument.Parse(await File.ReadAllTextAsync(indexPath));
-        var edges = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        foreach (var edge in index.RootElement.GetProperty("edges").EnumerateArray())
-        {
-            edges[edge.GetProperty("path").GetString() ?? ""] =
-                edge.GetProperty("classes").EnumerateArray().Select(item => item.GetString() ?? "")
-                    .ToHashSet(StringComparer.Ordinal);
-        }
-
-        var skippedPaths = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var row in index.RootElement.GetProperty("cappedPaths").EnumerateArray())
-            skippedPaths.Add(row.GetProperty("path").GetString() ?? "");
+        var allow = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in index.RootElement.GetProperty("allowlist").EnumerateArray())
-            skippedPaths.Add(row.GetString() ?? "");
+            allow.Add(row.GetString() ?? "");
+        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
+
+        // S1 claims. Rows 13, 16, and 17 are roster catches and stay out of this slice.
+        var required = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "2", "3", "4", "5", "6", "7", "8", "9", "11", "12", "14", "15",
+        };
 
         var slowest = TimeSpan.Zero;
         foreach (var row in Replay)
@@ -370,36 +388,139 @@ public sealed class DerivedImpactIndexTests
             using var selected = JsonDocument.Parse(ran.Stdout);
             var names = Git(root, "diff", "--name-only", range);
             var classes = Strings(selected.RootElement, "classes").ToHashSet(StringComparer.Ordinal);
+            var windows = WholeClasses(selected.RootElement, "windowsFilters");
             var skipped = Strings(selected.RootElement, "skippedByCap").ToHashSet(StringComparer.Ordinal);
-            var declared = false;
-            var edged = false;
             foreach (var file in names)
             {
-                if (skippedPaths.Contains(file))
+                if (allow.Contains(file))
                     skipped.ShouldContain(file, row.Id + " " + file);
-                if (row.ClassName is null)
-                    continue;
-                if (file.StartsWith("tests/", StringComparison.Ordinal) && file.EndsWith(".cs", StringComparison.Ordinal))
-                {
-                    var full = Path.Combine(root, file.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(full) && Declares(await File.ReadAllTextAsync(full), row.ClassName))
-                        declared = true;
-                }
-
-                if (!skippedPaths.Contains(file) && edges.TryGetValue(file, out var set) && set.Contains(row.ClassName))
-                    edged = true;
             }
 
-            Console.WriteLine(
-                "REPLAY " + row.Id + " class=" + (row.ClassName ?? "") + " selected="
-                + (row.ClassName is not null && classes.Contains(row.ClassName)) + " declared=" + declared + " edged=" + edged);
-            if (row.ClassName is not null && (declared || edged))
-                classes.ShouldContain(row.ClassName, "replay " + row.Id);
+            foreach (var name in WholeClasses(selected.RootElement, "filters"))
+                windowsOnly.ShouldNotContain(name, "replay " + row.Id + " linux " + name);
+
+            var selectedName = row.ClassName is not null && (classes.Contains(row.ClassName) || windows.Contains(row.ClassName));
+            Console.WriteLine("REPLAY " + row.Id + " class=" + (row.ClassName ?? "") + " selected=" + selectedName);
+            if (required.Contains(row.Id))
+                selectedName.ShouldBeTrue("replay " + row.Id + " " + row.ClassName);
+            if (row.Id == "1")
+                selectedName.ShouldBeFalse("replay 1");
             if (row.Id == "10")
                 skipped.ShouldContain("Antiphon.sln");
         }
 
         Console.WriteLine("REPLAY slowest=" + slowest.TotalSeconds.ToString("0.0") + "s");
+    }
+
+    [Test]
+    public void index_bytes_stay_lf_when_the_newline_source_is_crlf()
+    {
+        var previous = DerivedImpactIndexBuilder.NewLineSource;
+        try
+        {
+            DerivedImpactIndexBuilder.NewLineSource = static () => "\r\n";
+            using var fixture = new Fixture();
+            fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
+            fixture.Commit();
+            var index = DerivedImpactIndexBuilder.Build(fixture.Root);
+            index.Utf8.Contains((byte)'\r').ShouldBeFalse();
+            index.Utf8[^1].ShouldBe((byte)'\n');
+            DerivedImpactIndexBuilder.NewLineSource().ShouldBe("\r\n");
+        }
+        finally
+        {
+            DerivedImpactIndexBuilder.NewLineSource = previous;
+        }
+    }
+
+    [Test]
+    public async Task capped_real_paths_keep_the_specific_class()
+    {
+        var root = RepoRoot();
+        var lease = await SelectAsync(root, "-Path", LandingGitPath, "-Json");
+        lease.Exit.ShouldBe(0, lease.Text);
+        using (var json = JsonDocument.Parse(lease.Stdout))
+        {
+            Strings(json.RootElement, "classes").ShouldNotContain("RepositoryMutationLeaseTests");
+            WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryMutationLeaseTests");
+            OwedCount(json.RootElement, LandingGitPath).ShouldBe(39);
+        }
+
+        var leaseText = await SelectAsync(root, "-Path", LandingGitPath);
+        leaseText.Exit.ShouldBe(0, leaseText.Text);
+        leaseText.Stdout.Replace("\r\n", "\n").Split('\n').ShouldContain(
+            "owed/capped server/Infrastructure/Git/LandingGit.cs count=39 first=DispatchBaseNotificationTests,"
+            + "RunnerSettlementSyncTests,AgentTaskLandVerifierTests,PhoneHomeTaskDispatchProjectionTests,"
+            + "RepairSourceDispatchTests,RepositoryMutationLeaseDescribeTests,RunnerAlarmDeliveryTests,"
+            + "RunnerStateAlarmExclusionTests");
+
+        var service = await SelectAsync(root, "-Path", NotificationServicePath, "-Json");
+        service.Exit.ShouldBe(0, service.Text);
+        using (var json = JsonDocument.Parse(service.Stdout))
+        {
+            Strings(json.RootElement, "classes").ShouldContain("PreDispatchFailureDeliveryTests");
+            OwedCount(json.RootElement, NotificationServicePath).ShouldBe(11);
+        }
+
+        var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
+        sweep.Exit.ShouldBe(0, sweep.Text);
+        using var sweepJson = JsonDocument.Parse(sweep.Stdout);
+        Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
+        OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(6);
+    }
+
+    [Test]
+    public async Task merge_subset_matches_the_hand_selector()
+    {
+        var root = RepoRoot();
+        var master = Path.Combine(Path.GetTempPath(), "impacted-classes-master-" + Guid.NewGuid().ToString("N") + ".ps1");
+        await File.WriteAllTextAsync(master, GitShow(root, MasterSelector + ":scripts/impacted-classes.ps1"));
+        try
+        {
+            foreach (var sha in MergeRanges)
+            {
+                var args = sha is null
+                    ? new[] { "-MergeSubset", "-Json" }
+                    : new[] { "-MergeSubset", "-Range", sha + "^.." + sha, "-Json" };
+                var current = await SelectAsync(root, args);
+                var previous = await SelectScriptAsync(root, master, args);
+                current.Exit.ShouldBe(0, sha + " " + current.Text);
+                previous.Exit.ShouldBe(0, sha + " " + previous.Text);
+                if (current.Stdout != previous.Stdout)
+                {
+                    var at = 0;
+                    var limit = Math.Min(current.Stdout.Length, previous.Stdout.Length);
+                    while (at < limit && current.Stdout[at] == previous.Stdout[at])
+                        at++;
+                    throw new ShouldAssertException(
+                        "merge " + (sha ?? "none") + " differs at " + at
+                        + " current " + current.Stdout.Length + " master " + previous.Stdout.Length);
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(master);
+        }
+    }
+
+    [Test]
+    public async Task windows_only_classes_stay_out_of_linux_filters()
+    {
+        var root = RepoRoot();
+        var indexPath = Path.Combine(root, "tests", "derived-impact-index.json");
+        using var index = JsonDocument.Parse(await File.ReadAllTextAsync(indexPath));
+        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
+        foreach (var sha in MergeRanges)
+        {
+            if (sha is null)
+                continue;
+            var ran = await SelectAsync(root, "-Range", sha + "^.." + sha, "-Json");
+            ran.Exit.ShouldBe(0, sha + " " + ran.Text);
+            using var selected = JsonDocument.Parse(ran.Stdout);
+            foreach (var name in WholeClasses(selected.RootElement, "filters"))
+                windowsOnly.ShouldNotContain(name, sha + " " + name);
+        }
     }
 
     private static List<string> Edge(DerivedImpactIndex index, string path) =>
@@ -410,17 +531,6 @@ public sealed class DerivedImpactIndexTests
         var row = index.CappedPaths.Single(item => item.Path == path);
         row.Reason.ShouldBe("cap", path);
         row.Classes.ShouldBeGreaterThan(DerivedImpactIndexBuilder.Cap, path);
-    }
-
-    private static bool Declares(string source, string className)
-    {
-        foreach (Match match in ClassDeclaration.Matches(source))
-        {
-            if (match.Groups[1].Value == className)
-                return true;
-        }
-
-        return false;
     }
 
     private static Fixture FixtureWithLandingType(string testsSource)
@@ -462,6 +572,58 @@ public sealed class DerivedImpactIndexTests
         root.GetProperty("rosterIds").GetArrayLength().ShouldBe(0);
     }
 
+    private static int OwedCount(JsonElement root, string path)
+    {
+        foreach (var row in root.GetProperty("owed").EnumerateArray())
+        {
+            if (row.GetProperty("path").GetString() == path)
+                return row.GetProperty("count").GetInt32();
+        }
+
+        throw new ShouldAssertException("owed row missing for " + path);
+    }
+
+    private static HashSet<string> WholeClasses(JsonElement root, string property)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        if (!root.TryGetProperty(property, out var filters))
+            return names;
+        foreach (var filter in filters.EnumerateArray())
+        {
+            var body = filter.GetProperty("treenodeFilter").GetString() ?? "";
+            const string prefix = "/*/*/";
+            if (body.StartsWith(prefix, StringComparison.Ordinal))
+                body = body[prefix.Length..];
+            if (body.EndsWith("/*", StringComparison.Ordinal))
+                body = body[..^2];
+            foreach (var part in body.Split('|'))
+            {
+                if (part.StartsWith('(') && part.EndsWith("*)", StringComparison.Ordinal))
+                    names.Add(part[1..^2]);
+            }
+        }
+
+        return names;
+    }
+
+    private static string GitShow(string root, string spec)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("show");
+        start.ArgumentList.Add(spec);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("git did not start.");
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        process.ExitCode.ShouldBe(0, stderr);
+        return stdout;
+    }
+
     private static List<string> Strings(JsonElement root, string property) =>
         root.GetProperty(property).EnumerateArray().Select(item => item.GetString() ?? "").ToList();
 
@@ -485,7 +647,11 @@ public sealed class DerivedImpactIndexTests
         return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
-    private static async Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args)
+    private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
+        SelectScriptAsync(root, Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), args);
+
+    private static async Task<(int Exit, string Stdout, string Text)> SelectScriptAsync(
+        string root, string script, params string[] args)
     {
         var start = new ProcessStartInfo("pwsh")
         {
@@ -496,7 +662,7 @@ public sealed class DerivedImpactIndexTests
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-NonInteractive");
         start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"));
+        start.ArgumentList.Add(script);
         start.ArgumentList.Add("-Repo");
         start.ArgumentList.Add(root);
         foreach (var arg in args)

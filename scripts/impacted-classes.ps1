@@ -10,7 +10,10 @@
 # Under -MergeSubset a project row naming more than four land classes is split into <id>-land-<n> rows
 # (CARD-1801 D-1); the non-merge output keeps each project selection in one row (R2-D-1).
 # CARD-1820. A changed tests file selects the classes it declares. tests/derived-impact-index.json
-# adds reverse edges. JSON gains derivedClasses, keywordIds, rosterIds and skippedByCap.
+# adds reverse edges to the Code/Review output only. -MergeSubset stays the hand subset.
+# A capped path keeps its most specific classes and lists the rest on an owed/capped line.
+# windowsOnly classes go to windowsFilters, never a Linux filter.
+# JSON gains derivedClasses, keywordIds, rosterIds, skippedByCap and owed.
 # A missing index adds no derived class. Keyword and roster lists stay empty in this slice.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
@@ -878,9 +881,10 @@ function Refuse-Index([string]$Problem) {
 function Get-DerivedIndex {
     if ($null -ne $script:derivedIndexState) { return $script:derivedIndexState }
     $edges = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
-    $capped = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $capped = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
     $allow = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow }
+    $windowsOnly = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow; WindowsOnly = $windowsOnly }
     $indexPath = Join-Path $Repo 'tests/derived-impact-index.json'
     if (-not (Test-Path -LiteralPath $indexPath)) {
         $script:derivedIndexState = $state
@@ -928,7 +932,31 @@ function Get-DerivedIndex {
         $path = ''
         $pathProp = $row.PSObject.Properties['path']
         if ($null -ne $pathProp -and $null -ne $pathProp.Value) { $path = ([string]$pathProp.Value).Replace('\', '/') }
-        if (-not [string]::IsNullOrWhiteSpace($path)) { [void]$capped.Add($path) }
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $reason = ''
+        $reasonProp = $row.PSObject.Properties['reason']
+        if ($null -ne $reasonProp -and $null -ne $reasonProp.Value) { $reason = [string]$reasonProp.Value }
+        $owed = 0
+        $owedProp = $row.PSObject.Properties['owed']
+        if ($null -ne $owedProp -and $null -ne $owedProp.Value) { $owed = [int]$owedProp.Value }
+        $first = New-Object System.Collections.Generic.List[string]
+        $firstProp = $row.PSObject.Properties['first']
+        if ($null -ne $firstProp -and $null -ne $firstProp.Value) {
+            foreach ($name in @($firstProp.Value)) {
+                if ($null -eq $name) { continue }
+                $text = [string]$name
+                if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$first.Add($text) }
+            }
+        }
+        $capped[$path] = [pscustomobject]@{ Reason = $reason; Owed = $owed; First = $first }
+    }
+    $windowsProp = $doc.PSObject.Properties['windowsOnly']
+    if ($null -ne $windowsProp -and $null -ne $windowsProp.Value) {
+        foreach ($item in @($windowsProp.Value)) {
+            if ($null -eq $item) { continue }
+            $text = [string]$item
+            if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$windowsOnly.Add($text) }
+        }
     }
     $allowProp = $doc.PSObject.Properties['allowlist']
     if ($null -ne $allowProp -and $null -ne $allowProp.Value) {
@@ -955,10 +983,17 @@ function Test-LandGraphToolOnly($Paths) {
     return $any
 }
 
+function Add-DerivedClass($Index, $ClassName, $Whole, $Windows) {
+    if ($Index.WindowsOnly.Contains([string]$ClassName)) { [void]$Windows.Add([string]$ClassName) }
+    else { [void]$Whole.Add([string]$ClassName) }
+}
+
 function Resolve-Derived($Paths) {
     $whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $windows = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $methods = New-Object System.Collections.Generic.List[string]
     $skippedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $owed = New-Object System.Collections.Generic.List[object]
     $index = Get-DerivedIndex
     $toolOnly = Test-LandGraphToolOnly $Paths
     foreach ($path in @($Paths)) {
@@ -967,31 +1002,44 @@ function Resolve-Derived($Paths) {
         $isTestFile = $norm.StartsWith('tests/') -and $norm.EndsWith('.cs')
         if ($isTestFile -and $script:classesByFile.ContainsKey($norm)) {
             foreach ($className in $script:classesByFile[$norm]) {
-                if ($className.EndsWith('Tests')) { [void]$whole.Add($className) }
+                if ($className.EndsWith('Tests')) { Add-DerivedClass $index $className $whole $windows }
             }
         }
-        $capped = $index.Allow.Contains($norm) -or $index.Capped.Contains($norm)
-        if ($capped) { [void]$skippedSet.Add($norm) }
-        if ($capped) { continue }
+        $cappedRow = $null
+        if ($index.Capped.ContainsKey($norm)) { $cappedRow = $index.Capped[$norm] }
+        $allow = $index.Allow.Contains($norm) -or ($null -ne $cappedRow -and $cappedRow.Reason -eq 'allowlist')
+        if ($allow) { [void]$skippedSet.Add($norm) }
+        if ($null -ne $cappedRow -and -not $allow -and [int]$cappedRow.Owed -gt 0) {
+            $firstNames = New-Object System.Collections.Generic.List[string]
+            foreach ($name in $cappedRow.First) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$name)) { [void]$firstNames.Add([string]$name) }
+            }
+            [void]$owed.Add([pscustomobject]@{ Path = $norm; Count = [int]$cappedRow.Owed; First = $firstNames.ToArray() })
+        }
+        if ($allow) { continue }
         if (-not $index.Edges.ContainsKey($norm)) { continue }
         foreach ($className in $index.Edges[$norm]) {
             if (-not $census.Contains($className)) { continue }
-            $methodOnly = $toolOnly -and ($className -eq 'LandGraphEvaluationTests') -and (-not $whole.Contains($className))
+            $methodOnly = $toolOnly -and ($className -eq 'LandGraphEvaluationTests') -and (-not $whole.Contains($className)) -and (-not $windows.Contains($className))
             if ($methodOnly) {
                 [void]$methods.Add('LandGraphEvaluationTests/EvaluationBudgetRefusesSlowDotnet')
             }
             else {
-                [void]$whole.Add($className)
+                Add-DerivedClass $index $className $whole $windows
             }
         }
     }
+    foreach ($className in @($windows)) { [void]$whole.Remove([string]$className) }
     $derived = New-Object System.Collections.Generic.List[string]
-    Fill-Sorted @($whole) $derived
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($className in $whole) { [void]$names.Add([string]$className) }
+    foreach ($className in $windows) { [void]$names.Add([string]$className) }
+    Fill-Sorted $names $derived
     foreach ($method in $methods) {
         $slash = $method.IndexOf('/')
         if ($slash -gt 0) {
             $className = $method.Substring(0, $slash)
-            if (-not $whole.Contains($className)) { [void]$derived.Add($className) }
+            if (-not $whole.Contains($className) -and -not $windows.Contains($className)) { [void]$derived.Add($className) }
         }
     }
     if ($methods.Count -gt 0) {
@@ -1001,17 +1049,46 @@ function Resolve-Derived($Paths) {
     }
     $skipped = New-Object System.Collections.Generic.List[string]
     Fill-Sorted @($skippedSet) $skipped
+    $owedSorted = New-Object System.Collections.Generic.List[object]
+    foreach ($row in ($owed | Sort-Object Path)) { [void]$owedSorted.Add($row) }
     return [pscustomobject]@{
         Whole = $whole
+        Windows = $windows
         Methods = $methods
         Derived = $derived
         Skipped = $skipped
+        Owed = $owedSorted
     }
 }
 
-function Apply-Derived($Selection, $Whole, $MethodsByClass) {
-    foreach ($className in @($Selection.Whole)) { [void]$Whole.Add([string]$className) }
+function Apply-Derived($Selection, $Whole, $MethodsByClass, $WindowsWhole) {
+    foreach ($className in @($Selection.Whole)) {
+        # A hand method row stays. A derived whole class must not erase it.
+        if ($MethodsByClass.ContainsKey([string]$className)) { continue }
+        [void]$Whole.Add([string]$className)
+    }
+    if ($null -ne $WindowsWhole) {
+        foreach ($className in @($Selection.Windows)) { [void]$WindowsWhole.Add([string]$className) }
+    }
     foreach ($method in @($Selection.Methods)) { Add-MethodEntry ([string]$method) $MethodsByClass $null }
+}
+
+function Convert-Owed($Rows) {
+    # @() on List[object] indexes through the PowerShell adapter and throws
+    # "Argument types do not match". ToArray() enumerates as object[].
+    $out = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $Rows) { return ,$out }
+    foreach ($row in $Rows.ToArray()) {
+        $first = New-Object System.Collections.Generic.List[string]
+        if ($null -ne $row.First) {
+            foreach ($name in $row.First) {
+                $text = [string]$name
+                if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$first.Add($text) }
+            }
+        }
+        [void]$out.Add([pscustomobject]@{ path = [string]$row.Path; count = [int]$row.Count; first = $first.ToArray() })
+    }
+    return ,$out
 }
 
 function New-EmptyNameList {
@@ -1082,7 +1159,6 @@ if ($MergeSubset) {
         if ($kind.Windows -eq 'only') { continue }
         Add-KindSelection $kind $wholeSubset $subsetMethods $null
     }
-    Apply-Derived $derivedSelection $wholeSubset $subsetMethods
     $subsetRows = New-FilterRows $wholeSubset $subsetMethods 'CP-merge-subset-' $fixedNames
     $windowsRows = New-FilterRows $windowsWhole $windowsMethods 'CP-merge-windows-' $fixedNames
     $subsetTop = Get-TopFilter $subsetRows
@@ -1099,10 +1175,6 @@ if ($MergeSubset) {
         fixedClasses = $fixedOut
         fixedMethods = $fixedMethodOut
         classes = $classOut
-        derivedClasses = $derivedSelection.Derived
-        keywordIds = (New-EmptyNameList)
-        rosterIds = (New-EmptyNameList)
-        skippedByCap = $derivedSelection.Skipped
         treenodeFilter = [string]$subsetTop
         filters = @((Convert-Rows $subsetRows $true).ToArray())
         windowsFilters = @((Convert-Rows $windowsRows $true).ToArray())
@@ -1127,7 +1199,7 @@ foreach ($kind in $matched) {
     if ($kind.Windows -eq 'only') { continue }
     Add-KindSelection $kind $whole $methodsByClass $fileSet
 }
-Apply-Derived $derivedSelection $whole $methodsByClass
+Apply-Derived $derivedSelection $whole $methodsByClass $windowsWhole
 
 $rows = New-FilterRows $whole $methodsByClass '' $null
 $windowsRows = New-FilterRows $windowsWhole $windowsMethods '' $null
@@ -1143,6 +1215,7 @@ $payload = [pscustomobject]@{
     keywordIds = (New-EmptyNameList)
     rosterIds = (New-EmptyNameList)
     skippedByCap = $derivedSelection.Skipped
+    owed = @((Convert-Owed $derivedSelection.Owed).ToArray())
     treenodeFilter = [string]$top
     filters = @((Convert-Rows $rows $false).ToArray())
     windowsFilters = @((Convert-Rows $windowsRows $false).ToArray())
@@ -1151,5 +1224,15 @@ if ($Json) { Exit-Json $payload 0 }
 Write-Output ("kinds=" + ($k -join ','))
 Write-Output ("treenodeFilter=" + $top)
 foreach ($row in $windowsRows) { Write-Output ('windowsFilter=' + $row.Project + ' ' + $row.Filter) }
+foreach ($row in $derivedSelection.Owed.ToArray()) {
+    $first = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $row.First) {
+        foreach ($name in $row.First) {
+            $text = [string]$name
+            if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$first.Add($text) }
+        }
+    }
+    Write-Output ('owed/capped ' + $row.Path + ' count=' + $row.Count + ' first=' + ($first.ToArray() -join ','))
+}
 foreach ($relative in $f) { Write-Output $relative }
 exit 0
