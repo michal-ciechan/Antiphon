@@ -119,6 +119,14 @@ function Test-StaleWindow {
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'failed status is stale' 'fresh'
         Set-Content -LiteralPath $path -Value '{"utc":"not-a-time","exit":0}' -Encoding ASCII
         Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'bad utc is stale' 'fresh'
+        Set-Content -LiteralPath $path -Value '{"utc":"20261110T075000Z","exit":0,"bytes":1,"mode":"age"}' -Encoding ASCII
+        Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'non-plain status is stale' 'fresh'
+        Set-Content -LiteralPath $path -Value '{"utc":"20261110T075000Z","exit":0,"bytes":1}' -Encoding ASCII
+        Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) 'status without mode=plain is stale' 'fresh'
+        Set-Content -LiteralPath $path -Value '{"utc":"20261110T083000Z","exit":0,"bytes":1,"mode":"plain"}' -Encoding ASCII
+        Assert-True (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26) '30m future plain status is fresh' 'stale'
+        Set-Content -LiteralPath $path -Value '{"utc":"20261110T100000Z","exit":0,"bytes":1,"mode":"plain"}' -Encoding ASCII
+        Assert-True (-not (Test-SnapshotStatusFresh -Path $path -NowUtc $now -MaxAgeHours 26)) '2h future plain status is stale' 'fresh'
         if (-not (Get-Command Test-SnapshotDumpFresh -ErrorAction SilentlyContinue)) {
             Write-Fail 'dump freshness exists' 'Test-SnapshotDumpFresh missing'
             return
@@ -245,6 +253,51 @@ function Test-CloudSuffix {
     Assert-True ([string]$ok.detail -notmatch '(?i)password\s*=|postgres://|Host\s*=') 'cloud line has no secret' ([string]$ok.detail)
 }
 
+function Test-RunnerSourceSha {
+    $invoke = Join-Path $here 'windmill\invoke-postgres-snapshot.ps1'
+    if (-not (Test-Path -LiteralPath $invoke)) { Write-Fail 'runner invoke script exists' $invoke; return }
+    $text = [System.IO.File]::ReadAllText($invoke)
+    if ($text.IndexOf('SOURCE-SHA') -lt 0 -or $text.IndexOf("InvocationName -eq '.'") -lt 0) {
+        Write-Fail 'runner copy pins SOURCE-SHA' 'pin missing'
+        return
+    }
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-pin-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    try {
+        Copy-Item -LiteralPath $invoke -Destination (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        Copy-Item -LiteralPath (Join-Path $here 'windmill\job-status.ps1') -Destination (Join-Path $root 'job-status.ps1')
+        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        if (-not (Get-Command Resolve-PlainSnapshotScript -ErrorAction SilentlyContinue)) {
+            Write-Fail 'runner resolver exists' 'missing'
+            return
+        }
+        $marker = "[switch]`$Plain`r`n`$script:SnapshotPlainDecision = '2026-11-10'`r`n[switch]`$OneDriveCopy`r`n"
+        $early = Join-Path $root 'early.ps1'
+        $late = Join-Path $root 'postgres-snapshot.ps1'
+        Set-Content -LiteralPath $early -Value ($marker + "Write-Output 'EARLY'`r`n") -Encoding ASCII
+        Set-Content -LiteralPath $late -Value ($marker + "Write-Output 'RUNNER'`r`n") -Encoding ASCII
+        $lateHash = (Get-FileHash -LiteralPath $late -Algorithm SHA256).Hash.ToLowerInvariant()
+        $pin = Join-Path $root 'SOURCE-SHA'
+        Set-Content -LiteralPath $pin -Value $lateHash -Encoding ASCII
+        $chosen = Resolve-PlainSnapshotScript -Candidates @($early, $late) -PinFile $pin
+        Assert-True ([string]$chosen -eq $late) 'runner pin skips an earlier copy with a different hash' ([string]$chosen)
+        $bogus = 'ab' * 32
+        Set-Content -LiteralPath $pin -Value $bogus -Encoding ASCII
+        $refused = Resolve-PlainSnapshotScript -Candidates @($early, $late) -PinFile $pin
+        Assert-True ([string]$refused -eq '') 'runner pin refuses when no copy matches SOURCE-SHA' ([string]$refused)
+        $missing = Resolve-PlainSnapshotScript -Candidates @($late) -PinFile (Join-Path $root 'missing-pin')
+        Assert-True ([string]$missing -eq '') 'runner pin refuses a missing SOURCE-SHA' ([string]$missing)
+        Set-Content -LiteralPath $pin -Value $lateHash -Encoding ASCII
+        $earlySame = Join-Path $root 'same-early.ps1'
+        Copy-Item -LiteralPath $late -Destination $earlySame
+        $first = Resolve-PlainSnapshotScript -Candidates @($earlySame, $late) -PinFile $pin
+        Assert-True ([string]$first -eq $earlySame) 'runner pin keeps an earlier copy when the hash matches' ([string]$first)
+        Assert-True ([string]$script:PlainSnapshotSourceSha -eq $lateHash) 'runner pin records the source sha' ([string]$script:PlainSnapshotSourceSha)
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-HelperAscii {
     foreach ($needed in @($helperPath, $schemaPath, $registerPath)) {
         if (-not (Test-Path -LiteralPath $needed)) {
@@ -257,7 +310,7 @@ function Test-HelperAscii {
     }
 }
 
-$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'HelperAscii')
+$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'RunnerSourceSha', 'HelperAscii')
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }

@@ -11,6 +11,11 @@ param([string]$Case = '')
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $scriptPath = Join-Path $here 'postgres-snapshot.ps1'
+if (-not [string]::IsNullOrWhiteSpace($env:CARD1831_SNAPSHOT_SCRIPT)) {
+    if (Test-Path -LiteralPath $env:CARD1831_SNAPSHOT_SCRIPT -PathType Leaf) {
+        $scriptPath = $env:CARD1831_SNAPSHOT_SCRIPT
+    }
+}
 $script:passed = 0
 $script:failed = 0
 $script:failures = New-Object System.Collections.Generic.List[string]
@@ -160,6 +165,57 @@ function Assert-DestUntouched {
     $dumps = @(Get-ChildItem -LiteralPath $Fixture.Dest -Filter '*.dump.age' -ErrorAction SilentlyContinue)
     $status = Test-Path -LiteralPath (Join-Path $Fixture.Dest 'snapshot-status.json')
     Assert-True ($dumps.Count -eq 0 -and -not $status) "$Name writes nothing" "dumps=$($dumps.Count) status=$status"
+}
+
+function Get-PlainSnapshotStamp {
+    param([string]$Path)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (-not (Test-Path -LiteralPath $Path)) {
+        [void]$lines.Add('ABSENT')
+        return ($lines -join "`n")
+    }
+    $pending = New-Object System.Collections.Generic.Queue[string]
+    $pending.Enqueue($Path)
+    while ($pending.Count -gt 0) {
+        $dir = $pending.Dequeue()
+        foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | Sort-Object Name)) {
+            $rel = $child.FullName.Substring($Path.Length).TrimStart([char]'/', [char]'\')
+            $kind = [string]$child.LinkType
+            if ($kind -eq 'SymbolicLink' -or $kind -eq 'Junction') {
+                [void]$lines.Add('link ' + $rel + ' -> ' + [string]$child.Target)
+                continue
+            }
+            if ($child.PSIsContainer) {
+                [void]$lines.Add('dir ' + $rel)
+                $pending.Enqueue($child.FullName)
+                continue
+            }
+            $body = [System.IO.File]::ReadAllText($child.FullName)
+            [void]$lines.Add('file ' + $rel + ' ' + $body)
+        }
+    }
+    return ($lines -join "`n")
+}
+
+function New-PlainOutsideTree {
+    param([string]$Folder)
+    New-Item -ItemType Directory -Path $Folder -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $Folder 'notes.txt') -Value 'NOTES' -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $Folder 'hermes-backup.dump') -Value 'HERMES' -Encoding ASCII
+    foreach ($day in 1..8) {
+        $name = 'antiphon-202611{0:d2}T000000Z.dump' -f $day
+        Set-Content -LiteralPath (Join-Path $Folder $name) -Value ('old' + $day) -Encoding ASCII
+    }
+}
+
+function Assert-PlainLinkRefused {
+    param($Result, [string]$Before, [string]$After, [string]$Name, [string]$LocalFile)
+    Assert-True ([string]$Result.State -eq 'failed') "$Name state=failed" ([string]$Result.State + ' ' + [string]$Result.Loud)
+    Assert-True ([string]$Result.Loud -match 'oneDrive=failed') "$Name is loud" ([string]$Result.Loud)
+    Assert-True ([string]$Result.Loud -match 'reason=link') "$Name names the link" ([string]$Result.Loud)
+    Assert-True ($Before -eq $After) "$Name leaves the outside tree untouched" $After
+    Assert-True (Test-Path -LiteralPath $LocalFile) "$Name keeps the local dump" $LocalFile
+    Assert-True ([string]$Result.Loud -notmatch '(?i)password\s*=|postgres://|Host\s*=') "$Name stdout has no secret" ([string]$Result.Loud)
 }
 
 function Test-WhatIfPlan {
@@ -1950,6 +2006,209 @@ function Test-PlainDrillRefused {
     } finally { Remove-Fixture $fx }
 }
 
+function Test-PlainOneDriveLink {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainOneDriveLink script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Invoke-SnapshotPlainOneDriveCopy -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainOneDriveLink copy function' 'missing'
+        return
+    }
+    if (-not (Get-Command Test-SnapshotPlainForbiddenLink -ErrorAction SilentlyContinue)) {
+        Write-Fail 'cloud-filter reparse is not a link' 'classifier missing'
+        Write-Fail 'symlink link type is refused' 'classifier missing'
+        Write-Fail 'junction link type is refused' 'classifier missing'
+    } else {
+        Assert-True (-not (Test-SnapshotPlainForbiddenLink -LinkType '' -ReparsePoint $true)) 'cloud-filter reparse is not a link' 'refused'
+        Assert-True (Test-SnapshotPlainForbiddenLink -LinkType 'SymbolicLink' -ReparsePoint $true) 'symlink link type is refused' 'allowed'
+        Assert-True (Test-SnapshotPlainForbiddenLink -LinkType 'Junction' -ReparsePoint $true) 'junction link type is refused' 'allowed'
+    }
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-link-' + [guid]::NewGuid().ToString('N'))
+    $local = Join-Path $root 'local'
+    New-Item -ItemType Directory -Path $local -Force | Out-Null
+    $localName = 'antiphon-20261110T150000Z.dump'
+    $localFile = Join-Path $local $localName
+    Set-Content -LiteralPath $localFile -Value 'NEW-DUMP' -Encoding ASCII
+    try {
+        $case = Join-Path $root 'backups-link'
+        $outside = Join-Path $case 'outside'
+        $sync = Join-Path $case 'OneDrive'
+        $child = Join-Path $outside 'antiphon-postgres'
+        New-Item -ItemType Directory -Path $sync -Force | Out-Null
+        New-PlainOutsideTree $child
+        Set-Content -LiteralPath (Join-Path $outside 'keep-root.txt') -Value 'ROOT' -Encoding ASCII
+        New-Item -ItemType SymbolicLink -Path (Join-Path $sync 'Backups') -Target $outside | Out-Null
+        $before = Get-PlainSnapshotStamp $outside
+        $result = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        $after = Get-PlainSnapshotStamp $outside
+        Assert-PlainLinkRefused $result $before $after 'Backups symlink' $localFile
+
+        $case = Join-Path $root 'root-link'
+        $real = Join-Path $case 'real-onedrive'
+        $child = Join-Path (Join-Path $real 'Backups') 'antiphon-postgres'
+        New-PlainOutsideTree $child
+        $holder = Join-Path $case 'holder'
+        New-Item -ItemType Directory -Path $holder -Force | Out-Null
+        $sync = Join-Path $holder 'OneDrive'
+        New-Item -ItemType SymbolicLink -Path $sync -Target $real | Out-Null
+        $before = Get-PlainSnapshotStamp $real
+        $result = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        $after = Get-PlainSnapshotStamp $real
+        Assert-PlainLinkRefused $result $before $after 'Backups parent chain symlink' $localFile
+
+        $case = Join-Path $root 'child-link'
+        $sync = Join-Path $case 'OneDrive'
+        $backups = Join-Path $sync 'Backups'
+        $outside = Join-Path $case 'outside'
+        $child = Join-Path $outside 'antiphon-postgres'
+        New-Item -ItemType Directory -Path $backups -Force | Out-Null
+        New-PlainOutsideTree $child
+        New-Item -ItemType SymbolicLink -Path (Join-Path $backups 'antiphon-postgres') -Target $child | Out-Null
+        $before = Get-PlainSnapshotStamp $outside
+        $result = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        $after = Get-PlainSnapshotStamp $outside
+        Assert-PlainLinkRefused $result $before $after 'child symlink' $localFile
+
+        $case = Join-Path $root 'file-link'
+        $sync = Join-Path $case 'OneDrive'
+        $child = Join-Path (Join-Path $sync 'Backups') 'antiphon-postgres'
+        $outside = Join-Path $case 'outside'
+        New-Item -ItemType Directory -Path $child, $outside -Force | Out-Null
+        $target = Join-Path $outside 'escaped.dump'
+        Set-Content -LiteralPath $target -Value 'OUTSIDE-DUMP' -Encoding ASCII
+        $dumpLink = Join-Path $child 'antiphon-20261101T000000Z.dump'
+        New-Item -ItemType SymbolicLink -Path $dumpLink -Target $target | Out-Null
+        foreach ($day in 2..8) {
+            $name = 'antiphon-202611{0:d2}T000000Z.dump' -f $day
+            Set-Content -LiteralPath (Join-Path $child $name) -Value ('old' + $day) -Encoding ASCII
+        }
+        Set-Content -LiteralPath (Join-Path $child 'notes.txt') -Value 'NOTES' -Encoding ASCII
+        $before = Get-PlainSnapshotStamp $outside
+        $result = Invoke-SnapshotPlainOneDriveCopy -LocalFile $localFile -SyncRoot $sync -Keep 7
+        $after = Get-PlainSnapshotStamp $outside
+        Assert-PlainLinkRefused $result $before $after 'symlinked dump file' $localFile
+        Assert-True (Test-Path -LiteralPath $dumpLink) 'symlinked dump file remains' $dumpLink
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $child $localName))) 'symlinked dump writes no new cloud file' $child
+        Assert-True ((Get-Content -LiteralPath $target -Raw) -match 'OUTSIDE-DUMP') 'symlinked dump leaves the outside bytes' $target
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-PlainPublishPruneOrder {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'PlainPublishPruneOrder script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Invoke-SnapshotPlainPublish -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainPublishPruneOrder publish function' 'missing'
+        return
+    }
+    if (-not (Get-Command Update-SnapshotPlainRetention -ErrorAction SilentlyContinue)) {
+        Write-Fail 'PlainPublishPruneOrder retention function' 'missing'
+        return
+    }
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-order-' + [guid]::NewGuid().ToString('N'))
+    $dest = Join-Path $root 'local'
+    $stage = Join-Path $root 'stage'
+    $sync = Join-Path $root 'OneDrive'
+    $cloud = Join-Path (Join-Path $sync 'Backups') 'antiphon-postgres'
+    New-Item -ItemType Directory -Path $dest, $stage, $cloud -Force | Out-Null
+    foreach ($day in 1..15) {
+        $name = 'antiphon-202610{0:d2}T000000Z.dump' -f $day
+        Set-Content -LiteralPath (Join-Path $dest $name) -Value ('local' + $day) -Encoding ASCII
+    }
+    foreach ($day in 1..8) {
+        $name = 'antiphon-202611{0:d2}T000000Z.dump' -f $day
+        Set-Content -LiteralPath (Join-Path $cloud $name) -Value ('cloud' + $day) -Encoding ASCII
+    }
+    $script:PlainDumpBytes = 4096
+    $script:PlainExpectedHash = ''
+    $script:PlainListExits = New-Object System.Collections.Generic.List[int]
+    $script:PlainPruneTooEarly = $false
+    $script:PlainPruneCount = 0
+    $script:PlainFailSecondList = $true
+    $script:PlainOriginalRetention = ${function:Update-SnapshotPlainRetention}
+    $savedNative = ${function:Invoke-SnapshotNative}
+    try {
+        function Invoke-SnapshotNative {
+            param([string]$Command, [string[]]$ArgumentList)
+            $joined = [string]::Join(' ', @($ArgumentList))
+            if ($joined -match 'pg_restore' -and $joined -match '--list') {
+                $exitCode = 0
+                if ($script:PlainFailSecondList -and $script:PlainListExits.Count -ge 1) { $exitCode = 1 }
+                [void]$script:PlainListExits.Add($exitCode)
+                if ($exitCode -ne 0) {
+                    return [pscustomobject]@{ Exit = 1; Lines = @('verify failed') }
+                }
+                return [pscustomobject]@{ Exit = 0; Lines = @('3000; 0 12345 TABLE DATA public cards antiphon') }
+            }
+            if ($joined -match '(^| )wc( |$)') {
+                $line = [string]$script:PlainDumpBytes + ' /tmp/antiphon-snapshot.dump'
+                return [pscustomobject]@{ Exit = 0; Lines = @($line) }
+            }
+            if ($ArgumentList.Count -ge 1 -and [string]$ArgumentList[0] -eq 'cp') {
+                $destArg = [string]$ArgumentList[$ArgumentList.Count - 1]
+                if ($destArg -notmatch ':') {
+                    $buffer = New-Object byte[] ([int]$script:PlainDumpBytes)
+                    [System.IO.File]::WriteAllBytes($destArg, $buffer)
+                    $script:PlainExpectedHash = (Get-FileHash -LiteralPath $destArg -Algorithm SHA256).Hash
+                }
+                return [pscustomobject]@{ Exit = 0; Lines = @() }
+            }
+            return [pscustomobject]@{ Exit = 0; Lines = @() }
+        }
+        function Update-SnapshotPlainRetention {
+            param([string]$DestDir, [int]$Keep, [string]$NewName)
+            $script:PlainPruneCount++
+            $file = Join-Path $DestDir $NewName
+            $hashOk = $false
+            if (Test-Path -LiteralPath $file -PathType Leaf) {
+                $have = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash
+                $hashOk = ($have -eq $script:PlainExpectedHash)
+            }
+            $exits = @($script:PlainListExits)
+            $secondOk = $false
+            if ($exits.Count -ge 2 -and [int]$exits[$exits.Count - 1] -eq 0) { $secondOk = $true }
+            if (-not $secondOk -or -not $hashOk) { $script:PlainPruneTooEarly = $true }
+            return & $script:PlainOriginalRetention -DestDir $DestDir -Keep $Keep -NewName $NewName
+        }
+        $failed = Invoke-SnapshotPlainPublish -SourceContainer 'antiphon-postgres' -SourceDatabase 'antiphon' -Stage $stage -DestDir $dest -Keep 14 -Docker 'docker' -MinimumBytes 4096 -CopyToOneDrive $true -SyncRoot $sync -OneDriveKeep 7
+        Assert-True ([int]$failed.Code -eq 5) 'failed verify exits 5' ([string]$failed.Code + ' ' + [string]$failed.Reason)
+        Assert-True ([string]$failed.Reason -eq 'verify-failed') 'failed verify reason' ([string]$failed.Reason)
+        Assert-True ($script:PlainPruneCount -eq 0) 'failed verify does not prune' ("count=$($script:PlainPruneCount)")
+        Assert-True (Test-Path -LiteralPath (Join-Path $dest 'antiphon-20261001T000000Z.dump')) 'failed verify keeps the oldest local dump' 'missing'
+        Assert-True (Test-Path -LiteralPath (Join-Path $dest 'antiphon-20261002T000000Z.dump')) 'failed verify keeps the next local dump' 'missing'
+        $localLeft = @(Get-ChildItem -LiteralPath $dest -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($localLeft.Count -eq 15) 'failed verify leaves the local folder unpruned' ("count=$($localLeft.Count)")
+        Assert-True (Test-Path -LiteralPath (Join-Path $cloud 'antiphon-20261101T000000Z.dump')) 'failed verify keeps the oldest cloud dump' 'missing'
+        Assert-True (Test-Path -LiteralPath (Join-Path $cloud 'antiphon-20261102T000000Z.dump')) 'failed verify keeps the next cloud dump' 'missing'
+        $cloudLeft = @(Get-ChildItem -LiteralPath $cloud -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($cloudLeft.Count -eq 8) 'failed verify leaves the cloud folder unpruned' ("count=$($cloudLeft.Count)")
+
+        $script:PlainListExits = New-Object System.Collections.Generic.List[int]
+        $script:PlainPruneTooEarly = $false
+        $script:PlainPruneCount = 0
+        $script:PlainFailSecondList = $false
+        $script:PlainExpectedHash = ''
+        $ok = Invoke-SnapshotPlainPublish -SourceContainer 'antiphon-postgres' -SourceDatabase 'antiphon' -Stage $stage -DestDir $dest -Keep 14 -Docker 'docker' -MinimumBytes 4096 -CopyToOneDrive $true -SyncRoot $sync -OneDriveKeep 7
+        Assert-True ([int]$ok.Code -eq 0) 'verified publish exits 0' ([string]$ok.Code + ' ' + [string]$ok.Reason)
+        Assert-True (-not $script:PlainPruneTooEarly) 'prune runs only after verify and the hash match' ("early=$($script:PlainPruneTooEarly) count=$($script:PlainPruneCount)")
+        Assert-True ($script:PlainPruneCount -ge 1) 'verified publish calls retention' ("count=$($script:PlainPruneCount)")
+        $localAfter = @(Get-ChildItem -LiteralPath $dest -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($localAfter.Count -eq 14) 'verified publish keeps 14 local dumps' ("count=$($localAfter.Count)")
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $dest 'antiphon-20261001T000000Z.dump'))) 'verified publish drops the oldest local dump' 'still present'
+        Assert-True ($script:PlainListExits.Count -ge 2) 'verified publish lists the dump twice' ("lists=$($script:PlainListExits.Count)")
+        $cloudAfter = @(Get-ChildItem -LiteralPath $cloud -File | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($cloudAfter.Count -eq 7) 'verified publish keeps 7 cloud dumps' ("count=$($cloudAfter.Count)")
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $cloud 'antiphon-20261101T000000Z.dump'))) 'verified publish drops the oldest cloud dump' 'still present'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $cloud 'antiphon-20261102T000000Z.dump'))) 'verified publish drops the next cloud dump' 'still present'
+    } finally {
+        Set-Item -Path function:Invoke-SnapshotNative -Value $savedNative
+        if ($script:PlainOriginalRetention) {
+            Set-Item -Path function:Update-SnapshotPlainRetention -Value $script:PlainOriginalRetention
+        }
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -1964,7 +2223,7 @@ $all = @(
     'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules',
     'PlainOffByDefault', 'PlainPlan', 'PlainInsideOneDrive', 'PlainMissingOneDrive', 'PlainAclOpen',
     'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused',
-    'PlainOneDriveCopy', 'PlainOneDrivePlan'
+    'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
