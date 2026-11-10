@@ -125,7 +125,8 @@ public class ComposerInputProbeTests
 
         var result = await ComposerInputProbe.RunAsync(
             "zzdeadbeef", composer.SnapshotAsync, composer.WriteAsync,
-            FastOptions(timeoutMs: 1000, retypeMs: 100, maxWrites: 3), null, CancellationToken.None);
+            FastOptions(timeoutMs: 1000, retypeMs: 100, maxWrites: 3), null, CancellationToken.None,
+            new OvershootingPollTime());
 
         result.Writes.ShouldBe(3, "three writes inside the budget, including the first");
         composer.Writes.Count(w => w == "zzdeadbeef").ShouldBe(3);
@@ -179,6 +180,34 @@ public class ComposerInputProbeTests
     {
         var id = Guid.Parse("8eb8aa9c-2c93-481c-bba6-8ab5a4825c7f");
         ComposerInputProbe.TokenFor(id).ShouldBe("zz8eb8aa9c");
+    }
+
+    /// <summary>
+    /// Each poll delay jumps 600ms, the stretch that made run 6591e378 return two writes
+    /// from a 1000ms budget and a 100ms retype interval.
+    /// </summary>
+    private sealed class OvershootingPollTime : TimeProvider
+    {
+        private long _stamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => _stamp;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            _stamp += TimeSpan.FromMilliseconds(600).Ticks;
+            callback(state);
+            return new NoopTimer();
+        }
+    }
+
+    private sealed class NoopTimer : ITimer
+    {
+        public bool Change(TimeSpan dueTime, TimeSpan period) => false;
+        public void Dispose() { }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     /// <summary>

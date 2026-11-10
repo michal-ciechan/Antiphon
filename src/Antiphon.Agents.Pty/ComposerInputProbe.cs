@@ -103,57 +103,61 @@ public static class ComposerInputProbe
     /// <param name="snapshotScreen">Returns the current rendered screen.</param>
     /// <param name="write">Raw write into the terminal (no CR is ever appended — nothing is submitted).</param>
     /// <param name="log">Receives non-fatal events (a re-type, a lingering token); null to discard.</param>
+    /// <param name="time">Clock for the budget and the poll delay. Production passes null.</param>
     public static Task<ComposerProbeResult> RunAsync(
         string token, Func<CancellationToken, Task<string>> snapshotScreen,
         Func<string, CancellationToken, Task> write, ComposerProbeOptions options,
-        Action<string>? log, CancellationToken ct) =>
-        RunAsync(token, snapshotScreen, write, options, log, null, ct);
+        Action<string>? log, CancellationToken ct, TimeProvider? time = null) =>
+        RunAsync(token, snapshotScreen, write, options, log, null, ct, time);
 
     public static async Task<ComposerProbeResult> RunAsync(
         string token, Func<CancellationToken, Task<string>> snapshotScreen,
         Func<string, CancellationToken, Task> write, ComposerProbeOptions options,
-        Action<string>? log, Func<string, bool>? isBlocked, CancellationToken ct)
+        Action<string>? log, Func<string, bool>? isBlocked, CancellationToken ct,
+        TimeProvider? time = null)
     {
-        var clock = System.Diagnostics.Stopwatch.StartNew();
+        time ??= TimeProvider.System;
+        var started = time.GetTimestamp();
+        TimeSpan Elapsed() => time.GetElapsedTime(started);
         var writes = 0;
         bool Blocked(string screen) => isBlocked?.Invoke(screen) == true;
         async Task<bool> BlockedNow() => isBlocked is not null && Blocked(await snapshotScreen(ct));
-        ComposerProbeResult Result(ComposerProbeOutcome outcome) => new(outcome, token, writes, clock.Elapsed);
+        ComposerProbeResult Result(ComposerProbeOutcome outcome) => new(outcome, token, writes, Elapsed());
         if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
         await write(token, ct);
         writes++;
-        var lastWrite = clock.Elapsed;
+        var lastWrite = Elapsed();
         while (true)
         {
             var screen = await snapshotScreen(ct);
             if (Blocked(screen)) return Result(ComposerProbeOutcome.InterruptedByModal);
             if (ComposerDeliveryEvidence.FragmentIsVisible(screen, token)) break;
-            if (clock.Elapsed >= options.Timeout) return Result(ComposerProbeOutcome.NeverAppeared);
-            if (writes < Math.Max(1, options.MaxWrites) && clock.Elapsed - lastWrite >= options.RetypeInterval)
+            if (Elapsed() >= options.Timeout) return Result(ComposerProbeOutcome.NeverAppeared);
+            if (writes < Math.Max(1, options.MaxWrites) && Elapsed() - lastWrite >= options.RetypeInterval)
             {
                 if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
                 log?.Invoke($"Input probe token '{token}' has not rendered; writing it again.");
                 await write(token, ct);
                 writes++;
-                lastWrite = clock.Elapsed;
+                lastWrite = Elapsed();
             }
-            await Task.Delay(options.PollInterval, ct);
+            await Task.Delay(options.PollInterval, time, ct);
         }
-        var deadline = clock.Elapsed + options.EffectiveClearTimeout;
+        var deadline = Elapsed() + options.EffectiveClearTimeout;
         var attempts = Math.Max(1, options.ClearAttempts);
         var interval = options.EffectiveClearTimeout / attempts;
-        var nextPress = clock.Elapsed;
+        var nextPress = Elapsed();
         var presses = 0;
         while (true)
         {
-            if (presses < attempts && clock.Elapsed >= nextPress)
+            if (presses < attempts && Elapsed() >= nextPress)
             {
                 if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
                 await write(KillLine, ct);
                 presses++;
-                nextPress = clock.Elapsed + interval;
+                nextPress = Elapsed() + interval;
             }
-            await Task.Delay(options.PollInterval, ct);
+            await Task.Delay(options.PollInterval, time, ct);
             var screen = await snapshotScreen(ct);
             if (Blocked(screen)) return Result(ComposerProbeOutcome.InterruptedByModal);
             if (!ComposerDeliveryEvidence.FragmentIsVisible(screen, token))
@@ -161,7 +165,7 @@ public static class ComposerInputProbe
                 if (await BlockedNow()) return Result(ComposerProbeOutcome.InterruptedByModal);
                 return Result(ComposerProbeOutcome.Responsive);
             }
-            if (clock.Elapsed >= deadline && presses >= attempts) return Result(ComposerProbeOutcome.NeverCleared);
+            if (Elapsed() >= deadline && presses >= attempts) return Result(ComposerProbeOutcome.NeverCleared);
         }
     }
 }
