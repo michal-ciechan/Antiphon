@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -142,7 +142,14 @@ public sealed class DerivedImpactIndexTests
         index.Allowlist.ShouldBe(DerivedImpactIndexBuilder.Allowlist);
         index.Utf8.Length.ShouldBeLessThanOrEqualTo(DerivedImpactIndexBuilder.ByteLimit);
 
-        index.WindowsOnly.ShouldContain("RepositoryLeaseWindowsBoundaryTests");
+        // Hand windows:only classes are not derived windowsOnly. The override list and the
+        // class-level LinuxOnly declaration are.
+        index.WindowsOnly.ShouldContain("CodexAdapterLocalShellTests");
+        index.WindowsOnly.ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+        index.LinuxOnly.ShouldContain("PlatformTaxonomyClassFilterTests");
+        index.LinuxOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
+        index.WindowsOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
+        index.LinuxOnly.ShouldNotContain("CodexAdapterLocalShellTests");
 
         var path = Path.Combine(root, "tests", "derived-impact-index.json");
         File.Exists(path).ShouldBeTrue(path);
@@ -150,16 +157,20 @@ public sealed class DerivedImpactIndexTests
         using (var committedJson = JsonDocument.Parse(committed))
         {
             var windowsOnly = Strings(committedJson.RootElement, "windowsOnly");
-            windowsOnly.ShouldContain("RepositoryLeaseWindowsBoundaryTests");
+            windowsOnly.ShouldContain("CodexAdapterLocalShellTests");
+            windowsOnly.ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+            var linuxOnly = Strings(committedJson.RootElement, "linuxOnly");
+            linuxOnly.ShouldContain("PlatformTaxonomyClassFilterTests");
+            linuxOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
             var committedText = System.Text.Encoding.UTF8.GetString(committed);
             var blinded = committedText.Replace(
-                "\"RepositoryLeaseWindowsBoundaryTests\"",
-                "\"RepositoryLeaseWindowsBoundaryTestsBlind\"",
+                "\"PlatformTaxonomyClassFilterTests\"",
+                "\"PlatformTaxonomyClassFilterTestsBlind\"",
                 StringComparison.Ordinal);
             blinded.ShouldNotBe(committedText);
             using var broken = JsonDocument.Parse(blinded);
-            Strings(broken.RootElement, "windowsOnly")
-                .ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+            Strings(broken.RootElement, "linuxOnly")
+                .ShouldNotContain("PlatformTaxonomyClassFilterTests");
         }
 
         committed.ShouldBe(index.Utf8);
@@ -527,10 +538,11 @@ public sealed class DerivedImpactIndexTests
         lease.Exit.ShouldBe(0, lease.Text);
         using (var json = JsonDocument.Parse(lease.Stdout))
         {
-            // Both lease classes carry an OS-gate token, so the cap keeps them on the Windows lane.
-            Strings(json.RootElement, "classes").ShouldNotContain("RepositoryMutationLeaseTests");
+            // RepositoryMutationLeaseTests is undeclared, so it stays on Linux. The boundary
+            // class is the hand windows:only floor and stays off that filter.
+            Strings(json.RootElement, "classes").ShouldContain("RepositoryMutationLeaseTests");
             Strings(json.RootElement, "classes").ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
-            WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryMutationLeaseTests");
+            WholeClasses(json.RootElement, "windowsFilters").ShouldNotContain("RepositoryMutationLeaseTests");
             WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryLeaseWindowsBoundaryTests");
             OwedCount(json.RootElement, LandingGitPath).ShouldBe(39);
         }
@@ -554,8 +566,8 @@ public sealed class DerivedImpactIndexTests
         var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
         sweep.Exit.ShouldBe(0, sweep.Text);
         using var sweepJson = JsonDocument.Parse(sweep.Stdout);
-        Strings(sweepJson.RootElement, "classes").ShouldNotContain("C1677TempFamilyRegistryTests");
-        WholeClasses(sweepJson.RootElement, "windowsFilters").ShouldContain("C1677TempFamilyRegistryTests");
+        Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
+        WholeClasses(sweepJson.RootElement, "windowsFilters").ShouldNotContain("C1677TempFamilyRegistryTests");
         OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(7);
     }
 
@@ -636,6 +648,7 @@ public sealed class DerivedImpactIndexTests
             }
             """, overrides: null);
         probe.WindowsOnly.ShouldNotContain("UndeclaredOsTokenTests");
+        probe.LinuxOnly.ShouldNotContain("UndeclaredOsTokenTests");
         WholeClasses(probe.Json, "filters").ShouldContain("UndeclaredOsTokenTests");
         WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("UndeclaredOsTokenTests");
     }
@@ -658,6 +671,7 @@ public sealed class DerivedImpactIndexTests
                 }
             }
             """, overrides: null);
+        probe.LinuxOnly.ShouldContain("AllLinuxOnlyTests");
         probe.WindowsOnly.ShouldNotContain("AllLinuxOnlyTests");
         WholeClasses(probe.Json, "filters").ShouldContain("AllLinuxOnlyTests");
         WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("AllLinuxOnlyTests");
@@ -678,6 +692,7 @@ public sealed class DerivedImpactIndexTests
             }
             """, overrides: null);
         probe.WindowsOnly.ShouldNotContain("WindowsSpecificsTests");
+        probe.LinuxOnly.ShouldNotContain("WindowsSpecificsTests");
         WholeClasses(probe.Json, "filters").ShouldContain("WindowsSpecificsTests");
         WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("WindowsSpecificsTests");
     }
@@ -696,6 +711,7 @@ public sealed class DerivedImpactIndexTests
                 }
             }
             """, overrides: null);
+        probe.LinuxOnly.ShouldContain("ClassLinuxOnlyTests");
         probe.WindowsOnly.ShouldNotContain("ClassLinuxOnlyTests");
         WholeClasses(probe.Json, "filters").ShouldContain("ClassLinuxOnlyTests");
         WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("ClassLinuxOnlyTests");
@@ -712,85 +728,200 @@ public sealed class DerivedImpactIndexTests
             }
             """, overrides: "OverrideTargetTests\n");
         probe.WindowsOnly.ShouldContain("OverrideTargetTests");
+        probe.LinuxOnly.ShouldNotContain("OverrideTargetTests");
         WholeClasses(probe.Json, "filters").ShouldNotContain("OverrideTargetTests");
         WholeClasses(probe.Json, "windowsFilters").ShouldContain("OverrideTargetTests");
     }
 
     [Test]
-    public async Task linux_edge_classes_have_no_os_gate_token()
+    public void override_file_names_exist_and_are_undeclared()
     {
         var root = RepoRoot();
-        using var index = JsonDocument.Parse(await File.ReadAllTextAsync(IndexPath(root)));
-        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
-        var linux = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var edge in index.RootElement.GetProperty("edges").EnumerateArray())
+        var path = Path.Combine(root, DerivedImpactIndexBuilder.OverrideRelativePath);
+        var text = File.ReadAllText(path);
+        text.Contains('\r').ShouldBeFalse();
+        text.EndsWith('\n').ShouldBeTrue();
+        var names = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        names.ShouldBe(ReviewerOsPlatformWindowsClasses);
+        names.ShouldBe(names.Order(StringComparer.Ordinal).ToArray());
+        var facts = DerivedImpactIndexBuilder.InspectOverrides(root);
+        facts.Select(fact => fact.Name).ShouldBe(names);
+        foreach (var fact in facts)
         {
-            foreach (var name in Strings(edge, "classes"))
-            {
-                if (!windowsOnly.Contains(name))
-                    linux.Add(name);
-            }
+            fact.Found.ShouldBeTrue(fact.Name);
+            fact.Declared.ShouldBeFalse(fact.Name);
         }
-
-        var sources = OsGateFiles.Load(root);
-        var hits = new List<string>();
-        foreach (var name in linux.Order(StringComparer.Ordinal))
-        {
-            if (!sources.Classes.TryGetValue(name, out var decls))
-                continue;
-            foreach (var decl in decls)
-            {
-                var token = OsGateFiles.FirstToken(decl.Text);
-                if (token is not null)
-                {
-                    hits.Add(name + " file " + token);
-                    break;
-                }
-
-                foreach (var baseName in decl.Bases)
-                {
-                    if (!sources.Classes.TryGetValue(baseName, out var bases))
-                        continue;
-                    foreach (var baseDecl in bases)
-                    {
-                        var baseToken = OsGateFiles.FirstToken(baseDecl.Text);
-                        if (baseToken is null)
-                            continue;
-                        hits.Add(name + " base " + baseName + " " + baseToken);
-                        break;
-                    }
-                }
-            }
-        }
-
-        hits.ShouldBeEmpty(string.Join(", ", hits.Take(8)));
     }
 
+    // Ordered method tuples of the five declarations, lengths 0 through 4: 781.
+    // Eight class-shape cases follow. The count is the closed product the parser must match.
     [Test]
-    public void os_gate_token_census_is_windows_only()
+    public void parser_agrees_with_platform_taxonomy_derive()
     {
-        var root = RepoRoot();
-        using var index = JsonDocument.Parse(File.ReadAllText(IndexPath(root)));
-        var windowsOnly = Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
-        var sources = OsGateFiles.Load(root);
-        var hits = new List<string>();
-        foreach (var pair in sources.Classes.OrderBy(item => item.Key, StringComparer.Ordinal))
+        var values = Enum.GetValues<PlatformDeclaration>();
+        values.Length.ShouldBe(5);
+        var compared = 0;
+        foreach (var methods in DeclarationTuples(values))
         {
-            if (!pair.Key.EndsWith("Tests", StringComparison.Ordinal))
-                continue;
-            if (windowsOnly.Contains(pair.Key))
-                continue;
-            foreach (var decl in pair.Value)
-            {
-                var token = OsGateFiles.FirstToken(decl.Text);
-                if (token is null)
-                    continue;
-                hits.Add(pair.Key + " " + token);
-                break;
-            }
+            var parsed = DerivedImpactIndexBuilder.ClassifyTexts(
+                [("tests/Antiphon.Tests/ProbeTests.cs", RenderProbe(methods))],
+                []);
+            var members = new PlatformMember[methods.Length];
+            for (var i = 0; i < methods.Length; i++)
+                members[i] = new PlatformMember(true, methods[i]);
+            Agree(parsed, members, string.Join(",", methods));
+            compared++;
         }
 
-        hits.ShouldBeEmpty(string.Join(", ", hits.Take(8)));
+        compared.ShouldBe(781);
+
+        Agree(ClassifyOne("""
+            [LinuxOnly("class")]
+            public sealed class ProbeTests {
+                [Test]
+                public void One() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.LinuxOnly)], "class shorthand");
+        Agree(ClassifyOne("""
+            [LinuxOnly("class")]
+            public sealed class ProbeTests {
+                [Test]
+                [WindowsOnly("method")]
+                public void One() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.LinuxOnly)], "class wins");
+        Agree(ClassifyOne("""
+            public sealed class ProbeTests {
+                [Test]
+                public void One() { }
+
+                [LinuxOnly("helper")]
+                public void Helper() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.Unannotated)], "helper ignored");
+        Agree(ClassifyOne("""
+            [WindowsOnly("class")]
+            public sealed class ProbeTests {
+                public void Helper() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.WindowsOnly)], "class with no test");
+        Agree(ClassifyOne("""
+            [LinuxOnly("a")]
+            [WindowsOnly("b")]
+            public sealed class ProbeTests {
+                [Test]
+                public void One() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.Unannotated)], "class conflict");
+        Agree(ClassifyOne("""
+            [HasWindowsSpecifics("class")]
+            public sealed class ProbeTests {
+                [Test]
+                public void One() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.HasWindowsSpecifics)], "specifics shorthand");
+        Agree(ClassifyOne("""
+            public sealed class ProbeTests {
+                [Test]
+                [LinuxOnlyAttribute("suffix")]
+                public void One() { }
+            }
+            """), [new PlatformMember(true, PlatformDeclaration.LinuxOnly)], "attribute suffix");
+
+        var partial = DerivedImpactIndexBuilder.ClassifyTexts(
+            [
+                ("tests/Antiphon.Tests/A.cs", """
+                    namespace N;
+                    public partial class ProbeTests {
+                        [Test]
+                        [LinuxOnly("a")]
+                        public void One() { }
+                    }
+                    """),
+                ("tests/Antiphon.Tests/B.cs", """
+                    namespace N;
+                    public partial class ProbeTests {
+                        [Test]
+                        [LinuxOnly("b")]
+                        public void Two() { }
+                    }
+                    """),
+            ],
+            []);
+        Agree(partial, [
+            new PlatformMember(true, PlatformDeclaration.LinuxOnly),
+            new PlatformMember(true, PlatformDeclaration.LinuxOnly),
+        ], "partial");
+        compared += 8;
+
+        var forced = DerivedImpactIndexBuilder.ClassifyTexts(
+            [("tests/Antiphon.Tests/ProbeTests.cs", """
+                public sealed class ProbeTests {
+                    [Test]
+                    [LinuxOnly("declared")]
+                    public void One() { }
+                }
+                """)],
+            ["ProbeTests"]);
+        forced.WindowsOnly.ShouldContain("ProbeTests");
+        forced.LinuxOnly.ShouldNotContain("ProbeTests");
+        compared.ShouldBe(789);
+    }
+
+    private static IEnumerable<PlatformDeclaration[]> DeclarationTuples(PlatformDeclaration[] values)
+    {
+        yield return [];
+        for (var length = 1; length <= 4; length++)
+        {
+            var total = 1;
+            for (var i = 0; i < length; i++)
+                total *= values.Length;
+            for (var n = 0; n < total; n++)
+            {
+                var row = new PlatformDeclaration[length];
+                var rest = n;
+                for (var i = 0; i < length; i++)
+                {
+                    row[i] = values[rest % values.Length];
+                    rest /= values.Length;
+                }
+
+                yield return row;
+            }
+        }
+    }
+
+    private static string RenderProbe(PlatformDeclaration[] methods)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append("public sealed class ProbeTests {\n");
+        for (var i = 0; i < methods.Length; i++)
+        {
+            builder.Append("    [Test]\n");
+            if (methods[i] != PlatformDeclaration.Unannotated)
+            {
+                builder.Append("    [");
+                builder.Append(methods[i].ToString());
+                builder.Append("(\"r\")]\n");
+            }
+
+            builder.Append("    public void M");
+            builder.Append(i.ToString());
+            builder.Append("() { }\n");
+        }
+
+        builder.Append("}\n");
+        return builder.ToString();
+    }
+
+    private static LaneSets ClassifyOne(string source) =>
+        DerivedImpactIndexBuilder.ClassifyTexts([("tests/Antiphon.Tests/ProbeTests.cs", source)], []);
+
+    private static void Agree(LaneSets parsed, PlatformMember[] members, string label)
+    {
+        var expected = PlatformTaxonomy.Derive(members);
+        parsed.LinuxOnly.Contains("ProbeTests").ShouldBe(expected.LinuxOnly, label);
+        parsed.WindowsOnly.Contains("ProbeTests").ShouldBe(expected.WindowsOnly, label);
     }
 
     private static string IndexPath(string root) => Path.Combine(root, "tests", "derived-impact-index.json");
@@ -829,7 +960,10 @@ public sealed class DerivedImpactIndexTests
         return fixture;
     }
 
-    private readonly record struct LaneProbe(IReadOnlyList<string> WindowsOnly, JsonElement Json);
+    private readonly record struct LaneProbe(
+        IReadOnlyList<string> WindowsOnly,
+        IReadOnlyList<string> LinuxOnly,
+        JsonElement Json);
 
     private static async Task<LaneProbe> SelectDeclarationAsync(string className, string source, string? overrides)
     {
@@ -844,7 +978,7 @@ public sealed class DerivedImpactIndexTests
         var ran = await SelectAsync(fixture.Root, "-Path", "tests/Antiphon.Tests/" + className + ".cs", "-Json");
         ran.Exit.ShouldBe(0, ran.Text);
         using var document = JsonDocument.Parse(ran.Stdout);
-        return new LaneProbe(index.WindowsOnly.ToArray(), document.RootElement.Clone());
+        return new LaneProbe(index.WindowsOnly.ToArray(), index.LinuxOnly.ToArray(), document.RootElement.Clone());
     }
 
     private static async Task<JsonElement> SelectBuiltAsync(Fixture fixture, string path)
@@ -989,251 +1123,6 @@ public sealed class DerivedImpactIndexTests
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
             dir = dir.Parent;
         return dir?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
-    }
-
-    // Grep census, independent of DerivedImpactIndexBuilder. A class file or a base-class file
-    // matches when it contains an OS-gate token. Helper walks stay in the builder.
-    private sealed class OsGateFiles
-    {
-        private static readonly string[] Tokens =
-        [
-            "IsWindows",
-            "IsOSPlatform",
-            "OSPlatform.Windows",
-            "RuntimeInformation",
-            "Skip.Test",
-            "Skip.When",
-            "Skip.Unless",
-            "SkipTestException",
-            "[Skip",
-            "[Windows",
-            "[Linux",
-            "Environment.OSVersion",
-            "PlatformID",
-        ];
-
-        private static readonly Regex HelperName = new(
-            @"\b(?!\w*Tests\b)(?:\w*(?:Windows|Linux)\w*(?:Gate|Skip|Guard)\w*|\w*(?:Gate|Skip|Guard)\w*(?:Windows|Linux)\w*)\b",
-            RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-        private static readonly Regex TypeHeader = new(
-            @"^\s*(?:(?:public|internal|private|protected|file|sealed|static|abstract|partial|readonly)\s+)*(?:class|record)\s+(\w+)",
-            RegexOptions.Multiline | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-
-        private OsGateFiles(Dictionary<string, List<ClassText>> classes) => Classes = classes;
-
-        public Dictionary<string, List<ClassText>> Classes { get; }
-
-        public static OsGateFiles Load(string root)
-        {
-            var classes = new Dictionary<string, List<ClassText>>(StringComparer.Ordinal);
-            var tests = Path.Combine(root, "tests");
-            foreach (var file in Directory.EnumerateFiles(tests, "*.cs", SearchOption.AllDirectories))
-            {
-                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
-                if (relative.Split('/').Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.Ordinal)))
-                    continue;
-                var text = File.ReadAllText(file);
-                // Strings and comments are not declarations. A fixture class inside a raw string
-                // must not inherit the file's OS-gate token. Token checks still read the raw file.
-                var visible = HideNonCode(text);
-                foreach (Match match in TypeHeader.Matches(visible))
-                {
-                    var name = match.Groups[1].Value;
-                    var header = text.Substring(match.Index, Math.Min(400, text.Length - match.Index));
-                    var brace = header.IndexOf('{');
-                    if (brace >= 0)
-                        header = header[..brace];
-                    if (!classes.TryGetValue(name, out var decls))
-                    {
-                        decls = [];
-                        classes[name] = decls;
-                    }
-
-                    decls.Add(new ClassText(text, BaseNames(header)));
-                }
-            }
-
-            return new OsGateFiles(classes);
-        }
-
-        private static string HideNonCode(string text)
-        {
-            var chars = text.ToCharArray();
-            var n = chars.Length;
-            var i = 0;
-            while (i < n)
-            {
-                if (chars[i] == '/' && i + 1 < n && chars[i + 1] == '/')
-                {
-                    while (i < n && chars[i] != '\n')
-                        chars[i++] = ' ';
-                    continue;
-                }
-
-                if (chars[i] == '/' && i + 1 < n && chars[i + 1] == '*')
-                {
-                    chars[i++] = ' ';
-                    chars[i++] = ' ';
-                    while (i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/'))
-                    {
-                        if (chars[i] != '\n')
-                            chars[i] = ' ';
-                        i++;
-                    }
-
-                    if (i < n)
-                        chars[i++] = ' ';
-                    if (i < n)
-                        chars[i++] = ' ';
-                    continue;
-                }
-
-                if (chars[i] == '@' && i + 1 < n && (chars[i + 1] == '"' || (chars[i + 1] == '$' && i + 2 < n && chars[i + 2] == '"')))
-                {
-                    chars[i++] = ' ';
-                    if (chars[i] == '$')
-                        chars[i++] = ' ';
-                    chars[i++] = ' ';
-                    while (i < n)
-                    {
-                        if (chars[i] == '"')
-                        {
-                            chars[i++] = ' ';
-                            if (i < n && chars[i] == '"')
-                            {
-                                chars[i++] = ' ';
-                                continue;
-                            }
-
-                            break;
-                        }
-
-                        if (chars[i] != '\n')
-                            chars[i] = ' ';
-                        i++;
-                    }
-
-                    continue;
-                }
-
-                if (chars[i] == '"')
-                {
-                    var quotes = 0;
-                    while (i + quotes < n && chars[i + quotes] == '"')
-                        quotes++;
-                    for (var k = 0; k < quotes; k++)
-                        chars[i + k] = ' ';
-                    i += quotes;
-                    if (quotes >= 3)
-                    {
-                        while (i < n)
-                        {
-                            var end = 0;
-                            while (i + end < n && chars[i + end] == '"')
-                                end++;
-                            if (end >= quotes)
-                            {
-                                for (var k = 0; k < end; k++)
-                                {
-                                    if (chars[i] != '\n')
-                                        chars[i] = ' ';
-                                    i++;
-                                }
-
-                                break;
-                            }
-
-                            if (chars[i] != '\n')
-                                chars[i] = ' ';
-                            i++;
-                        }
-
-                        continue;
-                    }
-
-                    while (i < n && chars[i] != '"')
-                    {
-                        if (chars[i] == '\\' && i + 1 < n)
-                        {
-                            if (chars[i] != '\n')
-                                chars[i] = ' ';
-                            i++;
-                        }
-
-                        if (i < n && chars[i] != '\n')
-                            chars[i] = ' ';
-                        if (i < n)
-                            i++;
-                    }
-
-                    if (i < n && chars[i] == '"')
-                        chars[i++] = ' ';
-                    continue;
-                }
-
-                if (chars[i] == '\'')
-                {
-                    chars[i++] = ' ';
-                    if (i < n && chars[i] == '\\' && i + 1 < n)
-                    {
-                        chars[i++] = ' ';
-                        chars[i++] = ' ';
-                    }
-                    else if (i < n)
-                    {
-                        chars[i++] = ' ';
-                    }
-
-                    if (i < n && chars[i] == '\'')
-                        chars[i++] = ' ';
-                    continue;
-                }
-
-                i++;
-            }
-
-            return new string(chars);
-        }
-
-        public static string? FirstToken(string text)
-        {
-            foreach (var token in Tokens)
-            {
-                if (text.Contains(token, StringComparison.Ordinal))
-                    return token;
-            }
-
-            if (text.Contains("DirectorySeparatorChar == '\\\\'", StringComparison.Ordinal))
-                return "DirectorySeparatorChar";
-            var helper = HelperName.Match(text);
-            return helper.Success ? helper.Value : null;
-        }
-
-        private static string[] BaseNames(string header)
-        {
-            var colon = header.IndexOf(':');
-            if (colon < 0)
-                return [];
-            var names = new List<string>();
-            foreach (var part in header[(colon + 1)..].Split(','))
-            {
-                var id = "";
-                foreach (var piece in part.Split(['<', '>', '.', ' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (piece.Length == 0 || !char.IsLetter(piece[0]))
-                        continue;
-                    id = piece;
-                }
-
-                if (id.Length > 0 && id is not ("where" or "class" or "struct"))
-                    names.Add(id);
-            }
-
-            return names.ToArray();
-        }
-
-        public readonly record struct ClassText(string Text, string[] Bases);
     }
 
     private sealed class Fixture : IDisposable

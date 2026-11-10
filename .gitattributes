@@ -41,6 +41,7 @@ tests/fixtures/card0490-linux/*.sh text eol=lf
 
 # CARD-1820: the derived index is byte-compared, so a Windows checkout must keep LF.
 tests/derived-impact-index.json text eol=lf
+tests/derived-impact-index-known-os-gated.txt text eol=lf
 
 # CARD-1613: the pinned skip attribute and Windows reason baseline are hashed as LF bytes.
 tests/Shared/NativeLinuxOnlyAttribute.cs text eol=lf

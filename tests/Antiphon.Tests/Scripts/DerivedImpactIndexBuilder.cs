@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Antiphon.TestSupport;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -53,47 +54,25 @@ internal static class DerivedImpactIndexBuilder
         @"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    // A test class is windowsOnly when its file, a base, or a tests/ helper it reaches
-    // within this many hops contains an OS-gate token. Over-classification stays on Windows.
-    private const int OsGateReferenceDepth = 2;
+    internal const string OverrideRelativePath = "tests/derived-impact-index-known-os-gated.txt";
 
-    private static readonly string[] OsGateTokens =
-    [
-        "IsWindows",
-        "IsOSPlatform",
-        "OSPlatform.Windows",
-        "RuntimeInformation",
-        "Skip.Test",
-        "Skip.When",
-        "Skip.Unless",
-        "SkipTestException",
-        "[Skip",
-        "[Windows",
-        "[Linux",
-        "Environment.OSVersion",
-        "PlatformID",
-    ];
-
-    private static readonly Regex OsGateHelperName = new(
-        @"\b(?!\w*Tests\b)(?:\w*(?:Windows|Linux)\w*(?:Gate|Skip|Guard)\w*|\w*(?:Gate|Skip|Guard)\w*(?:Windows|Linux)\w*)\b",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    // CARD-1832. Lanes come from these declarations. A class attribute is shorthand for every
+    // test method. A method attribute beside a class attribute does not override it.
+    private static readonly Dictionary<string, PlatformDeclaration> PlatformNames = new(StringComparer.Ordinal)
+    {
+        ["LinuxOnly"] = PlatformDeclaration.LinuxOnly,
+        ["LinuxOnlyAttribute"] = PlatformDeclaration.LinuxOnly,
+        ["WindowsOnly"] = PlatformDeclaration.WindowsOnly,
+        ["WindowsOnlyAttribute"] = PlatformDeclaration.WindowsOnly,
+        ["HasLinuxSpecifics"] = PlatformDeclaration.HasLinuxSpecifics,
+        ["HasLinuxSpecificsAttribute"] = PlatformDeclaration.HasLinuxSpecifics,
+        ["HasWindowsSpecifics"] = PlatformDeclaration.HasWindowsSpecifics,
+        ["HasWindowsSpecificsAttribute"] = PlatformDeclaration.HasWindowsSpecifics,
+    };
 
     internal static DerivedImpactIndex Build(string repoRoot)
     {
-        var tracked = TrackedPaths(repoRoot);
-        var sources = new List<string>();
-        foreach (var path in tracked)
-        {
-            if (IsWalkedSource(path))
-                sources.Add(path);
-        }
-
-        var scans = new ConcurrentBag<FileScan>();
-        Parallel.ForEach(
-            sources,
-            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-            path => scans.Add(Scan(repoRoot, path)));
-
+        var scans = ScanAll(repoRoot, out var tracked);
         var bySimple = new Dictionary<string, List<Decl>>(StringComparer.Ordinal);
         var filesByFull = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var productionFiles = new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -173,8 +152,12 @@ internal static class DerivedImpactIndexBuilder
             }
         }
 
-        var windowsOnly = ClassifyWindowsOnly(scans);
-        Console.WriteLine("derived-impact windowsOnly count=" + windowsOnly.Count.ToString());
+        var lanes = ClassifyLanes(scans, ReadOverrideNames(repoRoot));
+        var windowsOnly = lanes.WindowsOnly;
+        var linuxOnly = lanes.LinuxOnly;
+        Console.WriteLine(
+            "derived-impact windowsOnly count=" + windowsOnly.Count.ToString()
+            + " linuxOnly count=" + linuxOnly.Count.ToString());
 
         var allow = new HashSet<string>(Allowlist, StringComparer.Ordinal);
         var handByPath = HandClassesByPath(repoRoot, hits.Keys);
@@ -216,6 +199,7 @@ internal static class DerivedImpactIndexBuilder
             byteLimit = ByteLimit,
             allowlist = Allowlist,
             windowsOnly = windowsOnly.ToArray(),
+            linuxOnly = linuxOnly.ToArray(),
             cappedPaths = capped.Select(row => new CappedDocument
             {
                 path = row.Path,
@@ -237,7 +221,8 @@ internal static class DerivedImpactIndexBuilder
             throw new InvalidOperationException(
                 "derived-impact index is " + utf8.Length.ToString() + " bytes, over the " + ByteLimit.ToString() + " limit.");
 
-        return new DerivedImpactIndex(1, Cap, Allowlist, windowsOnly.ToArray(), capped, edges, utf8);
+        return new DerivedImpactIndex(
+            1, Cap, Allowlist, windowsOnly.ToArray(), linuxOnly.ToArray(), capped, edges, utf8);
     }
 
     internal static void Write(string repoRoot, DerivedImpactIndex index)
@@ -245,6 +230,61 @@ internal static class DerivedImpactIndexBuilder
         var path = Path.Combine(repoRoot, "tests", "derived-impact-index.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, index.Utf8);
+    }
+
+    // In-memory lane classification. The agreement witness compares this with PlatformTaxonomy.Derive.
+    internal static LaneSets ClassifyTexts(
+        IReadOnlyList<(string Relative, string Text)> sources,
+        IReadOnlyCollection<string> overrides)
+    {
+        var scans = new FileScan[sources.Count];
+        for (var i = 0; i < sources.Count; i++)
+            scans[i] = ScanText(sources[i].Relative, sources[i].Text);
+        var names = new HashSet<string>(overrides, StringComparer.Ordinal);
+        return ClassifyLanes(scans, names);
+    }
+
+    // Each override name must still be a test class and must not yet carry a platform attribute.
+    internal static IReadOnlyList<OverrideInspection> InspectOverrides(string repoRoot)
+    {
+        var wanted = ReadOverrideNames(repoRoot).Order(StringComparer.Ordinal).ToArray();
+        var bySimple = new Dictionary<string, List<ClassPiece>>(StringComparer.Ordinal);
+        foreach (var piece in MergePieces(ScanAll(repoRoot, out _)).Values)
+        {
+            if (!bySimple.TryGetValue(piece.Simple, out var same))
+            {
+                same = [];
+                bySimple[piece.Simple] = same;
+            }
+
+            same.Add(piece);
+        }
+
+        var rows = new List<OverrideInspection>(wanted.Length);
+        foreach (var name in wanted)
+        {
+            if (!bySimple.TryGetValue(name, out var pieces))
+            {
+                rows.Add(new OverrideInspection(name, false, false));
+                continue;
+            }
+
+            var declared = false;
+            foreach (var piece in pieces)
+            {
+                if (piece.ClassConflict || piece.ClassDeclaration is not null)
+                    declared = true;
+                foreach (var method in piece.Methods)
+                {
+                    if (method.IsTest && (method.Conflict || method.Declaration != PlatformDeclaration.Unannotated))
+                        declared = true;
+                }
+            }
+
+            rows.Add(new OverrideInspection(name, true, declared));
+        }
+
+        return rows;
     }
 
     private static void AddStringHits(
@@ -456,15 +496,35 @@ internal static class DerivedImpactIndexBuilder
         return tracked;
     }
 
+    private static FileScan[] ScanAll(string repoRoot, out HashSet<string> tracked)
+    {
+        tracked = TrackedPaths(repoRoot);
+        var sources = new List<string>();
+        foreach (var path in tracked)
+        {
+            if (IsWalkedSource(path))
+                sources.Add(path);
+        }
+
+        var scans = new ConcurrentBag<FileScan>();
+        Parallel.ForEach(
+            sources,
+            new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+            path => scans.Add(Scan(repoRoot, path)));
+        return scans.ToArray();
+    }
+
     private static FileScan Scan(string repoRoot, string relative)
     {
         var full = Path.Combine(repoRoot, relative.Replace('/', Path.DirectorySeparatorChar));
-        var text = File.ReadAllText(full);
+        return ScanText(relative, File.ReadAllText(full));
+    }
+
+    private static FileScan ScanText(string relative, string text)
+    {
         var root = CSharpSyntaxTree.ParseText(text, ParseOptions, relative).GetRoot();
         var scan = new FileScan(relative);
         var testsFile = relative.StartsWith("tests/", StringComparison.Ordinal);
-        if (testsFile)
-            scan.SourceHasOsGate = SourceHasOsGate(text);
         var fullNames = new Dictionary<TypeDeclarationSyntax, string>();
         foreach (var type in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
         {
@@ -476,8 +536,8 @@ internal static class DerivedImpactIndexBuilder
                 || relative.StartsWith("server/", StringComparison.Ordinal);
             var simple = type.Identifier.ValueText;
             scan.Decls.Add(new Decl(simple, name, relative, production));
-            if (testsFile)
-                scan.Gates.Add(CollectTypeGate(type, simple, name, relative));
+            if (testsFile && simple.EndsWith("Tests", StringComparison.Ordinal))
+                scan.Pieces.Add(CollectPiece(type, simple, name));
         }
 
         foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
@@ -655,75 +715,173 @@ internal static class DerivedImpactIndexBuilder
         return false;
     }
 
-    private static bool SourceHasOsGate(string text)
+    private static LaneSets ClassifyLanes(IEnumerable<FileScan> scans, HashSet<string> overrides)
     {
-        foreach (var token in OsGateTokens)
+        var windowsOnly = new SortedSet<string>(StringComparer.Ordinal);
+        var linuxOnly = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var piece in MergePieces(scans).Values)
         {
-            if (text.Contains(token, StringComparison.Ordinal))
-                return true;
+            var label = PlatformTaxonomy.Derive(MembersOf(piece));
+            // Temporary override until CARD-1832 annotates the class. The witness refuses a
+            // name that is already declared, so this list cannot hide a real declaration.
+            var forced = overrides.Contains(piece.Simple);
+            if (forced || label.WindowsOnly)
+                windowsOnly.Add(piece.Simple);
+            else if (label.LinuxOnly)
+                linuxOnly.Add(piece.Simple);
         }
 
-        if (text.Contains("DirectorySeparatorChar == '\\\\'", StringComparison.Ordinal))
-            return true;
-        return OsGateHelperName.IsMatch(text);
+        return new LaneSets(windowsOnly.ToArray(), linuxOnly.ToArray());
     }
 
-    private static TypeGate CollectTypeGate(TypeDeclarationSyntax type, string simple, string full, string file)
+    private static Dictionary<string, ClassPiece> MergePieces(IEnumerable<FileScan> scans)
     {
-        var bases = new List<string>();
-        if (type.BaseList is not null)
+        var byFull = new Dictionary<string, ClassPiece>(StringComparer.Ordinal);
+        foreach (var scan in scans)
         {
-            foreach (var baseType in type.BaseList.Types)
+            foreach (var piece in scan.Pieces)
             {
-                var name = SimpleTypeName(baseType.Type);
-                if (name is null || name == simple)
+                if (!byFull.TryGetValue(piece.Full, out var merged))
+                {
+                    byFull[piece.Full] = piece;
                     continue;
-                bases.Add(name);
+                }
+
+                if (piece.ClassConflict || merged.ClassConflict)
+                {
+                    merged.ClassConflict = true;
+                    merged.ClassDeclaration = null;
+                }
+                else if (piece.ClassDeclaration is PlatformDeclaration incoming)
+                {
+                    if (merged.ClassDeclaration is PlatformDeclaration existing && existing != incoming)
+                    {
+                        merged.ClassConflict = true;
+                        merged.ClassDeclaration = null;
+                    }
+                    else
+                    {
+                        merged.ClassDeclaration = incoming;
+                    }
+                }
+
+                merged.Methods.AddRange(piece.Methods);
             }
         }
 
-        var helpers = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var node in type.DescendantNodes())
+        return byFull;
+    }
+
+    private static List<PlatformMember> MembersOf(ClassPiece piece)
+    {
+        var tests = new List<MethodFact>();
+        foreach (var method in piece.Methods)
         {
-            if (IsInsideNestedType(node, type))
+            if (method.IsTest)
+                tests.Add(method);
+        }
+
+        // A class attribute is shorthand for every test method. A method attribute beside it
+        // does not override. Conflicting attributes on one declaration stay on both lanes.
+        if (piece.ClassConflict)
+            return [new PlatformMember(true, PlatformDeclaration.Unannotated)];
+
+        if (piece.ClassDeclaration is PlatformDeclaration classDeclaration)
+        {
+            if (tests.Count == 0)
+                return [new PlatformMember(true, classDeclaration)];
+            var shorthand = new List<PlatformMember>(tests.Count);
+            for (var i = 0; i < tests.Count; i++)
+                shorthand.Add(new PlatformMember(true, classDeclaration));
+            return shorthand;
+        }
+
+        var members = new List<PlatformMember>(tests.Count);
+        foreach (var method in tests)
+        {
+            var declaration = method.Conflict ? PlatformDeclaration.Unannotated : method.Declaration;
+            members.Add(new PlatformMember(true, declaration));
+        }
+
+        return members;
+    }
+
+    private static ClassPiece CollectPiece(TypeDeclarationSyntax type, string simple, string full)
+    {
+        var piece = new ClassPiece(simple, full);
+        var classPlatform = ReadPlatform(type.AttributeLists);
+        piece.ClassDeclaration = classPlatform.Declaration;
+        piece.ClassConflict = classPlatform.Conflict;
+        foreach (var method in type.Members.OfType<MethodDeclarationSyntax>())
+        {
+            if (!IsTestMethod(method))
                 continue;
-            if (node is AttributeSyntax attribute)
+            var platform = ReadPlatform(method.AttributeLists);
+            piece.Methods.Add(new MethodFact(true, platform.Declaration ?? PlatformDeclaration.Unannotated, platform.Conflict));
+        }
+
+        return piece;
+    }
+
+    private static bool IsTestMethod(MethodDeclarationSyntax method)
+    {
+        foreach (var list in method.AttributeLists)
+        {
+            if (list.Target is not null)
+                continue;
+            foreach (var attribute in list.Attributes)
             {
                 var name = SimpleTypeName(attribute.Name);
-                if (name is null || name == simple || name.EndsWith("Tests", StringComparison.Ordinal))
-                    continue;
-                helpers.Add(name);
-                continue;
+                if (name is "Test" or "TestAttribute")
+                    return true;
             }
-
-            if (node is not IdentifierNameSyntax ident
-                || ident.Parent is not MemberAccessExpressionSyntax member
-                || member.Expression != ident)
-                continue;
-            var target = ident.Identifier.ValueText;
-            if (target.Length < 3 || target == simple || target.EndsWith("Tests", StringComparison.Ordinal))
-                continue;
-            helpers.Add(target);
-        }
-
-        return new TypeGate(
-            simple,
-            full,
-            file,
-            simple.EndsWith("Tests", StringComparison.Ordinal),
-            bases,
-            helpers);
-    }
-
-    private static bool IsInsideNestedType(SyntaxNode node, TypeDeclarationSyntax owner)
-    {
-        for (var current = node.Parent; current is not null && current != owner; current = current.Parent)
-        {
-            if (current is TypeDeclarationSyntax)
-                return true;
         }
 
         return false;
+    }
+
+    private readonly record struct PlatformRead(PlatformDeclaration? Declaration, bool Conflict);
+
+    private static PlatformRead ReadPlatform(SyntaxList<AttributeListSyntax> lists)
+    {
+        PlatformDeclaration? found = null;
+        var conflict = false;
+        foreach (var list in lists)
+        {
+            if (list.Target is not null)
+                continue;
+            foreach (var attribute in list.Attributes)
+            {
+                var name = SimpleTypeName(attribute.Name);
+                if (name is null || !PlatformNames.TryGetValue(name, out var declaration))
+                    continue;
+                if (found is null)
+                    found = declaration;
+                else if (found != declaration)
+                    conflict = true;
+            }
+        }
+
+        if (conflict)
+            return new PlatformRead(null, true);
+        return new PlatformRead(found, false);
+    }
+
+    private static HashSet<string> ReadOverrideNames(string repoRoot)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var path = Path.Combine(repoRoot, OverrideRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(path))
+            return names;
+        foreach (var raw in File.ReadAllLines(path))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#')
+                continue;
+            names.Add(line);
+        }
+
+        return names;
     }
 
     private static string? SimpleTypeName(TypeSyntax type)
@@ -743,124 +901,6 @@ internal static class DerivedImpactIndexBuilder
             default:
                 return null;
         }
-    }
-
-    private static SortedSet<string> ClassifyWindowsOnly(IEnumerable<FileScan> scans)
-    {
-        var gates = new List<TypeGate>();
-        var gatedFull = new HashSet<string>(StringComparer.Ordinal);
-        var bySimple = new Dictionary<string, List<TypeGate>>(StringComparer.Ordinal);
-        foreach (var scan in scans)
-        {
-            foreach (var gate in scan.Gates)
-            {
-                gates.Add(gate);
-                if (!bySimple.TryGetValue(gate.Simple, out var same))
-                {
-                    same = [];
-                    bySimple[gate.Simple] = same;
-                }
-
-                same.Add(gate);
-                if (scan.SourceHasOsGate)
-                    gatedFull.Add(gate.Full);
-            }
-        }
-
-        for (var depth = 0; depth < OsGateReferenceDepth; depth++)
-        {
-            var next = new List<string>();
-            foreach (var gate in gates)
-            {
-                if (gatedFull.Contains(gate.Full))
-                    continue;
-                if (ReferencesOsGate(gate, bySimple, gatedFull))
-                    next.Add(gate.Full);
-            }
-
-            if (next.Count == 0)
-                break;
-            foreach (var full in next)
-                gatedFull.Add(full);
-        }
-
-        var windowsOnly = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var gate in gates)
-        {
-            if (gate.TestClass && gatedFull.Contains(gate.Full))
-                windowsOnly.Add(gate.Simple);
-        }
-
-        return windowsOnly;
-    }
-
-    private static bool ReferencesOsGate(
-        TypeGate gate,
-        Dictionary<string, List<TypeGate>> bySimple,
-        HashSet<string> gatedFull)
-    {
-        foreach (var name in gate.Bases)
-        {
-            if (AnyDeclGated(name, bySimple, gatedFull))
-                return true;
-        }
-
-        foreach (var name in gate.Helpers)
-        {
-            if (UniqueOrSameFileGated(gate, name, bySimple, gatedFull))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool AnyDeclGated(
-        string name,
-        Dictionary<string, List<TypeGate>> bySimple,
-        HashSet<string> gatedFull)
-    {
-        if (!bySimple.TryGetValue(name, out var decls))
-            return false;
-        foreach (var decl in decls)
-        {
-            if (gatedFull.Contains(decl.Full))
-                return true;
-        }
-
-        return false;
-    }
-
-    private static bool UniqueOrSameFileGated(
-        TypeGate gate,
-        string name,
-        Dictionary<string, List<TypeGate>> bySimple,
-        HashSet<string> gatedFull)
-    {
-        if (!bySimple.TryGetValue(name, out var decls))
-            return false;
-        string? full = null;
-        var unique = true;
-        foreach (var decl in decls)
-        {
-            if (full is null)
-                full = decl.Full;
-            else if (!string.Equals(full, decl.Full, StringComparison.Ordinal))
-            {
-                unique = false;
-                break;
-            }
-        }
-
-        if (unique && full is not null)
-            return gatedFull.Contains(full);
-
-        foreach (var decl in decls)
-        {
-            if (decl.File == gate.File && gatedFull.Contains(decl.Full))
-                return true;
-        }
-
-        return false;
     }
 
     private static bool IsClassLike(TypeDeclarationSyntax type)
@@ -894,19 +934,21 @@ internal static class DerivedImpactIndexBuilder
         public List<string> Strings { get; } = [];
         public List<OwnedText> DirectStrings { get; } = [];
         public List<OwnedText> Idents { get; } = [];
-        public bool SourceHasOsGate { get; set; }
-        public List<TypeGate> Gates { get; } = [];
+        public List<ClassPiece> Pieces { get; } = [];
     }
 
-    private readonly record struct Decl(string Simple, string Full, string File, bool Production);
+    private sealed class ClassPiece(string simple, string full)
+    {
+        public string Simple { get; } = simple;
+        public string Full { get; } = full;
+        public PlatformDeclaration? ClassDeclaration { get; set; }
+        public bool ClassConflict { get; set; }
+        public List<MethodFact> Methods { get; } = [];
+    }
 
-    private readonly record struct TypeGate(
-        string Simple,
-        string Full,
-        string File,
-        bool TestClass,
-        List<string> Bases,
-        HashSet<string> Helpers);
+    private readonly record struct MethodFact(bool IsTest, PlatformDeclaration Declaration, bool Conflict);
+
+    private readonly record struct Decl(string Simple, string Full, string File, bool Production);
 
     private readonly record struct OwnedText(string TestFull, string TestSimple, string Text, bool Created);
 
@@ -919,6 +961,7 @@ internal static class DerivedImpactIndexBuilder
         public int byteLimit { get; set; }
         public string[] allowlist { get; set; } = [];
         public string[] windowsOnly { get; set; } = [];
+        public string[] linuxOnly { get; set; } = [];
         public CappedDocument[] cappedPaths { get; set; } = [];
         public EdgeDocument[] edges { get; set; } = [];
     }
@@ -943,11 +986,16 @@ internal readonly record struct CappedPath(string Path, int Classes, string Reas
 
 internal readonly record struct ImpactEdge(string Path, IReadOnlyList<string> Classes);
 
+internal readonly record struct LaneSets(IReadOnlyList<string> WindowsOnly, IReadOnlyList<string> LinuxOnly);
+
+internal readonly record struct OverrideInspection(string Name, bool Found, bool Declared);
+
 internal sealed record DerivedImpactIndex(
     int Schema,
     int Cap,
     IReadOnlyList<string> Allowlist,
     IReadOnlyList<string> WindowsOnly,
+    IReadOnlyList<string> LinuxOnly,
     IReadOnlyList<CappedPath> CappedPaths,
     IReadOnlyList<ImpactEdge> Edges,
     byte[] Utf8);

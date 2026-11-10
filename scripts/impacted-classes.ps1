@@ -13,6 +13,7 @@
 # adds reverse edges to the Code/Review output only. -MergeSubset stays the hand subset.
 # A capped path keeps its most specific classes and lists the rest on an owed/capped line.
 # windowsOnly classes go to windowsFilters, never a Linux filter.
+# linuxOnly classes stay on the Linux filter. A missing linuxOnly array is empty.
 # JSON gains derivedClasses, keywordIds, rosterIds, skippedByCap and owed.
 # A missing index adds no derived class. Keyword and roster lists stay empty in this slice.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
@@ -884,7 +885,8 @@ function Get-DerivedIndex {
     $capped = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
     $allow = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $windowsOnly = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow; WindowsOnly = $windowsOnly }
+    $linuxOnly = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow; WindowsOnly = $windowsOnly; LinuxOnly = $linuxOnly }
     $indexPath = Join-Path $Repo 'tests/derived-impact-index.json'
     if (-not (Test-Path -LiteralPath $indexPath)) {
         $script:derivedIndexState = $state
@@ -958,6 +960,14 @@ function Get-DerivedIndex {
             if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$windowsOnly.Add($text) }
         }
     }
+    $linuxProp = $doc.PSObject.Properties['linuxOnly']
+    if ($null -ne $linuxProp -and $null -ne $linuxProp.Value) {
+        foreach ($item in @($linuxProp.Value)) {
+            if ($null -eq $item) { continue }
+            $text = [string]$item
+            if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$linuxOnly.Add($text) }
+        }
+    }
     $allowProp = $doc.PSObject.Properties['allowlist']
     if ($null -ne $allowProp -and $null -ne $allowProp.Value) {
         foreach ($item in @($allowProp.Value)) {
@@ -984,8 +994,11 @@ function Test-LandGraphToolOnly($Paths) {
 }
 
 function Add-DerivedClass($Index, $ClassName, $Whole, $Windows) {
-    if ($Index.WindowsOnly.Contains([string]$ClassName)) { [void]$Windows.Add([string]$ClassName) }
-    else { [void]$Whole.Add([string]$ClassName) }
+    $name = [string]$ClassName
+    # LinuxOnly wins a double label. The declaration witness forbids that pair.
+    if ($Index.LinuxOnly.Contains($name)) { [void]$Whole.Add($name); return }
+    if ($Index.WindowsOnly.Contains($name)) { [void]$Windows.Add($name); return }
+    [void]$Whole.Add($name)
 }
 
 function Resolve-Derived($Paths) {
@@ -1204,9 +1217,11 @@ Apply-Derived $derivedSelection $whole $methodsByClass $windowsWhole
 # filter still has to drop it; -MergeSubset already returned above and stays the hand subset.
 $laneIndex = Get-DerivedIndex
 foreach ($className in @($whole)) {
-    if ($laneIndex.WindowsOnly.Contains([string]$className)) {
-        [void]$whole.Remove([string]$className)
-        [void]$windowsWhole.Add([string]$className)
+    $name = [string]$className
+    if ($laneIndex.LinuxOnly.Contains($name)) { continue }
+    if ($laneIndex.WindowsOnly.Contains($name)) {
+        [void]$whole.Remove($name)
+        [void]$windowsWhole.Add($name)
     }
 }
 
