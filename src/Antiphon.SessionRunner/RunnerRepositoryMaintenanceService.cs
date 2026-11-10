@@ -28,16 +28,31 @@ public sealed class RunnerRepositoryMaintenanceService(
         try
         {
             await Task.Delay(InitialDelay, stoppingToken);
-            await maintenance.RunAsync(stoppingToken);
-            using var timer = new PeriodicTimer(Interval ?? TimeSpan.FromMinutes(phoneHome.RepositoryMaintenance.CheckIntervalMinutes));
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await maintenance.RunAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        { /* shutting down */ }
-        catch (Exception ex)
+        { return; }
+
+        using var timer = new PeriodicTimer(Interval ?? TimeSpan.FromMinutes(phoneHome.RepositoryMaintenance.CheckIntervalMinutes));
+        while (!stoppingToken.IsCancellationRequested)
         {
-            logger.LogWarning(ex, "Repository maintenance pass failed.");
+            try
+            {
+                await maintenance.RunAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            { return; }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Repository maintenance pass failed.");
+            }
+
+            try
+            {
+                if (!await timer.WaitForNextTickAsync(stoppingToken))
+                    return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            { return; }
         }
     }
 }

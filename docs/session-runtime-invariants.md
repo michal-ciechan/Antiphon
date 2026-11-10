@@ -1860,9 +1860,14 @@ The child is `git gc --prune=2.weeks.ago`. It is not `git gc --auto` and it is n
 `--prune=now`. `BudgetSeconds` (600, at most 10800) kills it. The child drops
 inherited `GIT_CONFIG_*` so a bad count cannot block the owner. The pass skips
 while the slot-pool repository lease is held, a worktree add or a land is in
-flight, or a task git call is in flight. A task git call that starts during gc is
-not blocked. The pass never enters `antiphon_pgdata`, never follows a symlink out
-of the root, and keeps its last-run stamp in `repository-maintenance.json` beside
+flight, or a git call on the dispatcher workspace, the retention workspace, or the park workspace is in flight.
+Git an agent runs itself inside a worktree is not counted. A git call on one of
+those workspaces that starts during gc is not blocked. The pass never enters
+`antiphon_pgdata`, never follows a symlink out of the root, and never follows a
+symlinked .git. One repository that throws does not stop the pass or the owner;
+the next check retries that repository. A budget or shutdown kill can leave
+`packed-refs.lock`, and the pass removes a lock written during that pass. The
+last-run stamp stays in `repository-maintenance.json` beside
 `PhoneHome:StoreIdPath`, not inside a repository.
 
 One log line per repository names the outcome and the before/after loose-object

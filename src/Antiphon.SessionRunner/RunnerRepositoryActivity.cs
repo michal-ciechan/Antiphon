@@ -2,8 +2,9 @@ namespace Antiphon.SessionRunner;
 
 /// <summary>
 /// CARD-1817. Counts the runner's own repository lease, an in-flight worktree add or land,
-/// and a task git call. The maintenance pass skips while any of them is held. It does not
-/// take these counts itself: its git child is not a task git call.
+/// and a git call on the dispatcher, retention, or park workspace. Git an agent runs itself
+/// is not counted. The maintenance pass skips while any counted call is held. It does not
+/// take these counts itself: its git child is not one of those calls.
 /// </summary>
 public sealed class RunnerRepositoryActivity
 {
