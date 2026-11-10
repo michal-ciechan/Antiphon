@@ -102,9 +102,26 @@ public sealed class DerivedImpactIndexTests
         index.Allowlist.ShouldBe(DerivedImpactIndexBuilder.Allowlist);
         index.Utf8.Length.ShouldBeLessThanOrEqualTo(DerivedImpactIndexBuilder.ByteLimit);
 
+        index.WindowsOnly.ShouldContain("RepositoryLeaseWindowsBoundaryTests");
+
         var path = Path.Combine(root, "tests", "derived-impact-index.json");
         File.Exists(path).ShouldBeTrue(path);
         var committed = await File.ReadAllBytesAsync(path);
+        using (var committedJson = JsonDocument.Parse(committed))
+        {
+            var windowsOnly = Strings(committedJson.RootElement, "windowsOnly");
+            windowsOnly.ShouldContain("RepositoryLeaseWindowsBoundaryTests");
+            var committedText = System.Text.Encoding.UTF8.GetString(committed);
+            var blinded = committedText.Replace(
+                "\"RepositoryLeaseWindowsBoundaryTests\"",
+                "\"RepositoryLeaseWindowsBoundaryTestsBlind\"",
+                StringComparison.Ordinal);
+            blinded.ShouldNotBe(committedText);
+            using var broken = JsonDocument.Parse(blinded);
+            Strings(broken.RootElement, "windowsOnly")
+                .ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+        }
+
         committed.ShouldBe(index.Utf8);
 
         foreach (var broad in DerivedImpactIndexBuilder.Allowlist)
