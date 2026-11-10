@@ -11,11 +11,17 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-// CARD-1439: no child process. The 60s hook still assumes one historical clone at a time.
+// CARD-1439: no child process, so this class stays off ProcessSpawnLimit.
+// NotInParallel keeps one historical clone in this class. The hook awaits that
+// baseline. TUnit copies this timeout onto the hook; the setup cancel uses the same budget.
 [NotInParallel(nameof(C0824RefOnlySnapshotMigrationTests))]
-[Timeout(60_000)] // CARD-0824 provisional: isolated clone and subject-specific migration round trips.
+[Timeout(C0824RefOnlySnapshotMigrationTests.HistoricalBaselineBudgetMilliseconds)]
 public sealed class C0824RefOnlySnapshotMigrationTests
 {
+    // 2x loaded db-migrate p95 of the longer baseline (Additive, 34.3s, n=6) on server2,
+    // 2026-11-10, four sha256sum /dev/zero workers, load 26-43. Park's own p95 was 17.1s (n=12).
+    // Bodies on that run were about 5s, so this is also the body backstop.
+    private const int HistoricalBaselineBudgetMilliseconds = 70_000;
     private const string Previous = "20261105121558_Card0824RefOnlyDesktopCleanup";
     private const string Debt = "20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot";
     private const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
@@ -35,7 +41,8 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         if (name == nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)) return;
         // These round trips exercise the historical migrations. Starting from
         // the current template would first hit the later telemetry Down guard.
-        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        // Completes when the baseline migration is applied. The budget is only the backstop.
+        using var setup = new CancellationTokenSource(TimeSpan.FromMilliseconds(HistoricalBaselineBudgetMilliseconds));
         _historical = await MigrationTestDatabase.CreateAsync(
             name.StartsWith(nameof(Additive_upgrade_and_empty_downgrade_preserve_legacy_rows), StringComparison.Ordinal) ? Previous : Park,
             setup.Token);
