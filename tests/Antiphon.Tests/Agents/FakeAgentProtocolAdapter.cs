@@ -135,6 +135,9 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public bool Attached { get; private set; }
     public bool AttachResult { get; set; } = true;
     public AgentLaunchBlock? LaunchBlock { get; set; }
+
+    /// <summary>CARD-1508. Set by a test when the fake should name a fatal pre-prompt frame.</summary>
+    public string? StartupFailureOutcome { get; set; }
     public bool TurnCompleted { get; set; } = true;
     public string? TurnStopReason { get; set; }
     public bool ThrowOnRenderedSnapshot { get; set; }

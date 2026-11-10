@@ -77,6 +77,12 @@ public interface IAgentProtocolAdapter : IAsyncDisposable
     /// </summary>
     AgentLaunchBlock? LaunchBlock => null;
 
+    /// <summary>
+    /// CARD-1508. Bounded clause for a fatal pre-prompt Codex account-bootstrap frame.
+    /// Null leaves the process-exit sentence unchanged and does not record a launch block.
+    /// </summary>
+    string? StartupFailureOutcome => null;
+
     Task<AgentTurnResult> WaitForTurnCompleteAsync(CancellationToken ct);
 
     string SnapshotRawOutput();
