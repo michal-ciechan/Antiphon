@@ -44,6 +44,7 @@ internal sealed class C544World : IAsyncDisposable
     public C544Clock Clock { get; } = new();
     public ControlledInterimReadiness Readiness { get; } = new();
     public ServiceProvider Services { get; private set; } = null!;
+    internal List<ServiceDescriptor> ServiceGraph { get; } = [];
     public IInterceptor? Interceptor { get; private set; }
     /// <summary>Extra registrations applied on every (re)build, e.g. a LandDeliveryBoundary.</summary>
     public Action<IServiceCollection>? ConfigureServices { get; set; }
@@ -301,6 +302,8 @@ internal sealed class C544World : IAsyncDisposable
         services.AddScoped<AgentTaskDispatcher>();
         services.AddSingleton<AgentTaskReplyService>();
         ConfigureServices?.Invoke(services);
+        ServiceGraph.Clear();
+        ServiceGraph.AddRange(services);
         Services = services.BuildServiceProvider();
     }
 

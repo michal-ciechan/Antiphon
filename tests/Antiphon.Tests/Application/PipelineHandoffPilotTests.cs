@@ -196,6 +196,230 @@ public sealed class PipelineHandoffPilotTests
     public Task C1281_CompletionRecovery(string cut) =>
         new CompletionWarningDeliveryTests().C788_ProgressWarningRecovery(cut);
 
+    [Test]
+    public async Task C1281_UnexplainedWaitSurvivesLaterConsumedRecord()
+    {
+        await using var host = await PilotHost.CreateAsync();
+        using (var eligible = await host.Client.PostAsJsonAsync(host.Url, host.Request("eligible", "ready")))
+            eligible.StatusCode.ShouldBe(HttpStatusCode.OK, await eligible.Content.ReadAsStringAsync());
+        host.Clock.Advance(TimeSpan.FromMinutes(15) + TimeSpan.FromMilliseconds(1));
+        (await host.ReadAsync()).UnexplainedWaitRequiresInvestigation.ShouldBeTrue("unexplained-over-15m");
+        using var consumed = await host.Client.PostAsJsonAsync(host.Url, host.Request("consumed", "later record", 1));
+        consumed.StatusCode.ShouldBe(HttpStatusCode.OK, await consumed.Content.ReadAsStringAsync());
+        (await host.ReadAsync()).UnexplainedWaitRequiresInvestigation.ShouldBeTrue("later-consumed-record-keeps-investigation");
+    }
+
+    [Test]
+    public async Task C1281_OverdueNextObservationIsFlagged()
+    {
+        await using var host = await PilotHost.CreateAsync();
+        using var held = await host.Client.PostAsJsonAsync(host.Url, host.Request("dependency", "waiting on a blocker"));
+        held.StatusCode.ShouldBe(HttpStatusCode.OK, await held.Content.ReadAsStringAsync());
+        (await host.ReadAsync()).UnexplainedWaitRequiresInvestigation.ShouldBeFalse("future-observation");
+        host.Clock.Advance(TimeSpan.FromMinutes(5));
+        (await host.ReadAsync()).UnexplainedWaitRequiresInvestigation.ShouldBeFalse("exact-due-is-not-overdue");
+        host.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        (await host.ReadAsync()).UnexplainedWaitRequiresInvestigation.ShouldBeTrue("overdue-next-observation");
+    }
+
+    [Test]
+    public async Task C1281_ReeligibilityUsesLatestEligibility()
+    {
+        await using var host = await PilotHost.CreateAsync();
+        using (var first = await host.Client.PostAsJsonAsync(host.Url, host.Request("eligible", "first window")))
+            first.StatusCode.ShouldBe(HttpStatusCode.OK, await first.Content.ReadAsStringAsync());
+        DateTime firstEligible;
+        await using (var db = host.World.CreateContext())
+            firstEligible = (await db.PipelineHandoffActions.SingleAsync()).EligibleAt!.Value;
+        host.Clock.Advance(TimeSpan.FromMinutes(10));
+        using (var held = await host.Client.PostAsJsonAsync(host.Url, host.Request("dependency", "held", 1)))
+            held.StatusCode.ShouldBe(HttpStatusCode.OK, await held.Content.ReadAsStringAsync());
+        host.Clock.Advance(TimeSpan.FromMinutes(10));
+        using var again = await host.Client.PostAsJsonAsync(host.Url, host.Request("eligible", "second window", 2));
+        again.StatusCode.ShouldBe(HttpStatusCode.OK, await again.Content.ReadAsStringAsync());
+        await using var write = host.World.CreateContext();
+        var action = await write.PipelineHandoffActions.SingleAsync();
+        var latest = action.EligibleAt.ShouldNotBeNull();
+        latest.ShouldBeGreaterThan(firstEligible, "held-then-eligible-starts-a-new-window");
+        var child = new AgentTask
+        {
+            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "reeligible child", Goal = "reeligible child",
+            CardId = action.CardId, ProjectId = action.ProjectId, Role = action.NextStage,
+            WorkingDirectory = host.World.RepositoryPath, CreatedAt = latest.AddMinutes(1),
+        };
+        write.Add(child);
+        action.ChildTaskId = child.Id;
+        await write.SaveChangesAsync();
+        (await host.ReadAsync()).RequestedWithinFiveMinutes.ShouldBe(true, "reeligibility-five-minute-window");
+    }
+
+    [Test]
+    public async Task C1281_SessionTokenAuthorization()
+    {
+        await using var host = await PilotHost.CreateAsync();
+        using (var saved = await host.Client.PostAsJsonAsync(host.Url, host.Request("consumed", "operator")))
+            saved.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        await using (var db = host.World.CreateContext())
+        {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == host.World.CallerSessionId);
+            session.DelegationTokenHash = AgentTaskService.HashToken(token);
+            session.Cwd = host.World.RepositoryPath;
+            session.CardId = host.World.Card.Id;
+            await db.SaveChangesAsync();
+        }
+        using var client = host.App.GetTestClient();
+        client.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", token);
+        using (var get = await client.GetAsync(host.Url))
+            get.StatusCode.ShouldBe(HttpStatusCode.OK, "session-token-get " + await get.Content.ReadAsStringAsync());
+        using (var post = await client.PostAsJsonAsync(host.Url, host.Request("dependency", "session hold", 1)))
+            post.StatusCode.ShouldBe(HttpStatusCode.OK, "session-token-post " + await post.Content.ReadAsStringAsync());
+        (await host.ReadAsync()).Observations.Last().Actor.ShouldBe($"session:{host.World.CallerSessionId:D}", "session-actor-retained");
+
+        var foreignToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        await using (var db = host.World.CreateContext())
+        {
+            var otherCard = new Card
+            {
+                Id = Guid.NewGuid(), BoardId = host.World.Board.Id, BoardColumnId = host.World.Card.BoardColumnId,
+                Identifier = "CARD-1294", Title = "foreign session card",
+            };
+            var other = C544World.Session(Guid.NewGuid(), "c1293-foreign-session", host.Clock.GetUtcNow().UtcDateTime);
+            other.Cwd = host.World.RepositoryPath;
+            other.CardId = otherCard.Id;
+            other.DelegationTokenHash = AgentTaskService.HashToken(foreignToken);
+            db.AddRange(otherCard, other);
+            await db.SaveChangesAsync();
+        }
+        using var foreign = host.App.GetTestClient();
+        foreign.DefaultRequestHeaders.Add("X-Antiphon-Task-Token", foreignToken);
+        using (var denied = await foreign.GetAsync(host.Url))
+            await AssertProblemAsync(denied, HttpStatusCode.Forbidden, "handoff_card_denied");
+        (await host.ReadAsync()).Observations.Count.ShouldBe(2, "denied-session-no-write");
+
+        var missing = $"/api/agent-tasks/{Guid.NewGuid():D}/handoff-actions";
+        using (var probe = await client.GetAsync(missing))
+            await AssertProblemAsync(probe, HttpStatusCode.Forbidden, "handoff_predecessor_denied");
+        using (var postMissing = await client.PostAsJsonAsync(missing, host.Request("consumed", "absent")))
+            await AssertProblemAsync(postMissing, HttpStatusCode.Forbidden, "handoff_predecessor_denied");
+        using var operatorMissing = await host.Client.GetAsync(missing);
+        operatorMissing.StatusCode.ShouldBe(HttpStatusCode.NotFound, "operator-missing-predecessor-stays-404");
+    }
+
+    [Test]
+    public async Task C1281_HttpReceiptRefusal()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(false);
+        var (taskId, _) = await rig.SettleReviewAsync(next: "code");
+        await rig.DeliverAsync("B-2 http receipt");
+        await rig.ScanAsync();
+        var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull();
+        var queue = await rig.RowAsync(taskId);
+        var wire = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson).ShouldNotBeNull();
+        var receipt = new PipelineHandoffReceiptReference(note.Id, queue.Id, rig.World.CallerSessionId,
+            queue.LastDeliveryGeneration!.Value, note.ConfirmingPromptSequence!.Value, wire.WireSha256);
+        var predecessor = await rig.World.TaskAsync(taskId);
+        var request = new PipelineHandoffActionRequest(predecessor.Attempt, note.SourceEventId, AgentTaskRole.Code,
+            0, "consumed", "Explicit receipt consumption", Receipt: receipt);
+        await using var http = await ComponentHttp.StartAsync(rig.World.ServiceGraph);
+        var url = $"/api/agent-tasks/{taskId:D}/handoff-actions";
+        foreach (var wrong in new[]
+        {
+            receipt with { NotificationId = Guid.NewGuid() }, receipt with { QueueId = Guid.NewGuid() },
+            receipt with { RecipientSessionId = Guid.NewGuid() },
+            receipt with { RecipientGeneration = receipt.RecipientGeneration.AddSeconds(-1) },
+            receipt with { ReceiptSequence = queue.LastDeliveryBaselineSequence ?? 0 },
+            receipt with { WireDigest = new string('0', 64) },
+        })
+        {
+            using var refused = await http.Client.PostAsJsonAsync(url, request with { Receipt = wrong });
+            await AssertProblemAsync(refused, HttpStatusCode.Conflict, "handoff_foreign_receipt");
+        }
+        using var saved = await http.Client.PostAsJsonAsync(url, request);
+        saved.StatusCode.ShouldBe(HttpStatusCode.OK, "http-receipt-accepted " + await saved.Content.ReadAsStringAsync());
+        var body = (await saved.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!;
+        body.Action.ReceivedAt.ShouldBe(note.ConfirmedAt);
+        body.Action.ConsumedAt.ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task C1281_MismatchedChildDoesNotFailGet()
+    {
+        await using var host = await PilotHost.CreateAsync();
+        using var saved = await host.Client.PostAsJsonAsync(host.Url, host.Request("eligible", "healthy action"));
+        saved.StatusCode.ShouldBe(HttpStatusCode.OK, await saved.Content.ReadAsStringAsync());
+        var good = (await saved.Content.ReadFromJsonAsync<PipelineHandoffActionDto>())!.Action;
+        await using var db = host.World.CreateContext();
+        var foreign = new AgentTask
+        {
+            Id = Guid.NewGuid(), RootTaskId = Guid.NewGuid(), Title = "foreign child", Goal = "foreign child",
+            CardId = good.CardId, ProjectId = good.ProjectId, Role = AgentTaskRole.Review,
+            WorkingDirectory = host.World.RepositoryPath, CreatedAt = host.Clock.GetUtcNow().UtcDateTime.AddMinutes(1),
+        };
+        var bad = new PipelineHandoffAction
+        {
+            Id = Guid.NewGuid(), PredecessorTaskId = host.World.Owner.Id, Attempt = host.World.Owner.Attempt + 1,
+            SettlementEventId = Guid.NewGuid(), NextStage = AgentTaskRole.Code, CardId = good.CardId,
+            ProjectId = good.ProjectId, Actor = "operator", ReasonCode = "consumed",
+            CreatedAt = host.Clock.GetUtcNow().UtcDateTime.AddSeconds(1), SettledAt = good.SettledAt,
+            ChildTaskId = foreign.Id,
+        };
+        db.AddRange(foreign, bad);
+        await db.SaveChangesAsync();
+        using var get = await host.Client.GetAsync(host.Url);
+        var body = await get.Content.ReadAsStringAsync();
+        get.StatusCode.ShouldBe(HttpStatusCode.OK, "one-mismatched-child-keeps-the-list " + body);
+        var list = JsonSerializer.Deserialize<List<PipelineHandoffActionDto>>(body, JsonOptions)!;
+        list.Count.ShouldBe(2);
+        list.Single(item => item.Action.Id == good.Id).Action.Id.ShouldBe(good.Id);
+        var mismatched = list.Single(item => item.Action.Id == bad.Id);
+        mismatched.Action.ChildTaskId.ShouldBe(foreign.Id);
+        mismatched.Action.ChildCreatedAt.ShouldBeNull("mismatched-child-clocks-are-not-projected");
+        mismatched.RequestedWithinFiveMinutes.ShouldBeNull();
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+        response.StatusCode.ShouldBe(status, code + ": " + body);
+        using var problem = JsonDocument.Parse(body);
+        problem.RootElement.GetProperty("code").GetString().ShouldBe(code);
+    }
+
+    /// <summary>Component endpoint over an existing world graph. Does not own that world.</summary>
+    private sealed class ComponentHttp : IAsyncDisposable
+    {
+        public HttpClient Client { get; private set; } = null!;
+        private WebApplication App { get; set; } = null!;
+        private readonly string _tokenPath = Path.Combine(Path.GetTempPath(), "c1293-operator-" + Guid.NewGuid().ToString("N"));
+
+        public static async Task<ComponentHttp> StartAsync(IReadOnlyList<ServiceDescriptor> graph)
+        {
+            var host = new ComponentHttp();
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseTestServer();
+            foreach (var descriptor in graph) builder.Services.Add(descriptor);
+            builder.Services.AddSingleton(Options.Create(new PhoneHomeRunnerSettings { OperatorTokenPath = host._tokenPath }));
+            builder.Services.AddScoped<PipelineHandoffActionService>();
+            host.App = builder.Build();
+            host.App.UseMiddleware<ExceptionMiddleware>();
+            host.App.MapPipelineHandoffActionEndpoints();
+            await host.App.StartAsync();
+            host.Client = host.App.GetTestClient();
+            host.Client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(host._tokenPath));
+            return host;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Client.Dispose();
+            await App.DisposeAsync();
+            if (File.Exists(_tokenPath)) File.Delete(_tokenPath);
+        }
+    }
+
     // Component composition only. S6 owns real Program registration. All routes below are
     // the production extension; no test-only endpoint or production runner is installed.
     internal sealed class PilotHost : IAsyncDisposable
