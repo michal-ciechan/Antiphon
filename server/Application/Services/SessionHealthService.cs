@@ -36,6 +36,11 @@ public sealed class SessionHealthStateStore
         public DateTime? ReArmSettleUntilUtc;
         public bool DegradedAlerted;
         public DateTime? LastAcceptedStartedAt;
+
+        /// <summary>
+        /// One omission warning per session id. Not cleared when the generation changes.
+        /// </summary>
+        public bool OmissionWarned;
     }
 
     public ConcurrentDictionary<Guid, Entry> Sessions { get; } = new();
@@ -232,6 +237,19 @@ public sealed class SessionHealthService
 
         if (!isIdle)
             return false;
+
+        if (!probe.ConnectionCountMeasured)
+        {
+            if (!entry.OmissionWarned)
+            {
+                entry.OmissionWarned = true;
+                _logger.LogWarning(
+                    "Agent {AgentName}: session {SessionId}: Claude RC connection count is a supported omission off Windows. A missing count is not zero connections.",
+                    agent.Name, session.Id);
+            }
+
+            return false;
+        }
 
         if (probe.BridgeConnections > 0)
         {

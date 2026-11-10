@@ -16,18 +16,22 @@ public sealed class WindowsRcBridgeProbe : IRcBridgeProbe
     private static readonly string SessionsDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "sessions");
 
-    public RcProbeResult Probe(int pid)
+    public RcProbeResult Probe(int pid) => Probe(pid, OperatingSystem.IsWindows());
+
+    internal RcProbeResult Probe(int pid, bool platformCanCount)
     {
+        if (!platformCanCount)
+        {
+            return new RcProbeResult(
+                Armed: false,
+                BridgeConnections: 0,
+                StateFileFound: false,
+                ConnectionCountMeasured: false);
+        }
+
         var (armed, found) = ReadArmedState(pid);
         var connections = CountAnthropicConnections(pid);
         return new RcProbeResult(armed, connections, found);
-    }
-
-    // S1 seam: the bool is ignored so today's body still returns a measured count.
-    internal RcProbeResult Probe(int pid, bool platformCanCount)
-    {
-        _ = platformCanCount;
-        return Probe(pid);
     }
 
     private static (bool Armed, bool Found) ReadArmedState(int pid)
