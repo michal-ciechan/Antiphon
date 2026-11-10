@@ -8,7 +8,10 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'job-status.ps1')
 
 function Resolve-PlainSnapshotScript {
-    $marker = 'operator-decision=2026-11-10'
+    # The banner concatenates the date at runtime, so the source does not
+    # contain the literal operator-decision=2026-11-10. These two literals do.
+    $switch = '[switch]$Plain'
+    $decision = 'SnapshotPlainDecision'
     $candidates = @(
         'C:\src\Antiphon\scripts\postgres-snapshot.ps1',
         (Join-Path $PSScriptRoot 'postgres-snapshot.ps1'),
@@ -17,7 +20,7 @@ function Resolve-PlainSnapshotScript {
     foreach ($path in $candidates) {
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $text = [System.IO.File]::ReadAllText($path)
-        if ($text.Contains($marker) -and $text.Contains('[switch]$Plain')) { return $path }
+        if ($text.Contains($switch) -and $text.Contains($decision) -and $text.Contains('2026-11-10')) { return $path }
     }
     return ''
 }
