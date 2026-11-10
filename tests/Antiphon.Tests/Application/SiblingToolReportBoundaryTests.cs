@@ -18,6 +18,8 @@ namespace Antiphon.Tests.Application;
 /// (a compaction continuation or a local command) or a Claude task notification.
 /// The tool span runs from the marked owner to the next real prompt.
 /// <c>max_tokens</c> and <c>cancelled</c> stay terminal.
+/// A sibling phantom is not an ownership floor: the next housekeeping boundary
+/// still settles on the marked brief. The phantom alone does not nudge or settle.
 /// </summary>
 [Category("Integration")]
 public sealed class SiblingToolReportBoundaryTests
@@ -397,6 +399,380 @@ public sealed class SiblingToolReportBoundaryTests
         await AssertSettledAsync(task.Id, "Finished before the later prompt.");
     }
 
+    /// <summary>
+    /// CARD-1821 D-1. Rows #1 marked brief, #2 auto compact, #3 continuation,
+    /// #4 end_turn msg_b, #5 text msg_b, #6 tool msg_b, #7 text msg_c with the
+    /// done token, #8 end_turn msg_c. The final boundary is the report.
+    /// </summary>
+    [Test]
+    public async Task Compaction_phantom_then_genuine_final_selects_the_final_and_settles()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "Real final.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Compact(sessionId, 2, at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(2)),
+            Turn(sessionId, 4, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(3)),
+            Entry(sessionId, 5, TranscriptKinds.AssistantText, "mid", at.AddSeconds(3), "msg_b"),
+            Tool(sessionId, 6, "msg_b", at.AddSeconds(4)),
+            Entry(sessionId, 7, TranscriptKinds.AssistantText, report, at.AddSeconds(5), "msg_c"),
+            Turn(sessionId, 8, "msg_c", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(5)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(8);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "Real final.");
+    }
+
+    /// <summary>
+    /// CARD-1821 D-1 local-command shape. #1 brief, #2 status command, #3 end_turn
+    /// msg_b, #4 tool msg_b, #5 text msg_c with the done token, #6 end_turn msg_c.
+    /// </summary>
+    [Test]
+    public async Task Local_command_phantom_then_genuine_final_selects_the_final_and_settles()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "LC final.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Entry(sessionId, 2, TranscriptKinds.UserPrompt, "<command-name>/status</command-name>", at.AddSeconds(1)),
+            Turn(sessionId, 3, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(2)),
+            Tool(sessionId, 4, "msg_b", at.AddSeconds(3)),
+            Entry(sessionId, 5, TranscriptKinds.AssistantText, report, at.AddSeconds(4), "msg_c"),
+            Turn(sessionId, 6, "msg_c", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(6);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "LC final.");
+    }
+
+    /// <summary>
+    /// Two phantom-then-final cycles in one sweep. The genuine end_turn of the first
+    /// final still closes the owner window, so the sweep settles that report. A
+    /// phantom floor must not leave the task Dispatched.
+    /// </summary>
+    [Test]
+    public async Task Phantom_then_final_twice_settles_the_owner_visible_final()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var first = "First final.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+        var second = "Second final.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Compact(sessionId, 2, at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(2)),
+            Turn(sessionId, 4, "msg_b1", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(3)),
+            Entry(sessionId, 5, TranscriptKinds.AssistantText, "mid one", at.AddSeconds(3), "msg_b1"),
+            Tool(sessionId, 6, "msg_b1", at.AddSeconds(4)),
+            Entry(sessionId, 7, TranscriptKinds.AssistantText, first, at.AddSeconds(5), "msg_c1"),
+            Turn(sessionId, 8, "msg_c1", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(5)),
+            Entry(sessionId, 9, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(6)),
+            Turn(sessionId, 10, "msg_b2", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(7)),
+            Tool(sessionId, 11, "msg_b2", at.AddSeconds(8)),
+            Entry(sessionId, 12, TranscriptKinds.AssistantText, second, at.AddSeconds(9), "msg_c2"),
+            Turn(sessionId, 13, "msg_c2", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(9)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(8);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "First final.");
+    }
+
+    /// <summary>
+    /// The D-1 prefix with no later final. The phantom is skipped and nothing older
+    /// remains, so the task stays Dispatched with no nudge.
+    /// </summary>
+    [Test]
+    public async Task Compaction_phantom_without_a_final_does_not_nudge_or_settle()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Compact(sessionId, 2, at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(2)),
+            Turn(sessionId, 4, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(3)),
+            Entry(sessionId, 5, TranscriptKinds.AssistantText, "mid", at.AddSeconds(3), "msg_b"),
+            Tool(sessionId, 6, "msg_b", at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.None);
+        selection.Skipped.ShouldContain(new TaskReportSkip(4, "sibling-tool"));
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertNotNudgedOrSettledAsync(task.Id, sessionId);
+    }
+
+    /// <summary>
+    /// The tool that proves the phantom is stored before that end_turn. A later
+    /// text-only final in the same span still settles.
+    /// </summary>
+    [Test]
+    public async Task Tool_stored_before_the_phantom_end_turn_still_lets_the_later_final_settle()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "Final after an early tool.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Tool(sessionId, 2, "msg_b", at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(2)),
+            Turn(sessionId, 4, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(3)),
+            Entry(sessionId, 5, TranscriptKinds.AssistantText, report, at.AddSeconds(4), "msg_c"),
+            Turn(sessionId, 6, "msg_c", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(6);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "Final after an early tool.");
+    }
+
+    /// <summary>
+    /// Notification analogue of D-1: the phantom end_turn shares the notification's
+    /// response id with a tool, then a later end_turn carries the report.
+    /// </summary>
+    [Test]
+    public async Task Notification_phantom_then_genuine_final_settles()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "Noted the review.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWait for the review.", at),
+            Entry(sessionId, 2, TranscriptKinds.UserPrompt, NotificationText, at.AddSeconds(1)),
+            Turn(sessionId, 3, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(2)),
+            Entry(sessionId, 4, TranscriptKinds.AssistantText, "Still folding.", at.AddSeconds(2), "msg_b"),
+            Tool(sessionId, 5, "msg_b", at.AddSeconds(3)),
+            Entry(sessionId, 6, TranscriptKinds.AssistantText, report, at.AddSeconds(4), "msg_c"),
+            Turn(sessionId, 7, "msg_c", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(7);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "Noted the review.");
+    }
+
+    [Test]
+    public async Task Max_tokens_final_after_compaction_phantom_stays_terminal()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "Stopped on the ceiling.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nContinue.", at),
+            Compact(sessionId, 2, at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(2)),
+            Turn(sessionId, 4, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(3)),
+            Tool(sessionId, 5, "msg_b", at.AddSeconds(4)),
+            Entry(sessionId, 6, TranscriptKinds.AssistantText, report, at.AddSeconds(5), "msg_c"),
+            Turn(sessionId, 7, "msg_c", "max_tokens", at.AddSeconds(5)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(7);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "Stopped on the ceiling.");
+    }
+
+    [Test]
+    public async Task Cancelled_stop_after_compaction_phantom_stays_terminal()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nContinue.", at),
+            Entry(sessionId, 2, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(1)),
+            Turn(sessionId, 3, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(2)),
+            Tool(sessionId, 4, "msg_b", at.AddSeconds(3)),
+            Turn(sessionId, 5, "msg_c", TranscriptKinds.StopReasons.Cancelled, at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Interrupted);
+        selection.BoundarySequence.ShouldBe(5);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertNotNudgedOrSettledAsync(task.Id, sessionId);
+        await using var verify = AgentTaskReplyIntegrationTests.CreateContext();
+        (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id
+            && e.Type == AgentTaskEventType.Warning
+            && e.Detail != null
+            && e.Detail.Contains("cancelled")
+            && e.Detail.Contains("not a report")))
+            .ShouldBe(1);
+    }
+
+    /// <summary>
+    /// CARD-1821 A-1. A marked nudge, a compaction continuation, and a sibling
+    /// phantom must not fall through to the older unmarked-output boundary.
+    /// The real-prompt analogue already returns none.
+    /// </summary>
+    [Test]
+    public async Task Marked_nudge_then_compaction_phantom_does_not_select_the_older_boundary()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Entry(sessionId, 2, TranscriptKinds.AssistantText, "first turn, no token", at.AddSeconds(1), "msg_a"),
+            Turn(sessionId, 3, "msg_a", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(1)),
+            Entry(sessionId, 4, TranscriptKinds.UserPrompt,
+                marker + " Your turn ended without the closing report line.", at.AddSeconds(2)),
+            Entry(sessionId, 5, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(3)),
+            Turn(sessionId, 6, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)),
+            Entry(sessionId, 7, TranscriptKinds.AssistantText,
+                "mid " + DelegationReportFormatter.ReportToken(task.Id, "done"), at.AddSeconds(4), "msg_b"),
+            Tool(sessionId, 8, "msg_b", at.AddSeconds(5)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.None);
+        selection.BoundarySequence.ShouldBeNull();
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertNotNudgedOrSettledAsync(task.Id, sessionId);
+    }
+
+    [Test]
+    public async Task Marked_nudge_then_real_prompt_phantom_stays_unselected()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Entry(sessionId, 2, TranscriptKinds.AssistantText, "first turn, no token", at.AddSeconds(1), "msg_a"),
+            Turn(sessionId, 3, "msg_a", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(1)),
+            Entry(sessionId, 4, TranscriptKinds.UserPrompt,
+                marker + " Your turn ended without the closing report line.", at.AddSeconds(2)),
+            Turn(sessionId, 6, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)),
+            Entry(sessionId, 7, TranscriptKinds.AssistantText, "mid", at.AddSeconds(4), "msg_b"),
+            Tool(sessionId, 8, "msg_b", at.AddSeconds(5)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.None);
+        selection.BoundarySequence.ShouldBeNull();
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertNotNudgedOrSettledAsync(task.Id, sessionId);
+    }
+
+    /// <summary>
+    /// Notification analogue of A-1. The phantom answer carries the closing token
+    /// and a stored tool. The older unmarked-output boundary must not be selected.
+    /// </summary>
+    [Test]
+    public async Task Notification_phantom_does_not_select_the_older_marked_boundary()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWork.", at),
+            Entry(sessionId, 2, TranscriptKinds.AssistantText, "first turn, no token", at.AddSeconds(1), "msg_a"),
+            Turn(sessionId, 3, "msg_a", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(1)),
+            Entry(sessionId, 4, TranscriptKinds.UserPrompt,
+                marker + " Your turn ended without the closing report line.", at.AddSeconds(2)),
+            Entry(sessionId, 5, TranscriptKinds.UserPrompt, NotificationText, at.AddSeconds(3)),
+            Turn(sessionId, 6, "msg_b", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)),
+            Entry(sessionId, 7, TranscriptKinds.AssistantText,
+                "Folded.\n" + DelegationReportFormatter.ReportToken(task.Id, "done"), at.AddSeconds(4), "msg_b"),
+            Tool(sessionId, 8, "msg_b", at.AddSeconds(5)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.None);
+        selection.BoundarySequence.ShouldBeNull();
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertNotNudgedOrSettledAsync(task.Id, sessionId);
+    }
+
+    /// <summary>
+    /// A later housekeeping end_turn with no tool and no report must not steal a
+    /// genuine final that already closed the brief's turn.
+    /// </summary>
+    [Test]
+    public async Task Later_tokenless_housekeeping_end_turn_does_not_steal_a_genuine_final()
+    {
+        using var workspace = new AgentTaskReplyIntegrationTests.TempWorkspace();
+        var (task, sessionId) = await AgentTaskReplyIntegrationTests.SeedDispatchedTaskAsync(workspace.Path);
+        await Card0714Transcript.MarkProviderAsync(sessionId, task.Id, AgentKind.ClaudeCode);
+        var at = (task.DispatchedAt ?? DateTime.UtcNow).AddMinutes(1);
+        var marker = DelegationReportFormatter.TaskMarker(task.Id);
+        var report = "The real report.\n" + DelegationReportFormatter.ReportToken(task.Id, "done");
+
+        await SeedAsync(sessionId, at,
+            Entry(sessionId, 1, TranscriptKinds.UserPrompt, marker + "\n\nWrite the report.", at),
+            Entry(sessionId, 2, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(1)),
+            Entry(sessionId, 3, TranscriptKinds.AssistantText, report, at.AddSeconds(2), "msg_c"),
+            Turn(sessionId, 4, "msg_c", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(2)),
+            Entry(sessionId, 5, TranscriptKinds.UserPrompt, ContinuationText, at.AddSeconds(3)),
+            Entry(sessionId, 6, TranscriptKinds.AssistantText, "compaction ack", at.AddSeconds(4), "msg_d"),
+            Turn(sessionId, 7, "msg_d", TranscriptKinds.StopReasons.EndTurn, at.AddSeconds(4)));
+
+        var selection = await SelectStoredAsync(task.Id, sessionId);
+        selection.Kind.ShouldBe(TaskReportSelectionKind.Selected);
+        selection.BoundarySequence.ShouldBe(4);
+
+        await AgentTaskReplyIntegrationTests.CreateService().OnTurnEndAsync(sessionId, CancellationToken.None);
+        await AssertSettledAsync(task.Id, "The real report.");
+    }
+
     private const string ContinuationText =
         TranscriptKinds.CompactionContinuationPromptPrefix
         + " that ran out of context. The summary below covers…";
@@ -405,6 +781,13 @@ public sealed class SiblingToolReportBoundaryTests
         "<task-notification>\n<task-id>a548067d72b9d6de9</task-id>\n"
         + "<tool-use-id>toolu_c1821</tool-use-id>\n<status>completed</status>\n"
         + "<result>The subagent's own report.</result>\n</task-notification>";
+
+    private static async Task<TaskReportSelection> SelectStoredAsync(Guid taskId, Guid sessionId)
+    {
+        await using var db = AgentTaskReplyIntegrationTests.CreateContext();
+        var stored = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        return await TaskReportTurnSelector.SelectAsync(db, sessionId, stored, CancellationToken.None);
+    }
 
     private static async Task AssertNotNudgedOrSettledAsync(Guid taskId, Guid sessionId)
     {
