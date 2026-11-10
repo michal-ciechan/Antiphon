@@ -461,6 +461,8 @@ public class AgentTaskLandStageOutcomeTests
     /// SHA while the repository HEAD has moved on to contain the patch: the frozen SHA decides.
     /// One method per row (CARD-0567): two real lands plus the component row did not fit one
     /// 180 s budget on a loaded host, and a timeout hid which row was at fault.
+    /// CARD-0579 adds the two-unlanded-sibling row. One token is the same under <c>,</c> and
+    /// <c>;</c>, so only that row makes the join delimiter load-bearing.
     /// </summary>
     [Test]
     [Timeout(180_000)]
@@ -582,6 +584,44 @@ public class AgentTaskLandStageOutcomeTests
         var moving = await CollectAsync(land, build, repo.Path, verifiedSha: null);
         moving.Marker.ShouldBeNull();
         moving.Warnings.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// CARD-0579 / PC-5: two kept branches still absent from the frozen SHA. The marker must
+    /// join their tokens with a comma. A one-sibling row cannot tell <c>,</c> from <c>;</c>.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C508_RebasedSiblingMarkerMatrix_TwoUnlandedSiblingsJoinOnComma()
+    {
+        using var repo = new ScratchGitRepo("c508-ls-two");
+        await repo.CommitFileAsync("README.md", "base\n");
+        var pinnedM = (await repo.GitReadAsync("rev-parse", "HEAD")).Trim();
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var (land, worktrees) = CreateRecordingLand(db, repo);
+        var card = await SeedCardAsync(db);
+        var left = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(left.WorktreePath!, "plan.md", "the plan\n", "docs(plan): CARD-0579 a");
+        var right = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+        await CommitInAsync(right.WorktreePath!, "extra.md", "only on the second sibling\n", "docs(plan): CARD-0579 b");
+        var build = await SeedSucceededWorktreeAsync(db, worktrees, repo, card.Id);
+
+        var observed = await CollectAsync(land, build, repo.Path, pinnedM);
+
+        var earlier = left.Id.CompareTo(right.Id) <= 0 ? left : right;
+        var later = earlier.Id == left.Id ? right : left;
+        var earlierToken = $"{DelegationReportFormatter.Short(earlier.Id)}:{earlier.WorktreeBranch}";
+        var laterToken = $"{DelegationReportFormatter.Short(later.Id)}:{later.WorktreeBranch}";
+        observed.Marker.ShouldBe($"unlanded-sibling={earlierToken},{laterToken}");
+        observed.Warnings.Count.ShouldBe(2);
+        observed.Warnings.ShouldContain(w =>
+            w.Contains(earlier.WorktreeBranch!, StringComparison.Ordinal)
+            && w.Contains(DelegationReportFormatter.Short(earlier.Id), StringComparison.Ordinal));
+        observed.Warnings.ShouldContain(w =>
+            w.Contains(later.WorktreeBranch!, StringComparison.Ordinal)
+            && w.Contains(DelegationReportFormatter.Short(later.Id), StringComparison.Ordinal));
     }
 
     [Test]
