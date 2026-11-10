@@ -57,8 +57,9 @@ public static class PipelineHandoffActionEndpoints
         // Never use the task API's anonymous UI fallback on an accounting write/read.
         var caller = await tasks.AuthenticateAsync(http.Request.Headers["X-Antiphon-Task-Token"].FirstOrDefault(), ct);
         if (!caller.MayDelegate) throw Denied("principal");
-        var predecessor = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == predecessorId, ct)
-            ?? throw new NotFoundException(nameof(AgentTask), predecessorId);
+        var predecessor = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == predecessorId, ct);
+        // A valid token must not learn whether an id exists. Operators still 404 from the handler.
+        if (predecessor is null) throw Denied("predecessor");
         var project = caller.Task?.ProjectId ?? await tasks.DeriveCallerProjectAsync(caller, ct);
         if (predecessor.ProjectId is null || project != predecessor.ProjectId) throw Denied("project");
         var roots = new[] { caller.Task?.RepoPath ?? caller.WorkingDirectory }.Concat(caller.ExtraAllowedRoots ?? []);
