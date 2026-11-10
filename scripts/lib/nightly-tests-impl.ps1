@@ -802,7 +802,11 @@ function Invoke-NightlyOwnedProcess {
         [string]$WorkingDirectory,
         [int]$TimeoutMilliseconds,
         [hashtable]$Environment = $null,
-        [string]$LogPath
+        [string]$LogPath,
+        [string]$TrxPath = '',
+        [string]$DiagnosticDirectory = '',
+        [string]$HangCapturePath = '',
+        [int]$ExecutionGraceMilliseconds = 0
     )
     Write-NightlyTrace -Kind 'proc' -Message ($FilePath + ' ' + (($ArgumentList) -join ' '))
     # A child (or the seam standing in for one) reads the disk: queued evidence writes land first.
@@ -817,9 +821,17 @@ function Invoke-NightlyOwnedProcess {
     # Import only at the actual launch boundary. The controlled-I/O seam above
     # remains portable, and cannot earn native custody credit.
     . (Join-Path $PSScriptRoot 'nightly-owned-process.ps1')
+    $hooks = $null
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $hooks = New-Object Antiphon.Nightly.NativeProcessHooks
+        if (-not [string]::IsNullOrWhiteSpace($TrxPath)) { $hooks.TrxPath = $TrxPath }
+        if (-not [string]::IsNullOrWhiteSpace($DiagnosticDirectory)) { $hooks.DiagnosticDirectory = $DiagnosticDirectory }
+        if (-not [string]::IsNullOrWhiteSpace($HangCapturePath)) { $hooks.HangCapturePath = $HangCapturePath }
+        if ($ExecutionGraceMilliseconds -gt 0) { $hooks.ExecutionGraceMilliseconds = $ExecutionGraceMilliseconds }
+    }
     $owner = Start-NightlyNativeOwner -FilePath $FilePath -ArgumentList $ArgumentList `
         -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
-        -Environment $Environment -LogPath $LogPath
+        -Environment $Environment -LogPath $LogPath -Hooks $hooks
     return $owner.Completion.GetAwaiter().GetResult()
 }
 
@@ -1206,7 +1218,10 @@ function Invoke-NightlyScheduledChunk {
         try {
             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
                 -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
-                -Environment $phaseEnv -LogPath $logPath
+                -Environment $phaseEnv -LogPath $logPath `
+                -TrxPath $trxPath -DiagnosticDirectory $execDiagDir `
+                -HangCapturePath ($logPath + '.hang.txt') `
+                -ExecutionGraceMilliseconds ([int]$script:NightlyCompletionGraceMilliseconds)
         } catch {
             Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
             throw
@@ -1333,13 +1348,57 @@ function Invoke-NightlyScheduledChunk {
             $row.coverageComplete = $false
         }
     }
+    $completedHang = $false
     if ($run.TimedOut) {
         $overallFailed = $true
-        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false
+        $finished = $false
+        $childText = ''
+        $rootPid = 0
+        if ($null -ne $run.PSObject.Properties['Pid'] -and $null -ne $run.Pid) { $rootPid = [int]$run.Pid }
+        if ($isNative) {
+            $hangDiag = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
+            try { $finished = [bool](Test-NightlyExecutionFinished -TrxPath $trxPath -DiagnosticPath $hangDiag) } catch { $finished = $false }
+            $identities = @()
+            $images = @()
+            if ($null -ne $run.PSObject.Properties['DescendantIdentities']) { $identities = @($run.DescendantIdentities) }
+            if ($null -ne $run.PSObject.Properties['DescendantImages']) { $images = @($run.DescendantImages) }
+            $childText = [string](Format-NightlyHangChildren -Identities $identities -Images $images -RootPid $rootPid)
+            if ($null -ne $run.PSObject.Properties['CompletedButHung'] -and [bool]$run.CompletedButHung) { $finished = $true }
+        }
+        $resolvedHang = Resolve-NightlyCompletedHang -TimedOut $true -Finished $finished -SuiteId $suiteId -Children $childText
+        $completedHang = [bool]$resolvedHang.CompletedButHung
+        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false -CompletedButHung:$completedHang
         $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
         $testsPassed = [bool]$timeoutDisposition.TestsPassed
-        Set-NightlyOutcome TIMEOUT
-        $reasons += ('timeout {0}' -f $suiteId)
+        if ($completedHang) {
+            $row.result = 'FAIL'
+            $row.evidenceReasons = @(@($row.evidenceReasons) | Where-Object { [string]$_ -notmatch '^process-exit-' })
+            $killReason = 'process-exit-' + [string][int]$run.ExitCode
+            $keptReasons = New-Object System.Collections.Generic.List[string]
+            $droppedKill = $false
+            for ($reasonIndex = @($reasons).Count - 1; $reasonIndex -ge 0; $reasonIndex--) {
+                $reasonText = [string]$reasons[$reasonIndex]
+                if (-not $droppedKill -and $reasonText -eq $killReason) { $droppedKill = $true; continue }
+                $keptReasons.Insert(0, $reasonText)
+            }
+            $reasons = @($keptReasons.ToArray())
+            $reasons += [string]$resolvedHang.Reason
+            $capturePath = ''
+            if ($null -ne $run.PSObject.Properties['HangCapturePath'] -and -not [string]::IsNullOrWhiteSpace([string]$run.HangCapturePath)) {
+                $capturePath = [string]$run.HangCapturePath
+            }
+            if ([string]::IsNullOrWhiteSpace($capturePath) -or -not (Test-Path -LiteralPath $capturePath)) {
+                $capturePath = $logPath + '.hang.txt'
+                if (-not (Test-Path -LiteralPath $capturePath)) {
+                    Write-NightlyHangCapture -Path $capturePath -SuiteId $suiteId -Children $childText -RootPid $rootPid
+                }
+            }
+            $row.hangCapture = $capturePath
+            Set-NightlyOutcome TESTS
+        } else {
+            Set-NightlyOutcome TIMEOUT
+            $reasons += ('timeout {0}' -f $suiteId)
+        }
     } elseif ($run.ExitCode -ne 0) {
         $overallFailed = $true
         $testsPassed = $false
@@ -1365,6 +1424,9 @@ function Invoke-NightlyScheduledChunk {
         $timingWhy = 'script-failed'
     } elseif ($suiteId -eq 'scripts') {
         $timingWhy = 'no-trx:scripts'
+    }
+    if ($completedHang) {
+        $timingWhy = 'completed-but-hung'
     }
     $timingUpdate = @{
         LogRoot = $LogRoot
