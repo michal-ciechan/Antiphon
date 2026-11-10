@@ -128,6 +128,7 @@ public sealed class DerivedImpactIndexTests
     public async Task type_edge_on_a_fixture_diff_selects_the_lease_class()
     {
         using var fixture = FixtureWithLandingType("""
+            [Category("Unit")]
             public sealed class RepositoryMutationLeaseTests
             {
                 public void NamesTheType() { var git = new LandingGit(); }
@@ -150,6 +151,7 @@ public sealed class DerivedImpactIndexTests
             """);
         fixture.Add("tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs", "public class PtyHostLeakSweep { }\n");
         fixture.Add("tests/Antiphon.SessionRunner.Tests/C1677TempFamilyRegistryTests.cs", """
+            [Category("Unit")]
             public sealed class C1677TempFamilyRegistryTests
             {
                 public void NamesTheSweep() { var families = RunnerTempSweep.Owned; }
@@ -166,6 +168,7 @@ public sealed class DerivedImpactIndexTests
     public async Task dotted_script_name_selects_the_lease_class()
     {
         using var fixture = FixtureWithLandingType("""
+            [Category("Unit")]
             public sealed class RepositoryMutationLeaseTests
             {
                 public void Script()
@@ -206,6 +209,7 @@ public sealed class DerivedImpactIndexTests
         using var fixture = new Fixture();
         fixture.Add("Antiphon.sln", "fixture\n");
         fixture.Add("tests/Antiphon.Tests/SolutionShapeTests.cs", """
+            [Category("Unit")]
             public sealed class SolutionShapeTests
             {
                 public void ReadsTheSolution() { var path = "Antiphon.sln"; }
