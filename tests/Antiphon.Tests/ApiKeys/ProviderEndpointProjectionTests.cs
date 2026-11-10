@@ -501,7 +501,7 @@ public class ProviderEndpointProjectionTests
     public void C1827_six_class_guard_subset_is_not_described_as_78()
     {
         const string count = "The six-class Antiphon.Tests subset is 53 results. Do not describe that subset as 78.";
-        const string wider = "78 is only the nine-class union that also includes MechanicalPcContractTests, TaskPlatformGuidanceTests, C1729LayeringGuardTests and the SessionRunner copies of the layering and policy classes.";
+        const string wider = "78 is the nine-class Antiphon.Tests union of that subset plus MechanicalPcContractTests, TaskPlatformGuidanceTests and C1729LayeringGuardTests.";
         foreach (var relative in new[]
                  {
                      "docs/testing-and-build.md",
