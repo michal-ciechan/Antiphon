@@ -361,7 +361,7 @@ public class ApiErrorRecoveryServiceTests
     }
 
     [Test]
-    public async Task Grok_402_stub_writes_a_fallback_hold_for_grok_4_6_and_never_enqueues()
+    public async Task Grok_402_stub_writes_a_fallback_hold_for_grok_4_7_and_never_enqueues()
     {
         var now = TruncateUtcNow();
         var time = new FakeTimeProvider(now);
