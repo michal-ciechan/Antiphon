@@ -6,7 +6,7 @@ $script:PostLandProductRoot = Split-Path -Parent $script:PostLandScriptsRoot
 
 Set-StrictMode -Version 2.0
 
-# Tests set POST_LAND_WARNING_CULTURE so a desktop culture is in force before startedAt is read.
+# Tests set POST_LAND_WARNING_CULTURE so a desktop culture is in force. startedAt is read from the ISO text.
 $script:PostLandCultureName = [Environment]::GetEnvironmentVariable('POST_LAND_WARNING_CULTURE')
 if (-not [string]::IsNullOrWhiteSpace($script:PostLandCultureName)) {
     $script:PostLandCulture = [Globalization.CultureInfo]::GetCultureInfo($script:PostLandCultureName)
@@ -200,18 +200,38 @@ function Get-PostLandProcessStartUtc {
     }
 }
 
+function Get-PostLandStartedAtToken {
+    param([string]$Raw)
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return $null }
+    $marker = '"startedAt":"'
+    $at = $Raw.IndexOf($marker)
+    if ($at -lt 0) { return $null }
+    $start = $at + $marker.Length
+    $end = $Raw.IndexOf('"', $start)
+    if ($end -lt 0) { return $null }
+    return $Raw.Substring($start, $end - $start)
+}
+
+function ConvertTo-PostLandUtc {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $parsed = [datetime]::MinValue
+    $ok = [datetime]::TryParse(
+        $Text,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind,
+        [ref]$parsed)
+    if (-not $ok) { return $null }
+    if ($parsed.Kind -eq [DateTimeKind]::Unspecified) {
+        return [datetime]::SpecifyKind($parsed, [DateTimeKind]::Utc)
+    }
+    return $parsed.ToUniversalTime()
+}
+
 function Test-PostLandPidReused {
-    param([int]$ProcessId, $Doc)
-    if ($null -eq $Doc) { return $false }
-    if ($null -eq $Doc.PSObject.Properties['startedAt']) { return $false }
-    $text = [string]$Doc.startedAt
-    if ([string]::IsNullOrWhiteSpace($text)) { return $false }
-    try {
-        $lockStart = [datetime]::Parse($text).ToUniversalTime()
-    }
-    catch {
-        return $false
-    }
+    param([int]$ProcessId, [string]$StartedAtText)
+    $lockStart = ConvertTo-PostLandUtc $StartedAtText
+    if ($null -eq $lockStart) { return $false }
     $procStart = Get-PostLandProcessStartUtc $ProcessId
     if ($null -eq $procStart) { return $false }
     $limit = $lockStart.AddSeconds(2)
@@ -222,8 +242,10 @@ function Test-PostLandPidReused {
 function Get-PostLandLockKind {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
+    $raw = ''
     try {
-        $doc = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+        $raw = [IO.File]::ReadAllText($Path)
+        $doc = $raw | ConvertFrom-Json
     }
     catch {
         return 'stale'
@@ -233,7 +255,7 @@ function Get-PostLandLockKind {
     try { $processId = [int]$doc.pid } catch { return 'stale' }
     if ($processId -eq $PID) { return 'ours' }
     if (Test-PostLandPidAlive $processId) {
-        if (Test-PostLandPidReused $processId $doc) { return 'stale' }
+        if (Test-PostLandPidReused $processId (Get-PostLandStartedAtToken $raw)) { return 'stale' }
         return 'busy'
     }
     if ($null -eq $doc.PSObject.Properties['startedAt']) { return 'busy' }
@@ -322,19 +344,15 @@ function Write-PostLandRunMarker {
 function Test-PostLandHourly {
     param([string]$Path, [int]$Minutes)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $raw = ''
     try {
-        $doc = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+        $raw = [IO.File]::ReadAllText($Path)
     }
     catch {
         return $false
     }
-    if ($null -eq $doc.PSObject.Properties['startedAt']) { return $false }
-    try {
-        $started = [datetime]::Parse([string]$doc.startedAt).ToUniversalTime()
-    }
-    catch {
-        return $false
-    }
+    $started = ConvertTo-PostLandUtc (Get-PostLandStartedAtToken $raw)
+    if ($null -eq $started) { return $false }
     $age = ([datetime]::UtcNow - $started).TotalMinutes
     if ($age -ge 0 -and $age -lt $Minutes) { return $true }
     return $false
