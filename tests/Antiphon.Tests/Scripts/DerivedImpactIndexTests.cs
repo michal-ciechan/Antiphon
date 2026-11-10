@@ -319,8 +319,21 @@ public sealed class DerivedImpactIndexTests
         using var json = JsonDocument.Parse(ran.Stdout);
         Strings(json.RootElement, "kinds").ShouldBe(["migration-generated-sql-text", "migrations"]);
         var classes = Strings(json.RootElement, "classes");
+        var windows = WholeClasses(json.RootElement, "windowsFilters");
+        var windowsOnly = await CommittedWindowsOnly();
         foreach (var name in HandMigrationClasses)
-            classes.ShouldContain(name);
+        {
+            // A hand class the index marks windowsOnly is still selected. It leaves the Linux list.
+            if (windowsOnly.Contains(name))
+            {
+                classes.ShouldNotContain(name);
+                windows.ShouldContain(name);
+            }
+            else
+            {
+                classes.ShouldContain(name);
+            }
+        }
         classes.ShouldContain("AgentTuiSecretMigratorTests");
         classes.ShouldContain("Card1773TranscriptPromptStampMigrationTests");
         classes.ShouldContain("TranscriptHotPathMigrationTests");
@@ -504,8 +517,10 @@ public sealed class DerivedImpactIndexTests
         lease.Exit.ShouldBe(0, lease.Text);
         using (var json = JsonDocument.Parse(lease.Stdout))
         {
-            Strings(json.RootElement, "classes").ShouldContain("RepositoryMutationLeaseTests");
+            // Both lease classes carry an OS-gate token, so the cap keeps them on the Windows lane.
+            Strings(json.RootElement, "classes").ShouldNotContain("RepositoryMutationLeaseTests");
             Strings(json.RootElement, "classes").ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
+            WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryMutationLeaseTests");
             WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryLeaseWindowsBoundaryTests");
             OwedCount(json.RootElement, LandingGitPath).ShouldBe(39);
         }
@@ -896,7 +911,10 @@ public sealed class DerivedImpactIndexTests
                 if (relative.Split('/').Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.Ordinal)))
                     continue;
                 var text = File.ReadAllText(file);
-                foreach (Match match in TypeHeader.Matches(text))
+                // Strings and comments are not declarations. A fixture class inside a raw string
+                // must not inherit the file's OS-gate token. Token checks still read the raw file.
+                var visible = HideNonCode(text);
+                foreach (Match match in TypeHeader.Matches(visible))
                 {
                     var name = match.Groups[1].Value;
                     var header = text.Substring(match.Index, Math.Min(400, text.Length - match.Index));
@@ -914,6 +932,145 @@ public sealed class DerivedImpactIndexTests
             }
 
             return new OsGateFiles(classes);
+        }
+
+        private static string HideNonCode(string text)
+        {
+            var chars = text.ToCharArray();
+            var n = chars.Length;
+            var i = 0;
+            while (i < n)
+            {
+                if (chars[i] == '/' && i + 1 < n && chars[i + 1] == '/')
+                {
+                    while (i < n && chars[i] != '\n')
+                        chars[i++] = ' ';
+                    continue;
+                }
+
+                if (chars[i] == '/' && i + 1 < n && chars[i + 1] == '*')
+                {
+                    chars[i++] = ' ';
+                    chars[i++] = ' ';
+                    while (i + 1 < n && !(chars[i] == '*' && chars[i + 1] == '/'))
+                    {
+                        if (chars[i] != '\n')
+                            chars[i] = ' ';
+                        i++;
+                    }
+
+                    if (i < n)
+                        chars[i++] = ' ';
+                    if (i < n)
+                        chars[i++] = ' ';
+                    continue;
+                }
+
+                if (chars[i] == '@' && i + 1 < n && (chars[i + 1] == '"' || (chars[i + 1] == '$' && i + 2 < n && chars[i + 2] == '"')))
+                {
+                    chars[i++] = ' ';
+                    if (chars[i] == '$')
+                        chars[i++] = ' ';
+                    chars[i++] = ' ';
+                    while (i < n)
+                    {
+                        if (chars[i] == '"')
+                        {
+                            chars[i++] = ' ';
+                            if (i < n && chars[i] == '"')
+                            {
+                                chars[i++] = ' ';
+                                continue;
+                            }
+
+                            break;
+                        }
+
+                        if (chars[i] != '\n')
+                            chars[i] = ' ';
+                        i++;
+                    }
+
+                    continue;
+                }
+
+                if (chars[i] == '"')
+                {
+                    var quotes = 0;
+                    while (i + quotes < n && chars[i + quotes] == '"')
+                        quotes++;
+                    for (var k = 0; k < quotes; k++)
+                        chars[i + k] = ' ';
+                    i += quotes;
+                    if (quotes >= 3)
+                    {
+                        while (i < n)
+                        {
+                            var end = 0;
+                            while (i + end < n && chars[i + end] == '"')
+                                end++;
+                            if (end >= quotes)
+                            {
+                                for (var k = 0; k < end; k++)
+                                {
+                                    if (chars[i] != '\n')
+                                        chars[i] = ' ';
+                                    i++;
+                                }
+
+                                break;
+                            }
+
+                            if (chars[i] != '\n')
+                                chars[i] = ' ';
+                            i++;
+                        }
+
+                        continue;
+                    }
+
+                    while (i < n && chars[i] != '"')
+                    {
+                        if (chars[i] == '\\' && i + 1 < n)
+                        {
+                            if (chars[i] != '\n')
+                                chars[i] = ' ';
+                            i++;
+                        }
+
+                        if (i < n && chars[i] != '\n')
+                            chars[i] = ' ';
+                        if (i < n)
+                            i++;
+                    }
+
+                    if (i < n && chars[i] == '"')
+                        chars[i++] = ' ';
+                    continue;
+                }
+
+                if (chars[i] == '\'')
+                {
+                    chars[i++] = ' ';
+                    if (i < n && chars[i] == '\\' && i + 1 < n)
+                    {
+                        chars[i++] = ' ';
+                        chars[i++] = ' ';
+                    }
+                    else if (i < n)
+                    {
+                        chars[i++] = ' ';
+                    }
+
+                    if (i < n && chars[i] == '\'')
+                        chars[i++] = ' ';
+                    continue;
+                }
+
+                i++;
+            }
+
+            return new string(chars);
         }
 
         public static string? FirstToken(string text)
