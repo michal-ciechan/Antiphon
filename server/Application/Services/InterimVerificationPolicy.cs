@@ -324,18 +324,27 @@ public sealed class InterimVerificationPolicy(
                 && !string.Equals(Anchor(text), Anchor(wanted), StringComparison.Ordinal))
                 continue;
             var level = heading.Groups[1].Value.Length;
-            var tableLines = 0;
-            var separator = false;
             for (var j = i + 1; j < lines.Length; j++)
             {
                 var next = Regex.Match(lines[j], @"^(#{1,6})\s");
                 if (next.Success && next.Groups[1].Value.Length <= level) break;
-                var trimmed = lines[j].Trim();
-                if (!trimmed.StartsWith('|')) continue;
-                if (Regex.IsMatch(trimmed, @"^\|(\s*:?-{3,}:?\s*\|)+$")) { separator = true; continue; }
-                tableLines++;
+                if (!lines[j].Trim().StartsWith('|')) continue;
+                // CARD-0592: the first contiguous table is the selection. A later table
+                // in the same section does not supply the separator or the rows.
+                var tableLines = 0;
+                var separator = false;
+                for (var k = j; k < lines.Length; k++)
+                {
+                    var boundary = Regex.Match(lines[k], @"^(#{1,6})\s");
+                    if (boundary.Success && boundary.Groups[1].Value.Length <= level) break;
+                    var trimmed = lines[k].Trim();
+                    if (!trimmed.StartsWith('|')) break;
+                    if (Regex.IsMatch(trimmed, @"^\|(\s*:?-{3,}:?\s*\|)+$")) { separator = true; continue; }
+                    tableLines++;
+                }
+                return separator && tableLines >= 2;
             }
-            return separator && tableLines >= 2;
+            return false;
         }
         return false;
     }
