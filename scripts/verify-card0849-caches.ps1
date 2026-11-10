@@ -34,8 +34,8 @@ if ($Preview) {
 $previewRunId = ''
 if ($Case -eq 'Prune') {
     $previewText = [System.IO.File]::ReadAllText($Preview)
-    $runMatch = [regex]::Match($previewText, '(?m)^run=(c849[0-9a-f]{16}0)$')
-    $shaMatch = [regex]::Match($previewText, '(?m)^source-sha=([0-9a-f]{40})$')
+    $runMatch = [regex]::Match($previewText, '(?m)^run=(c849[0-9a-f]{16}0)\r?$')
+    $shaMatch = [regex]::Match($previewText, '(?m)^source-sha=([0-9a-f]{40})\r?$')
     if (-not $runMatch.Success -or -not $shaMatch.Success -or $shaMatch.Groups[1].Value -cne $Sha -or
         [System.IO.Path]::GetFileName($Preview) -cne 'preview.txt' -or
         [System.IO.Path]::GetFileName((Split-Path -Parent $Preview)) -cne 'runner-cache-prune-preview') {
