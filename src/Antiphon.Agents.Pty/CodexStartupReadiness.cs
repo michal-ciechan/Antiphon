@@ -67,8 +67,9 @@ public static class CodexStartupScreen
             return CodexStartupObservation.NotReady(CodexStartupReason.Trust, mcpVisible: mcpVisible);
         if (ContainsSignIn(text))
             return CodexStartupObservation.NotReady(CodexStartupReason.SignIn, mcpVisible: mcpVisible);
-        // CARD-1508. After sign-in, before the empty-screen Unknown return, so a raw-only
-        // fatal frame is named and a rendered sign-in still wins.
+        // CARD-1508. After sign-in, before the empty-screen Unknown return. IsFatal is
+        // only the pre-prompt frame: a live composer or ready chrome stays on the
+        // composer checks below, and a rendered sign-in above still wins.
         if (CodexAccountBootstrap.IsFatal(renderedScreen, rawOutput))
             return CodexStartupObservation.NotReady(CodexStartupReason.AccountBootstrap);
         if (lines.Length == 0)
@@ -208,6 +209,23 @@ public static class CodexStartupScreen
             return true;
         return value.StartsWith("loading", StringComparison.OrdinalIgnoreCase)
             && (value.Length == 7 || !char.IsLetterOrDigit(value[7]));
+    }
+
+    /// <summary>
+    /// A prompt is already on screen, or the ready banner and model-effort footer are.
+    /// The pre-prompt account/read frame has neither.
+    /// </summary>
+    internal static bool IsLiveSession(string? rendered)
+    {
+        var lines = NormalizeLines(rendered);
+        if (TryReadBottomComposer(lines, out _, out _, out _))
+            return true;
+        if (!HasCodexBanner(lines))
+            return false;
+        var end = lines.Length - 1;
+        while (end >= 0 && lines[end].Length == 0)
+            end--;
+        return end >= 0 && IsModelEffortCwdFooter(lines[end]);
     }
 
     private static bool TryReadBottomComposer(

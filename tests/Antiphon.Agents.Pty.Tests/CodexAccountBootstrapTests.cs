@@ -270,8 +270,6 @@ public class CodexAccountBootstrapTests
             screen, colored, "elapsedMs=43954", "/tmp/antiphon-codex-startup/example.txt", 1);
         outcome.ShouldBe(
             "AccountBootstrap: Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code -32603); elapsedMs=43954; capture=/tmp/antiphon-codex-startup/example.txt; exitCode=1");
-        outcome.ShouldNotContain("[31m");
-        outcome.ShouldNotContain("\u001b");
     }
 
     [Test]
