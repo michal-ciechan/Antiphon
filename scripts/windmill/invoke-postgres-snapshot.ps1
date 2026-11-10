@@ -44,8 +44,12 @@ function Invoke-PlainSnapshotChild {
     $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ('snapshot-out-' + $stamp + '.txt')
     $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ('snapshot-err-' + $stamp + '.txt')
     try {
+        # Local\antiphon is writable by another account, so the default staging
+        # parent fails CARD-1413. This profile directory's parents pass.
+        $staging = 'C:\Users\lndco\antiphon-snapshot-staging'
         $proc = Start-Process -FilePath $exe -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute'
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute',
+            '-StagingPath', $staging
         ) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         $stdout = ''
         $stderr = ''
