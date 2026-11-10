@@ -481,6 +481,16 @@ public sealed class DerivedImpactIndexTests
                 classes.ShouldNotContain(row.ClassName!, "replay 1 linux");
                 windows.ShouldContain(row.ClassName!, "replay 1 windows");
             }
+
+            // Rows 2, 4, 7, 9 and 14 are Linux catches. A Windows-only landing is the round-3 hole.
+            if (row.Id is "2" or "4" or "7" or "9" or "14")
+            {
+                WholeClasses(selected.RootElement, "filters")
+                    .ShouldContain(row.ClassName!, "replay " + row.Id + " linux filters");
+                if (row.Id is "2" or "4" or "7" or "14")
+                    windows.ShouldNotContain(row.ClassName!, "replay " + row.Id + " windows filters");
+            }
+
             if (row.Id == "10")
                 skipped.ShouldContain("Antiphon.sln");
         }
@@ -613,6 +623,100 @@ public sealed class DerivedImpactIndexTests
     }
 
     [Test]
+    public async Task undeclared_class_with_an_os_token_stays_on_both_lanes()
+    {
+        var probe = await SelectDeclarationAsync("UndeclaredOsTokenTests", """
+            public sealed class UndeclaredOsTokenTests
+            {
+                [Test]
+                public void Runs()
+                {
+                    if (OperatingSystem.IsWindows()) { }
+                }
+            }
+            """, overrides: null);
+        probe.WindowsOnly.ShouldNotContain("UndeclaredOsTokenTests");
+        WholeClasses(probe.Json, "filters").ShouldContain("UndeclaredOsTokenTests");
+        WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("UndeclaredOsTokenTests");
+    }
+
+    [Test]
+    public async Task linux_only_methods_stay_off_the_windows_filter()
+    {
+        var probe = await SelectDeclarationAsync("AllLinuxOnlyTests", """
+            public sealed class AllLinuxOnlyTests
+            {
+                [Test]
+                [LinuxOnly("fifo")]
+                public void One() { }
+
+                [Test]
+                [LinuxOnly("procfs")]
+                public void Two()
+                {
+                    if (OperatingSystem.IsWindows()) { }
+                }
+            }
+            """, overrides: null);
+        probe.WindowsOnly.ShouldNotContain("AllLinuxOnlyTests");
+        WholeClasses(probe.Json, "filters").ShouldContain("AllLinuxOnlyTests");
+        WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("AllLinuxOnlyTests");
+    }
+
+    [Test]
+    public async Task has_windows_specifics_stays_on_both_lanes()
+    {
+        var probe = await SelectDeclarationAsync("WindowsSpecificsTests", """
+            public sealed class WindowsSpecificsTests
+            {
+                [Test]
+                [HasWindowsSpecifics("path")]
+                public void One()
+                {
+                    if (OperatingSystem.IsWindows()) { }
+                }
+            }
+            """, overrides: null);
+        probe.WindowsOnly.ShouldNotContain("WindowsSpecificsTests");
+        WholeClasses(probe.Json, "filters").ShouldContain("WindowsSpecificsTests");
+        WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("WindowsSpecificsTests");
+    }
+
+    [Test]
+    public async Task class_level_linux_only_stays_off_the_windows_filter()
+    {
+        var probe = await SelectDeclarationAsync("ClassLinuxOnlyTests", """
+            [LinuxOnly("class shorthand")]
+            public sealed class ClassLinuxOnlyTests
+            {
+                [Test]
+                public void One()
+                {
+                    if (OperatingSystem.IsWindows()) { }
+                }
+            }
+            """, overrides: null);
+        probe.WindowsOnly.ShouldNotContain("ClassLinuxOnlyTests");
+        WholeClasses(probe.Json, "filters").ShouldContain("ClassLinuxOnlyTests");
+        WholeClasses(probe.Json, "windowsFilters").ShouldNotContain("ClassLinuxOnlyTests");
+    }
+
+    [Test]
+    public async Task override_list_forces_an_undeclared_class_onto_windows()
+    {
+        var probe = await SelectDeclarationAsync("OverrideTargetTests", """
+            public sealed class OverrideTargetTests
+            {
+                [Test]
+                public void One() { }
+            }
+            """, overrides: "OverrideTargetTests\n");
+        probe.WindowsOnly.ShouldContain("OverrideTargetTests");
+        WholeClasses(probe.Json, "filters").ShouldNotContain("OverrideTargetTests");
+        WholeClasses(probe.Json, "windowsFilters").ShouldContain("OverrideTargetTests");
+    }
+
+    [Test]
     public async Task linux_edge_classes_have_no_os_gate_token()
     {
         var root = RepoRoot();
@@ -723,6 +827,24 @@ public sealed class DerivedImpactIndexTests
         fixture.Add("tests/impacted-classes.json", AnchorTable("RepositoryMutationLeaseTests"));
         fixture.Commit();
         return fixture;
+    }
+
+    private readonly record struct LaneProbe(IReadOnlyList<string> WindowsOnly, JsonElement Json);
+
+    private static async Task<LaneProbe> SelectDeclarationAsync(string className, string source, string? overrides)
+    {
+        using var fixture = new Fixture();
+        fixture.Add("tests/Antiphon.Tests/" + className + ".cs", source);
+        fixture.Add("tests/impacted-classes.json", AnchorTable(className));
+        if (overrides is not null)
+            fixture.Add("tests/derived-impact-index-known-os-gated.txt", overrides);
+        fixture.Commit();
+        var index = DerivedImpactIndexBuilder.Build(fixture.Root);
+        DerivedImpactIndexBuilder.Write(fixture.Root, index);
+        var ran = await SelectAsync(fixture.Root, "-Path", "tests/Antiphon.Tests/" + className + ".cs", "-Json");
+        ran.Exit.ShouldBe(0, ran.Text);
+        using var document = JsonDocument.Parse(ran.Stdout);
+        return new LaneProbe(index.WindowsOnly.ToArray(), document.RootElement.Clone());
     }
 
     private static async Task<JsonElement> SelectBuiltAsync(Fixture fixture, string path)
