@@ -1594,11 +1594,46 @@ function Test-PlainMissingOneDrive {
     } finally { Remove-Fixture $fx }
 }
 
+function Grant-PlainOpenAcl {
+    param([string]$Path)
+    if ($env:OS -eq 'Windows_NT') {
+        $di = New-Object System.IO.DirectoryInfo $Path
+        $accessOnly = [System.Security.AccessControl.AccessControlSections]::Access
+        if ($PSVersionTable.PSEdition -eq 'Desktop') {
+            $acl = $di.GetAccessControl($accessOnly)
+        } else {
+            $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($di, $accessOnly)
+        }
+        $users = New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+        $grant = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $users,
+            [System.Security.AccessControl.FileSystemRights]::ReadAndExecute,
+            'ContainerInherit,ObjectInherit',
+            'None',
+            'Allow')
+        $acl.AddAccessRule($grant)
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $di.SetAccessControl($acl) } else { [System.IO.FileSystemAclExtensions]::SetAccessControl($di, $acl) }
+        return
+    }
+    Set-SnapshotHarnessMode $Path '755'
+}
+
+function Test-PlainUsersAceRemains {
+    param([string]$Path)
+    if ($env:OS -ne 'Windows_NT') { return $true }
+    $di = New-Object System.IO.DirectoryInfo $Path
+    $accessOnly = [System.Security.AccessControl.AccessControlSections]::Access
+    if ($PSVersionTable.PSEdition -eq 'Desktop') { $acl = $di.GetAccessControl($accessOnly) } else { $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($di, $accessOnly) }
+    $names = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+    return [bool]($names -contains 'S-1-5-32-545')
+}
+
 function Test-PlainAclOpen {
     $fx = New-Fixture
     try {
         $dest = Join-Path $fx.Root 'open-backups'
         New-Item -ItemType Directory -Path $dest | Out-Null
+        Grant-PlainOpenAcl $dest
         $plan = Invoke-Snapshot -Fixture $fx -Arguments @(
             '-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
         )
@@ -1608,6 +1643,7 @@ function Test-PlainAclOpen {
         Assert-True ($plan.Out -match 'acl=open') 'PlainAclOpen reports the directory is open' $plan.Out
         Assert-NoDocker $plan 'PlainAclOpen'
         Assert-True (Test-Path -LiteralPath $dest) 'PlainAclOpen does not remove the directory' $dest
+        Assert-True (Test-PlainUsersAceRemains $dest) 'PlainAclOpen does not tighten on a plan' $dest
         Assert-DestUntouched $fx 'PlainAclOpen'
     } finally { Remove-Fixture $fx }
 }

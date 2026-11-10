@@ -8,6 +8,12 @@
     pg_restore --list for TABLE DATA and a minimum byte size, encrypts with
     age, then copies the ciphertext into the snapshot directory. Retention
     keeps 14 exact dailies and prunes only after that new file is verified.
+
+    -Plain is off unless it is named (operator decision 2026-11-10). It does
+    not weaken the age path. It writes a compressed pg_dump -Fc file, with
+    no age step, to C:\Users\lndco\antiphon-backups (outside OneDrive,
+    user-only ACL). The plan text and snapshot-status.json both say plain
+    and name that decision. -Plain does not run the restore drill.
     -RestoreDrill restores the newest snapshot into a labelled scratch
     container and removes that container and volume unless -KeepScratch.
 
@@ -24,6 +30,7 @@
 param(
     [switch]$WhatIf,
     [switch]$Execute,
+    [switch]$Plain,
     [switch]$RestoreDrill,
     [string]$Container = 'antiphon-postgres',
     [string]$Database = 'antiphon',
@@ -50,6 +57,9 @@ param(
 # refused even when that container is not the current source.
 $script:SnapshotDrillLabel = 'antiphon.snapshot-drill'
 $script:SnapshotDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump\.age$'
+$script:SnapshotPlainDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$'
+$script:SnapshotPlainDestination = 'C:\Users\lndco\antiphon-backups'
+$script:SnapshotPlainDecision = '2026-11-10'
 $script:SnapshotProductionContainers = @(
     'antiphon-postgres',
     'antiphon-server2-postgres-postgres-1'
@@ -65,8 +75,10 @@ function Get-SnapshotPruneSet {
         [string[]]$Names,
         [int]$Retain = 14,
         [string]$NewName = '',
-        [bool]$Verified = $false
+        [bool]$Verified = $false,
+        [string]$NamePattern = ''
     )
+    if ([string]::IsNullOrWhiteSpace($NamePattern)) { $NamePattern = $script:SnapshotDumpPattern }
     $none = New-Object string[] 0
     if (-not $Verified) {
         return [pscustomobject]@{ Ok = $true; Drop = $none; Reason = 'unverified' }
@@ -77,11 +89,11 @@ function Get-SnapshotPruneSet {
     $all = New-Object System.Collections.Generic.List[string]
     foreach ($name in @($Names)) {
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if ($name -notmatch $script:SnapshotDumpPattern) { continue }
+        if ($name -notmatch $NamePattern) { continue }
         [void]$all.Add([string]$name)
     }
     if (-not [string]::IsNullOrWhiteSpace($NewName)) {
-        if ($NewName -notmatch $script:SnapshotDumpPattern) {
+        if ($NewName -notmatch $NamePattern) {
             return [pscustomobject]@{ Ok = $false; Drop = $none; Reason = 'bad-name' }
         }
         if (-not $all.Contains($NewName)) { [void]$all.Add($NewName) }
@@ -619,6 +631,10 @@ function Get-SnapshotReasonCode {
         'identity-link' { return 3 }
         'missing-age' { return 3 }
         'missing-sync-root' { return 3 }
+        'destination-inside-onedrive' { return 3 }
+        'destination-acl' { return 3 }
+        'destination-link' { return 3 }
+        'plain-drill-unsupported' { return 2 }
         'staging-inside-sync' { return 3 }
         'staging-inside-destination' { return 3 }
         'staging-link' { return 3 }
@@ -1280,6 +1296,309 @@ function Invoke-SnapshotDrill {
     }
 }
 
+function Test-SnapshotPlainInsideOneDrive {
+    param([string]$DestinationPath, [string]$OneDriveRoot)
+    if ([string]::IsNullOrWhiteSpace($DestinationPath) -or [string]::IsNullOrWhiteSpace($OneDriveRoot)) { return $false }
+    $sep = [System.IO.Path]::DirectorySeparatorChar
+    $destFull = [System.IO.Path]::GetFullPath($DestinationPath).TrimEnd($sep)
+    $rootFull = [System.IO.Path]::GetFullPath($OneDriveRoot).TrimEnd($sep)
+    if ($destFull.Equals($rootFull, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    return Test-SnapshotPathInside $OneDriveRoot $DestinationPath
+}
+
+function Test-SnapshotPlainVerified {
+    param([string[]]$Lines, [int64]$Bytes, [int64]$MinimumBytes)
+    if ($Bytes -lt $MinimumBytes) { return $false }
+    return [bool](Test-SnapshotTableData $Lines)
+}
+
+function Get-SnapshotPlainTableCount {
+    param([string[]]$Lines)
+    $count = 0
+    foreach ($line in @($Lines)) {
+        if ($line -match '(?i)(^|[^A-Za-z])TABLE DATA([^A-Za-z]|$)') { $count++ }
+    }
+    return $count
+}
+
+function Get-SnapshotSha256Prefix {
+    param([string]$Path)
+    $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ([string]::IsNullOrWhiteSpace($hash) -or $hash.Length -lt 12) { return '' }
+    return $hash.Substring(0, 12).ToLowerInvariant()
+}
+
+function Write-SnapshotPlainStatus {
+    param(
+        [string]$Dir,
+        [string]$Utc,
+        [int]$Code,
+        [int64]$Bytes,
+        [string]$Sha256Prefix,
+        [int]$DurationSec,
+        [int]$Tables
+    )
+    if ([string]::IsNullOrWhiteSpace($Dir) -or -not (Test-Path -LiteralPath $Dir -PathType Container)) { return $false }
+    if ($Utc -notmatch '^[0-9]{8}T[0-9]{6}Z$') { return $false }
+    if ($Sha256Prefix -notmatch '^[0-9a-f]{12}$') { $Sha256Prefix = '000000000000' }
+    if ($DurationSec -lt 0) { $DurationSec = 0 }
+    if ($Tables -lt 0) { $Tables = 0 }
+    $json = '{"utc":"' + $Utc + '","exit":' + $Code + ',"bytes":' + $Bytes + ',"sha256":"' + $Sha256Prefix + '","duration":' + $DurationSec + ',"tables":' + $Tables + ',"mode":"plain","encryption":"none","operatorDecision":"' + $script:SnapshotPlainDecision + '"}'
+    if ($json -match '(?i)password\s*=|postgres://|Host\s*=') { return $false }
+    $partial = Join-Path $Dir 'snapshot-status.json.partial'
+    $final = Join-Path $Dir 'snapshot-status.json'
+    $encoding = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($partial, $json, $encoding)
+    if (Test-Path -LiteralPath $final) { Remove-Item -LiteralPath $final -Force }
+    Move-Item -LiteralPath $partial -Destination $final
+    return (-not (Test-Path -LiteralPath $partial)) -and (Test-Path -LiteralPath $final)
+}
+
+function Update-SnapshotPlainRetention {
+    param([string]$DestDir, [int]$Keep, [string]$NewName)
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($file in @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump' -File -ErrorAction SilentlyContinue)) {
+        if ($file.Name -match $script:SnapshotPlainDumpPattern) { [void]$names.Add($file.Name) }
+    }
+    $prune = Get-SnapshotPruneSet -Names $names.ToArray() -Retain $Keep -NewName $NewName -Verified $true -NamePattern $script:SnapshotPlainDumpPattern
+    if (-not $prune.Ok) {
+        return [pscustomobject]@{ Ok = $false; Reason = $prune.Reason; Kept = 0 }
+    }
+    foreach ($name in @($prune.Drop)) {
+        if ($name -notmatch $script:SnapshotPlainDumpPattern -or $name -eq $NewName) { continue }
+        $victim = Join-Path $DestDir $name
+        if (-not (Test-SnapshotPathInside $DestDir $victim)) {
+            return [pscustomobject]@{ Ok = $false; Reason = 'outside-destination'; Kept = 0 }
+        }
+        Remove-Item -LiteralPath $victim -Force
+    }
+    $left = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match $script:SnapshotPlainDumpPattern })
+    $still = @($left | Where-Object { $_.Name -eq $NewName })
+    if ($left.Count -lt 1 -or $left.Count -gt $Keep -or $still.Count -ne 1) {
+        return [pscustomobject]@{ Ok = $false; Reason = 'prune-failed'; Kept = $left.Count }
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = 'prune'; Kept = $left.Count }
+}
+
+function Set-SnapshotPlainDirectoryAcl {
+    param([string]$Path)
+    if ($env:OS -ne 'Windows_NT') {
+        $chmod = Get-SnapshotUnixTool 'chmod'
+        if (-not $chmod) { return $false }
+        $made = Invoke-SnapshotNative $chmod @('700', '--', $Path)
+        if ($made.Exit -ne 0) { return $false }
+        return [bool](Test-SnapshotOwnedDirectory $Path)
+    }
+    try {
+        $sidText = Get-SnapshotWindowsCallerSid
+        if ([string]::IsNullOrWhiteSpace($sidText)) { return $false }
+        $identity = New-Object System.Security.Principal.SecurityIdentifier($sidText)
+        $di = New-Object System.IO.DirectoryInfo $Path
+        $accessOnly = [System.Security.AccessControl.AccessControlSections]::Access
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $acl = $di.GetAccessControl($accessOnly) } else { $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($di, $accessOnly) }
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) {
+            [void]$acl.RemoveAccessRuleSpecific($rule)
+        }
+        $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $grant = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $identity,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            $inherit,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($grant)
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $di.SetAccessControl($acl) } else { [System.IO.FileSystemAclExtensions]::SetAccessControl($di, $acl) }
+        return [bool](Test-SnapshotWindowsOwnedDirectory $Path)
+    } catch { return $false }
+}
+
+function Invoke-SnapshotPlainPublish {
+    param(
+        [string]$SourceContainer,
+        [string]$SourceDatabase,
+        [string]$Stage,
+        [string]$DestDir,
+        [int]$Keep,
+        [string]$Docker,
+        [int64]$MinimumBytes
+    )
+    $started = [System.Diagnostics.Stopwatch]::StartNew()
+    $stamp = [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
+    $containerDump = '/tmp/antiphon-snapshot-' + $stamp + '.dump'
+    $verifyRemote = '/tmp/antiphon-snapshot-verify-' + $stamp + '.dump'
+    $hostDump = Join-Path $Stage ('antiphon-' + $stamp + '.dump')
+    $destName = 'antiphon-' + $stamp + '.dump'
+    $destPartial = Join-Path $DestDir ($destName + '.partial')
+    $destFile = Join-Path $DestDir $destName
+    $published = $false
+    try {
+        $dump = Invoke-SnapshotNative $Docker @(
+            'exec', $SourceContainer, 'pg_dump', '-Fc', '--no-owner', '--no-acl',
+            '-U', 'antiphon', '-d', $SourceDatabase, '-f', $containerDump
+        )
+        if ($dump.Exit -ne 0) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 4 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 4; Reason = 'dump-failed' }
+        }
+        $list = Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'pg_restore', '--list', $containerDump)
+        $listed = @($list.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $sizeText = Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'wc', '-c', $containerDump)
+        $containerBytes = -1L
+        if ($sizeText.Lines.Count -gt 0 -and ([string]$sizeText.Lines[0]) -match '(\d+)') {
+            $containerBytes = [int64]$Matches[1]
+        }
+        $ready = ($list.Exit -eq 0) -and ($sizeText.Exit -eq 0) -and (Test-SnapshotPlainVerified $listed $containerBytes $MinimumBytes)
+        if (-not $ready) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 5 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
+        }
+        $copied = Invoke-SnapshotNative $Docker @('cp', ($SourceContainer + ':' + $containerDump), $hostDump)
+        if ($copied.Exit -ne 0 -or -not (Test-Path -LiteralPath $hostDump)) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 4 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 4; Reason = 'dump-failed' }
+        }
+        $hostBytes = ([System.IO.FileInfo]::new($hostDump)).Length
+        if ($hostBytes -ne $containerBytes) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 5 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
+        }
+        if ((Test-Path -LiteralPath $destFile) -or (Test-Path -LiteralPath $destPartial)) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 7 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 7; Reason = 'copy-failed' }
+        }
+        Copy-Item -LiteralPath $hostDump -Destination $destPartial
+        $partialBytes = ([System.IO.FileInfo]::new($destPartial)).Length
+        if ($partialBytes -ne $hostBytes) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 7 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 7; Reason = 'copy-failed' }
+        }
+        Move-Item -LiteralPath $destPartial -Destination $destFile
+        $published = $true
+        $sent = Invoke-SnapshotNative $Docker @('cp', $destFile, ($SourceContainer + ':' + $verifyRemote))
+        if ($sent.Exit -ne 0) {
+            Remove-Item -LiteralPath $destFile -Force -ErrorAction SilentlyContinue
+            $published = $false
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 5 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
+        }
+        $again = Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'pg_restore', '--list', $verifyRemote)
+        Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'rm', '-f', $verifyRemote) | Out-Null
+        $againLines = @($again.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $destBytes = ([System.IO.FileInfo]::new($destFile)).Length
+        if ($again.Exit -ne 0 -or -not (Test-SnapshotPlainVerified $againLines $destBytes $MinimumBytes)) {
+            Remove-Item -LiteralPath $destFile -Force -ErrorAction SilentlyContinue
+            $published = $false
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 5 0 '' ([int]$started.Elapsed.TotalSeconds) 0)
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed' }
+        }
+        $tables = Get-SnapshotPlainTableCount $againLines
+        $prefix = Get-SnapshotSha256Prefix $destFile
+        $prune = Update-SnapshotPlainRetention $DestDir $Keep $destName
+        $duration = [int]$started.Elapsed.TotalSeconds
+        if (-not $prune.Ok) {
+            [void](Write-SnapshotPlainStatus $DestDir $stamp 8 $destBytes $prefix $duration $tables)
+            return [pscustomobject]@{ Code = 8; Reason = 'prune-failed' }
+        }
+        [void](Write-SnapshotPlainStatus $DestDir $stamp 0 $destBytes $prefix $duration $tables)
+        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('bytes=' + $destBytes + ' kept=' + $prune.Kept + ' utc=' + $stamp) }
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($containerDump)) {
+            Invoke-SnapshotNative $Docker @('exec', $SourceContainer, 'rm', '-f', $containerDump, $verifyRemote) | Out-Null
+        }
+        Remove-SnapshotPartial @($hostDump)
+        if (-not $published) { Remove-SnapshotPartial @($destPartial) }
+    }
+}
+
+function Invoke-SnapshotPlainMode {
+    param([bool]$PlanOnly)
+    $sync = $SyncRoot
+    if ([string]::IsNullOrWhiteSpace($sync)) { $sync = 'C:\Users\lndco\OneDrive' }
+    $dest = $Destination
+    if ([string]::IsNullOrWhiteSpace($dest)) { $dest = $script:SnapshotPlainDestination }
+    $stage = $StagingPath
+    if ([string]::IsNullOrWhiteSpace($stage)) { $stage = Get-SnapshotDefaultStaging }
+
+    Write-Output ('PLAIN UNENCRYPTED operator-decision=' + $script:SnapshotPlainDecision + ' encryption=none')
+    if (Test-SnapshotContainsLink $dest) {
+        return Write-SnapshotResult $PlanOnly 'destination-link' ''
+    }
+    if (Test-SnapshotPlainInsideOneDrive $dest $sync) {
+        Write-Output ('step destination: ' + $dest + ' outside-onedrive=no')
+        return Write-SnapshotResult $PlanOnly 'destination-inside-onedrive' ''
+    }
+    Write-Output ('step destination: ' + $dest + ' outside-onedrive=yes')
+    if (Test-SnapshotContainsLink $stage) {
+        return Write-SnapshotResult $PlanOnly 'staging-link' ''
+    }
+    if ((Test-Path -LiteralPath $sync -PathType Container) -and (Test-SnapshotPathInside $sync $stage)) {
+        return Write-SnapshotResult $PlanOnly 'staging-inside-sync' ''
+    }
+    if (Test-SnapshotPathInside $dest $stage) {
+        return Write-SnapshotResult $PlanOnly 'staging-inside-destination' ''
+    }
+
+    $aclOpen = $false
+    if (Test-Path -LiteralPath $dest) {
+        if (-not (Test-Path -LiteralPath $dest -PathType Container)) {
+            return Write-SnapshotResult $PlanOnly 'destination-acl' ''
+        }
+        if (-not (Test-SnapshotOwnedDirectory $dest)) {
+            $aclOpen = $true
+            Write-Output 'step acl: user-only acl=open'
+            if ($PlanOnly) { return Write-SnapshotResult $true 'destination-acl' '' }
+        } else {
+            Write-Output 'step acl: user-only acl=ok'
+        }
+    } else {
+        Write-Output 'step acl: user-only directory=absent'
+    }
+
+    Write-Output ('step dump: docker exec ' + $Container + ' pg_dump -Fc --no-owner --no-acl -U antiphon -d ' + $Database + ' -f /tmp/antiphon-snapshot.dump')
+    Write-Output ('step verify: pg_restore --list on the new file must include TABLE DATA before prune; minimum ' + $MinimumDumpBytes + ' bytes')
+    Write-Output 'step copy: write the dump to antiphon-<utc>.dump.partial then rename to antiphon-<utc>.dump'
+    Write-Output ('step retention: keep ' + $Retain + ' plain dump files and prune only after the new file is verified')
+    Write-Output 'step status: snapshot-status.json partial-write then rename (utc, exit, bytes, sha256 prefix, duration, tables, mode=plain)'
+    if ($PlanOnly) {
+        return Write-SnapshotResult $true 'ok' ('plain=1 encryption=none retention=' + $Retain)
+    }
+
+    if ($aclOpen) {
+        if (-not (Set-SnapshotPlainDirectoryAcl $dest)) {
+            return Write-SnapshotResult $false 'destination-acl' ''
+        }
+        Write-Output 'step acl: tightened to user-only'
+    } elseif (-not (Test-Path -LiteralPath $dest)) {
+        $parent = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($dest))
+        if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path -LiteralPath $parent)) {
+            return Write-SnapshotResult $false 'destination-acl' ''
+        }
+        if (-not (New-SnapshotPrivateDirectory $dest)) {
+            return Write-SnapshotResult $false 'destination-acl' ''
+        }
+        Write-Output 'step acl: user-only created'
+    }
+
+    $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+    $rootState = Test-SnapshotStagingRoot $stage
+    if ($rootState -ne '') { return Write-SnapshotResult $false $rootState '' }
+    $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
+    if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
+    Write-SnapshotDaemonWarning
+    if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
+    $run = [string]$script:SnapshotRunStaging
+    if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
+    try {
+        $published = Invoke-SnapshotPlainPublish $Container $Database $run $dest $Retain $dockerCmd.Source $MinimumDumpBytes
+        return Write-SnapshotResult $false $published.Reason $published.Detail
+    } finally {
+        [void](Remove-SnapshotStaging $run)
+    }
+}
+
 function Invoke-PostgresSnapshot {
     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -Scope Global -ErrorAction SilentlyContinue) {
         $Global:PSNativeCommandUseErrorActionPreference = $false
@@ -1289,6 +1608,11 @@ function Invoke-PostgresSnapshot {
         return Write-SnapshotResult $true 'ambiguous-mode' ''
     }
     if ($WhatIf) { $planOnly = $true }
+    if ($Plain -and $RestoreDrill) {
+        Write-Output ('PLAIN UNENCRYPTED operator-decision=' + $script:SnapshotPlainDecision + ' encryption=none')
+        return Write-SnapshotResult $planOnly 'plain-drill-unsupported' ''
+    }
+    if ($Plain) { return Invoke-SnapshotPlainMode $planOnly }
     $sync = $SyncRoot
     if ([string]::IsNullOrWhiteSpace($sync)) { $sync = 'C:\Users\lndco\OneDrive' }
     $dest = $Destination

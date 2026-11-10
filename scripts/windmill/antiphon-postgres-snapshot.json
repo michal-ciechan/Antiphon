@@ -1,0 +1,12 @@
+{
+  "path": "u/lndcobra/antiphon_postgres_snapshot",
+  "summary": "Daily plain compressed Postgres snapshot. Desktop tag. 07:50 Europe/London.",
+  "description": "SSH-bridge wrapper. Runs postgres-snapshot.ps1 -Plain -Execute into C:\\Users\\lndco\\antiphon-backups and posts one short status line. Age encryption stays the default of the script; this job names -Plain. Operator decision 2026-11-10. The schedule is enabled because the operator asked for the daily job.",
+  "language": "bash",
+  "tag": "desktop",
+  "schema": {
+    "properties": {},
+    "required": []
+  },
+  "content": "#!/bin/bash\nset -uo pipefail\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Users\\lndco\\antiphon-snapshot-runner\\invoke-postgres-snapshot.ps1\"\nexit $?\n"
+}

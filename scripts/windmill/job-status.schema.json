@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Antiphon job status record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job", "icon", "status"],
+  "properties": {
+    "job": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,40}$" },
+    "icon": { "type": "string", "pattern": "^[A-Za-z0-9]{1,8}$" },
+    "status": { "type": "string", "enum": ["ok", "warn", "fail", "stale"] },
+    "detail": { "type": "string", "maxLength": 120 }
+  }
+}
