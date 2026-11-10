@@ -53,6 +53,17 @@ describe('endpointFromDraft userinfo', () => {
     // CARD-1822 A-2: mailto stays allowed only without a password and without //.
     ['mailto with a password', `mailto:operator:${SENTINEL}@proxy.test`],
     ['uppercase mailto with an authority', `MAILTO://operator:${SENTINEL}@proxy.test/v1`],
+    // CARD-1822 D-1: a prefix that itself looks like a scheme hides the real // authority.
+    ['a baseUrl: prefix that looks like a scheme', `baseUrl: https://u:${SENTINEL}@proxy.test/v1`],
+    ['a url: prefix that looks like a scheme', `url: https://u:${SENTINEL}@.`],
+    ['an endpoint: prefix with no space before the real scheme', `endpoint:https://u:${SENTINEL}@.`],
+    ['a quoted URL behind a one-letter scheme', `x:"https://u:${SENTINEL}@."`],
+    ['an https: prefix before another https URL', `https:https://u:${SENTINEL}@.`],
+    ['a data: prefix before an https URL', `data:text/plain,https://u:${SENTINEL}@h`],
+    ['a tab inside a scheme-shaped prefix', `baseUrl:\thttps://u:${SENTINEL}@proxy.test/v1`],
+    ['a space inside a scheme-shaped prefix', `endpoint: https://u:${SENTINEL}@proxy.test/v1`],
+    ['an uppercase scheme-shaped prefix', `BASEURL: HTTPS://u:${SENTINEL}@PROXY.TEST/V1`],
+    ['a percent-encoded colon behind a scheme-shaped prefix', `baseUrl: https%3A//u:${SENTINEL}@proxy.test/v1`],
   ])('refuses %s and does not return the URL', (_name, baseUrl) => {
     const result = endpointFromDraft({ baseUrl, apiKeyName: 'claude-proxy-key' }, 'Grok', false)
     expect(result.endpoint).toBeNull()
