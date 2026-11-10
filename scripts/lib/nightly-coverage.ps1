@@ -1130,6 +1130,120 @@ function Test-NightlyChunkMembership {
     }
 }
 
+function Get-NightlyExpectedSkipRoster {
+    param([string]$Path = '')
+    $useDefault = [string]::IsNullOrWhiteSpace($Path)
+    if ($useDefault -and $null -ne $script:NightlyExpectedSkipRosterCache) {
+        return @($script:NightlyExpectedSkipRosterCache)
+    }
+    if ($useDefault) {
+        $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $Path = Join-Path $repo (Join-Path 'tests' 'expected-platform-skips.json')
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw ('expected-skip roster missing {0}' -f $Path)
+    }
+    $doc = [System.IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    if ($null -eq $doc -or $null -eq $doc.entries) { throw 'expected-skip roster has no entries' }
+    $entries = @($doc.entries)
+    foreach ($entry in $entries) {
+        $platformName = [string]$entry.platform
+        $test = [string]$entry.test
+        $prefix = [string]$entry.reasonPrefix
+        if ($platformName -cnotin @('windows', 'linux')) { throw ('expected-skip roster platform {0}' -f $platformName) }
+        if ([string]::IsNullOrWhiteSpace($test) -or $test.IndexOf('.') -lt 1) { throw ('expected-skip roster test {0}' -f $test) }
+        if ([string]::IsNullOrWhiteSpace($prefix)) { throw ('expected-skip roster reason {0}' -f $test) }
+    }
+    if ($useDefault) { $script:NightlyExpectedSkipRosterCache = $entries }
+    return $entries
+}
+
+function Get-NightlyExpectedSkipSourceGaps {
+    # A roster test whose class or method is absent from tests/. Not a coverage failure.
+    param([string]$RepoRoot, [string]$Platform, $Entries = $null)
+    if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
+    $wanted = @()
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        if ([string]$entry.platform -cne $Platform) { continue }
+        $wanted += $entry
+    }
+    if ($wanted.Count -eq 0) { return @() }
+    $testsRoot = Join-Path $RepoRoot 'tests'
+    $byClass = @{}
+    foreach ($entry in $wanted) {
+        $test = [string]$entry.test
+        $methodDot = $test.LastIndexOf('.')
+        if ($methodDot -lt 1) { continue }
+        $method = $test.Substring($methodDot + 1)
+        $head = $test.Substring(0, $methodDot)
+        $classDot = $head.LastIndexOf('.')
+        $className = if ($classDot -lt 0) { $head } else { $head.Substring($classDot + 1) }
+        if (-not $byClass.ContainsKey($className)) {
+            $byClass[$className] = @{ methods = @{}; seenClass = $false }
+        }
+        $byClass[$className].methods[$method] = $false
+    }
+    if (Test-Path -LiteralPath $testsRoot -PathType Container) {
+        $pending = New-Object 'System.Collections.Generic.Stack[string]'
+        $pending.Push($testsRoot)
+        while ($pending.Count -gt 0) {
+            $dir = $pending.Pop()
+            $name = [System.IO.Path]::GetFileName($dir)
+            if ($name -eq 'bin' -or $name -eq 'obj' -or $name.StartsWith('bin-', [System.StringComparison]::Ordinal)) { continue }
+            foreach ($sub in [System.IO.Directory]::EnumerateDirectories($dir)) { $pending.Push($sub) }
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($dir, '*.cs')) {
+                $text = [System.IO.File]::ReadAllText($file)
+                foreach ($className in @($byClass.Keys)) {
+                    $bucket = $byClass[$className]
+                    if (-not [regex]::IsMatch($text, ('\bclass\s+' + [regex]::Escape($className) + '\b'))) { continue }
+                    $bucket.seenClass = $true
+                    foreach ($method in @($bucket.methods.Keys)) {
+                        if ($bucket.methods[$method]) { continue }
+                        if ([regex]::IsMatch($text, ('\b' + [regex]::Escape($method) + '\s*\('))) {
+                            $bucket.methods[$method] = $true
+                        }
+                    }
+                }
+            }
+        }
+    }
+    $gaps = @()
+    foreach ($entry in $wanted) {
+        $test = [string]$entry.test
+        $methodDot = $test.LastIndexOf('.')
+        if ($methodDot -lt 1) { $gaps += $test; continue }
+        $method = $test.Substring($methodDot + 1)
+        $head = $test.Substring(0, $methodDot)
+        $classDot = $head.LastIndexOf('.')
+        $className = if ($classDot -lt 0) { $head } else { $head.Substring($classDot + 1) }
+        $bucket = $byClass[$className]
+        if ($null -eq $bucket -or -not $bucket.seenClass -or -not $bucket.methods[$method]) { $gaps += $test }
+    }
+    return $gaps
+}
+
+function Test-NightlyRowIsExpectedSkip {
+    param($Row, [string]$Platform, [object[]]$Entries)
+    if ($null -eq $Row -or [string]::IsNullOrWhiteSpace($Platform)) { return $false }
+    if ((ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$Row.Outcome)) -cne 'NotExecuted') { return $false }
+    $trace = ''
+    if ($Row.PSObject.Properties.Name -contains 'DebugTrace') { $trace = [string]$Row.DebugTrace }
+    if (-not $trace.StartsWith('Skipped:', [System.StringComparison]::Ordinal)) { return $false }
+    $body = $trace.Substring(8)
+    if ($body.StartsWith(' ', [System.StringComparison]::Ordinal)) { $body = $body.Substring(1) }
+    $identity = [string]$Row.Identity
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        if ([string]$entry.platform -cne $Platform) { continue }
+        if ([string]$entry.test -cne $identity) { continue }
+        $prefix = [string]$entry.reasonPrefix
+        if ([string]::IsNullOrEmpty($prefix)) { continue }
+        if ($body.StartsWith($prefix, [System.StringComparison]::Ordinal)) { return $true }
+    }
+    return $false
+}
+
 function ConvertTo-NightlyCoverageVerdict {
     param(
         [object[]]$TerminalRows,
@@ -1142,7 +1256,10 @@ function ConvertTo-NightlyCoverageVerdict {
         [string]$ExpectedPolicyHash,
         [string[]]$RequiredSkips = @(),
         [object[]]$DiscoveryNodes = @(),
-        [bool]$UsedDiscoveryAsExecution = $false
+        [bool]$UsedDiscoveryAsExecution = $false,
+        [string]$Platform = '',
+        $ExpectedSkipRoster = $null,
+        [string[]]$KnownTestIdentities = $null
     )
     $coverageComplete = $true
     $testsPassed = $true
