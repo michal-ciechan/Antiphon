@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -10,12 +11,15 @@ namespace Antiphon.Tests.Infrastructure;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeLockDiagnosticsWindowsTests
 {
+    // WorktreeNativeIO.Supported is OperatingSystem.IsWindows(); off Windows the probe reports UnsupportedPlatform.
+    private const string NativeWindowsReason = "CARD-0588: C443 native sharing qualification needs Windows DELETE-access sharing (native error 32); WorktreeNativeIO is unsupported off Windows.";
+
     [Test] public Task C443_NativeFileSharing32() => NativeSharingAsync(false);
     [Test] public Task C443_NativeRootDirectorySharing32() => NativeSharingAsync(true);
 
     private static async Task NativeSharingAsync(bool directory)
     {
-        OperatingSystem.IsWindows().ShouldBeTrue("Native qualification requires Windows");
+        NativeWindowsGate.Require(NativeWindowsReason);
         var root = Path.Combine(Path.GetTempPath(), "antiphon-c443-native-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var file = Path.Combine(root, "held.bin");
