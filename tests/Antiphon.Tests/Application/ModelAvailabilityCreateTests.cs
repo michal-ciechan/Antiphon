@@ -98,7 +98,7 @@ public class ModelAvailabilityCreateTests
     }
 
     [Test]
-    public async Task Create_Grok_against_a_grok_4_6_hold_is_409_model_disabled()
+    public async Task Create_Grok_against_a_grok_4_7_hold_is_409_model_disabled()
     {
         var holdId = Guid.NewGuid();
         using var workspace = new TempWorkspace();
@@ -126,7 +126,7 @@ public class ModelAvailabilityCreateTests
     }
 
     [Test]
-    public async Task Create_Claude_succeeds_while_grok_4_6_is_held()
+    public async Task Create_Claude_succeeds_while_grok_4_7_is_held()
     {
         var holdId = Guid.NewGuid();
         using var workspace = new TempWorkspace();

@@ -13,7 +13,7 @@ namespace Antiphon.Tests.Application;
 [Category("Unit")]
 public class GrokLaunchArgsTests
 {
-    private static readonly string[] Grok46Catalog = ["xhigh", "high", "medium", "low"];
+    private static readonly string[] Grok47Catalog = ["xhigh", "high", "medium", "low"];
 
     [Test]
     [Arguments(AgentModelLevel.Frontier, "xhigh")]
@@ -23,7 +23,7 @@ public class GrokLaunchArgsTests
     public void every_tier_names_its_own_reasoning_effort(AgentModelLevel level, string expected)
     {
         GrokLaunchArgs.ReasoningEffort(level).ShouldBe(expected);
-        Grok46Catalog.ShouldContain(expected);
+        Grok47Catalog.ShouldContain(expected);
     }
 
     [Test]
@@ -40,10 +40,10 @@ public class GrokLaunchArgsTests
     }
 
     [Test]
-    public void every_emitted_effort_is_in_the_grok_4_6_catalog()
+    public void every_emitted_effort_is_in_the_grok_4_7_catalog()
     {
         foreach (var level in Enum.GetValues<AgentModelLevel>())
-            Grok46Catalog.ShouldContain(GrokLaunchArgs.ReasoningEffort(level));
+            Grok47Catalog.ShouldContain(GrokLaunchArgs.ReasoningEffort(level));
     }
 
     [Test]
@@ -67,7 +67,7 @@ public class GrokLaunchArgsTests
     }
 
     [Test]
-    public void grok_4_6_and_an_unset_model_keep_the_table_including_xhigh()
+    public void grok_4_7_and_an_unset_model_keep_the_table_including_xhigh()
     {
         GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, null).ShouldBe("xhigh");
         GrokLaunchArgs.ReasoningEffortForModel(AgentModelLevel.Frontier, "").ShouldBe("xhigh");
