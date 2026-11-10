@@ -69,29 +69,46 @@ not a fix of one test class.
 ## What the gate does now
 
 After `total ran: N` and `request execute stop`, with TRX outcome
-`Completed`, `executed == total`, and `notExecuted == 0`, the native owner
-waits `NightlyCompletionGraceMilliseconds` (60 s) and then kills the job.
-It writes `<log>.hang.txt` before `TerminateJobObject`: root pid, whether
-the root has exited, each descendant pid and image, and open handles from
-`NtQuerySystemInformation` class 64 (`SystemExtendedHandleInformation`).
-Handle names are not queried. A missing or partial TRX, a `total ran`
-that disagrees with the counters, or a tail without `request execute stop`
-stays on the launch watchdog.
+`Completed`, `executed == total`, `failed == 0`, and `notExecuted == 0`,
+the native owner waits `NightlyCompletionGrace.DefaultMilliseconds`
+(60000). That constant is an unmeasured placeholder. A chunk log line
+`execution-stop-to-exit-seconds=` records the seconds from the diagnostic
+write to process exit for a normal exit and for this kill, so a later run
+can set the grace near 2x that p95 (docs/test-performance-standards.md).
+The reader matches the opening `<ResultSummary` and `<Counters` tags, in
+any attribute order, with single or double quotes, and with an XML
+namespace prefix. At 89fd55cef `TryReadTrxSummary` used
+`LastIndexOf("ResultSummary")` and landed on `</ResultSummary>`, so the
+grace never armed. A TRX or diagnostic whose last write is at or before
+the process start is ignored, so a direct rerun into the same log root
+cannot treat the previous run as finished.
 
 The chunk stays `result=FAIL` and `timedOut=true`. Coverage stays
-incomplete and tests stay failed. The outcome class is `TESTS`. The suite
-reason is `completed-but-hung {suiteId} children=pid=/image=...`. The
+incomplete and tests stay failed. The outcome class is `TESTS`, so
+`publicationTerminal` changes from `timeout` to `failed-run`.
+`summary.harnessHang` is `completed-but-hung` on that path and empty
+otherwise, which lets the rc repair loop tell a harness hang from a test
+failure without parsing reasons. The suite reason is
+`completed-but-hung {suiteId} children=pid=/image=...`. The
 `process-exit-*` reason for the kill this path applied is dropped. A real
 `failed-row` reason is kept. The PowerShell capture used when the native
 file is absent says `handles=not-enumerated`.
 
-Linux proof of the bound: `Invoke-NightlyCompletionGrace` with `/bin/sleep 30`,
+It writes `<log>.hang.txt` before `TerminateJobObject`: root pid, whether
+the root has exited, each descendant pid and image, and open handles from
+`NtQuerySystemInformation` class 64 (`SystemExtendedHandleInformation`).
+Handle names are not queried. A missing or partial TRX, a `total ran`
+that disagrees with the counters, `failed > 0`, or a tail without
+`request execute stop` stays on the launch watchdog.
+
+Linux proof of the bound: `NightlyCompletionGrace.Wait` (the same method
+the native loop calls; the PowerShell copy is gone) with `/bin/sleep 30`,
 finished immediately, grace 300 ms, watchdog 5000 ms, returned
 `CompletedButHung` in under 2 s while the sleep was still alive. The
 unfinished case hit the 250 ms watchdog and was not a completed hang.
-`scripts/test-nightly-tests.ps1 -Case Group4CompletedHang` is 25/25.
-The native owner file compiled as a net10 class library, 0 warnings.
-`Add-Type` of that owner remains Windows-only.
+`scripts/test-nightly-tests.ps1 -Case Group4NativeTrxReader` calls
+`ExecutionEvidenceFinished` on the real owner through `Add-Type`.
+`NativeProcessOwner.Start` remains Windows-only.
 
 ## Introducing commit/card
 
@@ -126,8 +143,9 @@ the cheapest pre-land check as a path-glob -> class-filter entry for the impacte
 
 There is no TUnit class for this gate. `tests/impacted-classes.json` was
 not edited. The same case covers `scripts/lib/nightly-owned-process.cs`
-and the timeout branch in `scripts/lib/nightly-tests-impl.ps1`. It does
-not build `Antiphon.SessionRunner.Tests`.
+and the timeout branch in `scripts/lib/nightly-tests-impl.ps1`.
+`-Case Group4NativeTrxReader` loads that owner with `Add-Type` and calls
+the real reader. It does not build `Antiphon.SessionRunner.Tests`.
 
 ## Exemption
 

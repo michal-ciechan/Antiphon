@@ -2814,8 +2814,11 @@ function Test-Group4NativeTrxReader {
         param($Method, [string]$Trx, [string]$Diag, $NotBefore)
         if ($null -eq $Method) { return [pscustomobject]@{ Finished = $false; Error = 'method-missing' } }
         try {
-            $invokeArgs = @([string]$Trx, [string]$Diag)
-            if (@($Method.GetParameters()).Count -ge 3) { $invokeArgs += $NotBefore }
+            $count = @($Method.GetParameters()).Count
+            $invokeArgs = New-Object object[] $count
+            $invokeArgs[0] = [string]$Trx
+            $invokeArgs[1] = [string]$Diag
+            if ($count -ge 3) { $invokeArgs[2] = [datetime]$NotBefore }
             $value = [bool]$Method.Invoke($null, $invokeArgs)
             return [pscustomobject]@{ Finished = $value; Error = '' }
         } catch {
@@ -3030,13 +3033,20 @@ function Test-Group4CompletedHang {
     $captureOk = ($captureText.Contains('completed-hang-capture') -and $captureText.Contains('handles=not-enumerated') -and $captureText.Contains('pid=42/image=git') -and $captureText.Contains('suite=session-runner'))
     Assert-C487 -Cond $captureOk -Name 'group4 powershell hang capture names the tree and skips handle names' -Detail $captureError
 
+    $graceLoad = ''
+    try { Add-Type -Path (Join-Path $lib 'nightly-owned-process.cs') -ErrorAction Stop } catch {
+        if (-not ('Antiphon.Nightly.NightlyCompletionGrace' -as [type])) { $graceLoad = $_.Exception.Message }
+    }
     $sleep = $null
     $grace = $null
-    $graceError = ''
+    $graceError = $graceLoad
     try {
         $sleep = Start-Process -FilePath '/bin/sleep' -ArgumentList '30' -PassThru -ErrorAction Stop
         try {
-            $grace = Invoke-NightlyCompletionGrace -Exited { $sleep.HasExited } -Finished { $true } -GraceMilliseconds 300 -WatchdogMilliseconds 5000 -PollMilliseconds 10
+            $box = @($sleep)
+            $exited = [Func[bool]]{ $box[0].HasExited }.GetNewClosure()
+            $finishedNow = [Func[bool]]{ $true }
+            $grace = [Antiphon.Nightly.NightlyCompletionGrace]::Wait($exited, $finishedNow, 300, 5000, 10)
         } catch { $graceError = $_.Exception.Message }
         $alive = ($null -ne $sleep -and -not $sleep.HasExited)
         $graceOk = ($null -ne $grace -and [bool]$grace.CompletedButHung -and [bool]$grace.TimedOut -and $alive -and [int]$grace.ElapsedMilliseconds -ge 250 -and [int]$grace.ElapsedMilliseconds -lt 2000)
@@ -3051,7 +3061,9 @@ function Test-Group4CompletedHang {
 
     $openGrace = $null
     try {
-        $openGrace = Invoke-NightlyCompletionGrace -Exited { $false } -Finished { $false } -GraceMilliseconds 5000 -WatchdogMilliseconds 250 -PollMilliseconds 10
+        $stillRunning = [Func[bool]]{ $false }
+        $notFinished = [Func[bool]]{ $false }
+        $openGrace = [Antiphon.Nightly.NightlyCompletionGrace]::Wait($stillRunning, $notFinished, 5000, 250, 10)
     } catch { $openGrace = $null }
     $openOk = ($null -ne $openGrace -and [bool]$openGrace.TimedOut -and -not [bool]$openGrace.CompletedButHung -and [int]$openGrace.ElapsedMilliseconds -lt 1000)
     $openDetail = ''

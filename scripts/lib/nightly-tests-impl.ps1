@@ -1408,6 +1408,8 @@ function Invoke-NightlyScheduledChunk {
                 }
             }
             $row.hangCapture = $capturePath
+            # TESTS, not TIMEOUT, so publicationTerminal is failed-run.
+            $harnessHangReason = 'completed-but-hung'
             Set-NightlyOutcome TESTS
         } else {
             Set-NightlyOutcome TIMEOUT
@@ -1576,6 +1578,7 @@ function Invoke-AntiphonNightlyTests {
     $reasons = @()
     $expectedSkipWarnings = @()
     $expectedSkipRoster = @()
+    $harnessHangReason = ''
     $nativeActiveMax = 0
     $dispatchSchedule = $null
 
@@ -1953,6 +1956,7 @@ function Invoke-AntiphonNightlyTests {
         platform = $platform
         coverageScope = $coverageScope
         outcome = $script:NightlyTestsOutcome
+        harnessHang = (Get-NightlyHarnessHangField -CompletedButHung:($harnessHangReason -eq 'completed-but-hung'))
         succeeded = (-not $overallFailed -and $coverageComplete)
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
