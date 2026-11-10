@@ -34,6 +34,9 @@ pty-host fixture row. That row is `windows: required`, so the Windows lane stays
 R-4. The new `[NativeLinuxOnly]` row agrees with `ReleaseGatePlatformTests.LinuxOnlyWindowsExclusionPolicy`
 and `ReleaseGatePlatformTests.C1686_LinuxOnlyCensus`.
 
+R-5. `tests/test-execution-policy.json` matches the nightly-live-lane impacted-class row, so
+`LiveLaneRunnerTests` (4) and `NightlyCoreTests` (1) run on this commit.
+
 PC-1 stays pending for SourceLanding Mutation. One local mutant, deleting the
 `IsPipeOrSocketIdentity` check, must make V-2 red and is not a discharged PC.
 
@@ -42,6 +45,13 @@ PC-1 stays pending for SourceLanding Mutation. One local mutant, deleting the
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---:|---|---|
 | CP-1 | S2 | tests/Antiphon.PtyHost.Tests -> bin-c0608-alias/ | c0608-alias | `/*/*/(PosixProcessSpawnerStdioAliasTests*)\|(NativeLinuxPolicyWitnessTests*)\|(TestClassificationGuardTests*)/*` | V-1, V-2 | 0 failed | 5 | 10 | true | TEMP=/tmp;TMPDIR=/tmp |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c0608-guards/ | c0608-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-2 | 0 failed | 81 | 20 | true | TEMP=/tmp;TMPDIR=/tmp |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-c0608-guards/ | c0608-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-2 | 0 failed | 77 | 20 | true | TEMP=/tmp;TMPDIR=/tmp |
 | CP-3 | S2 | CP-2 | c0608-fixture | `/*/*/Card1277PtyHostFixtureTests/*` | R-3 | 0 failed | 3 | 6 | true | TEMP=/tmp;TMPDIR=/tmp |
 | CP-4 | S2 | CP-2 | c0608-linux-only | `/*/*/ReleaseGatePlatformTests/(LinuxOnlyWindowsExclusionPolicy*)\|(C1686_LinuxOnlyCensus*)` | R-4 | 0 failed | 2 | 5 | true | TEMP=/tmp;TMPDIR=/tmp |
+| CP-5 | S2 | CP-2 | c0608-lane | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-5 | 0 failed | 5 | 15 | true | TEMP=/tmp;TMPDIR=/tmp |
+
+CP-2 counts the eight named classes: policy 41, classification guard 1, slow-registry 5,
+tripwire 2, native-linux witness 3, mechanical contract 11, `TaskPlatformGuidanceTests` 5,
+layering 9. The four `RunnerDefaultGuidanceTests` methods in that same file are a different
+class and stay outside this filter. CP-5 counts the four live-lane methods and the one
+nightly-core method.
