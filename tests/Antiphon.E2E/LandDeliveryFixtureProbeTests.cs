@@ -355,6 +355,32 @@ public class LandDeliveryFixtureProbeTests
     }
 
     /// <summary>
+    /// C467_V31 still depends on the process-wide first two throws. An absent
+    /// <c>enqueue-errors-task.txt</c> must keep that behavior.
+    /// </summary>
+    [Test]
+    public async Task Enqueue_errors_still_count_the_first_two_when_unnamed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c488-enqueue-open-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var services = new ServiceCollection();
+        services.AddSingleton<VerifierCalls>();
+        services.AddSingleton<ILandingVerifier, RecordingVerifier>();
+        new LandDeliveryOptions(root, "enqueue-errors").ConfigureServices(services);
+        await using var provider = services.BuildServiceProvider();
+        try
+        {
+            var boundary = provider.GetRequiredService<LandDeliveryBoundary>();
+            await Should.ThrowAsync<IOException>(() => boundary.ReachedAsync("before-enqueue", Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None));
+            await Should.ThrowAsync<IOException>(() => boundary.ReachedAsync("before-enqueue", Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None));
+            await Should.NotThrowAsync(() => boundary.ReachedAsync("before-enqueue", Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None));
+            Directory.GetFiles(root, "enqueue-failure-*.json").Length.ShouldBe(2);
+            File.Exists(Path.Combine(root, "enqueue-errors-task.txt")).ShouldBeFalse();
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>
     /// CARD-1703 A-2: on a coarse file clock the last records of one verification share a write
     /// time. The diagnostic names the last record written, whichever order the directory lists them.
     /// </summary>
