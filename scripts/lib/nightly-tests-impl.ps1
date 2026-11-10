@@ -1103,6 +1103,7 @@ function Invoke-NightlyScheduledChunk {
     $chunk = $ExecutionChunk
     $chunkTestsPassed=$true
     $chunkCoverageComplete=$true
+    $exitTolerated = $false
     try {
     $chunkIndex++
     $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
@@ -1291,7 +1292,18 @@ function Invoke-NightlyScheduledChunk {
             -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
             -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
             -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
-            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex
+            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex `
+            -Platform $platform -ExpectedSkipRoster $expectedSkipRoster
+        if ($nativeVerdict.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$nativeVerdict.processExitTolerated) {
+            $exitTolerated = $true
+        }
+        if ($nativeVerdict.PSObject.Properties.Name -contains 'warnings') {
+            foreach ($skipWarning in @($nativeVerdict.warnings)) {
+                $skipWarningText = [string]$skipWarning
+                if ([string]::IsNullOrWhiteSpace($skipWarningText)) { continue }
+                if ($expectedSkipWarnings -notcontains $skipWarningText) { $expectedSkipWarnings += $skipWarningText }
+            }
+        }
         if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
             $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
         }
@@ -1320,6 +1332,8 @@ function Invoke-NightlyScheduledChunk {
             $testsPassed = $false
             $overallFailed = $true
             $row.result = 'FAIL'
+        } elseif ($exitTolerated -and [bool]$nativeVerdict.coverageComplete) {
+            $row.result = 'pass'
         }
     }
     if ($suiteId -eq 'client') {
@@ -1340,7 +1354,7 @@ function Invoke-NightlyScheduledChunk {
         $testsPassed = [bool]$timeoutDisposition.TestsPassed
         Set-NightlyOutcome TIMEOUT
         $reasons += ('timeout {0}' -f $suiteId)
-    } elseif ($run.ExitCode -ne 0) {
+    } elseif ($run.ExitCode -ne 0 -and -not $exitTolerated) {
         $overallFailed = $true
         $testsPassed = $false
         Set-NightlyOutcome TESTS
@@ -1498,6 +1512,8 @@ function Invoke-AntiphonNightlyTests {
     $buildResults = @()
     $preflight = [ordered]@{}
     $reasons = @()
+    $expectedSkipWarnings = @()
+    $expectedSkipRoster = @()
     $nativeActiveMax = 0
     $dispatchSchedule = $null
 
@@ -1767,6 +1783,10 @@ function Invoke-AntiphonNightlyTests {
             Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
+            $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
+            if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
+                $expectedSkipRoster = @(Get-NightlyExpectedSkipRoster -Path $rosterFile)
+            }
             . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites -DispatchHistory $dispatchInput.History -DispatchHistoryDigest $dispatchInput.Digest -DispatchPreviousRun $dispatchInput.PreviousRun -DispatchFallbackReason $dispatchInput.FallbackReason
 
         } else {
@@ -1800,6 +1820,14 @@ function Invoke-AntiphonNightlyTests {
         if ($Profile -eq 'nightly' -and $script:NightlyTestsOutcome -eq 'green') { Set-NightlyOutcome BUILD }
     }
     if ($nativeActiveMax -gt 1) { $coverageComplete = $false; $reasons += 'native-overlap' }
+    $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
+    $testsProject = Join-Path $RepoRoot (Join-Path 'tests' 'Antiphon.Tests')
+    if ((Test-Path -LiteralPath $rosterFile -PathType Leaf) -and (Test-Path -LiteralPath $testsProject -PathType Container) -and @($expectedSkipRoster).Count -gt 0) {
+        foreach ($gap in @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster)) {
+            $gapWarning = 'stale-roster:' + [string]$gap
+            if ($expectedSkipWarnings -notcontains $gapWarning) { $expectedSkipWarnings += $gapWarning }
+        }
+    }
 
     $coverageScope = 'Full'
     if ($Profile -eq 'rc' -and $platform -eq 'linux') {
@@ -1868,6 +1896,7 @@ function Invoke-AntiphonNightlyTests {
         testsPassed = [bool]$testsPassed
         policyHash = $policyHash
         reasons = $reasons
+        warnings = @($expectedSkipWarnings)
         nativeActiveMax = $nativeActiveMax
         preflight = $preflight
         builds = $buildResults

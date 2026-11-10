@@ -77,6 +77,16 @@ function Read-NightlyTrxIdentities {
         if ([string]::IsNullOrWhiteSpace($className) -or [string]::IsNullOrWhiteSpace($methodName)) {
             throw ('unresolved identity testId={0} display={1}' -f $testId, $display)
         }
+        $debugTrace = ''
+        foreach ($child in @($n.ChildNodes)) {
+            if ($child.LocalName -cne 'Output') { continue }
+            foreach ($outChild in @($child.ChildNodes)) {
+                if ($outChild.LocalName -ceq 'DebugTrace') {
+                    $debugTrace = [string]$outChild.InnerText
+                    break
+                }
+            }
+        }
         $rows += [pscustomobject]@{
             TestId = $testId
             Uid = ''
@@ -85,6 +95,7 @@ function Read-NightlyTrxIdentities {
             Display = $display
             Outcome = $outcome
             Identity = ('{0}.{1}' -f $className, $methodName)
+            DebugTrace = $debugTrace
         }
     }
     return $rows
@@ -1291,6 +1302,23 @@ function ConvertTo-NightlyCoverageVerdict {
     $unexecuted = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'NotExecuted' })
     $unknown = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Unknown' })
     }
+    # Expected platform skips stay out of the unexecuted bucket. Outcome=Skipped is unchanged.
+    $rosterEntries = @()
+    if ($null -ne $ExpectedSkipRoster) { $rosterEntries = @($ExpectedSkipRoster) }
+    elseif (-not [string]::IsNullOrWhiteSpace($Platform)) { $rosterEntries = @(Get-NightlyExpectedSkipRoster) }
+    $expectedSkipRows = New-Object System.Collections.Generic.List[object]
+    $stillUnexecuted = New-Object System.Collections.Generic.List[object]
+    foreach ($row in @($unexecuted)) {
+        if (Test-NightlyRowIsExpectedSkip -Row $row -Platform $Platform -Entries $rosterEntries) {
+            [void]$expectedSkipRows.Add($row)
+        } else {
+            [void]$stillUnexecuted.Add($row)
+        }
+    }
+    $unexecuted = $stillUnexecuted.ToArray()
+    $presentRows = @($TerminalRows | Where-Object { $null -ne $_ })
+    $allExpectedSkips = ($presentRows.Count -gt 0 -and $expectedSkipRows.Count -eq $presentRows.Count)
+    $processExitTolerated = $false
     if ($failed.Count -gt 0) {
         $testsPassed = $false
         $reasons += 'failed-row'
@@ -1305,8 +1333,11 @@ function ConvertTo-NightlyCoverageVerdict {
         $reasons += ('unknown-outcome:{0}' -f (($unknown | ForEach-Object { $_.Identity }) -join ','))
     }
     if ($ProcessExit -ne 0) {
-        $testsPassed = $false
-        $reasons += ('process-exit-{0}' -f $ProcessExit)
+        if ($ProcessExit -eq 8 -and $allExpectedSkips) { $processExitTolerated = $true }
+        else {
+            $testsPassed = $false
+            $reasons += ('process-exit-{0}' -f $ProcessExit)
+        }
     }
     if ($skipped.Count -gt 0) {
         $requiredHit = @($skipped | Where-Object {
@@ -1334,6 +1365,22 @@ function ConvertTo-NightlyCoverageVerdict {
     if ($null -eq $passedCount) {
         $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
     }
+    $skipWarnings = New-Object System.Collections.Generic.List[string]
+    if ($null -ne $KnownTestIdentities) {
+        $knownTests = [System.Collections.Generic.Dictionary[string,bool]]::new([System.StringComparer]::Ordinal)
+        foreach ($knownId in @($KnownTestIdentities)) {
+            $knownText = [string]$knownId
+            if (-not [string]::IsNullOrWhiteSpace($knownText)) { $knownTests[$knownText] = $true }
+        }
+        foreach ($entry in @($rosterEntries)) {
+            if ($null -eq $entry) { continue }
+            if ([string]$entry.platform -cne $Platform) { continue }
+            $entryTest = [string]$entry.test
+            if (-not $knownTests.ContainsKey($entryTest)) {
+                [void]$skipWarnings.Add('stale-roster:' + $entryTest)
+            }
+        }
+    }
     return [pscustomobject]@{
         coverageComplete = [bool]$coverageComplete
         testsPassed = [bool]$testsPassed
@@ -1344,6 +1391,9 @@ function ConvertTo-NightlyCoverageVerdict {
         total = @($TerminalRows).Count
         skippedIdentities = @($skipped | ForEach-Object { $_.Identity })
         failedIdentities = @($failed | ForEach-Object { $_.Identity })
+        expectedSkips = $expectedSkipRows.Count
+        warnings = $skipWarnings.ToArray()
+        processExitTolerated = [bool]$processExitTolerated
     }
 }
 
@@ -1471,7 +1521,9 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         [string[]]$RequiredClasses = @(),
         $ProfileExclusions = $null,
         [switch]$ProfileAware,
-        $DiscoveryIndex = $null
+        $DiscoveryIndex = $null,
+        [string]$Platform = '',
+        $ExpectedSkipRoster = $null
     )
     $reasons = @()
     if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) {
@@ -1563,7 +1615,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit $ProcessExit `
         -Sha $Sha -ExpectedSha $ExpectedSha -GitRef $GitRef -ExpectedRef $ExpectedRef `
         -PolicyHash $PolicyHash -ExpectedPolicyHash $ExpectedPolicyHash `
-        -DiscoveryNodes $inProgressNodes -UsedDiscoveryAsExecution $false
+        -DiscoveryNodes $inProgressNodes -UsedDiscoveryAsExecution $false `
+        -Platform $Platform -ExpectedSkipRoster $ExpectedSkipRoster
     $coverageComplete = [bool]$verdict.coverageComplete
     $testsPassed = [bool]$verdict.testsPassed
     foreach ($r in @($verdict.reasons)) { $reasons += $r }
@@ -1629,6 +1682,8 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         terminalNodes = $terminalNodes
         discoveryNodes = $discoveryNodes
         census = $censusOut
+        processExitTolerated = [bool]$verdict.processExitTolerated
+        warnings = @($verdict.warnings)
     }
 }
 
