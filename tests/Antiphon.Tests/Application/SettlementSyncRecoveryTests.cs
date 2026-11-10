@@ -932,16 +932,16 @@ public sealed class SettlementSyncRecoveryTests
     /// The Held claim restamps the debt and does not read a retirement or the filesystem.
     /// The checked closure is the Held-reachable part of <c>ClaimAsync</c> (the shared prefix,
     /// the Held branch, and the rescue tail; not the Pending else) plus every same-class method
-    /// it calls: <c>LockTaskAsync</c>, <c>RescheduleHeldAsync</c>, and
-    /// <c>RescheduleHeldInNewTransactionAsync</c>. A filesystem, retirement, or Git call in any
-    /// of those methods fails this pin.
+    /// it calls. An exhausted debt observes the desktop through <c>ExhaustedDesktopMatchesAsync</c>
+    /// and <c>MarkExhaustedReadyAsync</c>; the rev-parse itself is on <c>RemoteWorkspaceService</c>.
+    /// A filesystem, retirement, or <c>SyncSettledAsync</c> call in any of those methods fails this pin.
     /// </summary>
     private static void AssertHeldRecheckReadsNoFilesystem()
     {
         var source = ReadRepoFile("server/Application/Services/SettlementSyncRecoveryService.cs");
         var closure = ScanHeldRestampClosure(source);
         string.Join(", ", closure.Methods).ShouldBe(
-            "ClaimAsync, LockTaskAsync, RescheduleHeldAsync, RescheduleHeldInNewTransactionAsync",
+            "ClaimAsync, LockTaskAsync, ExhaustedDesktopMatchesAsync, MarkExhaustedReadyAsync, RescheduleHeldAsync, RescheduleHeldInNewTransactionAsync, EpisodeMatches",
             "Held restamp call-path closure");
         closure.FilesystemAccess.ShouldBeEmpty(
             "Held restamp closure " + string.Join(", ", closure.Methods));
@@ -1155,8 +1155,9 @@ public sealed class SettlementSyncRecoveryTests
     /// <summary>
     /// CARD-1446 V-3. A due Pending debt whose <c>Attempts</c> already reached
     /// <c>Delegation:RunnerSyncDebtMaxAttempts</c> (48) is Held <c>settlement_sync_attempts_exhausted</c> at the
-    /// claim, before Git: the sweep attempts nothing, no command is recorded, the desktop stays at its baseline,
-    /// and the Held row is restamped an hour later rather than retried.
+    /// claim, before Git: the sweep attempts nothing, no command is recorded, and the desktop stays at its baseline.
+    /// An hour later the exhausted recheck reads desktop HEAD and, while HEAD is still the baseline, restamps
+    /// the row instead of fast-forwarding it. The attention item stays.
     /// </summary>
     [Test]
     public async Task C1446_PendingDebtAtAttemptCapIsHeldExhaustedWithoutGit()
@@ -1184,8 +1185,15 @@ public sealed class SettlementSyncRecoveryTests
         held.ReasonCode.ShouldBe("settlement_sync_attempts_exhausted");
         held.Attempts.ShouldBe(48);
         held.NextAttemptAt.ShouldBe(world.DebtClock.GetUtcNow().UtcDateTime.AddMinutes(60));
-        world.Git.Git.Commands.ShouldBeEmpty();
+        world.Git.Git.Commands.ShouldContain(c => c.Contains("rev-parse", StringComparison.Ordinal));
+        world.Git.Git.Commands.ShouldNotContain(c => c.Contains("--ff-only", StringComparison.Ordinal)
+            || c.StartsWith("merge", StringComparison.Ordinal)
+            || c.StartsWith("pull", StringComparison.Ordinal)
+            || c.StartsWith("reset", StringComparison.Ordinal));
         (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        SettlementSyncDebtAttention.Build(
+            [held], [world.Task], world.DebtClock.GetUtcNow().UtcDateTime, new DelegationSettings())
+            .ShouldHaveSingleItem();
     }
 
     /// <summary>

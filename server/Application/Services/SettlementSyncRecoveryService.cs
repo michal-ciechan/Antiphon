@@ -10,14 +10,19 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1082 D-5. Retries an accepted desktop fast-forward. At most 32 due rows, Git outside
-/// the claim transaction, and the only write is the debt row. An empty table costs the one
+/// CARD-1082 D-5. Retries an accepted desktop fast-forward. At most 32 due rows. Pending Git
+/// runs outside the claim transaction, and the only write is the debt row. An exhausted Held
+/// recheck reads desktop HEAD inside its claim and does not fast-forward. An empty table costs the one
 /// indexed read in <see cref="SweepAsync"/>. A Held row is re-checked every
-/// <see cref="HeldRecheckMinutes"/> by restamping <c>NextAttemptAt</c>. The re-check does not
-/// read the filesystem, match a path, query a retirement, run Git, or fast-forward, and it
-/// does not supersede: <see cref="AgentTaskSyncDebt"/> has no registration id a complete
-/// retirement can be bound to. Any failure keeps the row Held and still moves the next
-/// attempt forward. Pending recovery is unchanged.
+/// <see cref="HeldRecheckMinutes"/> by restamping <c>NextAttemptAt</c>. Every Held reason
+/// except <c>settlement_sync_attempts_exhausted</c> does not read the filesystem, match a path,
+/// query a retirement, run Git, or fast-forward, and it does not supersede:
+/// <see cref="AgentTaskSyncDebt"/> has no registration id a complete retirement can be bound to.
+/// A debt held for exhausted attempts is re-checked on that same hour by reading the desktop
+/// worktree HEAD only. When that HEAD is the recorded source and the episode still matches, the
+/// row becomes Ready and its attention warning clears. The recheck does not fetch, merge, or
+/// fast-forward. Any other failure keeps the row Held and still moves the next attempt forward.
+/// Pending recovery is unchanged.
 /// This service does not read
 /// <c>RunnerSyncDebtOnSettlement</c>: that switch stops settlement from minting a row, and a
 /// row already accepted keeps recovering. CARD-1446 D-2: a Pending row claimed
@@ -74,6 +79,7 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
     private async Task<Claim?> ClaimAsync(Guid id, DateTime due, CancellationToken ct)
     {
         (Guid TaskId, long Revision)? rescue = null;
+        AgentTask? readyTask = null;
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             var snapshot = await db.AgentTaskSyncDebts.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id, ct);
@@ -85,9 +91,21 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                 if (debt.NextAttemptAt is not null && debt.NextAttemptAt > due) return null;
                 try
                 {
-                    if (await RescheduleHeldAsync(id, debt.Revision, due, ct) == 1)
+                    // Only an exhausted row is observed. Every other Held reason stays a restamp.
+                    if (debt.ReasonCode == RemoteSettlementSyncReasons.SettlementSyncAttemptsExhausted)
+                    {
+                        var matched = await ExhaustedDesktopMatchesAsync(debt, ct);
+                        if (matched is not null && debt.SourceSha is string sourceSha
+                            && await MarkExhaustedReadyAsync(id, debt.Revision, sourceSha, due, ct) == 1)
+                        {
+                            await tx.CommitAsync(ct);
+                            readyTask = matched;
+                        }
+                    }
+
+                    if (readyTask is null && await RescheduleHeldAsync(id, debt.Revision, due, ct) == 1)
                         await tx.CommitAsync(ct);
-                    return null;
+                    if (readyTask is null) return null;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
@@ -148,9 +166,53 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
             }
         }
 
+        if (readyTask is not null)
+        {
+            try
+            {
+                // A missed publish is recoverable from the debt row on the next read.
+                await events.PublishToGroupAsync("dashboard", "AgentTaskChanged",
+                    new { taskId = readyTask.Id, rootId = readyTask.RootTaskId }, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                logger.LogWarning("Settlement sync debt {DebtId} ready publish missed ({Type})", id, ex.GetType().Name);
+            }
+
+            return null;
+        }
+
         if (rescue is { } held)
             await RescheduleHeldInNewTransactionAsync(id, held.TaskId, held.Revision, due, ct);
         return null;
+    }
+
+    /// <summary>
+    /// Exhausted debts only. The task episode must still match, and the desktop worktree HEAD
+    /// must be the recorded source. Git failure or a mismatch returns null so the caller restamps.
+    /// </summary>
+    private async Task<AgentTask?> ExhaustedDesktopMatchesAsync(AgentTaskSyncDebt debt, CancellationToken ct)
+    {
+        var task = await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == debt.TaskId, ct);
+        if (!EpisodeMatches(task, debt)) return null;
+        if (!await workspace.CheckoutHeadMatchesAsync(debt.WorktreePath, debt.SourceSha, ct)) return null;
+        return task;
+    }
+
+    private Task<int> MarkExhaustedReadyAsync(Guid id, long revision, string sourceSha, DateTime due, CancellationToken ct)
+    {
+        DateTime? next = null;
+        return db.AgentTaskSyncDebts.Where(d => d.Id == id && d.Revision == revision
+                && d.State == AgentTaskSyncDebtState.Held
+                && d.ReasonCode == RemoteSettlementSyncReasons.SettlementSyncAttemptsExhausted)
+            .ExecuteUpdateAsync(u => u
+                .SetProperty(d => d.State, AgentTaskSyncDebtState.Ready)
+                .SetProperty(d => d.ReasonCode, RemoteSettlementSyncReasons.SettlementSyncReady)
+                .SetProperty(d => d.ConfirmedSha, sourceSha)
+                .SetProperty(d => d.SourceReadyAt, due)
+                .SetProperty(d => d.NextAttemptAt, next)
+                .SetProperty(d => d.UpdatedAt, due)
+                .SetProperty(d => d.Revision, d => d.Revision + 1), ct);
     }
 
     private async Task<bool> SaveAsync(Claim claim, RemoteSettlementSyncResult result, CancellationToken ct)

@@ -401,7 +401,7 @@ public class RunnerBranchContractDocumentationTests
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
         "The desktop checkout is dirty. This debt stays Held.",
         "Review that exact pushed S in a Worktree Review with -StartRef",
-        "A Held debt is re-checked every 60 minutes by restamping NextAttemptAt 60 minutes ahead: the re-check reads no filesystem and matches no path, runs no Git, fast-forwards nothing, and does not supersede, because AgentTaskSyncDebts has no registration id that a complete retirement can be bound to. The attention warning stays until that binding exists.",
+        "A Held debt is re-checked every 60 minutes by restamping NextAttemptAt 60 minutes ahead. Every Held reason except `settlement_sync_attempts_exhausted` reads no filesystem and matches no path, runs no Git, fast-forwards nothing, and does not supersede, because AgentTaskSyncDebts has no registration id that a complete retirement can be bound to, and its attention warning stays. A debt held `settlement_sync_attempts_exhausted` is re-checked on that same hour by reading the desktop worktree HEAD only; when that HEAD is the recorded source and the episode still matches, the row becomes Ready (`settlement_sync_ready`) and the attention warning clears. That recheck does not fetch, merge, or fast-forward.",
     ];
 
     private static readonly string[] RuntimeSentences =
@@ -415,7 +415,7 @@ public class RunnerBranchContractDocumentationTests
         "backoff is 1, 2, 4, then 5 minutes",
         "-Land does not read RemoteSync.",
         "syncDebt",
-        "A Held debt is re-checked hourly and stays Held: the re-check does not read the worktree and does not supersede the row.",
+        "A Held debt is re-checked hourly. Every reason except `settlement_sync_attempts_exhausted` stays Held: that re-check does not read the worktree and does not supersede the row. An exhausted debt is re-checked by reading the desktop worktree HEAD, and becomes Ready when that HEAD is the recorded source.",
     ];
 
     private static readonly string[] OpsSentences =
@@ -429,7 +429,7 @@ public class RunnerBranchContractDocumentationTests
         "synced later",
         "the progress read, not the lease, blocked the task; repair what the handoff names, then reply.",
         "RunnerSyncDebtAttentionMinutes defaults to 30.",
-        "Held debt is re-checked hourly and stays Held, so the re-check does not clear its attention row.",
+        "Held debt other than `settlement_sync_attempts_exhausted` is re-checked hourly and stays Held, so that re-check does not clear its attention row. A debt held `settlement_sync_attempts_exhausted` is re-checked hourly by reading the desktop worktree HEAD; when that HEAD is the recorded source the row becomes Ready and the attention warning clears.",
     ];
 
     private static readonly string[] ApiSentences =
