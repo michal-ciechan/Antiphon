@@ -41,6 +41,8 @@ public sealed class RcStoppedRunSeedTests
     [Test, Timeout(120_000)] public Task CumulativeMergeExplicitProven(CancellationToken token) => Run(nameof(CumulativeMergeExplicitProven), token);
     [Test, Timeout(120_000)] public Task CumulativeMergeDigestStable(CancellationToken token) => Run(nameof(CumulativeMergeDigestStable), token);
     [Test, Timeout(120_000)] public Task CumulativeMergeLaunchDefaults(CancellationToken token) => Run(nameof(CumulativeMergeLaunchDefaults), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergeFixPresentAtFailure(CancellationToken token) => Run(nameof(CumulativeMergeFixPresentAtFailure), token);
+    [Test, Timeout(120_000)] public Task CumulativeMergePrintsDigest(CancellationToken token) => Run(nameof(CumulativeMergePrintsDigest), token);
 
     // Provisional: one measured export of a 3,300 + 1,700 file layout (see the harness detail).
     // The harness budget is the file-creation plus export ceiling, wider than the 2x export bound.

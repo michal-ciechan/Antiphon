@@ -223,7 +223,7 @@ function Invoke-MergeChunkOrder($Doc,$Chunks,$Now){
     return New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $Now
 }
 try {
-    if($Case -in @('CumulativeMergeProvenDrop','CumulativeMergeUnfixedGreen','CumulativeMergeCherryPick')){
+    if($Case -in @('CumulativeMergeProvenDrop','CumulativeMergeUnfixedGreen','CumulativeMergeCherryPick','CumulativeMergeFixPresentAtFailure')){
         . (Join-Path $PSScriptRoot 'lib/test-selection.ps1')
     }
     $before=@(Snapshot)
@@ -1547,6 +1547,91 @@ try {
             $declares=($nightly.Contains('[string]$PriorFailuresPath') -and $nightly.Contains('[string]$PriorFailuresDigest') -and $nightly.Contains('[switch]$AcceptCrossCandidateSeed') -and $nightly.Contains('[string]$SeedSourceCandidateId'))
             $noCall=(-not $nightly.Contains('merge-nightly-seeds.ps1'))
             Check ($ascii -and $text.Contains($sentence) -and $declares -and $noCall) ('ascii='+$ascii+'; sentence='+$text.Contains($sentence)+'; declares='+$declares+'; noCall='+$noCall)
+        }
+        'CumulativeMergeFixPresentAtFailure' {
+            $repo=Join-Path $root 'present-repo'
+            New-MergeGitRepo $repo
+            $rootSha=Add-MergeGitCommit $repo 'a.txt' 'root' 'root' ''
+            $fixSha=Add-MergeGitCommit $repo 'a.txt' 'fixed' 'fix the arm' ''
+            $failSha=Add-MergeGitCommit $repo 'b.txt' 'later' 'later tip' ''
+            $newerFixSha=Add-MergeGitCommit $repo 'd.txt' 'second fix' 'fix the arm again' ''
+            Invoke-C487FixtureGit $repo @('checkout','-b','side',$rootSha)
+            $pickSha=Add-MergeGitCommit $repo 'c.txt' 'port' 'port the fix' ('(cherry picked from commit '+$fixSha+')')
+            $tab=[char]9
+            $utf8=New-Object System.Text.UTF8Encoding $false
+            $decision=Join-Path $root 'present-decisions.txt'
+            [IO.File]::WriteAllText($decision,('antiphon|Fixture.Alpha|M1'+$tab+$fixSha+"`n"),$utf8)
+            $mixedDecision=Join-Path $root 'present-mixed.txt'
+            [IO.File]::WriteAllText($mixedDecision,('antiphon|Fixture.Alpha|M1'+$tab+$fixSha+','+$newerFixSha+"`n"),$utf8)
+            function Write-PresentPair([string]$Name,[string]$FailSha,[string]$GreenSha,[bool]$GreenCompleted){
+                $olderObserved='2026-11-01T00:00:00.0000000+00:00'
+                $newerObserved='2026-11-02T00:00:00.0000000+00:00'
+                $olderPath=Join-Path $root ($Name+'-older.json')
+                $newerPath=Join-Path $root ($Name+'-newer.json')
+                Write-MergeSeed $olderPath 'run-fail' 'rc-fail' $FailSha $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                    (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+                ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+                Write-MergeSeed $newerPath 'run-green' 'rc-green' $GreenSha $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                    (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $GreenCompleted $true $newerObserved)
+                ) @() @()
+                return @($olderPath,$newerPath)
+            }
+            function Read-Present([string]$Name,[string[]]$Seeds,[string]$DecisionPath,[string[]]$Proven){
+                $out=Join-Path $root ($Name+'-merged.json')
+                $reportPath=Join-Path $root ($Name+'-report.json')
+                $merged=Invoke-MergeNightlySeeds -Seeds $Seeds -Decision $DecisionPath -Repo $repo -Proven $Proven -OutputPath $out -ReportPath $reportPath
+                $status='';$methods='';$flag=$false;$proving='';$containing=''
+                if($merged.Code -eq 0){
+                    $doc=Read-NightlyStoppedRunSeed $out
+                    $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
+                    $row=Find-MergeIdentity (Read-MergeReport $reportPath) 'M1'
+                    $status=[string]$row.status
+                    $flag=($row.fixPresentAtFailure -eq $true)
+                    $proving=[string]$row.provingRun
+                    $containing=[string]$row.containingCommit
+                }
+                return [pscustomobject]@{Code=$merged.Code;Status=$status;Methods=$methods;Flag=$flag;Proving=$proving;Containing=$containing;Text=$merged.Text}
+            }
+            $same=Read-Present 'same' (Write-PresentPair 'same' $failSha $failSha $true) $decision @()
+            $older=Read-Present 'older' (Write-PresentPair 'older' $failSha $fixSha $true) $decision @()
+            $held=Read-Present 'held' (Write-PresentPair 'held' $failSha $failSha $false) $decision @()
+            $fresh=Read-Present 'fresh' (Write-PresentPair 'fresh' $rootSha $failSha $true) $decision @()
+            $override=Read-Present 'override' (Write-PresentPair 'override' $failSha $failSha $true) $decision @('antiphon|Fixture.Alpha|M1:run-green')
+            $picked=Read-Present 'picked' (Write-PresentPair 'picked' $pickSha $pickSha $true) $decision @()
+            $mixed=Read-Present 'mixed' (Write-PresentPair 'mixed' $failSha $newerFixSha $true) $mixedDecision @()
+            $openOk=($same.Code -eq 0 -and $same.Status -ceq 'open' -and $same.Methods -ceq 'M1' -and $same.Flag -and [string]::IsNullOrWhiteSpace($same.Containing))
+            $olderOk=($older.Code -eq 0 -and $older.Status -ceq 'open' -and $older.Methods -ceq 'M1' -and $older.Flag -and [string]::IsNullOrWhiteSpace($older.Containing))
+            $heldOk=($held.Code -eq 0 -and $held.Status -ceq 'open' -and $held.Methods -ceq 'M1' -and $held.Flag -and [string]::IsNullOrWhiteSpace($held.Containing))
+            $freshOk=($fresh.Code -eq 0 -and $fresh.Status -ceq 'proven' -and $fresh.Methods -ceq '' -and -not $fresh.Flag -and $fresh.Proving -ceq 'run-green' -and $fresh.Containing -ceq $fixSha)
+            $overrideOk=($override.Code -eq 0 -and $override.Status -ceq 'proven' -and $override.Methods -ceq '' -and $override.Flag -and $override.Proving -ceq 'run-green')
+            $pickedOk=($picked.Code -eq 0 -and $picked.Status -ceq 'open' -and $picked.Methods -ceq 'M1' -and $picked.Flag -and [string]::IsNullOrWhiteSpace($picked.Containing))
+            $mixedOk=($mixed.Code -eq 0 -and $mixed.Status -ceq 'proven' -and $mixed.Methods -ceq '' -and $mixed.Flag -and $mixed.Proving -ceq 'run-green' -and $mixed.Containing -ceq $newerFixSha)
+            $ok=($openOk -and $olderOk -and $heldOk -and $freshOk -and $overrideOk -and $pickedOk -and $mixedOk)
+            Check $ok ('same='+$same.Status+'/'+$same.Methods+'/'+$same.Flag+'; older='+$older.Status+'; held='+$held.Status+'; fresh='+$fresh.Status+'/'+$fresh.Containing+'; override='+$override.Status+'/'+$override.Flag+'; picked='+$picked.Status+'; mixed='+$mixed.Status+'/'+$mixed.Containing+'; fix='+$fixSha+'; newerFix='+$newerFixSha+'; text='+$same.Text+$older.Text+$held.Text+$fresh.Text+$override.Text+$picked.Text+$mixed.Text)
+        }
+        'CumulativeMergePrintsDigest' {
+            $olderObserved='2026-11-01T00:00:00.0000000+00:00'
+            $newerObserved='2026-11-02T00:00:00.0000000+00:00'
+            $older=Join-Path $root 'print-older.json'
+            $newer=Join-Path $root 'print-newer.json'
+            Write-MergeSeed $older 'run-older' 'rc-older' ('a'*40) $olderObserved '2026-11-01T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $olderObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+            Write-MergeSeed $newer 'run-newer' 'rc-newer' ('b'*40) $newerObserved '2026-11-02T01:00:00.0000000+00:00' @(
+                (New-MergeChunk 'antiphon' 'g1' @('Fixture.Alpha') $true $true $newerObserved)
+            ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
+            $out=Join-Path $root 'print-merged.json'
+            $reportPath=Join-Path $root 'print-report.json'
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath
+            $fileDigest=''
+            if([IO.File]::Exists($out)){$fileDigest=Get-NightlyHistoryDigest $out}
+            $note='A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.'
+            $mergePath=Join-Path $PSScriptRoot 'merge-nightly-seeds.ps1'
+            $scriptText=[IO.File]::ReadAllText($mergePath)
+            $printed=$false
+            if(-not [string]::IsNullOrWhiteSpace($fileDigest)){$printed=$merged.Text.Contains('digest='+$fileDigest)}
+            $noted=($scriptText.Contains($note) -and $merged.Text.Contains($note))
+            Check ($merged.Code -eq 0 -and $fileDigest -cmatch '^[a-f0-9]{64}$' -and $printed -and $noted) ('code='+$merged.Code+'; digest='+$fileDigest+'; printed='+$printed+'; noted='+$noted+'; text='+$merged.Text)
         }
         default {throw 'unknown case'}
     }
