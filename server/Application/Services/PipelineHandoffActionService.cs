@@ -89,7 +89,10 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
         }
         else if (action.NotificationId is not null) throw Refuse("receipt_changed");
         action.ConsumedAt ??= now;
-        if (request.ReasonCode == "eligible") action.EligibleAt ??= now;
+        // A hold followed by eligible starts a new five-minute window. Another eligible
+        // observation in the same window does not move it.
+        if (request.ReasonCode == "eligible" && action.ReasonCode != "eligible")
+            action.EligibleAt = now;
         action.ReasonCode = request.ReasonCode;
         action.NextObservationAt = request.NextObservationAt;
         db.PipelineHandoffObservations.Add(new PipelineHandoffObservation
@@ -110,7 +113,7 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
         var actions = await db.PipelineHandoffActions.AsNoTracking().Where(a => a.PredecessorTaskId == predecessorId)
             .OrderBy(a => a.CreatedAt).ThenBy(a => a.Id).ToListAsync(ct);
         var results = new List<PipelineHandoffActionDto>();
-        foreach (var action in actions) results.Add(await ReadAsync(action, ct));
+        foreach (var action in actions) results.Add(await ReadAsync(action, ct, tolerateChildMismatch: true));
         return results;
     }
 
@@ -190,24 +193,62 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
         await tx.CommitAsync(ct);
     }
 
-    private async Task<PipelineHandoffActionDto> ReadAsync(PipelineHandoffAction action, CancellationToken ct)
+    private async Task<PipelineHandoffActionDto> ReadAsync(PipelineHandoffAction action, CancellationToken ct,
+        bool tolerateChildMismatch = false)
     {
         // Always fetch a detached snapshot: projection must not write cached task clocks back.
         var snapshot = await db.PipelineHandoffActions.AsNoTracking().SingleAsync(a => a.Id == action.Id, ct);
         var child = snapshot.ChildTaskId is { } childId
             ? await db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == childId, ct) : null;
-        if (snapshot.ChildTaskId is not null && (child is null || child.CardId != snapshot.CardId
-            || child.ProjectId != snapshot.ProjectId || child.Role != snapshot.NextStage))
-            throw Refuse("child_mismatch");
+        var mismatch = snapshot.ChildTaskId is not null && (child is null || child.CardId != snapshot.CardId
+            || child.ProjectId != snapshot.ProjectId || child.Role != snapshot.NextStage);
+        if (mismatch)
+        {
+            // A list read still returns the other actions. One foreign child is not a 409 for the GET.
+            if (!tolerateChildMismatch) throw Refuse("child_mismatch");
+            child = null;
+        }
         snapshot.ChildCreatedAt = child?.CreatedAt;
         snapshot.ChildDispatchedAt = child?.DispatchedAt;
         var history = await db.PipelineHandoffObservations.AsNoTracking().Where(o => o.ActionId == action.Id)
             .OrderBy(o => o.Sequence).ToListAsync(ct);
+        var now = clock.GetUtcNow().UtcDateTime;
         bool? timely = snapshot.EligibleAt is { } eligible && child is not null
             ? child.CreatedAt >= eligible && child.CreatedAt - eligible <= TimeSpan.FromMinutes(5) : null;
-        var unexplained = child is null && snapshot.ReasonCode == "eligible" && snapshot.EligibleAt is { } since
-            && clock.GetUtcNow().UtcDateTime - since > TimeSpan.FromMinutes(15);
+        var unexplained = RequiresInvestigation(snapshot, history, child, now);
         return new(snapshot, history, timely, unexplained);
+    }
+
+    /// <summary>
+    /// An eligibility gap over 15 minutes stays investigated after a later consumed record.
+    /// A hold whose next observation is already past is investigated too.
+    /// </summary>
+    private static bool RequiresInvestigation(PipelineHandoffAction snapshot,
+        IReadOnlyList<PipelineHandoffObservation> history, AgentTask? child, DateTime now)
+    {
+        if (child is null && snapshot.NextObservationAt is { } due && now > due)
+            return true;
+        DateTime? open = null;
+        foreach (var observation in history)
+        {
+            if (observation.ReasonCode == "eligible")
+            {
+                open ??= observation.ObservedAt;
+                continue;
+            }
+            if (open is { } start && UnexplainedGap(start, observation.ObservedAt, child?.CreatedAt))
+                return true;
+            open = null;
+        }
+        return open is { } still && UnexplainedGap(still,
+            child?.CreatedAt is { } created && created >= still ? created : now, child?.CreatedAt);
+    }
+
+    private static bool UnexplainedGap(DateTime start, DateTime end, DateTime? childCreated)
+    {
+        if (childCreated is { } created && created >= start && created - start <= TimeSpan.FromMinutes(15))
+            return false;
+        return end - start > TimeSpan.FromMinutes(15);
     }
 
     private async Task RequireWorkflowAsync(AgentTask predecessor, PipelineHandoffActionRequest request, CancellationToken ct)
