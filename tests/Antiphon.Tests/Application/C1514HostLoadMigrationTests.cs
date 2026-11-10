@@ -18,6 +18,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string Membership = "20261107040142_HostLoadSnapshotMembership";
     private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
     private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
+    private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -49,7 +50,8 @@ public sealed class C1514HostLoadMigrationTests
         chain.Skip(previous).Take(3).ShouldBe([Previous, Telemetry, Membership], "linear-after-current-master");
         chain[previous + 3].ShouldBe(Catchup, "retention-catchup-follows-membership");
         chain[previous + 4].ShouldBe(PromptStamp, "prompt-stamp-index-follows-retention-catchup");
-        (chain.Length - previous).ShouldBe(5, "prompt-stamp-index-is-the-tip");
+        chain[previous + 5].ShouldBe(ShadowCohort, "shadow-cohort-follows-prompt-stamp");
+        (chain.Length - previous).ShouldBe(6, "shadow-cohort-is-the-tip");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
@@ -80,7 +82,7 @@ public sealed class C1514HostLoadMigrationTests
             "IX_HostLoadHourlyRollups_Age", "IX_HostLoadSamples_DerivedAge"]);
     }
 
-    [Test, Arguments(Telemetry), Arguments(Membership), Arguments(Catchup)]
+    [Test, Arguments(Telemetry), Arguments(Membership), Arguments(Catchup), Arguments(ShadowCohort)]
     public void BothDownOperationsRefuseDestructiveDowngrade(string migration)
     {
         var error = Should.Throw<NotSupportedException>(() => _ = Migration(migration).DownOperations);
