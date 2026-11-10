@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using Shouldly;
@@ -224,6 +225,169 @@ public sealed class PublishedCardCompletionTests
         Directory.Exists(w.Land.Fixture.Source).ShouldBeTrue("cleanup-residue-retained");
     }
 
+    [Test]
+    public async Task C1294_UnlandedCodeSiblingBlocksClose()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        Guid siblingId;
+        await using (var db = w.Db())
+        {
+            siblingId = Guid.NewGuid();
+            var planId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = siblingId, RootTaskId = siblingId, CardId = w.CardId, Title = "sibling code", Goal = "sibling code",
+                Role = AgentTaskRole.Code, Status = AgentTaskStatus.Succeeded,
+            });
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = planId, RootTaskId = planId, CardId = w.CardId, Title = "sibling plan", Goal = "sibling plan",
+                Role = AgentTaskRole.Plan, Status = AgentTaskStatus.Succeeded,
+            });
+            await db.SaveChangesAsync();
+        }
+        var proposal = await w.ProposeAsync();
+        await w.RefusedAsync(proposal, "unlanded_sibling", "succeeded-unlanded-code-sibling-blocks-done");
+        await using (var db = w.Db())
+        {
+            var operation = await db.AgentTaskLandings.AsNoTracking().SingleAsync(o => o.Id == w.Request.OperationId);
+            var published = JsonSerializer.Deserialize<AgentTaskLanding>(JsonSerializer.Serialize(operation))!;
+            published.Id = Guid.NewGuid();
+            published.TaskId = siblingId;
+            published.Active = false;
+            published.RecoveryRefPrefix = $"refs/antiphon/land/{published.TaskId:N}/{published.Id:N}";
+            db.AgentTaskLandings.Add(published);
+            await db.SaveChangesAsync();
+        }
+        (await w.CompleteAsync(proposal)).Disposition.ShouldBe("completed", "published-code-sibling-allows-done");
+        await using var read = w.Db();
+        (await read.AgentTasks.SingleAsync(t => t.CardId == w.CardId && t.Role == AgentTaskRole.Plan)).Status
+            .ShouldBe(AgentTaskStatus.Succeeded, "unlanded-plan-sibling-stays");
+    }
+
+    [Test]
+    public async Task C1294_CloseCompletesWorkflowAndClearsActiveRun()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        var instant = DateTime.UtcNow;
+        var stamp = new DateTime(instant.Ticks - instant.Ticks % 10, DateTimeKind.Utc);
+        Guid runId;
+        await using (var db = w.Db())
+        {
+            var definition = new PipelineDefinition
+            {
+                Id = Guid.NewGuid(), Name = "c1294-" + Guid.NewGuid().ToString("N"), Source = PipelineDefinitionSource.Custom,
+                CreatedAt = stamp, UpdatedAt = stamp,
+            };
+            var revision = new PipelineDefinitionRevision
+            {
+                Id = Guid.NewGuid(), DefinitionId = definition.Id, RevisionNumber = 1, StagesJson = "[]",
+                ContentHash = "c1294run", CreatedAt = stamp,
+            };
+            runId = Guid.NewGuid();
+            db.AddRange(definition, revision, new CardWorkflowRun
+            {
+                Id = runId, CardId = w.CardId, PipelineDefinitionId = definition.Id,
+                PipelineDefinitionRevisionId = revision.Id, WorkflowName = definition.Name,
+                Status = CardWorkflowRunStatus.Running, CreatedAt = stamp, UpdatedAt = stamp,
+            });
+            var card = await db.Cards.SingleAsync(c => c.Id == w.CardId);
+            card.ActiveWorkflowRunId = runId;
+            await db.SaveChangesAsync();
+            var stored = await db.CardWorkflowRuns.AsNoTracking().SingleAsync(r => r.Id == runId);
+            await w.ReviseAsync(w.Request with
+            {
+                WorkflowRunId = runId,
+                PipelineDefinitionRevisionId = revision.Id,
+                CurrentStageId = stored.CurrentStageId,
+                WorkflowUpdatedAt = stored.UpdatedAt,
+            });
+        }
+        (await w.CloseAsync()).Disposition.ShouldBe("completed", "active-workflow-run-closes");
+        await using var read = w.Db();
+        var run = await read.CardWorkflowRuns.SingleAsync(r => r.Id == runId);
+        run.Status.ShouldBe(CardWorkflowRunStatus.Completed, "workflow-run-marked-completed");
+        run.CompletedAt.ShouldNotBeNull("workflow-run-completed-at");
+        (await read.Cards.SingleAsync(c => c.Id == w.CardId)).ActiveWorkflowRunId
+            .ShouldBeNull("completed-run-is-not-the-active-run");
+    }
+
+    [Test]
+    public async Task C1294_ShadowAdjudicatorMustDifferFromAcceptanceActor()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        var last = w.Settings.PublishedCloseShadowObservations[^1];
+        w.Settings.PublishedCloseShadowObservations[^1] = last with { Adjudicator = "operator" };
+        await w.RefusedAsync(await w.ProposeAsync(), "shadow_adjudicator_dependent", "acceptance-actor-cannot-adjudicate");
+        w.Settings.PublishedCloseShadowObservations[^1] = last;
+        (await w.CloseAsync()).Disposition.ShouldBe("completed", "independent-adjudicator-still-closes");
+    }
+
+    [Test]
+    public async Task C1294_ClosePushesLinkedTrackerAndCapturesReviewCheckpoint()
+    {
+        await using var w = await World.CreateAsync();
+        await w.PrepareAsync();
+        var agentId = Guid.NewGuid();
+        var fake = new FakeBidirectionalTracker(TrackerKind.GitHubIssues)
+        {
+            Candidates =
+            [
+                new TrackedIssue("acme/app#1", "#1", "Title", "Body", "open", 0, [], [],
+                    "https://github.test/acme/app/1", "{}"),
+            ],
+        };
+        await using (var db = w.Db())
+        {
+            var now = DateTime.UtcNow;
+            var board = await db.Boards.SingleAsync();
+            board.TrackerKind = TrackerKind.GitHubIssues;
+            board.TrackerActivatedAt = now;
+            db.BoardWorkflowDefinitions.Add(new BoardWorkflowDefinition
+            {
+                Id = Guid.NewGuid(), BoardId = board.Id, Version = 1, Name = "Tracked", IsActive = true,
+                CreatedAt = now, UpdatedAt = now,
+                Content = """
+                    ---
+                    tracker:
+                      kind: github_issues
+                      repository: acme/app
+                      active_states: [open]
+                      sync_out_create: false
+                    ---
+                    Work.
+                    """,
+            });
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, Name = "c1294-reviewer", Slug = "c1294-" + agentId.ToString("N")[..12],
+                WorkingDirectory = w.Land.Fixture.Source,
+            });
+            var card = await db.Cards.SingleAsync(c => c.Id == w.CardId);
+            card.AssignedAgentId = agentId;
+            card.AgentQueuePosition = 1;
+            db.ExternalIssueRefs.Add(new ExternalIssueRef
+            {
+                Id = Guid.NewGuid(), CardId = card.Id, TrackerKind = TrackerKind.GitHubIssues,
+                ExternalId = "acme/app#1", ExternalKey = "#1", Url = "https://github.test/acme/app/1",
+                RawPayloadJson = "{}", LastSyncedAt = now, Origin = ExternalIssueOrigin.ExternalImport,
+                LastKnownExternalState = "open", LastRevisionSynced = 0,
+            });
+            await db.SaveChangesAsync();
+        }
+        (await w.CloseWithEvidenceAsync(fake)).Disposition.ShouldBe("completed", "linked-close-still-completes");
+        await using var read = w.Db();
+        var checkpoints = await read.AgentReviewCheckpoints.CountAsync(c => c.AgentId == agentId
+            && c.Reason == "Card CARD-0001 completed");
+        var pushes = fake.SetStateCalls.Count;
+        var state = (await read.ExternalIssueRefs.SingleAsync(r => r.CardId == w.CardId)).LastKnownExternalState;
+        (checkpoints == 1 && pushes == 1 && state == "closed").ShouldBeTrue(
+            $"review-checkpoint-and-tracker-close checkpoints={checkpoints} pushes={pushes} state={state}");
+    }
+
     private sealed class InjectedFailure : Exception { }
     private sealed class Boundary : LandDeliveryBoundary
     {
@@ -255,7 +419,23 @@ public sealed class PublishedCardCompletionTests
         public Boundary Boundary { get; } = new();
         public Events Events { get; } = new();
         public AppDbContext Db() => Land.CreateContext();
-        public CardService Cards(AppDbContext db) => new(db, null!, null!, null!, Events, TimeProvider.System, null!);
+        public CardService Cards(AppDbContext db, TrackerCardStatePushService? push = null,
+            AgentReviewCheckpointService? checkpoints = null) =>
+            new(db, null!, null!, null!, Events, TimeProvider.System, checkpoints!, trackerStatePush: push);
+        public async Task<CompletePublishedCardResult> CloseWithEvidenceAsync(FakeBidirectionalTracker tracker)
+        {
+            await using var db = Db();
+            var push = new TrackerCardStatePushService(db,
+                new TrackerTokenResolver(db, new Antiphon.Tests.ApiKeys.ApiKeyStoreTests.FakeApiKeyProtector(),
+                    NullLogger<TrackerTokenResolver>.Instance),
+                [tracker], Options.Create(new TrackerSettings()), NullLogger<TrackerCardStatePushService>.Instance,
+                TimeProvider.System);
+            var checkpoints = new AgentReviewCheckpointService(db,
+                new GitWorkspaceService(NullLogger<GitWorkspaceService>.Instance),
+                NullLogger<AgentReviewCheckpointService>.Instance);
+            return await Cards(db, push, checkpoints).CompletePublishedAsync(await Completion(db).ProposeAsync(CardId, default),
+                Completion(db), "operator", default);
+        }
         private PublishedCardCompletion Completion(AppDbContext db) => new(db, Options.Create(Settings), Boundary, TimeProvider.System);
         public async Task<PublishedCardCompletionProposal> ProposeAsync()
         { await using var db = Db(); return await Completion(db).ProposeAsync(CardId, default); }
