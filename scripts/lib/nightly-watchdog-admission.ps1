@@ -246,7 +246,16 @@ function Test-NightlyWatchdogKilled {
 
 # Once total ran and request execute stop are on disk, a leftover tree is
 # killed after this grace instead of the full launch watchdog.
+# Unmeasured placeholder. Chunk logs record execution-stop-to-exit-seconds.
+# Set this near 2x that p95 (docs/test-performance-standards.md). 60000 matches
+# NightlyCompletionGrace.DefaultMilliseconds.
 $script:NightlyCompletionGraceMilliseconds = 60000
+
+function Get-NightlyHarnessHangField {
+    param([switch]$CompletedButHung)
+    if ($CompletedButHung) { return 'completed-but-hung' }
+    return ''
+}
 
 function Get-NightlyWatchdogTimeoutDisposition {
     param([bool]$TrxPresent, [bool]$TerminalAccounting, [switch]$CompletedButHung)
@@ -409,47 +418,4 @@ function Write-NightlyHangCapture {
     [System.IO.File]::WriteAllText($Path, (($lines -join "`n") + "`n"))
 }
 
-function Invoke-NightlyCompletionGrace {
-    param(
-        [scriptblock]$Exited,
-        [scriptblock]$Finished,
-        [int]$GraceMilliseconds,
-        [int]$WatchdogMilliseconds,
-        [int]$PollMilliseconds = 10
-    )
-    if ($PollMilliseconds -lt 1) { $PollMilliseconds = 1 }
-    $clock = [Diagnostics.Stopwatch]::StartNew()
-    $finishedAt = [int64]-1
-    $lastProbe = [int64]-500
-    $timedOut = $false
-    $hung = $false
-    while ($true) {
-        $gone = $false
-        if ($null -ne $Exited) {
-            try { $gone = [bool](& $Exited) } catch { $gone = $false }
-        }
-        if ($gone) { break }
-        $now = [int64]$clock.ElapsedMilliseconds
-        if ($null -ne $Finished -and $finishedAt -lt 0 -and ($now - $lastProbe) -ge 500) {
-            $lastProbe = $now
-            $done = $false
-            try { $done = [bool](& $Finished) } catch { $done = $false }
-            if ($done) { $finishedAt = $now }
-        }
-        if ($finishedAt -ge 0 -and ($now - $finishedAt) -ge $GraceMilliseconds) {
-            $timedOut = $true
-            $hung = $true
-            break
-        }
-        if ($now -ge $WatchdogMilliseconds) {
-            $timedOut = $true
-            break
-        }
-        Start-Sleep -Milliseconds $PollMilliseconds
-    }
-    return [pscustomobject]@{
-        TimedOut = $timedOut
-        CompletedButHung = $hung
-        ElapsedMilliseconds = [int]$clock.ElapsedMilliseconds
-    }
-}
+
