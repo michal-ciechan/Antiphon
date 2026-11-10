@@ -73,6 +73,62 @@ public sealed class CodexRunnerImageContractTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_up_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[1Ay").ShouldBe("x y", "CUU must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_down_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[1By").ShouldBe("x y", "CUD must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_back_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[1Dy").ShouldBe("x y", "CUB must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_next_line_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[1Ey").ShouldBe("x y", "CNL must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_previous_line_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[1Fy").ShouldBe("x y", "CPL must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_cursor_horizontal_absolute_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[9Gy").ShouldBe("x y", "CHA must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_horizontal_vertical_position_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[8;9fy").ShouldBe("x y", "HVP must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void Verifier_line_position_absolute_preserves_the_next_character()
+    {
+        StripVerifierCapture("x\u001b[8dy").ShouldBe("x y", "VPA must separate positioned words without eating y");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void Verifier_finds_the_0160_trust_prompt_in_raw_cursor_positioned_text()
     {
         // The measured 0.160.0 control capture in the CARD-0904 investigation: one CUP per word.
@@ -85,6 +141,7 @@ public sealed class CodexRunnerImageContractTests
     public void Verifier_still_strips_colour_and_erase_sequences()
     {
         StripVerifierCapture("A\u001b[31mB\u001b[0m\u001b[2KC").ShouldBe("ABC", "ordinary CSI must not consume following text");
+        StripVerifierCapture("A\u001b[1;40rB").ShouldBe("AB", "a scroll-region CSI is not a word separator");
     }
 
     [Test]
