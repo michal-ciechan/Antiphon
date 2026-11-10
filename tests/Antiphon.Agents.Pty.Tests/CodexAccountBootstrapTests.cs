@@ -26,6 +26,10 @@ public class CodexAccountBootstrapTests
         observation.Reason.ToString().ShouldBe("AccountBootstrap");
         observation.Reason.ShouldNotBe(CodexStartupReason.SignIn);
         observation.Reason.ShouldNotBe(CodexStartupReason.Unknown);
+        CodexAccountBootstrap.TryOutcome(
+            Welcome(Exact), Exact, "elapsedMs=43954", "/tmp/antiphon-codex-startup/example.txt", 1)
+            .ShouldBe(
+                "AccountBootstrap: Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code -32603); elapsedMs=43954; capture=/tmp/antiphon-codex-startup/example.txt; exitCode=1");
     }
 
     [Test]
@@ -37,12 +41,15 @@ public class CodexAccountBootstrapTests
     }
 
     [Test]
-    public void Fatal_line_above_a_ready_composer_stays_not_ready()
+    public void Sentence_in_an_agent_message_above_a_ready_composer_stays_ready()
     {
-        var screen = CodexStartupFixtures.InsertBeforeComposer(CodexStartupFixtures.P3, Exact);
+        var screen = CodexStartupFixtures.InsertBeforeComposer(
+            CodexStartupFixtures.P3, "• " + Exact);
         var observation = CodexStartupScreen.Classify(screen, Exact);
-        observation.IsReady.ShouldBeFalse();
-        observation.Reason.ToString().ShouldBe("AccountBootstrap");
+        observation.IsReady.ShouldBeTrue();
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        IdlePointer(screen);
+        NoBootstrapOutcome(screen, Exact);
     }
 
     [Test]
@@ -130,6 +137,178 @@ public class CodexAccountBootstrapTests
         var log = string.Join('\n', diagnostics);
         log.ShouldContain("not-ready reason=AccountBootstrap");
         log.ShouldNotContain("account/read failed");
+    }
+
+    [Test]
+    public void Quoting_composer_stays_readable()
+    {
+        var screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.P3, "› " + Exact);
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Unknown);
+        observation.Reason.ShouldNotBe(CodexStartupReason.AccountBootstrap);
+        CodexPointerComposerEvidence.IsComplete(screen, Exact).ShouldBeTrue();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, Exact).ShouldBe(Compact(Exact));
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Ready_screen_with_the_sentence_only_in_the_raw_tail_stays_ready()
+    {
+        var observation = CodexStartupScreen.Classify(CodexStartupFixtures.P3, Exact);
+        observation.IsReady.ShouldBeTrue();
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        IdlePointer(CodexStartupFixtures.P3);
+        NoBootstrapOutcome(CodexStartupFixtures.P3, Exact);
+    }
+
+    [Test]
+    public void Sentence_in_scrollback_above_the_banner_stays_ready()
+    {
+        var screen = Exact + "\n\n(older turn)\n\n" + CodexStartupFixtures.P3;
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeTrue();
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        IdlePointer(screen);
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Sentence_in_a_code_block_above_a_ready_composer_stays_ready()
+    {
+        var screen = CodexStartupFixtures.InsertBeforeComposer(CodexStartupFixtures.P3, "```");
+        screen = CodexStartupFixtures.InsertBeforeComposer(screen, Exact);
+        screen = CodexStartupFixtures.InsertBeforeComposer(screen, "```");
+        var observation = CodexStartupScreen.Classify(screen, screen);
+        observation.IsReady.ShouldBeTrue();
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        IdlePointer(screen);
+        NoBootstrapOutcome(screen, screen);
+    }
+
+    [Test]
+    public void Partially_drawn_composer_prefix_stays_readable()
+    {
+        const string partial = "Error: account/read failed during TUI bootstrap:";
+        var screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.P3, "› " + partial);
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexPointerComposerEvidence.IsComplete(screen, partial).ShouldBeTrue();
+        CodexPointerComposerEvidence.IsComplete(screen, Exact).ShouldBeFalse();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, Exact).ShouldBe(Compact(partial));
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Glyphless_partial_row_on_ready_chrome_stays_unknown()
+    {
+        var screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.P3, Exact);
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexPointerComposerEvidence.IsComplete(screen, Exact).ShouldBeFalse();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, Exact).ShouldBe(0);
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Resumed_session_with_the_old_error_in_history_stays_ready()
+    {
+        var screen = CodexStartupFixtures.InsertBeforeComposer(
+            CodexStartupFixtures.P3, "• Resumed session 700478bc");
+        screen = CodexStartupFixtures.InsertBeforeComposer(screen, Exact);
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeTrue();
+        observation.Reason.ShouldBe(CodexStartupReason.Ready);
+        IdlePointer(screen);
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Wrapped_quote_in_the_composer_stays_readable()
+    {
+        const string idle = "› Ask Codex to do anything";
+        const string block =
+            "› Error: account/read failed during TUI bootstrap: account/read failed:\n"
+            + "  workspace routing discovery timed out\n"
+            + "  (code -32603)";
+        var screen = CodexStartupFixtures.P3.Replace(idle, block, StringComparison.Ordinal);
+        const string body =
+            "Error: account/read failed during TUI bootstrap: account/read failed:"
+            + "  workspace routing discovery timed out"
+            + "  (code -32603)";
+        var observation = CodexStartupScreen.Classify(screen, Exact);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexPointerComposerEvidence.IsComplete(screen, body).ShouldBeTrue();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, body).ShouldBe(Compact(body));
+        NoBootstrapOutcome(screen, Exact);
+    }
+
+    [Test]
+    public void Composer_and_raw_tail_quoting_the_sentence_stay_readable()
+    {
+        var screen = CodexStartupFixtures.ReplaceComposer(CodexStartupFixtures.P3, "› " + Exact);
+        var observation = CodexStartupScreen.Classify(screen, screen);
+        observation.Reason.ShouldBe(CodexStartupReason.Unknown);
+        CodexPointerComposerEvidence.IsComplete(screen, Exact).ShouldBeTrue();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, Exact).ShouldBe(Compact(Exact));
+        NoBootstrapOutcome(screen, screen);
+    }
+
+    [Test]
+    public void Colored_fatal_frame_clause_drops_csi()
+    {
+        const string colored =
+            "Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code \u001b[31m-32603\u001b[0m)";
+        var screen = Welcome(colored);
+        var observation = CodexStartupScreen.Classify(screen, colored);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.AccountBootstrap);
+        var outcome = CodexAccountBootstrap.TryOutcome(
+            screen, colored, "elapsedMs=43954", "/tmp/antiphon-codex-startup/example.txt", 1);
+        outcome.ShouldBe(
+            "AccountBootstrap: Error: account/read failed during TUI bootstrap: account/read failed: workspace routing discovery timed out (code -32603); elapsedMs=43954; capture=/tmp/antiphon-codex-startup/example.txt; exitCode=1");
+        outcome.ShouldNotContain("[31m");
+        outcome.ShouldNotContain("\u001b");
+    }
+
+    [Test]
+    public void Blank_rendered_raw_tail_is_still_account_bootstrap()
+    {
+        var observation = CodexStartupScreen.Classify(" \n", Exact);
+        observation.IsReady.ShouldBeFalse();
+        observation.Reason.ShouldBe(CodexStartupReason.AccountBootstrap);
+        var outcome = CodexAccountBootstrap.TryOutcome(
+            " \n", Exact, "elapsedMs=43954", "/tmp/antiphon-codex-startup/example.txt", 1);
+        outcome.ShouldNotBeNull();
+        outcome.ShouldContain("AccountBootstrap: Error: account/read failed during TUI bootstrap");
+        outcome.ShouldContain("(code -32603)");
+    }
+
+    private static void IdlePointer(string screen)
+    {
+        var hint = CodexStartupScreen.HintAskAnything;
+        CodexPointerComposerEvidence.IsComplete(screen, hint).ShouldBeTrue();
+        CodexPointerComposerEvidence.MatchingPrefixLength(screen, hint).ShouldBe(Compact(hint));
+    }
+
+    private static void NoBootstrapOutcome(string rendered, string raw) =>
+        CodexAccountBootstrap.TryOutcome(
+            rendered, raw, "elapsedMs=43954", "/tmp/antiphon-codex-startup/example.txt", 1)
+            .ShouldBeNull();
+
+    private static int Compact(string text)
+    {
+        var count = 0;
+        foreach (var c in text)
+        {
+            if (!char.IsWhiteSpace(c))
+                count++;
+        }
+
+        return count;
     }
 
     private static string Welcome(string error) =>
