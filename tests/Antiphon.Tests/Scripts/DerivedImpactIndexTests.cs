@@ -693,6 +693,7 @@ public sealed class DerivedImpactIndexTests
         await File.WriteAllTextAsync(master, GitShow(root, MasterSelector + ":scripts/impacted-classes.ps1"));
         try
         {
+            var moved = 0;
             foreach (var sha in MergeRanges)
             {
                 var args = sha is null
@@ -704,15 +705,13 @@ public sealed class DerivedImpactIndexTests
                 previous.Exit.ShouldBe(0, sha + " " + previous.Text);
                 if (current.Stdout != previous.Stdout)
                 {
-                    var at = 0;
-                    var limit = Math.Min(current.Stdout.Length, previous.Stdout.Length);
-                    while (at < limit && current.Stdout[at] == previous.Stdout[at])
-                        at++;
-                    throw new ShouldAssertException(
-                        "merge " + (sha ?? "none") + " differs at " + at
-                        + " current " + current.Stdout.Length + " master " + previous.Stdout.Length);
+                    AssertOnlyProjectsMoved(root, sha ?? "none", current.Stdout, previous.Stdout);
+                    moved++;
                 }
             }
+
+            // dff78584 edits LandingGit.cs, which selects the Server.Git mirror classes.
+            moved.ShouldBeGreaterThan(0, "no range exercised the CARD-1843 project map");
         }
         finally
         {
@@ -1140,6 +1139,110 @@ public sealed class DerivedImpactIndexTests
 
         throw new ShouldAssertException("owed row missing for " + path);
     }
+
+    // CARD-1843. The frozen selector runs a class outside E2E, Messaging and SessionRunner in Antiphon.Tests,
+    // and only in the project of its ordinal-first file. The current one runs it in every project that
+    // declares it, a remainderProjects directory of the selection catalog being a project of its own. A
+    // range whose output differs from the frozen one may differ only there: the other fields, the selected
+    // entries and the land rows stay the same, and each entry runs in exactly the projects declaring its class.
+    private static void AssertOnlyProjectsMoved(string root, string sha, string current, string previous)
+    {
+        using var now = JsonDocument.Parse(current);
+        using var then = JsonDocument.Parse(previous);
+        string[] grouped = ["filters", "windowsFilters", "treenodeFilter"];
+        now.RootElement.EnumerateObject().Select(property => property.Name).ToArray()
+            .ShouldBe(then.RootElement.EnumerateObject().Select(property => property.Name).ToArray(), sha);
+        foreach (var property in then.RootElement.EnumerateObject().Where(property => !grouped.Contains(property.Name)))
+            now.RootElement.GetProperty(property.Name).GetRawText().ShouldBe(property.Value.GetRawText(), sha + " " + property.Name);
+
+        var declared = DeclaringProjects(root);
+        foreach (var property in grouped[..2])
+        {
+            var nowEntries = FilterEntries(now.RootElement, property);
+            var thenEntries = FilterEntries(then.RootElement, property);
+            nowEntries.Keys.Order(StringComparer.Ordinal).ToArray()
+                .ShouldBe(thenEntries.Keys.Order(StringComparer.Ordinal).ToArray(), sha + " " + property + " entries");
+            foreach (var (entry, projects) in nowEntries)
+            {
+                var className = entry.Split('/')[0];
+                var expected = declared.TryGetValue(className, out var found) ? found : ["tests/Antiphon.Tests"];
+                projects.Order(StringComparer.Ordinal).ToArray()
+                    .ShouldBe(expected.Order(StringComparer.Ordinal).ToArray(), sha + " " + property + " " + entry);
+            }
+
+            LandRows(now.RootElement, property).ShouldBe(LandRows(then.RootElement, property), sha + " " + property + " land rows");
+        }
+    }
+
+    // Class name -> the projects whose directory holds a file declaring it.
+    private static Dictionary<string, HashSet<string>> DeclaringProjects(string root)
+    {
+        using var catalog = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "tests", "test-selection-policy.json")));
+        var dirs = catalog.RootElement.GetProperty("sets").EnumerateArray()
+            .SelectMany(set => set.GetProperty("remainderProjects").EnumerateArray())
+            .Select(item => item.GetString() ?? "")
+            .Where(entry => entry.StartsWith("tests/", StringComparison.Ordinal) && entry.EndsWith(".csproj", StringComparison.Ordinal))
+            .Select(entry => entry[..entry.LastIndexOf('/')])
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var declaration = new System.Text.RegularExpressions.Regex(
+            @"(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b");
+        var projects = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "tests"), "*.cs", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (relative.Contains("/bin/", StringComparison.Ordinal) || relative.Contains("/obj/", StringComparison.Ordinal))
+                continue;
+            var project = dirs.Where(dir => relative.StartsWith(dir + "/", StringComparison.Ordinal))
+                .OrderByDescending(dir => dir.Length).FirstOrDefault() ?? "tests/Antiphon.Tests";
+            foreach (System.Text.RegularExpressions.Match match in declaration.Matches(File.ReadAllText(file)))
+            {
+                var name = match.Groups[1].Value;
+                if (!projects.TryGetValue(name, out var set))
+                    projects[name] = set = new HashSet<string>(StringComparer.Ordinal);
+                set.Add(project);
+            }
+        }
+
+        return projects;
+    }
+
+    // "Class" for a whole-class row, "Class/Method" for a method row, each with the projects that run it.
+    private static Dictionary<string, List<string>> FilterEntries(JsonElement root, string property)
+    {
+        var entries = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var row in root.GetProperty(property).EnumerateArray())
+        {
+            var project = row.GetProperty("project").GetString() ?? "";
+            var body = (row.GetProperty("treenodeFilter").GetString() ?? "")["/*/*/".Length..];
+            var keys = new List<string>();
+            if (body.StartsWith('('))
+            {
+                body.EndsWith("/*", StringComparison.Ordinal).ShouldBeTrue(body);
+                keys.AddRange(body[..^2].Split('|').Select(part => part[1..^2]));
+            }
+            else
+            {
+                var slash = body.IndexOf('/');
+                keys.AddRange(body[(slash + 1)..].Split('|').Select(part => body[..slash] + "/" + part[1..^2]));
+            }
+
+            foreach (var key in keys)
+            {
+                if (!entries.TryGetValue(key, out var list))
+                    entries[key] = list = [];
+                list.Add(project);
+            }
+        }
+
+        return entries;
+    }
+
+    private static List<string> LandRows(JsonElement root, string property) =>
+        root.GetProperty(property).EnumerateArray()
+            .Where(row => row.TryGetProperty("id", out var id) && (id.GetString() ?? "").Contains("-land-", StringComparison.Ordinal))
+            .Select(row => row.GetRawText())
+            .ToList();
 
     private static HashSet<string> WholeClasses(JsonElement root, string property)
     {

@@ -432,7 +432,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)"
         + "|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)|(DelegationTestServicesTests*)"
         + "|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)"
-        + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)|(GitIndexLockTests*)"
+        + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)"
         + "|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)"
         + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
         + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LiveLaneRunnerTests*)"
@@ -442,7 +442,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
         + "|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
-        + "|(SelectorLineEndingAttributeTests*)|(ServerGitAssemblyTests*)|(ServerGitProcessTests*)"
+        + "|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
         + "|(SessionRuntimeActionRoutingTests*)|(SessionTerminationSourcePersistenceTests*)"
         + "|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
@@ -454,7 +454,13 @@ public sealed partial class ImpactedClassesSelectorTests
 
     private const string WhyMissedSessionRunnerFilter =
         "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)"
-        + "|(HostStatsStoreTests*)|(PhoneHomeCommandDispatcherTests*)|(RunnerCapabilitiesTests*)/*";
+        + "|(HostStatsStoreTests*)|(PhoneHomeCommandDispatcherTests*)|(ProcessSpawnLimitTests*)|(RunnerCapabilitiesTests*)/*";
+
+    // CARD-1843. The Server.Git mirror classes run in their own project; ProcessSpawnLimitTests runs in
+    // every project that declares it (Antiphon.Tests, SessionRunner above, and Agents.Pty).
+    private const string WhyMissedServerGitFilter = "/*/*/(GitIndexLockTests*)|(ServerGitAssemblyTests*)/*";
+
+    private const string WhyMissedPtyFilter = "/*/*/(ProcessSpawnLimitTests*)/*";
 
     private const string LinuxOnlyCensusFilter =
         "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
@@ -650,6 +656,8 @@ public sealed partial class ImpactedClassesSelectorTests
         filters.ShouldContain(("tests/Antiphon.Tests", WhyMissedTestsFilter));
         filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
         filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerFilter));
+        filters.ShouldContain(("tests/Antiphon.Server.Git.Tests", WhyMissedServerGitFilter));
+        filters.ShouldContain(("tests/Antiphon.Agents.Pty.Tests", WhyMissedPtyFilter));
         windows.ShouldBe([
             ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
             ("tests/Antiphon.Tests", WindowsTestsFilter),
@@ -1423,6 +1431,11 @@ public sealed partial class ImpactedClassesSelectorTests
             AssertProjectOf(git, "GitIndexLockTests", "tests/Antiphon.Server.Git.Tests");
             AssertProjectOf(git, "ServerGitAssemblyTests", "tests/Antiphon.Server.Git.Tests");
             AssertProjectOf(git, "ServerGitProcessTests", "tests/Antiphon.Tests");
+
+            // A class name declared in three projects runs in each of them, not only the ordinal-first file.
+            var spawn = await ProjectRowsAsync(root, merge, "tests/Antiphon.Tests/Checkpoints/PhaseJournalKillDiagnosticTests.cs");
+            AssertProjectsOf(spawn, "ProcessSpawnLimitTests",
+                "tests/Antiphon.Agents.Pty.Tests", "tests/Antiphon.SessionRunner.Tests", "tests/Antiphon.Tests");
         }
     }
 
@@ -1440,8 +1453,10 @@ public sealed partial class ImpactedClassesSelectorTests
             WriteScratch(scratch, "tests/Antiphon.Tests/Scripts/AlphaTests.cs", "public sealed class AlphaTests\n{\n}\n");
             WriteScratch(scratch, "tests/Antiphon.Mirror.Tests/Antiphon.Mirror.Tests.csproj", "<Project />\n");
             WriteScratch(scratch, "tests/Antiphon.Mirror.Tests/MirrorTests.cs", "public sealed class MirrorTests\n{\n}\n");
+            WriteScratch(scratch, "tests/Antiphon.Tests/Scripts/SharedTests.cs", "public sealed class SharedTests\n{\n}\n");
+            WriteScratch(scratch, "tests/Antiphon.Mirror.Tests/SharedTests.cs", "public sealed class SharedTests\n{\n}\n");
             await File.WriteAllTextAsync(tablePath,
-                "{\"schema\":1,\"kinds\":[{\"id\":\"mirror\",\"globs\":[\"src/Mirror/**\"],\"classes\":[\"AlphaTests\",\"MirrorTests\"]}]}");
+                "{\"schema\":1,\"kinds\":[{\"id\":\"mirror\",\"globs\":[\"src/Mirror/**\"],\"classes\":[\"AlphaTests\",\"MirrorTests\",\"SharedTests\"]}]}");
             const string mainSet = "{\"id\":\"main\",\"remainderProjects\":[\"tests/Antiphon.Tests/Antiphon.Tests.csproj\"]}";
             const string mirrorSet = "{\"id\":\"mirror\",\"remainderProjects\":[\"tests/Antiphon.Mirror.Tests/Antiphon.Mirror.Tests.csproj\"]}";
 
@@ -1449,11 +1464,13 @@ public sealed partial class ImpactedClassesSelectorTests
             var listed = await ScratchRowsAsync(root, scratch, tablePath);
             AssertProjectOf(listed, "MirrorTests", "tests/Antiphon.Mirror.Tests");
             AssertProjectOf(listed, "AlphaTests", "tests/Antiphon.Tests");
+            AssertProjectsOf(listed, "SharedTests", "tests/Antiphon.Mirror.Tests", "tests/Antiphon.Tests");
 
             await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + "]}");
             var unlisted = await ScratchRowsAsync(root, scratch, tablePath);
             AssertProjectOf(unlisted, "MirrorTests", "tests/Antiphon.Tests");
             AssertProjectOf(unlisted, "AlphaTests", "tests/Antiphon.Tests");
+            AssertProjectOf(unlisted, "SharedTests", "tests/Antiphon.Tests");
 
             await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + ",");
             var refused = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Path", "src/Mirror/x.cs", "-Json");
@@ -1502,12 +1519,16 @@ public sealed partial class ImpactedClassesSelectorTests
     }
 
     // Exactly one row names the class, as a whole class or as a method row, and it runs in the project.
-    private static void AssertProjectOf(List<(string Project, string Filter)> rows, string className, string project)
+    private static void AssertProjectOf(List<(string Project, string Filter)> rows, string className, string project) =>
+        AssertProjectsOf(rows, className, project);
+
+    // One row per project names the class, and those are exactly the projects given.
+    private static void AssertProjectsOf(List<(string Project, string Filter)> rows, string className, params string[] projects)
     {
         var naming = rows.Where(row => row.Filter.Contains("(" + className + "*)", StringComparison.Ordinal)
             || row.Filter.Contains("/" + className + "/", StringComparison.Ordinal)).ToList();
         var shown = string.Join("; ", rows.Select(row => row.Project + " " + row.Filter));
-        naming.Count.ShouldBe(1, className + " rows: " + shown);
-        naming[0].Project.ShouldBe(project, className + " rows: " + shown);
+        naming.Select(row => row.Project).Order(StringComparer.Ordinal).ToArray()
+            .ShouldBe(projects.Order(StringComparer.Ordinal).ToArray(), className + " rows: " + shown);
     }
 }

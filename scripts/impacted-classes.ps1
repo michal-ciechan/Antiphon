@@ -797,11 +797,16 @@ function Add-KindSelection($Kind, $Whole, $MethodsByClass, $FileSet) {
     foreach ($method in $Kind.Methods) { Add-MethodEntry $method $MethodsByClass $FileSet }
 }
 
-function Get-ClassProject([string]$ClassName) {
-    if ($filesByClass.ContainsKey($ClassName) -and $filesByClass[$ClassName].Count -gt 0) {
-        return (Get-Project $filesByClass[$ClassName][0])
+# CARD-1843. A class name declared in several projects (ProcessSpawnLimitTests) runs in each of them.
+function Get-ClassProjects([string]$ClassName) {
+    $projects = New-StringList
+    if ($filesByClass.ContainsKey($ClassName)) {
+        $found = New-StringList
+        foreach ($relative in $filesByClass[$ClassName]) { [void]$found.Add((Get-Project $relative)) }
+        Fill-Sorted $found $projects
     }
-    return 'tests/Antiphon.Tests'
+    if ($projects.Count -eq 0) { [void]$projects.Add('tests/Antiphon.Tests') }
+    return ,$projects
 }
 
 function Get-ProjectSlug([string]$Project) {
@@ -827,11 +832,12 @@ function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) 
     $rows = New-Object System.Collections.Generic.List[object]
     $byProject = @{}
     foreach ($className in $Whole) {
-        $project = Get-ClassProject $className
-        if (-not $byProject.ContainsKey($project)) {
-            $byProject[$project] = New-Object System.Collections.Generic.List[string]
+        foreach ($project in (Get-ClassProjects $className)) {
+            if (-not $byProject.ContainsKey($project)) {
+                $byProject[$project] = New-Object System.Collections.Generic.List[string]
+            }
+            [void]$byProject[$project].Add($className)
         }
-        [void]$byProject[$project].Add($className)
     }
     $projectOrder = New-StringList
     Fill-Sorted @($byProject.Keys) $projectOrder
@@ -873,11 +879,16 @@ function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) 
     Fill-Sorted @($MethodsByClass.Keys) $methodOrder
     foreach ($className in $methodOrder) {
         if ($Whole.Contains($className)) { continue }
-        [void]$methodRows.Add([pscustomobject]@{
-            Id = $IdPrefix + $className
-            Project = (Get-ClassProject $className)
-            Filter = (New-MethodFilter $className $MethodsByClass[$className])
-        })
+        $methodProjects = Get-ClassProjects $className
+        foreach ($project in $methodProjects) {
+            $methodId = $IdPrefix + $className
+            if ($methodProjects.Count -gt 1) { $methodId = $methodId + '-' + (Get-ProjectSlug $project) }
+            [void]$methodRows.Add([pscustomobject]@{
+                Id = $methodId
+                Project = $project
+                Filter = (New-MethodFilter $className $MethodsByClass[$className])
+            })
+        }
     }
     foreach ($row in ($methodRows | Sort-Object Project, Filter)) { [void]$rows.Add($row) }
     return ,$rows
