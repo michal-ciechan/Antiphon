@@ -118,7 +118,7 @@ function Invoke-Stamp($Fixture, [hashtable]$Extra) {
     & $script:Stamp @stampArgs
 }
 function Get-Throw([scriptblock]$Block) {
-    try { & $Block; return '' } catch { return ('threw:' + [string]$_.Exception.Message) }
+    try { $null = & $Block; return '' } catch { return ('threw:' + [string]$_.Exception.Message) }
 }
 function Note-Rejected([string]$Label, [string]$Text, [string]$Token) {
     $path = Join-Path (New-Dir 'reject') ($Label + '.json')
