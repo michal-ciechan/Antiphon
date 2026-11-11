@@ -196,4 +196,20 @@ with the variable unset and expects 3 executed, 0 failed.
 
 ## Verification
 
-VERIFICATION_PLACEHOLDER
+Native Windows (this desktop, Windows 10 19045, .NET 9), worktree default
+`bin/Debug/net9.0`, each run through `scripts/build-slot.ps1`. Filter `F` is
+`/*/*/(PlatformTaxonomyFilterTests*)|(PlatformTaxonomyClassFilterTests*)/*`.
+
+| Row | Commit | Env | Filter | Result |
+|---|---|---|---|---|
+| red | `6f8741d87` (the cut) | unset | `F` | 3 total, 3 failed: same `should be "include"/"exclude" but was null` as the run |
+| unset | `a5632cc19` (fix) | unset | `F` | 3 total, 3 passed, 0 skipped |
+| CP-1 | `a5632cc19` | `include` | `F` + `[Platform=LinuxOnly]` | 2 total, 2 passed |
+| CP-2 | `a5632cc19` | `exclude` | `/*/*/PlatformTaxonomyFilterTests*/*[Platform!=LinuxOnly]` | 1 total, 1 passed |
+| V-2 wrong selection | `a5632cc19` | `include` | `F` (no Platform clause) | 3 total, 1 failed: `Unannotated_sibling_...` `should be "exclude" but was "include"` (the designed red is kept) |
+
+Not run: the whole `Antiphon.Tests` assembly. Neither file adds a type or a
+cross-class reference (the helper is private in each class), so
+`tests/derived-impact-index.json` and `DerivedImpactIndexTests` are not
+affected. Build-slot waits on this desktop were 6-42 min each (memory floor,
+the live run).
