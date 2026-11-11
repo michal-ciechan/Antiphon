@@ -25,21 +25,8 @@ public class TestDbFixture
 
 	internal static string MaintenanceConnectionString => Lifecycle.MaintenanceConnectionString;
 
-#if !ANTIPHON_RESILIENCE_MIRROR
-	[Before(Assembly)]
-#endif
 	public static async Task InitializeAsync(AssemblyHookContext context)
 	{
-		// CARD-0646: every worker mode runs on a parent-owned connection and exits here, before
-		// the warm-up below, so no worker child ever starts the shared store.
-#if !ANTIPHON_RESILIENCE_MIRROR
-		if (TestWorkerModes.Requested() is { } worker)
-		{
-			await TestWorkerModes.RunAndExitAsync(worker.Mode, worker.Payload);
-			return;
-		}
-#endif
-
 		// CARD-0646: one awaited startup before tests, only when this selection reaches the store.
 		if (SharedStoreWarmup.ProbeDefersWarmup(Environment.GetEnvironmentVariable(ProbeMarker)))
 			return;
@@ -57,9 +44,6 @@ public class TestDbFixture
 		}
 	}
 
-#if !ANTIPHON_RESILIENCE_MIRROR
-	[After(Assembly)]
-#endif
 	public static async Task DisposeAsync()
 	{
 		await Lifecycle.DisposeAsync();
