@@ -165,9 +165,9 @@ internal sealed class RunnerTerminalSession
                 || snapshot.Dialog?.State == ProviderDialogState.Blocked))
                 throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ModalBlocked);
             // A dialog key whose dialog was already gone on the first snapshot must not be
-            // typed into the composer that replaces the banner. The probe token is the input
-            // this wait exists for.
-            if (heldUnclassified && !IsComposerProbeToken(input))
+            // typed into the composer that replaces the banner. The probe token and the
+            // Ctrl+U that clears it are the inputs this wait exists for.
+            if (heldUnclassified && !IsComposerProbeClearance(input))
                 throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.StaleObservation);
             // The caller chose this input for the screen it saw. A re-observed screen that now
             // calls for another intent (a trust dialog gone, an effort menu moved) is not the
@@ -208,6 +208,11 @@ internal sealed class RunnerTerminalSession
             return false;
         return observation.State != ProviderDialogState.Clear && observation.State != ProviderDialogState.Blocked;
     }
+
+    // The startup probe writes its token, then Ctrl+U. Both may follow an unclassified
+    // banner. A dialog key is neither, and must not land in the composer.
+    private static bool IsComposerProbeClearance(string input) =>
+        input == ComposerInputProbe.KillLine || IsComposerProbeToken(input);
 
     private static bool IsComposerProbeToken(string input)
     {
