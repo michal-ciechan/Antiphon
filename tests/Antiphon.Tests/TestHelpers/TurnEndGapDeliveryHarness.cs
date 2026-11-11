@@ -317,25 +317,57 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task JoinDeliveryAsync(Task operation)
     {
+        // Delivery-owned timers on the controlled clock: input pacing (20/50 ms) and the
+        // CARD-0299/CARD-1505 composer settle read (PostEvidenceSettleMs) that interrupted-Sent
+        // recovery and Pending retry now take before a readable empty Claude box may retype.
+        // Without the settle timer here, FlushStrandedQueuesAsync parks in Task.Delay forever.
+        var settle = ComposerSettle();
         var after = 0;
-        while (!operation.IsCompleted)
+        try
         {
-            using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
-            var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
-                && (e.DueTime == TimeSpan.FromMilliseconds(20)
-                    || e.DueTime == TimeSpan.FromMilliseconds(50))
-                && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
-            if (await Task.WhenAny(operation, timer) == operation)
+            while (!operation.IsCompleted)
             {
-                await pending.CancelAsync();
-                try { await timer; } catch (OperationCanceledException) { }
-                break;
+                using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
+                var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
+                    && (e.DueTime == TimeSpan.FromMilliseconds(20)
+                        || e.DueTime == TimeSpan.FromMilliseconds(50)
+                        || (settle > TimeSpan.Zero && e.DueTime == settle))
+                    && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
+                if (await Task.WhenAny(operation, timer) == operation)
+                {
+                    await pending.CancelAsync();
+                    try { await timer; } catch (OperationCanceledException) { }
+                    break;
+                }
+                var registered = await timer;
+                after = registered.Sequence;
+                Clock.AdvanceTo(registered.Deadline);
             }
-            var registered = await timer;
-            after = registered.Sequence;
-            Clock.AdvanceTo(registered.Deadline);
+            await operation.WaitAsync(Token);
         }
-        await operation.WaitAsync(Token);
+        catch (OperationCanceledException ex) when (Token.IsCancellationRequested && !operation.IsCompleted)
+        {
+            // Name the controlled timer the delivery is parked on instead of a bare cancellation.
+            throw new TimeoutException(
+                $"JoinDeliveryAsync: delivery did not finish inside the harness budget. now={Clock.GetUtcNow():O} "
+                + $"advancedDueTimes=20ms,50ms,settle={settle.TotalMilliseconds}ms lastJoined={after} "
+                + $"liveTimers=[{DescribeLiveTimers()}]", ex);
+        }
+    }
+
+    private TimeSpan ComposerSettle() => TimeSpan.FromMilliseconds(Math.Clamp(
+        World.Services.GetRequiredService<IOptions<SupervisionSettings>>().Value
+            .DeliveryVerification.PostEvidenceSettleMs, 0, 3_000));
+
+    private string DescribeLiveTimers()
+    {
+        var states = Clock.TimerStates;
+        return string.Join("; ", Clock.Events
+            .Where(e => e.Action is "create" or "change" && states.GetValueOrDefault(e.TimerId) != "dispose")
+            .GroupBy(e => e.TimerId)
+            .Select(g => g.Last())
+            .Select(e => $"#{e.TimerId}:{e.Action}/{states[e.TimerId]} seq={e.Sequence} due={e.DueTime.TotalMilliseconds}ms "
+                + $"period={e.Period.TotalMilliseconds}ms deadline={e.Deadline:O}"));
     }
 
     public async Task AssertReceiptsAsync(List<AgentTaskLandNotification> before, List<SessionQueuedMessage> queued, int expectedAttempts = 1)
