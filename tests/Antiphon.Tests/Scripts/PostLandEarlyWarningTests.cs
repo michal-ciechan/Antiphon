@@ -290,6 +290,33 @@ public sealed class PostLandEarlyWarningTests
     }
 
     [Test]
+    public async Task Classes_inside_raw_string_fixtures_plan_no_shard()
+    {
+        using var fixture = Fixture.Create();
+        fixture.WriteUnitClass("Antiphon.Tests.Alpha", "AlphaTests");
+        fixture.WriteTable("src/Fixture.cs", "AlphaTests");
+        fixture.WriteFile(
+            "tests/Antiphon.Tests/FixtureTextTests.cs",
+            "namespace Antiphon.Tests.Alpha;\n\n[Category(\"Unit\")]\npublic sealed class FixtureTextTests\n{\n    [Test]\n    public void Holds()\n    {\n"
+            + "        var partial = \"\"\"\n            namespace Phantom;\n            public partial class GhostTests\n            {\n                [Test]\n                public void One() { }\n            }\n            \"\"\";\n"
+            + "        var unit = \"\"\"\n            [Category(\"Unit\")]\n            public sealed class GhostTests\n            {\n                [Test]\n                public void Two() { }\n            }\n            \"\"\";\n"
+            + "        var inline = \"\"\"public sealed class InlineTests { }\"\"\";\n"
+            + "    }\n}\n\n[Category(\"Unit\")]\npublic sealed class AfterTextTests\n{\n    [Test]\n    public void Holds() { }\n}\n");
+
+        var plan = await fixture.PlanAsync(fixture.Paths("src/Widget.cs"));
+        plan.Exit.ShouldBe(0, plan.Text);
+        plan.State.ShouldBe("run", plan.Text);
+        var filters = plan.Shards.Select(shard => shard.GetProperty("filter").GetString()).ToArray();
+        filters.ShouldBe(new[] { "/*/Antiphon.Tests.Alpha/*/*[Category=Unit]" }, plan.Text);
+        var names = plan.Shards.SelectMany(shard => shard.GetProperty("classes").EnumerateArray().Select(item => item.GetProperty("name").GetString() ?? ""))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        names.ShouldBe(new[] { "AfterTextTests", "AlphaTests", "FixtureTextTests" }, plan.Text);
+        Census(fixture.Repo).Select(row => row.Namespace + "." + row.Name).OrderBy(name => name, StringComparer.Ordinal)
+            .ShouldBe(new[] { "Antiphon.Tests.Alpha.AfterTextTests", "Antiphon.Tests.Alpha.AlphaTests", "Antiphon.Tests.Alpha.FixtureTextTests" });
+    }
+
+    [Test]
     public async Task Integration_list_drops_unit_classes_and_records_windows_as_owed()
     {
         using var fixture = Fixture.Create();
