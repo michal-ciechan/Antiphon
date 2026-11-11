@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 307,
+      "classes": 309,
       "reason": "allowlist"
     },
     {
@@ -1016,18 +1016,18 @@
     },
     {
       "path": "server/Application/Services/LandDeliveryBoundary.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
+        "RunnerTaskSettlementTests",
         "SessionMessageQueueWedgedHeadTests",
         "AdvisoryChangePolicyTests",
         "AgentTaskLandHeldNotificationTests",
         "AgentTaskLandPublicationTests",
         "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkSafetyTests",
-        "ClosingReportNudgeLifecycleTests",
-        "LandRestartReplayTests"
+        "ClosingReportNudgeLifecycleTests"
       ]
     },
     {
@@ -1315,14 +1315,14 @@
       "reason": "cap",
       "owed": 31,
       "first": [
+        "BlockedTaskParkReclaimTests",
         "C0824RefOnlyConsumerTests",
         "C1677RetentionServerTests",
         "ClaudeCredentialProbeDispatcherTests",
         "DefaultRunnerEligibilityTests",
         "DefaultRunnerPinTests",
         "DesktopCapabilitiesSnapshotTests",
-        "DispatcherRemotePrepStarvationTests",
-        "ExpectationStatusTests"
+        "DispatcherRemotePrepStarvationTests"
       ]
     },
     {
@@ -1469,14 +1469,14 @@
       "reason": "cap",
       "owed": 120,
       "first": [
+        "AgentTaskProjectScopeTests",
         "ApiKeyEnvResolverTests",
         "ApiKeyLaunchPathTests",
         "CardClosedAttentionTests",
         "CardDiagnosisSweepTests",
         "CardFileSyncEndpointTests",
         "CardRankingOrderTests",
-        "CardReviewServiceIntegrationTests",
-        "CardServiceTrackerPushTests"
+        "CardReviewServiceIntegrationTests"
       ]
     },
     {
@@ -2079,18 +2079,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 36,
+      "classes": 38,
       "reason": "cap",
-      "owed": 11,
+      "owed": 13,
       "first": [
+        "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
+        "ZombieCensusPlatformTests",
         "DirectoryBuildRspTests",
         "DockerDeliveryObservationTests",
-        "E2ECopyOwnedPtyHostAppHostContractTests",
-        "GitMinimumVersionGuardTests",
-        "GithubCredentialHelperTests"
+        "E2ECopyOwnedPtyHostAppHostContractTests"
       ]
     },
     {
@@ -3002,6 +3002,7 @@
         "DockerStackDocumentationTests",
         "GrokRunnerImageContractTests",
         "PublishedRoutingDocumentationTests",
+        "RcBridgeProbePlatformTests",
         "StandingBootDocumentationTests"
       ]
     },
@@ -3033,7 +3034,8 @@
       "path": "docs/bootstrap.md",
       "classes": [
         "GrokRunnerImageContractTests",
-        "StandingPipelinePolicyDocumentationTests"
+        "StandingPipelinePolicyDocumentationTests",
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -3057,13 +3059,15 @@
         "HangfirePostgreSqlStorageTests",
         "HangfireStorageSelectionTests",
         "JqRunnerImageContractTests",
+        "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests",
         "Server2StagingServerContractTests",
         "ServerImagePushCredentialTests",
-        "VolumeRetirementApplyGateTests"
+        "VolumeRetirementApplyGateTests",
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -3188,6 +3192,7 @@
         "C1818GcOwnerRobustnessTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "MidTurnInterruptDocumentationTests",
+        "RcBridgeProbePlatformTests",
         "ReceiptScanDestinationTests",
         "RunnerBranchContractDocumentationTests",
         "SessionRunnerAbsenceEvidenceDocumentationTests",
@@ -4269,6 +4274,7 @@
         "PipelineDefinitionMigrationTests",
         "PipelineDefinitionServiceTests",
         "PipelineResolutionTests",
+        "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests"
       ]
     },
@@ -9223,13 +9229,13 @@
         "CompletionNoteDurableSweepTests",
         "DispatchBaseNotificationTests",
         "DispatcherLeaseSpanTests",
+        "LandDeliveryFixtureProbeTests",
         "PendingSettlementDeliveryTests",
         "PipelineSpeedIntegrationTests",
         "PoolProviderProjectionStampTests",
         "PostLandMutationDeliveryTests",
         "ReviewEvidenceRecoveryTests",
         "ReviewEvidenceResettlementTests",
-        "RunnerTaskSettlementTests",
         "TaskSupervisionReceiptTests",
         "WorktreeLandingCleanupRetryTests"
       ]
@@ -10433,6 +10439,7 @@
     {
       "path": "server/Application/Services/SessionHealthService.cs",
       "classes": [
+        "RcBridgeProbePlatformTests",
         "SessionHealthTests"
       ]
     },
@@ -12093,7 +12100,6 @@
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
       "classes": [
         "AdvisoryChangePolicyTests",
-        "BlockedTaskParkReclaimTests",
         "CodexCliObservationTests",
         "CodexPhoneHomeCreateTests",
         "CodexPhoneHomeProjectionTests",
@@ -12113,6 +12119,7 @@
         "PhoneHomeStrandedQueueTests",
         "PhoneHomeTaskCreateTests",
         "PhoneHomeTaskDispatchProjectionTests",
+        "PipelineHandoffPilotTests",
         "RemoteExecutableLaunchTests",
         "RemoteWorkspacePreparerTests",
         "RunnerCodexCliEvidenceTests",
@@ -12382,7 +12389,14 @@
         "HangfireStartupSafetyTests",
         "HangfireStorageSelectionTests",
         "PhoneHomeReconciliationTests",
+        "ZombieCensusPlatformTests",
         "ZombieCensusServiceTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/ZombieCensusSettingsValidator.cs",
+      "classes": [
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -13037,7 +13051,6 @@
         "AgentTaskCardBindingTests",
         "AgentTaskLandAdoptionTests",
         "AgentTaskPipelineStatusTests",
-        "AgentTaskProjectScopeTests",
         "AgentTaskReplyIntegrationTests",
         "AttentionServiceTests",
         "CardFilePolicyTests",
@@ -13051,6 +13064,7 @@
         "ExternalTrackerSyncIdentifierTests",
         "ExternalTrackerSyncLandingColumnTests",
         "OrchestratorServiceIntegrationTests",
+        "PipelineSpeedIntegrationTests",
         "SeatDesktopJoinTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
@@ -13280,6 +13294,7 @@
         "KanbanPersistenceTests",
         "PipelineDefinitionMigrationShapeTests",
         "PipelineDefinitionMigrationTests",
+        "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests",
         "StandingSessionOwnershipTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
@@ -13716,6 +13731,7 @@
     {
       "path": "server/Domain/Entities/PipelineHandoffAction.cs",
       "classes": [
+        "PipelineHandoffPilotTests",
         "PipelineSpeedIntegrationTests",
         "ProjectCascadeForeignKeyTests"
       ]
@@ -14793,6 +14809,12 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Agents/WindowsZombieProcessCensus.cs",
+      "classes": [
+        "ZombieCensusPlatformTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Agents/WorktreeResidueJob.cs",
       "classes": [
         "C0824DesktopLegacyReleaseSwitchTests",
@@ -14815,6 +14837,12 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Agents/ZombieCensusRegistration.cs",
+      "classes": [
+        "ZombieCensusPlatformTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Agents/ZombieCensusService.cs",
       "classes": [
         "PhoneHomeReconciliationTests",
@@ -14826,6 +14854,12 @@
       "classes": [
         "AttentionServiceTests",
         "ZombieCensusServiceTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Agents/ZombieCensusUnsupportedPlatform.cs",
+      "classes": [
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -14919,6 +14953,7 @@
         "PipelineDefinitionMigrationTests",
         "PipelineDefinitionServiceTests",
         "PipelineResolutionTests",
+        "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests"
       ]
     },
@@ -15656,6 +15691,12 @@
       "path": "server/Infrastructure/Supervision/SubscriptionUsageMonitorHostedService.cs",
       "classes": [
         "SubscriptionUsageMonitorTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Supervision/WindowsRcBridgeProbe.cs",
+      "classes": [
+        "RcBridgeProbePlatformTests"
       ]
     },
     {
@@ -23392,7 +23433,7 @@
         "LandGraphAuditProjectInstanceTests",
         "PackageVersionPinContractTests",
         "PostgresPoolConfigurationTests",
-        "QualificationCheckoutSourceTests",
+        "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
         "Server2ProductionServerContractTests",
