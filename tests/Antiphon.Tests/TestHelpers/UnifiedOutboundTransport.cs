@@ -205,6 +205,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             ClockOffsetSeconds = offset, Mode = mode, BootstrapServers = Bootstrap, Topic,
             FailPublishCommit = refuseOutcome, ExpectedSourceSha = source,
             ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot, StallPoint = stallPoint,
+            DeadlineSeconds = (int)ProbeDeadline.TotalSeconds,
         }));
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -218,6 +219,13 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         await using var child = await StartProbeAsync(null, offset ?? (ConverterId == Guid.Empty ? 600 : 120));
         await child.CompleteAsync();
     }
+
+    // The child's own deadline, counted from its run start. The parent's reach wait adds the
+    // child's runtime startup and orderly exit, so a stalled child always ends first and its
+    // stderr phase log reaches the failure. Run d88de419 g29 failed a 30 s parent poll that
+    // equalled this deadline and so expired first, leaving only TaskCanceledException.
+    public static readonly TimeSpan ProbeDeadline = TimeSpan.FromSeconds(30);
+    public static readonly TimeSpan ProbeStartupAndExit = TimeSpan.FromSeconds(30);
 
     public static async Task WaitForAsync(Func<bool> predicate)
     {
@@ -238,6 +246,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         private readonly Task<string> _stdout = process.StandardOutput.ReadToEndAsync();
         private readonly Task<string> _stderr = process.StandardError.ReadToEndAsync();
         private readonly string _nativeStart = ReadNativeStart(process);
+        private readonly Stopwatch _age = Stopwatch.StartNew();
         private static string ReadNativeStart(Process child)
         {
             if (OperatingSystem.IsWindows()) return child.StartTime.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -246,9 +255,29 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         }
         public async Task ReachAsync(string point)
         {
-            await WaitForAsync(() => File.Exists(marker) || process.HasExited);
-            if (process.HasExited) throw new InvalidOperationException("Child exited before cut: " + await _stderr);
+            var budget = ProbeDeadline + ProbeStartupAndExit;
+            while (!File.Exists(marker) && !process.HasExited)
+            {
+                if (_age.Elapsed > budget) throw new TimeoutException(await StallReportAsync(point, budget));
+                await Task.Delay(25);
+            }
+            if (process.HasExited)
+                throw new InvalidOperationException($"Child exited before cut {point} after {_age.ElapsedMilliseconds} ms"
+                    + $" (exit {process.ExitCode}): " + await _stderr);
             await AssertMarkerAsync(point);
+            // One line per cut so Full-run TRX stdout yields the reach p95 for this budget.
+            Console.WriteLine($"c519-probe reach {point} {_age.ElapsedMilliseconds} ms");
+        }
+        private async Task<string> StallReportAsync(string point, TimeSpan budget)
+        {
+            var staged = File.Exists(marker + ".tmp");
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            await Task.WhenAny(Task.WhenAll(process.WaitForExitAsync(), _stdout, _stderr), Task.Delay(TimeSpan.FromSeconds(10)));
+            static string Text(Task<string> stream) => stream.IsCompletedSuccessfully ? stream.Result : "<unavailable>";
+            return $"Child neither reached {point} nor exited within {budget.TotalSeconds:F0} s"
+                + $" ({_age.ElapsedMilliseconds} ms, staged marker {staged}); it was killed."
+                + $"{Environment.NewLine}stderr:{Environment.NewLine}{Text(_stderr)}"
+                + $"stdout:{Environment.NewLine}{Text(_stdout)}";
         }
         public async Task AssertMarkerAsync(string point)
         {
@@ -271,7 +300,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         }
         public async Task CompleteAsync()
         {
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            var budget = ProbeDeadline + ProbeStartupAndExit;
+            try { await process.WaitForExitAsync().WaitAsync(budget - _age.Elapsed); }
+            catch (TimeoutException) { throw new TimeoutException(await StallReportAsync("recovery completion", budget)); }
+            Console.WriteLine($"c519-probe complete {_age.ElapsedMilliseconds} ms");
             await Task.WhenAll(_stdout, _stderr).WaitAsync(TimeSpan.FromSeconds(10));
             process.ExitCode.ShouldBe(0, await _stderr);
         }
