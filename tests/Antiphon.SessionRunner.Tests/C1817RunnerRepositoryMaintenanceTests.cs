@@ -563,13 +563,9 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
     {
         if (!Directory.Exists(path))
             return;
-        try { Directory.Delete(path, recursive: true); }
-        catch (IOException)
-        {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(path, recursive: true);
-        }
+        // Git for Windows marks loose objects and commit-graph read-only.
+        // ReadOnlyDirectory clears that bit before Directory.Delete.
+        ReadOnlyDirectory.Delete(path);
     }
 
     private sealed class CaptureLogger : ILogger
