@@ -43,6 +43,7 @@ public partial class SessionRuntimeActionRoutingTests
         }
         if (variant == "action-during-flush") { await VerifyActionDuringFlushAsync(); return; }
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new ScaledTimeProvider(1);
         var runner = new ScriptedSessionRunnerClient
         {
             Capabilities = new("test", "test", "test", false, SessionBackends: [SessionBackends.Herdr])
@@ -50,6 +51,7 @@ public partial class SessionRuntimeActionRoutingTests
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
+            TimeProvider = clock,
             ConfigureServices = s =>
             {
                 s.AddSingleton<ISessionRunnerClient>(runner);
@@ -127,7 +129,20 @@ public partial class SessionRuntimeActionRoutingTests
                 if (variant == "generation-changed") retained.ShouldBeNull("stale generation cannot be rebound");
                 else { retained.ShouldNotBeNull(); retained.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase); }
             }
-            if (variant == "working") await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+            if (variant == "working")
+            {
+                var heldUntil = clock.GetUtcNow().UtcDateTime.AddHours(1);
+                await using (var barrier = h.CreateObserverContext())
+                    await barrier.SessionRuntimeActions.Where(a => a.Id == actionId)
+                        .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, heldUntil));
+                await actions.DrainPageAsync(h.SessionId, default);
+                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible");
+                await using (var still = h.CreateObserverContext())
+                    (await still.SessionQueuedMessages.SingleAsync(m => m.Id == messageId)).DeliveryVerdict.ShouldBeNull();
+                clock.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(2));
+                Console.WriteLine("V-6 clock: DueAt one hour ahead blocked the drain; the shared schedule clock released it");
+                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+            }
             if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
             if (variant == "rules-held")
             {
@@ -138,7 +153,7 @@ public partial class SessionRuntimeActionRoutingTests
             h.Adapter.OnSubmitted = sent => { sent.ShouldBe(body); runner.Produce(receipt); return Task.CompletedTask; };
             // This is the existing one-second deferred-action schedule, not an extended
             // delivery timeout. The next request is captured in the current generation.
-            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            AdvanceSharedSchedule(h.Clock, TimeSpan.FromMilliseconds(1100));
             await actions.RequestAsync(h.SessionId, "status", default);
             await actions.DrainPageAsync(h.SessionId, default);
             await using (var verify = h.CreateObserverContext())
@@ -156,7 +171,7 @@ public partial class SessionRuntimeActionRoutingTests
                 var capped = await h.SeedPendingMessageAsync("C1259 parked body must never be typed again", deliveryAttempts: cap,
                     baselineSequence: receipt.Sequence);
                 await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
-                await Task.Delay(TimeSpan.FromMilliseconds(1100));
+                AdvanceSharedSchedule(h.Clock, TimeSpan.FromMilliseconds(1100));
                 await actions.RequestAsync(h.SessionId, "status", default);
                 await actions.DrainPageAsync(h.SessionId, default);
                 h.Adapter.SubmittedBodies.ShouldBe([body], "eligibility must not bypass the delivery attempt cap");
@@ -164,6 +179,7 @@ public partial class SessionRuntimeActionRoutingTests
                 var parked = await observer.SessionQueuedMessages.SingleAsync(m => m.Id == capped);
                 parked.Status.ShouldBe(QueuedMessageStatus.Pending);
                 parked.DeliveryAttempts.ShouldBe(cap);
+                Console.WriteLine("V-6 working capped idle row: zero extra input, attempts unchanged");
             }
         }
         finally { await pump.StopAsync(default); }
@@ -172,10 +188,12 @@ public partial class SessionRuntimeActionRoutingTests
     private static async Task VerifyActionDuringFlushAsync()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new ScaledTimeProvider(1);
         var runner = new ScriptedSessionRunnerClient();
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             ConnectionString = schema.ConnectionString,
+            TimeProvider = clock,
             ConfigureServices = s => s.AddSingleton<ISessionRunnerClient>(runner)
         });
         await h.InsertTurnAsync("previous prompt", "previous answer");
@@ -236,7 +254,7 @@ public partial class SessionRuntimeActionRoutingTests
                 await using var observer = h.CreateObserverContext();
                 return await observer.TranscriptEntries.AnyAsync(t => t.Uuid == finished.Uuid);
             });
-            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            AdvanceSharedSchedule(h.Clock, TimeSpan.FromMilliseconds(1100));
             await actions.DrainPageAsync(h.SessionId, default);
             h.Adapter.SubmittedBodies.ShouldBe([first, second]);
             // The newly submitted second prompt is now Working. Complete that actual
@@ -248,7 +266,7 @@ public partial class SessionRuntimeActionRoutingTests
                 await using var observer = h.CreateObserverContext();
                 return await observer.TranscriptEntries.AnyAsync(t => t.Uuid == secondFinished.Uuid);
             });
-            await Task.Delay(TimeSpan.FromMilliseconds(1100));
+            AdvanceSharedSchedule(h.Clock, TimeSpan.FromMilliseconds(1100));
             await actions.DrainPageAsync(h.SessionId, default);
             h.Adapter.SubmittedBodies.ShouldBe([first, second]);
             await using var verify = h.CreateObserverContext();
@@ -343,13 +361,36 @@ public partial class SessionRuntimeActionRoutingTests
                 legacy.ReviewReplyConsumedAt.ShouldBeNull();
                 (await upgraded.SessionRuntimeActions.CountAsync()).ShouldBe(0, "migration cannot replay historical transcript effects");
                 (await upgraded.ReviewComments.CountAsync(c => c.Author == ReviewCommentAuthor.Agent)).ShouldBe(0);
+                Console.WriteLine("V-11 legacy-upgrade: target null, consume null, historical action backlog empty");
                 // Explicit redispatch retires the unknown legacy request, then uses the real
                 // producer to create new durable authority. No target is backfilled.
                 legacy.Status = QueuedMessageStatus.Canceled;
                 await upgraded.SaveChangesAsync();
             }
         }
-        (await service.DispatchAsync(thread.Id, default)).ShouldBeTrue();
+        if (variant == "legacy-upgrade")
+        {
+            await using var cold = await ClaudeDialogFixture.CreateBridgeAsync(new()
+            {
+                ConnectionString = schema.ConnectionString,
+                AttachSessionId = h.SessionId,
+                AttachAgentId = h.AgentId,
+                PreserveDatabaseOnDispose = true,
+                ConfigureServices = s =>
+                {
+                    s.AddSingleton<ISessionRunnerClient>(runner);
+                    s.AddSingleton<ReviewReplyDispatcher>();
+                    s.AddScoped<ReviewThreadService>();
+                    s.AddScoped<AgentFilesService>();
+                }
+            });
+            using var coldScope = cold.Provider.CreateScope();
+            (await coldScope.ServiceProvider.GetRequiredService<ReviewThreadService>()
+                .DispatchAsync(thread.Id, default)).ShouldBeTrue("legacy redispatch comes from a fresh provider");
+            Console.WriteLine("V-11 legacy-upgrade: cold DI redispatch created the authorized queue row");
+        }
+        else
+            (await service.DispatchAsync(thread.Id, default)).ShouldBeTrue();
         SessionQueuedMessage source;
         await using (var db = h.CreateObserverContext())
         {
@@ -439,11 +480,13 @@ public partial class SessionRuntimeActionRoutingTests
             }
             if (variant == "forged-target")
             {
+                Console.WriteLine("V-11 forged-target malicious model tag: the answer names the decoy thread");
                 await using (var db = h.CreateObserverContext())
                     await db.SessionQueuedMessages.Where(m => m.Id == source.Id).ExecuteUpdateAsync(u =>
                         u.SetProperty(m => m.ConversationKey, $"review:{decoy.Id}"));
                 await restarted.OnTranscriptActionAsync(destination, boundary, default);
                 await AssertUnconsumedAsync();
+                Console.WriteLine("V-11 forged-target mismatched queue key: unconsumed, decoy received no comment");
                 await using var restore = h.CreateObserverContext();
                 await restore.SessionQueuedMessages.Where(m => m.Id == source.Id).ExecuteUpdateAsync(u =>
                     u.SetProperty(m => m.ConversationKey, source.ConversationKey));
@@ -473,6 +516,8 @@ public partial class SessionRuntimeActionRoutingTests
                 var comments = await verify.ReviewComments.AsNoTracking().Where(c => c.Author == ReviewCommentAuthor.Agent).ToListAsync();
                 comments.ShouldHaveSingleItem().Body.ShouldBe(answer);
                 comments[0].ThreadId.ShouldBe(thread.Id);
+                if (variant == "forged-target")
+                    Console.WriteLine("V-11 forged-target: restored key consumed onto the authorized thread");
                 (await verify.ReviewThreads.SingleAsync(t => t.Id == thread.Id)).Status.ShouldBe(ReviewThreadStatus.AwaitingHuman);
                 (await verify.ReviewThreads.SingleAsync(t => t.Id == decoy.Id)).Status.ShouldBe(ReviewThreadStatus.Open);
                 (await verify.SessionQueuedMessages.CountAsync(m => m.ReviewThreadId == thread.Id && m.ReviewReplyConsumedAt != null)).ShouldBe(1);
