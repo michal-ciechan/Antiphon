@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
@@ -962,18 +962,18 @@
     },
     {
       "path": "server/Application/Services/GitWorkspaceService.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
+        "TaskProgressGitTests",
         "WorktreeBaseSelectionTests",
         "WorktreeDefaultCallerTests",
         "DelegationTestServicesTests",
         "WorktreeListParsingTests",
         "GitIgnorePreviewTests",
         "AgentTaskInputSpillTests",
-        "GrokDelegateEndToEndTests",
-        "C1729LayeringGuardTests"
+        "GrokDelegateEndToEndTests"
       ]
     },
     {
@@ -2095,33 +2095,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 55,
+      "classes": 57,
       "reason": "cap",
-      "owed": 30,
+      "owed": 32,
       "first": [
+        "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "MechanicalPcRehearsalTests",
-        "NightlyCoreTests"
+        "MechanicalPcRehearsalTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 32,
+      "classes": 34,
       "reason": "cap",
-      "owed": 7,
+      "owed": 9,
       "first": [
+        "DirectoryLinkFixtureTests",
+        "NightlyCoreTests",
         "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
         "RcFullWatchdogHarnessTests",
         "RcQualificationStatusTests",
         "ReleaseGatePlatformTests",
-        "ReleaseSelectionCliTests",
-        "TestSelectionExecutionTests"
+        "ReleaseSelectionCliTests"
       ]
     },
     {
@@ -5745,6 +5746,7 @@
         "IssueTrackerAdapterTests",
         "OrchestratorServiceIntegrationTests",
         "OrchestratorTrackerCadenceTests",
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
         "TrackerSyncEndpointTests",
@@ -6143,6 +6145,7 @@
         "CardWorkTransitionServiceTests",
         "HerdrAlwaysOnChannelParityTests",
         "PipelineSpeedIntegrationTests",
+        "PublishedCardCompletionTests",
         "RemoteExecutableLaunchTests",
         "ReviewLoopTests",
         "ScheduleCardActionTests",
@@ -8825,10 +8828,10 @@
         "InProcessGitCommandsTests",
         "PlanCatalogServiceTests",
         "ProjectSetupServiceTests",
+        "PublishedCardCompletionTests",
         "RepositoryMutationLeaseOwnerTests",
         "RoutingExhaustedPlacementTests",
         "SourceBundleManifestTests",
-        "TaskProgressGitTests",
         "TaskProgressPolicyFileArmTests",
         "WorkspaceInfoGitIntegrationTests"
       ]
@@ -11282,6 +11285,7 @@
     {
       "path": "server/Application/Services/TrackerCardStatePushService.cs",
       "classes": [
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests"
       ]
@@ -11313,6 +11317,7 @@
     {
       "path": "server/Application/Services/TrackerTokenResolver.cs",
       "classes": [
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
         "TrackerTokenResolverTests"
@@ -12289,6 +12294,7 @@
     {
       "path": "server/Application/Settings/TrackerSettings.cs",
       "classes": [
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests"
       ]
@@ -13121,6 +13127,7 @@
         "OrchestratorServiceIntegrationTests",
         "OrchestratorTrackerCadenceTests",
         "PipelineDefinitionMigrationShapeTests",
+        "PublishedCardCompletionTests",
         "StandingSessionOwnershipTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
@@ -13245,6 +13252,12 @@
       ]
     },
     {
+      "path": "server/Domain/Entities/CardCompletionShadowEvent.cs",
+      "classes": [
+        "PublishedCardCompletionTests"
+      ]
+    },
+    {
       "path": "server/Domain/Entities/CardRelationship.cs",
       "classes": [
         "AgentTaskPipelineStatusTests",
@@ -13296,6 +13309,7 @@
         "PipelineDefinitionMigrationTests",
         "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests",
+        "PublishedCardCompletionTests",
         "StandingSessionOwnershipTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
       ]
@@ -13544,6 +13558,7 @@
         "KanbanPersistenceTests",
         "OrchestratorServiceIntegrationTests",
         "PipelineDefinitionMigrationShapeTests",
+        "PublishedCardCompletionTests",
         "StandingSessionOwnershipTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
@@ -13717,6 +13732,7 @@
       "classes": [
         "CardWorkflowRunFactoryTests",
         "PipelineDefinitionMigrationShapeTests",
+        "PublishedCardCompletionTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
       ]
     },
@@ -13725,6 +13741,7 @@
       "classes": [
         "CardWorkflowRunFactoryTests",
         "PipelineDefinitionMigrationShapeTests",
+        "PublishedCardCompletionTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
       ]
     },
@@ -21209,6 +21226,7 @@
         "ApiKeyLaunchPathTests",
         "LaunchEnvLayersIntegrationTests",
         "PoolProviderProjectionStampTests",
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests",
         "TrackerTokenResolverTests"
@@ -23782,7 +23800,7 @@
         "C599SnapshotTests",
         "ChangeAwareReleaseTests",
         "CheckpointOwnedOutputScriptTests",
-        "ClaudeEffortFixtureTraceTests",
+        "ClassCostMeasurementTests",
         "NightlyDeadOwnerLockTests",
         "NightlyPrerequisiteTests",
         "NightlyReclaimRaceTests",
@@ -23816,16 +23834,16 @@
         "C487ReadOnlyCleanupWitnessTests",
         "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
+        "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
-        "DirectoryLinkFixtureTests",
         "DirectoryLinkFixtureWindowsTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
-        "NightlyCoreTests",
         "NightlyProbeSupervisorTests",
+        "QualificationEtaTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
@@ -24586,6 +24604,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/FakeBidirectionalTracker.cs",
       "classes": [
         "CardServiceTrackerPushTests",
+        "PublishedCardCompletionTests",
         "TrackerBidirectionalSyncTests",
         "TrackerCardStatePushServiceTests"
       ]
