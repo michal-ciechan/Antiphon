@@ -153,7 +153,15 @@ sharing violation, no poll or timeout in the log.
   those two methods at all; the unannotated sibling stays on both lanes and
   would still have failed without this fix.
 
-## Fix (this branch)
+## Fix
+
+Already on master, and NOT on rc/2026-11-16 (`6f8741d87`):
+`c83846158` "fix(CARD-1832): platform filter probes assert the lane only under
+a probe row" (2026-11-11 13:27Z) and `a3917c155` "keep the class probe's lane
+check local" (13:47Z). Port both to the rc line. This branch wrote the same
+fix independently (`a5632cc19`) and then reverted it (`a91c0a2f0`) because it
+conflicted with master's version, so the branch now carries only this note.
+The master code and `a5632cc19` behave the same way:
 
 `tests/Antiphon.Tests/PlatformTaxonomyFilterTests.cs` and
 `tests/Antiphon.Tests/PlatformTaxonomyClassFilterTests.cs`: the lane assertion
@@ -207,6 +215,12 @@ Native Windows (this desktop, Windows 10 19045, .NET 9), worktree default
 | CP-1 | `a5632cc19` | `include` | `F` + `[Platform=LinuxOnly]` | 2 total, 2 passed |
 | CP-2 | `a5632cc19` | `exclude` | `/*/*/PlatformTaxonomyFilterTests*/*[Platform!=LinuxOnly]` | 1 total, 1 passed |
 | V-2 wrong selection | `a5632cc19` | `include` | `F` (no Platform clause) | 3 total, 1 failed: `Unannotated_sibling_...` `should be "exclude" but was "include"` (the designed red is kept) |
+
+These rows ran `a5632cc19`'s code, not master's `c83846158`/`a3917c155`
+text. The two are equivalent: the same `string.IsNullOrEmpty` check and the
+same `ShouldBe`, with a private helper in each class. Native Windows proof of
+the exact master/rc-port bytes is still owed. It is the same four rows run on
+the rc port.
 
 Not run: the whole `Antiphon.Tests` assembly. Neither file adds a type or a
 cross-class reference (the helper is private in each class), so
