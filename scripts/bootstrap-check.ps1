@@ -5,17 +5,42 @@
 #
 # Exit code = number of FAILs. WARN-only items never affect the exit code.
 #
+# CARD-1844: the database checks follow the effective AppHost endpoint
+# (-ConnectionString, else the AppHost user-secrets file, else the tracked
+# Antiphon.AppHost/appsettings.json). A loopback host on port 17280 keeps the
+# desktop container, volume and TCP checks; any other endpoint is remote and
+# only its host and port are TCP-checked. Host and port are the only parts of
+# the connection string that are ever printed. -DatabaseProbeOnly prints one
+# "database-endpoint host=<host> port=<port> mode=<local|remote>" line and
+# exits before any docker call or socket.
+#
 # Usage:
 #   pwsh -File scripts/bootstrap-check.ps1
 #   powershell.exe -File scripts/bootstrap-check.ps1 -NoStack
+#   pwsh -File scripts/bootstrap-check.ps1 -DatabaseProbeOnly
 
 [CmdletBinding()]
 param(
-    [switch]$NoStack
+    [switch]$NoStack,
+    [string]$ConnectionString,
+    [switch]$DatabaseProbeOnly
 )
 
 $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'DatabaseEndpoint.ps1')
+$databaseResolution = Resolve-AntiphonDatabaseEndpoint -RepoRoot $repoRoot -ConnectionString $ConnectionString
+$databaseEndpoint = $databaseResolution.Endpoint
+
+if ($DatabaseProbeOnly) {
+    if ($null -eq $databaseEndpoint) {
+        Write-Output ('database-endpoint unresolved source={0}' -f $databaseResolution.Source)
+        exit 1
+    }
+    Write-Output (Format-AntiphonDatabaseEndpoint $databaseEndpoint)
+    exit 0
+}
 
 $script:FailCount = 0
 $script:WarnCount = 0
@@ -24,7 +49,7 @@ $script:PassCount = 0
 function Write-Check {
     param(
         [string]$Name,
-        [ValidateSet('PASS', 'WARN', 'FAIL')]
+        [ValidateSet('PASS', 'WARN', 'FAIL', 'SKIP')]
         [string]$Status,
         [string]$Detail,
         [string]$Remedial = ''
@@ -33,6 +58,7 @@ function Write-Check {
         'PASS' { $script:PassCount++; $color = 'Green' }
         'WARN' { $script:WarnCount++; $color = 'Yellow' }
         'FAIL' { $script:FailCount++; $color = 'Red' }
+        'SKIP' { $color = 'DarkGray' }
     }
     $line = ('  [{0}] {1,-28} {2}' -f $Status, $Name, $Detail)
     Write-Host $line -ForegroundColor $color
@@ -380,11 +406,21 @@ foreach ($dir in $conventionDirs) {
 # 3. Docker postgres + volume (+ HNS only when Phase B is skipped)
 # ---------------------------------------------------------------------------
 
-$composeFile = Join-Path $repoRoot 'docker-compose.dev.yml'
+$composeFile = $null
+if ($null -eq $databaseEndpoint) {
+    Write-Check 'database / endpoint' 'FAIL' ('no host and port from {0}' -f $databaseResolution.Source) 'Set ConnectionStrings:DefaultConnection with Host and Port in the AppHost user secret (aspire-antiphon-apphost) or Antiphon.AppHost/appsettings.json. Value not displayed.'
+} else {
+    Write-Check 'database / endpoint' 'PASS' ('{0}:{1} mode={2} from {3}' -f $databaseEndpoint.Host, $databaseEndpoint.Port, $databaseEndpoint.Mode, $databaseResolution.Source)
+}
 
-if (-not $dockerUp) {
-    Write-Check 'docker / postgres' 'FAIL' 'cannot inspect antiphon-postgres (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
-    Write-Check 'docker / volume' 'FAIL' 'cannot inspect antiphon_pgdata (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
+if ($null -eq $databaseEndpoint) {
+    # Reported above; no container to inspect.
+} elseif ($databaseEndpoint.Mode -eq 'local') {
+    $composeFile = Join-Path $repoRoot 'docker-compose.dev.yml'
+
+    if (-not $dockerUp) {
+        Write-Check 'docker / postgres' 'FAIL' 'cannot inspect antiphon-postgres (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
+        Write-Check 'docker / volume' 'FAIL' 'cannot inspect antiphon_pgdata (daemon down)' 'Start Docker Desktop, then: docker compose -f docker-compose.dev.yml up -d'
 } else {
     $pgInspect = Get-NativeOutput -File $dockerPath -Arguments @(
         'inspect',
@@ -406,6 +442,10 @@ if (-not $dockerUp) {
     } else {
         Write-Check 'docker / volume' 'FAIL' 'antiphon_pgdata volume not found' 'docker compose -f docker-compose.dev.yml up -d  (project name antiphon + volume pgdata)'
     }
+}
+} else {
+    Write-Check 'docker / postgres' 'SKIP' ('remote database {0}:{1}; the host compose owns the container' -f $databaseEndpoint.Host, $databaseEndpoint.Port)
+    Write-Check 'docker / volume' 'SKIP' ('remote database {0}:{1}; no local volume is required' -f $databaseEndpoint.Host, $databaseEndpoint.Port)
 }
 
 if ($NoStack) {
@@ -430,25 +470,35 @@ if ($NoStack) {
 # 4. Database TCP (+ optional pg_isready)
 # ---------------------------------------------------------------------------
 
-$tcpOk = Test-TcpPort -HostName '127.0.0.1' -Port 17280
-$readyDetail = ''
-if ($dockerUp -and (Test-Path -LiteralPath $composeFile)) {
-    $readyRun = Get-NativeOutput -File $dockerPath -Arguments @(
-        'compose', '-f', $composeFile, 'exec', '-T', 'postgres', 'pg_isready', '-U', 'antiphon', '-d', 'antiphon'
-    )
-    if ($readyRun.Succeeded) {
-        $readyDetail = '; pg_isready ok'
-    } elseif (Test-NonEmptyText $readyRun.Text) {
-        $readyDetail = ('; pg_isready: {0}' -f ($readyRun.Text -replace '\s+', ' '))
-    } else {
-        $readyDetail = '; pg_isready failed'
+if ($null -eq $databaseEndpoint) {
+    # Reported in section 3.
+} elseif ($databaseEndpoint.Mode -eq 'local') {
+    $tcpOk = Test-TcpPort -HostName '127.0.0.1' -Port 17280
+    $readyDetail = ''
+    if ($dockerUp -and (Test-Path -LiteralPath $composeFile)) {
+        $readyRun = Get-NativeOutput -File $dockerPath -Arguments @(
+            'compose', '-f', $composeFile, 'exec', '-T', 'postgres', 'pg_isready', '-U', 'antiphon', '-d', 'antiphon'
+        )
+        if ($readyRun.Succeeded) {
+            $readyDetail = '; pg_isready ok'
+        } elseif (Test-NonEmptyText $readyRun.Text) {
+            $readyDetail = ('; pg_isready: {0}' -f ($readyRun.Text -replace '\s+', ' '))
+        } else {
+            $readyDetail = '; pg_isready failed'
+        }
     }
-}
 
-if ($tcpOk) {
-    Write-Check 'database' 'PASS' ('TCP localhost:17280 open{0}' -f $readyDetail)
+    if ($tcpOk) {
+        Write-Check 'database' 'PASS' ('TCP localhost:17280 open{0}' -f $readyDetail)
 } else {
     Write-Check 'database' 'FAIL' ('TCP localhost:17280 closed{0}' -f $readyDetail) 'docker compose -f docker-compose.dev.yml up -d  (postgres publishes 17280)'
+}
+} else {
+    if (Test-TcpPort -HostName $databaseEndpoint.Host -Port $databaseEndpoint.Port) {
+        Write-Check 'database' 'PASS' ('TCP {0}:{1} open (remote)' -f $databaseEndpoint.Host, $databaseEndpoint.Port)
+    } else {
+        Write-Check 'database' 'FAIL' ('TCP {0}:{1} closed (remote)' -f $databaseEndpoint.Host, $databaseEndpoint.Port) ("The remote database is owned by the server2 host compose (docker-compose.server2-postgres.yml, project antiphon-server2-postgres).`nOn that host check: docker compose -p antiphon-server2-postgres ps, and the tailnet path to {0}:{1}." -f $databaseEndpoint.Host, $databaseEndpoint.Port)
+    }
 }
 
 # ---------------------------------------------------------------------------
