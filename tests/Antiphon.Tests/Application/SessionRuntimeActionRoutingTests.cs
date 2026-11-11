@@ -131,19 +131,29 @@ public partial class SessionRuntimeActionRoutingTests
             }
             if (variant == "working")
             {
-                // The session is still working here. A TurnEnd supersedes a status action,
-                // so the DueAt comparison is not what holds this drain.
+                // CARD-1304 D-1: retain the deferred status wake as a failed, retry-held queue
+                // action. A FailureReason other than Deferred is never superseded by the newer
+                // TurnEnd wake, so once the turn has ended the DueAt an hour ahead on the
+                // schedule clock is the only thing holding this drain.
                 var heldUntil = clock.GetUtcNow().UtcDateTime.AddHours(1);
                 await using (var barrier = h.CreateObserverContext())
                     await barrier.SessionRuntimeActions.Where(a => a.Id == actionId)
-                        .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, heldUntil));
-                await actions.DrainPageAsync(h.SessionId, default);
-                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible");
-                await using (var still = h.CreateObserverContext())
-                    (await still.SessionQueuedMessages.SingleAsync(m => m.Id == messageId)).DeliveryVerdict.ShouldBeNull();
-                clock.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(2));
-                Console.WriteLine("V-6 clock: working defer held the row with DueAt an hour ahead; the shared schedule clock then advanced");
+                        .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, heldUntil)
+                            .SetProperty(a => a.FailureReason, nameof(IOException)));
                 await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+                (await h.Provider.GetRequiredService<SessionStateStore>().ReadAsync(h.SessionId, default)).Working
+                    .ShouldBeFalse("the turn has ended, so Working cannot be what holds this drain");
+                await actions.DrainPageAsync(h.SessionId, default);
+                h.Adapter.Inputs.ShouldBeEmpty("a retry-held action with DueAt an hour ahead on the schedule clock is not eligible");
+                await using (var still = h.CreateObserverContext())
+                {
+                    (await still.SessionQueuedMessages.SingleAsync(m => m.Id == messageId)).DeliveryVerdict.ShouldBeNull();
+                    var held = await still.SessionRuntimeActions.SingleAsync(a => a.Id == actionId);
+                    held.Phase.ShouldBe(SessionRuntimeActionCoordinator.QueuePhase);
+                    held.FailureReason.ShouldBe(nameof(IOException));
+                }
+                clock.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(2));
+                Console.WriteLine("V-6 clock: idle session, retry-held action with DueAt an hour ahead gave zero input; the shared schedule clock then advanced");
             }
             if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
             if (variant == "rules-held")
