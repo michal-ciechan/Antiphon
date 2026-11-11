@@ -232,7 +232,10 @@ public class SessionRuntimeActionTests
             rows.Select(t => t.Sequence).ShouldBe([1L, 2L, 3L]);
             rows.Count(t => t.Kind == "SessionRestartBoundary").ShouldBe(1);
             rows.Count(t => t.Uuid == "live").ShouldBe(1);
-            await using var db = f.Db(); (await db.SessionRuntimeActions.CountAsync()).ShouldBe(3);
+            await using var db = f.Db();
+            var actions = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == f.SessionId).ToListAsync();
+            actions.Count(a => a.TriggerKind != "catchup").ShouldBe(3);
+            actions.Count(a => a.TriggerKind == "catchup").ShouldBe(1, "an overlapping pull admitted catch-up debt beside the boundary");
             Console.WriteLine("V-4 synthetic-race: one writer across the boundary, the live persist and two pulls");
             return;
         }
