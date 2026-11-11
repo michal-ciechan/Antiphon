@@ -76,9 +76,11 @@ function Read-EtaLine([string]$Line) {
 function Invoke-Eta([string]$Root, [string]$CostPath) {
     $eta = Join-Path $PSScriptRoot 'qualification-eta.ps1'
     if (-not (Test-Path -LiteralPath $eta)) { throw 'qualification-eta.ps1 is absent' }
-    $argv = @('-TimingRoot', $Root, '-NowUtc', $script:NowText)
-    if (-not [string]::IsNullOrWhiteSpace($CostPath)) { $argv += @('-ClassCostPath', $CostPath) }
-    $output = @(& $eta @argv)
+    if ([string]::IsNullOrWhiteSpace($CostPath)) {
+        $output = @(& $eta -TimingRoot $Root -NowUtc $script:NowText)
+    } else {
+        $output = @(& $eta -TimingRoot $Root -NowUtc $script:NowText -ClassCostPath $CostPath)
+    }
     $text = @($output | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     if ($text.Count -ne 1) { throw ('expected one line, got ' + $text.Count + ' [' + ($text -join ' | ') + ']') }
     return Read-EtaLine ([string]$text[0])
