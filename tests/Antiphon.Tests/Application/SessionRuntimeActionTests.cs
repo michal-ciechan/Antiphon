@@ -393,7 +393,20 @@ public class SessionRuntimeActionTests
         }
         var receiver = new Receiver();
         var fault = new AckFault { Armed = variant == "after-effect-before-ack" };
-        await using var f = await SessionStateTestFixture.CreateAsync(fault, configure: s => s.AddSingleton<IEventBus>(receiver));
+        var lifecycle = new LifecycleProbe();
+        await using var f = await SessionStateTestFixture.CreateAsync(fault, configure: s =>
+        {
+            s.AddSingleton<IEventBus>(receiver);
+            if (variant == "uncooperative-effect") lifecycle.Register(s);
+        });
+        var adapter = new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
+        if (variant == "uncooperative-effect")
+        {
+            f.Runtime.Register(f.SessionId, adapter);
+            await using var seat = f.Db();
+            await seat.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.Status, SessionStatus.Running).SetProperty(s => s.RunnerId, LifecycleProbe.Seat));
+        }
         var entry = f.Event(1, variant == "during-confirm" ? "UserPrompt" : "ToolResult", text: "complete original body");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -429,6 +442,11 @@ public class SessionRuntimeActionTests
                 stopping = first.StopAsync(default);
                 stopping.IsCompleted.ShouldBeFalse();
                 receiver.Payloads.ShouldBeEmpty();
+                // CARD-1304 D-2: while Stop waits on the held effect, its owner and scope stay live.
+                OwnerCount(Actions(f)).ShouldBe(1, "the held effect still owns its session");
+                lifecycle.LiveScopes.ShouldBeGreaterThan(0, "the held effect's scope is not disposed before release");
+                await lifecycle.AssertNoStopKillOrSeatReleaseAsync(f, adapter, "held");
+                Console.WriteLine("V-9 uncooperative-effect held: owners=1 liveScopes=" + lifecycle.LiveScopes + " kill=0 seat-release=0");
             }
             else if (variant == "during-confirm")
             {
@@ -447,6 +465,15 @@ public class SessionRuntimeActionTests
         {
             release.TrySetResult(); queueGate?.Release();
             if (stopping is not null) await stopping; else await first.StopAsync(default);
+        }
+        if (variant == "uncooperative-effect")
+        {
+            OwnerCount(Actions(f)).ShouldBe(0, "no owner remains after the joined stop");
+            lifecycle.LiveScopes.ShouldBe(0, "every action scope was disposed by the joined stop");
+            lifecycle.CreatedScopes.ShouldBeGreaterThan(0);
+            await lifecycle.AssertNoStopKillOrSeatReleaseAsync(f, adapter, "joined");
+            receiver.Payloads.Count.ShouldBe(1, "the released effect completed exactly once");
+            Console.WriteLine("V-9 uncooperative-effect joined: owners=0 liveScopes=0 created=" + lifecycle.CreatedScopes + " kill=0 seat-release=0");
         }
         receiver.BeforeReceive = null;
         await using (var db = f.Db()) await db.SessionRuntimeActions.ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow));
@@ -481,6 +508,7 @@ public class SessionRuntimeActionTests
         if (variant == "phase-failure")
         {
             await VerifyEveryPhaseAcknowledgementAsync();
+            await VerifyEveryPhaseEffectFailureAsync();
             receiver.BeforeReceive = null;
             await Actions(f).DrainPageAsync(f.SessionId, default);
             await using (var db = f.Db())
@@ -494,6 +522,7 @@ public class SessionRuntimeActionTests
         }
         if (variant == "retry-clock")
         {
+            await VerifyFourFailedOwnersAsync();
             foreach (var seconds in new[] { 1, 2, 4, 8, 16, 30, 30 })
             {
                 var at = clock.GetUtcNow().UtcDateTime;
@@ -684,6 +713,145 @@ public class SessionRuntimeActionTests
         }
     }
 
+    // CARD-1304 D-3: a downstream effect fails at each injectable phase in turn. A UserPrompt
+    // row reaches the capacity effect (phase 1); an AssistantText row routes the UI (0), channel
+    // (4), review (5) and task (6) effects. Phases 2, 3 and 7 have no replaceable downstream
+    // for these rows here; their acknowledgement saves are VerifyEveryPhaseAcknowledgementAsync.
+    private static async Task VerifyEveryPhaseEffectFailureAsync()
+    {
+        foreach (var phase in new[] { 0, 1, SessionRuntimeActionCoordinator.ChannelReplyPhase, 5, 6 })
+        {
+            var label = "V-10 effect failure phase " + phase;
+            var clock = DatabaseClock();
+            var receiver = new Receiver();
+            var effect = new EffectFault(phase);
+            receiver.BeforeReceive = (_, _) => effect.Enter(0) ? throw new IOException(label) : Task.CompletedTask;
+            await using var f = await SessionStateTestFixture.CreateAsync(clock: clock, configure: s =>
+            {
+                s.AddSingleton<IEventBus>(receiver);
+                s.AddScoped(_ => effect.Resolve<CapacityRecoveryService>(1, label));
+                s.AddScoped(_ => effect.Resolve<ChannelReplyDispatcher>(SessionRuntimeActionCoordinator.ChannelReplyPhase, label));
+                s.AddScoped(_ => effect.Resolve<ReviewReplyDispatcher>(5, label));
+                s.AddScoped(_ => effect.Resolve<AgentTaskReplyService>(6, label));
+            });
+            await f.Runtime.ObserveTranscriptAsync(f.Event(1, phase == 1 ? "UserPrompt" : "AssistantText",
+                text: "effect " + phase), default);
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            effect.Hits.ShouldBe(1, label + ": the injected downstream failure ran");
+            await using (var before = f.Db())
+            {
+                var retained = await before.SessionRuntimeActions.SingleAsync();
+                retained.Phase.ShouldBe(phase, label + ": the failed phase is not acknowledged");
+                retained.Attempts.ShouldBe(1, label);
+                retained.FailureReason.ShouldBe(nameof(IOException), label);
+                retained.DueAt.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(1), label);
+            }
+            receiver.Payloads.Count.ShouldBe(phase == 0 ? 0 : 1, label);
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            effect.Calls.ShouldBe(1, label + ": no retry before the due time");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            effect.Calls.ShouldBe(2, label + ": the failed effect retried exactly once");
+            receiver.Payloads.Count.ShouldBe(1, label + ": the acknowledged UI phase never repeats");
+            await using var verify = f.Db();
+            (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0, label);
+            Console.WriteLine(label + ": failed, retained unacknowledged, retried once at due, completed");
+        }
+    }
+
+    // CARD-1304 D-3: four failing owners occupy all four workers at once, then fail. A later
+    // session still progresses, no failed owner keeps a worker between retries, and after the
+    // clock passes retention and retry age every failed turn recovers exactly once.
+    private static async Task VerifyFourFailedOwnersAsync()
+    {
+        var clock = DatabaseClock();
+        var receiver = new Receiver();
+        await using var f = await SessionStateTestFixture.CreateAsync(clock: clock, configure: s => s.AddSingleton<IEventBus>(receiver));
+        var failing = Enumerable.Range(0, SessionRuntimeActionCoordinator.WorkerCount).Select(_ => Guid.NewGuid()).ToArray();
+        var later = Guid.NewGuid();
+        await using (var db = f.Db())
+        {
+            foreach (var id in failing.Append(later)) db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "failed-owners",
+                Cwd = Path.GetTempPath(), Status = SessionStatus.Running, CreatedAt = clock.GetUtcNow().UtcDateTime,
+                StartedAt = clock.GetUtcNow().UtcDateTime, LastSeenAt = clock.GetUtcNow().UtcDateTime });
+            await db.SaveChangesAsync();
+        }
+        var armed = true;
+        var entered = new ConcurrentDictionary<Guid, int>();
+        var allEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        receiver.BeforeReceive = async (payload, ct) =>
+        {
+            var id = (Guid)payload.GetType().GetProperty("sessionId")!.GetValue(payload)!;
+            if (!Volatile.Read(ref armed) || !failing.Contains(id)) return;
+            entered.AddOrUpdate(id, 1, (_, count) => count + 1);
+            if (entered.Count == failing.Length) allEntered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            throw new IOException("failed owner " + id);
+        };
+        var coordinator = Actions(f);
+        using var worker = new SessionRuntimeActionHostedService(coordinator);
+        await worker.StartAsync(default);
+        try
+        {
+            var failedAt = clock.GetUtcNow().UtcDateTime;
+            foreach (var id in failing)
+                await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: id.ToString()) with { SessionId = id }, default);
+            await AwaitReadyAsync(allEntered.Task, "Four failing owners");
+            OwnerCount(coordinator).ShouldBe(SessionRuntimeActionCoordinator.WorkerCount, "four failing owners fill every worker slot");
+            release.TrySetResult();
+            await UntilAsync(async () =>
+            {
+                await using var db = f.Db();
+                return await db.SessionRuntimeActions.CountAsync(a => failing.Contains(a.AgentSessionId) && a.Attempts == 1) == failing.Length;
+            });
+            await UntilAsync(() => Task.FromResult(OwnerCount(coordinator) == 0));
+            await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "later progresses") with { SessionId = later }, default);
+            await UntilAsync(async () =>
+            {
+                await using var db = f.Db();
+                return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == later);
+            });
+            receiver.Payloads.Select(Text).ShouldBe(["later progresses"], "a later session progresses past four failed owners");
+            OwnerCount(coordinator).ShouldBe(0, "no failed owner occupies a worker between retries");
+            await using (var db = f.Db())
+            {
+                var debts = await db.SessionRuntimeActions.Where(a => failing.Contains(a.AgentSessionId)).ToListAsync();
+                debts.Count.ShouldBe(failing.Length);
+                debts.ShouldAllBe(a => a.Phase == 0 && a.Attempts == 1 && a.FailureReason == nameof(IOException));
+                debts.ShouldAllBe(a => a.DueAt == failedAt.AddSeconds(1));
+            }
+            entered.Values.ShouldAllBe(count => count == 1, "no failed owner retried before its due time");
+            Console.WriteLine("V-10 four failed owners: slots=4 owners-after=0 later progressed debts=4");
+            Volatile.Write(ref armed, false);
+            clock.Advance(TimeSpan.FromDays(100));
+            await UntilAsync(async () =>
+            {
+                await using var db = f.Db();
+                return !await db.SessionRuntimeActions.AnyAsync();
+            });
+            receiver.Payloads.Select(Text).Order().ShouldBe(failing.Select(id => id.ToString()).Append("later progresses").Order(),
+                "every failed turn recovers exactly once beyond retention and retry age");
+            Console.WriteLine("V-10 four failed owners: recovered after the clock passed retention and retry age");
+        }
+        finally { release.TrySetResult(); await worker.StopAsync(default); }
+    }
+
+    private sealed class EffectFault(int phase)
+    {
+        public int Hits;
+        public int Calls;
+        public bool Enter(int at)
+        {
+            if (at != phase) return false;
+            Interlocked.Increment(ref Calls);
+            if (Interlocked.CompareExchange(ref Hits, 1, 0) != 0) return false;
+            return true;
+        }
+        public T Resolve<T>(int at, string label) where T : class =>
+            Enter(at) ? throw new IOException(label + " " + typeof(T).Name) : null!;
+    }
+
     private sealed class CancelAtInsert(CancellationTokenSource cancellation) : DbCommandInterceptor
     {
         public int Hits;
@@ -728,6 +896,55 @@ public class SessionRuntimeActionTests
         { End(data.Context); return Task.CompletedTask; }
         public override Task SaveChangesCanceledAsync(DbContextEventData data, CancellationToken ct = default)
         { End(data.Context); return Task.CompletedTask; }
+    }
+
+    private static int OwnerCount(SessionRuntimeActionCoordinator coordinator) =>
+        ((System.Collections.ICollection)typeof(SessionRuntimeActionCoordinator)
+            .GetField("_owners", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(coordinator)!).Count;
+
+    // CARD-1304 D-2: records action scope lifetimes (every action scope resolves AppDbContext),
+    // stop/kill requests and the session's seat, so a kill, a seat release or a leaked scope
+    // on an uncooperative effect is a counted failure rather than an unobserved side effect.
+    private sealed class LifecycleProbe : IDelegateSessionStopper
+    {
+        public const string Seat = "c1304-seat";
+        private int _created;
+        private int _disposed;
+        public int Kills;
+        public int CreatedScopes => Volatile.Read(ref _created);
+        public int LiveScopes => Volatile.Read(ref _created) - Volatile.Read(ref _disposed);
+        public Task KillAsync(Guid sessionId, CancellationToken ct) { Interlocked.Increment(ref Kills); return Task.CompletedTask; }
+        public void Register(IServiceCollection s)
+        {
+            s.Remove(s.Last(d => d.ServiceType == typeof(AppDbContext)));
+            s.AddScoped(sp => new ScopeLease(this));
+            s.AddScoped(sp =>
+            {
+                sp.GetRequiredService<ScopeLease>();
+                return new AppDbContext(sp.GetRequiredService<DbContextOptions<AppDbContext>>());
+            });
+            s.AddSingleton<IDelegateSessionStopper>(this);
+        }
+        public async Task AssertNoStopKillOrSeatReleaseAsync(SessionStateTestFixture f,
+            Antiphon.Tests.Agents.FakeAgentProtocolAdapter adapter, string label)
+        {
+            Volatile.Read(ref Kills).ShouldBe(0, label + ": no session stop/kill request");
+            adapter.Killed.ShouldBeFalse(label + ": the registered adapter was not killed");
+            await using var db = f.Db();
+            var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == f.SessionId);
+            session.Status.ShouldBe(SessionStatus.Running, label + ": no park or stop");
+            session.RunnerId.ShouldBe(Seat, label + ": the session keeps its seat");
+            session.EndedAt.ShouldBeNull(label);
+            session.ExitStopIntentJson.ShouldBeNull(label);
+        }
+        private sealed class ScopeLease : IDisposable
+        {
+            private readonly LifecycleProbe _probe;
+            private int _done;
+            public ScopeLease(LifecycleProbe probe) { _probe = probe; Interlocked.Increment(ref probe._created); }
+            public void Dispose() { if (Interlocked.Exchange(ref _done, 1) == 0) Interlocked.Increment(ref _probe._disposed); }
+        }
     }
 
     private sealed class AckFault : SaveChangesInterceptor

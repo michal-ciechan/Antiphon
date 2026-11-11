@@ -34,7 +34,7 @@ public partial class SessionRuntimeActionRoutingTests
     {
         if (variant == "review-bound") { await VerifyReviewRoutingAsync(); return; }
         if (variant == "task-bound") { await VerifyTaskRoutingAsync(false); return; }
-        if (variant == "parent-handoffs") { await VerifyParentRoutingAsync(); return; }
+        if (variant == "parent-handoffs") { await VerifyParentRoutingAsync(); await VerifyParentHandoffCutsAsync(); return; }
         var producer = new HeldRoutingProducer();
         await using var f = await RoutingFixture.CreateAsync(s => s.AddSingleton<IAntiphonMessagingProducer>(producer));
         var h = f.H;
@@ -273,6 +273,43 @@ public partial class SessionRuntimeActionRoutingTests
         await using var verify = h.CreateObserverContext();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         h.Adapter.Inputs.ShouldBeEmpty("a complete stored receipt confirms without retyping");
+        if (variant == "old-generation") await VerifyStaleQueueGenerationLateConfirmAsync();
+    }
+
+    // CARD-1304 D-4: only the queue attempt's LastDeliveryGeneration differs from the session.
+    // The session generation, the admitted action and the runtime are left untouched, so a
+    // generation-only drift in the queue field is what this subcase isolates.
+    private static async Task VerifyStaleQueueGenerationLateConfirmAsync()
+    {
+        await using var f = await RoutingFixture.CreateAsync();
+        var h = f.H;
+        var body = "C1259 stale queue generation body " + new string('y', 700);
+        var cap = h.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification.MaxDeliveryAttempts;
+        DateTime current;
+        await using (var db = h.CreateObserverContext())
+            current = await db.AgentSessions.Where(s => s.Id == h.SessionId).Select(s => s.StartedAt).SingleAsync();
+        var stale = SessionGeneration.Normalize(current.AddMinutes(-7));
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        var id = await h.SeedPendingMessageAsync(body, deliveryAttempts: cap, baselineSequence: floor,
+            lastDeliveryStartedAt: h.Now, lastDeliveryGeneration: stale);
+        await using (var db = h.CreateObserverContext())
+        {
+            var seeded = await db.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+            seeded.LastDeliveryGeneration.ShouldBe(stale);
+            SessionGeneration.Equal(seeded.LastDeliveryGeneration, current).ShouldBeFalse("the attempt generation is stale");
+        }
+        await f.StreamAsync(f.Entry("UserPrompt", body), f.Entry("TurnEnd"));
+        f.AdvanceSchedule(TimeSpan.FromMilliseconds(1100));
+        await f.Actions.RequestAsync(h.SessionId, "status", default);
+        await f.Actions.DrainPageAsync(h.SessionId, default);
+        await using var verify = h.CreateObserverContext();
+        (await verify.AgentSessions.Where(s => s.Id == h.SessionId).Select(s => s.StartedAt).SingleAsync()).ShouldBe(current);
+        var row = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed,
+            "an ordinary Claude message is late-confirmed by its complete prompt whatever its attempt generation");
+        row.DeliveryAttempts.ShouldBe(cap);
+        h.Adapter.Inputs.ShouldBeEmpty("late confirmation of a stale-generation attempt never retypes");
+        Console.WriteLine("V-12 old-generation isolated LastDeliveryGeneration: ordinary message late-confirmed, zero input");
     }
 
 
@@ -521,6 +558,191 @@ public partial class SessionRuntimeActionRoutingTests
             (await verify.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Kind == "UserPrompt"
                 && t.Text == queued.Body).CountAsync()).ShouldBe(1);
             adapter.SubmittedBodies.ShouldBe([queued.Body]);
+        }
+    }
+
+    // CARD-1304 D-5: the durable parent note (a Blocked report with parking enabled) is cut at
+    // H0-H4 for an eligible and a busy parent. Each cut restarts DI over the same clone and the
+    // same note/queue identity, then recovers through AgentTaskLandNotificationService.ReconcileAsync
+    // and the real queue to one complete parent UserPrompt.
+    private static async Task VerifyParentHandoffCutsAsync()
+    {
+        foreach (var busy in new[] { false, true })
+        foreach (var cut in Enumerable.Range(0, 5))
+        {
+            var label = $"V-5 parent H{cut} {(busy ? "busy" : "eligible")}";
+            var boundary = new ParentCutBoundary();
+            var fault = new ParentEnqueueFault();
+            await using var f = await RoutingFixture.CreateAsync(s =>
+            {
+                AddTaskServices(s);
+                s.AddSingleton<LandDeliveryBoundary>(boundary);
+                s.AddSingleton<CompletionNoteFlushQueue>();
+                s.AddScoped<AgentTaskLandNotificationService>();
+                s.AddSingleton(Options.Create(new BlockedTaskParkingOptions { Enabled = true }));
+            }, o => o.AddInterceptors(fault));
+            var parent = Guid.NewGuid();
+            await using (var db = f.H.CreateObserverContext())
+            {
+                db.AgentSessions.Add(new AgentSession { Id = parent, DefinitionName = "fake", Cwd = f.H.TempRoot,
+                    Status = SessionStatus.Running, StartedAt = f.H.Now, CreatedAt = f.H.Now });
+                await db.SaveChangesAsync();
+            }
+            var submitted = new List<string>();
+            Antiphon.Tests.Agents.FakeAgentProtocolAdapter Attach()
+            {
+                var adapter = new Antiphon.Tests.Agents.FakeAgentProtocolAdapter();
+                adapter.OnSubmitted = body =>
+                {
+                    submitted.Add(body);
+                    f.Runner.Produce(f.Entry("UserPrompt", body) with { SessionId = parent });
+                    return Task.CompletedTask;
+                };
+                f.H.Runtime.Register(parent, adapter);
+                return adapter;
+            }
+            var adapter = Attach();
+            await f.StreamAsync(f.Entry("UserPrompt", "parent prior question") with { SessionId = parent, Sequence = 1 },
+                f.Entry("TurnEnd") with { SessionId = parent, Sequence = 2 });
+            if (busy) await f.StreamAsync(f.Entry("UserPrompt", "parent busy work") with { SessionId = parent });
+            var task = await SeedRoutingTaskAsync(f, parent);
+            if (cut == 0) boundary.ThrowAt = "before-enqueue";
+            if (cut == 1) fault.Armed = true;
+            if (cut == 2) boundary.DropWake = true;
+            const string resultBody = "Parent handoff report | one | two | caveat.\n--- next stage ---\nnext: review\nhandoff: recover the parent note";
+            var report = $"{resultBody}\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
+            await f.StreamAsync(f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(task.Id)),
+                f.Entry("AssistantText", report), f.Entry("TurnEnd"));
+            await f.Actions.DrainPageAsync(f.H.SessionId, default);
+            Guid noteId;
+            Guid? queueId;
+            await using (var db = f.H.CreateObserverContext())
+            {
+                (await db.AgentTasks.SingleAsync(t => t.Id == task.Id)).Status.ShouldBe(AgentTaskStatus.Blocked, label);
+                var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.TaskId == task.Id);
+                note.Kind.ShouldBe(LandNotificationKind.TaskCompletion, label);
+                note.ParentSessionId.ShouldBe(parent, label);
+                noteId = note.Id; queueId = note.QueueMessageId;
+                note.ConfirmedAt.ShouldBeNull(label + " is not acknowledged before the parent prompt");
+                var rows = await db.SessionQueuedMessages.Where(m => m.SourceLandNotificationId == note.Id).ToListAsync();
+                if (cut is 0 or 1)
+                {
+                    (cut == 0 ? boundary.Hits : fault.Hits).ShouldBe(1, label + " cut ran once");
+                    rows.ShouldBeEmpty(label + " left no queue row");
+                    queueId.ShouldBeNull(label);
+                    note.State.ShouldBe(LandNotificationState.RetryPending, label);
+                }
+                else
+                {
+                    rows.ShouldHaveSingleItem(label).Id.ShouldBe(queueId!.Value, label);
+                    rows[0].DeliveryAttempts.ShouldBe(0, label);
+                    note.State.ShouldBe(LandNotificationState.AwaitingReceipt, label);
+                }
+                if (cut == 2) boundary.Dropped.ShouldBe(1, label + " dropped the wake after the queue commit");
+            }
+            adapter.Inputs.ShouldBeEmpty(label + " typed nothing before the recovery owner ran");
+            if (cut is 3 or 4)
+            {
+                if (busy)
+                {
+                    await f.H.Queue.FlushIfIdleAsync(parent, default);
+                    adapter.Inputs.ShouldBeEmpty(label + " waits for the parent's idle boundary");
+                    await f.StreamAsync(f.Entry("TurnEnd") with { SessionId = parent });
+                }
+                await f.H.Queue.FlushIfIdleAsync(parent, default);
+                await WaitParentPromptAsync();
+                if (cut == 3)
+                {
+                    boundary.ThrowAt = "receipt-before-save";
+                    await ReconcileAsync();
+                    boundary.Hits.ShouldBe(1, label + " cut the acknowledgement after the receipt");
+                }
+                else await ReconcileAsync();
+                await using var db = f.H.CreateObserverContext();
+                var note = await db.AgentTaskLandNotifications.SingleAsync(n => n.Id == noteId);
+                if (cut == 3) note.ConfirmedAt.ShouldBeNull(label + " receipt exists but the producer ack is still owed");
+                else note.State.ShouldBe(LandNotificationState.Confirmed, label + " acknowledged before the restart");
+            }
+            await f.RestartAsync();
+            adapter = Attach();
+            f.AdvanceSchedule(TimeSpan.FromSeconds(AgentTaskLandNotificationService.RetrySeconds(1) + 1));
+            await ReconcileAsync();
+            if (cut is not (3 or 4))
+            {
+                if (busy)
+                {
+                    await f.H.Queue.FlushIfIdleAsync(parent, default);
+                    adapter.Inputs.ShouldBeEmpty(label + " recovered note waits for the parent's idle boundary");
+                    await f.StreamAsync(f.Entry("TurnEnd") with { SessionId = parent });
+                }
+                await f.H.Queue.FlushIfIdleAsync(parent, default);
+                await WaitParentPromptAsync();
+                await ReconcileAsync();
+            }
+            await using (var verify = f.H.CreateObserverContext())
+            {
+                var note = await verify.AgentTaskLandNotifications.SingleAsync(n => n.Id == noteId);
+                note.State.ShouldBe(LandNotificationState.Confirmed, label);
+                var queued = await verify.SessionQueuedMessages.SingleAsync(m => m.SourceLandNotificationId == noteId);
+                if (queueId is { } original) queued.Id.ShouldBe(original, label + " kept the original queue identity");
+                note.QueueMessageId.ShouldBe(queued.Id, label);
+                queued.SourceTaskId.ShouldBe(task.Id, label);
+                queued.Body.ShouldContain(resultBody, Case.Sensitive, label);
+                queued.DeliveryAttempts.ShouldBe(1, label);
+                var prompts = await verify.TranscriptEntries.Where(t => t.AgentSessionId == parent && t.Kind == "UserPrompt"
+                    && t.Text == queued.Body).Select(t => t.Sequence).ToListAsync();
+                prompts.ShouldHaveSingleItem(label + " one complete parent UserPrompt");
+                note.ConfirmingPromptSequence.ShouldBe(prompts[0], label);
+                submitted.ShouldBe([queued.Body], label + " exactly one body was typed");
+            }
+            Console.WriteLine(label + ": same note and queue identity, one complete parent prompt, confirmed by ReconcileAsync");
+
+            async Task ReconcileAsync()
+            {
+                await using var scope = f.H.Provider.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskLandNotificationService>().ReconcileAsync(noteId, default);
+            }
+            async Task WaitParentPromptAsync() => await SpecialistTaskRunnerDeadlineTests.UntilAsync(async () =>
+            {
+                await using var db = f.H.CreateObserverContext();
+                return await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == parent && t.Kind == "UserPrompt"
+                    && t.Text != null && t.Text.Contains("Parent handoff report"));
+            });
+        }
+    }
+
+    private sealed class ParentCutBoundary : LandDeliveryBoundary
+    {
+        public string? ThrowAt;
+        public bool DropWake;
+        public int Hits;
+        public int Dropped;
+        public override Task ReachedAsync(string boundary, Guid taskId, Guid identity, CancellationToken ct)
+        {
+            if (ThrowAt is null || boundary != ThrowAt) return Task.CompletedTask;
+            ThrowAt = null; Hits++;
+            throw new IOException("parent handoff cut at " + boundary);
+        }
+        public override bool DropWakeup(string boundary, Guid identity)
+        {
+            if (!DropWake || boundary != "completion") return false;
+            DropWake = false; Dropped++;
+            return true;
+        }
+    }
+
+    private sealed class ParentEnqueueFault : Microsoft.EntityFrameworkCore.Diagnostics.SaveChangesInterceptor
+    {
+        public bool Armed;
+        public int Hits;
+        public override ValueTask<Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int>> SavingChangesAsync(
+            Microsoft.EntityFrameworkCore.Diagnostics.DbContextEventData data,
+            Microsoft.EntityFrameworkCore.Diagnostics.InterceptionResult<int> result, CancellationToken ct = default)
+        {
+            if (Armed && data.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Added && e.Entity.SourceLandNotificationId != null))
+            { Armed = false; Hits++; throw new IOException("parent note enqueue failed before commit"); }
+            return ValueTask.FromResult(result);
         }
     }
 
