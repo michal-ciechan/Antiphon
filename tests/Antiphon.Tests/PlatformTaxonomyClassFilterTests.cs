@@ -6,7 +6,8 @@ namespace Antiphon.Tests;
 
 /// <summary>
 /// CARD-1832 S1. A class attribute is shorthand for every method. The body passes
-/// only when the include lane selected this Linux-only class.
+/// only when the include lane selected this Linux-only class, or when no probe row
+/// set the lane.
 /// </summary>
 [Category("Unit")]
 [LinuxOnly("class shorthand")]
@@ -25,6 +26,6 @@ public sealed class PlatformTaxonomyClassFilterTests
         attributes[0].Name.ShouldBe("Platform");
         attributes[0].Value.ShouldBe("LinuxOnly");
         attributes[0].Reason.ShouldBe("class shorthand");
-        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("include");
+        PlatformTaxonomyFilterTests.AssertProbeLane("include");
     }
 }

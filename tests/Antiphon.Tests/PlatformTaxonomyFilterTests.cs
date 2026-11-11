@@ -7,7 +7,9 @@ namespace Antiphon.Tests;
 
 /// <summary>
 /// CARD-1832 S1. Each body passes only on the lane that should select it, so the
-/// other treenode filter fails the method instead of looking green.
+/// other treenode filter fails the method instead of looking green. Only the
+/// CP-1/CP-2 probe rows set ANTIPHON_PLATFORM_FILTER; an ordinary lane has no
+/// probe expectation and still checks the attribute shape.
 /// </summary>
 [Category("Unit")]
 public sealed class PlatformTaxonomyFilterTests
@@ -25,7 +27,7 @@ public sealed class PlatformTaxonomyFilterTests
         Should.Throw<ArgumentException>(() => new HasLinuxSpecificsAttribute(""));
         Should.Throw<ArgumentException>(() => new HasWindowsSpecificsAttribute(""));
         Should.Throw<ArgumentException>(() => new LinuxOnlyAttribute(null!));
-        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("include");
+        AssertProbeLane("include");
     }
 
     [Test]
@@ -34,7 +36,14 @@ public sealed class PlatformTaxonomyFilterTests
         var method = typeof(PlatformTaxonomyFilterTests).GetMethod(nameof(Unannotated_sibling_is_excluded_from_the_linux_only_selection));
         method.ShouldNotBeNull();
         method!.GetCustomAttributes(typeof(PropertyAttribute), inherit: false).ShouldBeEmpty();
-        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("exclude");
+        AssertProbeLane("exclude");
+    }
+
+    internal static void AssertProbeLane(string expected)
+    {
+        var lane = Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER");
+        if (!string.IsNullOrEmpty(lane))
+            lane.ShouldBe(expected);
     }
 
     private static void AssertPlatform(object attribute, string value, string reason)
