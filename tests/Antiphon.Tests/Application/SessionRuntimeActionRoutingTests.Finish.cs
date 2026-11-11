@@ -400,7 +400,7 @@ public partial class SessionRuntimeActionRoutingTests
             f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(cancelled.Id)),
             f.Entry("AssistantText", "Cancelled before a report.\n[antiphon-report:"
                 + DelegationReportFormatter.Short(cancelled.Id) + " blocked]"),
-            f.Entry("TurnEnd") with { StopReason = StopReasons.Cancelled });
+            f.Entry("TurnEnd") with { StopReason = TranscriptKinds.StopReasons.Cancelled });
         await f.Actions.DrainPageAsync(f.H.SessionId, default);
         await using (var db = f.H.CreateObserverContext())
         {
