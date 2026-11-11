@@ -3,13 +3,13 @@
 One committed note for the rc/2026-11-15 group-7 failure of `RunnerProcessProbeTests.Late_process_start_after_the_one_second_deadline_is_reaped` (run 6591e378). CARD-1781.
 Owner: [why-missed write-up](../orchestration-loop.md#why-missed-write-up-card-1781).
 
-Run 6591e378, chunk `antiphon-all-group-7.trx`, candidate `C:\Antiphon\releases\candidates\rc-2026-11-15-ac6d00022e94\logs\2026-11-10-1248-6591e378`, rc/2026-11-15 = `ac6d00022e940ee3b90584c7d313567b4491c498`. The desktop extract `docs/investigations/2026-11-10-run-6591e378-group-7-runner-process-probe-windows-failure.md` was not on origin when this note was written. The failure text below is the in-progress Custom read `a58543ac` after it opened that TRX.
+Run 6591e378, chunk `antiphon-all-group-7.trx`, candidate `C:\Antiphon\releases\candidates\rc-2026-11-15-ac6d00022e94\logs\2026-11-10-1248-6591e378`, rc/2026-11-15 = `ac6d00022e940ee3b90584c7d313567b4491c498`. The desktop extract is `docs/investigations/2026-11-10-run-6591e378-group-7-runner-process-probe-windows-failure.md` on `origin/feat/card-task-a58543ac` at `2b49971d5`.
 
 ## Failure
 
 `Antiphon.Tests.AgentTui.RunnerProcessProbeTests.Late_process_start_after_the_one_second_deadline_is_reaped`. Chunk window `2026-11-11T02:09:24Z`–`02:11:03Z`. The test started `2026-11-11T02:09:36.5215383+00:00` and ended `2026-11-11T02:09:39.3388340+00:00` (wall about 2.817s).
 
-The stopwatch starts when the start seam is entered and stops when `RunAsync` returns. It measured 2.642s. The assertions before it had already passed: `TimedOut` true, `Started` false, `CleanupConfirmed` false. The failing assertion is `elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2))` at `tests/Antiphon.Tests/AgentTui/RunnerProcessProbeTests.cs` (then line 748). The reap-after-release assertions never ran.
+The stopwatch starts when the start seam is entered and stops when `RunAsync` returns. It measured `00:00:02.6420745`. The assertions before it had already passed: `TimedOut` true, `Started` false, `CleanupConfirmed` false. The failing assertion is `elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2))` at `tests/Antiphon.Tests/AgentTui/RunnerProcessProbeTests.cs` (then line 748). Exact TRX message: `ShouldAssertException: elapsed.Elapsed should be less than 00:00:02 but was 00:00:02.6420745`. The reap-after-release assertions never ran.
 
 The one-second `CancellationTokenSource` is created at the start of `RunAsync`, before the seam. After the seam, `WaitAsync` returns in the cancellation catch and `InterruptedBeforeStart` builds that result with no further wait. A 2.642s return is the timer callback arriving late, not a wrong result.
 
