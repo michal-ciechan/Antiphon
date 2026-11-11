@@ -312,6 +312,33 @@ public class RunnerStartupStaleObservationTests
         }
     }
 
+    // Windows rc d88de419 group 75: (ClaudeCode, False) failed in 2.279s with
+    // stale-observation on the first PtyHost session. The probe token is allowed
+    // after the banner. Ctrl+U is the next WriteStartupAsync call, and its own
+    // first snapshot can still be the banner. Once the composer is on screen the
+    // kill line must be sent. A dialog key stays refused by the test above.
+    [Test]
+    public async Task A_kill_line_is_sent_once_the_composer_replaces_an_unclassified_banner()
+    {
+        var spec = NewSpec();
+        var client = new RacingRunnerClient();
+        client.ScreenForRead = n => n == 1 ? "Fake Claude ready" : null;
+        var session = new RunnerTerminalSession(client);
+        await session.StartAsync(spec, CancellationToken.None);
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            await session.WriteStartupAsync(ComposerInputProbe.KillLine, budget.Token);
+            client.Inputs.ShouldBe([ComposerInputProbe.KillLine]);
+            client.Attempts.ShouldBe([(ComposerInputProbe.KillLine, ConditionalInputOutcomes.Written)]);
+            client.SnapshotReads.ShouldBeGreaterThanOrEqualTo(2);
+        }
+        finally
+        {
+            session.StopWatching();
+        }
+    }
+
     [Test]
     public async Task A_blocked_permission_dialog_is_refused_before_any_wait()
     {
