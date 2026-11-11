@@ -5675,9 +5675,10 @@ public sealed partial class AgentTaskDispatcher
             parkedTranscript = parked?.SessionId;
         }
 
+        var reported = await RunnerBoundDelivery.ReportedBackendAsync(_runners, session.RunnerId, ct);
         await _queue.EnqueueAsync(session.Id,
             FitBriefForSession(task, session, parkedSourceSha: parkedSha, parkedFullRef: parkedRef,
-                parkedTranscriptSessionId: parkedTranscript),
+                parkedTranscriptSessionId: parkedTranscript, reportedPtyBackend: reported),
             MessageSendMode.WhenIdle, ct,
             QueuedMessageOrigin.Delegation, conversationKey: $"released-seat-answer:{task.ReleasedSeatAnswerId:D}",
             sourceTaskId: task.Id, contentDigest: ReleasedAnswerDeliveryKey(task, session),
@@ -7160,25 +7161,23 @@ public sealed partial class AgentTaskDispatcher
     }
 
     /// <summary>
-    /// CARD-0649. A runner-bound brief is typed by the runner's queue, whose single-write
-    /// ceiling is the inbox 1 KB (<see cref="SessionDeliveryProfile"/>). Fitting it against
-    /// this process's modern 43 KB ceiling queued the whole brief, and the queue then replaced
-    /// it with a <c>YOUR MESSAGE</c> pointer that did not carry the opening task marker.
-    /// Runner cwd selects the inbox ceiling here so the queued body is already the brief
-    /// pointer. A local session keeps <paramref name="processCeilings"/>.
+    /// CARD-0649 / CARD-1224. A runner-bound brief is typed by the runner's queue. A cached
+    /// <c>UnixPty</c> report uses that arm. Every other report, including none, stays on the
+    /// inbox ceiling so a desktop modern profile cannot queue a body the runner then replaces.
+    /// A local session keeps <paramref name="processCeilings"/>.
     /// </summary>
     internal static PtyDeliveryCeilings? CeilingsForBrief(
-        PtyDeliveryCeilings? processCeilings, string? runnerCwd, DelegationSettings settings) =>
+        PtyDeliveryCeilings? processCeilings, string? runnerCwd, DelegationSettings settings,
+        string? reportedPtyBackend = null) =>
         string.IsNullOrWhiteSpace(runnerCwd)
             ? processCeilings
-            : settings.CeilingsFor(
-                PtyBackend.InboxConhost,
-                "runner-bound session is delivered under the inbox single-write ceiling; the desktop pty is not this session");
+            : RunnerBoundDelivery.ForRunner(settings, reportedPtyBackend);
 
     private string FitBriefForSession(AgentTask task, AgentSession session, bool refocus = false,
-        string? parkedSourceSha = null, string? parkedFullRef = null, Guid? parkedTranscriptSessionId = null) =>
+        string? parkedSourceSha = null, string? parkedFullRef = null, Guid? parkedTranscriptSessionId = null,
+        string? reportedPtyBackend = null) =>
         FitBriefForTyping(
-            task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _settings),
+            task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _settings, reportedPtyBackend),
             _logger, session.AgentKind, refocus,
             runnerCwd: session.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
@@ -9231,7 +9230,7 @@ public sealed partial class AgentTaskDispatcher
         // existing ?? ClaudeCode default so no current rendering changes.
         var sessionRow = await _db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == session)
-            .Select(s => new { s.AgentKind, s.RunnerCwd, s.StartedAt })
+            .Select(s => new { s.AgentKind, s.RunnerCwd, s.StartedAt, s.RunnerId })
             .FirstOrDefaultAsync(ct);
         var sessionKind = sessionRow?.AgentKind;
 
@@ -9264,8 +9263,9 @@ public sealed partial class AgentTaskDispatcher
         if (ReuseEnqueueOverride is not null)
         {
             var briefKind = sessionKind ?? AgentKind.ClaudeCode;
+            var reported = await RunnerBoundDelivery.ReportedBackendAsync(_runners, sessionRow?.RunnerId, ct);
             var brief = FitBriefForTyping(
-                task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, sessionRow?.RunnerCwd, _settings),
+                task, _settings, CeilingsForBrief(_ptyProfile?.Ceilings, sessionRow?.RunnerCwd, _settings, reported),
                 _logger, briefKind,
                 refocus: refocus,
                 runnerCwd: sessionRow?.RunnerCwd,

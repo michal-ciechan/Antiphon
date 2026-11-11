@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
@@ -192,10 +193,12 @@ public sealed class GrokRulesRefreshService(
         if (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == session.Id
             && m.SourceTaskId == task.Id && m.Origin == QueuedMessageOrigin.Delegation, ct)) return;
         using var scope = scopes.CreateScope();
-        var options = scope.ServiceProvider.GetRequiredService<IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>().Value;
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<DelegationSettings>>().Value;
         var profile = scope.ServiceProvider.GetService<PtyDeliveryProfile>();
+        var reported = await RunnerBoundDelivery.ReportedBackendAsync(
+            scope.ServiceProvider.GetService<ISessionRunnerDirectory>(), session.RunnerId, ct);
         var brief = AgentTaskDispatcher.FitBriefForTyping(
-            task, options, AgentTaskDispatcher.CeilingsForBrief(profile?.Ceilings, session.RunnerCwd, options),
+            task, options, AgentTaskDispatcher.CeilingsForBrief(profile?.Ceilings, session.RunnerCwd, options, reported),
             null, session.AgentKind,
             runnerCwd: session.RunnerCwd,
             stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)

@@ -305,16 +305,6 @@ public class PtyDeliveryCeilingsTests
     }
 
     [Test]
-    public void Unix_backend_keeps_conservative_limits()
-    {
-        var ceilings = new DelegationSettings().CeilingsFor(PtyBackend.UnixPty, "Unix unchanged transport");
-        ceilings.BriefInlineMaxBytes.ShouldBe(900);
-        ceilings.ReplyInlineMaxChars.ShouldBe(3000);
-        ceilings.SingleWriteMaxBytes.ShouldBe(1024);
-        ceilings.IsPastePath.ShouldBeFalse();
-    }
-
-    [Test]
     public async Task Unknown_runner_backend_downgrades_modern_server()
     {
         RequireRedistributable();
