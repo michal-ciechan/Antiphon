@@ -97,6 +97,9 @@ services:
       Schedules__Enabled: "true"
       ChannelBridge__Enabled: "${CHANNEL_BRIDGE_ENABLED:-false}"
       Digest__Enabled: "false"
+      AntiphonMessaging__BootstrapServers: "${ANTIPHON_MESSAGING_BOOTSTRAP_SERVERS:-}"
+      AntiphonMessaging__ClientId: "antiphon-server2-server"
+      AntiphonMessaging__ExpectedClusterId: "${ANTIPHON_MESSAGING_EXPECTED_CLUSTER_ID:-}"
       Agents__DefaultDefinition: grok
       Agents__Definitions__grok__Kind: Grok
       Agents__Definitions__grok__Exe: /usr/local/bin/grok
