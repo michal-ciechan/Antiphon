@@ -39,7 +39,7 @@ public sealed class PlatformTaxonomyFilterTests
         AssertProbeLane("exclude");
     }
 
-    internal static void AssertProbeLane(string expected)
+    private static void AssertProbeLane(string expected)
     {
         var lane = Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER");
         if (!string.IsNullOrEmpty(lane))
