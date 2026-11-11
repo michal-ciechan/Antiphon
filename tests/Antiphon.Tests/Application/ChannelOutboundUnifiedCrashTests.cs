@@ -68,6 +68,22 @@ public sealed class ChannelOutboundUnifiedCrashTests
         deadline.Token.ThrowIfCancellationRequested();
     }
 
+    // Run d88de419 g29: a cut probe stalled with no marker and no exit, and the parent's reach
+    // poll expired before the child's own deadline, so the red carried no child evidence.
+    [Test]
+    public async Task C519_Stalled_cut_probe_fails_with_its_own_evidence()
+    {
+        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
+        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await broker.StartAsync(startup.Token);
+        await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
+        await w.SeedCrashSourceAsync("trailing");
+        await using var child = await w.StartProbeAsync("capture-committed", stallPoint: "capture-committed");
+        var failure = await Should.ThrowAsync<InvalidOperationException>(() => child.ReachAsync("capture-committed"));
+        failure.Message.ShouldContain("probe stall capture-committed");
+        failure.Message.ShouldContain("Canceled");
+    }
+
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
     public Task C519_Attempt_death_stays_uncertain(string kind) =>
         PublicationAsync(kind, ["publishing-committed", "before-producer-call", "producer-entered"]);
