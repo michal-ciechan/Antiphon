@@ -194,21 +194,46 @@ public class SessionRuntimeActionTests
             runner.SetTranscript(new(f.SessionId, entries, 1));
             var gate = f.Services.GetRequiredService<SessionMessageQueueService>().GetLock(f.SessionId);
             await gate.WaitAsync();
-            try { await AwaitReadyAsync(f.Runtime.SyncTranscriptAsync(f.SessionId, default), "The catch-up sync"); }
+            var sync = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
+            try
+            {
+                await AwaitReadyAsync(sync, "The catch-up sync");
+                sync.IsCompletedSuccessfully.ShouldBeTrue("catch-up returns while the queue lock is still held");
+                gate.CurrentCount.ShouldBe(0);
+            }
             finally { gate.Release(); }
-            await using var db = f.Db();
-            (await db.SessionRuntimeActions.CountAsync(a => a.TriggerKind == "catchup")).ShouldBe(1);
+            await using (var held = f.Db())
+                (await held.SessionRuntimeActions.CountAsync(a => a.TriggerKind == "catchup")).ShouldBe(1);
+            await Actions(f).DrainPageAsync(f.SessionId, default);
+            await using var routed = f.Db();
+            (await routed.SessionRuntimeActions.CountAsync(a => a.TriggerKind == "catchup")).ShouldBe(0,
+                "catch-up debt routes once the queue lock is released");
+            (await routed.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(entries.Length);
+            Console.WriteLine("V-4 queue-lock catch-up: returned under the lock; debt routed");
+            return;
         }
         else if (variant == "synthetic-race")
         {
             await f.Runtime.PersistTranscriptAsync(f.SessionId, [entries[0]]);
-            await Task.WhenAll(f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default),
-                f.Runtime.PersistTranscriptAsync(f.SessionId, [entries[1] with { Uuid = "live" }]));
+            writes.Armed = true;
+            var boundary = f.Runtime.WriteRestartBoundaryIfInterruptedAsync(f.SessionId, default);
+            await AwaitReadyAsync(writes.Entered.Task, "The restart-boundary write");
+            var live = f.Runtime.PersistTranscriptAsync(f.SessionId, [entries[1] with { Uuid = "live" }]);
+            var pull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
+            var secondPull = f.Runtime.SyncTranscriptAsync(f.SessionId, default);
+            try
+            {
+                writes.Peak.ShouldBe(1, "the restart boundary shares the session writer with live ingestion");
+                boundary.IsCompleted.ShouldBeFalse();
+                live.IsCompleted.ShouldBeFalse();
+            }
+            finally { writes.Release.TrySetResult(); await Task.WhenAll(boundary, live, pull, secondPull); }
             var rows = await f.RowsAsync();
             rows.Select(t => t.Sequence).ShouldBe([1L, 2L, 3L]);
             rows.Count(t => t.Kind == "SessionRestartBoundary").ShouldBe(1);
             rows.Count(t => t.Uuid == "live").ShouldBe(1);
             await using var db = f.Db(); (await db.SessionRuntimeActions.CountAsync()).ShouldBe(3);
+            Console.WriteLine("V-4 synthetic-race: one writer across the boundary, the live persist and two pulls");
             return;
         }
         else
@@ -279,7 +304,12 @@ public class SessionRuntimeActionTests
         {
             foreach (var id in ids.Take(blockCount))
                 await restarted.GetRequiredService<AgentSessionRuntime>().ObserveTranscriptAsync(f.Event(1, "ToolResult", text: id.ToString()) with { SessionId = id }, default);
-            if (variant is not "poison-page" and not "backstop") await UntilAsync(() => Task.FromResult(entered.Count == blockCount));
+            if (variant is not "poison-page" and not "backstop")
+            {
+                await UntilAsync(() => Task.FromResult(entered.Count == blockCount));
+                if (variant == "production-capacity")
+                    entered.Count.ShouldBe(4, "four owners occupy the worker cohort");
+            }
             if (variant == "duplicate-owner")
             {
                 for (var i = 0; i < 100; i++) coordinator.Hint(ids[0]);
@@ -297,7 +327,10 @@ public class SessionRuntimeActionTests
                 entered[ids[0]].ShouldBe(1);
             }
             release.TrySetResult();
-            clock.Advance(TimeSpan.FromSeconds(1));
+            if (variant == "overflow")
+                Console.WriteLine("V-8 overflow: no one-second backstop advance");
+            else
+                clock.Advance(TimeSpan.FromSeconds(1));
             await UntilAsync(async () =>
             {
                 await using var db = f.Db();
@@ -309,6 +342,7 @@ public class SessionRuntimeActionTests
                 await using var db = f.Db();
                 var poison = await db.SessionRuntimeActions.SingleAsync();
                 poison.AgentSessionId.ShouldBe(ids[0]); poison.Attempts.ShouldBeGreaterThan(0); poison.Phase.ShouldBe(0);
+                Console.WriteLine("V-8 poison-page: the poisoned session stayed owed while the other owners completed");
             }
         }
         finally { release.TrySetResult(); await worker.StopAsync(default); }
@@ -495,6 +529,7 @@ public class SessionRuntimeActionTests
         (await retention.PruneTranscriptsAsync(default)).ShouldBe(0);
         (await retention.PruneQueuedMessagesAsync(default)).ShouldBe(0);
         (await retention.PruneSessionsAsync(default)).ShouldBe(0);
+        Console.WriteLine("V-10 " + variant + ": transcript, queued-message and session prune ran as separate calls while debt existed");
         (await retentionDb.TranscriptEntries.CountAsync()).ShouldBe(1);
         (await retentionDb.SessionQueuedMessages.CountAsync()).ShouldBe(1);
         receiver.BeforeReceive = null;
