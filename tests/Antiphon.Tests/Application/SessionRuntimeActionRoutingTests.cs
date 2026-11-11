@@ -135,13 +135,14 @@ public partial class SessionRuntimeActionRoutingTests
                 await using (var barrier = h.CreateObserverContext())
                     await barrier.SessionRuntimeActions.Where(a => a.Id == actionId)
                         .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, heldUntil));
+                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+                (await h.Provider.GetRequiredService<SessionStateStore>().ReadAsync(h.SessionId, default)).Working.ShouldBeFalse();
                 await actions.DrainPageAsync(h.SessionId, default);
-                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible");
+                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible once the session is idle");
                 await using (var still = h.CreateObserverContext())
                     (await still.SessionQueuedMessages.SingleAsync(m => m.Id == messageId)).DeliveryVerdict.ShouldBeNull();
                 clock.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(2));
-                Console.WriteLine("V-6 clock: DueAt one hour ahead blocked the drain; the shared schedule clock released it");
-                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
+                Console.WriteLine("V-6 clock: DueAt one hour ahead blocked the idle drain; the shared schedule clock released it");
             }
             if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
             if (variant == "rules-held")
