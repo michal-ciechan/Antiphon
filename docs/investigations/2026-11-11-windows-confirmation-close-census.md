@@ -24,7 +24,7 @@ Read-only. No card, run, host, session or container was touched. Operator questi
 | Bucket | Cards |
 |---|---|
 | A, closable now | CARD-1294 |
-| B, closable after a named ae84478d chunk passes | CARD-1510, CARD-1731 |
+| B, closable after a named ae84478d chunk passes | CARD-1510, CARD-1731, CARD-1770 |
 | C, needs a separate Windows run or Mutation/proof task | CARD-1532, CARD-1597, CARD-1013, CARD-1757, CARD-1368 |
 | D, not closable | everything else with a Windows/mutation tail (table below), including the operator-named partials |
 
@@ -88,13 +88,31 @@ Close reason text (after `antiphon-all-group-7` passes in ae84478d):
   - Debug b8770621 has one unlanded docs-only commit, `11cdf6ecbeb42ce7b08b4771943192395572507d` ("investigate CARD-1731 publication ledger timeouts"). It is a report, not a slice. Its finding is superseded by `8b75f3154`.
   - No open task.
 - **Why B, not A.** `8b75f3154` (2026-11-07) leaves "the residual" C599A_ExecutionLedger 300 s overrun, seen in the Windows pre-cut smoke c3f65ddb, "on open CARD-1731". The 11-08 fix is the answer, so a Windows pass of the class is the confirmation.
-- **Other remaining.** PC-1..PC-6 are Mutation. The review advisories A-1..A-4, including the Windows-only shape rows and a Windows 15 s sample, are already filed as CARD-1770.
+- **Other remaining.** PC-1..PC-6 are Mutation. The review advisories A-1..A-4, including the Windows-only shape rows and a Windows 15 s sample, are already filed as CARD-1770, which is itself B below.
 - **Confirming chunk.** `antiphon all-group-127`, 40 tests, holds `ReleaseGatePublicationAuthorityTests` (`C599A_ExecutionLedger`, `...Joins`, `...Markers` and the other 12 C599A cases). Dispatch ordinal **1070 of 1162**. Not run yet.
 - **Supporting, not ae84478d.** `all-group-127` passed 40/40 natively in earlier runs whose cuts contain `70aec174`: 231f573c, dce78ee0, 6591e378. C599A_ExecutionLedger took 30.6 s, 26.4 s and 34.3 s; Joins 32.3, 27.2 and 34.8 s; Markers 28.7, 26.4 and 30.6 s. That is far under 300 s.
 
 Close reason text (after `antiphon-all-group-127` passes in ae84478d):
 
 > Shipped: C599 publication ledger cost cut. Redundant snapshot restores removed (1038d07e66a54b630a1bc1d394923bc7049b73dd); release evidence paths resolved with one attribute read per component plus G-287 witnesses (0af14029dc48ce06802eae3feb591157a66080f2, df019b160454a5e0a396107264e7bcc6919846f5, 70aec174ed3f6d2fff2fc53ba59428fd9e821448); budget decision 8b75f315467f7b25c021ec1c0299c04e7398c0b8. Final Review 6c5b2084 Clean, Full, reviewedSourceClean=true at cf0aba324bdfff15e10f4ef0120c84a6c380f345 (patch-id of 70aec174). Windows confirmation: rc run ae84478d antiphon-all-group-127 <N>/<N>, C599A_ExecutionLedger/Joins/Markers well under the 300 s budget (also 26-35 s in rc runs 231f573c, dce78ee0, 6591e378). Remaining: SourceLanding Mutation PC-1..PC-6; review advisories A-1..A-4 live on CARD-1770. Closed under the 2026-11-10 mutation/confirmation-only close rule.
+
+### CARD-1770 (Review): CARD-1731 follow-ups: G-287 evidence path check error reporting, Windows witnesses
+
+- **Correction to close56.** Close56 said "No origin/master subject names CARD-1770". The card id sits in the commit bodies. Code `39248db6-f873-4d78-ad31-68fb756290fe` landed as:
+  - `cad49b304831ba057098de235c0aaceeda260499`: failing witness for an unreadable evidence directory, plus the middle-component link row (A-2).
+  - `fbf9418c1f347e3fc8a4256c73f669d9a0b4212e`: REFUSED instead of an unhandled publisher error (A-1). The mutation note now records the unwitnessed Windows shapes, the missing Windows walk sample and the A-4 reconciliation.
+  - Both are cherry-picks of `23e38ffe` and `34d383692e89`, both `-` under `git cherry`. `origin/feat/card-task-39248db6` has no `+` commits.
+- **Review.** `777ca96d-6a16-48e8-8fa6-d84b0a43cf42` (2026-11-08): Clean, Final, Full, `reviewedSourceClean=true`, at `34d383692e89dde6386f424e34fb40233a10b1cf`, which is the patch of `fbf9418c1`. Only Review row. No open task.
+- **Remaining.** A-3, "record a Windows sample" of the 15 s walk ceiling. That is `C599SnapshotTests.Evidence_path_walk_finishes_within_fifteen_seconds` (case `C1731_EvidenceWalk`). Also the review advisory that the Windows deny-ACE arm of the unreadable-directory row is unexecuted (`C599A_ExecutionLedger`, 6 assertions). PC-1..PC-7 are Mutation.
+- **Confirming chunks.**
+  - `antiphon all-group-131`, 226 tests, holds `C599SnapshotTests` (the walk and `C1731_EvidenceRefusals` 14 rows). Ordinal **88**.
+  - `antiphon all-group-127` holds `ReleaseGatePublicationAuthorityTests.C599A_ExecutionLedger` with the unreadable row. Ordinal **1070**.
+  - Neither has run yet.
+- **Supporting, not ae84478d.** The walk passed natively on DESKTOP-KTLKPIF in 3.17 s (dce78ee0, `antiphon-all-group-131.trx`) and 3.47 s (6591e378). Both cuts contain `fbf9418c1`. all-group-127 passed 40/40 in both.
+
+Close reason text (after `antiphon-all-group-131` and `-127` pass in ae84478d; take the walk duration from the group-131 TRX):
+
+> Shipped: unreadable release evidence refuses with a REFUSED line and publishes nothing (A-1), middle-component link row and declared Windows-only shapes (A-2), mutation-note reconciliation (A-4): cad49b304831ba057098de235c0aaceeda260499, fbf9418c1f347e3fc8a4256c73f669d9a0b4212e. Final Review 777ca96d Clean, Full, reviewedSourceClean=true at 34d383692e89dde6386f424e34fb40233a10b1cf (patch-id of fbf9418c1). A-3 Windows sample recorded: rc run ae84478d antiphon-all-group-131 C599SnapshotTests.Evidence_path_walk_finishes_within_fifteen_seconds <d> s on DESKTOP-KTLKPIF (earlier 3.17 s dce78ee0, 3.47 s 6591e378; Linux 0.153 s; ceiling 15 s); all-group-127 C599A_ExecutionLedger green natively. Remaining: SourceLanding Mutation PC-1..PC-7. Closed under the 2026-11-10 mutation/confirmation-only close rule.
 
 ## C. Needs a separate Windows run or Mutation/proof task
 
@@ -129,7 +147,6 @@ Operator-named partials first, then the remaining Review/InProgress cards with a
 | CARD-1636 | Review | Non-custody adoption session id | Review `4521968e` is Interim with `reviewedSourceClean=false`. It says "Still pending: the Windows lane for Card1636, the Windows-only custody rows". Needs a Final review first. |
 | CARD-1598 | Review | Timing reader cost grows with journals | Review `614831b6` is Interim. Windows junction refusal and the PS5.1 load row are pending. |
 | CARD-1591 | Review | Dialog guard withholds notices | PARKED 2026-10-27 after two failed attempts; not shipped. |
-| CARD-1770 | Review | CARD-1731 follow-ups incl. Windows witnesses | A-1..A-4 have no landed commit naming the card. The reviewed SHA `34d383692e89` is a different change (close56). |
 | CARD-1641 | Review | 2026-11-01 live-run advisories | Culture-parse, overlapped-read and live-claude ancestor-guard groups are not landed (close56). |
 | CARD-1728 | Review | Unit shard completion | Requires a complete Unit receipt; the Clean review approved a SCOPE-line edit (stale14). |
 | CARD-1784 | Review | Linux post-land early warning | Approving SHA `6fa1d709ecbb` is cherry `+`. Later repair commits through `3a8deb98a` have no new review. |
