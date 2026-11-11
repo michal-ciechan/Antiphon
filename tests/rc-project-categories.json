@@ -150,6 +150,9 @@
       "codex-runner",
       "shared-pty-runner"
     ],
+    "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj": [
+      "shared-runtime"
+    ],
     "tests/Antiphon.ScriptHarnessHost/Antiphon.ScriptHarnessHost.csproj": [
       "test-support"
     ],

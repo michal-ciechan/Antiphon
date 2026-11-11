@@ -14,7 +14,9 @@ public class PtyBackendEnvGuard
     /// <summary>The value this process was launched with, kept only so the log can name it.</summary>
     public static string? Inherited { get; private set; }
 
+#if !ANTIPHON_RESILIENCE_MIRROR
     [Before(Assembly)]
+#endif
     public static void ClearInheritedPtyBackend()
     {
         Inherited = Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar);
@@ -28,6 +30,7 @@ public class PtyBackendEnvGuard
     }
 }
 
+#if !ANTIPHON_RESILIENCE_MIRROR
 [Category("Integration")]
 public class PtyBackendEnvGuardTests
 {
@@ -46,3 +49,4 @@ public class PtyBackendEnvGuardTests
         decision.Deprecated.ShouldBeFalse();
     }
 }
+#endif

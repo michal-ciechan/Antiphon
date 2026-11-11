@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "card": "CARD-1782, CARD-1801, CARD-1819",
+  "card": "CARD-1782, CARD-1801, CARD-1819, CARD-1829",
   "cache": "none",
   "maximumStaleness": 0,
   "kinds": [
@@ -162,6 +162,24 @@
         "ServerGitProcessTests",
         "GitIndexLockTests",
         "ServerGitAssemblyTests"
+      ]
+    },
+    {
+      "id": "resilience-tests",
+      "globs": [
+        "src/Antiphon.Resilience/**",
+        "tests/Antiphon.Resilience.Tests/**"
+      ],
+      "classes": [
+        "DatabaseReadResilienceTests",
+        "HttpReadResilienceTests",
+        "HttpResilienceRegistrationTests",
+        "ResilienceBudgetTests",
+        "ResilienceCircuitTests",
+        "ResilienceOptionsAndTelemetryTests",
+        "ResiliencePredicateTests",
+        "ResilienceAssemblyTests",
+        "StaleWorkingTranscriptWatchdogTests"
       ]
     },
     {

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "7a7d65408ed9956188efb31dd7da7ad62082e864456404266c93c96aec5d650c",
+  "policyHash": "4ab004cf02e2d8adb80f4744030bd23fae3e2fd9b2cafff94822ba43b7bc5719",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -10,7 +10,8 @@
     "client",
     "scripts",
     "observability",
-    "server-git"
+    "server-git",
+    "resilience"
   ],
   "profiles": {
     "nightly": {
@@ -23,7 +24,8 @@
         "client",
         "scripts",
         "observability",
-        "server-git"
+        "server-git",
+        "resilience"
       ],
       "description": "The unattended suites, including the standalone CARD-1564 observability assembly. E2E stays out; OptIn/Explicit still excludes.",
       "exclusions": []
@@ -40,7 +42,8 @@
         "e2e",
         "markdown-pdf",
         "observability",
-        "server-git"
+        "server-git",
+        "resilience"
       ],
       "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
       "exclusions": [
@@ -1615,7 +1618,8 @@
     "tests/Antiphon.Tests/Antiphon.Tests.csproj",
     "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
     "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
-    "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"
+    "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
+    "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj"
   ],
   "suites": {
     "antiphon": {
@@ -1702,6 +1706,13 @@
       "name": "Antiphon.Server.Git.Tests",
       "processGroup": "native-dotnet",
       "assembly": "Antiphon.Server.Git.Tests",
+      "mode": "unattended"
+    },
+    "resilience": {
+      "project": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+      "name": "Antiphon.Resilience.Tests",
+      "processGroup": "native-dotnet",
+      "assembly": "Antiphon.Resilience.Tests",
       "mode": "unattended"
     }
   },
@@ -1968,10 +1979,16 @@
       "consumers": [],
       "project": "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
       "reason": "CARD-1546 mirrored test assembly for Antiphon.Server.Git. The Git project must not reference the server, and these tests are their own nightly and rc suite."
+    },
+    {
+      "role": "primary",
+      "consumers": [],
+      "project": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+      "reason": "CARD-1829 mirrored test assembly for Antiphon.Resilience. Namespaces stay. The mirror is its own nightly and rc suite; tests that still cover the library from Antiphon.Tests stay members of the resilience selection set."
     }
   ],
   "selectionCatalog": {
-    "hash": "b0dfba6df314cf57bc89631806a29dbc1fb366def500fb77662710349c54742b",
+    "hash": "f4aa926ae5d4ba930718c71b097c04316e1855431c35ba5d22de072749df68ec",
     "path": "tests/test-selection-policy.json"
   }
 }

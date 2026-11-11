@@ -55,7 +55,9 @@ public class ProductionRunnerGuard
     /// <summary>What this process inherited, kept so the log can name it.</summary>
     public static string? InheritedBaseUrl { get; private set; }
 
+#if !ANTIPHON_RESILIENCE_MIRROR
     [Before(Assembly)]
+#endif
     public static void PointEveryProgramBootAwayFromTheProductionRunner()
     {
         InheritedBaseUrl = Environment.GetEnvironmentVariable(BaseUrlEnvVar);
@@ -75,6 +77,7 @@ public class ProductionRunnerGuard
     }
 }
 
+#if !ANTIPHON_RESILIENCE_MIRROR
 /// <summary>
 /// The <see cref="ISessionRunnerClient"/> a factory host gets instead of the HTTP client. Lists
 /// nothing, streams nothing, and REFUSES to start a session — recording the attempt so a test can
@@ -218,3 +221,4 @@ public class ProductionRunnerGuardTests
         (await client.ListAsync(CancellationToken.None)).ShouldBeEmpty();
     }
 }
+#endif

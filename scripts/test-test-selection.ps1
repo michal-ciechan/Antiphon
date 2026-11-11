@@ -27,7 +27,7 @@ function Test-C1313_ProjectAndCatalogUniverse {
     $ownedAssembly = @($roles | Where-Object { $_.project -ceq $observability -and $_.role -ceq 'primary' -and $_.reason -and @($_.consumers).Count -eq 0 })
     $assemblyOwned = -not $hasObservability -or ($ownedAssembly.Count -eq 1 -and $policy.Object.profiles.rc.requiredSuites -ccontains 'observability' -and $policy.Object.profiles.nightly.requiredSuites -ccontains 'observability')
     $authority=ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes("$repoRoot/tests/test-execution-policy.json"))
-    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq (8 + [int]$hasObservability) -and $assemblyOwned -and $ownedProbes.Count -eq 2 -and $authority.RequiredSuites.Count -eq (10 + [int]$hasObservability) -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq (8 + [int]$hasObservability)) -Name 'C1313 primary-and-probe-ownership'
+    Assert-C487 -Cond (@($roles | Where-Object role -eq primary).Count -eq (9 + [int]$hasObservability) -and $assemblyOwned -and $ownedProbes.Count -eq 2 -and $authority.RequiredSuites.Count -eq (11 + [int]$hasObservability) -and $authority.RequiredSuites -ccontains 'markdown-pdf' -and $policy.Object.profiles.nightly.requiredSuites.Count -eq (9 + [int]$hasObservability)) -Name 'C1313 primary-and-probe-ownership'
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     Assert-C487 -Cond (@($catalog.sets | Where-Object id -eq core).members.Count -eq 7) -Name 'C1313 seven-method-core'
     $root=Join-Path $ResultsDirectory 'universe';[void](New-Item -ItemType Directory $root)
