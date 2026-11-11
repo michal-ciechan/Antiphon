@@ -25291,6 +25291,7 @@
         "HangfireStartupSafetyTests",
         "LiveStartupIntegrationTests",
         "PhoneHomeDirectoryTests",
+        "ProductionRunnerGuardTests",
         "ProductionRunnerIsolationTests",
         "RoutingPinCandidateDispatchTests",
         "TestDbFixtureLazyInitializationTests",
