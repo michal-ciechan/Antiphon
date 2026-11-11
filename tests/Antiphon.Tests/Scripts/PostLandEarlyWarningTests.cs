@@ -290,6 +290,62 @@ public sealed class PostLandEarlyWarningTests
     }
 
     [Test]
+    public async Task Raw_string_classes_are_not_planned_and_partial_parts_merge()
+    {
+        // CARD-1820 put a raw-string probe (namespace N; [Category("Unit")] class ProbeTests)
+        // into DerivedImpactIndexTests.cs. The scanner read it as source, and a non-unit
+        // partial part seen first hid the later [Category("Unit")] part (run d88de419 g131).
+        using var fixture = Fixture.Create();
+        fixture.WriteFile("tests/Antiphon.Tests/Probe.cs", """"
+            namespace Antiphon.Tests.Gamma;
+
+            public partial class GammaTests
+            {
+                [Test]
+                public void One() { }
+            }
+
+            [Category("Unit")]
+            public partial class GammaTests
+            {
+                [Test]
+                public void Two() { }
+            }
+
+            [Category("Unit")]
+            public sealed class HostTests
+            {
+                [Test]
+                public void Text()
+                {
+                    var text = """
+                        namespace N;
+                        [Category("Unit")]
+                        public sealed class ProbeTests {
+                            [Test]
+                            public void One() { }
+                        }
+                        """;
+                }
+            }
+            """");
+
+        var plan = await fixture.PlanAsync(fixture.Paths("src/Widget.cs"));
+        plan.Exit.ShouldBe(0, plan.Text);
+        plan.State.ShouldBe("run", plan.Text);
+        var filters = plan.Shards.Select(shard => shard.GetProperty("filter").GetString()).ToArray();
+        filters.ShouldBe(new[] { "/*/Antiphon.Tests.Gamma/*/*[Category=Unit]" }, plan.Text);
+        var names = plan.Shards
+            .SelectMany(shard => shard.GetProperty("classes").EnumerateArray().Select(item => item.GetProperty("name").GetString() ?? ""))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        names.ShouldBe(new[] { "GammaTests", "HostTests" }, plan.Text);
+
+        var census = Census(fixture.Repo).Select(row => row.Namespace + "." + row.Name).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+        census.ShouldBe(new[] { "Antiphon.Tests.Gamma.GammaTests", "Antiphon.Tests.Gamma.HostTests" });
+    }
+
+    [Test]
     public async Task Integration_list_drops_unit_classes_and_records_windows_as_owed()
     {
         using var fixture = Fixture.Create();
