@@ -688,18 +688,18 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandNotificationService.cs",
-      "classes": 37,
+      "classes": 38,
       "reason": "cap",
-      "owed": 12,
+      "owed": 13,
       "first": [
+        "RolePolicyToolBundleDispatchTests",
         "ImpactedClassesSelectorTests",
         "DerivedImpactIndexTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandReceiptTests",
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTaskLandReceiptWatermarkTests",
-        "ReceiptScanDestinationIntegrationTests",
-        "AgentTaskLandNotificationParkFollowUpTests"
+        "ReceiptScanDestinationIntegrationTests"
       ]
     },
     {
@@ -720,9 +720,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskReplyService.CeilingHold.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "GrokDelegateEndToEndTests",
         "OutputDistillationProducerTests",
@@ -736,9 +736,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskReplyService.cs",
-      "classes": 67,
+      "classes": 68,
       "reason": "cap",
-      "owed": 42,
+      "owed": 43,
       "first": [
         "GrokDelegateEndToEndTests",
         "OutputDistillationProducerTests",
@@ -921,9 +921,9 @@
     },
     {
       "path": "server/Application/Services/CompletionNoteWork.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
         "ReceiptScanDestinationIntegrationTests",
         "RunnerAlarmCoordinatorTests",
@@ -1016,18 +1016,18 @@
     },
     {
       "path": "server/Application/Services/LandDeliveryBoundary.cs",
-      "classes": 35,
+      "classes": 36,
       "reason": "cap",
-      "owed": 10,
+      "owed": 11,
       "first": [
         "RunnerTaskSettlementTests",
         "SessionMessageQueueWedgedHeadTests",
+        "SessionRuntimeActionRoutingTests",
         "AdvisoryChangePolicyTests",
         "AgentTaskLandHeldNotificationTests",
         "AgentTaskLandPublicationTests",
         "AgentTaskLandReceiptTests",
-        "AgentTaskLandReceiptWatermarkSafetyTests",
-        "ClosingReportNudgeLifecycleTests"
+        "AgentTaskLandReceiptWatermarkSafetyTests"
       ]
     },
     {
@@ -1379,10 +1379,10 @@
       "reason": "cap",
       "owed": 246,
       "first": [
+        "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
         "SessionGenerationExitTests",
         "SessionMessageQueueGrokPtyIntegrationTests",
-        "SessionRuntimeActionRoutingTests",
         "AgentAttachHerdrTests",
         "AgentTaskDecisionQuestionIntegrationTests",
         "AgentTaskSettlementRaceTests",
@@ -1818,9 +1818,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
-      "classes": 99,
+      "classes": 100,
       "reason": "cap",
-      "owed": 74,
+      "owed": 75,
       "first": [
         "CheckNoteDeliveryHandoffTests",
         "CompactionContinuationWireTests",
@@ -1999,9 +1999,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs",
-      "classes": 95,
+      "classes": 96,
       "reason": "cap",
-      "owed": 70,
+      "owed": 71,
       "first": [
         "AgentSessionBackendTests",
         "CheckNoteDeliveryHandoffTests",
@@ -6632,7 +6632,7 @@
         "PendingSettlementDeliveryTests",
         "PostLandMutationDeliveryTests",
         "RepositoryMutationLeaseOwnerTests",
-        "RolePolicyToolBundleDispatchTests",
+        "SessionRuntimeActionRoutingTests",
         "VerificationRoundDeliveryTests",
         "WorktreeLandingCleanupRetryTests"
       ]
@@ -7475,6 +7475,7 @@
         "DispatchHoldVisibilityTests",
         "ReceiptFailureDeliveryTests",
         "RepositoryMutationLeaseOwnerTests",
+        "SessionRuntimeActionTests",
         "StandingRestartEscalationTests",
         "WorktreeDefaultCallerTests"
       ]
@@ -7501,6 +7502,7 @@
         "DispatchHoldVisibilityTests",
         "ReceiptFailureDeliveryTests",
         "RepositoryMutationLeaseOwnerTests",
+        "SessionRuntimeActionTests",
         "StandingRestartEscalationTests",
         "WorktreeDefaultCallerTests"
       ]
@@ -7951,7 +7953,8 @@
         "ChannelReplyDurabilityTests",
         "ChannelReplyLateConfirmDispatchTests",
         "HerdrAlwaysOnChannelParityTests",
-        "SessionRuntimeActionRecoveryTests"
+        "SessionRuntimeActionRecoveryTests",
+        "SessionRuntimeActionTests"
       ]
     },
     {
@@ -10129,7 +10132,8 @@
         "ReviewLoopTests",
         "ReviewReplyDispatcherTests",
         "SessionRuntimeActionDeferralTests",
-        "SessionRuntimeActionRoutingTests"
+        "SessionRuntimeActionRoutingTests",
+        "SessionRuntimeActionTests"
       ]
     },
     {
@@ -11738,7 +11742,8 @@
       "classes": [
         "BlockedTaskParkProjectionTests",
         "BlockedTaskParkReclaimTests",
-        "BlockedTaskSyncRecoveryTests"
+        "BlockedTaskSyncRecoveryTests",
+        "SessionRuntimeActionRoutingTests"
       ]
     },
     {
@@ -12663,9 +12668,9 @@
         "HerdrLaunchContextResolverTests",
         "HerdrLaunchContextTitleTests",
         "LaunchEnvLayersIntegrationTests",
-        "PhoneHomeSessionRoutingTests",
         "PostLandMutationDeliveryTests",
         "SessionMessageQueuePtyIntegrationTests",
+        "SessionRuntimeActionRoutingTests",
         "SpecialistExecutionIdentityTests",
         "StandingRestartAccountingTests",
         "StandingRestartEscalationTests",
