@@ -190,6 +190,97 @@ public sealed class DerivedImpactIndexTests
         Edge(index, PrecheckPath).ShouldContain("LandGraphEvaluationTests");
     }
 
+    // CARD-1838. A stale committed index is rewritten by the Merge script, and a second run
+    // is a no-op. The script itself does not commit.
+    [Test]
+    public async Task regenerate_script_reports_changed_then_unchanged()
+    {
+        using var fixture = new Fixture();
+        fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
+        fixture.Add("tests/derived-impact-index.json", "{}\n");
+        fixture.Commit();
+        var head = Git(fixture.Root, "rev-parse", "HEAD").Single();
+        var first = await RegenAsync(fixture.Root);
+        first.Exit.ShouldBe(0, first.Text);
+        AssertChanged(first.Stdout);
+        Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
+        var written = await File.ReadAllBytesAsync(IndexPath(fixture.Root));
+        written.ShouldNotBe(System.Text.Encoding.UTF8.GetBytes("{}\n"));
+
+        var second = await RegenAsync(fixture.Root);
+        second.Exit.ShouldBe(0, second.Text);
+        AssertUnchanged(second.Stdout);
+        Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
+        (await File.ReadAllBytesAsync(IndexPath(fixture.Root))).ShouldBe(written);
+
+        var mutant = first.Stdout.Replace(
+            "derived-impact-index changed",
+            "derived-impact-index unchanged",
+            StringComparison.Ordinal);
+        mutant.ShouldNotBe(first.Stdout);
+        Should.Throw<ShouldAssertException>(() => AssertChanged(mutant));
+    }
+
+    // CARD-1838. The Merge process names the regenerate script as the last step before
+    // DerivedImpactIndexTests and the push, and the Merge guard union names the two missed rows.
+    [Test]
+    public void merge_process_names_the_regenerate_step()
+    {
+        var root = RepoRoot();
+        var loop = File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"));
+        var guide = File.ReadAllText(Path.Combine(root, "docs", "testing-and-build.md"));
+        AssertRegenDocs(loop, guide);
+
+        var blinded = loop.Replace(
+            "The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1.",
+            "The last step before the push is a hand edit of tests/derived-impact-index.json.",
+            StringComparison.Ordinal);
+        blinded.ShouldNotBe(loop);
+        Should.Throw<ShouldAssertException>(() => AssertRegenDocs(blinded, guide));
+
+        var guardBlind = guide.Replace(
+            "A Merge brief adds DerivedImpactIndexTests and C1584_E2EExpandedBudget to that standing guard union",
+            "A Merge brief keeps the standing guard union",
+            StringComparison.Ordinal);
+        guardBlind.ShouldNotBe(guide);
+        Should.Throw<ShouldAssertException>(() => AssertRegenDocs(loop, guardBlind));
+    }
+
+    private static void AssertChanged(string stdout)
+    {
+        stdout.ShouldContain("derived-impact-index changed", Case.Sensitive);
+        stdout.ShouldNotContain("derived-impact-index unchanged", Case.Sensitive);
+    }
+
+    private static void AssertUnchanged(string stdout)
+    {
+        stdout.ShouldContain("derived-impact-index unchanged", Case.Sensitive);
+        stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
+    }
+
+    private static void AssertRegenDocs(string loop, string guide)
+    {
+        const string heading = "### Merge process (CARD-1783)";
+        var start = loop.IndexOf(heading, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = loop.IndexOf("\n### ", start + heading.Length, StringComparison.Ordinal);
+        var section = end < 0 ? loop[start..] : loop[start..end];
+        const string step = "The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1.";
+        section.ShouldContain(step, Case.Sensitive);
+        section.ShouldContain("DerivedImpactIndexBuilder.Build", Case.Sensitive);
+        section.ShouldContain("DerivedImpactIndexBuilder.Write", Case.Sensitive);
+        section.ShouldContain("commits nothing", Case.Sensitive);
+        section.ShouldContain(
+            "DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare",
+            Case.Sensitive);
+        section.ShouldContain("so a Merge that skips the script still fails", Case.Sensitive);
+
+        const string guard = "A Merge brief adds DerivedImpactIndexTests and C1584_E2EExpandedBudget to that standing guard union";
+        guide.ShouldContain(guard, Case.Sensitive);
+        guide.ShouldContain("/*/*/C1514LandingSplitBudgetTests/C1584_E2EExpandedBudget*", Case.Sensitive);
+        guide.ShouldContain("(DerivedImpactIndexTests*)", Case.Sensitive);
+    }
+
     [Test]
     public async Task declaration_diff_selects_the_new_tests_class()
     {
@@ -1093,6 +1184,40 @@ public sealed class DerivedImpactIndexTests
 
     private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
         SelectScriptAsync(root, Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), args);
+
+    private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = RepoRoot(),
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-NonInteractive");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(Path.Combine(RepoRoot(), "scripts", "regenerate-derived-impact-index.ps1"));
+        start.ArgumentList.Add("-Repo");
+        start.ArgumentList.Add(fixtureRoot);
+        start.ArgumentList.Add("-NoBuild");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("regenerate-derived-impact-index exceeded 180s");
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        return (process.ExitCode, stdout, stdout + stderr);
+    }
 
     private static async Task<(int Exit, string Stdout, string Text)> SelectScriptAsync(
         string root, string script, params string[] args)
