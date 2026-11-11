@@ -470,8 +470,11 @@ internal sealed class TestDbFixtureLifecycle
         TestDbReadyState ready;
         lock (_gate)
         {
+            // Name the clone: run ae84478d g80 showed only "disposed object", not which drop lost the race.
             if (_disposeStarted)
-                throw new ObjectDisposedException(nameof(TestDbFixture));
+                throw new ObjectDisposedException(
+                    nameof(TestDbFixture),
+                    $"Clone {databaseName} was dropped after the assembly teardown started.");
             ready = _ready ?? throw new ObjectDisposedException(nameof(TestDbFixture));
         }
 
