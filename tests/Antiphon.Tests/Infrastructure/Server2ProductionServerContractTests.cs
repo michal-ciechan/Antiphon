@@ -559,6 +559,43 @@ public sealed class Server2ProductionServerContractTests
         }
     }
 
+    [Test]
+    public void Production_bootstrap_interpolation_has_no_live_host()
+    {
+        // CARD-1752 S1. Empty defaults. The env file supplies a value only when the bridge is enabled.
+        var server = Service("server");
+        server.ShouldContain("AntiphonMessaging__BootstrapServers: \"${ANTIPHON_MESSAGING_BOOTSTRAP_SERVERS:-}\"");
+        server.ShouldContain("AntiphonMessaging__ClientId: \"antiphon-server2-server\"");
+        server.ShouldContain("AntiphonMessaging__ExpectedClusterId: \"${ANTIPHON_MESSAGING_EXPECTED_CLUSTER_ID:-}\"");
+        Env(server, "AntiphonMessaging__BootstrapServers").ShouldBe("${ANTIPHON_MESSAGING_BOOTSTRAP_SERVERS:-}");
+        Env(server, "AntiphonMessaging__ClientId").ShouldBe("antiphon-server2-server");
+        Env(server, "AntiphonMessaging__ExpectedClusterId").ShouldBe("${ANTIPHON_MESSAGING_EXPECTED_CLUSTER_ID:-}");
+        server.ShouldNotContain("localhost");
+        server.ShouldNotContain("100.93.77.126");
+        server.ShouldNotContain("100.79.51.37");
+        var root = DockerStackDocuments.Read("docker-compose.yml");
+        root.ShouldContain("ChannelBridge__Enabled: \"false\"");
+        root.ShouldNotContain("ANTIPHON_MESSAGING_BOOTSTRAP_SERVERS");
+        var script = Script();
+        script.ShouldContain("AntiphonMessaging__BootstrapServers: \"${ANTIPHON_MESSAGING_BOOTSTRAP_SERVERS:-}\"");
+        script.ShouldContain("AntiphonMessaging__ClientId: \"antiphon-server2-server\"");
+        script.ShouldContain("AntiphonMessaging__ExpectedClusterId: \"${ANTIPHON_MESSAGING_EXPECTED_CLUSTER_ID:-}\"");
+        script.ShouldContain("ChannelBridge__Enabled: \"${CHANNEL_BRIDGE_ENABLED:-false}\"");
+        script.ShouldContain("Digest__Enabled: \"false\"");
+    }
+
+    [Test]
+    public void Production_client_id_is_antiphon_server2_server()
+    {
+        var server = Service("server");
+        server.ShouldContain("AntiphonMessaging__ClientId: \"antiphon-server2-server\"");
+        Env(server, "AntiphonMessaging__ClientId").ShouldBe("antiphon-server2-server");
+        server.ShouldContain("Digest__Enabled: \"false\"");
+        server.ShouldContain("ChannelBridge__Enabled: \"${CHANNEL_BRIDGE_ENABLED:-false}\"");
+        Env(server, "Digest__Enabled").ShouldBe("false");
+        Env(server, "ChannelBridge__Enabled").ShouldBe("${CHANNEL_BRIDGE_ENABLED:-false}");
+    }
+
     private static async Task AssertRefusalAsync(string bin, string[] args, string reason, string marker)
     {
         var ran = await RunDeployAsync(args, bin);
