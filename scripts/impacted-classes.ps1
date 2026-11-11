@@ -19,6 +19,8 @@
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
+# CARD-1843. A class under a remainderProjects directory of tests/test-selection-policy.json is
+# filtered against that project, not Antiphon.Tests. A catalog that does not parse exits 1.
 # PowerShell 5.1 compatible: no ternary, no ??, no ?. ASCII only.
 [CmdletBinding()]
 param(
@@ -216,10 +218,61 @@ function Split-Lines([string]$Text) {
     return $list
 }
 
+# CARD-1843. A test project of its own is a remainderProjects entry of tests/test-selection-policy.json
+# (a mirror such as tests/Antiphon.Resilience.Tests), so a class declared under its directory is
+# filtered against that project. The three historical projects stay when the catalog has no entry
+# or is absent (a scratch repository). A catalog that does not parse is refused, never ignored.
+function Get-TestProjectDirs {
+    $dirs = New-StringList
+    foreach ($known in @('tests/Antiphon.E2E', 'tests/Antiphon.Messaging.Tests', 'tests/Antiphon.SessionRunner.Tests')) {
+        [void]$dirs.Add($known)
+    }
+    $catalogPath = Join-Path $Repo 'tests/test-selection-policy.json'
+    if (-not (Test-Path -LiteralPath $catalogPath)) { return ,$dirs }
+    try {
+        $catalog = [IO.File]::ReadAllText($catalogPath) | ConvertFrom-Json
+        $entries = New-StringList
+        foreach ($set in @($catalog.sets)) {
+            $remainder = $set.PSObject.Properties['remainderProjects']
+            if ($null -eq $remainder) { continue }
+            foreach ($entry in @($remainder.Value)) {
+                if ($null -ne $entry) { [void]$entries.Add([string]$entry) }
+            }
+        }
+    }
+    catch {
+        $message = 'impacted-classes catalog refused: tests/test-selection-policy.json: ' + $_.Exception.Message
+        Write-Err $message
+        if ($script:Json) {
+            Exit-Json ([pscustomobject]@{
+                ok = $false
+                emptyGlobs = @()
+                missingClasses = @()
+                kinds = @()
+                globHits = @()
+                derivedFiles = @()
+                error = $message
+            }) 1
+        }
+        exit 1
+    }
+    foreach ($entry in $entries) {
+        $project = $entry.Replace('\', '/')
+        $slash = $project.LastIndexOf('/')
+        if (-not $project.StartsWith('tests/') -or -not $project.EndsWith('.csproj') -or $slash -le 6) { continue }
+        $dir = $project.Substring(0, $slash)
+        if ($dir -ne 'tests/Antiphon.Tests' -and -not $dirs.Contains($dir)) { [void]$dirs.Add($dir) }
+    }
+    return ,$dirs
+}
+
 function Get-Project([string]$Relative) {
-    if ($Relative.StartsWith('tests/Antiphon.E2E/')) { return 'tests/Antiphon.E2E' }
-    if ($Relative.StartsWith('tests/Antiphon.Messaging.Tests/')) { return 'tests/Antiphon.Messaging.Tests' }
-    if ($Relative.StartsWith('tests/Antiphon.SessionRunner.Tests/')) { return 'tests/Antiphon.SessionRunner.Tests' }
+    # The longest directory wins, so a nested project is not taken by its parent.
+    $best = ''
+    foreach ($dir in $script:testProjectDirs) {
+        if ($Relative.StartsWith($dir + '/', [StringComparison]::Ordinal) -and $dir.Length -gt $best.Length) { $best = $dir }
+    }
+    if ($best.Length -gt 0) { return $best }
     return 'tests/Antiphon.Tests'
 }
 
@@ -459,6 +512,8 @@ function Test-Any([System.Collections.Generic.List[regex]]$Regexes, [string]$Rel
     }
     return $false
 }
+
+$script:testProjectDirs = Get-TestProjectDirs
 
 # One walk: class declarations and downgrade-pattern files. bin/obj are build output.
 $deriveRegexes = New-Object System.Collections.Generic.List[regex]

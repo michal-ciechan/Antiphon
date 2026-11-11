@@ -356,6 +356,19 @@ The 2026-11-08 why-missed notes (`docs/investigations/2026-11-08-why-missed-*.md
 
 The card named `scripts/lib/*.sh`, `server/Infrastructure/Data/**Snapshot**`, `server/**/*Routes*.cs`, and `server/**/Dispatch*/**`. Each of those globs matches no tracked file, and the audit fails a glob that matches nothing, so the table cannot store them. The paths that exist today are: migrations `server/Migrations/**` (the model snapshot lives there), `server/Infrastructure/Data/AppDbContext.cs`, and `server/Infrastructure/Data/**/*Model.cs`; contracts `server/**/Dtos/**`, `server/**/*Endpoints*.cs`, and `client/src/api/**`; remote scripts `scripts/c590-remote.sh` and `scripts/*.sh`; statement budgets `server/**/WorkspaceReservationJournal.cs` and `server/**/*Dispatch*.cs`.
 
+#### Mirrored test projects (CARD-1843)
+
+Each `filters` entry names the project that declares its classes. A class under the directory of a `remainderProjects` entry in `tests/test-selection-policy.json` runs against that project. Today that is `tests/Antiphon.Resilience.Tests` and `tests/Antiphon.Server.Git.Tests`, and it covers every later CARD-1729 split. Any other class runs against `tests/Antiphon.Tests`. A catalog that does not parse exits 1; it never falls back silently. A split that moves classes into a new test project adds that csproj to its set's `remainderProjects` in the same slice, so the impacted rows point at it.
+
+A split plan carries a `### Checkpoints` table of this shape. Replace each `<...>` with the split's names and floors, and keep one isolated build per project:
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---|---|
+| CP-1 | S1 | tests/&lt;Mirror&gt;/&lt;Mirror&gt;.csproj -> bin-&lt;card&gt;-mirror/ | mirror | `/*/*/(<MovedClass>*)\|(<MirrorAssemblyTests>*)/*` | moved classes run in the mirror | 0 failed; &lt;n&gt; methods | &lt;n&gt; | &lt;m&gt; |
+| CP-2 | S1 | tests/Antiphon.Tests/Antiphon.Tests.csproj -> bin-&lt;card&gt;-tests/ | stayed | `/*/*/(<CoveringClassThatStayed>*)/*` | covering tests left in Antiphon.Tests | 0 failed | &lt;n&gt; | &lt;m&gt; |
+| CP-3 | S1 | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(C1729LayeringGuardTests*)\|(ImpactedClassesSelectorTests*)\|(TestSelectionCatalogTests*)/*` | policy, layering, impacted project map, catalog pins | 0 failed | &lt;n&gt; | &lt;m&gt; |
+| CP-4 | S1 | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | land graph | exit 0 | n/a | 6 |
+
 ### Offline rolling harness jq receipts (CARD-0983)
 
 On a jq-expected host, run `scripts/test-deploy-server2.ps1 -RequireJq` or
