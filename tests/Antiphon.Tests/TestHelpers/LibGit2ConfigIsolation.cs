@@ -1,6 +1,5 @@
 using Antiphon.GitInProcess;
 using LibGit2Sharp;
-using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -17,7 +16,6 @@ public static class LibGit2ConfigIsolation
 {
     public static string EmptyDirectory { get; } = Path.Combine(Path.GetTempPath(), "antiphon-libgit2-noconfig");
 
-    [Before(Assembly)]
     public static void IsolateLibGit2Config()
     {
         Directory.CreateDirectory(EmptyDirectory);

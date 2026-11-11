@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "4ab004cf02e2d8adb80f4744030bd23fae3e2fd9b2cafff94822ba43b7bc5719",
+  "policyHash": "a1d534f78407944871f438cc0d0d008d6aa0b107db645ee1396796bfa504e99c",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -11,7 +11,8 @@
     "scripts",
     "observability",
     "server-git",
-    "resilience"
+    "resilience",
+    "git-in-process"
   ],
   "profiles": {
     "nightly": {
@@ -25,7 +26,8 @@
         "scripts",
         "observability",
         "server-git",
-        "resilience"
+        "resilience",
+        "git-in-process"
       ],
       "description": "The unattended suites, including the standalone CARD-1564 observability assembly. E2E stays out; OptIn/Explicit still excludes.",
       "exclusions": []
@@ -43,7 +45,8 @@
         "markdown-pdf",
         "observability",
         "server-git",
-        "resilience"
+        "resilience",
+        "git-in-process"
       ],
       "description": "Full automated Windows profile including portable MarkdownPdf; explicit other-platform and manual obligations remain excluded with owners.",
       "exclusions": [
@@ -1619,7 +1622,8 @@
     "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
     "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj",
     "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj",
-    "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj"
+    "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+    "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj"
   ],
   "suites": {
     "antiphon": {
@@ -1713,6 +1717,13 @@
       "name": "Antiphon.Resilience.Tests",
       "processGroup": "native-dotnet",
       "assembly": "Antiphon.Resilience.Tests",
+      "mode": "unattended"
+    },
+    "git-in-process": {
+      "project": "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj",
+      "name": "Antiphon.GitInProcess.Tests",
+      "processGroup": "native-dotnet",
+      "assembly": "Antiphon.GitInProcess.Tests",
       "mode": "unattended"
     }
   },
@@ -1985,10 +1996,16 @@
       "consumers": [],
       "project": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
       "reason": "CARD-1829 mirrored test assembly for Antiphon.Resilience. Namespaces stay. The mirror is its own nightly and rc suite; tests that still cover the library from Antiphon.Tests stay members of the resilience selection set."
+    },
+    {
+      "role": "primary",
+      "consumers": [],
+      "project": "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj",
+      "reason": "CARD-1830 mirrored test assembly for Antiphon.GitInProcess. Namespaces stay. The mirror is its own nightly and rc suite; the server-git consumers that stayed in Antiphon.Tests are members of the git-in-process selection set."
     }
   ],
   "selectionCatalog": {
-    "hash": "f4aa926ae5d4ba930718c71b097c04316e1855431c35ba5d22de072749df68ec",
+    "hash": "6f7a46a74b18c1269d9b99f4ab12d9f060f0fc2139f20f5c05ca47c73512c64d",
     "path": "tests/test-selection-policy.json"
   }
 }

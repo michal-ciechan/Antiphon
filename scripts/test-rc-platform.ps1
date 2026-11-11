@@ -76,6 +76,7 @@ function Test-C1323_PlatformPolicy {
     if ($policy.suites.observability) { $expectedSuites += 'observability' }
     if ($policy.suites.PSObject.Properties.Name -contains 'server-git') { $expectedSuites += 'server-git' }
     if ($policy.suites.PSObject.Properties.Name -contains 'resilience') { $expectedSuites += 'resilience' }
+    if ($policy.suites.PSObject.Properties.Name -contains 'git-in-process') { $expectedSuites += 'git-in-process' }
     $observabilityRequired = $true
     if ($policy.suites.observability) {
         $missing = Copy-C1323Object $policy
