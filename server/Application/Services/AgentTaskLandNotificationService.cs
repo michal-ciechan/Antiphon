@@ -27,6 +27,18 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     internal static bool IsCompletionNoteKind(LandNotificationKind kind) =>
         kind is LandNotificationKind.DeliveryFailure or LandNotificationKind.TaskCompletion;
 
+    /// <summary>
+    /// CARD-0747. LastErrorCode of a terminal note settled <see cref="LandNotificationState.LegacyUnverified"/>
+    /// because its outcome committed more than <c>LandNoteReceiptExpiryDays</c> ago without a receipt.
+    /// </summary>
+    public const string ReceiptExpiredCode = "receipt_expired_aged";
+
+    /// <summary>
+    /// CARD-0747. LastErrorCode of a Held snapshot settled <see cref="LandNotificationState.NotRequired"/>
+    /// before typing because its land request already has a terminal outcome.
+    /// </summary>
+    public const string HeldSupersededCode = "held_superseded_by_terminal_outcome";
+
     private int MaxAttempts() => Math.Max(1,
         (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.MaxDeliveryAttempts);
 

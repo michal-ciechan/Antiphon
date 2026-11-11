@@ -1,0 +1,264 @@
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Application;
+
+/// <summary>
+/// CARD-0747. An orchestrator session that could not take input for two weeks (adopted, withheld)
+/// collected about 1,900 land and completion notes. When it restarted, the queue typed them oldest
+/// first, one per idle turn, as if they were new. These witnesses pin the three ways a note now
+/// stops: a keyed completion row carried to a successor session is confirmed on that session, an
+/// aged terminal note settles <see cref="LandNotificationState.LegacyUnverified"/> and its untyped
+/// row is canceled, and a Held snapshot whose request already has a terminal outcome is not typed.
+/// </summary>
+[Category("Integration")]
+public sealed class C0747LandReceiptReplayTests
+{
+    private const long Floor = LandReceiptScanHarness.Floor;
+
+    /// <summary>
+    /// case: a TaskCompletion's keyed row was carried by a standing agent's fresh restart to the
+    /// successor session and typed there; the receipt is on the successor. mutation: drop the carried
+    /// completion rule. red: the note stays AwaitingReceipt with completion_queue_identity_mismatch
+    /// (profiled) or completion_delivery_generation_changed (unprofiled), forever.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    [Arguments("profiled")]
+    [Arguments("unprofiled")]
+    [Arguments("profiled-receipt-on-parent-only")]
+    public async Task C0747_Carried_completion_confirms_on_the_session_it_was_typed_to(string arm, CancellationToken ct)
+    {
+        await using var h = await LandReceiptScanHarness.CreateAsync(new() { Cache = false });
+        var parent = h.SessionId;
+        var note = await h.SeedLinkedNoteAsync();
+        var startedAt = await h.StartedAtAsync(parent);
+        var successor = await h.AddSessionAsync(SessionStatus.Stopped, startedAt.AddHours(-1));
+        var row = await h.MarkSentAsync(note, destination: successor);
+        await h.UpdateNoteAsync(note.Id, n =>
+        {
+            n.Kind = LandNotificationKind.TaskCompletion;
+            if (arm.StartsWith("profiled", StringComparison.Ordinal))
+            {
+                n.CompletionSnapshotJson = "{}";
+                n.CompletionDeliveryJson = TaskCompletionNotification.SerializeDelivery(new TaskCompletionNotification.Delivery(
+                    TaskCompletionNotification.SnapshotVersion, "raw", n.Body, n.Body, TaskCompletionNotification.Sha256(n.Body),
+                    [row.Id], null, null, DateTime.UtcNow));
+            }
+        });
+        var receiptSession = arm == "profiled-receipt-on-parent-only" ? parent : successor;
+        var at = (await h.IngestEventsAsync(receiptSession,
+            [h.Event(receiptSession, Floor + 5, TranscriptKinds.UserPrompt, note.Body)])).Single();
+        h.Runner.Transcript = LandReceiptScanHarness.ScriptedTranscriptRunner.Mode.NotFound;
+
+        await h.Service.ReconcileAsync(note.Id, ct);
+        await h.Service.ReconcileAsync(note.Id, ct);
+
+        var saved = await h.NoteAsync(note.Id);
+        saved.ParentSessionId.ShouldBe(parent, "the note keeps its caller; only the receipt follows the keyed row");
+        (await h.RowAsync(row.Id)).AgentSessionId.ShouldBe(successor);
+        if (arm == "profiled-receipt-on-parent-only")
+        {
+            saved.State.ShouldBe(LandNotificationState.AwaitingReceipt, "a prompt on the parent is not this row's delivery");
+            saved.ConfirmedAt.ShouldBeNull();
+        }
+        else
+        {
+            saved.LastErrorCode.ShouldBeNull();
+            saved.State.ShouldBe(LandNotificationState.Confirmed);
+            saved.ConfirmingPromptSequence.ShouldBe(at);
+        }
+        h.Bridge.Adapter.Inputs.ShouldBeEmpty("receipt reconciliation never types");
+    }
+
+    /// <summary>
+    /// case: an outcome committed eight days ago, still unconfirmed. mutation: remove the aged
+    /// settlement from ReconcileAsync. red: the note stays open, its untyped row stays Pending and
+    /// the caller's next idle turn types an eight-day-old note. Controls: a six-day-old note, an
+    /// aged Held snapshot of a still-pending request and a row already typed once are untouched.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    [Arguments("pending-untyped")]
+    [Arguments("sent-unconfirmed")]
+    [Arguments("unlinked-destination-unavailable")]
+    [Arguments("fresh-control")]
+    [Arguments("pending-request-control")]
+    [Arguments("typed-pending-control")]
+    public async Task C0747_Aged_terminal_note_settles_and_is_never_typed(string arm, CancellationToken ct)
+    {
+        await using var h = await LandReceiptScanHarness.CreateAsync(new() { Cache = false });
+        var age = arm == "fresh-control" ? TimeSpan.FromDays(6) : TimeSpan.FromDays(8);
+        AgentTaskLandNotification note;
+        if (arm == "unlinked-destination-unavailable")
+        {
+            await using var db = h.Fixture();
+            note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+            note.State = LandNotificationState.DestinationUnavailable;
+            note.LastErrorCode = "destination_failed";
+            note.NextAttemptAt = DateTime.UtcNow.AddMinutes(5);
+            await db.SaveChangesAsync();
+        }
+        else
+            note = await h.SeedLinkedNoteAsync();
+        await h.UpdateNoteAsync(note.Id, n => n.CreatedAt = DateTime.UtcNow - age);
+        if (arm == "pending-request-control")
+        {
+            await h.UpdateNoteAsync(note.Id, n => n.Kind = LandNotificationKind.Held);
+            await using var db = h.Fixture();
+            await db.AgentTaskLandRequests.Where(r => r.Id == note.RequestId).ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.IsPending, true).SetProperty(r => r.State, LandRequestState.Held), ct);
+        }
+        if (arm == "sent-unconfirmed")
+            await h.MarkSentAsync(note);
+        if (arm == "typed-pending-control")
+            await h.UpdateRowAsync(note.QueueMessageId!.Value, r =>
+            {
+                r.DeliveryAttempts = 1;
+                r.LastDeliveryBaselineSequence = Floor;
+                r.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-1);
+            });
+        var before = note.QueueMessageId is Guid linked ? await h.RowAsync(linked) : null;
+
+        await h.Service.ReconcileAsync(note.Id, ct);
+        await h.Service.ReconcileAsync(note.Id, ct);
+
+        var saved = await h.NoteAsync(note.Id);
+        var settles = arm is "pending-untyped" or "sent-unconfirmed" or "unlinked-destination-unavailable";
+        if (settles)
+        {
+            saved.State.ShouldBe(LandNotificationState.LegacyUnverified);
+            saved.LastErrorCode.ShouldBe(AgentTaskLandNotificationService.ReceiptExpiredCode);
+            saved.ConfirmedAt.ShouldBeNull("an expired note was never proven delivered");
+        }
+        else
+            saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+        if (arm == "unlinked-destination-unavailable")
+        {
+            saved.QueueMessageId.ShouldBeNull();
+            await using var db = h.Fixture();
+            (await db.SessionQueuedMessages.CountAsync(m => m.SourceLandNotificationId == note.Id, ct)).ShouldBe(0);
+            return;
+        }
+
+        var row = await h.RowAsync(before!.Id);
+        row.Status.ShouldBe(arm switch
+        {
+            "pending-untyped" => QueuedMessageStatus.Canceled,
+            "sent-unconfirmed" => QueuedMessageStatus.Sent,
+            _ => QueuedMessageStatus.Pending,
+        });
+        // A Pending row is what the queue types on the caller's next idle turn; a Canceled one never is.
+        if (arm != "pending-untyped") row.CanceledAt.ShouldBeNull();
+        h.Bridge.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// case: a Held snapshot of a request that has since reached a terminal outcome. mutation: drop
+    /// the Held supersession. red: the snapshot is enqueued (unlinked) or stays Pending (linked) and
+    /// is typed after the outcome. Controls: a pending request still gets its Held note, and a Held
+    /// row already typed keeps its receipt scan.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    [Arguments("unlinked")]
+    [Arguments("linked-untyped")]
+    [Arguments("pending-request-control")]
+    [Arguments("sent-control")]
+    public async Task C0747_Held_snapshot_after_terminal_outcome_is_not_delivered(string arm, CancellationToken ct)
+    {
+        await using var h = await LandReceiptScanHarness.CreateAsync(new() { Cache = false });
+        AgentTaskLandNotification note;
+        await using (var db = h.Fixture())
+        {
+            note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+            note.Kind = LandNotificationKind.Held;
+            await db.SaveChangesAsync();
+        }
+        async Task SetRequestPendingAsync(bool pending)
+        {
+            await using var db = h.Fixture();
+            await db.AgentTaskLandRequests.Where(r => r.Id == note.RequestId).ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.IsPending, pending)
+                .SetProperty(r => r.State, pending ? LandRequestState.Held : LandRequestState.Completed), ct);
+        }
+        if (arm != "unlinked")
+        {
+            await SetRequestPendingAsync(true);
+            await h.Service.ReconcileAsync(note.Id, ct);
+            note = await h.NoteAsync(note.Id);
+            note.QueueMessageId.ShouldNotBeNull("a Held note of a pending request is enqueued");
+            if (arm == "sent-control") await h.MarkSentAsync(note);
+            if (arm != "pending-request-control") await SetRequestPendingAsync(false);
+        }
+
+        await h.Service.ReconcileAsync(note.Id, ct);
+        await h.Service.ReconcileAsync(note.Id, ct);
+
+        var saved = await h.NoteAsync(note.Id);
+        await using var check = h.Fixture();
+        var rows = await check.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceLandNotificationId == note.Id).ToListAsync(ct);
+        switch (arm)
+        {
+            case "unlinked":
+                saved.State.ShouldBe(LandNotificationState.NotRequired);
+                saved.LastErrorCode.ShouldBe(AgentTaskLandNotificationService.HeldSupersededCode);
+                rows.ShouldBeEmpty("no row is created for a superseded snapshot");
+                break;
+            case "linked-untyped":
+                saved.State.ShouldBe(LandNotificationState.NotRequired);
+                saved.LastErrorCode.ShouldBe(AgentTaskLandNotificationService.HeldSupersededCode);
+                rows.Single().Status.ShouldBe(QueuedMessageStatus.Canceled);
+                break;
+            case "pending-request-control":
+                saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+                rows.Single().Status.ShouldBe(QueuedMessageStatus.Pending);
+                break;
+            case "sent-control":
+                saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+                saved.LastErrorCode.ShouldBeNull();
+                rows.Single().Status.ShouldBe(QueuedMessageStatus.Sent);
+                break;
+        }
+        h.Bridge.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// case: an expired note is settled, not confirmed. mutation: drop the LegacyUnverified filter
+    /// from the attention projection. red: every expired note stays an unconfirmed-receipt row.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C0747_Expired_note_leaves_the_unconfirmed_receipt_feed(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { AlwaysOn = false, ConnectionString = schema.ConnectionString });
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var expired = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        var open = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+        expired.CreatedAt = open.CreatedAt = DateTime.UtcNow.AddDays(-8);
+        expired.State = LandNotificationState.LegacyUnverified;
+        expired.LastErrorCode = AgentTaskLandNotificationService.ReceiptExpiredCode;
+        open.State = LandNotificationState.AwaitingReceipt;
+        open.LastErrorCode = "destination_failed";
+        await db.SaveChangesAsync(ct);
+
+        await using var fresh = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var attention = await new AttentionService(fresh, h.Runner, Options.Create(new SupervisionSettings()),
+            Options.Create(new DelegationSettings()), TimeProvider.System, NullLogger<AttentionService>.Instance).GetAsync(ct);
+
+        attention.Items.ShouldContain(i => i.LandNotificationId == open.Id && i.Kind == AttentionKind.LandOutcomeUnconfirmed);
+        attention.Items.ShouldNotContain(i => i.LandNotificationId == expired.Id);
+    }
+}
