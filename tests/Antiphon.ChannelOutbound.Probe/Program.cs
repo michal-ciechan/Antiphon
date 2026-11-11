@@ -179,7 +179,7 @@ internal sealed record ProbeConfig(string ConnectionString, string StoreRoot, Gu
     Guid CorrelationId = default, bool AllowPublication = false,
     bool FailPublishCommit = false, string? BootstrapServers = null, string? Topic = null,
     string? WorkerExe = null, string? WorkerHome = null, string? WorkerGate = null,
-    string? LaunchSpecPath = null, string? ExpectedSourceSha = null);
+    string? LaunchSpecPath = null, string? ExpectedSourceSha = null, string? StallPoint = null);
 
 internal sealed class ProbeClock(int offsetSeconds) : TimeProvider
 {

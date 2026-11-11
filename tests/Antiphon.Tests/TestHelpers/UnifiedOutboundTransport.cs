@@ -192,7 +192,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     }
 
     public async Task<OwnedProbe> StartProbeAsync(string? barrier, int offset = 0, bool refuseOutcome = false,
-        string mode = "unified", Guid? deliveryId = null)
+        string mode = "unified", Guid? deliveryId = null, string? stallPoint = null)
     {
         var marker = Path.Combine(H.TempRoot, "cut-" + Guid.NewGuid().ToString("N") + ".json");
         var config = marker + ".config";
@@ -204,7 +204,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             EvidencePath = marker + ".unused", MarkerPath = marker, Barrier = barrier,
             ClockOffsetSeconds = offset, Mode = mode, BootstrapServers = Bootstrap, Topic,
             FailPublishCommit = refuseOutcome, ExpectedSourceSha = source,
-            ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot,
+            ConverterAgentId = ConverterId, ProjectId, WorkspaceRoot = H.TempRoot, StallPoint = stallPoint,
         }));
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };

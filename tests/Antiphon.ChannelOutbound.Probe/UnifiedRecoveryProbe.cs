@@ -29,6 +29,12 @@ internal static class UnifiedRecoveryProbe
         async Task BarrierAsync(string point, Guid id, CancellationToken token)
         {
             if (id != config.DeliveryId) observedId = id;
+            if (point == config.StallPoint)
+            {
+                // A stall without a marker: the shape of run d88de419's unexplained reach timeout.
+                Console.Error.WriteLine("probe stall " + point);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            }
             if (point != config.Barrier) return;
             await WriteMarkerAsync(config, point, observedId, token);
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
