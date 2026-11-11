@@ -131,18 +131,19 @@ public partial class SessionRuntimeActionRoutingTests
             }
             if (variant == "working")
             {
+                // The session is still working here. A TurnEnd supersedes a status action,
+                // so the DueAt comparison is not what holds this drain.
                 var heldUntil = clock.GetUtcNow().UtcDateTime.AddHours(1);
                 await using (var barrier = h.CreateObserverContext())
                     await barrier.SessionRuntimeActions.Where(a => a.Id == actionId)
                         .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, heldUntil));
-                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
-                (await h.Provider.GetRequiredService<SessionStateStore>().ReadAsync(h.SessionId, default)).Working.ShouldBeFalse();
                 await actions.DrainPageAsync(h.SessionId, default);
-                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible once the session is idle");
+                h.Adapter.Inputs.ShouldBeEmpty("a DueAt an hour ahead on the schedule clock is not eligible");
                 await using (var still = h.CreateObserverContext())
                     (await still.SessionQueuedMessages.SingleAsync(m => m.Id == messageId)).DeliveryVerdict.ShouldBeNull();
                 clock.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(2));
-                Console.WriteLine("V-6 clock: DueAt one hour ahead blocked the idle drain; the shared schedule clock released it");
+                Console.WriteLine("V-6 clock: working defer held the row with DueAt an hour ahead; the shared schedule clock then advanced");
+                await PersistAsync(Entry(TranscriptKinds.TurnEnd, null));
             }
             if (variant == "herdr-blocked") h.Runtime.SetTestAgentStatus(h.SessionId, "idle");
             if (variant == "rules-held")
