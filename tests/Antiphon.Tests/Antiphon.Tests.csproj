@@ -59,6 +59,7 @@
              Link="TestHelpers\PhoneHomeTestWebSocket.cs" />
     <Compile Include="..\Shared\TestTiming.cs" Link="TestHelpers\TestTiming.cs" />
     <Compile Include="..\Shared\TestTrace.cs" Link="TestHelpers\TestTrace.cs" />
+    <Compile Include="..\Antiphon.Resilience.Tests\ResilienceTestSupport.cs" Link="Infrastructure\Resilience\ResilienceTestSupport.cs" />
     <Compile Include="..\Shared\TestTraceOtlp.cs" Link="TestHelpers\TestTraceOtlp.cs" />
     <Compile Include="..\Shared\TestTimingAttribute.cs" Link="TestHelpers\TestTimingAttribute.cs" />
     <Compile Include="..\Shared\TestTimingRegistration.cs" Link="TestHelpers\TestTimingRegistration.cs" />
