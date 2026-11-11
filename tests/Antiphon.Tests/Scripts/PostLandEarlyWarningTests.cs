@@ -329,6 +329,7 @@ public sealed class PostLandEarlyWarningTests
                 }
             }
             """");
+        fixture.WriteTable("src/Fixture.cs", "GammaTests");
 
         var plan = await fixture.PlanAsync(fixture.Paths("src/Widget.cs"));
         plan.Exit.ShouldBe(0, plan.Text);
