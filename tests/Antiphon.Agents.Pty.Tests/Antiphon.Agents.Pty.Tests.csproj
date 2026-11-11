@@ -100,20 +100,12 @@
   </Target>
 
   <!-- CARD-1224: a Linux checkpoint build sets UseAppHost=false, which omits the
-       extensionless fake apphost. Stage one beside the copied dlls. -->
+       extensionless fake apphost. Stage one beside the copied dlls. A separate process
+       writes that apphost under TargetDir. Leave BaseIntermediateOutputPath at obj\ so the
+       default generated sources stay excluded and the default obj trees are not rewritten. -->
   <Target Name="CopyOwnedUnixFakeAppHosts" AfterTargets="CopyFakeClaude" Condition="'$(OS)' != 'Windows_NT'">
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
-             Targets="Restore"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=false" />
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj"
-             Targets="Build"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=false;OutputPath=$(TargetDir)fake-native-claude/" />
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
-             Targets="Restore"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=false" />
-    <MSBuild Projects="$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj"
-             Targets="Build"
-             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);UseAppHost=true;UseArtifactsOutput=false;OutputPath=$(TargetDir)fake-native-grok/" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeClaude\Antiphon.FakeClaude.csproj&quot; --property:Configuration=$(Configuration) --property:TargetFramework=$(TargetFramework) --property:UseAppHost=true --property:UseArtifactsOutput=false --property:OutputPath=$(TargetDir)fake-native-claude/ --property:IntermediateOutputPath=$(TargetDir)fake-native-claude-obj/" />
+    <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\..\src\Antiphon.FakeGrok\Antiphon.FakeGrok.csproj&quot; --property:Configuration=$(Configuration) --property:TargetFramework=$(TargetFramework) --property:UseAppHost=true --property:UseArtifactsOutput=false --property:OutputPath=$(TargetDir)fake-native-grok/ --property:IntermediateOutputPath=$(TargetDir)fake-native-grok-obj/" />
     <Copy SourceFiles="$(TargetDir)fake-native-claude/fakeclaude"
           DestinationFiles="$(TargetDir)fakeclaude/fakeclaude" SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(TargetDir)fake-native-grok/fakegrok"
