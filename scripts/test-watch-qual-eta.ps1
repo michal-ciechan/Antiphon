@@ -67,8 +67,8 @@ try {
         'OncePrintsOneEtaLine' {
             $root = New-TimingRoot
             $before = Get-TreeStamp $root
-            $lines = Invoke-Watch $root
-            $eta = Get-EtaLines $lines
+            $lines = @(Invoke-Watch $root)
+            $eta = @(Get-EtaLines $lines)
             Note ($eta.Count -eq 1) ('eta lines ' + $eta.Count + ' [' + ($lines -join ' | ') + ']')
             if ($eta.Count -ge 1) {
                 $match = [regex]::Match([string]$eta[0], $script:EtaPattern)
@@ -92,9 +92,9 @@ try {
         'OmittedTimingRootStaysSilent' {
             $root = New-TimingRoot
             # Control: the same watcher prints the line when the root is passed, so silence below is not a missing feature.
-            $with = Get-EtaLines (Invoke-Watch $root)
+            $with = @(Get-EtaLines (Invoke-Watch $root))
             Note ($with.Count -eq 1) ('control eta lines ' + $with.Count)
-            $lines = Invoke-Watch ''
+            $lines = @(Invoke-Watch '')
             $silent = @($lines | Where-Object { ([string]$_).Contains('ETA') })
             Note ($silent.Count -eq 0) ('eta without a root [' + ($silent -join ' | ') + ']')
             Note (@($lines | Where-Object { $_ -like 'watch-qual window ended*' }).Count -eq 1) ('window line [' + ($lines -join ' | ') + ']')
@@ -110,7 +110,8 @@ try {
             $names = @($status.PSObject.Properties | ForEach-Object { $_.Name }) -join ','
             $expected = 'candidateId,runId,stateRoot,coordinationRoot,releaseRoot,observedAtUtc,observationComplete,reason,inputs,state,locks,journal,identityMismatches'
             Note ($names -ceq $expected) ('status properties ' + $names)
-            $parameters = @((Get-Command Get-RcQualificationStatus).Parameters.Keys | Where-Object { $_ -in @('CandidateId', 'RunId', 'StateRoot', 'CoordinationRoot', 'ReleaseRoot', 'ObserveProcess', 'TimingRoot') }) -join ','
+            $common = @([System.Management.Automation.PSCmdlet]::CommonParameters) + @([System.Management.Automation.PSCmdlet]::OptionalCommonParameters)
+            $parameters = @((Get-Command Get-RcQualificationStatus).Parameters.Keys | Where-Object { $common -notcontains $_ }) -join ','
             Note ($parameters -ceq 'CandidateId,RunId,StateRoot,CoordinationRoot,ReleaseRoot,ObserveProcess') ('status parameters ' + $parameters)
             $wrapper = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'rc-qualification-status.ps1'), [ref]$null, [ref]$null)
             $wrapperNames = @($wrapper.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }) -join ','
