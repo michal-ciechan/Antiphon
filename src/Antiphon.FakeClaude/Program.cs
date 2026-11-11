@@ -219,10 +219,19 @@ internal static class Program
         if (deafStartMs > 0) Write($"DEAFSTART:ms={deafStartMs}\r\n");
         if (debugInput)
         {
-            var h = GetStdHandle(STD_INPUT_HANDLE);
-            Write(GetConsoleMode(h, out var m)
-                ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0} cp={GetConsoleCP()}\r\n"
-                : "INMODE:unavailable\r\n");
+            // The mode probe is kernel32. On Linux it cannot load, and the throw used to kill
+            // the process before RAWBURST could show whether ESC[200~ arrived (CARD-1224).
+            try
+            {
+                var h = GetStdHandle(STD_INPUT_HANDLE);
+                Write(GetConsoleMode(h, out var m)
+                    ? $"INMODE:0x{m:X} vt={(m & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0} cp={GetConsoleCP()}\r\n"
+                    : "INMODE:unavailable\r\n");
+            }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            {
+                Write("INMODE:unavailable\r\n");
+            }
         }
         // --echo-args: print the argv verbatim (newline-escaped) so tests can assert that args —
         // notably a multi-line --append-system-prompt value — survived process-spawn quoting intact.
