@@ -36,20 +36,48 @@ public sealed class ExpectedDurationSyncTests
         ExpectedDurationRoster.Differences(roster with { Classes = drifted }, costs).Count.ShouldBe(1);
 
         // The committed roster is what the exporter writes from the committed cost file.
-        var output = Path.Combine(Path.GetTempPath(), "c1842-roster-" + Guid.NewGuid().ToString("N") + ".json");
+        var scratch = Path.Combine(Path.GetTempPath(), "c1842-roster-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
         try
         {
-            var start = new ProcessStartInfo("pwsh");
-            foreach (var argument in new[] { "-NoProfile", "-File", RepoPath("scripts/export-expected-duration-roster.ps1"), "-OutputPath", output })
-                start.ArgumentList.Add(argument);
-            var ran = await C1514Support.RunProcess(start, token);
+            var output = Path.Combine(scratch, "roster.json");
+            var ran = await Export(null, output, token);
             ran.ExitCode.ShouldBe(0, ran.Text);
             ExpectedDurationRoster.Differences(ExpectedDurationRoster.Load(output), roster).ShouldBeEmpty(ran.Text);
+
+            // Committed rows carry no measurement identity yet, so a fixture row proves the exporter copies it.
+            var fixture = Path.Combine(scratch, "costs.json");
+            await File.WriteAllTextAsync(fixture, """
+                {"format":"antiphon-nightly-class-costs-v1","platform":"windows","classes":{
+                  "Fx.Measured":{"nodes":2,"seconds":12.3,"basis":"trx","source":"s","hostId":"host-a","os":"windows","measuredRunId":"run-a","otherSample":{"seconds":40}},
+                  "Fx.Bound":{"nodes":1,"seconds":600,"basis":"conservative-bound"}}}
+                """, token);
+            var fixtureOutput = Path.Combine(scratch, "fixture-roster.json");
+            ran = await Export(fixture, fixtureOutput, token);
+            ran.ExitCode.ShouldBe(0, ran.Text);
+            var projected = ExpectedDurationRoster.ProjectCostFile(fixture);
+            projected.Classes["Fx.Measured"].ShouldBe(new ExpectedDurationEntry(12.3, "trx", "host-a", "windows", "run-a"));
+            projected.Classes["Fx.Bound"].ShouldBe(new ExpectedDurationEntry(600, "conservative-bound", null, null, null));
+            ExpectedDurationRoster.Differences(ExpectedDurationRoster.Load(fixtureOutput), projected).ShouldBeEmpty(ran.Text);
         }
         finally
         {
-            File.Delete(output);
+            Directory.Delete(scratch, recursive: true);
         }
+    }
+
+    private static Task<(int ExitCode, string Text)> Export(string? costPath, string outputPath, CancellationToken token)
+    {
+        var start = new ProcessStartInfo("pwsh");
+        foreach (var argument in new[] { "-NoProfile", "-File", RepoPath("scripts/export-expected-duration-roster.ps1"), "-OutputPath", outputPath })
+            start.ArgumentList.Add(argument);
+        if (costPath is not null)
+        {
+            start.ArgumentList.Add("-CostPath");
+            start.ArgumentList.Add(costPath);
+        }
+
+        return C1514Support.RunProcess(start, token);
     }
 
     [Test, Timeout(120_000)]
