@@ -431,13 +431,29 @@ function Get-PostLandClasses {
             }
             if (-not $hasTest) { continue }
             $name = $match.Groups[1].Value
+            $isUnit = ($unit -and -not $integration)
+            $isIntegration = ($integration -and -not $unit)
+            # A raw-string class with no category must not occupy the key. The census
+            # records only Unit rows, so a later Unit sighting of the same name counts.
+            if (-not $isUnit -and -not $isIntegration) { continue }
             $key = $ns + "`n" + $name
-            if (-not $seen.Add($key)) { continue }
+            if (-not $seen.Add($key)) {
+                if ($isUnit) {
+                    foreach ($existing in $found) {
+                        if ([string]$existing.Namespace -eq $ns -and [string]$existing.Name -eq $name -and -not $existing.Unit) {
+                            $existing.Unit = $true
+                            $existing.Integration = $false
+                            break
+                        }
+                    }
+                }
+                continue
+            }
             [void]$found.Add([pscustomobject]@{
                 Namespace = $ns
                 Name = $name
-                Unit = ($unit -and -not $integration)
-                Integration = ($integration -and -not $unit)
+                Unit = $isUnit
+                Integration = $isIntegration
             })
         }
     }
