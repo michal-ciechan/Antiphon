@@ -66,20 +66,6 @@ public sealed class ExpectedDurationSyncTests
         }
     }
 
-    private static Task<(int ExitCode, string Text)> Export(string? costPath, string outputPath, CancellationToken token)
-    {
-        var start = new ProcessStartInfo("pwsh");
-        foreach (var argument in new[] { "-NoProfile", "-File", RepoPath("scripts/export-expected-duration-roster.ps1"), "-OutputPath", outputPath })
-            start.ArgumentList.Add(argument);
-        if (costPath is not null)
-        {
-            start.ArgumentList.Add("-CostPath");
-            start.ArgumentList.Add(costPath);
-        }
-
-        return C1514Support.RunProcess(start, token);
-    }
-
     [Test, Timeout(120_000)]
     public void TreeHasNoExpectedDurationAttribute(CancellationToken token)
     {
@@ -114,12 +100,12 @@ public sealed class ExpectedDurationSyncTests
         foreach (var delta in new[] { 1.0, 0.5, -1.0 })
         {
             var differs = ExpectedDurationRoster.FindApplications(Fixture(ns, type, Literal(entry.Seconds + delta)), "fixture");
-            ExpectedDurationRoster.Check(roster, differs).ShouldHaveSingleItem().ShouldContain("differs from roster seconds");
+            ExpectedDurationRoster.Check(roster, differs).ShouldHaveSingleItem().ShouldContain("differs from roster seconds", Case.Sensitive);
         }
 
         var computed = ExpectedDurationRoster.FindApplications(Fixture(ns, type, "2 * 300"), "fixture");
         computed.ShouldHaveSingleItem().Seconds.ShouldBeNull();
-        ExpectedDurationRoster.Check(roster, computed).ShouldHaveSingleItem().ShouldContain("numeric literal");
+        ExpectedDurationRoster.Check(roster, computed).ShouldHaveSingleItem().ShouldContain("numeric literal", Case.Sensitive);
     }
 
     [Test, Timeout(120_000)]
@@ -133,7 +119,7 @@ public sealed class ExpectedDurationSyncTests
         var applications = ExpectedDurationRoster.FindApplications(
             Fixture("Antiphon.Tests.TestHelpers", "ExpectedDurationAttributeOnlyFixture", Literal(seconds)), "fixture");
         applications.ShouldHaveSingleItem().ClassName.ShouldBe(name);
-        ExpectedDurationRoster.Check(roster, applications).ShouldHaveSingleItem().ShouldContain("absent from " + ExpectedDurationRoster.RelativePath);
+        ExpectedDurationRoster.Check(roster, applications).ShouldHaveSingleItem().ShouldContain("absent from " + ExpectedDurationRoster.RelativePath, Case.Sensitive);
     }
 
     [Test, Timeout(120_000)]
@@ -165,7 +151,21 @@ public sealed class ExpectedDurationSyncTests
                      "The roster beside PlatformTaxonomy is a projection of that file.",
                      "An ExpectedDuration attribute, when present, must equal the roster seconds for that class.",
                  })
-            section.ShouldContain(sentence);
+            section.ShouldContain(sentence, Case.Sensitive);
+    }
+
+    private static Task<(int ExitCode, string Text)> Export(string? costPath, string outputPath, CancellationToken token)
+    {
+        var start = new ProcessStartInfo("pwsh");
+        foreach (var argument in new[] { "-NoProfile", "-File", RepoPath("scripts/export-expected-duration-roster.ps1"), "-OutputPath", outputPath })
+            start.ArgumentList.Add(argument);
+        if (costPath is not null)
+        {
+            start.ArgumentList.Add("-CostPath");
+            start.ArgumentList.Add(costPath);
+        }
+
+        return C1514Support.RunProcess(start, token);
     }
 
     private static string Fixture(string ns, string type, string seconds) =>
