@@ -1679,9 +1679,9 @@
     },
     {
       "path": "src/Antiphon.Agents.Pty/PtyAgentRunner.cs",
-      "classes": 61,
+      "classes": 62,
       "reason": "cap",
-      "owed": 36,
+      "owed": 37,
       "first": [
         "Card1619UnixExitTests",
         "Card1619WindowsExitTests",
@@ -16254,7 +16254,8 @@
         "PtyBracketedPasteContractTests",
         "PtyInputEncodingTests",
         "PtyLargeWriteTests",
-        "TurnEndGapRestartDeliveryTests"
+        "TurnEndGapRestartDeliveryTests",
+        "UnixPtyDeliveryEnvelopeTests"
       ]
     },
     {
@@ -22043,12 +22044,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Application/CheckCompactionReceiptTests.cs",
-      "classes": [
-        "InterimVerificationReadinessTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Application/CheckNoteDeliveryHandoffTests.H5.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -22398,12 +22393,6 @@
         "C0824RefOnlyCleanupTests",
         "C1708ReflogSalvageTests",
         "GatewayTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Application/DispatchBaseInspectionDiagnosticsTests.cs",
-      "classes": [
-        "RoutingExhaustedPlacementTests"
       ]
     },
     {
