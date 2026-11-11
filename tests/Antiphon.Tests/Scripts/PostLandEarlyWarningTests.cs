@@ -42,6 +42,10 @@ public sealed class PostLandEarlyWarningTests
         @"^namespace\s+([A-Za-z0-9_.]+)\s*\{",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex RawStringRun = new(
+        "\"{3,}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     [Test]
     public async Task Docs_only_range_skips()
     {
@@ -787,9 +791,12 @@ public sealed class PostLandEarlyWarningTests
             if (relative.Contains("/bin/", StringComparison.Ordinal) || relative.Contains("/obj/", StringComparison.Ordinal))
                 continue;
             var lines = File.ReadAllLines(file);
+            var inRaw = RawStringLines(lines);
             var ns = "";
             for (var i = 0; i < lines.Length; i++)
             {
+                if (inRaw[i])
+                    continue;
                 var trim = lines[i].Trim();
                 var fileNs = FileNamespace.Match(trim);
                 if (fileNs.Success)
@@ -811,6 +818,8 @@ public sealed class PostLandEarlyWarningTests
                 var attrs = new List<string>();
                 for (var j = i - 1; j >= 0; j--)
                 {
+                    if (inRaw[j])
+                        break;
                     var earlier = lines[j].Trim();
                     if (earlier.Length == 0 || earlier.StartsWith("//", StringComparison.Ordinal))
                         continue;
@@ -830,6 +839,8 @@ public sealed class PostLandEarlyWarningTests
                 var hasTest = false;
                 for (var k = i + 1; k < lines.Length; k++)
                 {
+                    if (inRaw[k])
+                        continue;
                     var body = lines[k].Trim();
                     if (ClassLine.IsMatch(body))
                         break;
@@ -851,6 +862,23 @@ public sealed class PostLandEarlyWarningTests
         }
 
         return found;
+    }
+
+    // A line inside or on the edge of a raw string literal is fixture text, not a declaration.
+    private static bool[] RawStringLines(string[] lines)
+    {
+        var inRaw = new bool[lines.Length];
+        var open = false;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var runs = RawStringRun.Matches(lines[i]).Count;
+            if (open || runs > 0)
+                inRaw[i] = true;
+            if (runs % 2 == 1)
+                open = !open;
+        }
+
+        return inRaw;
     }
 
     private static int CountOf(string text, string token)

@@ -394,13 +394,23 @@ function Get-PostLandClasses {
     $classLine = [regex]::new('^public\s+(?:(?:sealed|static|partial|abstract)\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)\b', 'CultureInvariant')
     $fileNs = [regex]::new('^namespace\s+([A-Za-z0-9_.]+)\s*;', 'CultureInvariant')
     $blockNs = [regex]::new('^namespace\s+([A-Za-z0-9_.]+)\s*\{', 'CultureInvariant')
+    $rawRun = [regex]::new('"{3,}', 'CultureInvariant')
     $files = [IO.Directory]::EnumerateFiles($root, '*.cs', [IO.SearchOption]::AllDirectories)
     foreach ($file in $files) {
         $relative = ([string]$file).Replace('\', '/')
         if ($relative.Contains('/bin/') -or $relative.Contains('/obj/')) { continue }
         $lines = [IO.File]::ReadAllLines($file)
+        # A line inside or on the edge of a raw string literal is fixture text, not a declaration.
+        $inRaw = New-Object 'bool[]' $lines.Length
+        $open = $false
+        for ($r = 0; $r -lt $lines.Length; $r++) {
+            $runs = $rawRun.Matches($lines[$r]).Count
+            if ($open -or $runs -gt 0) { $inRaw[$r] = $true }
+            if (($runs % 2) -eq 1) { $open = -not $open }
+        }
         $ns = ''
         for ($i = 0; $i -lt $lines.Length; $i++) {
+            if ($inRaw[$i]) { continue }
             $trim = $lines[$i].Trim()
             $fileMatch = $fileNs.Match($trim)
             if ($fileMatch.Success) { $ns = $fileMatch.Groups[1].Value; continue }
@@ -411,6 +421,7 @@ function Get-PostLandClasses {
             $unit = $false
             $integration = $false
             for ($j = $i - 1; $j -ge 0; $j--) {
+                if ($inRaw[$j]) { break }
                 $earlier = $lines[$j].Trim()
                 if ($earlier.Length -eq 0 -or $earlier.StartsWith('//')) { continue }
                 if ($earlier.StartsWith('[')) {
@@ -422,6 +433,7 @@ function Get-PostLandClasses {
             }
             $hasTest = $false
             for ($k = $i + 1; $k -lt $lines.Length; $k++) {
+                if ($inRaw[$k]) { continue }
                 $body = $lines[$k].Trim()
                 if ($classLine.IsMatch($body)) { break }
                 if ($body.Contains('[Test]') -or $body.Contains('[Test,') -or $body.Contains('[TestAttribute')) {
