@@ -17,11 +17,15 @@ var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..
 builder.AddDaemonSupervisor();
 
 // ── PostgreSQL (always-on, EXTERNAL container — not managed by Aspire) ─────────
-// Postgres runs as a standalone docker-compose container (docker-compose.dev.yml,
-// restart: unless-stopped) so it auto-starts on login and stays up whether or not
-// the AppHost is running. We only reference its connection string here; the value
-// comes from appsettings.json (Host=localhost;Port=17280;...). This sidesteps the
-// Aspire-managed-postgres flakiness (stale DefaultConnection containers, HNS hangs).
+// AppHost does not start the server2 Postgres container.
+// Nor the desktop one: a database whose lifecycle is an AppHost call would die with the desktop
+// Docker engine (CARD-1844). The tracked appsettings.json value is the standalone
+// docker-compose.dev.yml container (Host=localhost;Port=17280, restart: unless-stopped). The
+// production override is the AppHost user secret (aspire-antiphon-apphost) that
+// scripts/cutover-postgres-server2.ps1 writes for the server2 listener, whose owner is
+// scripts/deploy-server2-postgres.ps1 on the server2 host. We only reference the connection
+// string here, which also sidesteps the Aspire-managed-postgres flakiness (stale
+// DefaultConnection containers, HNS hangs). Startup logs its host and port only.
 var postgres = builder.AddConnectionString("DefaultConnection");
 
 // ── Session runner (daemon — survives AppHost exit, keeps live PTY sessions alive)
@@ -136,6 +140,36 @@ else
         "Messaging broker for server: {Broker} ({Source})",
         "localhost:19092",
         "default (server/appsettings.json)");
+}
+
+// Host and port only: the connection string also carries the user and password, so it is parsed
+// here and never logged. Port defaults to 5432, as in Npgsql.
+var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection");
+var (databaseHost, databasePort) = DatabaseEndpoint(databaseConnection);
+logger.LogInformation("Database endpoint {Host}:{Port}", databaseHost, databasePort);
+
+static (string Host, string Port) DatabaseEndpoint(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+        return ("(not configured)", "-");
+
+    var parts = new System.Data.Common.DbConnectionStringBuilder();
+    try
+    {
+        parts.ConnectionString = connectionString;
+    }
+    catch (ArgumentException)
+    {
+        return ("(unparseable)", "-");
+    }
+
+    var host = parts.TryGetValue("Host", out var hostValue) || parts.TryGetValue("Server", out hostValue)
+        ? Convert.ToString(hostValue)
+        : null;
+    var port = parts.TryGetValue("Port", out var portValue) ? Convert.ToString(portValue) : null;
+    return (
+        string.IsNullOrWhiteSpace(host) ? "(not set)" : host.Trim(),
+        string.IsNullOrWhiteSpace(port) ? "5432" : port.Trim());
 }
 
 using var hostTiming = liveTiming.ObserveHostStartup(app.Services.GetRequiredService<IHostApplicationLifetime>());
