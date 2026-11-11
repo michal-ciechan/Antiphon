@@ -103,6 +103,7 @@ public partial class SessionRuntimeActionRoutingTests
                 await f.Actions.DrainPageAsync(h.SessionId, default);
                 producer.Sent.Count.ShouldBe(expected, "the whole mixed API-error turn is withheld");
                 (await h.Dispatcher.PendingCountAsync(h.SessionId)).ShouldBe(1);
+                Console.WriteLine("V-5 channel-bound mixed API-error: the whole turn stayed withheld");
             }
         }
         finally { producer.Release.TrySetResult(); await drain; }
@@ -189,7 +190,7 @@ public partial class SessionRuntimeActionRoutingTests
                 (await h.Provider.GetRequiredService<SessionStateStore>().ReadAsync(h.SessionId, default)).Working.ShouldBeTrue();
                 h.Adapter.Inputs.ShouldBeEmpty("status cannot turn committed Working into idle");
                 await f.StreamAsync(f.Entry("TurnEnd"));
-                await Task.Delay(TimeSpan.FromMilliseconds(1100));
+                f.AdvanceSchedule(TimeSpan.FromMilliseconds(1100));
                 await f.Actions.RequestAsync(h.SessionId, "status", default);
                 await f.Actions.DrainPageAsync(h.SessionId, default);
             }
@@ -266,7 +267,7 @@ public partial class SessionRuntimeActionRoutingTests
             h.Runtime.SetTestAcceptedStartedAt(h.SessionId, h.Adapter.AcceptedStartedAt!.Value);
         }
         await f.StreamAsync(f.Entry("UserPrompt", body), f.Entry("TurnEnd"));
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        f.AdvanceSchedule(TimeSpan.FromMilliseconds(1100));
         await f.Actions.RequestAsync(h.SessionId, "status", default);
         await f.Actions.DrainPageAsync(h.SessionId, default);
         await using var verify = h.CreateObserverContext();
@@ -298,7 +299,19 @@ public partial class SessionRuntimeActionRoutingTests
     private static async Task VerifyTaskRoutingAsync(bool emptySync)
     {
         await using var f = await RoutingFixture.CreateAsync(AddTaskServices);
-        var task = await SeedRoutingTaskAsync(f);
+        Guid? parent = null;
+        if (emptySync)
+        {
+            parent = Guid.NewGuid();
+            await using var parentDb = f.H.CreateObserverContext();
+            parentDb.AgentSessions.Add(new AgentSession
+            {
+                Id = parent.Value, DefinitionName = "empty-sync-parent", Cwd = f.H.TempRoot,
+                Status = SessionStatus.Running, StartedAt = f.H.Now, CreatedAt = f.H.Now
+            });
+            await parentDb.SaveChangesAsync();
+        }
+        var task = await SeedRoutingTaskAsync(f, parent);
         var marker = DelegationReportFormatter.TaskMarker(task.Id);
         const string resultBody = "Original complete result needs a decision.";
         var report = $"{resultBody}\n[antiphon-report:{DelegationReportFormatter.Short(task.Id)} blocked]";
@@ -337,6 +350,88 @@ public partial class SessionRuntimeActionRoutingTests
         (await verify.TranscriptEntries.Where(t => t.AgentSessionId == f.H.SessionId && t.Kind == "AssistantText")
             .Select(t => t.Text).ToListAsync()).ShouldContain(report, "the complete marked source remains durable");
         (await verify.AgentTaskEvents.CountAsync(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+        if (emptySync)
+        {
+            var note = await verify.SessionQueuedMessages.SingleAsync(m => m.SourceTaskId == task.Id);
+            note.AgentSessionId.ShouldBe(parent!.Value);
+            note.Body.ShouldContain(resultBody);
+            Console.WriteLine("V-7 empty-sync: owed task settled and the parent receipt is queued; historical UI was not replayed");
+        }
+        else
+            await VerifyTaskBoundDepthAsync(f, task, resultBody, report);
+    }
+
+    private static async Task PublishReportAsync(RoutingFixture f, Guid taskId, string report)
+    {
+        await f.StreamAsync(f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(taskId)),
+            f.Entry("AssistantText", report), f.Entry("TurnEnd"));
+        await f.Actions.DrainPageAsync(f.H.SessionId, default);
+    }
+
+    private static async Task VerifyTaskBoundDepthAsync(RoutingFixture f, AgentTask first, string resultBody, string firstReport)
+    {
+        var second = await SeedRoutingTaskAsync(f);
+        const string secondBody = "Second settled task result stays independent.";
+        var secondReport = $"{secondBody}\n[antiphon-report:{DelegationReportFormatter.Short(second.Id)} blocked]";
+        await PublishReportAsync(f, second.Id, secondReport);
+        await using (var db = f.H.CreateObserverContext())
+        {
+            (await db.AgentTasks.SingleAsync(t => t.Id == first.Id)).Status.ShouldBe(AgentTaskStatus.Blocked);
+            var settledSecond = await db.AgentTasks.SingleAsync(t => t.Id == second.Id);
+            settledSecond.Status.ShouldBe(AgentTaskStatus.Blocked);
+            settledSecond.Result.ShouldBe(secondBody);
+        }
+        Console.WriteLine("V-5 task-bound: two settled ids");
+
+        var housekeeping = await SeedRoutingTaskAsync(f);
+        var housekeepingPrompt = TranscriptKinds.TaskNotificationPrefix + "\n"
+            + DelegationReportFormatter.TaskMarker(housekeeping.Id) + "\n"
+            + "Housekeeping must not settle.\n[antiphon-report:"
+            + DelegationReportFormatter.Short(housekeeping.Id) + " blocked]";
+        await f.StreamAsync(f.Entry("UserPrompt", housekeepingPrompt),
+            f.Entry("AssistantText", "notification seen"), f.Entry("TurnEnd"));
+        await f.Actions.DrainPageAsync(f.H.SessionId, default);
+        await using (var db = f.H.CreateObserverContext())
+            (await db.AgentTasks.SingleAsync(t => t.Id == housekeeping.Id)).Status.ShouldBe(AgentTaskStatus.Working);
+        Console.WriteLine("V-5 task-bound housekeeping: notification left the task Working");
+
+        var cancelled = await SeedRoutingTaskAsync(f);
+        await f.StreamAsync(
+            f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(cancelled.Id)),
+            f.Entry("AssistantText", "Cancelled before a report.\n[antiphon-report:"
+                + DelegationReportFormatter.Short(cancelled.Id) + " blocked]"),
+            f.Entry("TurnEnd") with { StopReason = StopReasons.Cancelled });
+        await f.Actions.DrainPageAsync(f.H.SessionId, default);
+        await using (var db = f.H.CreateObserverContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == cancelled.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Working);
+            row.Result.ShouldBeNull();
+        }
+        Console.WriteLine("V-5 task-bound cancelled: interrupt left the task Working");
+
+        var errored = await SeedRoutingTaskAsync(f);
+        await f.StreamAsync(
+            f.Entry("UserPrompt", DelegationReportFormatter.TaskMarker(errored.Id)),
+            f.Entry("AssistantText", "API Error: interrupted") with { IsApiError = true },
+            f.Entry("TurnEnd") with { IsApiError = true, StopReason = "error" });
+        await f.Actions.DrainPageAsync(f.H.SessionId, default);
+        await using (var db = f.H.CreateObserverContext())
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == errored.Id);
+            row.Status.ShouldBe(AgentTaskStatus.Working);
+            row.Result.ShouldBeNull();
+        }
+        Console.WriteLine("V-5 task-bound API-error: stub turn left the task Working with no result");
+
+        await PublishReportAsync(f, first.Id, firstReport);
+        await using (var db = f.H.CreateObserverContext())
+        {
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == first.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+            (await db.AgentTaskEvents.CountAsync(e => e.AgentTaskId == second.Id && e.Type == AgentTaskEventType.Blocked)).ShouldBe(1);
+            (await db.AgentTasks.SingleAsync(t => t.Id == first.Id)).Result.ShouldBe(resultBody);
+        }
+        Console.WriteLine("V-5 task-bound answered-Blocked watermark: replaying the old report added no second Blocked event");
     }
 
     private static async Task VerifyReviewRoutingAsync()
@@ -506,7 +601,7 @@ public partial class SessionRuntimeActionRoutingTests
                 await f.Actions.DrainPageAsync(f.H.SessionId, default);
                 f.H.Adapter.Inputs.ShouldBeEmpty(label);
                 await f.StreamAsync(f.Entry("TurnEnd"));
-                await Task.Delay(TimeSpan.FromMilliseconds(1100));
+                f.AdvanceSchedule(TimeSpan.FromMilliseconds(1100));
                 await f.Actions.RequestAsync(f.H.SessionId, "status", default);
             }
             var accepted = new List<string>();
@@ -883,12 +978,26 @@ public partial class SessionRuntimeActionRoutingTests
         }
     }
 
+    private static void AdvanceSharedSchedule(TimeProvider clock, TimeSpan by)
+    {
+        if (clock is not ScaledTimeProvider scaled)
+            throw new InvalidOperationException("The schedule clock must be the shared ScaledTimeProvider.");
+        scaled.Advance(by);
+    }
+
     private sealed class RoutingFixture : IAsyncDisposable
     {
         public required BridgeQueueHarness H;
         public required ScriptedSessionRunnerClient Runner;
         public required SessionRunnerEventPump Pump;
         public required IsolatedTestSchema Schema;
+        public required ScaledTimeProvider ScheduleClock;
+        public void AdvanceSchedule(TimeSpan by)
+        {
+            if (!ReferenceEquals(H.Clock, ScheduleClock))
+                throw new InvalidOperationException("runtime, queue and worker must share the schedule clock");
+            AdvanceSharedSchedule(H.Clock, by);
+        }
         private Action<IServiceCollection>? _configure;
         private Action<DbContextOptionsBuilder>? _configureDb;
         private readonly List<string> _tempRoots = [];
@@ -898,10 +1007,12 @@ public partial class SessionRuntimeActionRoutingTests
             Action<DbContextOptionsBuilder>? configureDb = null)
         {
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+            var clock = new ScaledTimeProvider(1);
             var runner = new ScriptedSessionRunnerClient();
             var h = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = schema.ConnectionString,
+                TimeProvider = clock,
                 PreserveDatabaseOnDispose = true,
                 ConfigureDbContext = configureDb,
                 Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
@@ -916,7 +1027,7 @@ public partial class SessionRuntimeActionRoutingTests
                 Options.Create(new SessionRunnerSettings { Enabled = true }), NullLogger<SessionRunnerEventPump>.Instance, h.Clock);
             await pump.StartAsync(default);
             await runner.Streaming.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var fixture = new RoutingFixture { H = h, Runner = runner, Pump = pump, Schema = schema };
+            var fixture = new RoutingFixture { H = h, Runner = runner, Pump = pump, Schema = schema, ScheduleClock = clock };
             fixture._configure = configure; fixture._configureDb = configureDb; fixture._tempRoots.Add(h.TempRoot);
             fixture._sequence = await h.CurrentTranscriptMaxSequenceAsync();
             return fixture;
@@ -929,6 +1040,7 @@ public partial class SessionRuntimeActionRoutingTests
             H = await ClaudeDialogFixture.CreateBridgeAsync(new()
             {
                 ConnectionString = Schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
+                TimeProvider = ScheduleClock,
                 PreserveDatabaseOnDispose = true, ConfigureDbContext = _configureDb,
                 Outbound = new ChannelOutboundSettings { UnifiedRecoveryEnabled = false },
                 ConfigureServices = s => { s.AddSingleton<ISessionRunnerClient>(Runner); _configure?.Invoke(s); }
