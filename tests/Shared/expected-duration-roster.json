@@ -1,0 +1,5412 @@
+{
+  "format": "antiphon-expected-duration-roster-v1",
+  "platform": "windows",
+  "costFile": "scripts/lib/nightly-class-costs.json",
+  "export": "pwsh -NoProfile -File scripts/export-expected-duration-roster.ps1",
+  "classes": {
+    "Antiphon.E2E.AgentE2ETests": {
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.AgentTaskLandDeliveryE2ETests": {
+      "seconds": 31800,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.BoardE2ETests": {
+      "seconds": 3000,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.CardCliE2ETests": {
+      "seconds": 3000,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ChannelE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ChannelOutboundIsolatedTests": {
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ChromiumRuntimeSmokeTests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ContractSnapshotTests": {
+      "seconds": 1500,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.CreatedResourceTests": {
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.DelegationPipelineE2ETests": {
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.DelegationSequencingE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.DirectoryAutocompleteE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests": {
+      "seconds": 7800,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.DispatchConcurrencySettingsE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.Fixtures.AntiphonAppFixtureHostPathTests": {
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.Fixtures.IsolatedSessionRunnerTeardownTests": {
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.Fixtures.PtyBackendEnvGuardTests": {
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.LandDeliveryFixtureProbeTests": {
+      "seconds": 140,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.OrchestratorE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.OutputDistillationApplyCanaryTests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.OutputDistillationCanaryGuardTests": {
+      "seconds": 330,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.PipelineGlanceE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ProjectDeleteE2ETests": {
+      "seconds": 2400,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ReleaseGateIsolationTests": {
+      "seconds": 900,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ReleaseGateReportDeliveryTests": {
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.ScheduleCliE2ETests": {
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.SmokeE2ETests": {
+      "seconds": 600,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.WorkflowDeleteTests": {
+      "seconds": 1800,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.WorkflowOutputTests": {
+      "seconds": 1200,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.E2E.WorktreeRetirementDeliveryE2ETests": {
+      "seconds": 2500,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.TestSupport.TestClassificationGuardTests": {
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.AgentTui.AgentTuiLaunchResolverTests": {
+      "seconds": 137,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.AgentTui.AgentTuiModelArgumentMigrationTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.AgentTuiPersistenceTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.AgentTuiProfileImporterBackfillTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.ClaudeAdapterEffortPromptTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.ClaudeEffortFixtureTraceTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.CodexAdapterLocalShellTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.DirectSessionRunnerClientDisposalTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.OwnedPtyFixtureCleanupWindowsTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.ProviderEndpointSentinelCanaryTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerClaudeAdapterEffortPromptTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerClaudeAdapterTrustPromptTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerCodexAdapterTurnCompleteTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerGrokAdapterTrustPromptTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerGrokAdapterTurnCompleteTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.RunnerTerminalSessionGenerationTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Agents.SessionRunnerRuntimeTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.ExpectationHoldReleaseEndpointTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.ExpectationStatusTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.KeepSixReminderTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.OperatorShutdownEndpointTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.OrchestratorInstructionsEndpointTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Api.RolePolicyEndpointTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ApiKeys.ApiKeyApiTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ApiKeys.ApiKeyEnvResolverTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ApiKeys.ApiKeyLaunchPathTests": {
+      "seconds": 45,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ApiKeys.DelegationCapabilityApiTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ApiKeys.LaunchEnvLayersIntegrationTests": {
+      "seconds": 147,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AbandonedLandingReconcilerTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AdvisoryChangePolicyTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentChannelServiceIntegrationTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentCreateRaceTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentCreateSupervisionTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentModelLevelBindTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentPinnedInstructionCompositionTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentPinnedInstructionEndpointTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentPinnedInstructionServiceTests": {
+      "seconds": 126,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentRemoteControlGateTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentReplyStyleEndpointTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentReportStoreTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentServiceIntegrationTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionBackendTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionCancelledTurnTests": {
+      "seconds": 181,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionInterruptedLaunchResumeTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionLaunchFailureTests": {
+      "seconds": 121,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionLaunchQueueOwnershipTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionRuntimeActivityTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSessionRuntimeTests": {
+      "seconds": 108,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentStartRecoveryTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentSystemPromptLaunchTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskAnswerTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskAutoTitleTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskCallerResolutionTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskCancelReasonTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskCardBindingTests": {
+      "seconds": 87,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskCatchUpSettlementTests": {
+      "seconds": 40,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskCommitEndpointTests": {
+      "seconds": 97,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskConcurrencyLimitTests": {
+      "seconds": 105,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskDecisionQuestionIntegrationTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskDeliveryWatchdogTests": {
+      "seconds": 227,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskDetailBlockedContextTests": {
+      "seconds": 29,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskDispatchBaseGuardTests": {
+      "seconds": 497,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskDispatcherWiringTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskEffectiveModelChipTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskInputFallbackTests": {
+      "seconds": 27,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskInputSpillTests": {
+      "seconds": 41,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskInternalDecisionLifecycleTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskInternalDecisionMigrationTests": {
+      "seconds": 53,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandActiveSourceClaimTests": {
+      "seconds": 1920,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandAdmissionControlledTests": {
+      "seconds": 304,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandAdmissionTests": {
+      "seconds": 528,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandAdoptionConcurrencyTests": {
+      "seconds": 483,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandAdoptionTests": {
+      "seconds": 723,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandApprovalPersistenceTests": {
+      "seconds": 175,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandApprovalRecoveryTests": {
+      "seconds": 480,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandApprovalRequestTests": {
+      "seconds": 96,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandBareRepositoryCleanupTests": {
+      "seconds": 725,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandBoundaryControlledTests": {
+      "seconds": 1218,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandBoundaryTests": {
+      "seconds": 866,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandCheckpointMatrixTests": {
+      "seconds": 1560,
+      "basis": "pace",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandCheckpointWorkerTests": {
+      "seconds": 1560,
+      "basis": "pace",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandCleanupSafetyTests": {
+      "seconds": 1288,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandConcurrencyControlledTests": {
+      "seconds": 212,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandConcurrencyTests": {
+      "seconds": 576,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandDispatchYieldTests": {
+      "seconds": 300,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandEnqueueTests": {
+      "seconds": 87,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandFailureDiagnosticTests": {
+      "seconds": 192,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandHalfResetTests": {
+      "seconds": 1776,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandHalfResetWindowsTests": {
+      "seconds": 158,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandHeldNotificationTests": {
+      "seconds": 119,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandHoldVisibilityTests": {
+      "seconds": 279,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandIdentityMatrixTests": {
+      "seconds": 251,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandIndexLockTests": {
+      "seconds": 376,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandLocalContainmentTests": {
+      "seconds": 85,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandMonitoringTests": {
+      "seconds": 295,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandNestedRepositoryCleanupTests": {
+      "seconds": 448,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandNotificationPersistenceTests": {
+      "seconds": 225,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandNotificationRecoveryTests": {
+      "seconds": 112,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandPersistenceFailureTests": {
+      "seconds": 1980,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandPreparationIdentityTests": {
+      "seconds": 473,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandPublicationTests": {
+      "seconds": 3780,
+      "basis": "pace",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandQueueAgingTests": {
+      "seconds": 49,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandQueuedReceiptTests": {
+      "seconds": 137,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandReceiptTests": {
+      "seconds": 67,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandReceiptWatermarkSafetyTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandReceiptWatermarkTests": {
+      "seconds": 114,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRecoveryTests": {
+      "seconds": 673,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRefusedRetryTests": {
+      "seconds": 638,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRegistrationSafetyTests": {
+      "seconds": 216,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRegistrationSafetyWindowsTests": {
+      "seconds": 69,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionATests": {
+      "seconds": 176,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionBTests": {
+      "seconds": 186,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionCTests": {
+      "seconds": 456,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemoteSourceRetentionDTests": {
+      "seconds": 151,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRemovalMatrixTests": {
+      "seconds": 1415,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandRequestTests": {
+      "seconds": 361,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandSourceFreshnessTests": {
+      "seconds": 630,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandSourcePersistenceTests": {
+      "seconds": 395,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandStageOutcomeTests": {
+      "seconds": 451,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandSweepTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandTargetRaceFakeTests": {
+      "seconds": 70,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandTargetRaceTests": {
+      "seconds": 446,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandVerifierTests": {
+      "seconds": 105,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLandingPersistenceTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskListStatusFilterTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskLocalMergeSafetyTests": {
+      "seconds": 202,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskPipelineEndpointTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskPipelineStatusTests": {
+      "seconds": 730,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskProjectScopeTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskRefineTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskReplyIntegrationTests": {
+      "seconds": 562,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskReplyOverlayTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskReuseEnqueueTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskReviewEvidenceTests": {
+      "seconds": 66,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskScopeOverlapCreateTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskStandingAgentDispatchTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeBaseCreateTests": {
+      "seconds": 138,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeBaseMigrationTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeBaseResolverTests": {
+      "seconds": 290,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeBaseSyncDebtTests": {
+      "seconds": 58,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeContinuityTests": {
+      "seconds": 283,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests": {
+      "seconds": 948,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AlertPersistenceTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AttentionFeedNoiseTests": {
+      "seconds": 67,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AttentionServiceTests": {
+      "seconds": 569,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.AuditArchiveEndpointTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedReplyReportRetentionTests": {
+      "seconds": 175,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkDeliveryTests": {
+      "seconds": 611,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkReclaimTests": {
+      "seconds": 978,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkReleaseTests": {
+      "seconds": 735,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkReplyAdmissionTests": {
+      "seconds": 1068,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkResumeTests": {
+      "seconds": 553,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskParkStateTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests": {
+      "seconds": 211,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BoardCardOrderApiTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BoardCardOrderIntegrationTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BoardProjectArchiveApiTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BoardProjectArchiveTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BoardServiceIntegrationTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BootLivenessProbeScopeTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BootStallAttentionTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BootStallDetectionTests": {
+      "seconds": 247,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BootStallWorkingTickCharacterizationTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.BootWedgeRelaunchParityTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CapacityRecoveryAttentionTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CapacityRecoveryCompatibilityTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CapacityRecoveryTranscriptTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardCleanupSchedulingSchemaTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardClosedAttentionTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardDiagnosisApplyTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardDoneWorktreeCleanupTests": {
+      "seconds": 477,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileBoardLookupTests": {
+      "seconds": 77,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileGitFailureAcceptanceTests": {
+      "seconds": 40,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileIgnoreAcceptanceTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileIgnoreTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyBoundaryAcceptanceTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyConcurrencyTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyGitTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyHostedServiceTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyMigrationTests": {
+      "seconds": 13,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyOwnershipAcceptanceTests": {
+      "seconds": 44,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyOwnershipTests": {
+      "seconds": 28,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyPathTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyPersistenceTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacyRecoveryTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacySyncAcceptanceTests": {
+      "seconds": 111,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFilePrivacySyncTests": {
+      "seconds": 101,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileSyncDisabledEndpointTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardFileSyncEndpointTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardListPaginationApiTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardPlatformScriptTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardPlatformTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardPrivateNotesBoundaryTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardRelationshipSchemaTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardReorderApiTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardReviewServiceIntegrationTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardSpawnModelArgumentTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardTaskFileServiceTests": {
+      "seconds": 91,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardTaskSettlementTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardThreadServiceTests": {
+      "seconds": 46,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardTrackerPushApiTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardVerificationPolicyTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardWorktreeCleanupRecoveryTests": {
+      "seconds": 177,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CardWorktreeMirrorBindingTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelBatchingTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelBridgeTests": {
+      "seconds": 56,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelConsumerIdentityEndpointTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelFollowUpAttachmentTests": {
+      "seconds": 57,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelIngressIncidentTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundComposedTransportTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundDiscoveryTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundDurabilitySchemaTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundEndpointTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundFailureRecordingTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundMigrationTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundRecoveryTests": {
+      "seconds": 201,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundRetentionTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundTrailingRecoveryTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundUnifiedCrashTests": {
+      "seconds": 837,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundUnifiedPathTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests": {
+      "seconds": 1277,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelPreamblePresetEndpointTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelReplyAttachmentReaderWindowsTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelReplyDurabilityTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChannelReplyLateConfirmDispatchTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ChatChannelServiceTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionAttentionTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionContinuationTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionCrashTests": {
+      "seconds": 102,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionReceiptTests": {
+      "seconds": 106,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionRecoveryFlowTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckCompactionRecoveryPersistenceTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CheckpointSourceApprovalTests": {
+      "seconds": 491,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ClaudeCredentialProbeDispatcherTests": {
+      "seconds": 47,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ClaudeDialogDeliveryTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ClosedCardSweepTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CodexCliObservationGapTests": {
+      "seconds": 439,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CodexCliObservationTests": {
+      "seconds": 529,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CodexPhoneHomeCreateTests": {
+      "seconds": 51,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CommitOnSettlePolicyTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CommitRecoveryObligationsLoaderTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CompletionNoteDurableSweepTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.CompletionWarningDeliveryTests": {
+      "seconds": 233,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityAttentionTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityChainConcurrencyHttpTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityChainHttpTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityChainRaceTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityChainRoleTests": {
+      "seconds": 84,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityChainServiceTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityCreateTests": {
+      "seconds": 112,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityDispatcherTests": {
+      "seconds": 64,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityEffectiveHttpTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityRoutingWalkTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ComplexityWallRerouteTests": {
+      "seconds": 83,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ContextCompactionAgentTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ContinuationSettlementTests": {
+      "seconds": 295,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DefaultRunnerCreateTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DefaultRunnerEligibilityTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DefaultRunnerPinTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DefaultRunnerRerouteTests": {
+      "seconds": 102,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateBranchDeliveryTests": {
+      "seconds": 371,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegatePlatformScriptTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptAdoptTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptCapabilityTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptKindTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptLandApprovalTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptLandStatusTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptRepairSourceTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptStartRefTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptTitleTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptVerificationRoundTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptWorkspaceDefaultTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegateScriptWorktreeBaseTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationBriefCeilingPtyTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationBriefRecoveryTests": {
+      "seconds": 56,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationCapabilityTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests": {
+      "seconds": 3505,
+      "basis": "pace",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationRetryEventKindTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DelegationWorktreeTests": {
+      "seconds": 636,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DiagnoseProvisionerTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DiagnosticsBundleEndpointTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DiagnosticsBundleServiceTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests": {
+      "seconds": 190,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchBaseNotificationTests": {
+      "seconds": 336,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencyAdmissionTests": {
+      "seconds": 29,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencyDispatchTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencyMigrationTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencyPipelineTests": {
+      "seconds": 15,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencySettingsTests": {
+      "seconds": 45,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchConcurrencyWireTests": {
+      "seconds": 27,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchHeldAttentionTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchHoldVisibilityTests": {
+      "seconds": 44,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatchSiblingInspectionTests": {
+      "seconds": 154,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatcherAdmissionSchedulingTests": {
+      "seconds": 41,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatcherLeaseSpanTests": {
+      "seconds": 28,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatcherRemotePrepStarvationTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests": {
+      "seconds": 576,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.DurableRunnerSpillReceiptTests": {
+      "seconds": 79,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.EffectiveSettingsPipelineTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationDebtTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationDirectDeliveryTests": {
+      "seconds": 72,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationEpisodeTests": {
+      "seconds": 44,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationEscalationTests": {
+      "seconds": 63,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationLedgerTests": {
+      "seconds": 13,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationNoteDebtTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationObservationAdapterTests": {
+      "seconds": 167,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationReceiptTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationResponseTests": {
+      "seconds": 15,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationSchedulingTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationSnapshotTests": {
+      "seconds": 31,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ExpectationWatchdogScenarioTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GatedCommitServiceTests": {
+      "seconds": 160,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GitIndexLockPathTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GitWorkspaceServiceIndexLockTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GitWorkspaceServiceTimeoutTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokCredentialProbeDispatcherTests": {
+      "seconds": 27,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokDelegateEndToEndTests": {
+      "seconds": 262,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesCompactionRecoveryTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesCompactionTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesFailureTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesLaunchRefusalTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesReadyOrderingTests": {
+      "seconds": 13,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesReceiptTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokRulesTransactionTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokSignInIncidentTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokSignInRuntimeTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.GrokStartupReadyOrderingTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HeldModelEscalationTests": {
+      "seconds": 31,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HeldStandingAgentChainTests": {
+      "seconds": 50,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HerdrAlwaysOnChannelParityTests": {
+      "seconds": 78,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HerdrLabelFollowFlowTests": {
+      "seconds": 44,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HerdrLabelFollowTests": {
+      "seconds": 162,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HerdrLabelFollowWireTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HerdrPlacementSettingsTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HomeTaskServiceIntegrationTests": {
+      "seconds": 56,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostBudgetServiceTests": {
+      "seconds": 46,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostCleanupMaintenanceTests": {
+      "seconds": 55,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostCleanupOrchestrationTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostCleanupReportTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostEndpointTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostOccupancySampleEndpointTests": {
+      "seconds": 61,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.HostStatsEndpointTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.InterimVerificationLandGitTests": {
+      "seconds": 85,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.InterimVerificationLandGuardTests": {
+      "seconds": 106,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.InterimVerificationPolicyTests": {
+      "seconds": 95,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandDispatchHandoffTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandGraphEvaluationTests": {
+      "seconds": 826,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandNonCodeSkipTests": {
+      "seconds": 2088,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandRefusalDeliveryWitnessTests": {
+      "seconds": 122,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandReplacementApprovalTests": {
+      "seconds": 266,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandRequestWriteDiagnosticTests": {
+      "seconds": 173,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandRestartReplayTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandSourceIdentityTests": {
+      "seconds": 201,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandVerificationLeaseWindowTests": {
+      "seconds": 149,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandWarmArtifactsTests": {
+      "seconds": 111,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandingProtocolGuardTests": {
+      "seconds": 64,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LandingProtocolHarnessTests": {
+      "seconds": 94,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.LegacyCheckNotePublicationTests": {
+      "seconds": 91,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MatrixChildReceiptTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MatrixDefaultComplexityCreateTests": {
+      "seconds": 164,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MatrixDefaultComplexityRoutingTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ModelAvailabilityDispatcherTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MultiRunnerRecoveryTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MutationAdmissionTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MutationDispatchTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.MutationPipelineTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OrchestratorInstructionsRefreshTests": {
+      "seconds": 298,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OrchestratorInvestigationSweepTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OrchestratorStateProjectionTests": {
+      "seconds": 95,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OrchestratorWorkspaceWarningTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OutboundConversionPublicCreateTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OutputDistillationDeliveryTests": {
+      "seconds": 328,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OutputDistillationDispatchTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.OutputDistillationMigrationTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PermissionWaitTests": {
+      "seconds": 173,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeBackpressureTests": {
+      "seconds": 62,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests": {
+      "seconds": 31,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeDeferredKillTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeEventPumpTests": {
+      "seconds": 52,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeImmediateSendTests": {
+      "seconds": 95,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeLaunchTransportTests": {
+      "seconds": 66,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeOutageMentionTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomePendingInventoryTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeQueuedTurnTests": {
+      "seconds": 55,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeReconciliationTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeRestartResumeTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeRollingRunnerTests": {
+      "seconds": 97,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeRunnerRetirementCycleTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeSchedulePreviewTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeSessionRoutingTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeSpillTransportTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeStandingLaunchTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeStrandedQueueTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeTaskCreateTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeTaskDispatchProjectionTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PhoneHomeTranscriptIncidentTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PinnedAgentKindTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PinnedCodexProfileDispatchLaunchTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PinnedProfileLaunchSpecTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PipelineDefinitionServiceTests": {
+      "seconds": 47,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PipelineHandoffPilotTests": {
+      "seconds": 196,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PipelineResolutionTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PipelineSpeedIntegrationTests": {
+      "seconds": 403,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PolledCompletionNoteShrinkTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PoolClaudeEffortMigrationTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PoolClaudeEffortTests": {
+      "seconds": 47,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PoolProviderProjectionStampTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PostLandMutationAdmissionTests": {
+      "seconds": 561,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PostLandMutationCleanupTests": {
+      "seconds": 1398,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PostLandMutationCustodyTests": {
+      "seconds": 1225,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PostLandMutationDeliveryTests": {
+      "seconds": 1662,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PostLandMutationWorktreeTests": {
+      "seconds": 673,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectCascadeForeignKeyTests": {
+      "seconds": 118,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectDeletionTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectReadinessBatchTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectServiceTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectSetupServiceTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProjectWorkerWorkspaceDefaultTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProviderQuotaRefusalAcceptanceTests": {
+      "seconds": 29,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ProviderSignInRequiredCreateTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.PublishedCardCompletionTests": {
+      "seconds": 137,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReceiptFailureDeliveryTests": {
+      "seconds": 175,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReceiptScanDestinationIntegrationTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RefocusBriefIdentityTests": {
+      "seconds": 66,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReleaseGateActivationTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteCompletionSpillTests": {
+      "seconds": 62,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteControlModalAttentionTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteControlModalPersistenceTests": {
+      "seconds": 65,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteControlModalWatchTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteControlRecoveryPtyIntegrationTests": {
+      "seconds": 58,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteControlRecoveryTests": {
+      "seconds": 31,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemotePoolFollowUpAdmissionTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteWorkspacePreparerTests": {
+      "seconds": 162,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RemoteWorkspaceReadinessTests": {
+      "seconds": 46,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RepairSourceDispatchTests": {
+      "seconds": 337,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RepairSourceLandRefusalTests": {
+      "seconds": 146,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RepairSourceRecoveryLandingTests": {
+      "seconds": 100,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RepairSourceSettlementTests": {
+      "seconds": 520,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RequiredSingleCandidateRefusalTests": {
+      "seconds": 28,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceConsistencyTests": {
+      "seconds": 239,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceDeliveryTests": {
+      "seconds": 230,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceRebindingTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceRecoveryEndpointTests": {
+      "seconds": 64,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceRecoveryTests": {
+      "seconds": 239,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceResettlementTests": {
+      "seconds": 358,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewEvidenceSettlementTests": {
+      "seconds": 72,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewLoopTests": {
+      "seconds": 195,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.ReviewReplyDispatcherTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RolePolicyInvalidValuesCreateTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RolePolicyToolBundleDispatchTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingExhaustedPlacementTests": {
+      "seconds": 52,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinCandidateCreateTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinCandidateDispatchTests": {
+      "seconds": 70,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinCandidateTests": {
+      "seconds": 89,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinCreateTests": {
+      "seconds": 84,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinDispatcherTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RoutingPinServiceTests": {
+      "seconds": 67,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunAttemptStallDetectorTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerAlarmAttentionTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerAlarmCoordinatorTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerAlarmDeliveryTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerAlarmHostedServiceTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerCapacityEndpointTests": {
+      "seconds": 36,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerCatalogueTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerClaudeFinalLaunchArgvTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerCodexCliEvidenceTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerCompletionProgressTests": {
+      "seconds": 65,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerDefaultMigrationTests": {
+      "seconds": 63,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerDefaultPlacementTests": {
+      "seconds": 60,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerDefaultSettingsTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerDefaultsWireTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerGrokCredentialProbeDispatcherTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerRetireJobTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerSeatLiveSeatWarmupTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerSeatOrphanSweepTests": {
+      "seconds": 203,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerSettlementSyncTests": {
+      "seconds": 441,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerSlotEndpointTests": {
+      "seconds": 63,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerSyncLeaseFairnessTests": {
+      "seconds": 183,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.RunnerTaskSettlementTests": {
+      "seconds": 424,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SeatDesktopJoinTests": {
+      "seconds": 38,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SeatOccupancyAttentionTests": {
+      "seconds": 75,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SeatOccupancySamplerTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionContextUsagePersistenceTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionFinishedDuplicateTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionGenerationDeliveryOverlapTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionGenerationExitTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionHealthTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueBootWedgeTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueCodexPointerTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueDeliveredSpillRecoveryTests": {
+      "seconds": 160,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueDeliveredSpillTests": {
+      "seconds": 180,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueGrokPtyIntegrationTests": {
+      "seconds": 92,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueuePhoneHomeDropTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueuePtyIntegrationTests": {
+      "seconds": 37,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueServiceTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueSpillTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionMessageQueueSupervisionTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionQueueReceiptPlumbingTests": {
+      "seconds": 111,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRunnerEventPumpTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRunnerStreamReadinessTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionDeferralTests": {
+      "seconds": 62,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests": {
+      "seconds": 45,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionRoutingTests": {
+      "seconds": 115,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionTemporaryBlockTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionRuntimeActionTests": {
+      "seconds": 103,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionStateCacheReadTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionStateCommitTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionStateProjectionTests": {
+      "seconds": 49,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionStateWarmupTests": {
+      "seconds": 76,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SessionTerminationSourcePersistenceTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SettlementSyncDebtLandingTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SettlementSyncDebtSchemaTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SettlementSyncRecoveryTests": {
+      "seconds": 305,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SourceBundleManifestTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistExecutionIdentityTests": {
+      "seconds": 73,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistHealthAttentionTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistInputTransportTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistPublicationTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistQualificationTests": {
+      "seconds": 130,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistRoleContractTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistRoutingScriptTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SpecialistStartIntentTests": {
+      "seconds": 42,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StageOutcomeBackfillTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StageOutcomeSummaryTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingBootAttentionTests": {
+      "seconds": 63,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingBootQueueWitnessTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingBootStatementBudgetTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingBootWatchdogTests": {
+      "seconds": 57,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingResumeReceiptReadinessTests": {
+      "seconds": 71,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSessionOwnershipTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSessionQueueSwitchTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSessionRecoveryHttpTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSpecialistRoutingHttpTests": {
+      "seconds": 91,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSpecialistRoutingMigrationTests": {
+      "seconds": 67,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StandingSpecialistSeatTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StartRefAvailabilityTests": {
+      "seconds": 47,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.StartRefRepairAdoptionTests": {
+      "seconds": 200,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.SubscriptionQuotaGateDispatchTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskInputReadFailureTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskInputWeakArmBoundaryTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskLaunchTokenBoundaryTests": {
+      "seconds": 37,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskParkPublicationTests": {
+      "seconds": 69,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskParkRunnerIdentityTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskPlatformDispatchTests": {
+      "seconds": 109,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskPlatformPersistenceTests": {
+      "seconds": 42,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskPlatformPlacementTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskPlatformWireTests": {
+      "seconds": 37,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskProgressGitTests": {
+      "seconds": 28,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskProgressPolicyFileArmTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TaskWorktreeRetirementTests": {
+      "seconds": 148,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TerminalRunnerSeatReleaseTests": {
+      "seconds": 917,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TranscriptBindingIncidentTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TranscriptHotPathMigrationTests": {
+      "seconds": 164,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TranscriptHotPathQueryTests": {
+      "seconds": 141,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TranscriptWorkingStateQueryTests": {
+      "seconds": 63,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.TurnEndGapReproductionTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.VerificationCleanupServiceTests": {
+      "seconds": 70,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.VerificationRoundDeliveryTests": {
+      "seconds": 257,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.VerificationRoundDispatchTests": {
+      "seconds": 65,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.VerificationRoundSettlementTests": {
+      "seconds": 52,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WatchdogServiceTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorkerWorkspaceDefaultMigrationTests": {
+      "seconds": 50,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorkflowEngineTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorkspaceInfoGitIntegrationTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeBaseSelectionTests": {
+      "seconds": 67,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeDefaultAdmissionTests": {
+      "seconds": 35,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeDefaultCallerTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeDefaultContinuationTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeHealthServiceTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeLandingCleanupRetryTests": {
+      "seconds": 355,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeResidueCandidateRowTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeResiduePublicationLaneTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeResidueRecoveryTests": {
+      "seconds": 487,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeResidueScriptTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeResidueSweepTests": {
+      "seconds": 23,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeRetirementRaceTests": {
+      "seconds": 119,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Application.WorktreeStartRefDispatchTests": {
+      "seconds": 185,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.BaselineComparerTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.C1307CliCancellationTests": {
+      "seconds": 32,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointAdmissionContractTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointAppTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointBuildBindingPathTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointConfinementLedgerTests": {
+      "seconds": 272,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointLargeStampScriptTests": {
+      "seconds": 46,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointLargeStampTests": {
+      "seconds": 87,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointLaunchCleanupTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointNamespaceCensusUsageTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointOutputConfinementTests": {
+      "seconds": 25,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointReceiptSafetyTests": {
+      "seconds": 176,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests": {
+      "seconds": 300,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointScriptReaderDeadlineTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointSelectedOutputTests": {
+      "seconds": 158,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointShadowCustodyTests": {
+      "seconds": 22,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointSlotExecutorTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests": {
+      "seconds": 79,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointSourceStateTests": {
+      "seconds": 92,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests": {
+      "seconds": 86,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointTaskOwnershipTests": {
+      "seconds": 52,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointTempUsageTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.CheckpointToolSourceTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.EvidenceFolderTests": {
+      "seconds": 26,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.OutputCleanupTests": {
+      "seconds": 271,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.PlanCoverageBindingTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.PlanCoverageCensusTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.PlanCoverageCommandTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.PlanCoverageGoldenTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.RerunFilterHostTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.RerunPolicyTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.RunStateStoreTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.ShadowCopyTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.TestPhaseCustodyTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Checkpoints.TimeoutTests": {
+      "seconds": 64,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.AmServiceDeployReadinessTests": {
+      "seconds": 87,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.AppDbContextModelTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.CodexRootExecContractTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.CompletedCardWorktreeRemovalTests": {
+      "seconds": 942,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.DatabaseSeederTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.DbCommandMetricsTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.EvidencePolicyWorkflowTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.GitDiffSpikeTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.KanbanPersistenceTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandRecoveryCheckoutTests": {
+      "seconds": 241,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandRecoveryIgnoredNestedRepositoryTests": {
+      "seconds": 114,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandRecoveryIgnoredObstructionTests": {
+      "seconds": 77,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandVerificationWindowNativeTests": {
+      "seconds": 18,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandVerificationWindowTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandWorkspaceTests": {
+      "seconds": 43,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingAdmissionControlTests": {
+      "seconds": 96,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingGitBatchingTests": {
+      "seconds": 76,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingGitTests": {
+      "seconds": 288,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingRegistrationFreshnessTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingRemovalControlTests": {
+      "seconds": 761,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingSourceBoundaryControlTests": {
+      "seconds": 38,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.LandingSourceFreshnessTests": {
+      "seconds": 117,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.OperatorTokenFileTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.OrchestratorInstructionsMigrationShapeTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.RepositoryChildRecoveryTests": {
+      "seconds": 116,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.RepositoryFenceObserverTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.RepositoryMutationLeaseDescribeTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.RepositoryMutationLeaseOwnerTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.RepositoryMutationLeaseTests": {
+      "seconds": 171,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.Resilience.DatabaseReadResilienceTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.SettledWorktreeRemovalTests": {
+      "seconds": 668,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.SlowTestRegistryMergeTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.WorktreeGuardedCleanupTests": {
+      "seconds": 1593,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests": {
+      "seconds": 46,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.WorktreeManagerStartRefLocalOnlyTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.WorktreeRemovalAuthorityTests": {
+      "seconds": 74,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Migrations.PipelineDefinitionMigrationTests": {
+      "seconds": 68,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.ProgramStartupConcurrencyTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.AppHostWatchdogStateObserverScriptTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.BuildSlotScriptTests": {
+      "seconds": 180,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests": {
+      "seconds": 57,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.C1514LandingSplitBudgetTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CacheFixtureCompletionTests": {
+      "seconds": 37,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CacheSeedNpmOwnershipTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CapabilityScriptTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CardCloseDeploymentPromptScriptTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CardDiagnoseScriptTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CardFilePrivacyScriptTests": {
+      "seconds": 21,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CardListSearchScriptTests": {
+      "seconds": 42,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CardRelationshipScriptTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ChangeAwareReleaseTests": {
+      "seconds": 569,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CheckpointOwnedOutputScriptTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.CommitOnSettleScriptTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ComplexityChainScriptTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.DelegateScriptBindDiagnosisTests": {
+      "seconds": 13,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.DispatchConcurrencyScriptTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.EvidenceApprovedFixtureGuardTests": {
+      "seconds": 190,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.EvidenceDeletionGuardTests": {
+      "seconds": 610,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.EvidenceDiffGuardTests": {
+      "seconds": 210,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.EvidenceGitFixtureTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.EvidenceSupplementalDeletionGuardTests": {
+      "seconds": 140,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.HerdrPaneScriptTests": {
+      "seconds": 19,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.MeasureSessionStateCacheScriptTests": {
+      "seconds": 51,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.MechanicalPcRehearsalTests": {
+      "seconds": 52,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.MigrateStagePinsScriptTests": {
+      "seconds": 29,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyDeadOwnerLockTests": {
+      "seconds": 12,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyDiscoveryParserTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyExecutionDiagnosticTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyNativeOwnershipTests": {
+      "seconds": 41,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyPrerequisiteTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyReclaimRaceTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.NightlyVerificationContractTests": {
+      "seconds": 45,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ProcessSpawnTimeoutPolicyTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ProjectScriptWorkspaceTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RcProjectSelectionTests": {
+      "seconds": 78,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RcQualificationStatusTests": {
+      "seconds": 9,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RcRosterRepairTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests": {
+      "seconds": 143,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseBranchModelGateTests": {
+      "seconds": 24,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateAuthorityContractTests": {
+      "seconds": 34,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateE2EEvidenceTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateFollowupTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGatePlatformTests": {
+      "seconds": 31,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGatePolicyTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests": {
+      "seconds": 600,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGatePublicationTests": {
+      "seconds": 116,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateRegistrationTests": {
+      "seconds": 15,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateRunTests": {
+      "seconds": 30,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseGateStatusTests": {
+      "seconds": 10,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ReleaseTagAllocatorTests": {
+      "seconds": 407,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RemoteScriptContractTests": {
+      "seconds": 4591,
+      "basis": "pace",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RetireTempRunnerTimestampTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RetiredTempContainerScriptTests": {
+      "seconds": 220,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests": {
+      "seconds": 1740,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RoutingPinScriptTests": {
+      "seconds": 13,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RunCheckpointRepeatScriptTests": {
+      "seconds": 82,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RunCheckpointScriptTests": {
+      "seconds": 1420,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.RunCheckpointSourceScriptTests": {
+      "seconds": 400,
+      "basis": "observed-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ScriptHarnessCancellationTests": {
+      "seconds": 48,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ScriptHarnessProcessTests": {
+      "seconds": 40,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.ScriptHarnessSharingTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestClientFilterTests": {
+      "seconds": 54,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestSelectionCatalogTests": {
+      "seconds": 11,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestSelectionDependencyTests": {
+      "seconds": 202,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestSelectionExecutionTests": {
+      "seconds": 14,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestSelectionTests": {
+      "seconds": 248,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.TestTimingReportTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.VerifyDevStackSmokeTests": {
+      "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.VerifyPhoneHomeGrokScriptTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests": {
+      "seconds": 33,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.CheckCompactionWorkerLifetimeTests": {
+      "seconds": 39,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.EntityScalarSnapshotConsumerGuardTests": {
+      "seconds": 4,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.EntityScalarSnapshotTests": {
+      "seconds": 91,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.LinuxTestRosterTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.ProductionRunnerGuardTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestClassificationPolicyTests": {
+      "seconds": 74,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestDbFixtureIsolationTests": {
+      "seconds": 5,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestDurationTripwireTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests": {
+      "seconds": 1,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestPhaseSummaryTests": {
+      "seconds": 20,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestPhaseSupervisorTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestSchemaSnapshotTests": {
+      "seconds": 95,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestTimingChokePointTests": {
+      "seconds": 240,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestTimingLifecycleTests": {
+      "seconds": 2,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    }
+  }
+}

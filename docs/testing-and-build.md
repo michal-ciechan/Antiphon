@@ -1686,6 +1686,13 @@ a cost marker, never Skip. Offline harnesses: `scripts/test-nightly-run.ps1`,
 harness case and, in-process on `C545World`, the watchdog's carried CARD-0544 notification controls;
 `NightlyWatchdogCoreTests` covers the watchdog core (clock, evaluator, ledger, body, snapshot, transport, reader).
 
+Expected duration is one seconds number on the class-cost row. The roster beside PlatformTaxonomy is a projection of that file.
+An ExpectedDuration attribute, when present, must equal the roster seconds for that class.
+The class-cost row is `scripts/lib/nightly-class-costs.json` and the roster is
+`tests/Shared/expected-duration-roster.json`; re-run
+`pwsh -NoProfile -File scripts/export-expected-duration-roster.ps1` after a class-cost refresh,
+or `ExpectedDurationSyncTests` stays red (CARD-1842).
+
 ### Windows rc watchdogs and gate lanes (2026-10-18/19)
 
 **Windows rc profile watchdogs.** `tests/test-execution-policy.json` `watchdogs` are `antiphon`
