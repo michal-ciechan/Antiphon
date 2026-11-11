@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -395,13 +396,8 @@ public sealed class C1818GcOwnerRobustnessTests
     {
         if (!Directory.Exists(path))
             return;
-        try { Directory.Delete(path, recursive: true); }
-        catch (IOException)
-        {
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(path, recursive: true);
-        }
+        // Same read-only loose-object refusal as C1817. Clear the bit, then delete.
+        ReadOnlyDirectory.Delete(path);
     }
 
     private sealed class CaptureLogger : ILogger
