@@ -17528,6 +17528,7 @@
     {
       "path": "src/Antiphon.Server.Git/ServerGitProcess.cs",
       "classes": [
+        "ImpactedClassesSelectorTests",
         "ServerGitAssemblyTests",
         "ServerGitProcessTests"
       ]
@@ -20232,6 +20233,12 @@
         "ParentDeathSpikeTests",
         "PipeTestClientDiagnosticsTests",
         "PtyHostLauncherTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Resilience.Tests/ResilienceCircuitTests.cs",
+      "classes": [
+        "ImpactedClassesSelectorTests"
       ]
     },
     {
