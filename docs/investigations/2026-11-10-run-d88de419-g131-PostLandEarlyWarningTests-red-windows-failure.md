@@ -123,4 +123,10 @@ classes (for example `LandGraphEvaluationTests`, `DelegationDispatchRecoveryBoun
 `AgentTaskReplyIntegrationTests`) whose `[Category("Integration")]` sits on a later part
 now read as Integration instead of unclassified.
 
-Native Windows proof: see the task report for the class run on the desktop.
+Native Windows proof: on the desktop, at `7efd8cb4`, through `scripts/build-slot.ps1`,
+`dotnet run --project tests/Antiphon.Tests --no-build -- --treenode-filter "/*/*/PostLandEarlyWarningTests/*"`:
+total 22, failed 0, succeeded 22, skipped 0, duration 5m 31s, including
+`Manifest_uses_no_letter_or_and_partitions_unit_classes` over the real tree and the new
+witness. The C# witness was not run red under the harness (a queued red run starved on the
+host memory floor and was stopped); its red is the script-level reproduction above with the
+same fixture. A Linux run of the class is not yet recorded.
