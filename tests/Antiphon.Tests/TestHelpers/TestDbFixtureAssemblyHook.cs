@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -9,12 +8,6 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 internal static class TestDbFixtureAssemblyHook
 {
-    /// <summary>
-    /// Run ae84478d g80: the longest wait for an open After(Class) before the shared store is
-    /// disposed anyway. A class still open at the bound is named in the output.
-    /// </summary>
-    internal static readonly TimeSpan ClassTeardownBound = TimeSpan.FromMinutes(2);
-
     [Before(Assembly)]
     public static async Task InitializeAsync(AssemblyHookContext context)
     {
@@ -29,34 +22,29 @@ internal static class TestDbFixtureAssemblyHook
         await TestDbFixture.InitializeAsync(context);
     }
 
-    [BeforeEvery(Class)]
-    public static void EnterClass(ClassHookContext context) =>
-        ClassTeardownTracker.Default.Enter(context.ClassType.FullName ?? context.ClassType.Name);
-
-    [AfterEvery(Class)]
-    public static void ExitClass(ClassHookContext context) =>
-        ClassTeardownTracker.Default.Exit(context.ClassType.FullName ?? context.ClassType.Name);
+    // Run ae84478d g80: an After(Class) clone drop overtaken by this teardown. A class teardown
+    // (harness dispose, clone drop) is seconds; past this the fixture goes anyway and names them.
+    internal static readonly TimeSpan ClassTeardownBound = TimeSpan.FromSeconds(60);
 
     [After(Assembly)]
     public static Task DisposeAsync() =>
         DisposeAfterClassTeardownsAsync(ClassTeardownTracker.Default, TestDbFixture.DisposeAsync, ClassTeardownBound);
 
     /// <summary>
-    /// TUnit 1.44 can run After(Assembly) for the last test while another class's After(Class)
-    /// is still in flight. Disposing the store under it fails that class's clone drop with
-    /// ObjectDisposedException (run ae84478d g80), so wait for open classes, then dispose.
+    /// TUnit 1.44 can start After(Assembly) while another class's After(Class) still runs; wait for
+    /// those before the shared store goes, so their clone drops do not hit a disposed fixture.
     /// </summary>
     internal static async Task<IReadOnlyList<string>> DisposeAfterClassTeardownsAsync(
         ClassTeardownTracker tracker, Func<Task> dispose, TimeSpan bound)
     {
-        var waited = Stopwatch.StartNew();
+        var timer = System.Diagnostics.Stopwatch.StartNew();
         var open = await tracker.WaitForIdleAsync(bound).ConfigureAwait(false);
         if (open.Count > 0)
-            Console.WriteLine(
-                $"ClassTeardownTracker: disposing the shared store after {waited.ElapsedMilliseconds} ms with After(Class) still open: {string.Join(", ", open)}");
-        else if (waited.ElapsedMilliseconds >= 50)
-            Console.WriteLine(
-                $"ClassTeardownTracker: waited {waited.ElapsedMilliseconds} ms for open After(Class) hooks before disposing the shared store");
+            Console.Error.WriteLine(
+                $"ANTIPHON_FIXTURE_TEARDOWN class teardowns still open after {timer.ElapsedMilliseconds} ms; disposing anyway: {string.Join(", ", open)}");
+        else if (timer.ElapsedMilliseconds >= 100)
+            Console.Error.WriteLine(
+                $"ANTIPHON_FIXTURE_TEARDOWN waited {timer.ElapsedMilliseconds} ms for open class teardowns");
         await dispose().ConfigureAwait(false);
         return open;
     }
