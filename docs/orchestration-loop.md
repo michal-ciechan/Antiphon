@@ -733,6 +733,8 @@ No row needs an Environment cell. `AntiphonAppFixture` keeps every Windows-path 
 | CP-merge-subset-e2e | batch | tests/Antiphon.E2E -> bin-merge-e2e/ | merge-high-radius | `/*/*/(ContractSnapshotTests*)/*` | CARD-1783 fixed subset, E2E contract snapshots | 0 failed | 5 | 10 | true | n/a |
 | CP-merge-subset-messaging | batch | tests/Antiphon.Messaging.Tests -> bin-merge-messaging/ | merge-high-radius | `/*/*/(InboxConversationMigrationTests*)/*` | CARD-1783 migration diff only | 0 failed | 1 | 5 | true | n/a |
 
+The last step before DerivedImpactIndexTests and the push is scripts/regenerate-derived-impact-index.ps1. The script calls DerivedImpactIndexBuilder.Build and DerivedImpactIndexBuilder.Write, prints whether the bytes changed, and commits nothing. Exit 0 either way; exit 1 on build failure. DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare, so a Merge that skips the script still fails. Commit the regenerated tests/derived-impact-index.json when the script prints changed, then run DerivedImpactIndexTests, then push.
+
 <a id="review-rounds"></a>
 ### Review rounds: at most three, diff-only after the first, then a human (operator, 2026-11-01; CARD-1635)
 
