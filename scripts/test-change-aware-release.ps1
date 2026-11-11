@@ -152,6 +152,7 @@ function Test-C1313_ModeCredit {
         if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj')) { $suiteNames += 'observability' }
         if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj')) { $suiteNames += 'server-git' }
         if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj')) { $suiteNames += 'resilience' }
+        if (Test-Path (Join-Path $repoRoot 'tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj')) { $suiteNames += 'git-in-process' }
         $scriptNames = @('test-apphost-graceful-stop','test-apphost-lock-age','test-apphost-main-worktree-guard','test-apphost-probe-class',
             'test-cleanup-claude-sessions','test-cleanup-codex-test-residue','test-client-mode','test-deploy-am-service','test-deploy-nightly-watchdog',
             'test-hooks','test-nightly-report','test-reap-zombie-agents','test-stage-value-report')

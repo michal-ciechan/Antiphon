@@ -299,7 +299,7 @@ function Export-NightlyStoppedRunSeed {
     # must never erase a resolvable failure. Only supervisor per-chunk names at
     # the supplied root are admitted, never nested discovery/diagnostic TRX files.
     foreach($trxFile in @($files|Where-Object {$_.DirectoryName -eq $root -and $_.Extension -ceq '.trx'}|Sort-Object Name)){
-        if($trxFile.Name -cnotmatch '^(antiphon|session-runner|pty-host|agents-pty|messaging|e2e|markdown-pdf|observability|server-git|resilience)-([A-Za-z0-9_-]+)\.trx$'){continue}
+        if($trxFile.Name -cnotmatch '^(antiphon|session-runner|pty-host|agents-pty|messaging|e2e|markdown-pdf|observability|server-git|resilience|git-in-process)-([A-Za-z0-9_-]+)\.trx$'){continue}
         $orphanSuite=$Matches[1];$orphanChunk=$Matches[2]
         if($plannedKeys.Contains($orphanSuite+'/'+$orphanChunk)){continue}
         $orphanRows=@()

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "card": "CARD-1782, CARD-1801, CARD-1819, CARD-1829",
+  "card": "CARD-1782, CARD-1801, CARD-1819, CARD-1829, CARD-1830",
   "cache": "none",
   "maximumStaleness": 0,
   "kinds": [
@@ -180,6 +180,23 @@
         "ResiliencePredicateTests",
         "ResilienceAssemblyTests",
         "StaleWorkingTranscriptWatchdogTests"
+      ]
+    },
+    {
+      "id": "gitinprocess-tests",
+      "globs": [
+        "src/Antiphon.GitInProcess/**",
+        "tests/Antiphon.GitInProcess.Tests/**"
+      ],
+      "classes": [
+        "InProcessGitCommandsTests",
+        "LibGit2VsGitDifferentialTests",
+        "LibGit2VsGitJunctionTests",
+        "LibGit2VsGitWorkingTreeVerdictTests",
+        "LibGit2VsGitWorktreeListTests",
+        "GitInProcessAssemblyTests",
+        "ServerGitProcessTests",
+        "LandingGitBatchingTests"
       ]
     },
     {

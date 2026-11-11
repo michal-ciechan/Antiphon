@@ -358,7 +358,7 @@ function Assert-NightlyHistorySchema {
     foreach ($m in @($History.members)) {
         Assert-NightlyHistoryFields $m @('suite','className','reasons','observations')
         Assert-NightlyHistoryClass ([string]$m.className)
-        if ($m.suite -cnotin @('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability','server-git','resilience')) { throw 'unsupported-history-suite' }
+        if ($m.suite -cnotin @('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability','server-git','resilience','git-in-process')) { throw 'unsupported-history-suite' }
         if (-not $seen.Add(([string]$m.suite+'/'+[string]$m.className)) -or $m.reasons -isnot [array] -or $m.observations -isnot [array] -or @($m.reasons).Count -eq 0) { throw 'history-schema: member' }
         foreach ($o in @($m.observations)) {
             Assert-NightlyHistoryFields $o @('artifact','chunk','uid','state','reason','kind')
@@ -488,7 +488,7 @@ function Export-NightlyPriorFailures {
     }
     foreach ($chunk in @($summary.suites)) {
         $suite=[string]$chunk.id
-        if ($suite -cnotin @('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability','server-git','resilience')) {
+        if ($suite -cnotin @('antiphon','session-runner','pty-host','agents-pty','messaging','e2e','markdown-pdf','observability','server-git','resilience','git-in-process')) {
             if ($chunk.trx -or $chunk.execution) { throw 'unsupported-history-suite' }
             continue
         }

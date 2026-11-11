@@ -136,6 +136,9 @@
       "server",
       "shared-pty-runner"
     ],
+    "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj": [
+      "git-operations"
+    ],
     "tests/Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj": [
       "markdown-pdf"
     ],

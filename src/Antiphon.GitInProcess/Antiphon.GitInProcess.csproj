@@ -10,5 +10,6 @@
     <InternalsVisibleTo Include="Antiphon.SessionRunner" />
     <InternalsVisibleTo Include="Antiphon.SessionRunner.Tests" />
     <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.GitInProcess.Tests" />
   </ItemGroup>
 </Project>
