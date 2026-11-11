@@ -2099,14 +2099,14 @@
       "reason": "cap",
       "owed": 32,
       "first": [
+        "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
-        "LiveLaneRunnerTests",
-        "MechanicalPcRehearsalTests"
+        "LiveLaneRunnerTests"
       ]
     },
     {
@@ -2115,14 +2115,14 @@
       "reason": "cap",
       "owed": 9,
       "first": [
+        "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
         "NightlyCoreTests",
         "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
         "RcFullWatchdogHarnessTests",
         "RcQualificationStatusTests",
-        "ReleaseGatePlatformTests",
-        "ReleaseSelectionCliTests"
+        "ReleaseGatePlatformTests"
       ]
     },
     {
@@ -23789,7 +23789,6 @@
         "C599SnapshotTests",
         "ChangeAwareReleaseTests",
         "CheckpointOwnedOutputScriptTests",
-        "ClassCostMeasurementTests",
         "NightlyDeadOwnerLockTests",
         "NightlyPrerequisiteTests",
         "NightlyReclaimRaceTests",
@@ -23803,6 +23802,7 @@
         "ReleaseBranchModelGateTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
+        "ReleaseSelectionCliTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
         "ScriptHarnessProcessContractTests",
@@ -23824,7 +23824,6 @@
         "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
-        "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureWindowsTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
@@ -23839,6 +23838,7 @@
         "RcIncrementalLedgerTests",
         "RcStoppedRunSeedTests",
         "ReleaseGateFollowupTests",
+        "ReleaseSelectionCliTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
@@ -26257,6 +26257,8 @@
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskLandBareRepositoryCleanupTests",
+        "C1817RunnerRepositoryMaintenanceTests",
+        "C1818GcOwnerRobustnessTests",
         "CompletedCardWorkspaceRemovalTests",
         "LandGraphAuditCleanupTests",
         "PostLandEarlyWarningTests",
