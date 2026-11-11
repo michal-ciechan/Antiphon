@@ -247,14 +247,14 @@
       "reason": "cap",
       "owed": 144,
       "first": [
+        "AgentTaskSettlementRaceTests",
         "ClosingReportNudgeLifecycleTests",
         "RunnerTaskSettlementTests",
         "AgentTaskConcurrencyLimitTests",
         "CodexDelegateDispatchTests",
         "DelegationBriefCeilingPtyTests",
         "ModelLevelAliasDisplayTests",
-        "TaskParkPublicationTests",
-        "AgentTaskReuseEnqueueTests"
+        "TaskParkPublicationTests"
       ]
     },
     {
@@ -1382,11 +1382,11 @@
         "SessionDeliveryProfileTests",
         "SessionGenerationExitTests",
         "SessionMessageQueueGrokPtyIntegrationTests",
+        "SessionRuntimeActionRoutingTests",
         "AgentAttachHerdrTests",
         "AgentTaskDecisionQuestionIntegrationTests",
         "AgentTaskSettlementRaceTests",
-        "BlockedTaskParkReclaimTests",
-        "CapacityRecoveryCompatibilityTests"
+        "BlockedTaskParkReclaimTests"
       ]
     },
     {
@@ -4197,7 +4197,6 @@
         "AgentTaskPoolTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskServiceIntegrationTests",
-        "AgentTaskSettlementRaceTests",
         "AttentionServiceTests",
         "BlockedReplyReportRetentionTests",
         "BlockedTaskParkReplyAdmissionTests",
@@ -4211,6 +4210,7 @@
         "InstructionBundleTests",
         "PostLandMutationDeliveryTests",
         "PostLandMutationWorktreeTests",
+        "SessionRuntimeActionRoutingTests",
         "SiblingToolReportBoundaryTests"
       ]
     },
@@ -25561,6 +25561,7 @@
         "RoutingExhaustedPlacementTests",
         "ScaledTimeProviderTests",
         "SessionMessageQueueDeliveryVerificationTests",
+        "SessionRuntimeActionRoutingTests",
         "StandingResumeReceiptReadinessTests"
       ]
     },
