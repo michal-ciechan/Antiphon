@@ -52,6 +52,12 @@ public sealed class WindowsShellGuardAuditTests
             "a process name in fake Herdr pane info; nothing is spawned"),
         ("HerdrPaneChildKillTests.cs", "(dummy.Id, \"cmd.exe\"),", 2, "a process name in fake Herdr pane info; nothing is spawned"),
         ("HerdrPaneChildKillTests.cs", "[(dummy.Id, \"cmd.exe\", new[] { \"cmd\" }, settings.SessionLogPath)]);", 1, "a process name in fake Herdr pane info; nothing is spawned"),
+        ("C1817RunnerRepositoryMaintenanceTests.cs",
+            "Path.GetFileName(MaintenanceFixture.SleepStart(30).FileName).ShouldBe(\"cmd.exe\");", 1,
+            "expected file name of a ProcessStartInfo the test never starts"),
+        ("C1817RunnerRepositoryMaintenanceTests.cs",
+            "Path.GetFileName(MaintenanceFixture.TrueStart().FileName).ShouldBe(\"cmd.exe\");", 1,
+            "expected file name of a ProcessStartInfo the test never starts"),
     ];
 
     [Test]
