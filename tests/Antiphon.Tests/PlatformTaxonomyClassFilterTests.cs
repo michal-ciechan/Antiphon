@@ -25,6 +25,18 @@ public sealed class PlatformTaxonomyClassFilterTests
         attributes[0].Name.ShouldBe("Platform");
         attributes[0].Value.ShouldBe("LinuxOnly");
         attributes[0].Reason.ShouldBe("class shorthand");
-        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("include");
+        AssertSelectedByLane("include");
+    }
+
+    // Same rule as PlatformTaxonomyFilterTests: only a checkpoint lane sets the variable.
+    private static void AssertSelectedByLane(string expectedLane)
+    {
+        var lane = Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER");
+        if (string.IsNullOrEmpty(lane))
+        {
+            return;
+        }
+
+        lane.ShouldBe(expectedLane);
     }
 }
