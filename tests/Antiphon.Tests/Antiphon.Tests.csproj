@@ -176,6 +176,8 @@
   <ItemGroup>
     <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
     <Compile Include="..\Shared\PlatformTaxonomy.cs" Link="TestSupport\PlatformTaxonomy.cs" />
+    <Compile Include="..\Shared\ExpectedDurationAttribute.cs" Link="TestSupport\ExpectedDurationAttribute.cs" />
+    <Compile Include="..\Shared\ExpectedDurationRoster.cs" Link="TestSupport\ExpectedDurationRoster.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
     <Compile Include="..\..\tools\Antiphon.NativeLinuxMigrationAudit\NativeLinuxWindowsReasonAudit.cs" Link="TestSupport\NativeLinuxWindowsReasonAudit.cs" />
