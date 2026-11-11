@@ -13,7 +13,13 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[Timeout(80_000)] // CARD-0824 provisional queue/restart pack, with one assembly-shared database template.
+// CARD-0824. Nine cuts share one budget. Linux completions on server2 (24 cores, 2026-11-11):
+// 42.739s alone at loadavg 14.8 22.9 24.4 (n=1) and 26.546s beside the group-56 filter (n=1;
+// git-lane neighbors finished within 9.5s). Windows rc 6591e378 was still in this method at
+// 81.042s. The same chunk's C971 methods ran 1.9x-3.9x those Linux durations (median 3.3x),
+// which scales the 26.546s completion to about 87s. 170s is 2x the censored Windows lower
+// bound. Provisional until a Windows completion is collected.
+[Timeout(170_000)]
 public sealed class C0824RefOnlyReceiptTests
 {
     [Test]
@@ -23,6 +29,10 @@ public sealed class C0824RefOnlyReceiptTests
             "before-enqueue", "queue-inserted", "queue-committed-before-wakeup", "receipt-before-save" };
         foreach (var cut in variants)
         {
+            // The class timeout's stdout is the only frame a censored run keeps. Name the cut
+            // before any await so the next Windows censor identifies which settlement was in flight.
+            Console.WriteLine("c0824-receipt-cut=" + cut);
+            Console.Out.Flush();
             var review = cut == "settlement-before-commit";
             await using var w = await RunnerSettlementWorld.CreateAsync(review ? AgentTaskRole.Review : AgentTaskRole.Code,
                 profiled: true, controlledSyncClock: true);
