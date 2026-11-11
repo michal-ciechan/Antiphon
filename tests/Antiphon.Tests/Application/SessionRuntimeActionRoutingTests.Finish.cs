@@ -384,12 +384,13 @@ public partial class SessionRuntimeActionRoutingTests
         Console.WriteLine("V-5 task-bound: two settled ids");
 
         var housekeeping = await SeedRoutingTaskAsync(f);
+        var housekeepingReport = "Housekeeping must not settle.\n[antiphon-report:"
+            + DelegationReportFormatter.Short(housekeeping.Id) + " blocked]";
         var housekeepingPrompt = TranscriptKinds.TaskNotificationPrefix + "\n"
             + DelegationReportFormatter.TaskMarker(housekeeping.Id) + "\n"
-            + "Housekeeping must not settle.\n[antiphon-report:"
-            + DelegationReportFormatter.Short(housekeeping.Id) + " blocked]";
+            + housekeepingReport;
         await f.StreamAsync(f.Entry("UserPrompt", housekeepingPrompt),
-            f.Entry("AssistantText", "notification seen"), f.Entry("TurnEnd"));
+            f.Entry("AssistantText", housekeepingReport), f.Entry("TurnEnd"));
         await f.Actions.DrainPageAsync(f.H.SessionId, default);
         await using (var db = f.H.CreateObserverContext())
             (await db.AgentTasks.SingleAsync(t => t.Id == housekeeping.Id)).Status.ShouldBe(AgentTaskStatus.Working);
