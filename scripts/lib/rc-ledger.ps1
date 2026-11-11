@@ -1,5 +1,7 @@
 #requires -Version 5.1
 # CARD-1836 S1. Schema antiphon-rc-ledger-v1: read, write, validate, and carry decisions.
+# CARD-1842 S6. antiphon-rc-ledger-v2 is v1 plus optional, nullable chunk hostId and os.
+# Set-RcLedgerDurations fills durations on either format; Set-RcLedgerHost needs v2.
 # Read-RcLedger is default-deny. Duplicate names (case-insensitive), names outside the
 # closed schema, and JSON values of the wrong type throw ledger-invalid before any carry.
 # ASCII-only. Pure: no network, no git, no process launch. Windows PowerShell 5.1.
@@ -8,6 +10,8 @@ if ($script:RcLedgerLoaded) { return }
 $script:RcLedgerLoaded = $true
 
 $script:RcLedgerFormat = 'antiphon-rc-ledger-v1'
+$script:RcLedgerFormatV2 = 'antiphon-rc-ledger-v2'
+$script:RcLedgerHostFields = @('hostId', 'os')
 $script:RcLedgerOutcomes = @('passed', 'failed', 'interrupted', 'not-run', 'unexpected-skip', 'expected-skip', 'unproven')
 
 function ConvertTo-RcList {
@@ -386,7 +390,8 @@ function Test-RcLedgerDocument {
     param($Document)
     $errors = New-Object System.Collections.Generic.List[string]
     if ($null -eq $Document) { Add-RcError $errors 'document-missing'; return [pscustomobject]@{ valid = $false; errors = $errors.ToArray() } }
-    if ([string](Get-RcProp $Document 'format') -cne $script:RcLedgerFormat) { Add-RcError $errors 'format' }
+    $format = [string](Get-RcProp $Document 'format')
+    if ($format -cne $script:RcLedgerFormat -and $format -cne $script:RcLedgerFormatV2) { Add-RcError $errors 'format' }
     $platform = [string](Get-RcProp $Document 'platform')
     if ($platform -cne 'windows' -and $platform -cne 'linux') { Add-RcError $errors 'platform' }
     foreach ($name in @('repository', 'candidateId', 'candidateSha', 'runId')) {
@@ -432,6 +437,14 @@ function Test-RcLedgerDocument {
         if (-not (Test-RcRequiredText $boundary) -or -not (Test-RcRequiredText $suite)) { Add-RcError $errors 'chunk-boundary' }
         if (-not (Test-RcStoredDigest ([string](Get-RcProp $chunk 'inputDigest')))) { Add-RcError $errors 'chunk-digest' }
         if (-not (Test-RcDuration (Get-RcProp $chunk 'durationSeconds'))) { Add-RcError $errors 'chunk-duration' }
+        foreach ($name in $script:RcLedgerHostFields) {
+            if (-not (Test-RcHasProp $chunk $name)) { continue }
+            if ($format -cne $script:RcLedgerFormatV2) { Add-RcError $errors ('unknown-property:' + $name); continue }
+            $hostValue = Get-RcProp $chunk $name
+            if ($null -eq $hostValue) { continue }
+            if ($hostValue -isnot [string] -or -not (Test-RcRequiredText $hostValue)) { Add-RcError $errors ('chunk-' + $name) }
+            elseif ($name -ceq 'os' -and $hostValue -cne 'windows' -and $hostValue -cne 'linux') { Add-RcError $errors 'chunk-os' }
+        }
         $keys = ConvertTo-RcList (Get-RcProp $chunk 'identityKeys')
         if ($keys.Count -eq 0) { Add-RcError $errors 'chunk-keys-empty' }
         $memberOutcomes = New-Object System.Collections.Generic.List[string]
@@ -608,6 +621,21 @@ function ConvertTo-RcIdentityJson {
         ',"carriedFrom":' + $carriedJson + '}'
 }
 
+function Get-RcLedgerFormatOf {
+    param($Document)
+    $format = [string](Get-RcProp $Document 'format')
+    if ($format -ceq $script:RcLedgerFormatV2) { return $script:RcLedgerFormatV2 }
+    return $script:RcLedgerFormat
+}
+
+# v1 never names a host; v2 always writes both fields, null when unset.
+function ConvertTo-RcChunkHostJson {
+    param($Document, $Chunk)
+    if ((Get-RcLedgerFormatOf $Document) -cne $script:RcLedgerFormatV2) { return '' }
+    return ',"hostId":' + (ConvertTo-RcJsonNullableString (Get-RcProp $Chunk 'hostId')) +
+        ',"os":' + (ConvertTo-RcJsonNullableString (Get-RcProp $Chunk 'os'))
+}
+
 function ConvertTo-RcLedgerJson {
     param($Document)
     $contract = Get-RcProp $Document 'contract'
@@ -624,10 +652,10 @@ function ConvertTo-RcLedgerJson {
             ',"identityKeys":' + (ConvertTo-RcJsonStringArray (Get-RcProp $chunk 'identityKeys')) +
             ',"inputDigest":' + (ConvertTo-RcJsonString ([string](Get-RcProp $chunk 'inputDigest'))) +
             ',"outcome":' + (ConvertTo-RcJsonString ([string](Get-RcProp $chunk 'outcome'))) +
-            ',"durationSeconds":' + (ConvertTo-RcJsonDuration (Get-RcProp $chunk 'durationSeconds')) + '}')
+            ',"durationSeconds":' + (ConvertTo-RcJsonDuration (Get-RcProp $chunk 'durationSeconds')) + (ConvertTo-RcChunkHostJson $Document $chunk) + '}')
     }
     return '{' +
-        '"format":' + (ConvertTo-RcJsonString $script:RcLedgerFormat) +
+        '"format":' + (ConvertTo-RcJsonString (Get-RcLedgerFormatOf $Document)) +
         ',"platform":' + (ConvertTo-RcJsonString ([string](Get-RcProp $Document 'platform'))) +
         ',"repository":' + (ConvertTo-RcJsonString ([string](Get-RcProp $Document 'repository'))) +
         ',"candidateId":' + (ConvertTo-RcJsonString ([string](Get-RcProp $Document 'candidateId'))) +
@@ -657,6 +685,81 @@ function Write-RcLedger {
     }
     $encoding = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, $json, $encoding)
+}
+
+# CARD-1842 S6. Chunk durationSeconds from the sidecar runWallSeconds whose suite and chunk
+# equal the chunk's suite and chunkId; identity durationSeconds is the sum of the TRX
+# UnitTestResult durations whose TestMethod className and name equal the identity's. A
+# chunk or identity without a match keeps its value. Format and host are not touched.
+function Get-RcTrxDurations {
+    param($TrxPath)
+    $totals = New-Object 'System.Collections.Generic.Dictionary[string,double]' ([System.StringComparer]::Ordinal)
+    $owners = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::Ordinal)
+    foreach ($pathValue in @(ConvertTo-RcList $TrxPath)) {
+        $path = [string]$pathValue
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $xml = New-Object System.Xml.XmlDocument
+        $xml.XmlResolver = $null
+        $xml.Load($path)
+        $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+        $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
+        $methods = @{}
+        foreach ($test in @($xml.SelectNodes('//t:UnitTest', $ns))) {
+            $method = $test.SelectSingleNode('t:TestMethod', $ns)
+            if ($null -eq $method) { continue }
+            $methods[[string]$test.GetAttribute('id')] = ([string]$method.GetAttribute('className')) + '/' + ([string]$method.GetAttribute('name'))
+        }
+        foreach ($result in @($xml.SelectNodes('//t:UnitTestResult', $ns))) {
+            $key = $methods[[string]$result.GetAttribute('testId')]
+            $text = [string]$result.GetAttribute('duration')
+            if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($text)) { continue }
+            $span = [TimeSpan]::Zero
+            if (-not [TimeSpan]::TryParse($text, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$span)) { throw ('duration-invalid: ' + $key) }
+            if ($owners.ContainsKey($key) -and $owners[$key] -cne $path) { throw ('duration-ambiguous: ' + $key) }
+            $owners[$key] = $path
+            if (-not $totals.ContainsKey($key)) { $totals[$key] = 0.0 }
+            $totals[$key] = $totals[$key] + $span.TotalSeconds
+        }
+    }
+    return ,$totals
+}
+
+function Set-RcLedgerDurations {
+    param([Parameter(Mandatory = $true)]$Document, $TimingPath, $TrxPath)
+    $walls = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    foreach ($pathValue in @(ConvertTo-RcList $TimingPath)) {
+        $path = [string]$pathValue
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        $timing = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $key = ([string](Get-RcProp $timing 'suite')) + "`n" + ([string](Get-RcProp $timing 'chunk'))
+        if ($walls.ContainsKey($key)) { throw ('duration-duplicate: ' + [System.IO.Path]::GetFileName($path)) }
+        $wall = Get-RcProp $timing 'runWallSeconds'
+        if ((Test-RcNumber $wall) -and (Test-RcDuration $wall)) { $walls[$key] = [double]$wall } else { $walls[$key] = $null }
+    }
+    foreach ($chunk in @(ConvertTo-RcList (Get-RcProp $Document 'chunks'))) {
+        $key = ([string](Get-RcProp $chunk 'suite')) + "`n" + ([string](Get-RcProp $chunk 'chunkId'))
+        if ($walls.ContainsKey($key) -and $null -ne $walls[$key]) { $chunk.durationSeconds = $walls[$key] }
+    }
+    $totals = Get-RcTrxDurations $TrxPath
+    foreach ($identity in @(ConvertTo-RcList (Get-RcProp $Document 'identities'))) {
+        $key = Get-RcIdentityKey $identity
+        if ($totals.ContainsKey($key)) { $identity.durationSeconds = $totals[$key] }
+    }
+    return $Document
+}
+
+# Sets chunk hostId and os from the caller's arguments; never reads the machine name.
+function Set-RcLedgerHost {
+    param([Parameter(Mandatory = $true)]$Document, [string]$HostId, [string]$Os)
+    if ([string](Get-RcProp $Document 'format') -cne $script:RcLedgerFormatV2) { throw 'ledger-schema' }
+    if (-not (Test-RcRequiredText $HostId)) { throw 'ledger-host: hostId' }
+    if ($Os -cne 'windows' -and $Os -cne 'linux') { throw 'ledger-host: os' }
+    foreach ($chunk in @(ConvertTo-RcList (Get-RcProp $Document 'chunks'))) {
+        if ($chunk -is [System.Collections.IDictionary]) { $chunk['hostId'] = $HostId; $chunk['os'] = $Os; continue }
+        $chunk | Add-Member -NotePropertyName hostId -NotePropertyValue $HostId -Force
+        $chunk | Add-Member -NotePropertyName os -NotePropertyValue $Os -Force
+    }
+    return $Document
 }
 
 function New-RcFieldMap {
@@ -701,6 +804,9 @@ function Initialize-RcLedgerSchema {
     $chunk.Add('inputDigest', 's')
     $chunk.Add('outcome', 's')
     $chunk.Add('durationSeconds', 'nn')
+    # Optional (?) here; Test-RcLedgerDocument refuses them on v1.
+    $chunk.Add('hostId', 'sn?')
+    $chunk.Add('os', 'sn?')
     $carried = New-RcFieldMap
     $carried.Add('candidateId', 's')
     $carried.Add('runId', 's')
@@ -866,7 +972,7 @@ function Test-RcScanScalar {
         if ($Raw.IndexOf([char]92) -ge 0) { $null = ConvertFrom-RcScanString $Raw }
         return
     }
-    if ($Type -ceq 'sn') {
+    if ($Type -ceq 'sn' -or $Type -ceq 'sn?') {
         if ($isNull) { return }
         if (-not $isString) { throw 'ledger-invalid: type' }
         if ($Raw.IndexOf([char]92) -ge 0) { $null = ConvertFrom-RcScanString $Raw }
@@ -885,6 +991,7 @@ function Test-RcScanScalar {
 function Close-RcScanObject {
     param($Frames, $Frame)
     foreach ($required in @($Frame.Schema.Keys)) {
+        if (([string]$Frame.Schema[$required]).EndsWith('?')) { continue }
         if (-not $Frame.Exact.Contains([string]$required)) { throw ('ledger-invalid: missing:' + $required) }
     }
     $Frames.RemoveAt($Frames.Count - 1)
