@@ -127,6 +127,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Server.Git", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Server.Git.Tests", "tests\Antiphon.Server.Git.Tests\Antiphon.Server.Git.Tests.csproj", "{4EC1651C-23F4-4981-ACA1-9722265A5ECA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Antiphon.Resilience.Tests", "tests\Antiphon.Resilience.Tests\Antiphon.Resilience.Tests.csproj", "{2B360338-49E3-4CB2-9C9F-90992570942F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -809,6 +811,18 @@ Global
 		{4EC1651C-23F4-4981-ACA1-9722265A5ECA}.Release|x64.Build.0 = Release|Any CPU
 		{4EC1651C-23F4-4981-ACA1-9722265A5ECA}.Release|x86.ActiveCfg = Release|Any CPU
 		{4EC1651C-23F4-4981-ACA1-9722265A5ECA}.Release|x86.Build.0 = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|x64.Build.0 = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Debug|x86.Build.0 = Debug|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|x64.ActiveCfg = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|x64.Build.0 = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|x86.ActiveCfg = Release|Any CPU
+		{2B360338-49E3-4CB2-9C9F-90992570942F}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -866,5 +880,6 @@ Global
 		{8A2E70A6-54B4-42E9-A442-F27E2B1A8AD5} = {23D52B2D-4E1D-4BA5-9F24-AEFC01F4A8AF}
 		{E18EDCBC-1887-454C-A4E2-119FEB8DF7FC} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{4EC1651C-23F4-4981-ACA1-9722265A5ECA} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{2B360338-49E3-4CB2-9C9F-90992570942F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

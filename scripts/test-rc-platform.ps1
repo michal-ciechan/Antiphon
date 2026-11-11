@@ -75,6 +75,7 @@ function Test-C1323_PlatformPolicy {
     $expectedSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e', 'markdown-pdf')
     if ($policy.suites.observability) { $expectedSuites += 'observability' }
     if ($policy.suites.PSObject.Properties.Name -contains 'server-git') { $expectedSuites += 'server-git' }
+    if ($policy.suites.PSObject.Properties.Name -contains 'resilience') { $expectedSuites += 'resilience' }
     $observabilityRequired = $true
     if ($policy.suites.observability) {
         $missing = Copy-C1323Object $policy

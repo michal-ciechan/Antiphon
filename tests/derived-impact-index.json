@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 309,
+      "classes": 310,
       "reason": "allowlist"
     },
     {
@@ -17422,6 +17422,7 @@
     {
       "path": "src/Antiphon.Resilience/ResilienceBudget.cs",
       "classes": [
+        "ResilienceAssemblyTests",
         "ResilienceBudgetTests"
       ]
     },
@@ -20207,6 +20208,18 @@
         "ParentDeathSpikeTests",
         "PipeTestClientDiagnosticsTests",
         "PtyHostLauncherTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Resilience.Tests/ResilienceTestSupport.cs",
+      "classes": [
+        "AgentSessionLaunchFailureTests",
+        "DatabaseReadResilienceTests",
+        "HttpReadResilienceTests",
+        "HttpResilienceRegistrationTests",
+        "ResilienceBudgetTests",
+        "ResilienceCircuitTests",
+        "ResilienceOptionsAndTelemetryTests"
       ]
     },
     {
@@ -23548,18 +23561,6 @@
         "DerivedImpactIndexTests",
         "ProcessSpawnLimitTests",
         "RepositoryMutationLeaseTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Infrastructure/Resilience/ResilienceTestSupport.cs",
-      "classes": [
-        "AgentSessionLaunchFailureTests",
-        "DatabaseReadResilienceTests",
-        "HttpReadResilienceTests",
-        "HttpResilienceRegistrationTests",
-        "ResilienceBudgetTests",
-        "ResilienceCircuitTests",
-        "ResilienceOptionsAndTelemetryTests"
       ]
     },
     {

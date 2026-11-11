@@ -105,6 +105,15 @@
     },
     {
       "partition": "",
+      "pattern": "^(src/Antiphon\\.Resilience/|tests/Antiphon\\.Resilience\\.Tests/).*$",
+      "sets": [
+        "resilience"
+      ],
+      "full": false,
+      "id": "P-RESILIENCE"
+    },
+    {
+      "partition": "",
       "pattern": "^client/.*$",
       "sets": [
         "client",
@@ -3244,6 +3253,177 @@
         "docker": false,
         "broker": false
       }
+    },
+    {
+      "categories": [],
+      "eligibility": "unattended",
+      "dependsOn": [],
+      "remainderProjects": [
+        "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj"
+      ],
+      "sourceInputs": [
+        "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs"
+      ],
+      "reason": "CARD-1829: edits under the Resilience project or its mirror select the covering tests that stayed in Antiphon.Tests. The mirrored project is the remainder.",
+      "owner": "CARD-1829",
+      "members": [
+        {
+          "method": "C1205_Interval_boundary_controls_probe_and_log",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Wall_clock_jumps_do_not_change_due_time",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Healthy_keepalives_do_not_reset_probe_debt",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Fair_pages_and_single_flight_bound_work",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Concurrency_and_generation_are_bounded",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Capacity_overflow_remains_visible",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Failed_probe_retains_debt_and_retries",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Overdue_operation_is_logged_and_joined",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Hosted_restart_discovers_working_sessions_immediately",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Disabled_setting_logs_the_missing_bound",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Invalid_settings_are_rejected",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Valid_settings_limits_are_accepted",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Discovery_requires_positive_local_working_evidence",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Discovery_failure_retains_visible_debt",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Probe_budget_covers_headers_body_and_retries",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Recovered_idle_schedules_only_coalesced_work",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Ownership_cleanup_is_bounded_and_conservative",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Recovery_does_not_manufacture_idle_or_release",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Reconciliation_preserves_owned_recovery_wakeup",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        },
+        {
+          "method": "C1205_Hosted_backlog_bound_includes_poll_refill",
+          "class": "Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests",
+          "project": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+          "source": "tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs",
+          "script": ""
+        }
+      ],
+      "prerequisites": [],
+      "id": "resilience",
+      "platforms": [
+        "any"
+      ],
+      "resources": {
+        "vendorExecutable": "none",
+        "interaction": "none",
+        "api": "none",
+        "browser": false,
+        "desktopUi": false,
+        "nativePty": false,
+        "postgres": true,
+        "docker": true,
+        "broker": false
+      }
     }
   ],
   "edges": [
@@ -3285,7 +3465,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "b0dfba6df314cf57bc89631806a29dbc1fb366def500fb77662710349c54742b",
+  "catalogHash": "f4aa926ae5d4ba930718c71b097c04316e1855431c35ba5d22de072749df68ec",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

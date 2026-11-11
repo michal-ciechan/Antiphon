@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.Resilience.Tests" />
     <InternalsVisibleTo Include="Antiphon.Server" />
   </ItemGroup>
 
