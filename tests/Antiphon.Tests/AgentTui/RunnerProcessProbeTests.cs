@@ -738,14 +738,18 @@ public sealed class RunnerProcessProbeTests
                 Request(script, ["tree", pidPath]),
                 CancellationToken.None);
             await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var elapsed = Stopwatch.StartNew();
-            var result = await operation;
-            elapsed.Stop();
+            // The one-second CancellationTokenSource is already running when this
+            // seam is entered. The condition is the timed-out result. Run 6591e378
+            // group-7 measured 2.642s from here to TimedOut / not started / cleanup
+            // unconfirmed under that chunk's opening herd (provisional, n=1). Twice
+            // that observation is 5.284s. Quiet Linux and a 24-core sha256sum load
+            // at bc71a95e both stayed under the old 2s wall and did not reproduce
+            // the in-process herd.
+            var result = await operation.WaitAsync(TimeSpan.FromMilliseconds(5_284));
 
             result.TimedOut.ShouldBeTrue();
             result.Started.ShouldBeFalse();
             result.CleanupConfirmed.ShouldBeFalse();
-            elapsed.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
             reaper.TrackedProcessCount.ShouldBe(1);
 
             releaseStart.TrySetResult();
