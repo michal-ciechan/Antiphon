@@ -42,6 +42,14 @@ public sealed class PostLandEarlyWarningTests
         @"^namespace\s+([A-Za-z0-9_.]+)\s*\{",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly Regex QuoteRun = new(
+        "\"{3,}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex RawStringOpen = new(
+        "(\"{3,})$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     [Test]
     public async Task Docs_only_range_skips()
     {
@@ -808,9 +816,11 @@ public sealed class PostLandEarlyWarningTests
 
     private static List<(string Namespace, string Name)> Census(string repo)
     {
+        // Same rules as Get-PostLandClasses: raw-string fixture text is not source, and the
+        // partial parts of one class merge their [Category] whatever order the walk sees them.
         var root = Path.Combine(repo, "tests", "Antiphon.Tests");
-        var found = new List<(string Namespace, string Name)>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var order = new List<string>();
+        var parts = new Dictionary<string, (string Namespace, string Name, bool Unit, bool Integration, bool HasTest)>(StringComparer.Ordinal);
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
             var relative = file.Replace('\\', '/');
@@ -818,9 +828,21 @@ public sealed class PostLandEarlyWarningTests
                 continue;
             var lines = File.ReadAllLines(file);
             var ns = "";
+            var rawQuotes = 0;
             for (var i = 0; i < lines.Length; i++)
             {
                 var trim = lines[i].Trim();
+                if (rawQuotes > 0)
+                {
+                    if (trim.StartsWith(new string('"', rawQuotes), StringComparison.Ordinal))
+                        rawQuotes = 0;
+                    continue;
+                }
+
+                var open = RawStringOpen.Match(trim);
+                if (open.Success && QuoteRun.Matches(trim).Count % 2 == 1)
+                    rawQuotes = open.Groups[1].Length;
+
                 var fileNs = FileNamespace.Match(trim);
                 if (fileNs.Success)
                 {
@@ -855,8 +877,6 @@ public sealed class PostLandEarlyWarningTests
 
                 var unit = attrs.Any(line => line.Contains("Category(\"Unit\")", StringComparison.Ordinal));
                 var integration = attrs.Any(line => line.Contains("Category(\"Integration\")", StringComparison.Ordinal));
-                if (!unit || integration)
-                    continue;
                 var hasTest = false;
                 for (var k = i + 1; k < lines.Length; k++)
                 {
@@ -872,15 +892,23 @@ public sealed class PostLandEarlyWarningTests
                     }
                 }
 
-                if (!hasTest)
-                    continue;
-                var key = ns + "\n" + match.Groups[1].Value;
-                if (seen.Add(key))
-                    found.Add((ns, match.Groups[1].Value));
+                var name = match.Groups[1].Value;
+                var key = ns + "\n" + name;
+                if (!parts.TryGetValue(key, out var part))
+                {
+                    part = (ns, name, false, false, false);
+                    order.Add(key);
+                }
+
+                parts[key] = (ns, name, part.Unit || unit, part.Integration || integration, part.HasTest || hasTest);
             }
         }
 
-        return found;
+        return order
+            .Select(key => parts[key])
+            .Where(part => part.HasTest && part.Unit && !part.Integration)
+            .Select(part => (part.Namespace, part.Name))
+            .ToList();
     }
 
     private static int CountOf(string text, string token)

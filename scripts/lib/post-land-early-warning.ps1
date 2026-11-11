@@ -388,20 +388,33 @@ function Read-PostLandManifest {
 function Get-PostLandClasses {
     param([string]$Repo)
     $found = New-PostLandObjectList
-    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    # Partial parts of one class merge: a [Category] on any part counts, whatever file order the walk sees.
+    $parts = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    $order = New-PostLandStringList
     $root = Join-Path $Repo 'tests/Antiphon.Tests'
     if (-not (Test-Path -LiteralPath $root)) { return $found }
     $classLine = [regex]::new('^public\s+(?:(?:sealed|static|partial|abstract)\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)\b', 'CultureInvariant')
     $fileNs = [regex]::new('^namespace\s+([A-Za-z0-9_.]+)\s*;', 'CultureInvariant')
     $blockNs = [regex]::new('^namespace\s+([A-Za-z0-9_.]+)\s*\{', 'CultureInvariant')
+    # A multi-line raw string opens with an odd count of 3+ quote runs and the last run at line end.
+    $quoteRun = [regex]::new('"{3,}', 'CultureInvariant')
+    $rawOpen = [regex]::new('("{3,})$', 'CultureInvariant')
     $files = [IO.Directory]::EnumerateFiles($root, '*.cs', [IO.SearchOption]::AllDirectories)
     foreach ($file in $files) {
         $relative = ([string]$file).Replace('\', '/')
         if ($relative.Contains('/bin/') -or $relative.Contains('/obj/')) { continue }
         $lines = [IO.File]::ReadAllLines($file)
         $ns = ''
+        $rawQuotes = 0
         for ($i = 0; $i -lt $lines.Length; $i++) {
             $trim = $lines[$i].Trim()
+            # Fixture source inside a raw string literal is text, not a class (CARD-1820 probes).
+            if ($rawQuotes -gt 0) {
+                if ($trim.StartsWith(('"' * $rawQuotes))) { $rawQuotes = 0 }
+                continue
+            }
+            $open = $rawOpen.Match($trim)
+            if ($open.Success -and ($quoteRun.Matches($trim).Count % 2) -eq 1) { $rawQuotes = $open.Groups[1].Length }
             $fileMatch = $fileNs.Match($trim)
             if ($fileMatch.Success) { $ns = $fileMatch.Groups[1].Value; continue }
             $blockMatch = $blockNs.Match($trim)
@@ -429,17 +442,27 @@ function Get-PostLandClasses {
                     break
                 }
             }
-            if (-not $hasTest) { continue }
             $name = $match.Groups[1].Value
             $key = $ns + "`n" + $name
-            if (-not $seen.Add($key)) { continue }
-            [void]$found.Add([pscustomobject]@{
-                Namespace = $ns
-                Name = $name
-                Unit = ($unit -and -not $integration)
-                Integration = ($integration -and -not $unit)
-            })
+            if (-not $parts.ContainsKey($key)) {
+                $parts[$key] = [pscustomobject]@{ Namespace = $ns; Name = $name; Unit = $false; Integration = $false; HasTest = $false }
+                [void]$order.Add($key)
+            }
+            $part = $parts[$key]
+            if ($unit) { $part.Unit = $true }
+            if ($integration) { $part.Integration = $true }
+            if ($hasTest) { $part.HasTest = $true }
         }
+    }
+    foreach ($key in $order) {
+        $part = $parts[$key]
+        if (-not $part.HasTest) { continue }
+        [void]$found.Add([pscustomobject]@{
+            Namespace = $part.Namespace
+            Name = $part.Name
+            Unit = ($part.Unit -and -not $part.Integration)
+            Integration = ($part.Integration -and -not $part.Unit)
+        })
     }
     return ,$found
 }

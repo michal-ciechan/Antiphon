@@ -1965,6 +1965,8 @@ CARD-1747 gives those checkpoint-tool classes `CheckpointToolSpawnLimit` at widt
 
 The post-land warning runs the shard manifest one shard at a time through the build-slot gate, skips a docs-only batch, and is not a per-task Final and not a replacement for the Windows Full run.
 
+Its class census (`Get-PostLandClasses`, mirrored by the test's `Census`) skips multi-line raw-string literals, so fixture source such as the CARD-1820 `namespace N;` probes never becomes a shard, and it merges the parts of a partial class, so a `[Category]` on any part counts whatever order the file walk sees (run d88de419 group 131).
+
 ## Test traces (OpenTelemetry-style spans)
 
 Fixtures emit `Activity` spans from the `Antiphon.Tests` source (`tests/Shared/TestTrace.cs`). Every
