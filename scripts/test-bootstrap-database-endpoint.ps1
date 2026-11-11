@@ -85,7 +85,7 @@ function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData) {
 
 function Invoke-Probe([string]$Name, [string]$ConnectionString, [string]$Expected, [string]$AppDataRoot = $appData) {
     $arguments = @('-NoProfile', '-NonInteractive', '-File', $bootstrap, '-DatabaseProbeOnly')
-    if ($null -ne $ConnectionString) { $arguments += @('-ConnectionString', $ConnectionString) }
+    if (-not [string]::IsNullOrEmpty($ConnectionString)) { $arguments += @('-ConnectionString', $ConnectionString) }
     $result = Invoke-Child $arguments $AppDataRoot
     $lines = @($result.Stdout -split "`r?`n" | Where-Object { $_.Length -gt 0 })
     Assert-Endpoint ($result.ExitCode -eq 0) "$Name exits 0"
@@ -202,12 +202,46 @@ try {
     $where = ($ungated | ForEach-Object { $_.Extent.StartLineNumber }) -join ','
     Assert-Endpoint ($ungated.Count -eq 0) "R-2 every local container literal is gated by mode local (ungated lines: $where)"
 
-    $gates = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match "^\`$databaseEndpoint\.Mode\s+-eq\s+'local'$" }, $true))
+    $gates = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and
+                @($n.Clauses | Where-Object { $_.Item1.Extent.Text -match "^\`$databaseEndpoint\.Mode\s+-eq\s+'local'$" }).Count -gt 0 }, $true))
     Assert-Endpoint ($gates.Count -ge 2) 'R-2 the container section and the TCP section are both gated by mode local'
     $remoteTcp = @($gates | Where-Object { $null -ne $_.ElseClause } | ForEach-Object {
             $_.ElseClause.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Test-TcpPort' -and
                     $n.Extent.Text -match '\$databaseEndpoint\.Host' -and $n.Extent.Text -match '\$databaseEndpoint\.Port' }, $true) })
     Assert-Endpoint ($remoteTcp.Count -ge 1) 'R-2 the remote branch TCP-checks the resolved host and port'
+
+    # Run the gated sections in process with recording stubs: no docker, no socket.
+    $gated = @($statements | Where-Object { $gates -contains $_ })
+    Assert-Endpoint ($gated.Count -ge 2) 'R-2 both gated sections are top-level statements'
+    $stubs = @'
+param($databaseEndpoint, $dockerUp, $dockerPath, $repoRoot, $tcpOpen, $calls)
+Set-StrictMode -Off
+function Write-Check { param($Name, $Status, $Detail, $Remedial) $calls.Add("check|$Name|$Status|$Detail|$Remedial") }
+function Test-TcpPort { param($HostName, $Port, $TimeoutMs) $calls.Add("tcp|$HostName|$Port"); return $tcpOpen }
+function Get-NativeOutput { param($File, $Arguments) $calls.Add('native|' + ($Arguments -join ' ')); return @{ Text = 'running|healthy'; ExitCode = 0; Succeeded = $true } }
+'@
+    $sections = [scriptblock]::Create($stubs + "`n" + (($gated | ForEach-Object { $_.Extent.Text }) -join "`n"))
+    function Invoke-Sections($Endpoint, [bool]$TcpOpen) {
+        $calls = New-Object System.Collections.Generic.List[string]
+        & $sections $Endpoint $true 'docker' $SourceRoot $TcpOpen $calls
+        return , $calls
+    }
+    $remote = [pscustomobject][ordered]@{ Host = '100.64.0.2'; Port = 5432; Mode = 'remote' }
+    $local = [pscustomobject][ordered]@{ Host = 'localhost'; Port = 17280; Mode = 'local' }
+    foreach ($open in @($true, $false)) {
+        $calls = Invoke-Sections $remote $open
+        $text = $calls -join "`n"
+        Assert-Endpoint (@($calls | Where-Object { $_ -like 'native|*' }).Count -eq 0) "R-2 remote (tcp open=$open) runs no docker inspect, volume inspect or pg_isready"
+        Assert-Endpoint (@($calls | Where-Object { $_ -like 'tcp|*' }).Count -eq 1 -and $calls.Contains('tcp|100.64.0.2|5432')) "R-2 remote (tcp open=$open) TCP-checks 100.64.0.2:5432 only"
+        Assert-Endpoint (-not [regex]::IsMatch($text, 'antiphon-postgres|antiphon_pgdata|17280|docker-compose\.dev\.yml')) "R-2 remote (tcp open=$open) names no local container, volume, port or compose file"
+        $status = if ($open) { 'PASS' } else { 'FAIL' }
+        Assert-Endpoint (@($calls | Where-Object { $_ -like "check|database|$status|*100.64.0.2:5432*" }).Count -eq 1) "R-2 remote (tcp open=$open) reports database $status with host and port"
+    }
+    $calls = Invoke-Sections $local $true
+    Assert-Endpoint ($calls.Contains('tcp|127.0.0.1|17280')) 'R-2 local TCP-checks 127.0.0.1:17280'
+    Assert-Endpoint (@($calls | Where-Object { $_ -like 'native|inspect*antiphon-postgres' }).Count -eq 1) 'R-2 local inspects antiphon-postgres'
+    Assert-Endpoint ($calls.Contains('native|volume inspect antiphon_pgdata')) 'R-2 local inspects antiphon_pgdata'
+    Assert-Endpoint (@($calls | Where-Object { $_ -like 'native|compose*pg_isready*' }).Count -eq 1) 'R-2 local runs pg_isready through the dev compose'
 } finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
