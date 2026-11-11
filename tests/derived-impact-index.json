@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 310,
+      "classes": 311,
       "reason": "allowlist"
     },
     {
@@ -1705,8 +1705,8 @@
         "AgentTaskLandTargetRaceFakeTests",
         "AgentTaskLandTargetRaceTests",
         "C0824DesktopLegacyReleaseSwitchTests",
-        "LibGit2VsGitWorkingTreeVerdictTests",
-        "WorktreeResidueRecoveryTests"
+        "WorktreeResidueRecoveryTests",
+        "AgentTaskLandRefusedRetryTests"
       ]
     },
     {
@@ -16450,6 +16450,7 @@
     {
       "path": "src/Antiphon.GitInProcess/InProcessGitReads.More.cs",
       "classes": [
+        "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
         "LibGit2VsGitDifferentialTests",
         "LibGit2VsGitJunctionTests",
@@ -16461,6 +16462,7 @@
     {
       "path": "src/Antiphon.GitInProcess/InProcessGitReads.cs",
       "classes": [
+        "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
         "LibGit2VsGitDifferentialTests",
         "LibGit2VsGitJunctionTests",
@@ -20152,6 +20154,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorkingTreeVerdictTests.cs",
+      "classes": [
+        "AgentTaskDispatchBaseGuardTests",
+        "DispatchConcurrencyAdmissionTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs",
       "classes": [
         "ChannelOutboundComposedTransportTests",
@@ -23541,13 +23550,6 @@
       "path": "tests/Antiphon.Tests/Infrastructure/LandingRemovalControlTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Infrastructure/LibGit2VsGitWorkingTreeVerdictTests.cs",
-      "classes": [
-        "AgentTaskDispatchBaseGuardTests",
-        "DispatchConcurrencyAdmissionTests"
       ]
     },
     {
