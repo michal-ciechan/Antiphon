@@ -2,13 +2,13 @@
 
 Task 500bb290. Cut `rc/2026-11-16` from current `origin/master` and started one detached Windows Full qualification. No tag was created. Nothing was published or promoted. AppHost, the production runner, Docker Desktop, containers, and volumes were not changed.
 
-Observed through 2026-11-11T12:02:03Z. The run was still in its first chunk at that time. Leave the supervisor running.
+Observed through 2026-11-11T12:04:04Z. Leave the supervisor running.
 
 ## Verdict
 
 `rc/2026-11-16` is `6f8741d872d63507827014f972ccf71196722d4a`, the same SHA as `origin/master` at the cut. `rc/2026-11-15` is still `ac6d00022e940ee3b90584c7d313567b4491c498`.
 
-Run `d88de419025b4d368fb75108e4de0c36` is a Windows Full rc qualification at concurrency 1, ordered by the run `6591e378` seed. The supervisor is alive, its heartbeat is advancing, and the first failed-method chunk has started: `session-runner-all-group-2` at 2026-11-11T11:56:00Z.
+Run `d88de419025b4d368fb75108e4de0c36` is a Windows Full rc qualification at concurrency 1, ordered by the run `6591e378` seed. The supervisor is alive and its heartbeat is advancing. The failed-method band started in schedule order: `session-runner-all-group-2` at 2026-11-11T11:56:00Z, then `agents-pty-all-group-1`, then `antiphon-all-group-75` (in flight at 12:04Z). The trx files were not scored.
 
 ## Cut
 
@@ -112,8 +112,9 @@ Nightly arguments include `-Profile rc -Trigger rc -SelectionMode Full -RunId d8
 | 2026-11-11T11:43:15Z | 100.3 | 0 | npm-ci.log.stderr.tmp | false |
 | 2026-11-11T11:56:28Z | 116.9 | 0 | log_261111115600894.diag | false |
 | 2026-11-11T12:02:02Z | 179.6 | 0 | log_261111115600894.diag | false |
+| 2026-11-11T12:04:04Z | 147.3 | 2 | log_261111120404296.diag | false |
 
-The file's last write at the check was 2026-11-11T12:02:03.0834805Z. Cadence is about 30 seconds. `hangSuspected` stayed false.
+The file's last write at the check was 2026-11-11T12:04:04.7048755Z. Cadence is about 30 seconds. `hangSuspected` stayed false. Cpu seconds are the live process tree, so the total can fall when a chunk process exits.
 
 ### First chunk
 
@@ -137,7 +138,7 @@ The file's last write at the check was 2026-11-11T12:02:03.0834805Z. Cadence is 
 
 The old ids `antiphon-all-group-115`, `56`, `74`, `120`, and `130` are later in the schedule because those ids now name other classes. The outage methods themselves are in new groups 116, 117, 118, and 119, which are inside the leading band. The seed's `unproven-by-environment` mark stays on the old 115-118 rows.
 
-`session-runner-all-group-2-execution` was created at 2026-11-11T11:56:00.8956113Z. A diag log for that chunk is the heartbeat's newest file. `trx` is still 0 because the chunk has not finished. Phase on `last-run.json` is `tests`. SHA on that state is the cut SHA.
+`session-runner-all-group-2-execution` was created at 2026-11-11T11:56:00.8956113Z. Its trx was written at 2026-11-11T12:02:36Z. `agents-pty-all-group-1-execution` followed at 12:02:39Z and its trx was written at 12:04:03Z. `antiphon-all-group-75-execution` was created at 12:04:04Z and was the in-flight chunk at the last check. Those trx files were not scored. Phase on `last-run.json` is `tests`. SHA on that state is the cut SHA.
 
 The schedule's `priorFailure` flag is still the history member-list bit. It is true on 48 entries. Thirteen of those lead. The other 35 sit at dispatch ordinals 656-690 (the sibling band), after the resume band.
 
@@ -154,7 +155,7 @@ The schedule's `priorFailure` flag is still the history member-list bit. It is t
 
 `observe.ps1` credits only run id `d88de419025b4d368fb75108e4de0c36`. The end signal is `completedAt` for that run id. Do not stop the supervisor.
 
-Docker after launch, at 12:02Z: server 29.5.3, `antiphon-postgres` Up (healthy).
+Docker after launch, at 12:04Z: server 29.5.3, `antiphon-postgres` Up (healthy). Supervisor pid 50568 and nightly pid 449568 were still alive.
 
 ## Authority
 
