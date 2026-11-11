@@ -144,7 +144,7 @@ else
 
 // Host and port only: the connection string also carries the user and password, so it is parsed
 // here and never logged. Port defaults to 5432, as in Npgsql.
-var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection");
+var databaseConnection = builder.Configuration["ConnectionStrings:DefaultConnection"];
 var (databaseHost, databasePort) = DatabaseEndpoint(databaseConnection);
 logger.LogInformation("Database endpoint {Host}:{Port}", databaseHost, databasePort);
 
