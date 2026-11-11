@@ -480,7 +480,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
     }
 
     /// <summary>CARD-0747. What <see cref="ExpireAgedAsync"/> did, or would do, with one note.</summary>
-    public enum ExpiryOutcome { NotAged, NotOpen, NonTerminal, TypedPending, Changed, WouldSettle, Settled }
+    public enum ExpiryOutcome { NotAged, NotOpen, NonTerminal, TypedPending, ReceiptPresent, Changed, WouldSettle, Settled }
 
     /// <summary>
     /// CARD-0747 operator sweep. Applies the aged-note rule to one note created at or before
@@ -531,6 +531,9 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             ? await LandNotificationReconcileQueries.MessageOrDefaultById(db, queued, ct)
             : await LandNotificationReconcileQueries.MessageBySourceNotification(db, note.Id, ct);
         if (row is { Status: QueuedMessageStatus.Pending, DeliveryAttempts: > 0 }) return ExpiryOutcome.TypedPending;
+        // A typed row whose receipt is already stored is confirmed by the ordinary reconcile, not expired.
+        if (row is { Status: QueuedMessageStatus.Sent } && await HasStoredReceiptAsync(note, row, ct))
+            return ExpiryOutcome.ReceiptPresent;
         if (!apply) return ExpiryOutcome.WouldSettle;
         if (row is { Status: QueuedMessageStatus.Pending }
             && !await messages.CancelPendingIfUntypedAsync(row.AgentSessionId, row.Id, ct, lockWait))
@@ -542,6 +545,29 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
         await db.SaveChangesAsync(ct);
         scanCache?.Invalidate(note.Id);
         return ExpiryOutcome.Settled;
+    }
+
+    /// <summary>
+    /// Any committed prompt, above the row's delivery floor, on the session the row was typed to or
+    /// on the note's parent, that the CARD-0641 rule accepts for the note body, the typed row body
+    /// (a spill pointer) or a completion's frozen wire text. No runner pull: a week-old delivery's
+    /// transcript is long since stored.
+    /// </summary>
+    private async Task<bool> HasStoredReceiptAsync(AgentTaskLandNotification note, SessionQueuedMessage row, CancellationToken ct)
+    {
+        var tolerance = (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.UnobservableBaselineConfirmClockToleranceSeconds;
+        var expected = new HashSet<string>(StringComparer.Ordinal) { note.Body, row.Body };
+        if (TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson) is { } rendering)
+            expected.Add(rendering.WireText);
+        foreach (var session in new[] { row.AgentSessionId, note.ParentSessionId ?? Guid.Empty }.Where(s => s != Guid.Empty).Distinct())
+        {
+            var prompts = LandNoteReceipt.Prompts(db.TranscriptEntries.AsNoTracking(), session, note.IsLegacy, note.Kind,
+                row.LastDeliveryBaselineSequence, row.LastDeliveryStartedAt, tolerance);
+            if (prompts is null) continue;
+            foreach (var text in expected)
+                if (await LandNoteReceipt.FirstReceiptAsync(prompts, text, ct) is not null) return true;
+        }
+        return false;
     }
 
     /// <summary>

@@ -218,6 +218,10 @@ public sealed class AgentTaskLandQueuedReceiptTests
                 if (note.Kind != kind)
                 {
                     note.Kind = kind;
+                    // CARD-0747: a Held snapshot is enqueued only while its request is still pending.
+                    if (kind == LandNotificationKind.Held)
+                        await db.AgentTaskLandRequests.Where(r => r.Id == note.RequestId).ExecuteUpdateAsync(s => s
+                            .SetProperty(r => r.IsPending, true).SetProperty(r => r.State, LandRequestState.Held));
                     await db.SaveChangesAsync();
                 }
 
