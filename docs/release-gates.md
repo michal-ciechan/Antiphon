@@ -156,7 +156,10 @@ same-account writers are outside a diagnostic reader's authority.
 `state` contains recorded identity, phase and timestamps, nullable exits and actual
 boolean coverage/test/report flags. An early blank `sha` can use `expectedSha`.
 `lastActivityAt` is a recorded transition, **not a continuous heartbeat**; its age
-does not prove a hang or supply an ETA. `ownerObservation` distinguishes `alive`
+does not prove a hang or supply an ETA. The batch ETA is the one line from
+scripts/orchestration/watch-qual.ps1 when -TimingRoot is passed. This status reader
+does not walk a timing root, and lastActivityAt does not supply an ETA.
+`ownerObservation` distinguishes `alive`
 (matching PID and start), `absent` (definitive PID not found), `reused` (different
 start), and `unknown` (invalid identity or inaccessible probe). `alive` describes
 only the recorded owner, never the supervisor tree. An unrelated shared lock stays

@@ -6,6 +6,8 @@ Observe completed TRX failures, qualification completion and heartbeat stalls wi
 Writes only the caller-owned StateFile, which must be outside the observed run. Reuse it
 on re-arm. Parse errors remain eligible for retry. No process or lock operations.
 ASCII-only, Windows PowerShell 5.1 safe; -Once permits offline smoke checks.
+With -TimingRoot each poll prints the one read-only line from qualification-eta.ps1
+(CARD-1842); without it no ETA line is printed.
 #>
 [CmdletBinding()]
 param(
@@ -16,8 +18,11 @@ param(
     [ValidateRange(1, 29)][int]$MaxMinutes = 28,
     [ValidateRange(0, 300)][int]$MinFileAgeSeconds = 5,
     [ValidateRange(1, 60)][int]$HeartbeatStaleMinutes = 5,
+    [string]$TimingRoot,
     [switch]$Once)
 $ErrorActionPreference = 'Stop'
+$etaScript = $null
+if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { $etaScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'qualification-eta.ps1' }
 $seen = @{}
 if (Test-Path -LiteralPath $StateFile) {
     Get-Content -LiteralPath $StateFile | ForEach-Object { if ($_) { $seen[$_] = $true } }
@@ -61,6 +66,14 @@ do {
                 $seen[$file.FullName] = $true
             } catch { "TRX-PARSE-ERROR $($file.Name): $($_.Exception.Message)" }
         }
+    }
+    if ($etaScript) {
+        # One line per poll. The ETA script only reads the timing root.
+        try {
+            $etaLines = @(& $etaScript -TimingRoot $TimingRoot | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+            if ($etaLines.Count -ne 1) { throw ('expected one ETA line, got ' + $etaLines.Count) }
+            [string]$etaLines[0]
+        } catch { "ETA-ERROR $($_.Exception.Message)" }
     }
     if (Test-Path -LiteralPath (Join-Path $LogDir 'summary.json')) {
         "RUN-ENDED summary.json present in $LogDir"
