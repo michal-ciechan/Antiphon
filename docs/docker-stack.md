@@ -807,6 +807,41 @@ A hot reload works only for the desktop AppHost's `appsettings.Development.json`
 `Delegation__WorkspaceSlotRoles` environment variable shadows it. Confirm a rollback from the next task's
 `WorkspaceSlotDecision` event (`reason=roles_none`).
 
+### Per-slot worktree activation (CARD-1750)
+
+Turn the shipped flags on during the next rc rollout. Tracked default stays false:
+`docker-compose.server2-runner.yml` interpolates `${PhoneHome__WorkspaceSlots__Enabled:-false}`,
+and `Delegation:WorkspaceSlotsEnabled` defaults to false.
+
+Set `PhoneHome__WorkspaceSlots__Enabled=true` in `secrets/stack.temp.env` before
+`-Phase deploy-temp`. Set the same assignment in `secrets/stack.env` only after the temp
+slot proof and zero drain-old counters, immediately before `-Phase redeploy-old`.
+Each saved assignment is exactly `true` or `false`, once, LF. A bad value refuses
+`RunnerWorkspaceSlotsSettingInvalid` before a side effect.
+
+Restart the desktop production server once with `scripts/restart-apphost.ps1
+-ExpectedServerSha <sha>` after merging `WorkspaceSlotsEnabled=true` and
+`WorkspaceSlotRoles=none`. This remains the production restart until the CARD-1744 window.
+Do not use restart-linux-server.ps1 for this activation until that window is recorded.
+Change roles only in the ignored server `appsettings.Development.json` (or user secrets id
+`antiphon-server` for the restart-bound flag). Never set `Delegation__WorkspaceSlotRoles`.
+
+Then set `WorkspaceSlotRoles=Plan`. Run the slot proof on server2-temp.
+Then set `Investigate,TestDesign,Docs`. Mutation is never listed.
+SourceLanding never leases. The gate-2 Custom canary is a legacy mirror while roles are none.
+
+Run `-Phase drain-old` only after that temp proof. After standing is recreated, run the
+slot proof on standing server2 before `WorkspaceSlotRoles=*`.
+
+A warm reset keeps native build output. Enabling the flags does no default cold reset.
+`SessionRunner__BuildSlots__MaxConcurrent` stays `4`. A slot lease, reset, re-home or
+overflow does not take a build slot.
+
+Rollback is roles none while leases drain, then both flags false.
+`retire-temp` stops on `RecycleUnpublishedWork` and on `RecycleWorktreeDirty`.
+`RecycleGitAuditUnknown reason=registry-missing` is operator-only.
+Do not force a failing-slot recycle. A natural failure must re-home that slot.
+
 ### Runner worktree retention (CARD-1677)
 
 The server job `antiphon:runner-worktree-retention` retires the `/work/worktrees/task-<8hex>` mirrors of
