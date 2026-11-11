@@ -227,6 +227,10 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
         if (@($obj.projectDispositions | Where-Object project -ceq 'tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj').Count -gt 0) {
             $required += 'server-git'
         }
+        # CARD-1829. Once the mirrored Resilience test project is declared, rc must require it.
+        if (@($obj.projectDispositions | Where-Object project -ceq 'tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj').Count -gt 0) {
+            $required += 'resilience'
+        }
     }
     $missing = @($required | Where-Object { $suites -notcontains $_ })
     $unknown = @($suites | Where-Object { $required -notcontains $_ })
