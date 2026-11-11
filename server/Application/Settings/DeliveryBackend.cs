@@ -10,4 +10,6 @@ public enum DeliveryBackend
     InboxConhost = 0,
     ModernConPty = 1,
     HerdrPane = 2,
+    /// <summary>CARD-1224. Raised UnixPty receipt only. The unraised outcome stays <see cref="InboxConhost"/>.</summary>
+    UnixPty = 3,
 }

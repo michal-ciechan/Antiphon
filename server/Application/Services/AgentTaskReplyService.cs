@@ -497,8 +497,10 @@ public sealed partial class AgentTaskReplyService
                 // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
                 var blockedSession = await db.AgentSessions.AsNoTracking()
                     .SingleAsync(s => s.Id == blockedSessionId, ct);
+                var reported = await RunnerBoundDelivery.ReportedBackendAsync(
+                    scope.ServiceProvider.GetService<ISessionRunnerDirectory>(), blockedSession.RunnerId, ct);
                 var replyWire = FitBlockedReplyForTyping(task, replyEvent.Id, blockedBody,
-                    blockedSession, queue, out var replyApiOnly);
+                    blockedSession, queue, out var replyApiOnly, reported);
                 if (replyApiOnly)
                 {
                     db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Warning,
@@ -829,8 +831,10 @@ public sealed partial class AgentTaskReplyService
                     // (CARD-0084 S1) — a Grok session joins every line, so its refinement spills.
                     var boundSession = await db.AgentSessions.AsNoTracking()
                         .SingleAsync(s => s.Id == sessionId, ct);
+                    var reported = await RunnerBoundDelivery.ReportedBackendAsync(
+                        scope.ServiceProvider.GetService<ISessionRunnerDirectory>(), boundSession.RunnerId, ct);
                     var body = FitRefinementForTyping(task, inputEvent, now, boundSession,
-                        queue, out var refineApiOnly);
+                        queue, out var refineApiOnly, reported);
                     if (refineApiOnly)
                     {
                         db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Warning,
@@ -1089,12 +1093,12 @@ public sealed partial class AgentTaskReplyService
     /// </param>
     private string FitRefinementForTyping(
         AgentTask task, AgentTaskEvent inputEvent, DateTime now, AgentSession session,
-        SessionMessageQueueService queue, out bool apiOnly)
+        SessionMessageQueueService queue, out bool apiOnly, string? reportedPtyBackend = null)
     {
         apiOnly = false;
         var remote = !string.IsNullOrWhiteSpace(session.RunnerId);
         var ceilings = (remote
-            ? _settings.CeilingsFor(PtyBackend.InboxConhost, "runner-bound input")
+            ? RunnerBoundDelivery.ForRunner(_settings, reportedPtyBackend)
             : _ptyProfile?.Ceilings
                 ?? _settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(session.AgentKind);
@@ -1153,12 +1157,12 @@ public sealed partial class AgentTaskReplyService
 
     private string FitBlockedReplyForTyping(
         AgentTask task, Guid eventId, string body, AgentSession session,
-        SessionMessageQueueService queue, out bool apiOnly)
+        SessionMessageQueueService queue, out bool apiOnly, string? reportedPtyBackend = null)
     {
         apiOnly = false;
         if (string.IsNullOrWhiteSpace(session.RunnerId))
             return body; // The established local queue spill handles oversized desktop replies.
-        var ceilings = _settings.CeilingsFor(PtyBackend.InboxConhost, "runner-bound input")
+        var ceilings = RunnerBoundDelivery.ForRunner(_settings, reportedPtyBackend)
             .ForAgentKind(session.AgentKind);
         if (System.Text.Encoding.UTF8.GetByteCount(body) <= ceilings.SingleWriteMaxBytes)
             return body;

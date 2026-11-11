@@ -72,6 +72,7 @@ public sealed partial class SessionMessageQueueService
     private readonly CompletionNoteFlushQueue? _completionNotes;
     private readonly SessionStateStore? _states;
     private readonly LandDeliveryBoundary? _boundary;
+    private readonly ISessionRunnerDirectory? _runners;
 
     /// <summary>
     /// Test seam. Runs after the unlocked open-question read and before the
@@ -98,8 +99,10 @@ public sealed partial class SessionMessageQueueService
         RemoteSpillCourier? remoteSpills = null,
         CompletionNoteFlushQueue? completionNotes = null,
         SessionStateStore? states = null,
-        LandDeliveryBoundary? boundary = null)
+        LandDeliveryBoundary? boundary = null,
+        ISessionRunnerDirectory? runners = null)
     {
+        _runners = runners;
         _boundary = boundary;
         _states = states;
         _remoteSpills = remoteSpills;
@@ -292,8 +295,9 @@ public sealed partial class SessionMessageQueueService
         if (inputEvent is null || task is null || session is null)
             return false;
 
-        var limits = _delegationSettings.CeilingsFor(
-            PtyBackend.InboxConhost, "runner-bound input").ForAgentKind(session.AgentKind);
+        var reported = await RunnerBoundDelivery.ReportedBackendAsync(_runners, session.RunnerId, ct);
+        var limits = RunnerBoundDelivery.ForRunner(_delegationSettings, reported)
+            .ForAgentKind(session.AgentKind);
         var pointer = DelegationReportFormatter.BuildTaskInputPointer(task, eventId, null,
             inputEvent.InputBody!.Length, session.AgentKind, limits.SingleWriteMaxBytes,
             reply: inputEvent.Type == AgentTaskEventType.Replied);

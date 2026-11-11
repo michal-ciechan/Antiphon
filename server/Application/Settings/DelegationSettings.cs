@@ -261,6 +261,24 @@ public sealed class DelegationSettings
     /// </summary>
     public int ModernPtySingleWriteMaxBytes { get; set; } = 86_400;
 
+    /// <summary>CARD-1224 measurement id appended to every <see cref="PtyBackend.UnixPty"/> reason.</summary>
+    public const string UnixPtyMeasurementId = "card-1224-unixpty";
+
+    /// <summary>
+    /// <see cref="BriefInlineMaxBytes"/> copied from the committed fake-agent receipt
+    /// <c>card-1224-unixpty</c> (markers survived; single write 86 400, brief min(paced, single/2)).
+    /// </summary>
+    public int UnixPtyBriefInlineMaxBytes { get; set; } = 43_200;
+
+    /// <summary><see cref="ReplyInlineMaxChars"/> on the Unix arm: 14 400 = 43 200 / 3.</summary>
+    public int UnixPtyReplyInlineMaxChars { get; set; } = 14_400;
+
+    /// <summary>
+    /// Oversize tripwire on the Unix arm: 86 400 bytes, the largest whole single write on the
+    /// fake-agent ladder. A body past it is still sent and raises OversizedTerminalDelivery.
+    /// </summary>
+    public int UnixPtySingleWriteMaxBytes { get; set; } = 86_400;
+
     // ── Herdr pane.send_text ceilings (CARD-0161) ───────────────────────────────────────────────
     //
     // Separate knobs from modern because they are separate measurements — a herdr upgrade
@@ -302,10 +320,22 @@ public sealed class DelegationSettings
         PtyBackend.ModernConPty => new PtyDeliveryCeilings(
             DeliveryBackend.ModernConPty, ModernPtyBriefInlineMaxBytes, ModernPtyReplyInlineMaxChars,
             ModernPtySingleWriteMaxBytes, reason),
+        PtyBackend.UnixPty => new PtyDeliveryCeilings(
+            DeliveryBackend.UnixPty, UnixPtyBriefInlineMaxBytes, UnixPtyReplyInlineMaxChars,
+            UnixPtySingleWriteMaxBytes, UnixReason(reason)),
         _ => new PtyDeliveryCeilings(
             DeliveryBackend.InboxConhost, BriefInlineMaxBytes, ReplyInlineMaxChars,
             PtySingleChunkBytes, reason),
     };
+
+    private static string UnixReason(string reason)
+    {
+        if (string.IsNullOrEmpty(reason))
+            return UnixPtyMeasurementId;
+        if (reason.Contains(UnixPtyMeasurementId, StringComparison.Ordinal))
+            return reason;
+        return reason + " " + UnixPtyMeasurementId;
+    }
 
     /// <summary>
     /// A DIFFERENT TRANSPORT ENTIRELY, so none of the ceilings above apply: instruction bundles

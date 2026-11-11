@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -181,8 +182,9 @@ public sealed partial class SessionMessageQueueService
         DispatchBriefEnsureRequest request,
         CancellationToken ct)
     {
+        var reported = await RunnerBoundDelivery.ReportedBackendAsync(_runners, session.RunnerId, ct);
         var ceilings = AgentTaskDispatcher.CeilingsForBrief(
-            _ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings);
+            _ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings, reported);
         var fitted = AgentTaskDispatcher.FitBriefForTyping(
             task,
             _delegationSettings,

@@ -1149,8 +1149,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             return (false, false);
         if (task.DispatchedAt is not DateTime dispatchedAt)
         {
+            var reported = await RunnerBoundDelivery.ReportedBackendAsync(_directory, session.RunnerId, ct);
             var brief = AgentTaskDispatcher.FitBriefForTyping(task, _delegationSettings,
-                AgentTaskDispatcher.CeilingsForBrief(_ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings),
+                AgentTaskDispatcher.CeilingsForBrief(
+                    _ptyProfile?.Ceilings, session.RunnerCwd, _delegationSettings, reported),
                 _logger, session.AgentKind, runnerCwd: session.RunnerCwd,
                 stageRemoteSpill: string.IsNullOrWhiteSpace(session.RunnerCwd)
                     ? null

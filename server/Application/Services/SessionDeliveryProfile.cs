@@ -25,6 +25,7 @@ public sealed class SessionDeliveryProfile
     private readonly ISessionRunnerClient _runner;
     private readonly TimeProvider _time;
     private readonly ILogger<SessionDeliveryProfile> _logger;
+    private readonly ISessionRunnerDirectory? _runners;
 
     private readonly ConcurrentDictionary<Guid, (SessionBackend Backend, string? RunnerId, AgentKind Kind)> _snapshotCache = new();
     private readonly object _capabilityGate = new();
@@ -37,13 +38,15 @@ public sealed class SessionDeliveryProfile
         IOptions<DelegationSettings> settings,
         ISessionRunnerClient runner,
         TimeProvider time,
-        ILogger<SessionDeliveryProfile> logger)
+        ILogger<SessionDeliveryProfile> logger,
+        ISessionRunnerDirectory? runners = null)
     {
         _ptyProfile = ptyProfile;
         _settings = settings.Value;
         _runner = runner;
         _time = time;
         _logger = logger;
+        _runners = runners;
     }
 
     /// <summary>
@@ -57,15 +60,12 @@ public sealed class SessionDeliveryProfile
         var snapshot = await ResolveSnapshotAsync(db, sessionId, ct);
         if (!string.IsNullOrWhiteSpace(snapshot.RunnerId))
         {
-            // CARD-0490 / CARD-0649. Phone-home never borrows local ModernConPty evidence: the
-            // desktop's 43 KB ceiling is not a measurement of this pty, so the single-write
-            // stays the inbox 1 KB. The join-safe narrowing follows the SESSION's kind. Applying
-            // Grok's brief-inline 0 to every runner, including Claude, was why a Claude brief
-            // fitted on the desktop was then re-spilled here as a marker-less pointer.
-            return _settings.CeilingsFor(
-                    Antiphon.Agents.Pty.PtyBackend.InboxConhost,
-                    "phone-home delivery uses the inbox single-write ceiling; local ModernConPty is not evidence for this pty")
-                .ForAgentKind(snapshot.Kind);
+            // CARD-0490 / CARD-0649 / CARD-1224. Phone-home never borrows local ModernConPty
+            // evidence. A cached UnixPty report uses that arm; a missing directory, descriptor,
+            // or capabilities string stays on the inbox arm. The join-safe narrowing follows
+            // the session's kind.
+            var reported = await RunnerBoundDelivery.ReportedBackendAsync(_runners, snapshot.RunnerId, ct);
+            return RunnerBoundDelivery.ForRunner(_settings, reported).ForAgentKind(snapshot.Kind);
         }
 
         var backend = snapshot.Backend;
