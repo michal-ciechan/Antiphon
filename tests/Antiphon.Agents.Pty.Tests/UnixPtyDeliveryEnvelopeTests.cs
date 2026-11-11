@@ -219,9 +219,10 @@ public sealed class UnixPtyDeliveryEnvelopeTests
                 static text => text.Contains("SUBMITTED:", StringComparison.Ordinal),
                 TimeSpan.FromSeconds(60));
             var output = runner.SnapshotText();
-            var submits = CountSubmitted(output);
-            var whole = sawSubmit && submits == 1 && lines.All(line => output.Contains(line, StringComparison.Ordinal));
-            return new Arrival(whole, submits, PasteStartSeen(output), clock.ElapsedMilliseconds);
+            var payload = SubmittedPayloads(output).ToArray();
+            var whole = sawSubmit && payload.Length == 1
+                && lines.All(line => payload[0].Contains(line, StringComparison.Ordinal));
+            return new Arrival(whole, payload.Length, PasteStartSeen(output), clock.ElapsedMilliseconds);
         }
         finally
         {
