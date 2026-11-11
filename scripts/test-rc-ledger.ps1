@@ -322,6 +322,8 @@ switch ($Case) {
         Assert-Rejected 'unknown-contract' (Update-Once $json '"policyHash":"p"' '"policyHash":"p","extra":true')
         Assert-Rejected 'unknown-identity' (Update-Once $json '{"suite":"antiphon"' '{"extra":1,"suite":"antiphon"')
         Assert-Rejected 'unknown-chunk' (Update-Once $json '{"chunkId":' '{"extra":true,"chunkId":')
+        # CARD-1842: hostId is a v2 chunk field only; a v1 chunk that carries it stays invalid.
+        Assert-Rejected 'v1-chunk-host' (Update-Once $json '{"chunkId":' '{"hostId":"server2","chunkId":')
         $carried = New-Id 'passed' $same 'core' 'Runs'
         $carried.carriedFrom = [ordered]@{
             candidateId = 'cand-0'; runId = 'run-0'; candidateSha = ('2' * 40)
@@ -352,7 +354,7 @@ switch ($Case) {
         Assert-Rejected 'missing-duration' (Update-Once $json '"durationSeconds":1.25,' '')
         Assert-Rejected 'missing-outcome' (Update-Once $json '"outcome":"passed",' '')
         Assert-Rejected 'truncated' ($json.Substring(0, 40))
-        Assert-Rejected 'newer-format' ($json.Replace('antiphon-rc-ledger-v1', 'antiphon-rc-ledger-v2'))
+        Assert-Rejected 'newer-format' ($json.Replace('antiphon-rc-ledger-v1', 'antiphon-rc-ledger-v3'))
         Assert-Contract
     }
     'BomAndCrlfStillRead' {
