@@ -140,6 +140,25 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
             Results.Ok(await settlement.SweepAsync(request?.Apply ?? false, ct)));
 
+        // CARD-0747. Before /{id}. A bare POST is a dry run that writes nothing. Apply settles only open
+        // terminal notes at least olderThanDays old (default and minimum 7); a child task token cannot apply.
+        tasks.MapPost("/land-notifications/expire", async (
+            LandNoteExpirySweepRequest? request,
+            HttpContext http,
+            AgentTaskService service,
+            LandNoteExpirySweepService sweep,
+            CancellationToken ct) =>
+        {
+            var apply = request?.Apply ?? false;
+            if (apply)
+            {
+                var caller = await ResolveCallerAsync(http, service, ct);
+                if (caller.Task is not null)
+                    throw new ForbiddenException("A child task token cannot settle land notifications.", "caller_scope");
+            }
+            return Results.Ok(await sweep.SweepAsync(apply, request?.OlderThanDays, ct));
+        });
+
         // CARD-0459. Static residue routes before /{id}.
         tasks.MapPost("/worktree-residue/preview", async (
             WorktreeResiduePreviewRequest request,

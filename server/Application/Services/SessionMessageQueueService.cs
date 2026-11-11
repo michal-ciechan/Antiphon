@@ -1343,6 +1343,16 @@ public sealed partial class SessionMessageQueueService
             m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct) == true;
 
     /// <summary>
+    /// CARD-0747. <see cref="CancelPendingIfUntypedAsync(Guid, Guid, CancellationToken)"/> for the land
+    /// notification scan: with <paramref name="lockWait"/> it waits at most that long for the lock and
+    /// throws <see cref="SessionQueueBusyException"/>, as the scan's enqueue does (CARD-1705).
+    /// </summary>
+    public async Task<bool> CancelPendingIfUntypedAsync(Guid sessionId, Guid messageId, CancellationToken ct, TimeSpan? lockWait) =>
+        await CancelUnderLockAsync(
+            sessionId, messageId,
+            m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct, lockWait) == true;
+
+    /// <summary>
     /// CARD-0354: after boot successfully arms remote-control (or finds the bridge already live),
     /// drop leftover queued <c>/remote-control</c> rows. Health-watch enqueues that body WhenIdle
     /// as Ui origin; a kill/restart leaves the row on the persistent session, and delivering it
@@ -1461,11 +1471,17 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId,
         Guid messageId,
         Func<SessionQueuedMessage, bool> when,
-        CancellationToken ct)
+        CancellationToken ct,
+        TimeSpan? lockWait = null)
     {
         var canceled = false;
         var sem = GetLock(sessionId);
-        await sem.WaitAsync(ct);
+        if (lockWait is { } bound)
+        {
+            if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+        }
+        else
+            await sem.WaitAsync(ct);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();

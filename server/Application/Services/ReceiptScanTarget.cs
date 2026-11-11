@@ -32,4 +32,22 @@ internal static class ReceiptScanTarget
         if (row.Body.Contains(TypedBodySpill.PointerHeadline, StringComparison.Ordinal)) return false;
         return string.Equals(expectedText, note.Body, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// CARD-0747. A TaskCompletion's keyed row that a standing agent's fresh restart carried to the
+    /// successor session (<c>AgentControlService</c> moves Pending rows) and that was typed there.
+    /// Its identity, delivery generation and receipt belong to that session; the note keeps its
+    /// parent. Needs the row keyed to this note with the note's digest, and one typed attempt with
+    /// a recorded generation. Pinned by <c>C0747_Carried_completion_confirms_on_the_session_it_was_typed_to</c>.
+    /// </summary>
+    public static bool FollowsCarriedCompletion(AgentTaskLandNotification note, SessionQueuedMessage row)
+    {
+        if (note.Kind != LandNotificationKind.TaskCompletion || note.IsLegacy) return false;
+        if (note.ParentSessionId is not Guid parent || parent == Guid.Empty) return false;
+        if (row.AgentSessionId == Guid.Empty || row.AgentSessionId == parent) return false;
+        if (row.SourceLandNotificationId != note.Id) return false;
+        if (!string.Equals(row.ContentDigest, note.ContentDigest, StringComparison.Ordinal)) return false;
+        if (row.Status != QueuedMessageStatus.Sent || row.DeliveryAttempts <= 0) return false;
+        return row.LastDeliveryGeneration is not null;
+    }
 }

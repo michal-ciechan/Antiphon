@@ -86,8 +86,10 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             await db.SaveChangesAsync(ct);
             return;
         }
-        if (note.IsLegacy && note.QueueMessageId is null) return; // Historical evidence never creates a new submission.
         var now = clock.GetUtcNow().UtcDateTime;
+        // CARD-0747: an aged terminal note settles here instead of being typed weeks late.
+        if (await ExpireOnReconcileAsync(note, now, busySessions, ct)) return;
+        if (note.IsLegacy && note.QueueMessageId is null) return; // Historical evidence never creates a new submission.
         if (note.QueueMessageId is null && note.NextAttemptAt > now) return;
         (LandReceiptScanCache.Context Context, LandReceiptScanCache.StateStamp? Before, LandReceiptScanCache.StateStamp? After,
             bool Matched, long? CompletedAt)? negative = null;
@@ -134,6 +136,12 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             }
             if (note.QueueMessageId is null)
             {
+                // CARD-0747: a Held snapshot taken before the request's terminal outcome is not news.
+                if (note.Kind == LandNotificationKind.Held && await RequestTerminalAsync(note, ct))
+                {
+                    await SettleHeldSupersededAsync(note, now, ct);
+                    return;
+                }
                 var destinationStatus = await LandNotificationReconcileQueries.SessionStatusById(db, session, ct);
                 if (destinationStatus is SessionStatus.Stopped or SessionStatus.Failed)
                 {
@@ -220,8 +228,13 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 await db.SaveChangesAsync(ct);
                 return;
             }
+            // CARD-0747: a completion row carried to a successor session was delivered there.
+            var carried = ReceiptScanTarget.FollowsCarriedCompletion(note, row)
+                ? await LandNotificationReconcileQueries.SessionScanById(db, row.AgentSessionId, ct)
+                : null;
+            var deliveredTo = carried is null ? session : row.AgentSessionId;
             if (TaskCompletionNotification.IsProfiled(note)
-                && (row.AgentSessionId != session || row.ContentDigest != note.ContentDigest
+                && (row.AgentSessionId != deliveredTo || row.ContentDigest != note.ContentDigest
                     || row.SourceLandNotificationId != note.Id))
             {
                 note.LastErrorCode = "completion_queue_identity_mismatch";
@@ -235,6 +248,17 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 note.State = LandNotificationState.Canceled;
                 note.LastErrorCode = "queue_canceled_unconfirmed";
                 await db.SaveChangesAsync(ct);
+                return;
+            }
+            if (note.Kind == LandNotificationKind.Held && row.Status == QueuedMessageStatus.Pending
+                && row.DeliveryAttempts == 0 && await RequestTerminalAsync(note, ct))
+            {
+                // CARD-0747: never typed and already superseded. A row the queue took first stays.
+                if (await messages.CancelPendingIfUntypedAsync(row.AgentSessionId, row.Id, ct,
+                        busySessions is null ? null : ScanQueueLockWait))
+                    await SettleHeldSupersededAsync(note, now, ct);
+                else
+                    db.ChangeTracker.Clear();
                 return;
             }
             if (row.DeliveryVerdict == DeliveryVerdict.Truncated)
@@ -319,7 +343,7 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     return;
                 }
                 if (note.Kind == LandNotificationKind.TaskCompletion && row.LastDeliveryGeneration is DateTime deliveredGeneration
-                    && await LandNotificationReconcileQueries.SessionStartedAtById(db, session, ct) != deliveredGeneration)
+                    && (carried?.StartedAt ?? await LandNotificationReconcileQueries.SessionStartedAtById(db, session, ct)) != deliveredGeneration)
                 {
                     note.LastErrorCode = "completion_delivery_generation_changed";
                     note.LastErrorAt = now;
@@ -338,6 +362,8 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     if (followed is not null)
                         (scanSession, scanStatus, scanStartedAt) = (row.AgentSessionId, followed.Status, followed.StartedAt);
                 }
+                else if (carried is not null)
+                    (scanSession, scanStatus, scanStartedAt) = (row.AgentSessionId, carried.Status, carried.StartedAt);
                 // CARD-1121: only a whitelisted shape bound to a terminal scanned session gets a scan
                 // context, and its proof names the session the scan reads (CARD-1157 D-4). Every
                 // other note keeps today's catch-up and scan.
@@ -451,6 +477,99 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
             note.NextAttemptAt = now.AddSeconds(RetrySeconds(note.EnqueueAttempts));
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <summary>CARD-0747. What <see cref="ExpireAgedAsync"/> did, or would do, with one note.</summary>
+    public enum ExpiryOutcome { NotAged, NotOpen, NonTerminal, TypedPending, Changed, WouldSettle, Settled }
+
+    /// <summary>
+    /// CARD-0747 operator sweep. Applies the aged-note rule to one note created at or before
+    /// <paramref name="cutoff"/>. Without <paramref name="apply"/> it only classifies and writes nothing.
+    /// </summary>
+    public async Task<(ExpiryOutcome Outcome, LandNotificationKind Kind, LandNotificationState State)> ExpireAgedAsync(
+        Guid id, DateTime cutoff, bool apply, CancellationToken ct)
+    {
+        var note = await LoadNoteAsync(id, ct);
+        var (kind, state) = (note.Kind, note.State);
+        var outcome = await ExpireCoreAsync(note, cutoff, clock.GetUtcNow().UtcDateTime, apply, null, ct);
+        return (outcome, kind, state);
+    }
+
+    private async Task<bool> ExpireOnReconcileAsync(AgentTaskLandNotification note, DateTime now, ISet<Guid>? busySessions,
+        CancellationToken ct)
+    {
+        var days = (supervision?.Value ?? new SupervisionSettings()).DeliveryVerification.LandNoteReceiptExpiryDays;
+        if (days <= 0) return false;
+        try
+        {
+            var outcome = await ExpireCoreAsync(note, now.AddDays(-days), now, apply: true,
+                busySessions is null ? null : ScanQueueLockWait, ct);
+            if (outcome == ExpiryOutcome.Changed) db.ChangeTracker.Clear();
+            return outcome is ExpiryOutcome.Settled or ExpiryOutcome.Changed;
+        }
+        catch (SessionQueueBusyException busy) when (busySessions is not null)
+        {
+            db.ChangeTracker.Clear();
+            busySessions.Add(busy.SessionId);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Settles an open terminal note whose outcome committed at or before <paramref name="cutoff"/>.
+    /// A never-typed Pending row is canceled under the queue lock first; a row typed once and still
+    /// Pending is the queue's to finish, so that note is left alone.
+    /// </summary>
+    private async Task<ExpiryOutcome> ExpireCoreAsync(AgentTaskLandNotification note, DateTime cutoff, DateTime now, bool apply,
+        TimeSpan? lockWait, CancellationToken ct)
+    {
+        if (note.CreatedAt > cutoff) return ExpiryOutcome.NotAged;
+        if (note.State is not (LandNotificationState.AwaitingReceipt or LandNotificationState.DestinationUnavailable))
+            return ExpiryOutcome.NotOpen;
+        if (!await IsTerminalAsync(note, ct)) return ExpiryOutcome.NonTerminal;
+        var row = note.QueueMessageId is Guid queued
+            ? await LandNotificationReconcileQueries.MessageOrDefaultById(db, queued, ct)
+            : await LandNotificationReconcileQueries.MessageBySourceNotification(db, note.Id, ct);
+        if (row is { Status: QueuedMessageStatus.Pending, DeliveryAttempts: > 0 }) return ExpiryOutcome.TypedPending;
+        if (!apply) return ExpiryOutcome.WouldSettle;
+        if (row is { Status: QueuedMessageStatus.Pending }
+            && !await messages.CancelPendingIfUntypedAsync(row.AgentSessionId, row.Id, ct, lockWait))
+            return ExpiryOutcome.Changed;
+        note.State = LandNotificationState.LegacyUnverified;
+        note.LastErrorCode = ReceiptExpiredCode;
+        note.LastErrorAt = now;
+        note.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync(ct);
+        scanCache?.Invalidate(note.Id);
+        return ExpiryOutcome.Settled;
+    }
+
+    /// <summary>
+    /// A land note is terminal once its request is no longer pending; a note without a request
+    /// (completion, delivery failure, dispatch base) once its task is Succeeded, Failed or Canceled.
+    /// A missing request or task, a provider wait and a legacy Check note never are.
+    /// </summary>
+    private async Task<bool> IsTerminalAsync(AgentTaskLandNotification note, CancellationToken ct)
+    {
+        if (note.Kind is LandNotificationKind.ProviderInputWait or LandNotificationKind.LegacyCheckNote) return false;
+        if (note.RequestId is not null) return await RequestTerminalAsync(note, ct);
+        var status = await db.AgentTasks.AsNoTracking().Where(t => t.Id == note.TaskId)
+            .Select(t => (AgentTaskStatus?)t.Status).SingleOrDefaultAsync(ct);
+        return status is AgentTaskStatus.Succeeded or AgentTaskStatus.Failed or AgentTaskStatus.Canceled;
+    }
+
+    private async Task<bool> RequestTerminalAsync(AgentTaskLandNotification note, CancellationToken ct) =>
+        note.RequestId is Guid requestId
+        && await db.AgentTaskLandRequests.AsNoTracking().Where(r => r.Id == requestId)
+            .Select(r => (bool?)r.IsPending).SingleOrDefaultAsync(ct) == false;
+
+    private async Task SettleHeldSupersededAsync(AgentTaskLandNotification note, DateTime now, CancellationToken ct)
+    {
+        note.State = LandNotificationState.NotRequired;
+        note.LastErrorCode = HeldSupersededCode;
+        note.LastErrorAt = now;
+        await db.SaveChangesAsync(ct);
+        scanCache?.Invalidate(note.Id);
     }
 
     /// <summary>
