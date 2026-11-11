@@ -565,6 +565,59 @@ public sealed class DockerStackDocumentationTests
         http.ShouldContain("After the CARD-1744 move", Case.Sensitive, "c1779-http-move");
     }
 
+    // CARD-1750. First-index order inside the activation section, plus the closed contain
+    // and forbid set. Absent heading fails here, before any constant could pass.
+    [Test]
+    public void Card_1750_slot_activation_order_is_documented()
+    {
+        const string heading = "### Per-slot worktree activation (CARD-1750)";
+        var slice = Section(Read("docs/docker-stack.md"), heading, " ### ");
+
+        void Before(string earlier, string later)
+        {
+            var earlierAt = slice.IndexOf(earlier, StringComparison.Ordinal);
+            var laterAt = slice.IndexOf(later, StringComparison.Ordinal);
+            earlierAt.ShouldBeGreaterThanOrEqualTo(0, earlier);
+            laterAt.ShouldBeGreaterThan(earlierAt, later);
+        }
+
+        Before("secrets/stack.temp.env", "secrets/stack.env");
+        Before("WorkspaceSlotRoles=none", "WorkspaceSlotRoles=Plan");
+        Before("WorkspaceSlotRoles=Plan", "slot proof on server2-temp");
+        Before("slot proof on server2-temp", "Investigate,TestDesign,Docs");
+        Before("Investigate,TestDesign,Docs", "-Phase drain-old");
+        Before("-Phase drain-old", "slot proof on standing server2");
+        Before("slot proof on standing server2", "WorkspaceSlotRoles=*");
+
+        foreach (var pin in new[]
+        {
+            "Mutation is never listed",
+            "SourceLanding never leases",
+            "RecycleUnpublishedWork",
+            "RecycleWorktreeDirty",
+            "RecycleGitAuditUnknown reason=registry-missing",
+            "restart-apphost.ps1",
+            "until the CARD-1744 window",
+            "Tracked default stays false",
+            "${PhoneHome__WorkspaceSlots__Enabled:-false}",
+            "no default cold reset",
+            "native build output",
+            "SessionRunner__BuildSlots__MaxConcurrent",
+            "does not take a build slot",
+            "Do not force a failing-slot recycle",
+        })
+            slice.ShouldContain(pin, Case.Sensitive, pin);
+
+        foreach (var gone in new[]
+        {
+            "tracked default becomes true",
+            "Mutation,",
+            ",Mutation",
+            "restart-linux-server.ps1 is the production restart for this activation",
+        })
+            slice.ShouldNotContain(gone, Case.Sensitive, gone);
+    }
+
     /// <summary>
     /// Prose wraps. Asserting a phrase against the raw bytes makes the guard fail the moment a
     /// paragraph is rewrapped, which says nothing about whether the doc still means what it must,
