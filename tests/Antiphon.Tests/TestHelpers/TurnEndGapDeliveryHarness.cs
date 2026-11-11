@@ -317,25 +317,52 @@ internal sealed class TurnEndGapDeliveryHarness : IAsyncDisposable
 
     public async Task JoinDeliveryAsync(Task operation)
     {
+        // The delivery path's own delays: the Enter gap (20 ms), the verification poll
+        // (PollIntervalMs) and, since CARD-1505, the composer double-read settle
+        // (PostEvidenceSettleMs, clamped as the queue clamps it) on interrupted-run recovery.
+        var verification = World.Services.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification;
+        TimeSpan[] delays =
+        [
+            TimeSpan.FromMilliseconds(20),
+            TimeSpan.FromMilliseconds(verification.PollIntervalMs),
+            TimeSpan.FromMilliseconds(Math.Clamp(verification.PostEvidenceSettleMs, 0, 3_000)),
+        ];
         var after = 0;
-        while (!operation.IsCompleted)
+        try
         {
-            using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
-            var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
-                && (e.DueTime == TimeSpan.FromMilliseconds(20)
-                    || e.DueTime == TimeSpan.FromMilliseconds(50))
-                && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
-            if (await Task.WhenAny(operation, timer) == operation)
+            while (!operation.IsCompleted)
             {
-                await pending.CancelAsync();
-                try { await timer; } catch (OperationCanceledException) { }
-                break;
+                using var pending = CancellationTokenSource.CreateLinkedTokenSource(Token);
+                var timer = Clock.WaitForTimerAsync(e => e.Action == "create"
+                    && delays.Contains(e.DueTime)
+                    && Clock.TimerStates[e.TimerId] != "dispose", after, pending.Token);
+                if (await Task.WhenAny(operation, timer) == operation)
+                {
+                    await pending.CancelAsync();
+                    try { await timer; } catch (OperationCanceledException) { }
+                    break;
+                }
+                var registered = await timer;
+                after = registered.Sequence;
+                Clock.AdvanceTo(registered.Deadline);
             }
-            var registered = await timer;
-            after = registered.Sequence;
-            Clock.AdvanceTo(registered.Deadline);
+            await operation.WaitAsync(Token);
         }
-        await operation.WaitAsync(Token);
+        catch (OperationCanceledException) when (Token.IsCancellationRequested && !operation.IsCompleted)
+        {
+            // A delivery that waits on a delay this pump does not advance hangs until the
+            // harness stop token. Cancellation disposes that delay's timer, so name the last
+            // timers created that this pump never advances, with their state now.
+            var states = Clock.TimerStates;
+            var unadvanced = Clock.Events
+                .Where(e => e.Sequence > after && e.Action == "create" && !delays.Contains(e.DueTime))
+                .TakeLast(8)
+                .Select(e => $"timer {e.TimerId} due {e.DueTime.TotalMilliseconds} ms (seq {e.Sequence}, now {states.GetValueOrDefault(e.TimerId)})");
+            throw new TimeoutException(
+                $"JoinDeliveryAsync: delivery did not complete before the harness stop token; pump advances "
+                + $"{string.Join(", ", delays.Select(d => $"{d.TotalMilliseconds} ms"))} after seq {after}; "
+                + $"unadvanced timers: {string.Join("; ", unadvanced)}");
+        }
     }
 
     public async Task AssertReceiptsAsync(List<AgentTaskLandNotification> before, List<SessionQueuedMessage> queued, int expectedAttempts = 1)
