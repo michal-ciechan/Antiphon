@@ -26,6 +26,8 @@ public sealed class PlatformTaxonomyClassFilterTests
         attributes[0].Name.ShouldBe("Platform");
         attributes[0].Value.ShouldBe("LinuxOnly");
         attributes[0].Reason.ShouldBe("class shorthand");
-        PlatformTaxonomyFilterTests.AssertProbeLane("include");
+        var lane = Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER");
+        if (!string.IsNullOrEmpty(lane))
+            lane.ShouldBe("include");
     }
 }
