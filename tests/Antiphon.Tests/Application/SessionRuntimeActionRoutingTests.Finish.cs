@@ -213,6 +213,8 @@ public partial class SessionRuntimeActionRoutingTests
     [Arguments("truncated")]
     public async Task C1259_missing_or_truncated_prompt_never_confirms(string variant)
     {
+        // The isolated queue-generation subcase runs first, so its own assertion is the first to fail.
+        if (variant == "old-generation") await VerifyStaleQueueGenerationLateConfirmAsync();
         await using var f = await RoutingFixture.CreateAsync();
         var h = f.H;
         var body = "C1259 exact requested body " + new string('x', 700);
@@ -273,7 +275,6 @@ public partial class SessionRuntimeActionRoutingTests
         await using var verify = h.CreateObserverContext();
         (await verify.SessionQueuedMessages.SingleAsync(m => m.Id == id)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         h.Adapter.Inputs.ShouldBeEmpty("a complete stored receipt confirms without retyping");
-        if (variant == "old-generation") await VerifyStaleQueueGenerationLateConfirmAsync();
     }
 
     // CARD-1304 D-4: only the queue attempt's LastDeliveryGeneration differs from the session.

@@ -508,8 +508,8 @@ public class SessionRuntimeActionTests
         await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "retained turn"), default);
         if (variant == "phase-failure")
         {
-            await VerifyEveryPhaseAcknowledgementAsync();
             await VerifyEveryPhaseEffectFailureAsync();
+            await VerifyEveryPhaseAcknowledgementAsync();
             receiver.BeforeReceive = null;
             await Actions(f).DrainPageAsync(f.SessionId, default);
             await using (var db = f.Db())
