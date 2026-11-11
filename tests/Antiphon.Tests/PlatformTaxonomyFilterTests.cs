@@ -25,7 +25,7 @@ public sealed class PlatformTaxonomyFilterTests
         Should.Throw<ArgumentException>(() => new HasLinuxSpecificsAttribute(""));
         Should.Throw<ArgumentException>(() => new HasWindowsSpecificsAttribute(""));
         Should.Throw<ArgumentException>(() => new LinuxOnlyAttribute(null!));
-        AssertSelectedByLane("include");
+        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("include");
     }
 
     [Test]
@@ -34,23 +34,7 @@ public sealed class PlatformTaxonomyFilterTests
         var method = typeof(PlatformTaxonomyFilterTests).GetMethod(nameof(Unannotated_sibling_is_excluded_from_the_linux_only_selection));
         method.ShouldNotBeNull();
         method!.GetCustomAttributes(typeof(PropertyAttribute), inherit: false).ShouldBeEmpty();
-        AssertSelectedByLane("exclude");
-    }
-
-    /// <summary>
-    /// The checkpoint lanes (CP-1 include, CP-2 exclude) set ANTIPHON_PLATFORM_FILTER, so a
-    /// method the wrong tree filter selected fails. An ordinary suite run (rc Full, nightly,
-    /// developer) sets no lane and has nothing to witness; any value it does carry must match.
-    /// </summary>
-    private static void AssertSelectedByLane(string expectedLane)
-    {
-        var lane = Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER");
-        if (string.IsNullOrEmpty(lane))
-        {
-            return;
-        }
-
-        lane.ShouldBe(expectedLane);
+        Environment.GetEnvironmentVariable("ANTIPHON_PLATFORM_FILTER").ShouldBe("exclude");
     }
 
     private static void AssertPlatform(object attribute, string value, string reason)
