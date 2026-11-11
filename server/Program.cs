@@ -507,6 +507,8 @@ try
     builder.Services.AddScoped<AgentTaskLandingState>();
     builder.Services.AddScoped<AgentTaskLandService>();
     builder.Services.AddScoped<AgentTaskLandNotificationService>();
+    // CARD-0747: operator sweep that settles aged terminal notes (dry run unless apply).
+    builder.Services.AddScoped<LandNoteExpirySweepService>();
     // CARD-1121: process-local negative receipt-scan proofs; a restart starts empty.
     builder.Services.AddSingleton<LandReceiptScanCache>();
     builder.Services.AddScoped<AgentTaskLandMonitorService>();

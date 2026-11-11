@@ -7,6 +7,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -232,6 +233,78 @@ public sealed class C0747LandReceiptReplayTests
                 break;
         }
         h.Bridge.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// case: the operator sweep over a mixed cohort. mutation: let the dry run apply, or drop the
+    /// minimum age. red: a dry run writes, a younger, non-terminal or already-typed note is settled,
+    /// or a six-day sweep is accepted. A second apply finds nothing left to settle.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    public async Task C0747_Sweep_dry_run_writes_nothing_and_apply_settles_only_aged_terminal_notes(CancellationToken ct)
+    {
+        await using var h = await LandReceiptScanHarness.CreateAsync(new() { Cache = false });
+        var untyped = await h.SeedLinkedNoteAsync();
+        AgentTaskLandNotification unlinked;
+        await using (var db = h.Fixture())
+        {
+            unlinked = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
+            unlinked.State = LandNotificationState.DestinationUnavailable;
+            unlinked.NextAttemptAt = DateTime.UtcNow.AddMinutes(5);
+            await db.SaveChangesAsync(ct);
+        }
+        var young = await h.SeedLinkedNoteAsync();
+        var pendingRequest = await h.SeedLinkedNoteAsync();
+        var typed = await h.SeedLinkedNoteAsync();
+        foreach (var note in new[] { untyped, unlinked, pendingRequest, typed })
+            await h.UpdateNoteAsync(note.Id, n => n.CreatedAt = DateTime.UtcNow.AddDays(-8));
+        await h.UpdateNoteAsync(young.Id, n => n.CreatedAt = DateTime.UtcNow.AddDays(-6));
+        await h.UpdateNoteAsync(pendingRequest.Id, n => n.Kind = LandNotificationKind.Held);
+        await using (var db = h.Fixture())
+            await db.AgentTaskLandRequests.Where(r => r.Id == pendingRequest.RequestId).ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.IsPending, true).SetProperty(r => r.State, LandRequestState.Held), ct);
+        await h.UpdateRowAsync(typed.QueueMessageId!.Value, r => r.DeliveryAttempts = 1);
+
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)));
+        services.AddScoped(sp => new AgentTaskLandNotificationService(sp.GetRequiredService<AppDbContext>(), h.Bridge.Queue,
+            new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System));
+        await using var provider = services.BuildServiceProvider();
+        await using var sweepDb = h.Fixture();
+        var sweep = new LandNoteExpirySweepService(sweepDb, provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        async Task<Dictionary<Guid, (LandNotificationState State, QueuedMessageStatus? Row)>> SnapshotAsync()
+        {
+            await using var db = h.Fixture();
+            var ids = new[] { untyped.Id, unlinked.Id, young.Id, pendingRequest.Id, typed.Id };
+            var notes = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => ids.Contains(n.Id)).ToListAsync(ct);
+            var result = new Dictionary<Guid, (LandNotificationState, QueuedMessageStatus?)>();
+            foreach (var n in notes)
+                result[n.Id] = (n.State, n.QueueMessageId is Guid q
+                    ? await db.SessionQueuedMessages.Where(m => m.Id == q).Select(m => (QueuedMessageStatus?)m.Status).SingleAsync(ct)
+                    : null);
+            return result;
+        }
+
+        await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ValidationException>(() => sweep.SweepAsync(true, 6, ct));
+        var before = await SnapshotAsync();
+        var dry = await sweep.SweepAsync(apply: false, olderThanDays: null, ct);
+        (await SnapshotAsync()).ShouldBe(before, "a dry run writes nothing");
+        (dry.Apply, dry.OlderThanDays, dry.Scanned, dry.Failures).ShouldBe((false, 7, 4, 0));
+        dry.Outcomes.ShouldBe(new Dictionary<string, int> { ["WouldSettle"] = 2, ["NonTerminal"] = 1, ["TypedPending"] = 1 }, ignoreOrder: true);
+        dry.EligibleByState.ShouldBe(new Dictionary<string, int> { ["AwaitingReceipt"] = 1, ["DestinationUnavailable"] = 1 }, ignoreOrder: true);
+
+        var applied = await sweep.SweepAsync(apply: true, olderThanDays: 7, ct);
+        applied.Outcomes.ShouldBe(new Dictionary<string, int> { ["Settled"] = 2, ["NonTerminal"] = 1, ["TypedPending"] = 1 }, ignoreOrder: true);
+        var after = await SnapshotAsync();
+        after[untyped.Id].ShouldBe((LandNotificationState.LegacyUnverified, (QueuedMessageStatus?)QueuedMessageStatus.Canceled));
+        after[unlinked.Id].ShouldBe((LandNotificationState.LegacyUnverified, (QueuedMessageStatus?)null));
+        after[young.Id].ShouldBe(before[young.Id]);
+        after[pendingRequest.Id].ShouldBe(before[pendingRequest.Id]);
+        after[typed.Id].ShouldBe(before[typed.Id]);
+
+        var again = await sweep.SweepAsync(apply: true, olderThanDays: 7, ct);
+        (again.Scanned, again.Outcomes.GetValueOrDefault("Settled")).ShouldBe((2, 0), "idempotent: only the two left-alone notes remain open");
     }
 
     /// <summary>

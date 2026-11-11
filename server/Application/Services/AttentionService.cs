@@ -1580,7 +1580,9 @@ public sealed partial class AttentionService
             .Where(i => i.MaterializedAt == null && i.ReplyTo != AgentTaskReplyTo.None)
             .ToListAsync(ct);
         var notes = await _db.AgentTaskLandNotifications.AsNoTracking().Where(n => !n.IsLegacy && n.ConfirmedAt == null
-            && n.State != LandNotificationState.NotRequired).ToListAsync(ct);
+            && n.State != LandNotificationState.NotRequired
+            // CARD-0747: an aged note settled LegacyUnverified is closed, not an unconfirmed receipt.
+            && n.State != LandNotificationState.LegacyUnverified).ToListAsync(ct);
         var noteIds = notes.Select(n => n.Id).ToHashSet();
         foreach (var note in notes)
         {

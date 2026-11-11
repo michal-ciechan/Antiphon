@@ -358,6 +358,17 @@ public sealed class DeliveryVerificationSettings
     public int PendingNoteAlertMinimumCount { get; set; } = 1;
 
     /// <summary>
+    /// CARD-0747. A land or completion note created at least this many days ago that is still
+    /// AwaitingReceipt or DestinationUnavailable, and whose land request or task is terminal,
+    /// settles LegacyUnverified (<c>receipt_expired_aged</c>) on its next reconcile. Its row is
+    /// canceled when it was never typed, so a caller that becomes deliverable late is not sent
+    /// weeks of stale notes. A row typed once and still Pending is left alone. Zero or negative
+    /// disables it. The operator sweep (<c>POST /api/agent-tasks/land-notifications/expire</c>)
+    /// applies the same rule on demand and never below seven days.
+    /// </summary>
+    public int LandNoteReceiptExpiryDays { get; set; } = 7;
+
+    /// <summary>
     /// CARD-0055 kill switch. With it off, a delivery is Delivered as soon as the output sequence
     /// advances after Enter — which any redraw satisfies, including the composer re-rendering the
     /// text it is STILL HOLDING. That is how a note sat unsubmitted for 104 minutes and how a
