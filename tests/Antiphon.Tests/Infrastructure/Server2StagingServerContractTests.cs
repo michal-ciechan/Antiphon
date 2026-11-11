@@ -184,6 +184,18 @@ public sealed class Server2StagingServerContractTests
             "docker-compose.server2-staging-server.yml");
     }
 
+    [Test]
+    public void Staging_bridge_stays_off_without_a_bootstrap_key()
+    {
+        // CARD-1752 S1. Staging never interpolates the bridge flag and never receives a bootstrap key.
+        var text = Compose();
+        var server = Service("staging-server");
+        server.ShouldContain("ChannelBridge__Enabled: \"false\"");
+        Env(server, "ChannelBridge__Enabled").ShouldBe("false");
+        text.ShouldNotContain("CHANNEL_BRIDGE_ENABLED");
+        text.ShouldNotContain("ANTIPHON_MESSAGING_");
+    }
+
     private static string Compose() => DockerStackDocuments.Read(ComposePath);
 
     private static string Script() => DockerStackDocuments.Read(ScriptPath);
