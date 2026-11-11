@@ -158,9 +158,9 @@
     },
     {
       "path": "antiphon.areas.json",
-      "classes": 349,
+      "classes": 350,
       "reason": "cap",
-      "owed": 324,
+      "owed": 325,
       "first": [
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDetailBlockedContextTests",
@@ -243,9 +243,9 @@
     },
     {
       "path": "server/Application/Core/DelegationReportFormatter.cs",
-      "classes": 169,
+      "classes": 170,
       "reason": "cap",
-      "owed": 144,
+      "owed": 145,
       "first": [
         "ClosingReportNudgeLifecycleTests",
         "RunnerTaskSettlementTests",
@@ -592,9 +592,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.BootStall.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -608,9 +608,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.CeilingHold.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -624,9 +624,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -640,9 +640,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -656,9 +656,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -672,9 +672,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.cs",
-      "classes": 126,
+      "classes": 127,
       "reason": "cap",
-      "owed": 101,
+      "owed": 102,
       "first": [
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
@@ -1279,18 +1279,18 @@
     },
     {
       "path": "server/Application/Settings/DelegationSettings.cs",
-      "classes": 351,
+      "classes": 352,
       "reason": "cap",
-      "owed": 326,
+      "owed": 327,
       "first": [
+        "DispatchHoldVisibilityTests",
         "InstructionBundleTests",
         "PostLandMutationWorktreeTests",
         "ProjectReadinessTests",
         "RoutingPinCandidateDispatchTests",
         "SpecialistExecutionIdentityTests",
         "TaskProgressPolicyTests",
-        "TaskProgressStallSweepTests",
-        "WorktreeDefaultCallerTests"
+        "TaskProgressStallSweepTests"
       ]
     },
     {
@@ -1391,9 +1391,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 417,
+      "classes": 418,
       "reason": "cap",
-      "owed": 392,
+      "owed": 393,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -1679,9 +1679,9 @@
     },
     {
       "path": "src/Antiphon.Agents.Pty/PtyAgentRunner.cs",
-      "classes": 61,
+      "classes": 62,
       "reason": "cap",
-      "owed": 36,
+      "owed": 37,
       "first": [
         "Card1619UnixExitTests",
         "Card1619WindowsExitTests",
@@ -11869,7 +11869,6 @@
         "DelegationDispatchRecoveryBoundaryTests",
         "DelegationLeaseSettingsTests",
         "DelegationReportFormatterTests",
-        "DispatchHoldVisibilityTests",
         "GrokDeliveryShapeTests",
         "MatrixDefaultComplexitySettingsTests",
         "PtyDeliveryCeilingsTests",
@@ -11878,7 +11877,8 @@
         "SettlementSyncDebtPolicyTests",
         "SettlementSyncRecoveryTests",
         "StandingSpecialistSeatTests",
-        "TaskDeadlinePolicyTests"
+        "TaskDeadlinePolicyTests",
+        "UnixDeliveryCeilingTests"
       ]
     },
     {
@@ -12164,6 +12164,12 @@
         "SessionRuntimeActionTests",
         "SessionStateWarmupTests",
         "WorktreeResidueCandidateRowTests"
+      ]
+    },
+    {
+      "path": "server/Application/Settings/RunnerBoundDelivery.cs",
+      "classes": [
+        "UnixDeliveryCeilingTests"
       ]
     },
     {
@@ -16237,7 +16243,8 @@
         "PtyBracketedPasteContractTests",
         "PtyInputEncodingTests",
         "PtyLargeWriteTests",
-        "TurnEndGapRestartDeliveryTests"
+        "TurnEndGapRestartDeliveryTests",
+        "UnixPtyDeliveryEnvelopeTests"
       ]
     },
     {
@@ -22022,12 +22029,6 @@
       "classes": [
         "ProcessSpawnLimitTests",
         "TestDbFixtureLazyInitializationTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Application/CheckCompactionReceiptTests.cs",
-      "classes": [
-        "InterimVerificationReadinessTests"
       ]
     },
     {
