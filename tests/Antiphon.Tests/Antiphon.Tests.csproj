@@ -141,8 +141,11 @@
   <!-- Copies each helper from its producer's own output; artifacts and relative OutputPath builds
        give every project its own output. One absolute OutputPath (the checkpoint tool) makes the
        producer's output this OutDir, and copying it nested every earlier helper folder into the
-       next (CARD-1238, 38 GB), so the helper is built into its folder instead.
-       Guard: TestHelpers/BuildOutputNestingTests. -->
+       next (CARD-1238, 38 GB), so the helper is built into its folder instead. Its ProjectReferences
+       are already built into that shared output: BuildProjectReferences=false only asks them for
+       their paths, and OutDir is removed from what they inherit so those paths are the shared ones.
+       Passing OutDir on compiled Antiphon.Server again into each probe folder (CARD-1841, 168 s).
+       Guards: TestHelpers/BuildOutputNestingTests, TestHelpers/StagedHelperBuildTests. -->
   <Target Name="CopyStagedHelpers" AfterTargets="Build" Outputs="%(StagedHelper.Identity)">
     <ItemGroup>
       <_StagedHelperTarget Remove="@(_StagedHelperTarget)" />
@@ -164,7 +167,7 @@
       <_StagedHelperShared Condition="'$([MSBuild]::NormalizeDirectory($(_StagedHelperDir)))' == '$([MSBuild]::NormalizeDirectory($(MSBuildProjectDirectory), $(OutDir)))'">true</_StagedHelperShared>
     </PropertyGroup>
     <MSBuild Condition="'$(_StagedHelperShared)' == 'true'" Projects="@(StagedHelper)" Targets="Build"
-             Properties="Configuration=$(Configuration);TargetFramework=$(_StagedHelperFramework);OutDir=$(_StagedHelperDest)" />
+             Properties="Configuration=$(Configuration);TargetFramework=$(_StagedHelperFramework);OutDir=$(_StagedHelperDest);BuildProjectReferences=false;_GlobalPropertiesToRemoveFromProjectReferences=%3BOutDir" />
     <ItemGroup Condition="'$(_StagedHelperShared)' != 'true'">
       <_StagedHelperFiles Include="$(_StagedHelperDir)$(_StagedHelperGlob)" />
     </ItemGroup>
