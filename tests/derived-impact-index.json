@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 9,
+      "classes": 10,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 6,
+      "classes": 7,
       "reason": "allowlist"
     },
     {
@@ -24034,6 +24034,12 @@
         "SessionMessageQueueDeliveryVerificationTests",
         "StandingBootQueueWitnessTests",
         "TranscriptBindingIncidentTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/BuildOutputNestingTests.cs",
+      "classes": [
+        "StagedHelperBuildTests"
       ]
     },
     {
