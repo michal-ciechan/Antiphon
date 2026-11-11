@@ -24,4 +24,11 @@ internal static class TestDbFixtureAssemblyHook
 
     [After(Assembly)]
     public static Task DisposeAsync() => TestDbFixture.DisposeAsync();
+
+    internal static async Task<IReadOnlyList<string>> DisposeAfterClassTeardownsAsync(
+        ClassTeardownTracker tracker, Func<Task> dispose, TimeSpan bound)
+    {
+        await dispose();
+        return [];
+    }
 }
