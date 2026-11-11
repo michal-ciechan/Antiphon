@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -432,6 +433,31 @@ public sealed class C1817RunnerRepositoryMaintenanceTests
             config.ShouldContain("hooksPath = " + (OperatingSystem.IsWindows() ? "NUL" : "/dev/null"));
         }
         finally { Delete(root); }
+    }
+
+    [Test]
+    public void C1817_readonly_loose_object_delete_removes_the_tree()
+    {
+        var root = Temp("ro");
+        try
+        {
+            var objects = Path.Combine(root, "repo", ".git", "objects", "4d");
+            Directory.CreateDirectory(objects);
+            var loose = Path.Combine(objects, "de070c607382e53f749f4b220511c93de63b");
+            File.WriteAllText(loose, "loose");
+            File.SetAttributes(loose, File.GetAttributes(loose) | FileAttributes.ReadOnly);
+            // Linux Directory.Delete ignores a read-only file. A read-only parent is the
+            // refusal this host can raise. Git for Windows sets the bit on the loose object
+            // and RemoveDirectoryRecursive throws UnauthorizedAccessException.
+            File.SetAttributes(objects, File.GetAttributes(objects) | FileAttributes.ReadOnly);
+            Delete(root);
+            Directory.Exists(root).ShouldBeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                ReadOnlyDirectory.Delete(root);
+        }
     }
 
     [Test]
