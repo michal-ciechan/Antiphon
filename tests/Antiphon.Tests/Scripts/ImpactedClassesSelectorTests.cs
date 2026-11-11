@@ -1394,4 +1394,119 @@ public sealed partial class ImpactedClassesSelectorTests
 
         return false;
     }
+
+    // CARD-1843. A class declared in a mirrored test project is filtered against that project, not
+    // Antiphon.Tests. The selection catalog's remainderProjects names each test project of its own.
+    private static readonly string[] MirrorProjects = ["tests/Antiphon.Resilience.Tests", "tests/Antiphon.Server.Git.Tests"];
+
+    [Test]
+    public async Task C1843_mirror_test_paths_select_their_own_project()
+    {
+        var root = Root();
+        var remainder = CatalogRemainderProjects(root);
+        foreach (var project in MirrorProjects)
+        {
+            var csproj = project + "/" + Path.GetFileName(project) + ".csproj";
+            File.Exists(Path.Combine(root, csproj)).ShouldBeTrue(csproj);
+            remainder.ShouldContain(csproj);
+        }
+
+        foreach (var merge in new[] { false, true })
+        {
+            var resilience = await ProjectRowsAsync(root, merge, "tests/Antiphon.Resilience.Tests/ResilienceCircuitTests.cs");
+            AssertProjectOf(resilience, "ResilienceCircuitTests", "tests/Antiphon.Resilience.Tests");
+            AssertProjectOf(resilience, "ResilienceAssemblyTests", "tests/Antiphon.Resilience.Tests");
+            AssertProjectOf(resilience, "StaleWorkingTranscriptWatchdogTests", "tests/Antiphon.Tests");
+
+            var git = await ProjectRowsAsync(root, merge, "src/Antiphon.Server.Git/ServerGitProcess.cs");
+            AssertProjectOf(git, "GitIndexLockTests", "tests/Antiphon.Server.Git.Tests");
+            AssertProjectOf(git, "ServerGitAssemblyTests", "tests/Antiphon.Server.Git.Tests");
+            AssertProjectOf(git, "ServerGitProcessTests", "tests/Antiphon.Tests");
+        }
+    }
+
+    // The map is the catalog's data, not a second hand list: dropping the entry moves the class back
+    // to Antiphon.Tests although its csproj is still there, and a catalog that does not parse is refused.
+    [Test]
+    public async Task C1843_project_map_reads_the_catalog_remainder_projects()
+    {
+        var root = Root();
+        var scratch = Path.Combine(Path.GetTempPath(), "impacted-classes-c1843-" + Guid.NewGuid().ToString("N"));
+        var tablePath = scratch + ".json";
+        var catalogPath = Path.Combine(scratch, "tests", "test-selection-policy.json");
+        try
+        {
+            WriteScratch(scratch, "tests/Antiphon.Tests/Scripts/AlphaTests.cs", "public sealed class AlphaTests\n{\n}\n");
+            WriteScratch(scratch, "tests/Antiphon.Mirror.Tests/Antiphon.Mirror.Tests.csproj", "<Project />\n");
+            WriteScratch(scratch, "tests/Antiphon.Mirror.Tests/MirrorTests.cs", "public sealed class MirrorTests\n{\n}\n");
+            await File.WriteAllTextAsync(tablePath,
+                "{\"schema\":1,\"kinds\":[{\"id\":\"mirror\",\"globs\":[\"src/Mirror/**\"],\"classes\":[\"AlphaTests\",\"MirrorTests\"]}]}");
+            const string mainSet = "{\"id\":\"main\",\"remainderProjects\":[\"tests/Antiphon.Tests/Antiphon.Tests.csproj\"]}";
+            const string mirrorSet = "{\"id\":\"mirror\",\"remainderProjects\":[\"tests/Antiphon.Mirror.Tests/Antiphon.Mirror.Tests.csproj\"]}";
+
+            await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + "," + mirrorSet + "]}");
+            var listed = await ScratchRowsAsync(root, scratch, tablePath);
+            AssertProjectOf(listed, "MirrorTests", "tests/Antiphon.Mirror.Tests");
+            AssertProjectOf(listed, "AlphaTests", "tests/Antiphon.Tests");
+
+            await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + "]}");
+            var unlisted = await ScratchRowsAsync(root, scratch, tablePath);
+            AssertProjectOf(unlisted, "MirrorTests", "tests/Antiphon.Tests");
+            AssertProjectOf(unlisted, "AlphaTests", "tests/Antiphon.Tests");
+
+            await File.WriteAllTextAsync(catalogPath, "{\"sets\":[" + mainSet + ",");
+            var refused = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Path", "src/Mirror/x.cs", "-Json");
+            refused.Exit.ShouldBe(1, refused.Text);
+            refused.Text.ShouldContain("test-selection-policy.json", Case.Sensitive);
+        }
+        finally
+        {
+            File.Delete(tablePath);
+            DeleteTree(scratch);
+        }
+    }
+
+    private static HashSet<string> CatalogRemainderProjects(string root)
+    {
+        using var catalog = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "tests", "test-selection-policy.json")));
+        return catalog.RootElement.GetProperty("sets").EnumerateArray()
+            .SelectMany(set => set.GetProperty("remainderProjects").EnumerateArray())
+            .Select(item => item.GetString() ?? "")
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static void WriteScratch(string scratch, string relative, string text)
+    {
+        var path = Path.Combine(scratch, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
+    private static async Task<List<(string Project, string Filter)>> ProjectRowsAsync(string root, bool merge, string path)
+    {
+        var ran = merge
+            ? await RunAsync(root, "-MergeSubset", "-Path", path, "-Json")
+            : await RunAsync(root, "-Path", path, "-Json");
+        ran.Exit.ShouldBe(0, path + " " + ran.Text);
+        using var json = JsonDocument.Parse(ran.Stdout);
+        return FilterRows(json.RootElement, "filters");
+    }
+
+    private static async Task<List<(string Project, string Filter)>> ScratchRowsAsync(string root, string scratch, string tablePath)
+    {
+        var ran = await RunAsync(root, "-Repo", scratch, "-Table", tablePath, "-Path", "src/Mirror/x.cs", "-Json");
+        ran.Exit.ShouldBe(0, ran.Text);
+        using var json = JsonDocument.Parse(ran.Stdout);
+        return FilterRows(json.RootElement, "filters");
+    }
+
+    // Exactly one row names the class, as a whole class or as a method row, and it runs in the project.
+    private static void AssertProjectOf(List<(string Project, string Filter)> rows, string className, string project)
+    {
+        var naming = rows.Where(row => row.Filter.Contains("(" + className + "*)", StringComparison.Ordinal)
+            || row.Filter.Contains("/" + className + "/", StringComparison.Ordinal)).ToList();
+        var shown = string.Join("; ", rows.Select(row => row.Project + " " + row.Filter));
+        naming.Count.ShouldBe(1, className + " rows: " + shown);
+        naming[0].Project.ShouldBe(project, className + " rows: " + shown);
+    }
 }
