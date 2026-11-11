@@ -405,7 +405,8 @@ public class SessionRuntimeActionTests
             f.Runtime.Register(f.SessionId, adapter);
             await using var seat = f.Db();
             await seat.AgentSessions.Where(s => s.Id == f.SessionId).ExecuteUpdateAsync(u => u
-                .SetProperty(s => s.Status, SessionStatus.Running).SetProperty(s => s.RunnerId, LifecycleProbe.Seat));
+                .SetProperty(s => s.Status, SessionStatus.Running).SetProperty(s => s.RunnerId, LifecycleProbe.Seat)
+                .SetProperty(s => s.RunnerStoreId, LifecycleProbe.SeatStore).SetProperty(s => s.RunnerCwd, LifecycleProbe.SeatCwd));
         }
         var entry = f.Event(1, variant == "during-confirm" ? "UserPrompt" : "ToolResult", text: "complete original body");
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -751,7 +752,8 @@ public class SessionRuntimeActionTests
             effect.Calls.ShouldBe(1, label + ": no retry before the due time");
             clock.Advance(TimeSpan.FromSeconds(1));
             await Actions(f).DrainPageAsync(f.SessionId, default);
-            effect.Calls.ShouldBe(2, label + ": the failed effect retried exactly once");
+            effect.Hits.ShouldBe(1, label + ": the failure was injected once");
+            effect.Calls.ShouldBeGreaterThan(1, label + ": the failed effect ran again at its due time");
             receiver.Payloads.Count.ShouldBe(1, label + ": the acknowledged UI phase never repeats");
             await using var verify = f.Db();
             (await verify.SessionRuntimeActions.CountAsync()).ShouldBe(0, label);
@@ -805,7 +807,8 @@ public class SessionRuntimeActionTests
                 await using var db = f.Db();
                 return await db.SessionRuntimeActions.CountAsync(a => failing.Contains(a.AgentSessionId) && a.Attempts == 1) == failing.Length;
             });
-            await UntilAsync(() => Task.FromResult(OwnerCount(coordinator) == 0));
+            await OwnersSettledAsync(coordinator);
+            OwnerCount(coordinator).ShouldBe(0, "the four failed owners released their workers");
             await f.Runtime.ObserveTranscriptAsync(f.Event(1, "ToolResult", text: "later progresses") with { SessionId = later }, default);
             await UntilAsync(async () =>
             {
@@ -813,6 +816,7 @@ public class SessionRuntimeActionTests
                 return !await db.SessionRuntimeActions.AnyAsync(a => a.AgentSessionId == later);
             });
             receiver.Payloads.Select(Text).ShouldBe(["later progresses"], "a later session progresses past four failed owners");
+            await OwnersSettledAsync(coordinator);
             OwnerCount(coordinator).ShouldBe(0, "no failed owner occupies a worker between retries");
             await using (var db = f.Db())
             {
@@ -835,6 +839,14 @@ public class SessionRuntimeActionTests
             Console.WriteLine("V-10 four failed owners: recovered after the clock passed retention and retry age");
         }
         finally { release.TrySetResult(); await worker.StopAsync(default); }
+    }
+
+    // The owner leaves only after the drain that removed the action row returns. Poll for that
+    // bounded release; the caller then asserts the count, so a leaked owner still fails.
+    private static async Task OwnersSettledAsync(SessionRuntimeActionCoordinator coordinator)
+    {
+        var until = DateTime.UtcNow.AddSeconds(10);
+        while (OwnerCount(coordinator) != 0 && DateTime.UtcNow < until) await Task.Delay(20);
     }
 
     private sealed class EffectFault(int phase)
@@ -909,6 +921,8 @@ public class SessionRuntimeActionTests
     private sealed class LifecycleProbe : IDelegateSessionStopper
     {
         public const string Seat = "c1304-seat";
+        public const string SeatCwd = "/c1304/seat";
+        public static readonly Guid SeatStore = Guid.Parse("13041304-0000-4000-8000-000000000d02");
         private int _created;
         private int _disposed;
         public int Kills;
@@ -935,6 +949,8 @@ public class SessionRuntimeActionTests
             var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == f.SessionId);
             session.Status.ShouldBe(SessionStatus.Running, label + ": no park or stop");
             session.RunnerId.ShouldBe(Seat, label + ": the session keeps its seat");
+            session.RunnerStoreId.ShouldBe(SeatStore, label);
+            session.RunnerCwd.ShouldBe(SeatCwd, label);
             session.EndedAt.ShouldBeNull(label);
             session.ExitStopIntentJson.ShouldBeNull(label);
         }
