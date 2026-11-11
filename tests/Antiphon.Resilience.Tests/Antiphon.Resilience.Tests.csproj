@@ -7,7 +7,6 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner>
-    <DefineConstants>$(DefineConstants);ANTIPHON_RESILIENCE_MIRROR</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.44.0" />

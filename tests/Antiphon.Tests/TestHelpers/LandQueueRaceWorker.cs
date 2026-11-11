@@ -14,7 +14,7 @@ internal static class LandQueueRaceWorker
     internal const string Marker = "ANTIPHON_C467_QUEUE_WORKER";
     private sealed record Settings(string Root, Guid Session, Guid Task, Guid Notification);
 
-    // Dispatched by TestDbFixture.InitializeAsync through TestWorkerModes (CARD-0646).
+    // Dispatched by TestDbFixtureAssemblyHook through TestWorkerModes (CARD-0646).
     internal static async Task RunAsync(string encoded)
     {
         var settings = JsonSerializer.Deserialize<Settings>(encoded)!;

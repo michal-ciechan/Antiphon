@@ -22,7 +22,7 @@ internal static class CheckCompactionCrashWorker
 {
     internal const string Marker = "ANTIPHON_C79_CRASH_WORKER";
 
-    // Dispatched by TestDbFixture.InitializeAsync through TestWorkerModes (CARD-0646).
+    // Dispatched by TestDbFixtureAssemblyHook through TestWorkerModes (CARD-0646).
     internal static async Task RunAsync(string encoded)
     {
         var request = JsonSerializer.Deserialize<CrashWorkerRequest>(encoded)
