@@ -82,6 +82,7 @@ public sealed class ChannelOutboundUnifiedCrashTests
         var failure = await Should.ThrowAsync<InvalidOperationException>(() => child.ReachAsync("capture-committed"));
         failure.Message.ShouldContain("probe stall capture-committed");
         failure.Message.ShouldContain("Canceled");
+        Console.WriteLine(failure.Message);
     }
 
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]

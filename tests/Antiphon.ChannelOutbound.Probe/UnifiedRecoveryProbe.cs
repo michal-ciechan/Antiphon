@@ -14,6 +14,7 @@ using Antiphon.Server.Infrastructure.Supervision;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -23,12 +24,19 @@ internal static class UnifiedRecoveryProbe
 {
     public static async Task<int> RunAsync(ProbeConfig config)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // The parent sizes its reach wait from this deadline, so a child stall ends here and
+        // reaches the parent as an exit with this stderr, never as a parent-side poll timeout.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(config.DeadlineSeconds));
         var ct = deadline.Token;
+        ProbeLog.Phase($"run-start deadline={config.DeadlineSeconds}s barrier={config.Barrier ?? "none"}");
+        using var expired = ct.Register(() => ProbeLog.Phase("deadline-expired"));
         var observedId = config.DeliveryId;
+        var crossed = new HashSet<string>();
         async Task BarrierAsync(string point, Guid id, CancellationToken token)
         {
             if (id != config.DeliveryId) observedId = id;
+            lock (crossed)
+                if (crossed.Add(point)) ProbeLog.Phase("point " + point);
             if (point == config.StallPoint)
             {
                 // A stall without a marker: the shape of run d88de419's unexplained reach timeout.
@@ -40,7 +48,7 @@ internal static class UnifiedRecoveryProbe
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         }
         var services = new ServiceCollection();
-        services.AddLogging();
+        services.AddLogging(logging => logging.AddProvider(new ProbeLog()));
         services.AddDbContext<AppDbContext>(o =>
         {
             o.UseNpgsql(config.ConnectionString);
@@ -93,21 +101,23 @@ internal static class UnifiedRecoveryProbe
             sp.GetRequiredService<AppDbContext>(), sp.GetRequiredService<OutboundConversionTaskRunner>(), files,
             sp.GetRequiredService<IAntiphonMessagingProducer>(),
             sp.GetRequiredService<IOptions<AntiphonMessagingOptions>>(), clock,
-            NullLogger<ChannelOutboundDeliveryPump>.Instance, settings,
+            sp.GetRequiredService<ILogger<ChannelOutboundDeliveryPump>>(), settings,
             sp.GetRequiredService<ChannelReplyPreparation>(),
             cursor: sp.GetRequiredService<ChannelOutboundWorkCursor>()) { ProbeBarrierAsync = BarrierAsync });
         await using var provider = services.BuildServiceProvider();
         using var host = new ChannelOutboundHostedService(provider.GetRequiredService<IServiceScopeFactory>(),
-            NullLogger<ChannelOutboundHostedService>.Instance, clock, settings);
+            provider.GetRequiredService<ILogger<ChannelOutboundHostedService>>(), clock, settings);
         var cycles = 0;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.CycleCompletedAsync = async token =>
         {
             if (config.FailPublishCommit && File.Exists(config.MarkerPath))
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
-            if (++cycles == 3) completed.TrySetResult();
+            ProbeLog.Phase("cycle " + ++cycles);
+            if (cycles == 3) completed.TrySetResult();
         };
         await host.StartAsync(ct);
+        ProbeLog.Phase("host-started");
         try { await completed.Task.WaitAsync(ct); }
         finally { await host.StopAsync(ct); }
         return 0;
