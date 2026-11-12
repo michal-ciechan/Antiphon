@@ -205,6 +205,33 @@ public class PtyHostLeakSweepTests
         PtyHostLeakSweep.IsOwnedHost(path, DateTime.UtcNow, true, [root]).ShouldBeTrue();
         PtyHostLeakSweep.IsOwnedHost(@"C:\logs\antiphon\session-runner\pty-hosts\bin\stamp\Antiphon.PtyHost.exe", DateTime.UtcNow.AddHours(-1), false, [root]).ShouldBeFalse();
     }
+
+    /// <summary>
+    /// Hang task d268c50c (run ae84478d, session-runner all-group-4 completed-but-hung on a live
+    /// Antiphon.PtyHost): the sweep recognised only the first seven prefixes, so a host left under
+    /// any later root (c649-prompt, c1653-*, c514-*, ...) survived the assembly and held the chunk.
+    /// </summary>
+    [Test]
+    public void A_host_under_any_registered_prefix_root_is_identified()
+    {
+        var roots = new List<string>();
+        try
+        {
+            foreach (var prefix in TestSessionLogRoot.KnownPrefixes)
+            {
+                var root = TestSessionLogRoot.Create(prefix);
+                roots.Add(root);
+                var path = Path.Combine(root, "pty-hosts", "bin", "stamp", "Antiphon.PtyHost.exe");
+                PtyHostLeakSweep.IsOwnedHost(path, DateTime.UtcNow, true, [root])
+                    .ShouldBeTrue($"a host under a registered {prefix} root is this run's and must be swept");
+            }
+        }
+        finally
+        {
+            foreach (var root in roots)
+                try { Directory.Delete(root, recursive: true); } catch (IOException) { /* Best effort. */ }
+        }
+    }
 }
 
 /// <summary>
