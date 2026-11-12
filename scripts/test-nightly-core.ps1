@@ -365,9 +365,40 @@ function Test-NCDocumentsMatchFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'canonicalJson' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+# Get-NightlyExpectedSkipSourceGaps (NightlyTestSources.cs) over a fixture tests/ tree, and its read cache: a
+# same-length rewrite of a settled (cached) file must be seen by the next scan.
+function Test-NCSourceGapsMatchFallback {
+    $fixture = Join-Path $root 'source-gaps'
+    $tests = Join-Path $fixture 'tests'
+    foreach ($dir in @('A', 'A/bin', 'A/obj', 'B/bin-x', 'B/Deep', 'C')) { [void][IO.Directory]::CreateDirectory((Join-Path $tests $dir)) }
+    $files = [ordered]@{
+        'A/One.cs' = "namespace N { public sealed class Alpha { public void Run() { } void Helper () { } } }"
+        'A/bin/Hidden.cs' = "class Hidden { void Run() { } }"
+        'A/obj/Gen.cs' = "class Generated { void Run() { } }"
+        'B/bin-x/Skip.cs' = "class Skipped { void Run() { } }"
+        'B/Deep/Two.cs' = "partial class Beta { async Task Go(){} } class AlphaBeta { void Other() { } }"
+        'C/Three.cs' = "// class Gamma mentioned only`nclass gamma { void Run() { } }"
+    }
+    foreach ($key in $files.Keys) { [IO.File]::WriteAllText((Join-Path $tests $key), $files[$key]) }
+    $entries = @(foreach ($test in @('N.Alpha.Run', 'N.Alpha.Helper', 'N.Alpha.Missing', 'N.ALPHA.run', 'N.Hidden.Run', 'N.Generated.Run',
+        'N.Skipped.Run', 'X.Beta.Go', 'Beta.Go', 'Beta', '', '.Go', 'N.AlphaBeta.Other', 'N.Gamma.Run', 'N.gamma.Run', 'N.Alpha.Run')) {
+        [pscustomobject]@{ platform = 'windows'; test = $test }
+    }) + @($null, [pscustomobject]@{ platform = 'linux'; test = 'N.Nope.Run' })
+    $r = Invoke-NCBothWays { @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $fixture -Platform 'windows' -Entries $entries) }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Compiled.Contains('N.Alpha.Missing') -and -not $r.Compiled.Contains('"N.Alpha.Run"')) 'sourceGaps' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    $path = Join-Path $tests 'C/Cache.cs'
+    [IO.File]::WriteAllText($path, 'class Cached { void Alpha() { } }')
+    [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddHours(-1))
+    $one = @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($tests, [string[]]@('N.Cached.Alpha')))
+    [IO.File]::WriteAllText($path, 'class Cached { void Omega() { } }')
+    $two = @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($tests, [string[]]@('N.Cached.Alpha')))
+    $three = [Antiphon.Nightly.NightlyTestSources]::ReadText($path)
+    Assert-NC ($one.Count -eq 0 -and $two.Count -eq 1 -and $three.Contains('Omega')) 'sourceTextCache' ('settled ' + $one.Count + ' rewritten ' + $two.Count)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; $expected = 18 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; $expected = 20 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

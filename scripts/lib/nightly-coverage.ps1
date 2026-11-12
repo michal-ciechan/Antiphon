@@ -1852,6 +1852,12 @@ function Get-NightlyExpectedSkipSourceGaps {
     }
     if ($wanted.Count -eq 0) { return @() }
     $testsRoot = Join-Path $RepoRoot 'tests'
+    # The compiled scan (NightlyTestSources.cs) returns the same gaps in the same order and shares one racy-safe
+    # read of each source file with the reason-gap walk; the PowerShell below is the fallback (5.1, no core).
+    if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($testsRoot)) {
+        $tests = [string[]]@(foreach ($entry in $wanted) { [string]$entry.test })
+        return @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($testsRoot, $tests))
+    }
     $byClass = @{}
     foreach ($entry in $wanted) {
         $test = [string]$entry.test

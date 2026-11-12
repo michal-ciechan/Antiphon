@@ -85,7 +85,7 @@ namespace Antiphon.Nightly
                     foreach (var sub in Directory.EnumerateDirectories(dir)) pending.Push(sub);
                     foreach (var file in Directory.EnumerateFiles(dir, "*.cs"))
                     {
-                        var text = System.IO.File.ReadAllText(file);
+                        var text = NightlyTestSources.ReadText(file);
                         foreach (Match match in ClassRx.Matches(text))
                         {
                             var className = match.Groups[1].Value;
@@ -309,7 +309,7 @@ namespace Antiphon.Nightly
         {
             if (!_parsed.Add(path)) return;
             if (!System.IO.File.Exists(path)) return;
-            var text = System.IO.File.ReadAllText(path);
+            var text = NightlyTestSources.ReadText(path);
             var mask = Mask(text);
             var n = mask.Length;
             var namespaces = new List<NamespaceSpan>();
