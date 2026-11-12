@@ -326,6 +326,32 @@ public class TestSessionTeardownTests
     }
 
     /// <summary>
+    /// Hang task d268c50c: the leak check fails a test whose host is still alive after its teardown,
+    /// and kills that host, so the failure is the assertion and not a chunk harness hang.
+    /// </summary>
+    [Test]
+    public async Task A_host_alive_after_teardown_fails_the_leak_check_and_is_killed()
+    {
+        using var host = Process.Start(OperatingSystem.IsWindows()
+            ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "PING.EXE"), ["-n", "60", "127.0.0.1"])
+            : new ProcessStartInfo("/bin/sleep", ["60"]))!;
+        try
+        {
+            ShouldAssertException? failure = null;
+            try { await TestSessionTeardown.AssertHostGoneAsync((host.Id, host.StartTime.ToUniversalTime()), TimeSpan.FromMilliseconds(300)); }
+            catch (ShouldAssertException caught) { failure = caught; }
+
+            failure.ShouldNotBeNull("a live host after teardown must fail the test");
+            failure.Message.ShouldContain($"pty-host pid {host.Id} outlived the test's teardown");
+            host.WaitForExit(5_000).ShouldBeTrue("the failed check kills the host it found");
+        }
+        finally
+        {
+            try { host.Kill(entireProcessTree: true); } catch { /* Already gone. */ }
+        }
+    }
+
+    /// <summary>
     /// CARD-1696: the pid the teardown was given can belong to another process by the time it kills
     /// (the host exited and the pid was reused). A process whose start time is not the host's is
     /// left alone; one within the 1 s read tolerance is still the host and is killed.
