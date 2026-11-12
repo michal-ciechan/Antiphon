@@ -86,4 +86,56 @@ public class RunnerRestartScriptCompatibilityTests
         }
         finally { cts.Cancel(); listener.Stop(); await server; lock (clients) foreach (var client in clients) client.Dispose(); }
     }
+
+    // Debug 4ca0643a (2026-11-12): the orchestrator ran `pwsh -Command "& '...\restart-session-runner.ps1'"`
+    // and stop-service failed with "The term 'Get-RunnerProcessIdentity' is not recognized". Under the call
+    // operator the dot-sourced helpers live in the script scope, and a GetNewClosure() block resolves commands
+    // from its own dynamic module and the global scope only; `-File` runs the script in the global scope and
+    // hid it. This drives the real platform from a call-operator entry. Process listing is a global
+    // Get-Process fake naming this child, whose path is never the Debug runner, so nothing is stopped.
+    [Test, Arguments("pwsh.exe"), Arguments("powershell.exe")]
+    public async Task Real_platform_closures_resolve_helpers_under_the_call_operator(string shell)
+    {
+        using var f = new RestartFixture();
+        var helper = RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "session-runner-restart-health.ps1"));
+        File.WriteAllText(Path.Combine(f.Root, "call-operator-entry.ps1"), $$"""
+            $ErrorActionPreference='Stop'
+            . '{{helper}}'
+            $p=New-RunnerRestartPlatform -Root $PSScriptRoot
+            New-Item -ItemType Directory -Force (Join-Path $PSScriptRoot 'logs') | Out-Null
+            Set-Content -LiteralPath (Join-Path (Join-Path $PSScriptRoot 'logs') 'session-runner.supervisor.pid') -Value $PID
+            $r=[ordered]@{ census=$null; stopService=$null; stopSupervisor=$null; verify=$null }
+            try { $r.census=(& $p.Census).supervisor.pid } catch { $r.census=$_.Exception.Message }
+            try { & $p.Control 'stop-service' $null; $r.stopService='ok' } catch { $r.stopService=$_.Exception.Message }
+            try { & $p.Control 'stop-supervisor' @{ pid=$PID; startTimeUtc='2000-01-01T00:00:00.0000000Z'; path='synthetic' }; $r.stopSupervisor='ok' } catch { $r.stopSupervisor=$_.Exception.Message }
+            $me=& $p.Process $PID
+            $me.path=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'src\Antiphon.SessionRunner\bin\Debug\net9.0\Antiphon.SessionRunner.exe'))
+            try { $r.verify=[bool](& $p.Verify $me) } catch { $r.verify=$_.Exception.Message }
+            $r
+            """);
+        var driver = $$"""
+            $ErrorActionPreference='Stop'
+            $global:C4caListed=0
+            function global:Get-Process {
+                [CmdletBinding()] param([Parameter(Position=0)][string[]]$Name, [int[]]$Id)
+                if ($PSBoundParameters.ContainsKey('Id')) { return Microsoft.PowerShell.Management\Get-Process -Id $Id -ErrorAction Stop }
+                $global:C4caListed++
+                if ($Name -contains 'Antiphon.SessionRunner') { return [pscustomobject]@{ Id = $PID } }
+            }
+            $r=& (Join-Path $PSScriptRoot 'call-operator-entry.ps1')
+            $r.listed=$global:C4caListed
+            $r.helperGlobal=[bool](Get-Command Get-RunnerProcessIdentity -ErrorAction SilentlyContinue)
+            $r.pid=$PID
+            $r | ConvertTo-Json -Compress
+            """;
+        var result = await f.Script(driver, shell);
+        result.Exit.ShouldBe(0, result.Output);
+        var json = JsonDocument.Parse(result.Output.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Last()).RootElement;
+        json.GetProperty("helperGlobal").GetBoolean().ShouldBeFalse("the witness must keep the helpers out of the global scope");
+        json.GetProperty("stopService").ToString().ShouldBe("ok", result.Output);
+        json.GetProperty("listed").GetInt32().ShouldBeGreaterThan(0, "stop-service reached the process listing");
+        json.GetProperty("stopSupervisor").ToString().ShouldBe("Process identity changed before stop", result.Output);
+        json.GetProperty("census").ToString().ShouldBe(json.GetProperty("pid").ToString(), result.Output);
+        json.GetProperty("verify").ToString().ShouldBe("True", result.Output);
+    }
 }
