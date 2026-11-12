@@ -137,6 +137,66 @@ public sealed class C0747QueueRowExpiryTests
     }
 
     /// <summary>
+    /// case: an eight-day-old untyped Pending Delegation row of a Succeeded task, no land note. After the
+    /// row is selected and the session queue lock is held, the source is retried to Queued, or an open
+    /// land note is linked to the row. mutation: cancel on Pending and untyped alone. red: the row is
+    /// Canceled even though it is no longer eligible.
+    /// </summary>
+    [Test]
+    [Timeout(180_000)]
+    [Arguments("retried-source")]
+    [Arguments("open-land-note")]
+    public async Task C0747_Eligibility_rechecked_under_the_lock_keeps_a_row_pending(string arm, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
+        var caller = await AddStoppedCallerAsync(h, ct);
+        var row = await SeedRowAsync(h, caller, QueuedMessageOrigin.Delegation, AgentTaskStatus.Succeeded, TimeSpan.FromDays(8), ct);
+        h.Queue.BeforeAgedExpiryRecheck = async (db, token) =>
+        {
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == row.SourceTaskId, token);
+            if (arm == "retried-source")
+            {
+                task.Status = AgentTaskStatus.Queued;
+                await db.SaveChangesAsync(token);
+                return;
+            }
+
+            var eventId = Guid.NewGuid();
+            db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = eventId, AgentTaskId = task.Id, AgentTask = task, Type = AgentTaskEventType.LandRefused,
+                Detail = "C0747 race open note", At = DateTime.UtcNow,
+            });
+            db.AgentTaskLandNotifications.Add(new AgentTaskLandNotification
+            {
+                Id = Guid.NewGuid(), TaskId = task.Id, SourceEventId = eventId, Kind = LandNotificationKind.Outcome,
+                ReplyTo = AgentTaskReplyTo.Session, ParentSessionId = caller, Body = "open land note published while expiry waited",
+                ContentDigest = "c0747-race", CreatedAt = DateTime.UtcNow, NextAttemptAt = DateTime.UtcNow.AddHours(1),
+                State = LandNotificationState.AwaitingReceipt, QueueMessageId = row.Id,
+            });
+            await db.SaveChangesAsync(token);
+        };
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        await new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, ct);
+
+        await using var observed = h.CreateObserverContext();
+        if (arm == "retried-source")
+            (await observed.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == row.SourceTaskId, ct)).Status
+                .ShouldBe(AgentTaskStatus.Queued, "the retry landed before the write");
+        else
+            (await observed.AgentTaskLandNotifications.AsNoTracking().CountAsync(n => n.QueueMessageId == row.Id
+                && n.State == LandNotificationState.AwaitingReceipt, ct))
+                .ShouldBe(1, "the open note landed before the write");
+        var saved = await RowAsync(h, row.Id, ct);
+        saved.Status.ShouldBe(QueuedMessageStatus.Pending, "eligibility is decided again under the queue lock");
+        saved.CanceledAt.ShouldBeNull();
+        saved.DeliveryAttempts.ShouldBe(0);
+    }
+
+    /// <summary>
     /// case: LandNoteReceiptExpiryDays = 0, an aged eligible row. mutation: drop the off-switch check from
     /// the hosted step. red: the row is canceled although expiry is off.
     /// </summary>
