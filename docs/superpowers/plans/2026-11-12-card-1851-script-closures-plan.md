@@ -41,13 +41,17 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-runner/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
+| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-redb/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-2 | all listed, 0 failed | 5 | 4 |
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
 
 Code runs CP-1 once at S1 for the expected red witness, then all three rows at S2 with
 `--expected-source-sha <committed HEAD>`. Inspect fresh TRX by class/method/arguments and
 validate receipt source/build provenance. Preserve all original CHECKPOINT lines.
+Use a fresh output name for each new run after red, because failed checkpoints retain their
+owned output and an existing build-source stamp must not be reused by a new build. The first
+run encountered the host's symlinked `pwsh`; prepend its real installation directory to the
+run's child PATH and set TEMP to the native temporary directory, without changing host PATH.
 Windows must run CP-1 at the reviewed source using both installed shells; Linux skipped
 Windows rows are pending obligations, never native green certificates.
 
