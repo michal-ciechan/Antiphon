@@ -167,7 +167,7 @@ internal static class C0747ExpireSeed
         db.AgentTasks.Add(new AgentTask
         {
             Id = id, RootTaskId = id, Title = "C0747 child", Goal = "a child task token is not the operator",
-            WorkingDirectory = "/tmp", Status = AgentTaskStatus.Running, CreatedAt = DateTime.UtcNow,
+            WorkingDirectory = "/tmp", Status = AgentTaskStatus.Dispatched, CreatedAt = DateTime.UtcNow,
             TokenHash = AgentTaskService.HashToken(token),
         });
         await db.SaveChangesAsync(ct);
