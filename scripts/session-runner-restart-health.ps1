@@ -68,7 +68,15 @@ public class AntiphonRestartTcpOwner {
     $identityOf = ${function:Get-RunnerProcessIdentity}
     $readPid = {
         param($name)
-        try { $v = [IO.File]::ReadAllText((Join-Path $logDir $name)).Trim(); if ($v -match '^\d+$') { & $identityOf ([int]$v) } } catch { }
+        # An unreadable or malformed PID is unknown ownership, not an absent supervisor.
+        # Let the restart fail before any controls; only an absent file means no PID.
+        try { $v = [IO.File]::ReadAllText((Join-Path $logDir $name)).Trim() }
+        catch [IO.FileNotFoundException] { return $null }
+        $processIdValue = 0
+        if ($v -notmatch '^\d+$' -or -not [int]::TryParse($v, [ref]$processIdValue) -or $processIdValue -le 0) {
+            throw "Invalid PID file: $name"
+        }
+        & $identityOf $processIdValue
     }.GetNewClosure()
     $stop = {
         param($identity)

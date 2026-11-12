@@ -41,7 +41,7 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-redb/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
+| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-green/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-2 | all listed, 0 failed | 5 | 4 |
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
 
@@ -58,8 +58,8 @@ Windows rows are pending obligations, never native green certificates.
 ### Cost
 
 Ordinary final checkpoint estimate: 9 minutes, plus the initial red CP-1 (3 minutes),
-authoring and manual checks. Mutation floor is provisional 6 minutes for the three exact
-method controls below plus discovery/reporting. No full assembly is justified by this scope.
+authoring and manual checks. Mutation floor is provisional 8 minutes for the eight
+variants below plus discovery/reporting. No full assembly is justified by this scope.
 
 ## Performance budget
 
@@ -86,11 +86,11 @@ Candidate pack: `docs/superpowers/mutations/2026-11-12-card-1851-script-closures
 - PC-1 / swallowed-read: restore catch-all PID read suppression. Exact method:
   `RunnerRestartScriptCompatibilityTests/Pid_read_errors_stop_restart_before_any_control`.
   Directory, exclusive lock, invalid, overflow and missing-parent arguments must detect it.
-- PC-2 / HTTP-name: change the captured HTTP helper back to a by-name call in each of
-  GetRegistration, GetSchedule and GetJobs (three independent variants).
+- PC-2 / registration-http-name, schedule-http-name, jobs-http-name, result-http-name:
+  change each captured HTTP helper call back to a by-name call (four variants).
   Exact method: `RunnerRestartScriptCompatibilityTests/Nightly_health_closures_resolve_helpers_under_the_call_operator`.
-- PC-3 / conversion-name and due-name: restore each by-name helper lookup in GetJobs
-  (two variants). Same nightly method must fail actual mapping or expected UTC assertions.
+- PC-3 / conversion-name, due-name, timezone-name: restore each by-name helper lookup
+  in GetJobs (three variants). Same nightly method must fail mapping or expected UTC assertions.
 
 Mutation owns method-scoped red/restore/fresh-build/green, missing-control discovery and
 binding to the actual published SHA. Ordinary regressions here are not mutant evidence.
