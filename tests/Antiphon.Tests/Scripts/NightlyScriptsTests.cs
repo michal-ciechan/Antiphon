@@ -17,6 +17,24 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyScriptsTests
 {
+    [Test]
+    public Task C1854_EolRepairHardening() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1854_EolRepairHardening",
+            nameof(C1854_EolRepairHardening), 11,
+            [
+                "C1854 real reused clone has three stale tracked files",
+                "C1854 missing decoded and C-quoted paths are discriminating inputs",
+                "C1854 mixed repair completes despite missing decoded path",
+                "C1854 valid literal path is rewritten to LF",
+                "C1854 skipped files retain their bytes",
+                "C1854 checkout receives only the existing unquoted path",
+                "C1854 mixed repair logs two skipped paths",
+                "C1854 skipped-only repair logs count without checkout",
+                "C1854 real non-ASCII paths repair when decoded correctly",
+                "C1854 clean repair remains silent",
+                "C1854 repaired clone has clean tracked status"
+            ]);
+
     /// <summary>rc ae84478d g126: the sync rewrites working files whose bytes predate an eol attribute.</summary>
     [Test]
     public Task C1313_ReusedCloneEolRepair() =>
