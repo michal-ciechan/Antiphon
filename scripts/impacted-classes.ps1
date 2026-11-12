@@ -516,9 +516,16 @@ function Test-Any([System.Collections.Generic.List[regex]]$Regexes, [string]$Rel
 $script:testProjectDirs = Get-TestProjectDirs
 
 # One walk: class declarations and downgrade-pattern files. bin/obj are build output.
+# The walk reads ~2,600 files (~42 MB). A file is a derive hit when ANY pattern matches, so the patterns are
+# joined into one alternation (each in its own non-capturing group): one pass per file instead of one per pattern,
+# same verdict. Both regexes are compiled; matching is unchanged.
 $deriveRegexes = New-Object System.Collections.Generic.List[regex]
-foreach ($pattern in $derivePatterns) { [void]$deriveRegexes.Add([regex]::new($pattern, 'CultureInvariant')) }
-$classDecl = [regex]::new('(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b')
+if ($derivePatterns.Count -gt 0) {
+    $deriveAlternatives = New-Object System.Collections.Generic.List[string]
+    foreach ($pattern in $derivePatterns) { [void]$deriveAlternatives.Add('(?:' + $pattern + ')') }
+    [void]$deriveRegexes.Add([regex]::new(($deriveAlternatives -join '|'), 'CultureInvariant, Compiled'))
+}
+$classDecl = [regex]::new('(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b', 'Compiled')
 $classWord = @{}
 $filesByClass = @{}
 $script:classesByFile = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
