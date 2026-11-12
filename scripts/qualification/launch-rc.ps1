@@ -10,7 +10,8 @@ equal the supervisor's ANTIPHON_QUALIFICATION_RUN_ID, the run id observe.ps1 cre
 (exit 3) while the state root's run.lock (-StateRoot, default C:\Antiphon\nightly) names a live
 owner, rather than queueing behind that run; a dead owner is left to nightly-run's stale-lock
 rule. This is a point-in-time check: a run that starts while this launch waits for a build slot
-still makes nightly-run refuse it (exit 3). Refuses unless the checkout HEAD equals expectedSha, then runs
+still makes nightly-run refuse it (exit 3). Refuses unless the checkout HEAD equals expectedSha and every
+tracked working file honours its eol attribute (git ls-files --eol; a reused checkout can keep stale CRLF), then runs
   pwsh -NoProfile -File <checkout>\scripts\build-slot.ps1 -Label <label> -- pwsh -NoProfile -File <checkout>\scripts\nightly-run.ps1 <nightlyArguments>
 and exits with its exit code. Copy it into the task directory with its record, or pass -Config.
 Ownership-marker, memory and leftover-testhost prechecks stay with the commissioning task.
@@ -57,6 +58,19 @@ if (Test-Path -LiteralPath $lockPath) {
 }
 $head = ('' + (& git -C $checkout rev-parse HEAD)).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $expected) { Write-Output "launch-rc: refused, checkout HEAD $head is not $expected"; exit 2 }
+# Run ae84478d g126: git checkout/reset never rewrites a working file whose blob is unchanged, so a
+# reused checkout keeps line endings from before an eol attribute existed while git status stays clean.
+# Tests read those working bytes. Refuse a tree whose files break their eol attribute.
+$eolRows = @(& git -C $checkout -c core.quotepath=off ls-files --eol 2>$null)
+if ($LASTEXITCODE -ne 0) { Write-Output "launch-rc: refused, git ls-files --eol failed in $checkout"; exit 2 }
+$eolBad = @($eolRows | Where-Object {
+        $_ -match '^\S+\s+w/(crlf|mixed)\s+attr/[^\t]*\beol=lf\b' -or $_ -match '^\S+\s+w/(lf|mixed)\s+attr/[^\t]*\beol=crlf\b'
+    } | ForEach-Object { ($_ -split "`t", 2)[1] })
+if ($eolBad.Count -gt 0) {
+    Write-Output ("launch-rc: refused, {0} working file(s) in {1} have line endings their eol attribute forbids (first: {2}); rewrite them with: git -C {1} checkout-index --force --all" -f `
+            $eolBad.Count, $checkout, ((@($eolBad | Select-Object -First 5)) -join ', '))
+    exit 2
+}
 $label = [string]$record.buildSlotLabel
 if ([string]::IsNullOrWhiteSpace($label)) { $label = 'rc-qualification' }
 $pwsh = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
