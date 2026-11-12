@@ -88,13 +88,51 @@ public class RunnerRestartScriptCompatibilityTests
     }
 
     [Test]
+    [Arguments("pwsh.exe", false), Arguments("powershell.exe", false)]
+    [Arguments("pwsh.exe", true), Arguments("powershell.exe", true)]
+    public async Task Missing_logs_is_an_absent_pid_without_creating_the_directory(string shell, bool callOperator)
+    {
+        using var f = new RestartFixture();
+        var helper = RestartFixture.Quote(Path.Combine(RestartFixture.Repo, "scripts", "session-runner-restart-health.ps1"));
+        var entry = $$"""
+            $ErrorActionPreference='Stop'
+            . '{{helper}}'
+            $logDir=Join-Path $PSScriptRoot 'logs'
+            if (Test-Path -LiteralPath $logDir) { throw 'fixture must start without logs' }
+            $p=New-RunnerRestartPlatform -Root $PSScriptRoot
+            $census=& $p.Census
+            if ($null -ne $census.supervisor -or $null -ne $census.wrapper) { throw 'missing logs must mean absent PIDs' }
+            if (Test-Path -LiteralPath $logDir) { throw 'PID census created logs' }
+            $controls=New-Object 'System.Collections.Generic.List[string]'
+            $p.Control={ param($op,$identity) $controls.Add($op) }.GetNewClosure()
+            $p.Probe={ param($ms) @{ status=200; result='fixture-healthy' } }
+            $p.Identity={ @{ pid=$PID } }
+            $p.Verify={ param($identity) $true }
+            $r=Invoke-RunnerRestart -Platform $p -TimeoutSec 1
+            @{ result=$r; controls=@($controls.ToArray()); logsExists=(Test-Path -LiteralPath $logDir) } | ConvertTo-Json -Depth 8 -Compress
+            """;
+        if (callOperator)
+            File.WriteAllText(Path.Combine(f.Root, "missing-logs-entry.ps1"), entry);
+        var run = await f.Script(callOperator ? "& (Join-Path $PSScriptRoot 'missing-logs-entry.ps1')" : entry, shell);
+        run.Exit.ShouldBe(0, run.Output);
+        var json = JsonDocument.Parse(run.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Last()).RootElement;
+        json.GetProperty("result").GetProperty("outcome").GetString().ShouldBe("healthy", run.Output);
+        json.GetProperty("controls").EnumerateArray().Select(x => x.GetString()).ToArray()
+            .ShouldBe(["write-state", "stop-service", "delete-pids", "start-task"], run.Output);
+        json.GetProperty("logsExists").GetBoolean().ShouldBeFalse(run.Output);
+    }
+
+    [Test]
     [Arguments("pwsh.exe", "directory"), Arguments("powershell.exe", "directory")]
     [Arguments("pwsh.exe", "locked"), Arguments("powershell.exe", "locked")]
     [Arguments("pwsh.exe", "invalid"), Arguments("powershell.exe", "invalid")]
     [Arguments("pwsh.exe", "overflow"), Arguments("powershell.exe", "overflow")]
     [Arguments("pwsh.exe", "zero"), Arguments("powershell.exe", "zero")]
     [Arguments("pwsh.exe", "wrapper-directory"), Arguments("powershell.exe", "wrapper-directory")]
-    [Arguments("pwsh.exe", "missing-parent"), Arguments("powershell.exe", "missing-parent")]
+    [Arguments("pwsh.exe", "hard-directory"), Arguments("powershell.exe", "hard-directory")]
+    [Arguments("pwsh.exe", "hard-invalid"), Arguments("powershell.exe", "hard-invalid")]
+    [Arguments("pwsh.exe", "wait-directory"), Arguments("powershell.exe", "wait-directory")]
+    [Arguments("pwsh.exe", "wait-invalid"), Arguments("powershell.exe", "wait-invalid")]
     [Arguments("pwsh.exe", "missing"), Arguments("powershell.exe", "missing")]
     [Arguments("pwsh.exe", "live"), Arguments("powershell.exe", "live")]
     public async Task Pid_read_errors_stop_restart_before_any_control(string shell, string state)
@@ -108,7 +146,7 @@ public class RunnerRestartScriptCompatibilityTests
             $null=New-Item -ItemType Directory -Path $logDir -Force
             $pidPath=Join-Path $logDir 'session-runner.supervisor.pid'
             $lock=$null
-            switch ('{{state}}') {
+            switch ('{{(state.StartsWith("hard-") || state.StartsWith("wait-") ? state.Split('-').Last() : state)}}') {
                 'directory' { $null=New-Item -ItemType Directory -Path $pidPath }
                 'locked' { [IO.File]::WriteAllText($pidPath, [string]$PID); $lock=[IO.File]::Open($pidPath, 'Open', 'ReadWrite', 'None') }
                 'invalid' { [IO.File]::WriteAllText($pidPath, 'not-a-pid') }
@@ -119,7 +157,6 @@ public class RunnerRestartScriptCompatibilityTests
                     $pidPath=Join-Path $logDir 'session-runner.service.pid'
                     $null=New-Item -ItemType Directory -Path $pidPath
                 }
-                'missing-parent' { Remove-Item -LiteralPath $logDir }
                 'live' { [IO.File]::WriteAllText($pidPath, [string]$PID) }
             }
             try {
@@ -129,7 +166,7 @@ public class RunnerRestartScriptCompatibilityTests
                 $p.Probe={ param($ms) @{ status=200; result='fixture-healthy' } }
                 $p.Identity={ @{ pid=$PID } }
                 $p.Verify={ param($identity) $true }
-                $r=Invoke-RunnerRestart -Platform $p -TimeoutSec 1
+                $r=Invoke-RunnerRestart -Platform $p -TimeoutSec 1 {{(state.StartsWith("hard-") ? "-Hard" : state.StartsWith("wait-") ? "-WaitOnly" : "")}}
                 @{ result=$r; controls=@($controls.ToArray()); pidExists=(Test-Path -LiteralPath $pidPath); helperGlobal=$false }
             } finally { if ($lock) { $lock.Dispose() } }
             """);
@@ -156,7 +193,7 @@ public class RunnerRestartScriptCompatibilityTests
             result.GetProperty("exitCode").GetInt32().ShouldBe(1, run.Output);
             result.GetProperty("error").GetString().ShouldNotBeNullOrWhiteSpace(run.Output);
             controls.ShouldBeEmpty(run.Output);
-            json.GetProperty("pidExists").GetBoolean().ShouldBe(state != "missing-parent", run.Output);
+            json.GetProperty("pidExists").GetBoolean().ShouldBeTrue(run.Output);
         }
     }
 
