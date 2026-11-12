@@ -21,6 +21,48 @@ if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyConti
 
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 
+# reset --hard rewrites only index entries whose blob or stat changed. A reused clone that
+# was checked out before an eol attribute landed keeps the old bytes for every unchanged
+# blob: rc run ae84478d reused a 2026-10-18 core.autocrlf=true clone, so 169 *.ps1 stayed
+# CRLF after *.ps1 eol=lf and C1313 refused the selector. Rewrite exactly the paths whose
+# working bytes differ from what the current attributes check out. checkout-index -f skips
+# a stat-clean file, so each stale file is removed first. -u refreshes its index stat.
+function Get-NightlyStaleEolPaths {
+    param([string]$LsFilesEolOutput)
+    $stale = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ([string]$LsFilesEolOutput -split "`n")) {
+        $line = $line.TrimEnd("`r")
+        if ($line -notmatch '^i/(\S*)\s+w/(\S*)\s+attr/([^\t]*)\t(.+)$') { continue }
+        $index = $Matches[1]; $work = $Matches[2]; $attr = ' ' + $Matches[3].Trim() + ' '; $path = $Matches[4]
+        # A quoted path carries C escapes; leave it rather than guess its name.
+        if ($path.StartsWith('"')) { continue }
+        if ($index -ne 'lf' -or $attr -match ' -text ') { continue }
+        $wantLf = $attr -match ' eol=lf '
+        $wantCrlf = $attr -match ' eol=crlf '
+        if (($wantLf -and ($work -eq 'crlf' -or $work -eq 'mixed')) -or
+            ($wantCrlf -and ($work -eq 'lf' -or $work -eq 'mixed'))) { $stale.Add($path) }
+    }
+    return ,$stale.ToArray()
+}
+
+function Repair-NightlyCheckoutLineEndings {
+    param([string]$CheckoutRoot)
+    $eol = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('-c', 'core.quotePath=false', 'ls-files', '--eol')
+    if ([int]$eol.ExitCode -ne 0) { throw ('git ls-files --eol failed with exit {0}' -f $eol.ExitCode) }
+    $stale = @(Get-NightlyStaleEolPaths -LsFilesEolOutput ([string]$eol.Output))
+    if ($stale.Count -eq 0) { return }
+    Write-Host ('nightly sync: rewriting {0} working file(s) whose line endings predate their eol attribute' -f $stale.Count)
+    for ($i = 0; $i -lt $stale.Count; $i += 100) {
+        $batch = @($stale[$i..([Math]::Min($i + 99, $stale.Count - 1))])
+        foreach ($path in $batch) {
+            $full = Join-Path $CheckoutRoot $path
+            if (Test-Path -LiteralPath $full -PathType Leaf) { Remove-Item -LiteralPath $full -Force }
+        }
+        $write = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments (@('checkout-index', '-f', '-u', '--') + $batch)
+        if ([int]$write.ExitCode -ne 0) { throw ('git checkout-index for stale line endings failed with exit {0}' -f $write.ExitCode) }
+    }
+}
+
 function New-NightlyRunDirectoryName {
     param([datetime]$Utc, [string]$RunId)
     $stamp = $Utc.ToUniversalTime().ToString('yyyy-MM-dd-HHmm')
@@ -538,6 +580,7 @@ function Invoke-AntiphonNightlyRunCore {
             if ([int]$fetch.ExitCode -ne 0) { throw ('git fetch origin {0} failed with exit {1}' -f $Ref, $fetch.ExitCode) }
             $reset = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('reset', '--hard', 'FETCH_HEAD')
             if ([int]$reset.ExitCode -ne 0) { throw ('git reset --hard FETCH_HEAD failed with exit {0}' -f $reset.ExitCode) }
+            Repair-NightlyCheckoutLineEndings -CheckoutRoot $CheckoutRoot
             # These untracked root markers authorize both the self-reexec and later runs.
             $clean = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('clean', '-fdx', '-e', '/.antiphon-nightly-owned', '-e', '/.antiphon-release-owned')
             if ([int]$clean.ExitCode -ne 0) { throw ('git clean -fdx failed with exit {0}' -f $clean.ExitCode) }
