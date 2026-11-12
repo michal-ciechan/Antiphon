@@ -76,15 +76,17 @@ public class RunnerSessionGenerationTests
         var payloadA = await ReadExitAsync(events, cts.Token);
         payloadA.AcceptedStartedAt.ShouldBe(generationA);
 
-        await runtime.StartAsync(new RunnerLaunchRequest(
+        var hostB = TestSessionTeardown.CaptureHost(await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
-            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
+            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token));
         runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
 
         runtime.SweepVanishedSessions(new StubProbe(false));
         var payloadB = await ReadExitAsync(events, cts.Token);
         payloadB.AcceptedStartedAt.ShouldBe(generationB);
         KillBestEffort(runtime.Get(sessionId).Pid);
+        // Hang task d268c50c: run ae84478d session-runner all-group-4 was held by this case's host B.
+        await TestSessionTeardown.AssertHostGoneAsync(hostB, TimeSpan.FromSeconds(5));
     }
 
     [Test]
