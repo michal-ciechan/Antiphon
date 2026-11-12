@@ -140,21 +140,25 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
             Results.Ok(await settlement.SweepAsync(request?.Apply ?? false, ct)));
 
-        // CARD-0747. Before /{id}. A bare POST is a dry run that writes nothing. Apply settles only open
-        // terminal notes at least olderThanDays old (default and minimum 7); a child task token cannot apply.
+        // CARD-0747. Before /{id}. A bare POST is a dry run that writes nothing and stays open. Apply settles only
+        // open terminal notes at least olderThanDays old (default and minimum 7). D-1: apply needs the operator
+        // credential (403 operator_token_required for anyone else, a task token included) and is refused 409
+        // land_note_expiry_disabled while LandNoteReceiptExpiryDays is 0, the reconcile's own off switch.
         tasks.MapPost("/land-notifications/expire", async (
             LandNoteExpirySweepRequest? request,
             HttpContext http,
-            AgentTaskService service,
+            IOptions<PhoneHomeRunnerSettings> operatorSettings,
+            IOptions<SupervisionSettings> supervision,
             LandNoteExpirySweepService sweep,
             CancellationToken ct) =>
         {
             var apply = request?.Apply ?? false;
             if (apply)
             {
-                var caller = await ResolveCallerAsync(http, service, ct);
-                if (caller.Task is not null)
-                    throw new ForbiddenException("A child task token cannot settle land notifications.", "caller_scope");
+                OperatorCredential.Require(http, operatorSettings.Value, "Applying the land-note expiry sweep requires the operator credential.");
+                if (supervision.Value.DeliveryVerification.LandNoteReceiptExpiryDays <= 0)
+                    throw new ConflictException("Land-note expiry is off (LandNoteReceiptExpiryDays is 0); apply settles nothing.",
+                        "land_note_expiry_disabled");
             }
             return Results.Ok(await sweep.SweepAsync(apply, request?.OlderThanDays, ct));
         });
