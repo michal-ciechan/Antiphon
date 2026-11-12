@@ -88,9 +88,15 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
                         services.AddSingleton(sp => new PtyDeliveryProfile(sp.GetRequiredService<IServiceScopeFactory>(),
                             NullLogger<PtyDeliveryProfile>.Instance, backendOverride: backend));
                         services.AddScoped<AgentTaskLandNotificationService>(); } });
-                // Unix PTYs retain the conservative ceiling; Windows selectors do not apply there.
+                // Off Windows every selector resolves to UnixPty. CARD-1224 measured that
+                // arm at 86_400 bytes and stopped the inbox fall-through. Windows still
+                // splits modern (86_400) from inbox (1_024). The outcome body stays inside
+                // LandNotificationPayload's own 1_024-byte envelope.
+                var expectedSingleWrite = OperatingSystem.IsWindows()
+                    ? (backend == "modern" ? 86_400 : 1_024)
+                    : 86_400;
                 (await receiver.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(default))
-                    .SingleWriteMaxBytes.ShouldBe(OperatingSystem.IsWindows() && backend == "modern" ? 86400 : 1024);
+                    .SingleWriteMaxBytes.ShouldBe(expectedSingleWrite);
                 producer.Messages = receiver.Queue;
                 await using var db = producer.CreateContext();
                 var task = await db.AgentTasks.SingleAsync(t => t.Id == producer.Fixture.TaskId);
