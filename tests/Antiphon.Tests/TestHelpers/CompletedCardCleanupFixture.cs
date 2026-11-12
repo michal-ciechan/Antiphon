@@ -338,8 +338,12 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     /// CARD-1230: AgentReportStore refuses a report root under the OS temp directory
     /// (docs/orchestration-loop.md, report storage), and this fixture keeps its repository, so its
     /// report root, inside the checkout. From a checkout there each admitted cleanup ends artifact_unpreserved.
+    /// The store falls back to a configured ReportStorageRoot, so a temp source with a persistent
+    /// configured root is admitted (CARD-0824 R-5; rc ae84478d g97).
     /// </summary>
-    internal static string? FixtureRootRefusal(string root, string? reportRoot, string temp) => TempCheckoutRefusal(root, temp);
+    internal static string? FixtureRootRefusal(string root, string? reportRoot, string temp) =>
+        TempCheckoutRefusal(root, temp) is { } refusal && (reportRoot is null || TempCheckoutRefusal(reportRoot, temp) is not null)
+            ? refusal : null;
 
     internal static string? TempCheckoutRefusal(string root, string temp)
     {
