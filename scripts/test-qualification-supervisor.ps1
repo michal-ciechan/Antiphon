@@ -87,6 +87,19 @@ function Invoke-Launch([string]$Name, $Record, [string]$BoundRunId) {
     } finally { $env:ANTIPHON_QUALIFICATION_RUN_ID = $previous }
     return [pscustomobject]@{ Code = $code; Text = $text }
 }
+$script:eolRepo = $null
+function Remove-EolFixture {
+    # The eol fixture is a git repository this harness created under its own GUID scratch root; that
+    # one directory is removed recursively, and nothing outside the scratch root.
+    $path = $script:eolRepo
+    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return }
+    $full = [IO.Path]::GetFullPath($path)
+    $prefix = [IO.Path]::GetFullPath($scratch).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $full) -cne 'eol-checkout') {
+        throw "eol fixture path outside the scratch root: $full"
+    }
+    Remove-Item -LiteralPath $full -Recurse -Force
+}
 function Invoke-Observe($Run) {
     $text = @(& $pwshPath -NoProfile -NonInteractive -File $observeScript -TaskRoot $Run.Task -StateRoot $Run.State 2>&1) -join "`n"
     $code = $LASTEXITCODE
@@ -382,7 +395,10 @@ try {
     # Run ae84478d g126: a reused checkout moved to the expected SHA kept a CRLF working copy of an
     # eol=lf script (git checkout never rewrites a file whose blob is unchanged). The launch must refuse
     # that tree before build-slot, and must launch once the working file honours its attribute.
-    $eolRepo = New-OwnedDirectory 'eol-checkout'
+    # A real git repository: the owned-path cleanup cannot remove it, so Remove-EolFixture does.
+    $script:eolRepo = Join-Path $scratch 'eol-checkout'
+    $eolRepo = $script:eolRepo
+    [void][IO.Directory]::CreateDirectory($eolRepo)
     $lfUtf8 = New-Object System.Text.UTF8Encoding $false
     [void][IO.Directory]::CreateDirectory((Join-Path $eolRepo 'scripts'))
     [IO.File]::WriteAllText((Join-Path $eolRepo '.gitattributes'), "*.ps1 text eol=lf`n", $lfUtf8)
@@ -402,6 +418,7 @@ try {
     Assert-C1667 ($eolSha -match '^[0-9a-f]{40}$' -and $crlf.Code -eq 2 -and $crlf.Text -match 'line endings' -and $crlf.Text -match 'scripts/selector\.ps1' -and
         $crlf.Text -notmatch 'fake build-slot' -and $lf.Code -eq 7 -and $lf.Text -match 'C1667 fake build-slot') `
         'launch-rc refuses a checkout whose working files break their eol attribute before build-slot' ($crlf.Text + ' | ' + $lf.Text)
+    Remove-EolFixture
 
     # Line-flushed log: every line is on disk when the call returns, and no handle stays open.
     $logDir = New-OwnedDirectory 'log'
@@ -524,7 +541,8 @@ try {
     $script:failed++
     Write-Host "FAIL C1667 harness error: $($_.Exception.Message) $($_.ScriptStackTrace)"
 } finally {
-    # Exact owned paths only; never recursive removal.
+    # Exact owned paths only; the one recursive removal is the guarded eol fixture repository.
+    try { Remove-EolFixture } catch { $script:failed++; Write-Host "FAIL C1667 eol fixture cleanup: $($_.Exception.Message)" }
     foreach ($path in $owned) { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force } }
     foreach ($dir in $ownedDirs) {
         foreach ($leaf in @('run.lock', 'last-run.json', 'supervisor-identity.json', 'supervisor-heartbeat.json', 'launch-child.json', 'own-last-run.json')) {
