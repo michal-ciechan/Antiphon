@@ -80,6 +80,31 @@ public sealed class DescendantLeakScopeTests
         }
     }
 
+    /// <summary>CARD-1853 A-4: C24 calls <see cref="DescendantLeakScope.AdoptOrKill"/> before its
+    /// try. A throwing adopt must kill the root; otherwise the worker outlives the test.</summary>
+    [Test]
+    public async Task A_throwing_adopt_kills_the_root(CancellationToken ct)
+    {
+        using var scope = DescendantLeakScope.Create();
+        using var root = Process.Start(Sleeper())!;
+        try
+        {
+            root.HasExited.ShouldBeFalse("the witness needs a live root");
+            var thrown = Should.Throw<InvalidOperationException>(() =>
+                scope.AdoptOrKill(root, _ => throw new InvalidOperationException("injected Adopt failure")));
+            thrown.Message.ShouldBe("injected Adopt failure");
+            var clock = Stopwatch.StartNew();
+            while (!root.HasExited && clock.Elapsed < TimeSpan.FromSeconds(2))
+                await Task.Delay(50, ct);
+            root.HasExited.ShouldBeTrue(
+                "a throwing Adopt must kill the root so C24 cannot leave the worker running");
+        }
+        finally
+        {
+            if (!root.HasExited) root.Kill(entireProcessTree: true);
+        }
+    }
+
     /// <summary>Starts a root that orphans one sleeper, waits for the root to exit, and returns
     /// the scope's live members. The root waits briefly before it spawns so Windows can adopt it.</summary>
     private static async Task<int[]> StartOrphanerAsync(DescendantLeakScope scope, CancellationToken ct)
