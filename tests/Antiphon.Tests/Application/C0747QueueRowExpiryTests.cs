@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -197,6 +198,47 @@ public sealed class C0747QueueRowExpiryTests
     }
 
     /// <summary>
+    /// case: 1,937 aged eligible Pending rows on one stopped caller, the backlog measured on one
+    /// orchestrator session. One hosted pass cancels them a page at a time. mutation: after each page,
+    /// publish the whole remaining queue including bodies. red: a publication carries the body marker
+    /// or is larger than one page of ids.
+    /// </summary>
+    [Test]
+    [Timeout(300_000)]
+    public async Task C0747_Scale_expiry_cancels_in_bounded_batches(CancellationToken ct)
+    {
+        const int rows = 1937;
+        const string marker = "C0747-SCALE-BODY";
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
+        var caller = await AddStoppedCallerAsync(h, ct);
+        await SeedScaleAsync(h, caller, rows, marker, ct);
+
+        await RunHostedPassAsync(h, scans, TimeSpan.FromMinutes(3));
+
+        await using var observed = h.CreateObserverContext();
+        (await observed.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == caller, ct))
+            .ShouldBe(rows, "cancel never deletes");
+        (await observed.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == caller
+            && m.Status == QueuedMessageStatus.Canceled, ct)).ShouldBe(rows);
+
+        var publications = h.EventBus.PublishedEvents
+            .Where(e => e.EventName is "SessionQueueChanged" or "SessionQueueExpiry")
+            .ToList();
+        publications.Count.ShouldBeGreaterThanOrEqualTo(8, "1,937 rows cancel a page at a time");
+        var maxJson = 0;
+        foreach (var publication in publications)
+        {
+            var json = JsonSerializer.Serialize(publication.Payload);
+            json.ShouldNotContain(marker);
+            json.Length.ShouldBeLessThanOrEqualTo(16 * 1024);
+            if (json.Length > maxJson) maxJson = json.Length;
+        }
+        Console.WriteLine($"C0747 scale publications={publications.Count} maxJsonChars={maxJson}");
+    }
+
+    /// <summary>
     /// case: LandNoteReceiptExpiryDays = 0, an aged eligible row. mutation: drop the off-switch check from
     /// the hosted step. red: the row is canceled although expiry is off.
     /// </summary>
@@ -314,15 +356,16 @@ public sealed class C0747QueueRowExpiryTests
             h.Provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
 
     /// <summary>Starts the real hosted loop, waits for its first completed pass, and stops it.</summary>
-    internal static async Task RunHostedPassAsync(BridgeQueueHarness h, ScanCounter scans)
+    internal static async Task RunHostedPassAsync(BridgeQueueHarness h, ScanCounter scans, TimeSpan? budget = null)
     {
+        var limit = budget ?? TimeSpan.FromSeconds(90);
         var worker = new AgentTaskLandNotificationHostedService(h.Provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<AgentTaskLandNotificationHostedService>.Instance);
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        using var stop = new CancellationTokenSource(limit);
         await worker.StartAsync(stop.Token);
         try
         {
-            (await scans.WaitForScanAsync(1, TimeSpan.FromSeconds(30))).ShouldBeTrue("the hosted pass completes");
+            (await scans.WaitForScanAsync(1, limit)).ShouldBeTrue("the hosted pass completes");
         }
         finally
         {
@@ -372,6 +415,30 @@ public sealed class C0747QueueRowExpiryTests
         db.SessionQueuedMessages.Add(row);
         await db.SaveChangesAsync(ct);
         return row;
+    }
+
+    /// <summary>One terminal task and <paramref name="rows"/> aged untyped Delegation rows on <paramref name="caller"/>.</summary>
+    private static async Task SeedScaleAsync(BridgeQueueHarness h, Guid caller, int rows, string marker, CancellationToken ct)
+    {
+        await using var db = h.CreateObserverContext();
+        var taskId = Guid.NewGuid();
+        var created = DateTime.UtcNow.AddDays(-8);
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = taskId, RootTaskId = taskId, Title = "C0747 scale", Goal = "aged queue scale fixture",
+            WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.Session,
+            ParentSessionId = caller, CreatedAt = created,
+        });
+        var body = marker + "-" + new string('x', 48);
+        for (var i = 1; i <= rows; i++)
+        {
+            db.SessionQueuedMessages.Add(new SessionQueuedMessage
+            {
+                Id = Guid.NewGuid(), AgentSessionId = caller, Status = QueuedMessageStatus.Pending, Sequence = i,
+                Origin = QueuedMessageOrigin.Delegation, SourceTaskId = taskId, CreatedAt = created, Body = body,
+            });
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     internal static async Task<SessionQueuedMessage> RowAsync(BridgeQueueHarness h, Guid id, CancellationToken ct)
