@@ -24493,6 +24493,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/DescendantLeakScope.cs",
+      "classes": [
+        "DescendantLeakScopeTests",
+        "RepositoryMutationLeaseTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/DirectSessionRunnerClient.cs",
       "classes": [
         "AgentAttachHerdrTests",
