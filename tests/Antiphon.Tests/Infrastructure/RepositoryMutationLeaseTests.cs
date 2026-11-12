@@ -532,13 +532,13 @@ public sealed class RepositoryMutationLeaseTests
         using var leaks = DescendantLeakScope.Create();
         leaks.Apply(start);
         using var process = Process.Start(start)!;
-        leaks.Adopt(process);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         Process? child = null;
         using var unrelated = StartSleeper();
         try
         {
+            leaks.AdoptOrKill(process);
             var common = await fixture.Git.CommonDirectoryAsync(fixture.Repository, CancellationToken.None);
             var directory = Path.Combine(common, "antiphon", "children");
             RepositoryChildJournal.ChildRecord? record = null;
