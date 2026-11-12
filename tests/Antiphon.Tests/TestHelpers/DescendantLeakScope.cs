@@ -62,6 +62,16 @@ internal sealed class DescendantLeakScope : IDisposable
             throw new InvalidOperationException("AssignProcessToJobObject failed: " + Marshal.GetLastWin32Error().ToString(CultureInfo.InvariantCulture));
     }
 
+    /// <summary>
+    /// <see cref="Adopt"/>, or <paramref name="adopt"/> when a test injects a failure.
+    /// The pre-fix form lets the exception escape and leaves <paramref name="root"/> running.
+    /// </summary>
+    public void AdoptOrKill(Process root, Action<Process>? adopt = null)
+    {
+        if (adopt is null) Adopt(root);
+        else adopt(root);
+    }
+
     /// <summary>Live members of the scope, never the test host itself.</summary>
     public IReadOnlyList<int> Alive()
     {
