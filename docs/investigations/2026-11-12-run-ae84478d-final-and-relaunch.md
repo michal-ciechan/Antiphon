@@ -155,6 +155,13 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 
 Cold reset: `scripts/workspace-slots.ps1 cold-reset -AllRunners -Reason 'rc qualification rc/2026-11-18 56e96eabf698'` printed `no runner advertises workspaceSlotV1; nothing to cold-reset` (exit 0), so no request ids were issued.
 
+Verified after launch:
+
+- The heartbeat advanced: `observedAtUtc` went 12:14:40 → 12:16:43 → 12:27:52Z, and CPU climbed through npm ci, npm build, client lint and `dotnet build`.
+- `dispatch-schedule.json` (12:24:33Z) accepted the seed: `historyDigest` = the seed digest `9cf22758...`, `preparationComplete=true`, `unresolved=0`, 1,163 entries including `git-in-process`.
+- The 7 `priorFailure=true` chunks sit at dispatch ordinals 0 to 6, in this order: antiphon g80, g97, g131, g133, session-runner g1, antiphon g126, session-runner profile-16.
+- The first failed-first chunk, **antiphon `all-group-80`**, started at **12:24:33Z** (`lastPhase=run`).
+
 Watch with `scripts/orchestration/watch-qual.ps1` on the log directory, and with `scripts/qualification/observe.ps1 -TaskRoot C:\Antiphon\releases\task-25e35cdf -StateRoot C:\Antiphon\releases\state-25e35cdf`.
 
 ### ETA
