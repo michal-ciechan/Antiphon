@@ -442,6 +442,77 @@ function Test-C1313_ReusedCloneEolRepair {
     Assert-C487 ([string]::IsNullOrWhiteSpace($status)) 'C1313 reused clone is clean after the eol repair' $status
 }
 
+# CARD-1854: real tracked files, with only native stdout decoding/quoting simulated.
+function Test-C1854_EolRepairHardening {
+    $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    $seed = Join-Path $root 'seed'
+    $clone = Join-Path $root 'clone'
+    New-Item -ItemType Directory -Path $seed -Force | Out-Null
+    function Invoke-HardeningGit {
+        param([string]$Directory, [string[]]$GitArgs)
+        $output = & git -C $Directory @GitArgs 2>&1
+        if ($LASTEXITCODE -ne 0) { throw ('fixture git failed: ' + ($output | Out-String)) }
+        return ($output | Out-String)
+    }
+    $commit = @('-c', 'user.name=Eol Test', '-c', 'user.email=eol@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m')
+    $plain = 'selector [one].ps1'
+    $unicode = 'unicode-' + [char]0x00e9 + '.ps1'
+    $quoted = 'quoted-' + [char]0x4e2d + '.ps1'
+    Invoke-HardeningGit $seed @('init', '-q', '-b', 'master') | Out-Null
+    Invoke-HardeningGit $seed @('config', '--local', 'core.autocrlf', 'false') | Out-Null
+    foreach ($name in @($plain, $unicode, $quoted)) {
+        [IO.File]::WriteAllBytes((Join-Path $seed $name), [Text.Encoding]::ASCII.GetBytes("a`nb`n"))
+    }
+    Invoke-HardeningGit $seed @('add', '.') | Out-Null
+    Invoke-HardeningGit $seed ($commit + 'before-attribute') | Out-Null
+    Invoke-HardeningGit $root @('clone', '-q', '-c', 'core.autocrlf=true', $seed, $clone) | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $seed '.gitattributes'), [Text.Encoding]::ASCII.GetBytes("*.ps1 text eol=lf`n"))
+    Invoke-HardeningGit $seed @('add', '.gitattributes') | Out-Null
+    Invoke-HardeningGit $seed ($commit + 'pin-lf') | Out-Null
+    Invoke-HardeningGit $clone @('fetch', '-q', 'origin', 'master') | Out-Null
+    Invoke-HardeningGit $clone @('reset', '--hard', 'FETCH_HEAD') | Out-Null
+    $crlf = @(@($plain, $unicode, $quoted) | Where-Object { [IO.File]::ReadAllBytes((Join-Path $clone $_)) -contains 13 })
+    Assert-C487 ($crlf.Count -eq 3) 'C1854 real reused clone has three stale tracked files' ([string]$crlf.Count)
+
+    # Model UTF-8 bytes decoded with the console OEM code page on Windows PS 5.1.
+    $mangled = [Text.Encoding]::GetEncoding(437).GetString([Text.Encoding]::UTF8.GetBytes($unicode))
+    $quotedLine = @((Invoke-HardeningGit $clone @('-c', 'core.quotePath=true', 'ls-files', '--eol')) -split "`n" | Where-Object { $_ -match '"quoted-' })[0]
+    $quotedPath = ($quotedLine.TrimEnd("`r") -split "`t", 2)[1]
+    Assert-C487 ($mangled -cne $unicode -and -not (Test-Path -LiteralPath (Join-Path $clone $mangled)) -and $quotedPath.StartsWith('"')) 'C1854 missing decoded and C-quoted paths are discriminating inputs'
+    $checkouts = New-Object System.Collections.Generic.List[string]
+    $savedSeams = $script:NightlySeams
+    try {
+        $script:NightlySeams = @{ Git = {
+            param($Directory, $GitArgs)
+            $output = & git -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -C $Directory @GitArgs 2>&1
+            $exit = $LASTEXITCODE
+            $text = $output | Out-String
+            if ($GitArgs -contains 'ls-files') { $text = $text.Replace($unicode, $mangled).Replace($quoted, $quotedPath) }
+            if ($GitArgs -contains 'checkout-index') { $checkouts.Add(($GitArgs -join '|')) }
+            return [pscustomobject]@{ ExitCode = $exit; Output = $text }
+        }.GetNewClosure() }
+        $failure = ''
+        try { $log = & { Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone } 6>&1 | Out-String }
+        catch { $failure = $_.Exception.Message }
+        Assert-C487 ([string]::IsNullOrEmpty($failure)) 'C1854 mixed repair completes despite missing decoded path' $failure
+        Assert-C487 (-not ([IO.File]::ReadAllBytes((Join-Path $clone $plain)) -contains 13)) 'C1854 valid literal path is rewritten to LF'
+        Assert-C487 (([IO.File]::ReadAllBytes((Join-Path $clone $unicode)) -contains 13) -and ([IO.File]::ReadAllBytes((Join-Path $clone $quoted)) -contains 13)) 'C1854 skipped files retain their bytes'
+        Assert-C487 ($checkouts.Count -eq 1 -and $checkouts[0] -ceq ('checkout-index|-f|-u|--|' + $plain)) 'C1854 checkout receives only the existing unquoted path' ($checkouts -join ';')
+        Assert-C487 ($log -match 'nightly sync: rewriting 1 working file\(s\).*skipped=2') 'C1854 mixed repair logs two skipped paths' $log
+        $checkouts.Clear()
+        $log = & { Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone } 6>&1 | Out-String
+        Assert-C487 ($checkouts.Count -eq 0 -and $log -match 'nightly sync: rewriting 0 working file\(s\).*skipped=2') 'C1854 skipped-only repair logs count without checkout' $log
+    } finally { $script:NightlySeams = $savedSeams }
+    # Native pwsh 7 decodes these real non-ASCII paths correctly; they remain repairable.
+    Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone
+    $remaining = @(@($plain, $unicode, $quoted) | Where-Object { [IO.File]::ReadAllBytes((Join-Path $clone $_)) -contains 13 })
+    Assert-C487 ($remaining.Count -eq 0) 'C1854 real non-ASCII paths repair when decoded correctly' ([string]$remaining.Count)
+    $log = & { Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone } 6>&1 | Out-String
+    Assert-C487 ([string]::IsNullOrWhiteSpace($log)) 'C1854 clean repair remains silent' $log
+    $status = Invoke-HardeningGit $clone @('status', '--porcelain', '--untracked-files=no')
+    Assert-C487 ([string]::IsNullOrWhiteSpace($status)) 'C1854 repaired clone has clean tracked status' $status
+}
+
 # ---- CARD-0545 D-10: the wrapper's last stdout line is the JSON completion record ----
 
 function Invoke-C545ResultLineRun {
