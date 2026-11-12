@@ -1353,6 +1353,54 @@ public sealed partial class SessionMessageQueueService
             m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct, lockWait) == true;
 
     /// <summary>
+    /// CARD-0747 aged queue rows. The same never-typed re-check as
+    /// <see cref="CancelPendingIfUntypedAsync(Guid, Guid, CancellationToken, TimeSpan?)"/> for several rows of one
+    /// session in one lock hold, with one queue publish. Rows are marked Canceled, never deleted. Returns the ids
+    /// it canceled; a row already typed, sent, canceled or gone is left as it is.
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> CancelPendingIfUntypedAsync(Guid sessionId, IReadOnlyCollection<Guid> messageIds,
+        CancellationToken ct, TimeSpan? lockWait)
+    {
+        var canceled = new List<Guid>();
+        if (messageIds.Count == 0)
+            return canceled;
+        var sem = GetLock(sessionId);
+        if (lockWait is { } bound)
+        {
+            if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+        }
+        else
+            await sem.WaitAsync(ct);
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var ids = messageIds.ToList();
+            var rows = await db.SessionQueuedMessages
+                .Where(m => ids.Contains(m.Id) && m.AgentSessionId == sessionId
+                    && m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0)
+                .ToListAsync(ct);
+            if (rows.Count == 0)
+                return canceled;
+            var now = UtcNow();
+            foreach (var row in rows)
+            {
+                row.Status = QueuedMessageStatus.Canceled;
+                row.CanceledAt = now;
+                canceled.Add(row.Id);
+            }
+            await db.SaveChangesAsync(ct);
+        }
+        finally
+        {
+            sem.Release();
+        }
+
+        await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        return canceled;
+    }
+
+    /// <summary>
     /// CARD-0354: after boot successfully arms remote-control (or finds the bridge already live),
     /// drop leftover queued <c>/remote-control</c> rows. Health-watch enqueues that body WhenIdle
     /// as Ui origin; a kill/restart leaves the row on the persistent session, and delivering it

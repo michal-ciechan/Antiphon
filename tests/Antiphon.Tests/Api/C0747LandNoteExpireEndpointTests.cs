@@ -69,6 +69,12 @@ public sealed class C0747LandNoteExpireEndpointTests(C0747ExpireWebAppFactory fa
                 ((int)response.StatusCode).ShouldBe(200, body.ToString());
                 body.GetProperty("apply").GetBoolean().ShouldBeFalse();
                 body.GetProperty("outcomes").GetProperty("WouldSettle").GetInt32().ShouldBeGreaterThanOrEqualTo(1);
+                // Debug 3b0adade: the response carries the aged queue-row rule too (additive).
+                var queueRows = body.GetProperty("queueRows");
+                queueRows.GetProperty("scanned").ValueKind.ShouldBe(JsonValueKind.Number);
+                queueRows.GetProperty("outcomes").ValueKind.ShouldBe(JsonValueKind.Object);
+                queueRows.GetProperty("eligibleByKind").ValueKind.ShouldBe(JsonValueKind.Object);
+                queueRows.GetProperty("failures").GetInt32().ShouldBe(0);
                 after.ShouldBe(before, "a dry run writes nothing");
                 break;
             case "no-token-apply":

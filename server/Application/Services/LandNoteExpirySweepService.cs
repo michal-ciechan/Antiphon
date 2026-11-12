@@ -13,6 +13,8 @@ namespace Antiphon.Server.Application.Services;
 /// LegacyUnverified with <c>receipt_expired_aged</c>, and a never-typed row canceled first. It never
 /// deletes a row, never touches a younger note, a non-terminal one or a row the queue already typed.
 /// Running it twice is safe: a settled note is no longer open.
+/// Debug 3b0adade: it then applies <see cref="AgedQueueRowExpiry"/> with the same cutoff, so a never-typed
+/// Pending Delegation or Check row of a terminal task that no open land note owns is canceled too.
 /// </summary>
 public sealed class LandNoteExpirySweepService(AppDbContext db, IServiceScopeFactory scopes, TimeProvider clock)
 {
@@ -63,7 +65,11 @@ public sealed class LandNoteExpirySweepService(AppDbContext db, IServiceScopeFac
             if (ids.Count < PageSize) break;
             cursor = ids[^1];
         }
-        return new LandNoteExpirySweepDto(apply, days, cutoff, scanned, outcomes, settledByKind, settledByState, failures);
+        // Rows with no open land note: the notes above settle their own rows first, so nothing is counted twice.
+        await using var queueScope = scopes.CreateAsyncScope();
+        var queueRows = await new AgedQueueRowExpiry(db, queueScope.ServiceProvider.GetRequiredService<SessionMessageQueueService>())
+            .ExpireAsync(cutoff, apply, lockWait: null, ct);
+        return new LandNoteExpirySweepDto(apply, days, cutoff, scanned, outcomes, settledByKind, settledByState, failures, queueRows);
     }
 
     private static void Increment(Dictionary<string, int> counts, string key) =>
@@ -74,9 +80,10 @@ public sealed class LandNoteExpirySweepService(AppDbContext db, IServiceScopeFac
 /// CARD-0747 sweep result. <c>Outcomes</c> counts every scanned note by what happened
 /// (<c>WouldSettle</c> on a dry run, <c>Settled</c> on apply, otherwise why it was left);
 /// <c>EligibleByKind</c> and <c>EligibleByState</c> break down the settled (or would-settle) ones.
+/// <c>QueueRows</c> (Debug 3b0adade, additive) is the aged queue-row rule over rows no open note owns.
 /// </summary>
 public sealed record LandNoteExpirySweepDto(bool Apply, int OlderThanDays, DateTime Cutoff, int Scanned,
     IReadOnlyDictionary<string, int> Outcomes, IReadOnlyDictionary<string, int> EligibleByKind,
-    IReadOnlyDictionary<string, int> EligibleByState, int Failures);
+    IReadOnlyDictionary<string, int> EligibleByState, int Failures, AgedQueueRowExpiryDto QueueRows);
 
 public sealed record LandNoteExpirySweepRequest(bool? Apply, int? OlderThanDays);
