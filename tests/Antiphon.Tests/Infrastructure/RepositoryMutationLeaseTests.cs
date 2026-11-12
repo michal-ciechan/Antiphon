@@ -603,6 +603,9 @@ public sealed class RepositoryMutationLeaseTests
             if (child is not null) { if (!child.HasExited) child.Kill(true); await child.WaitForExitAsync(); child.Dispose(); }
             if (!process.HasExited) process.Kill(true);
             await process.WaitForExitAsync();
+            // The tree kills above stop at the hook's shell on Windows: its msys sleep was exec'd by
+            // a fork stub that has exited. The scope's job reaches it, before the worker's pipes drain.
+            leaks.KillAll();
             await Task.WhenAll(output, error);
             if (!unrelated.HasExited) unrelated.Kill(true);
             await unrelated.WaitForExitAsync();
