@@ -47,7 +47,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
         var root = sourceRoot ?? Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
             ".antiphon", "test-output", "c1017", Guid.NewGuid().ToString("N"));
-        if (TempCheckoutRefusal(root, Path.GetTempPath()) is { } refusal)
+        if (FixtureRootRefusal(root, reportRoot, Path.GetTempPath()) is { } refusal)
             throw new InvalidOperationException($"{refusal}: {root} is under {Path.GetTempPath()}; run from a checkout outside the temp directory.");
         Host = new LandingSafetyHarness(root)
         {
@@ -339,6 +339,8 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     /// (docs/orchestration-loop.md, report storage), and this fixture keeps its repository, so its
     /// report root, inside the checkout. From a checkout there each admitted cleanup ends artifact_unpreserved.
     /// </summary>
+    internal static string? FixtureRootRefusal(string root, string? reportRoot, string temp) => TempCheckoutRefusal(root, temp);
+
     internal static string? TempCheckoutRefusal(string root, string temp)
     {
         var full = Path.GetFullPath(root);
