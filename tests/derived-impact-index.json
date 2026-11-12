@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 311,
+      "classes": 312,
       "reason": "allowlist"
     },
     {
@@ -2095,9 +2095,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 57,
+      "classes": 59,
       "reason": "cap",
-      "owed": 32,
+      "owed": 34,
       "first": [
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
@@ -2111,18 +2111,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 34,
+      "classes": 36,
       "reason": "cap",
-      "owed": 9,
+      "owed": 11,
       "first": [
+        "ReleaseGateFollowupTests",
+        "ReleaseSelectionCliTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
         "NightlyCoreTests",
         "ProcessSpawnLimitTests",
         "QualificationGraphContractTests",
-        "RcFullWatchdogHarnessTests",
-        "RcQualificationStatusTests",
-        "ReleaseGatePlatformTests"
+        "RcFullWatchdogHarnessTests"
       ]
     },
     {
@@ -3328,6 +3328,7 @@
         "AdvisoryChangePolicyTests",
         "CheckpointManifestDocumentationTests",
         "DockerStackDocumentationTests",
+        "ExpectedDurationSyncTests",
         "GrokRunnerImageContractTests",
         "MechanicalPcContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -3567,6 +3568,12 @@
       ]
     },
     {
+      "path": "scripts/export-expected-duration-roster.ps1",
+      "classes": [
+        "ExpectedDurationSyncTests"
+      ]
+    },
+    {
       "path": "scripts/fixtures/c1008-fake-docker.sh",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -3794,6 +3801,7 @@
     {
       "path": "scripts/lib/nightly-class-costs.json",
       "classes": [
+        "ExpectedDurationSyncTests",
         "TimeoutAuditTests"
       ]
     },
@@ -23845,14 +23853,14 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcIncrementalLedgerTests",
+        "RcLedgerDurationTests",
         "RcStoppedRunSeedTests",
-        "ReleaseGateFollowupTests",
-        "ReleaseSelectionCliTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessCancellationTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
-        "ScriptHarnessWindowsOwnershipTests"
+        "ScriptHarnessWindowsOwnershipTests",
+        "WatchQualEtaLineTests"
       ]
     },
     {
@@ -24070,6 +24078,7 @@
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
+        "ExpectedDurationSyncTests",
         "NativeLinuxPolicyExecutionTests",
         "RcFullTimingContractTests",
         "RcFullWatchdogHarnessTests",
@@ -24299,6 +24308,12 @@
         "CheckpointRecoveryLinuxTests",
         "CheckpointRecoveryWindowsTests",
         "CheckpointScriptReaderDeadlineTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/ClassTeardownTracker.cs",
+      "classes": [
+        "ClassTeardownTrackerTests"
       ]
     },
     {
@@ -25857,6 +25872,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixtureAssemblyHook.cs",
+      "classes": [
+        "ClassTeardownTrackerTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixtureLazyInitializationTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -26049,6 +26070,12 @@
         "DispatchCrashWarningTests",
         "DispatchSiblingInspectionTests",
         "ProgressAwareWaitTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/ExpectedDurationRoster.cs",
+      "classes": [
+        "ExpectedDurationSyncTests"
       ]
     },
     {
@@ -26250,6 +26277,7 @@
       "path": "tests/Shared/PlatformTaxonomy.cs",
       "classes": [
         "DerivedImpactIndexTests",
+        "ExpectedDurationSyncTests",
         "PlatformTaxonomyClassFilterTests",
         "PlatformTaxonomyDerivationTests",
         "PlatformTaxonomyFilterTests"
@@ -26336,6 +26364,12 @@
       "path": "tests/Shared/TestTraceOtlp.cs",
       "classes": [
         "CodexCliObservationTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/expected-duration-roster.json",
+      "classes": [
+        "ExpectedDurationSyncTests"
       ]
     },
     {
