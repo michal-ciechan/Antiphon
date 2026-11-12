@@ -433,7 +433,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)|(DelegationTestServicesTests*)"
         + "|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)|(DispatchHoldVisibilityTests*)"
         + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)"
-        + "|(ImpactedClassesSelectorTests*)|(InProcessGitCommandsTests*)"
+        + "|(ImpactedClassesSelectorTests*)"
         + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
         + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LiveLaneRunnerTests*)"
         + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
@@ -458,6 +458,9 @@ public sealed partial class ImpactedClassesSelectorTests
     // CARD-1843. The Server.Git mirror classes run in their own project; ProcessSpawnLimitTests runs in
     // every project that declares it (Antiphon.Tests, SessionRunner above, and Agents.Pty).
     private const string WhyMissedServerGitFilter = "/*/*/(GitIndexLockTests*)|(ServerGitAssemblyTests*)/*";
+
+    // CARD-1830 moved InProcessGitCommandsTests to the GitInProcess mirror, so it runs there and not in Antiphon.Tests.
+    private const string WhyMissedGitInProcessFilter = "/*/*/(InProcessGitCommandsTests*)/*";
 
     private const string WhyMissedPtyFilter = "/*/*/(ProcessSpawnLimitTests*)/*";
 
@@ -656,6 +659,7 @@ public sealed partial class ImpactedClassesSelectorTests
         filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
         filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerFilter));
         filters.ShouldContain(("tests/Antiphon.Server.Git.Tests", WhyMissedServerGitFilter));
+        filters.ShouldContain(("tests/Antiphon.GitInProcess.Tests", WhyMissedGitInProcessFilter));
         filters.ShouldContain(("tests/Antiphon.Agents.Pty.Tests", WhyMissedPtyFilter));
         windows.ShouldBe([
             ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
