@@ -118,6 +118,16 @@ public sealed class CardDoneWorktreeCleanupTests
     }
 
     [Test]
+    public void C1230_ConfiguredReportRootDecidesTheTempRefusal()
+    {
+        // The store falls back to a configured ReportStorageRoot when the checkout is under temp (CARD-0824 R-5).
+        CompletedCardCleanupFixture.FixtureRootRefusal("/tmp/c1017/ab", "/work/.antiphon-test-evidence/r", "/tmp/").ShouldBeNull();
+        CompletedCardCleanupFixture.FixtureRootRefusal("/tmp/c1017/ab", null, "/tmp/").ShouldBe("c1017_checkout_under_temp");
+        CompletedCardCleanupFixture.FixtureRootRefusal("/tmp/c1017/ab", "/tmp/reports", "/tmp/").ShouldBe("c1017_checkout_under_temp");
+        CompletedCardCleanupFixture.FixtureRootRefusal("/work/t/c1017/ab", null, "/tmp/").ShouldBeNull();
+    }
+
+    [Test]
     public async Task C1017_UniqueOrdinaryOwner()
     {
         foreach (var vector in new[] { "exact-path", "short-prefix" })
