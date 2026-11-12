@@ -47,8 +47,9 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
         var root = sourceRoot ?? Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
             ".antiphon", "test-output", "c1017", Guid.NewGuid().ToString("N"));
-        if (TempCheckoutRefusal(root, Path.GetTempPath()) is { } refusal)
-            throw new InvalidOperationException($"{refusal}: {root} is under {Path.GetTempPath()}; run from a checkout outside the temp directory.");
+        if (TempCheckoutRefusal(root, Path.GetTempPath(), reportRoot) is { } refusal)
+            throw new InvalidOperationException($"{refusal}: report root {reportRoot ?? "(derived from source root)"} with source root {root} is under {Path.GetTempPath()}; " +
+                "give a persistent reportRoot or run from a checkout outside the temp directory.");
         Host = new LandingSafetyHarness(root)
         {
             Clock = clock ?? TimeProvider.System,
@@ -339,13 +340,22 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     /// (docs/orchestration-loop.md, report storage), and this fixture keeps its repository, so its
     /// report root, inside the checkout. From a checkout there each admitted cleanup ends artifact_unpreserved.
     /// </summary>
+    /// <remarks>
+    /// The refusal follows the effective report root: an explicit <paramref name="reportRoot"/> is judged on its own,
+    /// so a temporary source checkout with a persistent report root (C0824 R-5) is admitted. Without one the report
+    /// root is derived from the checkout, so the checkout itself is judged.
+    /// </remarks>
     internal static string? TempCheckoutRefusal(string root, string temp, string? reportRoot = null)
     {
-        var full = Path.GetFullPath(root);
         var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(temp));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        return string.Equals(full, tempRoot, comparison) || full.StartsWith(tempRoot + Path.DirectorySeparatorChar, comparison)
-            ? "c1017_checkout_under_temp" : null;
+        bool Under(string path)
+        {
+            var full = Path.GetFullPath(path);
+            return string.Equals(full, tempRoot, comparison) || full.StartsWith(tempRoot + Path.DirectorySeparatorChar, comparison);
+        }
+        if (reportRoot is not null) return Under(reportRoot) ? "c1017_report_root_under_temp" : null;
+        return Under(root) ? "c1017_checkout_under_temp" : null;
     }
 
     public async Task<string?> SentinelAsync() => File.Exists(Sentinel) ? await File.ReadAllTextAsync(Sentinel) : null;
