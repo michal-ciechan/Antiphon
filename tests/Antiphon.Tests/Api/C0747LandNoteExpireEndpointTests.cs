@@ -61,7 +61,7 @@ public sealed class C0747LandNoteExpireEndpointTests(C0747ExpireWebAppFactory fa
         request.Content = arm == "bare-dry-run" ? JsonContent.Create(new { }) : JsonContent.Create(new { apply = true });
         using var response = await client.SendAsync(request, ct);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-        var after = await SnapshotAsync(factory, ct);
+        var after = await SnapshotAsync(factory, ct, before.Keys);
 
         switch (arm)
         {
@@ -126,7 +126,7 @@ public sealed class C0747LandNoteExpireOffSwitchEndpointTests(C0747ExpireDisable
             ((int)response.StatusCode).ShouldBe(200, body.ToString());
             body.GetProperty("apply").GetBoolean().ShouldBeFalse();
         }
-        (await SnapshotAsync(factory, ct)).ShouldBe(before, "the off switch settles nothing");
+        (await SnapshotAsync(factory, ct, before.Keys)).ShouldBe(before, "the off switch settles nothing");
     }
 }
 
@@ -174,13 +174,23 @@ internal static class C0747ExpireSeed
         return token;
     }
 
+    /// <summary>
+    /// Every land note, or only <paramref name="ids"/>. The real host's other background services may insert
+    /// new notes for the seeded tasks while a test runs; the sweep only ever settles notes that already exist,
+    /// so "writes nothing" compares every note present before the request.
+    /// </summary>
     internal static async Task<Dictionary<Guid, (LandNotificationState State, string? Code)>> SnapshotAsync(
-        AntiphonWebAppFactory factory, CancellationToken ct)
+        AntiphonWebAppFactory factory, CancellationToken ct, IEnumerable<Guid>? ids = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var rows = await db.AgentTaskLandNotifications.AsNoTracking()
-            .Select(n => new { n.Id, n.State, n.LastErrorCode }).ToListAsync(ct);
+        var query = db.AgentTaskLandNotifications.AsNoTracking();
+        if (ids is not null)
+        {
+            var keep = ids.ToList();
+            query = query.Where(n => keep.Contains(n.Id));
+        }
+        var rows = await query.Select(n => new { n.Id, n.State, n.LastErrorCode }).ToListAsync(ct);
         return rows.ToDictionary(r => r.Id, r => (r.State, r.LastErrorCode));
     }
 }
