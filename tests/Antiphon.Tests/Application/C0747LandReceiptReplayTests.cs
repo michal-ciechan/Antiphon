@@ -97,16 +97,17 @@ public sealed class C0747LandReceiptReplayTests
     [Arguments("fresh-control")]
     [Arguments("pending-request-control")]
     [Arguments("typed-pending-control")]
+    [Arguments("retry-pending-control")]
     public async Task C0747_Aged_terminal_note_settles_and_is_never_typed(string arm, CancellationToken ct)
     {
         await using var h = await LandReceiptScanHarness.CreateAsync(new() { Cache = false });
         var age = arm == "fresh-control" ? TimeSpan.FromDays(6) : TimeSpan.FromDays(8);
         AgentTaskLandNotification note;
-        if (arm == "unlinked-destination-unavailable")
+        if (arm is "unlinked-destination-unavailable" or "retry-pending-control")
         {
             await using var db = h.Fixture();
             note = await AgentTaskLandReceiptTests.SeedAsync(db, h.SessionId);
-            note.State = LandNotificationState.DestinationUnavailable;
+            note.State = arm == "retry-pending-control" ? LandNotificationState.RetryPending : LandNotificationState.DestinationUnavailable;
             note.LastErrorCode = "destination_failed";
             note.NextAttemptAt = DateTime.UtcNow.AddMinutes(5);
             await db.SaveChangesAsync();
@@ -144,8 +145,8 @@ public sealed class C0747LandReceiptReplayTests
             saved.ConfirmedAt.ShouldBeNull("an expired note was never proven delivered");
         }
         else
-            saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
-        if (arm == "unlinked-destination-unavailable")
+            saved.State.ShouldBe(arm == "retry-pending-control" ? LandNotificationState.RetryPending : LandNotificationState.AwaitingReceipt);
+        if (arm is "unlinked-destination-unavailable" or "retry-pending-control")
         {
             saved.QueueMessageId.ShouldBeNull();
             await using var db = h.Fixture();
@@ -200,7 +201,11 @@ public sealed class C0747LandReceiptReplayTests
             await h.Service.ReconcileAsync(note.Id, ct);
             note = await h.NoteAsync(note.Id);
             note.QueueMessageId.ShouldNotBeNull("a Held note of a pending request is enqueued");
-            if (arm == "sent-control") await h.MarkSentAsync(note);
+            if (arm == "sent-control")
+            {
+                await h.MarkSentAsync(note);
+                await h.IngestEventsAsync(h.SessionId, [h.Event(h.SessionId, Floor + 5, TranscriptKinds.UserPrompt, note.Body)]);
+            }
             if (arm != "pending-request-control") await SetRequestPendingAsync(false);
         }
 
@@ -227,7 +232,7 @@ public sealed class C0747LandReceiptReplayTests
                 rows.Single().Status.ShouldBe(QueuedMessageStatus.Pending);
                 break;
             case "sent-control":
-                saved.State.ShouldBe(LandNotificationState.AwaitingReceipt);
+                saved.State.ShouldBe(LandNotificationState.Confirmed, "a typed Held note keeps its receipt scan");
                 saved.LastErrorCode.ShouldBeNull();
                 rows.Single().Status.ShouldBe(QueuedMessageStatus.Sent);
                 break;
