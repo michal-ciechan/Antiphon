@@ -53,7 +53,6 @@ public class ProcessSpawnLimitTests
             typeof(RunnerCustodyTests),
             typeof(RunnerSessionGenerationTests),
             typeof(BuildSlotEndToEndTests),
-            typeof(StandingRunnerCwdTests),
         ];
 
         var actual = typeof(ProcessSpawnLimit).Assembly.GetTypes()
