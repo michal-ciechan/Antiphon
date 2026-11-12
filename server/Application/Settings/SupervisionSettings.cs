@@ -364,7 +364,8 @@ public sealed class DeliveryVerificationSettings
     /// canceled when it was never typed, so a caller that becomes deliverable late is not sent
     /// weeks of stale notes. A row typed once and still Pending is left alone. Zero or negative
     /// disables it. The operator sweep (<c>POST /api/agent-tasks/land-notifications/expire</c>)
-    /// applies the same rule on demand and never below seven days.
+    /// applies the same rule on demand and never below seven days; its apply needs the operator token
+    /// and is refused (409 <c>land_note_expiry_disabled</c>) while this is zero or negative.
     /// </summary>
     public int LandNoteReceiptExpiryDays { get; set; } = 7;
 

@@ -81,8 +81,9 @@ alone.
   typed Held row keeps its receipt scan.
 - **Attention**: a settled `LegacyUnverified` note is no longer an `LandOutcomeUnconfirmed` row.
 - **Operator sweep**: `POST /api/agent-tasks/land-notifications/expire` `{ apply?, olderThanDays? }`
-  runs the same rule on demand. It is a dry run by default, `olderThanDays` must be at least 7, a child
-  task token cannot apply, it never deletes, and a rerun is idempotent ([ops-http](../ops-http.md)).
+  runs the same rule on demand. It is a dry run by default, `olderThanDays` must be at least 7, apply
+  needs the `X-Antiphon-Operator-Token` header and is refused while `LandNoteReceiptExpiryDays` is 0
+  (Review D-1), it never deletes, and a rerun is idempotent ([ops-http](../ops-http.md)).
 
 No migration: `LegacyUnverified`, `NotRequired` and `Canceled` already exist.
 
@@ -106,7 +107,7 @@ for about 17–27 h after deploy. They expire on their own as each one turns 7 d
 
 **Apply: not done.** The supported path exists only on this branch, and production runs the rc line.
 The before and after counts above are owed after the server runs a build that contains it, through
-`POST .../land-notifications/expire {"apply":false}` and then `{"apply":true}`. With the hosted
+`POST .../land-notifications/expire {"apply":false}` and then `{"apply":true}` with the operator token. With the hosted
 reconcile rule deployed, the scan itself settles these within about 5 minutes of start, so the apply
 call mostly confirms the count.
 
