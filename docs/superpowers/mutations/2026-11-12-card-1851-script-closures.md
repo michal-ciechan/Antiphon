@@ -12,7 +12,7 @@ and restoration evidence externally. Never widen a timeout or loosen an assertio
 
 | PC / variant | Deliberate defect | Exact method filter | Required detection |
 |---|---|---|---|
-| PC-1 / swallowed-read | Restore the old catch-all PID reader | `/*/*/RunnerRestartScriptCompatibilityTests/Pid_read_errors_stop_restart_before_any_control` | directory, exclusive lock, invalid, overflow and missing-parent cases report action-failed with zero controls; missing/live remain valid |
+| PC-1 / swallowed-read | Restore the old catch-all PID reader | `/*/*/RunnerRestartScriptCompatibilityTests/Pid_read_errors_stop_restart_before_any_control` | directory, exclusive lock, invalid, overflow, zero, unreadable wrapper and missing-parent cases report action-failed with zero controls; missing/live remain valid |
 | PC-2 / registration-http-name | Restore by-name HTTP lookup in GetRegistration | `/*/*/RunnerRestartScriptCompatibilityTests/Nightly_health_closures_resolve_helpers_under_the_call_operator` | both London date arguments detect the scope failure |
 | PC-2 / schedule-http-name | Restore by-name HTTP lookup in GetSchedule | `/*/*/RunnerRestartScriptCompatibilityTests/Nightly_health_closures_resolve_helpers_under_the_call_operator` | same method, schedule boundary |
 | PC-2 / jobs-http-name | Restore by-name jobs/list HTTP lookup in GetJobs | `/*/*/RunnerRestartScriptCompatibilityTests/Nightly_health_closures_resolve_helpers_under_the_call_operator` | same method, jobs list boundary |
