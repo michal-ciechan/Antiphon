@@ -490,6 +490,36 @@ public sealed class StandingRunnerCwdTests
         Expect(cwd, Root, windows: true, admitted: true, standing: true);
     }
 
+    [Test]
+    public void Link_fixtures_fall_back_to_a_junction_without_the_windows_symlink_privilege()
+    {
+        // rc ae84478d: the desktop lane has no SeCreateSymbolicLinkPrivilege. A direct symlink call
+        // in a link fixture failed there before any assertion and stayed green on Linux.
+        var privilege = unchecked((int)0x80070522);
+        IsMissingSymlinkPrivilege(new IOException("privilege", privilege), windows: true).ShouldBeTrue("io");
+        IsMissingSymlinkPrivilege(new UnauthorizedAccessException { HResult = privilege }, windows: true).ShouldBeTrue("denied");
+        IsMissingSymlinkPrivilege(new IOException("privilege", privilege), windows: false).ShouldBeFalse("linux");
+        IsMissingSymlinkPrivilege(new IOException("other", unchecked((int)0x80070521)), windows: true).ShouldBeFalse("other win32");
+        IsMissingSymlinkPrivilege(new InvalidOperationException { HResult = privilege }, windows: true).ShouldBeFalse("type");
+
+        var needle = "CreateSymbolic" + "Link(";
+        var source = Path.Combine(RepoRoot(), "tests", "Antiphon.SessionRunner.Tests", nameof(StandingRunnerCwdTests) + ".cs");
+        var calls = File.ReadAllLines(source)
+            .Select(line => line.Trim())
+            .Where(line => !line.StartsWith("//", StringComparison.Ordinal) && line.Contains(needle, StringComparison.Ordinal))
+            .ToList();
+        calls.ShouldBe(new[] { "Directory." + needle + "linkPath, targetPath);" }, ignoreOrder: false, "only CreateDirectoryLink may create a link");
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+            dir = dir.Parent;
+        return dir?.FullName
+            ?? throw new DirectoryNotFoundException("Could not locate repo root (Antiphon.sln) from test base dir.");
+    }
+
     private static void Expect(string? cwd, string root, bool windows, bool admitted, bool standing)
     {
         var label = (cwd ?? "<null>") + " windows=" + windows;
@@ -548,7 +578,9 @@ public sealed class StandingRunnerCwdTests
         }
 
         // mklink reads a leading '/' as a switch and needs an absolute junction target.
-        var commandInterpreter = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+        var commandInterpreter = OperatingSystem.IsWindows()
+            ? Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe")
+            : throw new PlatformNotSupportedException("A junction fallback needs Windows.");
         using var process = Process.Start(new ProcessStartInfo
         {
             FileName = commandInterpreter,
