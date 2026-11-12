@@ -1360,13 +1360,14 @@ public sealed partial class SessionMessageQueueService
     internal Func<AppDbContext, CancellationToken, Task>? BeforeAgedExpiryRecheck { get; set; }
 
     /// <summary>
-    /// CARD-0747 aged queue rows. The same never-typed re-check as
-    /// <see cref="CancelPendingIfUntypedAsync(Guid, Guid, CancellationToken, TimeSpan?)"/> for several rows of one
-    /// session in one lock hold, with one queue publish. Rows are marked Canceled, never deleted. Returns the ids
-    /// it canceled; a row already typed, sent, canceled or gone is left as it is.
+    /// CARD-0747 aged queue rows. Several rows of one session, one lock hold, one queue publish.
+    /// After the lock is held the full rule is read again (<paramref name="eligibilityCutoff"/>, terminal
+    /// source, no open land note, no provider-wait, no capacity wait, never typed) and applied as one
+    /// conditional update, so a source retried or a note published while the lock was waited for is left
+    /// Pending. Rows are marked Canceled, never deleted. Returns the ids it canceled.
     /// </summary>
     public async Task<IReadOnlyList<Guid>> CancelPendingIfUntypedAsync(Guid sessionId, IReadOnlyCollection<Guid> messageIds,
-        CancellationToken ct, TimeSpan? lockWait)
+        CancellationToken ct, TimeSpan? lockWait, DateTime eligibilityCutoff)
     {
         var canceled = new List<Guid>();
         if (messageIds.Count == 0)
@@ -1384,21 +1385,21 @@ public sealed partial class SessionMessageQueueService
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             if (BeforeAgedExpiryRecheck is { } mutate)
                 await mutate(db, ct);
-            var ids = messageIds.ToList();
-            var rows = await db.SessionQueuedMessages
-                .Where(m => ids.Contains(m.Id) && m.AgentSessionId == sessionId
-                    && m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0)
-                .ToListAsync(ct);
-            if (rows.Count == 0)
-                return canceled;
             var now = UtcNow();
-            foreach (var row in rows)
-            {
-                row.Status = QueuedMessageStatus.Canceled;
-                row.CanceledAt = now;
-                canceled.Add(row.Id);
-            }
-            await db.SaveChangesAsync(ct);
+            var eligibleIds = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, messageIds.ToList(), untypedOnly: true)
+                .Select(m => m.Id).ToListAsync(ct);
+            if (eligibleIds.Count == 0)
+                return canceled;
+            var written = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, eligibleIds, untypedOnly: true)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
+                    .SetProperty(m => m.CanceledAt, now), ct);
+            if (written == eligibleIds.Count)
+                canceled.AddRange(eligibleIds);
+            else
+                canceled.AddRange(await db.SessionQueuedMessages.AsNoTracking()
+                    .Where(m => eligibleIds.Contains(m.Id) && m.Status == QueuedMessageStatus.Canceled)
+                    .Select(m => m.Id).ToListAsync(ct));
         }
         finally
         {

@@ -67,7 +67,8 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
                 }
                 try
                 {
-                    var canceled = (await queue.CancelPendingIfUntypedAsync(session.Key, rows.Select(r => r.Id).ToList(), ct, lockWait))
+                    var canceled = (await queue.CancelPendingIfUntypedAsync(
+                        session.Key, rows.Select(r => r.Id).ToList(), ct, lockWait, cutoff))
                         .ToHashSet();
                     foreach (var row in rows)
                     {
@@ -100,7 +101,18 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
     }
 
     private IQueryable<Domain.Entities.SessionQueuedMessage> Candidates(DateTime cutoff) =>
-        db.SessionQueuedMessages.AsNoTracking().Where(m =>
+        Eligible(db, cutoff, sessionId: null, ids: null, untypedOnly: false);
+
+    /// <summary>
+    /// Rows this rule may cancel. The scan passes no session and keeps typed rows so they can be
+    /// counted. The write passes the session, the selected ids and <paramref name="untypedOnly"/>,
+    /// and runs it again under that session's queue lock: a source retried to Queued or Working, or
+    /// a land or provider-wait note published while the lock was waited for, is no longer eligible.
+    /// </summary>
+    internal static IQueryable<Domain.Entities.SessionQueuedMessage> Eligible(
+        AppDbContext db, DateTime cutoff, Guid? sessionId, List<Guid>? ids, bool untypedOnly)
+    {
+        var query = db.SessionQueuedMessages.AsNoTracking().Where(m =>
             m.Status == QueuedMessageStatus.Pending
             && m.CreatedAt <= cutoff
             && (m.Origin == QueuedMessageOrigin.Delegation || m.Origin == QueuedMessageOrigin.Check)
@@ -113,6 +125,16 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
                 && (n.Kind == LandNotificationKind.ProviderInputWait
                     || (n.State != LandNotificationState.Confirmed && n.State != LandNotificationState.NotRequired
                         && n.State != LandNotificationState.LegacyUnverified && n.State != LandNotificationState.Canceled))));
+        if (untypedOnly)
+            query = query.Where(m => m.DeliveryAttempts == 0);
+        if (sessionId is Guid session)
+            query = query.Where(m => m.AgentSessionId == session);
+        if (ids is { Count: 0 })
+            return query.Where(_ => false);
+        if (ids is not null)
+            query = query.Where(m => ids.Contains(m.Id));
+        return query;
+    }
 
     private static void Increment(Dictionary<string, int> counts, string key) =>
         counts[key] = counts.GetValueOrDefault(key) + 1;
