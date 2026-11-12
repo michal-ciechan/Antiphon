@@ -79,13 +79,23 @@ public class RunnerSessionGenerationTests
         var hostB = TestSessionTeardown.CaptureHost(await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token));
-        runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
+        try
+        {
+            runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
 
-        runtime.SweepVanishedSessions(new StubProbe(false));
-        var payloadB = await ReadExitAsync(events, cts.Token);
-        payloadB.AcceptedStartedAt.ShouldBe(generationB);
-        KillBestEffort(runtime.Get(sessionId).Pid);
-        // Hang task d268c50c: run ae84478d session-runner all-group-4 was held by this case's host B.
+            runtime.SweepVanishedSessions(new StubProbe(false));
+            var payloadB = await ReadExitAsync(events, cts.Token);
+            payloadB.AcceptedStartedAt.ShouldBe(generationB);
+        }
+        finally
+        {
+            // Hang task d268c50c: the stub sweep sent host B its shutdown ack while the child lived.
+            // On Windows that host can wedge (or linger 72s), and killing the child pid alone left it
+            // holding run ae84478d session-runner all-group-4. The session is already exited here,
+            // so the host is killed directly, with its child.
+            KillBestEffort(runtime.Get(sessionId).Pid);
+            TestSessionTeardown.KillHost(hostB);
+        }
         await TestSessionTeardown.AssertHostGoneAsync(hostB, TimeSpan.FromSeconds(5));
     }
 
@@ -101,31 +111,39 @@ public class RunnerSessionGenerationTests
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
         var events = runtime.Subscribe(cts.Token);
-        await runtime.StartAsync(new RunnerLaunchRequest(
+        var host = TestSessionTeardown.CaptureHost(await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
-            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
-
-        var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
-        Directory.CreateDirectory(settings.PtyHostManifestDir);
-        new PtyHostManifest
+            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token));
+        try
         {
-            SessionId = sessionId,
-            PipeName = "gone",
-            HostPid = 1,
-            HostStartTimeUtc = generationA,
-            CreatedAtUtc = generationA,
-            ExitCode = 1,
-            ExitReason = "KilledByRequest",
-            ExitedAtUtc = DateTime.UtcNow,
-            AcceptedStartedAt = generationA,
-        }.SaveAtomic(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId));
+            var settings = new SessionRunnerSettings { SessionLogPath = logRoot, PtyHostLingerHours = 0.02 };
+            Directory.CreateDirectory(settings.PtyHostManifestDir);
+            new PtyHostManifest
+            {
+                SessionId = sessionId,
+                PipeName = "gone",
+                HostPid = 1,
+                HostStartTimeUtc = generationA,
+                CreatedAtUtc = generationA,
+                ExitCode = 1,
+                ExitReason = "KilledByRequest",
+                ExitedAtUtc = DateTime.UtcNow,
+                AcceptedStartedAt = generationA,
+            }.SaveAtomic(PtyHostManifest.PathFor(settings.PtyHostManifestDir, sessionId));
 
-        await runtime.AdoptOrphanedHostsAsync(new StubProbe(true), cts.Token);
-        var payload = await ReadExitAsync(events, cts.Token);
-        payload.AcceptedStartedAt.ShouldBe(generationA);
-        runtime.Get(sessionId).Status.ShouldBe("Running");
-        runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
-        KillBestEffort(runtime.Get(sessionId).Pid);
+            await runtime.AdoptOrphanedHostsAsync(new StubProbe(true), cts.Token);
+            var payload = await ReadExitAsync(events, cts.Token);
+            payload.AcceptedStartedAt.ShouldBe(generationA);
+            runtime.Get(sessionId).Status.ShouldBe("Running");
+            runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
+        }
+        finally
+        {
+            // Hang task d268c50c: killing the child pid alone leaves the host to a shutdown ack that
+            // races this runtime's disposal; without it the host lingers 72s past the test.
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, host?.Pid, host?.StartedAtUtc);
+        }
+        await TestSessionTeardown.AssertHostGoneAsync(host, TimeSpan.FromSeconds(5));
     }
 
     [Test]
@@ -139,39 +157,47 @@ public class RunnerSessionGenerationTests
         var generationA = SessionGeneration.Normalize(DateTime.UtcNow.AddMinutes(-5));
         var generationB = SessionGeneration.Next(generationA, DateTime.UtcNow);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
-        await runtime.StartAsync(new RunnerLaunchRequest(
+        var host = TestSessionTeardown.CaptureHost(await runtime.StartAsync(new RunnerLaunchRequest(
             sessionId, Cmd, HerdrTestProcess.InteractiveArgs, new Dictionary<string, string>(),
-            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token);
-
-        var sidecar = new HerdrPaneSidecar
+            Path.GetTempPath(), 80, 24, AcceptedStartedAt: generationB), cts.Token));
+        try
         {
-            SessionId = sessionId,
-            WorkspaceKey = "none",
-            WorkspaceId = "w",
-            TabId = "t",
-            PaneId = "p",
-            ChildPid = 4242,
-            LaunchedAtUtc = generationA,
-            UpdatedAtUtc = generationA,
-            AcceptedStartedAt = generationA,
-        };
-        var hub = new SessionRunnerEventHub();
-        var producerEvents = hub.Subscribe(cts.Token);
-        var producerSettings = new SessionRunnerSettings { SessionLogPath = logRoot };
+            var sidecar = new HerdrPaneSidecar
+            {
+                SessionId = sessionId,
+                WorkspaceKey = "none",
+                WorkspaceId = "w",
+                TabId = "t",
+                PaneId = "p",
+                ChildPid = 4242,
+                LaunchedAtUtc = generationA,
+                UpdatedAtUtc = generationA,
+                AcceptedStartedAt = generationA,
+            };
+            var hub = new SessionRunnerEventHub();
+            var producerEvents = hub.Subscribe(cts.Token);
+            var producerSettings = new SessionRunnerSettings { SessionLogPath = logRoot };
 
-        _ = SessionRunnerRuntime.RunnerSession.CreateAdoptedHerdrExited(
-            sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance,
-            HerdrExitReasons.RestartPresumedDead);
-        (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
+            _ = SessionRunnerRuntime.RunnerSession.CreateAdoptedHerdrExited(
+                sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance,
+                HerdrExitReasons.RestartPresumedDead);
+            (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
 
-        var pending = SessionRunnerRuntime.RunnerSession.CreatePendingHerdr(
-            sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance, new StubProbe(true));
-        pending.CompletePendingAsExited(HerdrExitReasons.RestartPresumedDead, 1);
-        (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
+            var pending = SessionRunnerRuntime.RunnerSession.CreatePendingHerdr(
+                sidecar, producerSettings, hub, NullLogger<SessionRunnerRuntime>.Instance, new StubProbe(true));
+            pending.CompletePendingAsExited(HerdrExitReasons.RestartPresumedDead, 1);
+            (await ReadExitAsync(producerEvents, cts.Token)).AcceptedStartedAt.ShouldBe(generationA);
 
-        runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
-        runtime.Get(sessionId).Status.ShouldBe("Running");
-        KillBestEffort(runtime.Get(sessionId).Pid);
+            runtime.Get(sessionId).AcceptedStartedAt.ShouldBe(generationB);
+            runtime.Get(sessionId).Status.ShouldBe("Running");
+        }
+        finally
+        {
+            // Hang task d268c50c: killing the child pid alone leaves the host to a shutdown ack that
+            // races this runtime's disposal; without it the host lingers 72s past the test.
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, host?.Pid, host?.StartedAtUtc);
+        }
+        await TestSessionTeardown.AssertHostGoneAsync(host, TimeSpan.FromSeconds(5));
     }
 
     [Test]
