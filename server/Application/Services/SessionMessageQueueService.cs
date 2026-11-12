@@ -1353,6 +1353,13 @@ public sealed partial class SessionMessageQueueService
             m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0, ct, lockWait) == true;
 
     /// <summary>
+    /// Test seam for the CARD-0747 eligibility race. Invoked after this session's queue lock is held
+    /// and before the expiry write, so a witness can retry the source task or publish a land note in
+    /// the gap the selection query already passed. Production leaves it null.
+    /// </summary>
+    internal Func<AppDbContext, CancellationToken, Task>? BeforeAgedExpiryRecheck { get; set; }
+
+    /// <summary>
     /// CARD-0747 aged queue rows. The same never-typed re-check as
     /// <see cref="CancelPendingIfUntypedAsync(Guid, Guid, CancellationToken, TimeSpan?)"/> for several rows of one
     /// session in one lock hold, with one queue publish. Rows are marked Canceled, never deleted. Returns the ids
@@ -1375,6 +1382,8 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (BeforeAgedExpiryRecheck is { } mutate)
+                await mutate(db, ct);
             var ids = messageIds.ToList();
             var rows = await db.SessionQueuedMessages
                 .Where(m => ids.Contains(m.Id) && m.AgentSessionId == sessionId
