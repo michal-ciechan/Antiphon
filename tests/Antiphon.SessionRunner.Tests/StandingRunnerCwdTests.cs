@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -13,7 +12,6 @@ namespace Antiphon.SessionRunner.Tests;
 /// in the lexical cases is <c>/work</c>. Nothing here touches a live runner.
 /// </summary>
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class StandingRunnerCwdTests
 {
     private const string Root = "/work";
@@ -178,7 +176,7 @@ public sealed class StandingRunnerCwdTests
             var absentWorktree = Path.Combine(root, "worktrees", "task-absent");
             Should.NotThrow(() => dispatcher.RejectUnsupportedLaunch(Launch(absentWorktree)));
 
-            CreateDirectoryLink(linked, outside);
+            Directory.CreateSymbolicLink(linked, outside);
             var linkRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
                 dispatcher.RejectUnsupportedLaunch(Launch(linked)));
             linkRefusal.Message.Contains("symlink", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(linkRefusal.Message);
@@ -195,7 +193,7 @@ public sealed class StandingRunnerCwdTests
             // the agents directory, so only an lstat of the agents directory itself refuses this.
             var target = Path.Combine(agentsRoot, "target-agents");
             Directory.CreateDirectory(Path.Combine(target, "ok-agent"));
-            CreateDirectoryLink(agentsLink, target);
+            Directory.CreateSymbolicLink(agentsLink, target);
             var agentsRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
                 NewDispatcher(agentsRoot).RejectUnsupportedLaunch(Launch(Path.Combine(agentsLink, "ok-agent"))));
             agentsRefusal.Message.Contains("agents", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(agentsRefusal.Message);
@@ -491,24 +489,36 @@ public sealed class StandingRunnerCwdTests
     }
 
     [Test]
-    public void Link_fixtures_fall_back_to_a_junction_without_the_windows_symlink_privilege()
+    public void Directory_link_cleanup_removes_the_link_not_the_target()
     {
-        // rc ae84478d: the desktop lane has no SeCreateSymbolicLinkPrivilege. A direct symlink call
-        // in a link fixture failed there before any assertion and stayed green on Linux.
-        var privilege = unchecked((int)0x80070522);
-        IsMissingSymlinkPrivilege(new IOException("privilege", privilege), windows: true).ShouldBeTrue("io");
-        IsMissingSymlinkPrivilege(new UnauthorizedAccessException { HResult = privilege }, windows: true).ShouldBeTrue("denied");
-        IsMissingSymlinkPrivilege(new IOException("privilege", privilege), windows: false).ShouldBeFalse("linux");
-        IsMissingSymlinkPrivilege(new IOException("other", unchecked((int)0x80070521)), windows: true).ShouldBeFalse("other win32");
-        IsMissingSymlinkPrivilege(new InvalidOperationException { HResult = privilege }, windows: true).ShouldBeFalse("type");
-
-        var needle = "CreateSymbolic" + "Link(";
+        // rc ae84478d: File.Delete on a directory symlink is access denied on Windows and fine on
+        // Linux, so the two link tests failed only in their Windows finally blocks. Every link
+        // cleanup in this class goes through DeleteDirectoryLink.
         var source = Path.Combine(RepoRoot(), "tests", "Antiphon.SessionRunner.Tests", nameof(StandingRunnerCwdTests) + ".cs");
-        var calls = File.ReadAllLines(source)
+        var needle = "File." + "Delete(";
+        File.ReadAllLines(source)
             .Select(line => line.Trim())
             .Where(line => !line.StartsWith("//", StringComparison.Ordinal) && line.Contains(needle, StringComparison.Ordinal))
-            .ToList();
-        calls.ShouldBe(new[] { "Directory." + needle + "linkPath, targetPath);" }, ignoreOrder: false, "only CreateDirectoryLink may create a link");
+            .ShouldBe(new[] { needle + "path);" }, ignoreOrder: false, "only DeleteDirectoryLink's non-Windows branch may File.Delete");
+
+        var root = Path.Combine("/tmp", "rc-ae84478d-link-" + Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(root, "target");
+        var link = Path.Combine(root, "link");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "kept.txt"), "kept");
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+            DeleteDirectoryLink(link);
+            (File.Exists(link) || Directory.Exists(link)).ShouldBeFalse(link);
+            File.ReadAllText(Path.Combine(target, "kept.txt")).ShouldBe("kept");
+            Should.NotThrow(() => DeleteDirectoryLink(target));
+            Directory.Exists(target).ShouldBeTrue(target);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static string RepoRoot()
@@ -526,6 +536,22 @@ public sealed class StandingRunnerCwdTests
         RunnerWorkspaceAdmission.IsAdmitted(cwd, root, windows).ShouldBe(admitted, label);
         RunnerWorkspaceCwd.IsAdmitted(cwd, root, windows).ShouldBe(admitted, label);
         RunnerWorkspaceAdmission.IsStandingCheckout(cwd, root, windows).ShouldBe(standing, label);
+    }
+
+    /// <summary>
+    /// Removes a directory symlink, never its target. On Windows a directory symlink is a
+    /// directory reparse point, so File.Delete answers access denied (rc run ae84478d);
+    /// Directory.Delete removes the link itself. Linux unlinks it with File.Delete.
+    /// A path that is not a link is left for the recursive root delete.
+    /// </summary>
+    private static void DeleteDirectoryLink(string path)
+    {
+        if (new DirectoryInfo(path).LinkTarget is null)
+            return;
+        if (OperatingSystem.IsWindows())
+            Directory.Delete(path);
+        else
+            File.Delete(path);
     }
 
     private static PhoneHomeSettings EnabledSettings(string allowedCwd) => new()
@@ -559,56 +585,6 @@ public sealed class StandingRunnerCwdTests
             PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
             JsonSerializer.SerializeToElement(Launch(cwd), PhoneHomeFraming.Json));
         return dispatcher.DispatchAsync(frame, CancellationToken.None);
-    }
-
-    /// <summary>
-    /// A directory symlink, or a junction on a Windows host without SeCreateSymbolicLinkPrivilege
-    /// (ERROR_PRIVILEGE_NOT_HELD; the native desktop qualification lane). StandingCheckoutLink
-    /// refuses both as one reparse-point class, so the junction runs the same refusal, not a skip.
-    /// </summary>
-    private static void CreateDirectoryLink(string linkPath, string targetPath)
-    {
-        try
-        {
-            Directory.CreateSymbolicLink(linkPath, targetPath);
-            return;
-        }
-        catch (Exception ex) when (IsMissingSymlinkPrivilege(ex, OperatingSystem.IsWindows()))
-        {
-        }
-
-        // mklink reads a leading '/' as a switch and needs an absolute junction target.
-        var commandInterpreter = OperatingSystem.IsWindows()
-            ? Environment.GetEnvironmentVariable("ComSpec") ?? Path.Combine(Environment.SystemDirectory, "cmd.exe")
-            : throw new PlatformNotSupportedException("A junction fallback needs Windows.");
-        using var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = commandInterpreter,
-            Arguments = $"/d /c mklink /J \"{Path.GetFullPath(linkPath)}\" \"{Path.GetFullPath(targetPath)}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        }) ?? throw new InvalidOperationException("Could not start mklink for the standing junction.");
-        process.WaitForExit();
-        if (process.ExitCode != 0)
-            throw new IOException($"Could not create the standing junction (exit code {process.ExitCode}).");
-        new DirectoryInfo(linkPath).Attributes.HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue(linkPath);
-    }
-
-    private static bool IsMissingSymlinkPrivilege(Exception error, bool windows) =>
-        windows && error is IOException or UnauthorizedAccessException
-        && error.HResult == unchecked((int)0x80070522); // HRESULT_FROM_WIN32(ERROR_PRIVILEGE_NOT_HELD)
-
-    // Removes only the link. File.Delete refuses a Windows directory link, and Directory.Delete
-    // without recursion never follows one.
-    private static void DeleteDirectoryLink(string linkPath)
-    {
-        var link = new DirectoryInfo(linkPath);
-        if (link.Exists && link.LinkTarget is not null)
-            Directory.Delete(linkPath);
-        else if (new FileInfo(linkPath).LinkTarget is not null)
-            File.Delete(linkPath);
     }
 
     private static RunnerLaunchRequest Launch(string cwd) =>
@@ -650,7 +626,7 @@ public sealed class StandingRunnerCwdTests
         public Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct)
         {
             Directory.Delete(leaf, recursive: true);
-            CreateDirectoryLink(leaf, outside);
+            Directory.CreateSymbolicLink(leaf, outside);
             return Task.FromResult(new RunnerProviderAuthDto(provider, true, "test", null, DateTimeOffset.UtcNow, null));
         }
     }
