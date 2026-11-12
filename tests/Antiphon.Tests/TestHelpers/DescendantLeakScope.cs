@@ -15,8 +15,14 @@ namespace Antiphon.Tests.TestHelpers;
 /// Every process started from <see cref="Apply"/> inherits <see cref="Variable"/>; Linux finds
 /// the members by their initial environ. On Windows, <see cref="Adopt"/> puts the root in a job
 /// that every later descendant joins, with no breakaway. Adopt runs after
-/// <see cref="Process.Start(ProcessStartInfo)"/>, so a root must not spawn before it can be
-/// adopted (a pwsh worker needs far longer than that to start its first child).
+/// <see cref="Process.Start(ProcessStartInfo)"/>. A grandchild created in that window misses the
+/// job, which is a false negative only. Closing it needs <c>CREATE_SUSPENDED</c> or
+/// <c>PROC_THREAD_ATTRIBUTE_JOB_LIST</c> on <c>CreateProcess</c>. Callers need the redirected
+/// <see cref="Process"/> that <c>Process.Start</c> builds, and that API exposes neither flag.
+/// A private CreateProcess stack would be a new native launch path, and
+/// <c>DescendantLeakScopeTests</c> still starts with <c>Process.Start</c> then Adopt, so
+/// CARD-1853 leaves the race optional. The pwsh worker and the witness's <c>ping -n 2</c>
+/// delay both outlast the window.
 /// The job is KILL_ON_JOB_CLOSE: a test host that dies still takes the members with it.
 /// </summary>
 internal sealed class DescendantLeakScope : IDisposable
@@ -64,12 +70,28 @@ internal sealed class DescendantLeakScope : IDisposable
 
     /// <summary>
     /// <see cref="Adopt"/>, or <paramref name="adopt"/> when a test injects a failure.
-    /// The pre-fix form lets the exception escape and leaves <paramref name="root"/> running.
+    /// A throw kills <paramref name="root"/> before it escapes, so a caller whose try has not
+    /// started cannot leave the worker running (CARD-1853 A-4).
     /// </summary>
     public void AdoptOrKill(Process root, Action<Process>? adopt = null)
     {
-        if (adopt is null) Adopt(root);
-        else adopt(root);
+        try
+        {
+            if (adopt is null) Adopt(root);
+            else adopt(root);
+        }
+        catch
+        {
+            try
+            {
+                if (!root.HasExited) root.Kill(entireProcessTree: true);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // The root exited between the check and the kill.
+            }
+            throw;
+        }
     }
 
     /// <summary>Live members of the scope, never the test host itself.</summary>

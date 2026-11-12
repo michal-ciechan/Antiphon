@@ -80,8 +80,8 @@ public sealed class DescendantLeakScopeTests
         }
     }
 
-    /// <summary>CARD-1853 A-4: C24 calls <see cref="DescendantLeakScope.AdoptOrKill"/> before its
-    /// try. A throwing adopt must kill the root; otherwise the worker outlives the test.</summary>
+    /// <summary>CARD-1853 A-4: a throwing adopt kills the root, and C448_C24 calls
+    /// <see cref="DescendantLeakScope.AdoptOrKill"/> inside its try.</summary>
     [Test]
     public async Task A_throwing_adopt_kills_the_root(CancellationToken ct)
     {
@@ -98,11 +98,32 @@ public sealed class DescendantLeakScopeTests
                 await Task.Delay(50, ct);
             root.HasExited.ShouldBeTrue(
                 "a throwing Adopt must kill the root so C24 cannot leave the worker running");
+            C24AdoptsInsideItsTry();
         }
         finally
         {
             if (!root.HasExited) root.Kill(entireProcessTree: true);
         }
+    }
+
+    /// <summary>The C24 method itself, not a copy: AdoptOrKill is inside the try and the bare
+    /// Adopt call is gone, so an assignment failure reaches the kill.</summary>
+    private static void C24AdoptsInsideItsTry()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+        var source = File.ReadAllText(Path.Combine(
+            directory.ShouldNotBeNull().FullName,
+            "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs"));
+        var start = source.IndexOf("Task C448_C24_KilledWorkerLeavesLiveGitChildFenced", StringComparison.Ordinal);
+        var end = source.IndexOf("private static string FindRepositoryRoot", start, StringComparison.Ordinal);
+        var body = source[start..end];
+        var tryAt = body.IndexOf("\n        try\n", StringComparison.Ordinal);
+        var adopt = body.IndexOf("leaks.AdoptOrKill(process)", StringComparison.Ordinal);
+        tryAt.ShouldBeGreaterThanOrEqualTo(0);
+        adopt.ShouldBeGreaterThan(tryAt);
+        body.ShouldNotContain("leaks.Adopt(process)");
     }
 
     /// <summary>Starts a root that orphans one sleeper, waits for the root to exit, and returns
