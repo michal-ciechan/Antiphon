@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 313,
+      "classes": 314,
       "reason": "allowlist"
     },
     {
@@ -2099,30 +2099,30 @@
       "reason": "cap",
       "owed": 35,
       "first": [
+        "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
-        "LiveLaneReceiptTests",
-        "LiveLaneRunnerTests"
+        "LiveLaneReceiptTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
         "ReleaseSelectionCliTests",
         "ClaudeEffortFixtureTraceTests",
         "DirectoryLinkFixtureTests",
         "NightlyCoreTests",
         "ProcessSpawnLimitTests",
-        "QualificationGraphContractTests",
-        "RcFullWatchdogHarnessTests"
+        "QualificationGraphContractTests"
       ]
     },
     {
@@ -2690,10 +2690,22 @@
       ]
     },
     {
+      "path": "client/src/features/attention/attentionVisuals.test.ts",
+      "classes": [
+        "TestClientFilterTests"
+      ]
+    },
+    {
       "path": "client/src/features/attention/attentionVisuals.ts",
       "classes": [
         "BootStallDocumentationTests",
         "StandingBootDocumentationTests"
+      ]
+    },
+    {
+      "path": "client/tsconfig.node.json",
+      "classes": [
+        "TestClientFilterTests"
       ]
     },
     {
@@ -23587,6 +23599,7 @@
       "path": "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs",
       "classes": [
         "DerivedImpactIndexTests",
+        "DescendantLeakScopeTests",
         "ProcessSpawnLimitTests",
         "RepositoryMutationLeaseTests"
       ]
@@ -23827,11 +23840,11 @@
         "C1514LandingSplitBudgetTests",
         "C1733AllocatorFixtureTests",
         "C599SnapshotTests",
-        "ChangeAwareReleaseTests",
         "CheckpointOwnedOutputScriptTests",
         "NightlyDeadOwnerLockTests",
         "NightlyPrerequisiteTests",
         "NightlyReclaimRaceTests",
+        "NightlyScriptsTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
@@ -23859,7 +23872,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
-        "C1514HostLoadScriptTests",
         "C487ReadOnlyCleanupWitnessTests",
         "ChangeAwareReleaseBudgetTests",
         "ChangeAwareReleaseTests",
@@ -23871,6 +23883,7 @@
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
         "NightlyProbeSupervisorTests",
+        "NightlyScriptsTests",
         "QualificationEtaTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
