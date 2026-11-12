@@ -32,9 +32,18 @@ public sealed class TestClientFilterTests
         if (!File.Exists(vitest))
             throw new SkipTestException($"client/node_modules is not installed ({vitest}); run npm ci in client/.");
 
-        var run = await RunWrapperAsync(repoRoot, "attentionVisuals.test");
+        // The wrapper gates vitest on a typecheck and a lint. Those gates are not the claim here, so they are
+        // scoped with the wrapper's own forwarding switches (the small node tsconfig, the one test file):
+        // all three stages still run in order, but not over the whole client (a cold full typecheck plus
+        // lint cost most of this test's ~46 s). The switches must be consumed by the wrapper, not reach vitest.
+        var run = await RunWrapperAsync(repoRoot,
+            "-TypecheckProject", "client/tsconfig.node.json",
+            "-LintPath", "client/src/features/attention/attentionVisuals.test.ts",
+            "attentionVisuals.test");
         var output = AnsiEscape.Replace(run.Output, string.Empty);
 
+        output.ShouldContain("CLIENT TYPECHECK EXIT CODE: 0", customMessage: output);
+        output.ShouldContain("CLIENT LINT EXIT CODE: 0", customMessage: output);
         output.ShouldContain("CLIENT TESTS EXIT CODE:", customMessage: output);
         // vitest's summary shape: " Test Files  1 passed (1)" (or "1 failed (1)" if that file is red —
         // still ONE file, which is the claim under test).
