@@ -28,19 +28,24 @@ function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 # working bytes differ from what the current attributes check out. checkout-index -f skips
 # a stat-clean file, so each stale file is removed first. -u refreshes its index stat.
 function Get-NightlyStaleEolPaths {
-    param([string]$LsFilesEolOutput)
+    param([string]$LsFilesEolOutput, [ref]$SkippedCount)
     $stale = New-Object System.Collections.Generic.List[string]
     foreach ($line in ([string]$LsFilesEolOutput -split "`n")) {
         $line = $line.TrimEnd("`r")
         if ($line -notmatch '^i/(\S*)\s+w/(\S*)\s+attr/([^\t]*)\t(.+)$') { continue }
         $index = $Matches[1]; $work = $Matches[2]; $attr = ' ' + $Matches[3].Trim() + ' '; $path = $Matches[4]
-        # A quoted path carries C escapes; leave it rather than guess its name.
-        if ($path.StartsWith('"')) { continue }
         if ($index -ne 'lf' -or $attr -match ' -text ') { continue }
         $wantLf = $attr -match ' eol=lf '
         $wantCrlf = $attr -match ' eol=crlf '
         if (($wantLf -and ($work -eq 'crlf' -or $work -eq 'mixed')) -or
-            ($wantCrlf -and ($work -eq 'lf' -or $work -eq 'mixed'))) { $stale.Add($path) }
+            ($wantCrlf -and ($work -eq 'lf' -or $work -eq 'mixed'))) {
+            # A quoted path carries C escapes; leave it rather than guess its name.
+            if ($path.StartsWith('"')) {
+                if ($null -ne $SkippedCount) { $SkippedCount.Value++ }
+                continue
+            }
+            $stale.Add($path)
+        }
     }
     # No unary comma: callers wrap in @(), and @(,@()) would be one empty element.
     return $stale.ToArray()
@@ -50,9 +55,17 @@ function Repair-NightlyCheckoutLineEndings {
     param([string]$CheckoutRoot)
     $eol = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('-c', 'core.quotePath=false', 'ls-files', '--eol')
     if ([int]$eol.ExitCode -ne 0) { throw ('git ls-files --eol failed with exit {0}' -f $eol.ExitCode) }
-    $stale = @(Get-NightlyStaleEolPaths -LsFilesEolOutput ([string]$eol.Output))
-    if ($stale.Count -eq 0) { return }
-    Write-Host ('nightly sync: rewriting {0} working file(s) whose line endings predate their eol attribute' -f $stale.Count)
+    $skipped = 0
+    $stale = New-Object System.Collections.Generic.List[string]
+    foreach ($path in @(Get-NightlyStaleEolPaths -LsFilesEolOutput ([string]$eol.Output) -SkippedCount ([ref]$skipped))) {
+        # Windows PowerShell 5.1 can decode Git's UTF-8 stdout with the OEM code
+        # page. Never pass an unresolvable name to checkout-index: it fails the
+        # whole sync. LiteralPath also preserves spaces and wildcard characters.
+        if (Test-Path -LiteralPath (Join-Path $CheckoutRoot $path) -PathType Leaf) { $stale.Add($path) }
+        else { $skipped++ }
+    }
+    if ($stale.Count -eq 0 -and $skipped -eq 0) { return }
+    Write-Host ('nightly sync: rewriting {0} working file(s) whose line endings predate their eol attribute; skipped={1} path(s) (quoted or missing)' -f $stale.Count, $skipped)
     for ($i = 0; $i -lt $stale.Count; $i += 100) {
         $batch = @($stale[$i..([Math]::Min($i + 99, $stale.Count - 1))])
         foreach ($path in $batch) {

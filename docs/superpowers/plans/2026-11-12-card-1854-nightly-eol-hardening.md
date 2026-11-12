@@ -65,16 +65,20 @@ One seed/clone per regression method is necessary to test pre-attribute checkout
 state. No service, database or container setup. Original C1313 measured 6.2 s in
 Review 3997c63a; new C1854 duration is provisional, collected by this task's TRX.
 Retain checkpoint build/slot/run timing and harness evidence; detailed Git-call
-phase timings are unavailable. Existing harness timeout is unchanged. No timeout
-is widened. No full lane/assembly or unbounded class set is needed. Total ordinary
-estimate is 9 minutes, including two cold builds (red and green). A third row
-reuses the green build. Admission is bounded by the checkpoint broker defaults;
-execution uses the checkpoint derived total allowance. No repeated green proof.
+phase timings are unavailable. The red witness measured 3.50 s test body and
+317.80 s isolated build (sample=1, not p95). C1854 gets an explicit provisional
+20-second execution budget and the existing 10-second cleanup budget; green TRX
+supplies the next bounded sample. No timeout is widened. No full lane/assembly
+or unbounded class set is needed. Total green estimate is 7 minutes including
+one cold build. The red run cost 5m55s, retained separately; its initial estimate
+was 4 minutes. CP-1 is rerun green; CP-2/CP-3 reuse that build. Admission is bounded
+by the checkpoint broker defaults; execution uses its derived total allowance.
+The method is rerun once as part of its required class; no further green repeats.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1854-red/ | red-witness | /*/*/NightlyScriptsTests/C1854_EolRepairHardening | V-1 | C1854_EolRepairHardening, expected red before S2 | 1 | 4 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1854-green/ | touched-class | /*/*/NightlyScriptsTests/* | V-1,V-2 | all listed, 0 failed | 7 | 4 |
-| CP-3 | S2 | CP-2 | impacted | /*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(TestLaneCategoryGuardTests*)/* | V-3 | all listed, 0 failed | 6 | 1 |
+| CP-1 | S2 | tests/Antiphon.Tests -> bin-c1854-green/ | red-witness | /*/*/NightlyScriptsTests/C1854_EolRepairHardening | V-1 | all listed, 0 failed | 1 | 5 |
+| CP-2 | S2 | CP-1 | touched-class | /*/*/NightlyScriptsTests/* | V-1,V-2 | all listed, 0 failed | 7 | 1 |
+| CP-3 | S2 | CP-1 | impacted | /*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(TestLaneCategoryGuardTests*)/* | V-3 | all listed, 0 failed | 6 | 1 |
