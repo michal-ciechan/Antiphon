@@ -47,9 +47,9 @@
   "cappedPaths": [
     {
       "path": ".claude/skills/antiphon-delegate/SKILL.md",
-      "classes": 180,
+      "classes": 181,
       "reason": "cap",
-      "owed": 155,
+      "owed": 156,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandActiveSourceClaimTests",
@@ -95,9 +95,9 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 218,
+      "classes": 219,
       "reason": "cap",
-      "owed": 193,
+      "owed": 194,
       "first": [
         "CommitOnSettleDocumentationTests",
         "DockerStackDocumentationTests",
@@ -116,9 +116,9 @@
     },
     {
       "path": "CLAUDE.md",
-      "classes": 191,
+      "classes": 192,
       "reason": "cap",
-      "owed": 166,
+      "owed": 167,
       "first": [
         "AgentTaskDispatchFailureTests",
         "AgentTaskInputSpillTests",
@@ -174,9 +174,9 @@
     },
     {
       "path": "docs/agent-card-lifecycle.md",
-      "classes": 175,
+      "classes": 176,
       "reason": "cap",
-      "owed": 150,
+      "owed": 151,
       "first": [
         "AgentTaskMidTurnRefineTests",
         "AgentTaskPoolTests",
@@ -190,9 +190,9 @@
     },
     {
       "path": "docs/ops-http.md",
-      "classes": 178,
+      "classes": 179,
       "reason": "cap",
-      "owed": 153,
+      "owed": 154,
       "first": [
         "AgentTaskLandAdmissionControlledTests",
         "AgentTaskLandAdmissionTests",
@@ -206,9 +206,9 @@
     },
     {
       "path": "docs/orchestration-loop.md",
-      "classes": 188,
+      "classes": 189,
       "reason": "cap",
-      "owed": 163,
+      "owed": 164,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
@@ -433,9 +433,9 @@
     },
     {
       "path": "server/Application/Exceptions/ValidationException.cs",
-      "classes": 97,
+      "classes": 98,
       "reason": "cap",
-      "owed": 72,
+      "owed": 73,
       "first": [
         "WorktreeDefaultContinuationTests",
         "WorktreeStartRefDispatchTests",
@@ -688,18 +688,18 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandNotificationService.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "CapacityRecoveryTaskTests",
         "DispatchHoldVisibilityTests",
         "RepositoryMutationLeaseOwnerTests",
         "RolePolicyToolBundleDispatchTests",
         "ImpactedClassesSelectorTests",
         "DerivedImpactIndexTests",
         "AgentTaskLandNotificationRecoveryTests",
-        "AgentTaskLandReceiptTests",
-        "AgentTaskLandNotificationPersistenceTests"
+        "AgentTaskLandReceiptTests"
       ]
     },
     {
@@ -921,9 +921,9 @@
     },
     {
       "path": "server/Application/Services/CompletionNoteWork.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "LegacyCheckNotePublicationTests",
         "ReceiptScanDestinationIntegrationTests",
@@ -1016,18 +1016,18 @@
     },
     {
       "path": "server/Application/Services/LandDeliveryBoundary.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "ReviewEvidenceRecoveryTests",
         "RunnerTaskSettlementTests",
         "SessionMessageQueueWedgedHeadTests",
         "SessionRuntimeActionRoutingTests",
         "AdvisoryChangePolicyTests",
         "AgentTaskLandHeldNotificationTests",
         "AgentTaskLandPublicationTests",
-        "AgentTaskLandReceiptTests",
-        "AgentTaskLandReceiptWatermarkSafetyTests"
+        "AgentTaskLandReceiptTests"
       ]
     },
     {
@@ -1327,9 +1327,9 @@
     },
     {
       "path": "server/Application/Settings/SupervisionSettings.cs",
-      "classes": 171,
+      "classes": 172,
       "reason": "cap",
-      "owed": 146,
+      "owed": 147,
       "first": [
         "CapacityRecoveryTaskTests",
         "ChannelBridgeTests",
@@ -1391,9 +1391,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 418,
+      "classes": 419,
       "reason": "cap",
-      "owed": 393,
+      "owed": 394,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -1407,18 +1407,18 @@
     },
     {
       "path": "server/Domain/Entities/AgentTaskLandNotification.cs",
-      "classes": 39,
+      "classes": 40,
       "reason": "cap",
-      "owed": 14,
+      "owed": 15,
       "first": [
         "AgentTaskLandReceiptWatermarkSafetyTests",
         "AgentTaskWorktreeLockOutcomeTests",
         "BlockedTaskParkReleaseTests",
+        "C0747QueueRowExpiryTests",
         "EntityScalarSnapshotTests",
         "PendingSettlementDeliveryTests",
         "PreDispatchFailureDeliveryTests",
-        "ReceiptFailureDeliveryTests",
-        "ReceiptScanDestinationIntegrationTests"
+        "ReceiptFailureDeliveryTests"
       ]
     },
     {
@@ -1573,18 +1573,18 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 150,
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
+        "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
         "SessionRuntimeActionTests",
         "StandingBootQueueWitnessTests",
         "AgentTaskLandNotificationParkFollowUpTests",
         "ChannelFollowUpAttachmentTests",
         "ChannelMachineTurnTextTests",
-        "ChannelOutboundDiscoveryTests",
-        "ChannelOutboundDurabilitySchemaTests"
+        "ChannelOutboundDiscoveryTests"
       ]
     },
     {
@@ -1621,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 595,
+      "classes": 596,
       "reason": "cap",
-      "owed": 570,
+      "owed": 571,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1637,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 595,
+      "classes": 596,
       "reason": "cap",
-      "owed": 570,
+      "owed": 571,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2143,9 +2143,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 143,
+      "classes": 144,
       "reason": "cap",
-      "owed": 118,
+      "owed": 119,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
@@ -2175,9 +2175,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/ClaudeDialogFixture.cs",
-      "classes": 92,
+      "classes": 93,
       "reason": "cap",
-      "owed": 67,
+      "owed": 68,
       "first": [
         "RepairSourceSettlementTests",
         "SessionGenerationDeliveryOverlapTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 508,
+      "classes": 509,
       "reason": "cap",
-      "owed": 483,
+      "owed": 484,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -6621,9 +6621,9 @@
         "BlockedTaskParkDeliveryTests",
         "C0747LandNoteExpireEndpointTests",
         "C0747LandReceiptReplayTests",
+        "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
         "C0824RefOnlyReceiptTests",
-        "CapacityRecoveryTaskTests",
         "CheckNoteDeliveryHandoffTests",
         "CompletionNoteDurableSweepTests",
         "DataRetentionServiceTests",
@@ -9232,6 +9232,7 @@
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationRescanTests",
         "AgentTaskReplyIntegrationTests",
+        "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
         "C0824RefOnlyReceiptTests",
         "CapacityAdmissionLifecycleTests",
@@ -9248,7 +9249,6 @@
         "PipelineSpeedIntegrationTests",
         "PoolProviderProjectionStampTests",
         "PostLandMutationDeliveryTests",
-        "ReviewEvidenceRecoveryTests",
         "ReviewEvidenceResettlementTests",
         "TaskSupervisionReceiptTests",
         "WorktreeLandingCleanupRetryTests"
@@ -9264,7 +9264,8 @@
     {
       "path": "server/Application/Services/LandNoteExpirySweepService.cs",
       "classes": [
-        "C0747LandReceiptReplayTests"
+        "C0747LandReceiptReplayTests",
+        "C0747QueueRowExpiryTests"
       ]
     },
     {
@@ -13975,6 +13976,7 @@
         "AgentTaskReplyIntegrationTests",
         "AttentionServiceTests",
         "BlockedReplyReportRetentionTests",
+        "C0747QueueRowExpiryTests",
         "CapacityObsoleteQueueTests",
         "ChannelInputWithheldIncidentTests",
         "ChannelOutboundDeliveryTests",
@@ -13982,7 +13984,6 @@
         "CheckCompactionReceiptTests",
         "DataRetentionServiceTests",
         "DelegationDispatchRecoveryBoundaryTests",
-        "ProviderQuotaRefusalAcceptanceTests",
         "RemoteCompletionSpillTests",
         "RemoteControlRecoveryPtyIntegrationTests",
         "RunnerAlarmDeliveryTests",
@@ -15572,6 +15573,7 @@
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationRescanTests",
         "AgentTaskWorktreeLockOutcomeTests",
+        "C0747QueueRowExpiryTests",
         "DispatchBaseNotificationTests",
         "ImpactedClassesSelectorTests",
         "LandDeliveryFixtureProbeTests"
@@ -21554,6 +21556,7 @@
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandQueuedReceiptTests",
         "C0747LandReceiptReplayTests",
+        "C0747QueueRowExpiryTests",
         "CompletionNoteDurableSweepTests",
         "PostLandMutationDeliveryTests",
         "VerificationRoundDeliveryTests",
@@ -21568,6 +21571,7 @@
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandQueuedReceiptTests",
         "C0747LandReceiptReplayTests",
+        "C0747QueueRowExpiryTests",
         "CompletionNoteDurableSweepTests",
         "PostLandMutationDeliveryTests",
         "VerificationRoundDeliveryTests",
