@@ -1411,10 +1411,10 @@
       "reason": "cap",
       "owed": 15,
       "first": [
+        "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkSafetyTests",
         "AgentTaskWorktreeLockOutcomeTests",
         "BlockedTaskParkReleaseTests",
-        "C0747QueueRowExpiryTests",
         "EntityScalarSnapshotTests",
         "PendingSettlementDeliveryTests",
         "PreDispatchFailureDeliveryTests",
@@ -2324,10 +2324,10 @@
       "owed": 57,
       "first": [
         "AgentTaskServiceIntegrationTests",
+        "CardFileGitFailureAcceptanceTests",
         "RepositoryMutationLeaseOwnerTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "WorktreeDefaultCallerTests",
-        "CardFileGitFailureAcceptanceTests",
         "CheckpointTaskScriptTests",
         "CodexCliObservationTests",
         "GatedCommitServiceTests"
@@ -5075,6 +5075,7 @@
       "path": "server/Application/Dtos/SessionQueueDtos.cs",
       "classes": [
         "AgentTaskCheckSweepTests",
+        "C0747QueueRowExpiryTests",
         "ChannelOutboundRecoveryTests",
         "DeliveryUnverifiedDiagnosticTests",
         "ExpectationHoldReleaseEndpointTests",
@@ -5954,6 +5955,12 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "C0824RefOnlyIdentityTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgedQueueRowExpiry.cs",
+      "classes": [
+        "C0747QueueRowExpiryTests"
       ]
     },
     {
@@ -12789,11 +12796,11 @@
         "AgentTaskLandNotificationRescanTests",
         "AgentTaskLandPublicationTests",
         "AgentTaskLandQueuedReceiptTests",
-        "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkTests",
         "AgentTaskReplyIntegrationTests",
         "AttentionServiceTests",
         "C0747LandReceiptReplayTests",
+        "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
         "CheckCompactionCrashTests",
         "CheckNoteDeliveryHandoffTests",
