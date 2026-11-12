@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
@@ -1360,11 +1361,24 @@ public sealed partial class SessionMessageQueueService
     internal Func<AppDbContext, CancellationToken, Task>? BeforeAgedExpiryRecheck { get; set; }
 
     /// <summary>
-    /// CARD-0747 aged queue rows. Several rows of one session, one lock hold, one queue publish.
-    /// After the lock is held the full rule is read again (<paramref name="eligibilityCutoff"/>, terminal
-    /// source, no open land note, no provider-wait, no capacity wait, never typed) and applied as one
-    /// conditional update, so a source retried or a note published while the lock was waited for is left
-    /// Pending. Rows are marked Canceled, never deleted. Returns the ids it canceled.
+    /// One locked page of an aged-queue cancel: how many ids the lock covered, how long it was held,
+    /// and how many of those ids were published. The publish itself happens after the lock is released.
+    /// </summary>
+    internal readonly record struct AgedExpiryBatch(int RowsUnderLock, long LockHeldMilliseconds, int PublishedIds);
+
+    /// <summary>
+    /// Test seam. Production leaves it null. A scale witness reads one record per locked page.
+    /// </summary>
+    internal Action<AgedExpiryBatch>? OnAgedExpiryBatch { get; set; }
+
+    /// <summary>
+    /// CARD-0747 aged queue rows. Each page is at most <see cref="AgedQueueRowExpiry.BatchSize"/> ids,
+    /// one lock hold, then one bounded publish of those ids and a pending count. Message bodies are
+    /// not loaded and not published. After the lock is held the full rule is read again
+    /// (<paramref name="eligibilityCutoff"/>, terminal source, no open land note, no provider-wait,
+    /// no capacity wait, never typed) and applied as one conditional update, so a source retried or a
+    /// note published while the lock was waited for is left Pending. Rows are marked Canceled, never
+    /// deleted. Returns the ids it canceled.
     /// </summary>
     public async Task<IReadOnlyList<Guid>> CancelPendingIfUntypedAsync(Guid sessionId, IReadOnlyCollection<Guid> messageIds,
         CancellationToken ct, TimeSpan? lockWait, DateTime eligibilityCutoff)
@@ -1372,6 +1386,15 @@ public sealed partial class SessionMessageQueueService
         var canceled = new List<Guid>();
         if (messageIds.Count == 0)
             return canceled;
+        foreach (var page in messageIds.Chunk(AgedQueueRowExpiry.BatchSize))
+            canceled.AddRange(await CancelEligiblePageAsync(sessionId, page, ct, lockWait, eligibilityCutoff));
+        return canceled;
+    }
+
+    private async Task<IReadOnlyList<Guid>> CancelEligiblePageAsync(Guid sessionId, Guid[] page, CancellationToken ct,
+        TimeSpan? lockWait, DateTime eligibilityCutoff)
+    {
+        var canceled = new List<Guid>();
         var sem = GetLock(sessionId);
         if (lockWait is { } bound)
         {
@@ -1379,6 +1402,7 @@ public sealed partial class SessionMessageQueueService
         }
         else
             await sem.WaitAsync(ct);
+        var hold = Stopwatch.StartNew();
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1386,28 +1410,53 @@ public sealed partial class SessionMessageQueueService
             if (BeforeAgedExpiryRecheck is { } mutate)
                 await mutate(db, ct);
             var now = UtcNow();
-            var eligibleIds = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, messageIds.ToList(), untypedOnly: true)
+            var ids = page.ToList();
+            var eligibleIds = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, ids, untypedOnly: true)
                 .Select(m => m.Id).ToListAsync(ct);
-            if (eligibleIds.Count == 0)
-                return canceled;
-            var written = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, eligibleIds, untypedOnly: true)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
-                    .SetProperty(m => m.CanceledAt, now), ct);
-            if (written == eligibleIds.Count)
-                canceled.AddRange(eligibleIds);
-            else
-                canceled.AddRange(await db.SessionQueuedMessages.AsNoTracking()
-                    .Where(m => eligibleIds.Contains(m.Id) && m.Status == QueuedMessageStatus.Canceled)
-                    .Select(m => m.Id).ToListAsync(ct));
+            if (eligibleIds.Count > 0)
+            {
+                var written = await AgedQueueRowExpiry.Eligible(db, eligibilityCutoff, sessionId, eligibleIds, untypedOnly: true)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
+                        .SetProperty(m => m.CanceledAt, now), ct);
+                if (written == eligibleIds.Count)
+                    canceled.AddRange(eligibleIds);
+                else
+                    canceled.AddRange(await db.SessionQueuedMessages.AsNoTracking()
+                        .Where(m => eligibleIds.Contains(m.Id) && m.Status == QueuedMessageStatus.Canceled)
+                        .Select(m => m.Id).ToListAsync(ct));
+            }
         }
         finally
         {
+            hold.Stop();
             sem.Release();
         }
 
-        await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        if (canceled.Count > 0)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var pending = await db.SessionQueuedMessages.AsNoTracking()
+                .CountAsync(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending, ct);
+            await PublishExpiryAsync(sessionId, canceled, pending, ct);
+        }
+        OnAgedExpiryBatch?.Invoke(new AgedExpiryBatch(page.Length, hold.ElapsedMilliseconds, canceled.Count));
         return canceled;
+    }
+
+    private async Task PublishExpiryAsync(Guid sessionId, IReadOnlyList<Guid> canceledIds, int pendingRemaining, CancellationToken ct)
+    {
+        try
+        {
+            await _eventBus.PublishToGroupAsync(
+                AgentSessionGroups.Session(sessionId), "SessionQueueExpiry",
+                new SessionQueueExpiryNotice(sessionId, canceledIds, pendingRemaining), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to publish queue expiry for session {SessionId}", sessionId);
+        }
     }
 
     /// <summary>

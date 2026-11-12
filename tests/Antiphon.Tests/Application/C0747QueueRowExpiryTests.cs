@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -214,6 +215,8 @@ public sealed class C0747QueueRowExpiryTests
         await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
         var caller = await AddStoppedCallerAsync(h, ct);
         await SeedScaleAsync(h, caller, rows, marker, ct);
+        var batches = new List<SessionMessageQueueService.AgedExpiryBatch>();
+        h.Queue.OnAgedExpiryBatch = batches.Add;
 
         await RunHostedPassAsync(h, scans, TimeSpan.FromMinutes(3));
 
@@ -223,19 +226,37 @@ public sealed class C0747QueueRowExpiryTests
         (await observed.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == caller
             && m.Status == QueuedMessageStatus.Canceled, ct)).ShouldBe(rows);
 
-        var publications = h.EventBus.PublishedEvents
-            .Where(e => e.EventName is "SessionQueueChanged" or "SessionQueueExpiry")
-            .ToList();
-        publications.Count.ShouldBeGreaterThanOrEqualTo(8, "1,937 rows cancel a page at a time");
+        h.EventBus.PublishedEvents.ShouldNotContain(e => e.EventName == "SessionQueueChanged");
+        var publications = h.EventBus.PublishedEvents.Where(e => e.EventName == "SessionQueueExpiry").ToList();
+        publications.Count.ShouldBe(8, "1,937 rows cancel a page at a time");
+        batches.Count.ShouldBe(publications.Count);
+        batches.Sum(b => b.RowsUnderLock).ShouldBe(rows);
+        batches.Sum(b => b.PublishedIds).ShouldBe(rows);
         var maxJson = 0;
         foreach (var publication in publications)
         {
-            var json = JsonSerializer.Serialize(publication.Payload);
+            var notice = publication.Payload.ShouldBeOfType<SessionQueueExpiryNotice>();
+            notice.CanceledIds.Count.ShouldBeGreaterThan(0);
+            notice.CanceledIds.Count.ShouldBeLessThanOrEqualTo(AgedQueueRowExpiry.BatchSize);
+            var json = JsonSerializer.Serialize(notice);
             json.ShouldNotContain(marker);
             json.Length.ShouldBeLessThanOrEqualTo(16 * 1024);
             if (json.Length > maxJson) maxJson = json.Length;
         }
-        Console.WriteLine($"C0747 scale publications={publications.Count} maxJsonChars={maxJson}");
+        foreach (var batch in batches)
+        {
+            batch.RowsUnderLock.ShouldBeGreaterThan(0);
+            batch.RowsUnderLock.ShouldBeLessThanOrEqualTo(AgedQueueRowExpiry.BatchSize);
+            batch.PublishedIds.ShouldBe(batch.RowsUnderLock);
+        }
+        publications.Select(p => ((SessionQueueExpiryNotice)p.Payload).PendingRemaining).Min().ShouldBe(0);
+        publications.Select(p => ((SessionQueueExpiryNotice)p.Payload).PendingRemaining).Max()
+            .ShouldBe(rows - AgedQueueRowExpiry.BatchSize);
+        var maxRows = batches.Max(b => b.RowsUnderLock);
+        var maxHold = batches.Max(b => b.LockHeldMilliseconds);
+        var maxIds = batches.Max(b => b.PublishedIds);
+        Console.WriteLine(
+            $"C0747 scale batches={batches.Count} maxRows={maxRows} maxHoldMs={maxHold} maxPublishedIds={maxIds} maxJsonChars={maxJson} holdsMs={string.Join(',', batches.Select(b => b.LockHeldMilliseconds))} pageSizes={string.Join(',', batches.Select(b => b.RowsUnderLock))}");
     }
 
     /// <summary>
