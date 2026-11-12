@@ -69,9 +69,11 @@ public class AntiphonRestartTcpOwner {
     $readPid = {
         param($name)
         # An unreadable or malformed PID is unknown ownership, not an absent supervisor.
-        # Let the restart fail before any controls; only an absent file means no PID.
+        # Let the restart fail before any controls. An absent file or parent directory
+        # means no PID; a fresh checkout need not have logs yet. This read creates nothing.
         try { $v = [IO.File]::ReadAllText((Join-Path $logDir $name)).Trim() }
         catch [IO.FileNotFoundException] { return $null }
+        catch [IO.DirectoryNotFoundException] { return $null }
         $processIdValue = 0
         if ($v -notmatch '^\d+$' -or -not [int]::TryParse($v, [ref]$processIdValue) -or $processIdValue -le 0) {
             throw "Invalid PID file: $name"

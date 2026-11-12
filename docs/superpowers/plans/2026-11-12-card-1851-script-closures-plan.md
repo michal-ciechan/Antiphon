@@ -44,11 +44,23 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
+| CP-0 | S2 | n/a | derived-driver-prerequisite | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | R-2 | exit 0; native-default driver required by CP-6 | n/a | 5 |
 | CP-1 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-final/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 15 executed, 0 failed; native Windows rows pending on Linux | 15 | 3 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(ProcessSpawnLimitTests*)/*` | R-2 | all listed, 0 failed | 6 | 4 |
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
 | CP-4 | S2 | CP-1 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 1 |
 | CP-5 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1851-pty/ | pty-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 2 |
+| CP-6 | S2 | CP-2 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-2 | all listed, 0 failed; CP-0 prerequisite completed | 1 | 4 |
+
+CARD-1860 A-3 repair: run this closed list with `--serial` and include CP-0 before
+CP-6 (or any external guard row that includes DerivedImpactIndexTests). A fresh
+isolated test-project build does not build the regeneration driver, even though
+the solution lists it. CP-0 explicitly builds its native-default output because
+regenerate_script_reports_changed_then_unchanged uses the regeneration script's
+`-NoBuild` path there. The checkpoint command row holds the build slot; its explicit
+single-node cap also bounds MSBuild through the command-shell boundary. No nested
+test-time build, solution build or dependency cycle is required. This amendment
+does not replace the historical CARD-1851 outcomes or their timing evidence.
 
 Code ran CP-1 at S1 for the expected red witness, then runs all five rows at S2 with
 `--expected-source-sha <committed HEAD>`. Inspect fresh TRX by class/method/arguments and
