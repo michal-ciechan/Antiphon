@@ -83,6 +83,6 @@ The method is rerun once as part of its required class; no further green repeats
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | tests/Antiphon.Tests -> bin-c1854-green/ | red-witness | /*/*/NightlyScriptsTests/C1854_EolRepairHardening | V-1 | all listed, 0 failed | 1 | 5 |
+| CP-1 | S2 | tests/Antiphon.Tests -> bin-c1854-final/ | red-witness | /*/*/NightlyScriptsTests/C1854_EolRepairHardening | V-1 | all listed, 0 failed | 1 | 5 |
 | CP-2 | S2 | CP-1 | touched-class | /*/*/NightlyScriptsTests/* | V-1,V-2 | all listed, 0 failed | 7 | 1 |
 | CP-3 | S2 | CP-1 | impacted | /*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(TestLaneCategoryGuardTests*)/* | V-3 | all listed, 0 failed | 6 | 1 |
