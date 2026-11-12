@@ -339,7 +339,7 @@ internal sealed class CompletedCardCleanupFixture : IAsyncDisposable
     /// (docs/orchestration-loop.md, report storage), and this fixture keeps its repository, so its
     /// report root, inside the checkout. From a checkout there each admitted cleanup ends artifact_unpreserved.
     /// </summary>
-    internal static string? TempCheckoutRefusal(string root, string temp)
+    internal static string? TempCheckoutRefusal(string root, string temp, string? reportRoot = null)
     {
         var full = Path.GetFullPath(root);
         var tempRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(temp));

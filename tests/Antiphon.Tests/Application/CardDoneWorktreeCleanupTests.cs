@@ -118,6 +118,19 @@ public sealed class CardDoneWorktreeCleanupTests
     }
 
     [Test]
+    public void C1230_TempSourceWithPersistentReportRootIsAdmitted()
+    {
+        // The refusal is about the report root. C0824 R-5 deliberately runs a temporary source checkout
+        // with an explicit persistent report root (run ae84478d g97); that pairing must be admitted.
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/tmp/c1017/ab", "/tmp/", reportRoot: "/work/.antiphon-test-evidence/c0824-r5-ab")
+            .ShouldBeNull("temp-source-persistent-report-root");
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/work/worktrees/t/.antiphon/test-output/c1017/ab", "/tmp/", reportRoot: "/tmp/reports/ab")
+            .ShouldBe("c1017_report_root_under_temp", "explicit-temp-report-root");
+        CompletedCardCleanupFixture.TempCheckoutRefusal("/tmp/c1017/ab", "/tmp/", reportRoot: null)
+            .ShouldBe("c1017_checkout_under_temp", "derived-report-root");
+    }
+
+    [Test]
     public async Task C1017_UniqueOrdinaryOwner()
     {
         foreach (var vector in new[] { "exact-path", "short-prefix" })
