@@ -56,7 +56,10 @@ public sealed class RepositoryMutationLeaseTests
         using var cancellation = new CancellationTokenSource();
         Process? child = null;
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var mutation = new LandingGit().RunOwnedAsync(fixture.Source, ["commit", "--allow-empty", "-m", "owned cancel"],
+        // Hang task d268c50c: the real LandingGit, with its git child marked so the check below
+        // sees a hook descendant the cancellation leaves running.
+        using var leaks = DescendantLeakScope.Create();
+        var mutation = new ScopedLandingGit(leaks).RunOwnedAsync(fixture.Source, ["commit", "--allow-empty", "-m", "owned cancel"],
             (pid, ticks, _) =>
             {
                 child = Process.GetProcessById(pid);
@@ -107,6 +110,21 @@ public sealed class RepositoryMutationLeaseTests
                 if (!unrelated.HasExited) unrelated.Kill(true);
                 await unrelated.WaitForExitAsync();
             }
+        }
+        await leaks.AssertNoneAliveAsync(TimeSpan.FromSeconds(5),
+            "cancellation must not leave the hook's sleep running (run ae84478d antiphon all-group-118 completed-but-hung)");
+    }
+
+    /// <summary>The production LandingGit, with every git child it starts in a test leak scope.</summary>
+    private sealed class ScopedLandingGit(DescendantLeakScope leaks) : LandingGit
+    {
+        protected override void ConfigureProcess(ProcessStartInfo start) => leaks.Apply(start);
+
+        protected override Process? StartProcess(ProcessStartInfo start)
+        {
+            var process = base.StartProcess(start);
+            if (process is not null) leaks.Adopt(process);
+            return process;
         }
     }
 
@@ -509,7 +527,12 @@ public sealed class RepositoryMutationLeaseTests
         start.Environment["GIT_CONFIG_VALUE_1"] = "";
         start.Environment["GIT_CONFIG_KEY_2"] = "core.hooksPath";
         start.Environment["GIT_CONFIG_VALUE_2"] = hooks;
+        // Hang task d268c50c: on Windows the hook's msys sleep is the worker's descendant but not
+        // in the process tree of the recorded Git child, so it is tracked from the worker down.
+        using var leaks = DescendantLeakScope.Create();
+        leaks.Apply(start);
         using var process = Process.Start(start)!;
+        leaks.Adopt(process);
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         Process? child = null;
@@ -584,6 +607,8 @@ public sealed class RepositoryMutationLeaseTests
             if (!unrelated.HasExited) unrelated.Kill(true);
             await unrelated.WaitForExitAsync();
         }
+        await leaks.AssertNoneAliveAsync(TimeSpan.FromSeconds(5),
+            "the hook's sleep must not outlive the test (run ae84478d antiphon all-group-118 completed-but-hung)");
     }
 
     private static string FindRepositoryRoot()
