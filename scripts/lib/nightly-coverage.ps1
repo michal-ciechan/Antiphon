@@ -1388,6 +1388,9 @@ function Initialize-NightlyCsMethodIndex {
         Methods = @{}
         Parsed = @{}
         Mapped = $false
+        # The compiled index (Antiphon.Nightly.NightlyCsMethodIndex) when Get-NightlyReachableSkipTexts can use it.
+        NativeDecided = $false
+        Native = $null
     }
     return $script:NightlyCsMethodIndex
 }
@@ -1692,6 +1695,19 @@ function Get-NightlyReachableSkipTexts {
     if ($classDot -lt 1) { return @() }
     $className = $head.Substring($classDot + 1)
     $namespace = $head.Substring(0, $classDot)
+    # The compiled walk (NightlyCsIndex.cs) returns the same texts in the same order; the PowerShell below is the
+    # fallback (Windows PowerShell 5.1, no core). It needs a fully qualified tests path, as its file reads do.
+    if (-not $index.NativeDecided) {
+        $index.NativeDecided = $true
+        $testsRoot = Join-Path $RepoRoot 'tests'
+        if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($testsRoot)) {
+            $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList $testsRoot
+        }
+    }
+    if ($null -ne $index.Native) {
+        $foldNative = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
+        return $index.Native.ReachableSkipTexts($className, $method, $namespace, $foldNative)
+    }
     $starts = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName $className -MethodName $method -Namespace $namespace)
     $fold = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
     $texts = New-Object System.Collections.Generic.List[string]
