@@ -1,8 +1,10 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Orchestration;
 
@@ -100,6 +102,7 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
                 }
 
                 await ScanLandNotificationsOnceAsync(stoppingToken, busySessions);
+                await ExpireAgedQueueRowsIfDueAsync(stoppingToken);
                 await using var observation = scopes.CreateAsyncScope();
                 if (observation.ServiceProvider.GetService<LandDeliveryBoundary>() is { } boundary)
                     await boundary.ReachedAsync("notification-scan", Guid.Empty, Guid.Empty, stoppingToken);
@@ -108,6 +111,47 @@ public sealed class AgentTaskLandNotificationHostedService(IServiceScopeFactory 
             { logger.LogWarning(ex, "Land notification scan failed"); }
             await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
+    }
+
+    /// <summary>
+    /// Debug 3b0adade (CARD-0747 follow-up). How often the loop applies <see cref="AgedQueueRowExpiry"/>:
+    /// the first pass after boot runs it, then once an hour, or after a minute when a held queue lock
+    /// left a session's rows for later.
+    /// </summary>
+    internal static readonly TimeSpan QueueRowExpiryPeriod = TimeSpan.FromHours(1);
+    internal static readonly TimeSpan QueueRowExpiryBusyRetry = TimeSpan.FromMinutes(1);
+    private DateTime _nextQueueRowExpiryAt = DateTime.MinValue;
+
+    /// <summary>
+    /// Cancels never-typed Pending Delegation and Check rows of terminal tasks that no open land note
+    /// owns, once they are older than <c>LandNoteReceiptExpiryDays</c> (zero or negative turns it off,
+    /// as it does the note rule). The note scan above only reaches rows a note links.
+    /// </summary>
+    private async Task ExpireAgedQueueRowsIfDueAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var services = scope.ServiceProvider;
+            var now = (services.GetService<TimeProvider>() ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+            if (now < _nextQueueRowExpiryAt) return;
+            _nextQueueRowExpiryAt = now + QueueRowExpiryPeriod;
+            var days = (services.GetService<IOptions<SupervisionSettings>>()?.Value ?? new SupervisionSettings())
+                .DeliveryVerification.LandNoteReceiptExpiryDays;
+            if (days <= 0) return;
+            var result = await new AgedQueueRowExpiry(services.GetRequiredService<AppDbContext>(),
+                    services.GetRequiredService<SessionMessageQueueService>())
+                .ExpireAsync(now.AddDays(-days), apply: true, AgentTaskLandNotificationService.ScanQueueLockWait, ct);
+            if (result.Outcomes.GetValueOrDefault(nameof(AgedQueueRowExpiry.Outcome.Busy)) > 0)
+                _nextQueueRowExpiryAt = now + QueueRowExpiryBusyRetry;
+            if (result.Scanned > 0)
+                logger.LogInformation(
+                    "Aged queue-row expiry: {Scanned} scanned, {Canceled} canceled ({Outcomes}), {Failures} failed",
+                    result.Scanned, result.Outcomes.GetValueOrDefault(nameof(AgedQueueRowExpiry.Outcome.Canceled)),
+                    string.Join(", ", result.Outcomes.Select(o => $"{o.Key}={o.Value}")), result.Failures);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        { logger.LogWarning(ex, "Aged queue-row expiry failed"); }
     }
 
     /// <summary>
