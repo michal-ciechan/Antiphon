@@ -123,6 +123,16 @@ function New-C1336Candidate {
 `$NightlySeams.E2EPrerequisites = { return @{Ok=`$true;Rows=@()} }
 Set-Item Function:script:Get-NightlyDefaultStateRoot { return '$($master.Replace("'", "''"))' }
 "@
+    # Admit exactly the suite executables the copied execution policy registers. A hand list
+    # here missed server-git (CARD-1546) and resilience (CARD-1829): run ae84478d group 131.
+    $suitePolicy = Get-Content (Join-Path $seed 'tests/test-execution-policy.json') -Raw | ConvertFrom-Json
+    $suiteExecutables = @($suitePolicy.suites.PSObject.Properties |
+        ForEach-Object { [string]$_.Value.project } | Where-Object { $_ } |
+        ForEach-Object { [IO.Path]::GetFileNameWithoutExtension(($_ -replace '\\', '/')) + '.exe' } | Sort-Object -Unique)
+    foreach ($required in @('Antiphon.Tests.exe', 'Antiphon.E2E.exe')) {
+        if ($suiteExecutables -cnotcontains $required) { throw "Fixture suite executable census lacks $required" }
+    }
+    Add-Content $seams ('$script:C1336SuiteExecutables = @(' + (($suiteExecutables | ForEach-Object { "'" + $_ + "'" }) -join ', ') + ')')
     # The shared synthetic native I/O helper is wrapped in a fail-closed target
     # allowlist; no unexpected executable can fall through to a real process.
     Add-Content $seams @'
@@ -140,7 +150,7 @@ $NightlySeams.StartProcess = {
         $allowed = ($args.Count -eq 3 -and $args[2] -ceq 'ci') -or
             ($args.Count -eq 4 -and $args[2] -ceq 'run' -and $args[3] -in @('build', 'lint'))
     }
-    if ($leaf -match '^Antiphon\.(Tests|SessionRunner\.Tests|PtyHost\.Tests|Agents\.Pty\.Tests|Messaging\.Tests|Observability\.Tests|E2E|MarkdownPdf\.Tests)\.exe$') { $allowed = $true }
+    if ($leaf -cin $script:C1336SuiteExecutables) { $allowed = $true }
     if ($leaf -in @('pwsh', 'pwsh.exe') -and $fileIndex -ge 0) {
         $target = [IO.Path]::GetFileName(([string]$args[$fileIndex + 1] -replace '\\', '/'))
         $policy = Get-Content (Join-Path $WorkingDirectory 'tests/test-execution-policy.json') -Raw | ConvertFrom-Json
