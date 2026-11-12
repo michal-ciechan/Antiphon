@@ -62,18 +62,22 @@ public class AntiphonRestartTcpOwner {
     $clock = $CommandClock
     if (-not $clock) { $clock = [Diagnostics.Stopwatch]::StartNew() }
     $expectedExe = [IO.Path]::GetFullPath((Join-Path $Root 'src\Antiphon.SessionRunner\bin\Debug\net9.0\Antiphon.SessionRunner.exe'))
+    # A GetNewClosure() block sees only its captured variables and the global scope. Under
+    # `& restart-session-runner.ps1` this file's functions live in the script scope, so the
+    # closures below carry the helper as a variable instead of calling it by name (Debug 4ca0643a).
+    $identityOf = ${function:Get-RunnerProcessIdentity}
     $readPid = {
         param($name)
-        try { $v = [IO.File]::ReadAllText((Join-Path $logDir $name)).Trim(); if ($v -match '^\d+$') { Get-RunnerProcessIdentity ([int]$v) } } catch { }
+        try { $v = [IO.File]::ReadAllText((Join-Path $logDir $name)).Trim(); if ($v -match '^\d+$') { & $identityOf ([int]$v) } } catch { }
     }.GetNewClosure()
     $stop = {
         param($identity)
         if (-not $identity) { return }
-        $now = Get-RunnerProcessIdentity $identity.pid
+        $now = & $identityOf $identity.pid
         if (-not $now) { return }
         if ($now.startTimeUtc -ne $identity.startTimeUtc -or $now.path -ne $identity.path) { throw 'Process identity changed before stop' }
         & taskkill.exe /T /F /PID $identity.pid 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0 -and (Get-RunnerProcessIdentity $identity.pid)) { throw "taskkill failed (exit $LASTEXITCODE)" }
+        if ($LASTEXITCODE -ne 0 -and (& $identityOf $identity.pid)) { throw "taskkill failed (exit $LASTEXITCODE)" }
     }.GetNewClosure()
     return @{
         CommandOrigin = 0
@@ -86,7 +90,7 @@ public class AntiphonRestartTcpOwner {
             if ($owner) { Get-RunnerProcessIdentity $owner }
         }
         Verify = { param($identity) $null -ne $identity -and $identity.path -eq $expectedExe -and
-            (Get-RunnerProcessIdentity $identity.pid).startTimeUtc -eq $identity.startTimeUtc }.GetNewClosure()
+            (& $identityOf $identity.pid).startTimeUtc -eq $identity.startTimeUtc }.GetNewClosure()
         Census = { @{ supervisor = (& $readPid 'session-runner.supervisor.pid'); wrapper = (& $readPid 'session-runner.service.pid') } }.GetNewClosure()
         Process = { param($id) Get-RunnerProcessIdentity $id }
         Control = {
@@ -99,7 +103,7 @@ public class AntiphonRestartTcpOwner {
                     # (including a worktree or Release runner) is left alone, even with -Hard.
                     & $stop (& $readPid 'session-runner.service.pid')
                     Get-Process Antiphon.SessionRunner -ErrorAction SilentlyContinue | ForEach-Object {
-                        $owned = Get-RunnerProcessIdentity $_.Id
+                        $owned = & $identityOf $_.Id
                         if ($owned.path -eq $expectedExe) { & $stop $owned }
                     }
                 }
@@ -109,7 +113,7 @@ public class AntiphonRestartTcpOwner {
                 'kill-sessions' {
                     try { Invoke-WebRequest 'http://127.0.0.1:17204/sessions/kill-all' -Method Post -UseBasicParsing -TimeoutSec 15 | Out-Null }
                     catch { Write-Host 'kill-all endpoint unavailable; checking detached pty-host stragglers.' }
-                    Get-Process Antiphon.PtyHost -ErrorAction SilentlyContinue | ForEach-Object { & $stop (Get-RunnerProcessIdentity $_.Id) }
+                    Get-Process Antiphon.PtyHost -ErrorAction SilentlyContinue | ForEach-Object { & $stop (& $identityOf $_.Id) }
                 }
                 default { throw "Unknown control operation $operation" }
             }
