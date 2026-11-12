@@ -6,8 +6,9 @@ if ($script:AntiphonNightlyHealthLoaded) { return }
 $script:AntiphonNightlyHealthLoaded = $true
 
 function Get-NightlyDueUtcForLondonDate {
-    param([datetime]$LondonDate)
-    $tz = Get-NightlyLondonTimeZone
+    param([datetime]$LondonDate, [TimeZoneInfo]$TimeZone)
+    $tz = $TimeZone
+    if ($null -eq $tz) { $tz = Get-NightlyLondonTimeZone }
     # Exact local 00:30:00.0000000: Get-Date -Hour/-Minute/-Second keeps the current sub-second ticks.
     $local = New-Object DateTime ($LondonDate.Year, $LondonDate.Month, $LondonDate.Day, 0, 30, 0, [DateTimeKind]::Unspecified)
     return [TimeZoneInfo]::ConvertTimeToUtc($local, $tz)
@@ -600,9 +601,15 @@ function New-NightlyProductionWindmillApi {
     $token = [string]$Config.Token
     $scriptPath = [string]$Config.ScriptPath
     $escaped = ($scriptPath -replace '\\', '/')
+    # Under & invocation these functions are script-local, outside GetNewClosure's
+    # dynamic module. Carry the helpers, including the due-time helper's dependency.
+    $windmillHttp = ${function:Invoke-NightlyWindmillHttp}
+    $convertJob = ${function:ConvertFrom-NightlyWindmillJob}
+    $dueUtc = ${function:Get-NightlyDueUtcForLondonDate}
+    $londonTimeZone = ${function:Get-NightlyLondonTimeZone}
     return @{
         GetRegistration = {
-            $obj = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/scripts/get/p/{2}' -f $base, $ws, $escaped) -Token $token
+            $obj = & $windmillHttp -Method GET -Url ('{0}/api/w/{1}/scripts/get/p/{2}' -f $base, $ws, $escaped) -Token $token
             if ($null -eq $obj) { return $null }
             return @{
                 script = $true
@@ -612,7 +619,7 @@ function New-NightlyProductionWindmillApi {
             }
         }.GetNewClosure()
         GetSchedule = {
-            $obj = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/schedules/get/{2}' -f $base, $ws, $escaped) -Token $token
+            $obj = & $windmillHttp -Method GET -Url ('{0}/api/w/{1}/schedules/get/{2}' -f $base, $ws, $escaped) -Token $token
             if ($null -eq $obj) { return $null }
             $paused = $false
             if ($obj.PSObject.Properties['paused']) { $paused = [bool]$obj.paused }
@@ -629,7 +636,7 @@ function New-NightlyProductionWindmillApi {
         }.GetNewClosure()
         GetJobs = {
             $url = '{0}/api/w/{1}/jobs/list?script_path_exact={2}&per_page=20' -f $base, $ws, [uri]::EscapeDataString($escaped)
-            $obj = Invoke-NightlyWindmillHttp -Method GET -Url $url -Token $token
+            $obj = & $windmillHttp -Method GET -Url $url -Token $token
             # CARD-0545 D-10: CompletedJob list rows carry no result and no scheduled_for. Fetch the
             # result for at most the five newest completed scheduled rows; a row that is not fetched,
             # whose fetch fails, or whose result lacks the native identity stays 'unknown'.
@@ -642,7 +649,7 @@ function New-NightlyProductionWindmillApi {
                     $fetched++
                     $result = $null
                     try {
-                        $result = Invoke-NightlyWindmillHttp -Method GET -Url ('{0}/api/w/{1}/jobs_u/completed/get_result/{2}' -f $base, $ws, [uri]::EscapeDataString([string]$j.id)) -Token $token
+                        $result = & $windmillHttp -Method GET -Url ('{0}/api/w/{1}/jobs_u/completed/get_result/{2}' -f $base, $ws, [uri]::EscapeDataString([string]$j.id)) -Token $token
                     } catch {
                         $result = $null
                     }
@@ -651,11 +658,11 @@ function New-NightlyProductionWindmillApi {
                     # Only a fetched result may name the native run.
                     $j.PSObject.Properties.Remove('result')
                 }
-                $row = ConvertFrom-NightlyWindmillJob -Job $j
+                $row = & $convertJob -Job $j
                 if ([string]$j.type -eq 'CompletedJob' -and -not [string]::IsNullOrWhiteSpace([string]$row.localDueDate)) {
                     try {
                         $dueDate = [datetime]::ParseExact([string]$row.localDueDate, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
-                        $row.scheduledFor = (Get-NightlyDueUtcForLondonDate -LondonDate $dueDate).ToString('o')
+                        $row.scheduledFor = (& $dueUtc -LondonDate $dueDate -TimeZone (& $londonTimeZone)).ToString('o')
                     } catch { }
                 }
                 $rows += $row
