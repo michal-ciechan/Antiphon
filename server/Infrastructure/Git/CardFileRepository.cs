@@ -413,11 +413,18 @@ public sealed class CardFileRepository(
 
         try
         {
-            // Fallback only while git has not exited: job create/assign failed, or the job
-            // kill threw. Attach runs after Process.Start and AssignedBeforeSpawn stays false,
-            // so a grandchild started before the assignment is outside the job. A successful
-            // job kill has already exited git, HasExited is true, and this walk is skipped.
-            // It does not collect that grandchild. Same attach-after-start limit as LandingGit.
+            // Fallback while git has not exited. TerminateMembers does not throw when
+            // TerminateJobObject returns false: it logs terminated=False and returns.
+            // That false return leaves git alive, so this Kill(entireProcessTree) runs.
+            // Job create or assign failure is the other way git is still alive. Attach
+            // runs after Process.Start and AssignedBeforeSpawn stays false, so a
+            // grandchild started before the assignment is outside the job.
+            // TerminateJobObject only starts termination and does not wait. If HasExited
+            // is still false, this walk runs and kills that grandchild while git is
+            // still its parent. Once git has exited, the walk is skipped and the
+            // grandchild is not collected. LandingGit attaches after start the same
+            // way, but ReleaseChildAsync walks the tree before TerminateMembers, so
+            // it collects that child of a live git. This path kills the job first.
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
