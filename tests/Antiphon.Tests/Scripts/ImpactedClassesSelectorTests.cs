@@ -383,7 +383,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(LegacyCheckNotePublicationTests*)|(PendingSettlementDeliveryTests*)"
         + "|(PostLandMutationDeliveryTests*)|(PreDispatchFailureDeliveryTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
-        + "|(RolePolicyToolBundleDispatchTests*)|(VerificationRoundDeliveryTests*)"
+        + "|(SessionRuntimeActionRoutingTests*)|(VerificationRoundDeliveryTests*)"
         + "|(WorktreeLandingCleanupRetryTests*)/*";
 
     // The C1432 roster: every server file that starts a git process, plus the CARD-1546 project.
@@ -440,11 +440,12 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(RepositoryMutationLeaseOwnerTests*)"
-        + "|(RolePolicyToolBundleDispatchTests*)|(RunnerStartupStaleObservationTests*)"
+        + "|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
         + "|(SelectorLineEndingAttributeTests*)|(ServerGitAssemblyTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
-        + "|(SessionTerminationSourcePersistenceTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
+        + "|(SessionRuntimeActionRoutingTests*)|(SessionTerminationSourcePersistenceTests*)"
+        + "|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
         + "|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)|(WindowsUnitPlatformAdmissionTests*)"
         + "|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
         + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)"
