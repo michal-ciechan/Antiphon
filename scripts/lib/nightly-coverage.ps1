@@ -1862,6 +1862,9 @@ function Get-NightlyExpectedSkipSourceGaps {
                 $text = [System.IO.File]::ReadAllText($file)
                 foreach ($className in @($byClass.Keys)) {
                     $bucket = $byClass[$className]
+                    # Both patterns hold the name literally (case-sensitive), so a file without it cannot match:
+                    # the ordinal search only skips files the regex would reject.
+                    if ($text.IndexOf($className, [System.StringComparison]::Ordinal) -lt 0) { continue }
                     if (-not [regex]::IsMatch($text, ('\bclass\s+' + [regex]::Escape($className) + '\b'))) { continue }
                     $bucket.seenClass = $true
                     foreach ($method in @($bucket.methods.Keys)) {
