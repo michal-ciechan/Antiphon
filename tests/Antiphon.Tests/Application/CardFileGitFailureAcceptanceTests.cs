@@ -89,6 +89,58 @@ public class CardFileGitFailureAcceptanceTests
         (await repo.GitReadAsync("show", "HEAD:"+relative)).ShouldBe("C408_PUBLIC\n");
     }
 
+    // rc run 0b292fa4 g82: on Windows Process.Kill(true) ended git's own conhost.exe and then
+    // re-read the whole process table before it reached the hook shell. In that window the live
+    // hook started its next native child without a console, saw it fail (exit 127) and ran its
+    // failure branch after the cancel. The kill must end git, its console and the hook together.
+    // The hook spawns a native child in a tight loop, so most cancels land mid-spawn.
+    [Test]
+    public async Task Canceled_commit_ends_a_spawning_hook_before_it_sees_its_child_fail()
+    {
+        using var repo = new ScratchGitRepo("c408-spawn-cancel"); await repo.CommitFileAsync("seed", "seed\n");
+        var directory = Directory.CreateDirectory(Path.Combine(repo.Path, "docs/cards/board")).FullName;
+        const string relative = "docs/cards/board/card.md";
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, relative), "C408_PUBLIC\n");
+        var hook = Path.Combine(repo.Path, ".git/hooks/pre-commit");
+        var child = OperatingSystem.IsWindows() ? "ping -n 1 127.0.0.1" : "env true";
+        await ScratchGitRepo.WriteExecutableHookAsync(hook, "#!/bin/sh\n"
+            + HookPidLine
+            + "echo started > hook-started\n"
+            + "while [ ! -f hook-release ]; do\n"
+            + $"  {child} >/dev/null 2>&1 || {{ echo child-failed > hook-child-failed; exit 1; }}\n"
+            + "done\n");
+        var head = await repo.GitReadAsync("rev-parse", "HEAD");
+        var expected = new Dictionary<string, string?> { [relative] = "C408_PUBLIC\n" };
+        var started = Path.Combine(repo.Path, "hook-started");
+        var failed = Path.Combine(repo.Path, "hook-child-failed");
+        for (var round = 0; round < 8; round++)
+        {
+            File.Delete(started);
+            using var cancel = new CancellationTokenSource();
+            var task = Repository().CommitAsync(repo.Path, directory, expected, "public sync", cancel.Token);
+            var waited = Stopwatch.StartNew();
+            while (!File.Exists(started) && !task.IsCompleted && waited.Elapsed < TimeSpan.FromSeconds(60))
+                await Task.Delay(25);
+            File.Exists(started).ShouldBeTrue($"round {round}: hook never started");
+            await Task.Delay(300);
+            cancel.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => task);
+            var pid = int.Parse((await File.ReadAllTextAsync(Path.Combine(repo.Path, "hook-pid"))).Trim());
+            var gone = Stopwatch.StartNew();
+            while (HookAlive(pid) && gone.Elapsed < TimeSpan.FromSeconds(15))
+                await Task.Delay(50);
+            HookAlive(pid).ShouldBeFalse($"round {round}: hook outlived the cancel");
+            File.Exists(failed).ShouldBeFalse($"round {round}: hook ran its failure branch after the cancel");
+            (await repo.GitReadAsync("rev-parse", "HEAD")).ShouldBe(head);
+            var lockFile = Path.Combine(repo.Path, ".git/index.lock");
+            if (File.Exists(lockFile)) File.Delete(lockFile);
+        }
+    }
+
+    // MSYS sh puts its own pid in $$, not the Windows pid; /proc/$$/winpid holds the Windows one.
+    private const string HookPidLine =
+        "if [ -r /proc/$$/winpid ]; then cat /proc/$$/winpid > hook-pid; else echo $$ > hook-pid; fi\n";
+
     [Test]
     [Arguments("missing")] [Arguments("reappeared")]
     public async Task Missing_desired_or_reappearing_deleted_file_refuses_byte_recheck(string change)
@@ -119,7 +171,7 @@ public class CardFileGitFailureAcceptanceTests
             ? "ping -n 2 127.0.0.1 >/dev/null 2>&1"
             : "sleep 0.2";
         return "#!/bin/sh\n"
-            + "echo $$ > hook-pid\n"
+            + HookPidLine
             + "echo started > hook-started\n"
             + "while [ ! -f hook-release ]; do\n"
             + $"  {wait} || {{ echo wait-failed > hook-wait-failed; exit 1; }}\n"
