@@ -31,7 +31,17 @@ namespace Antiphon.Scripts
         private static readonly string[] RequiredFiles = { "authority/authority.json", "authority/execution-plan.json", "authority/discovery.json",
             "authority/ledger.json", "authority/publication-authority.json", "release-manifest.json", "publish.json", "complete-green.json" };
         private static readonly string[] RcSuites = { "antiphon", "session-runner", "pty-host", "agents-pty", "messaging", "client", "scripts", "e2e" };
-        private const string ObservabilityProject = "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj";
+        // ConvertFrom-ReleaseAuthorityPolicyBytes (scripts/lib/release-authority.ps1): from schema 3 on, each mirrored
+        // test project the policy declares in projectDispositions adds its own rc suite. Keep this list in the same
+        // order as the PowerShell; a project added there and not here makes every baseline receipt NotHandled
+        // (policy-rc-suites), which ReleaseSelectionCliTests.BaselineMatchesWorker reports as route=worker.
+        private static readonly (string Project, string Suite)[] DeclaredProjectSuites =
+        {
+            ("tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj", "observability"),
+            ("tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj", "server-git"),
+            ("tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "resilience"),
+            ("tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj", "git-in-process"),
+        };
         private static readonly Regex Sha256 = new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex LongLivedRef = new Regex(@"^rc/(?<y>\d{4})-(?<m>\d{2})-(?<d>\d{2})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly Regex StampRef = new Regex(@"^release/rc-(?<stamp>\d{8}T\d{6}Z)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -302,8 +312,10 @@ namespace Antiphon.Scripts
             {
                 required.Add("markdown-pdf");
                 TestSelection.ProjectDispositions(obj);
-                if (List(obj.Get("projectDispositions") ?? new List<object>(), "dispositions").Any(row => Doc(row, "dispositions").Get("project") is string p && p == ObservabilityProject))
-                    required.Add("observability");
+                var dispositions = List(obj.Get("projectDispositions") ?? new List<object>(), "dispositions");
+                foreach (var (project, suite) in DeclaredProjectSuites)
+                    if (dispositions.Any(row => Doc(row, "dispositions").Get("project") is string p && p == project))
+                        required.Add(suite);
             }
             if (required.Any(r => !suites.Contains(r)) || suites.Any(s => !required.Contains(s))) throw Refused("policy-rc-suites");
             PsObject suiteMap = Doc(obj.Get("suites"), "policy-rc-suite-undefined");
