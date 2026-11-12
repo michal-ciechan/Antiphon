@@ -202,10 +202,8 @@ public sealed class StandingRunnerCwdTests
         }
         finally
         {
-            if (File.Exists(linked) || Directory.Exists(linked))
-                File.Delete(linked);
-            if (File.Exists(agentsLink) || Directory.Exists(agentsLink))
-                File.Delete(agentsLink);
+            DeleteDirectoryLink(linked);
+            DeleteDirectoryLink(agentsLink);
             Directory.Delete(root, recursive: true);
             Directory.Delete(agentsRoot, recursive: true);
         }
@@ -286,9 +284,7 @@ public sealed class StandingRunnerCwdTests
         }
         finally
         {
-            var link = new DirectoryInfo(leaf);
-            if (link.Exists && link.LinkTarget is not null)
-                File.Delete(leaf);
+            DeleteDirectoryLink(leaf);
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
         }
@@ -498,6 +494,22 @@ public sealed class StandingRunnerCwdTests
         RunnerWorkspaceAdmission.IsAdmitted(cwd, root, windows).ShouldBe(admitted, label);
         RunnerWorkspaceCwd.IsAdmitted(cwd, root, windows).ShouldBe(admitted, label);
         RunnerWorkspaceAdmission.IsStandingCheckout(cwd, root, windows).ShouldBe(standing, label);
+    }
+
+    /// <summary>
+    /// Removes a directory symlink, never its target. On Windows a directory symlink is a
+    /// directory reparse point, so File.Delete answers access denied (rc run ae84478d);
+    /// Directory.Delete removes the link itself. Linux unlinks it with File.Delete.
+    /// A path that is not a link is left for the recursive root delete.
+    /// </summary>
+    private static void DeleteDirectoryLink(string path)
+    {
+        if (new DirectoryInfo(path).LinkTarget is null)
+            return;
+        if (OperatingSystem.IsWindows())
+            Directory.Delete(path);
+        else
+            File.Delete(path);
     }
 
     private static PhoneHomeSettings EnabledSettings(string allowedCwd) => new()
