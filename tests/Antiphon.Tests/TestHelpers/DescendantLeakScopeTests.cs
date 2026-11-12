@@ -107,7 +107,8 @@ public sealed class DescendantLeakScopeTests
     }
 
     /// <summary>The C24 method itself, not a copy: AdoptOrKill is inside the try and the bare
-    /// Adopt call is gone, so an assignment failure reaches the kill.</summary>
+    /// Adopt call is gone, so an assignment failure reaches the kill. The source is normalised
+    /// to LF first so every search matches a CRLF checkout (CARD-1853 D-1).</summary>
     private static void C24AdoptsInsideItsTry()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -115,7 +116,8 @@ public sealed class DescendantLeakScopeTests
             directory = directory.Parent;
         var source = File.ReadAllText(Path.Combine(
             directory.ShouldNotBeNull().FullName,
-            "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs"));
+            "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs"))
+            .ReplaceLineEndings("\n");
         var start = source.IndexOf("Task C448_C24_KilledWorkerLeavesLiveGitChildFenced", StringComparison.Ordinal);
         var end = source.IndexOf("private static string FindRepositoryRoot", start, StringComparison.Ordinal);
         var body = source[start..end];
