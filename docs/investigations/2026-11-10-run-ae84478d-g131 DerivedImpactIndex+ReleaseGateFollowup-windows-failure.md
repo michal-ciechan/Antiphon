@@ -103,7 +103,10 @@ is a case-sensitive exact leaf match. It stays fail-closed: an executable that i
 `Antiphon.Tests.exe` or `Antiphon.E2E.exe`. No assertion or row count changed.
 Static check at the cut: the derived set is the old eight plus `Antiphon.Resilience.Tests.exe` and
 `Antiphon.Server.Git.Tests.exe`. Those two are exactly what the old regex rejects. The fixture parses
-with 0 errors and stays ASCII-only.
+with 0 errors and stays ASCII-only. Master since the cut (b02f110fb) has also registered
+`Antiphon.GitInProcess.Tests` (CARD-1830, 0686117e5) and still carries the old regex, so master is red
+on this row for three suites. The derived list admits all three. The branch merges cleanly with
+b02f110fb (`git merge-tree` exit 0).
 
 ## Why missed
 
