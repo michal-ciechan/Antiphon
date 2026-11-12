@@ -19,6 +19,10 @@ capture behavior; the accepted skip-missing alternative needs no encoding change
 V-1: C1854_EolRepairHardening creates one local seed and core.autocrlf=true
 clone before adding the LF attribute. Real ls-files output is decoded through
 CP437 for one non-ASCII path and uses Git's own C-quoted form for another.
+The fixture explicitly captures UTF-8 before injecting mojibake, and selects
+UTF-8 for its final correctly-decoded phase, restoring console encoding each
+time. Production console encoding remains untouched. This keeps both phases
+discriminating when the harness itself runs under Windows PowerShell 5.1.
 Assert stale fixture bytes, discriminating inputs, successful mixed repair,
 literal space/bracket path LF bytes, unchanged skipped bytes, exact checkout argv,
 mixed skipped=2, skipped-only skipped=2 without checkout, correctly decoded

@@ -484,8 +484,14 @@ function Test-C1854_EolRepairHardening {
     try {
         $script:NightlySeams = @{ Git = {
             param($Directory, $GitArgs)
-            $output = & git -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -C $Directory @GitArgs 2>&1
-            $exit = $LASTEXITCODE
+            # Get known UTF-8 text before deliberately applying the OEM decode
+            # below. This fixture must not inherit PS 5.1's console decoder.
+            $savedEncoding = [Console]::OutputEncoding
+            try {
+                [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+                $output = & git -c core.fsmonitor=false -c gc.auto=0 -c maintenance.auto=false -C $Directory @GitArgs 2>&1
+                $exit = $LASTEXITCODE
+            } finally { [Console]::OutputEncoding = $savedEncoding }
             $text = $output | Out-String
             if ($GitArgs -contains 'ls-files') { $text = $text.Replace($unicode, $mangled).Replace($quoted, $quotedPath) }
             if ($GitArgs -contains 'checkout-index') { $checkouts.Add(($GitArgs -join '|')) }
@@ -503,8 +509,13 @@ function Test-C1854_EolRepairHardening {
         $log = & { Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone } 6>&1 | Out-String
         Assert-C487 ($checkouts.Count -eq 0 -and $log -match 'nightly sync: rewriting 0 working file\(s\).*skipped=2') 'C1854 skipped-only repair logs count without checkout' $log
     } finally { $script:NightlySeams = $savedSeams }
-    # Native pwsh 7 decodes these real non-ASCII paths correctly; they remain repairable.
-    Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone
+    # Also exercise real Invoke-NightlyGit with correctly decoded non-ASCII
+    # paths. Select that decoder explicitly for this phase on PS 5.1 too.
+    $savedEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone
+    } finally { [Console]::OutputEncoding = $savedEncoding }
     $remaining = @(@($plain, $unicode, $quoted) | Where-Object { [IO.File]::ReadAllBytes((Join-Path $clone $_)) -contains 13 })
     Assert-C487 ($remaining.Count -eq 0) 'C1854 real non-ASCII paths repair when decoded correctly' ([string]$remaining.Count)
     $log = & { Repair-NightlyCheckoutLineEndings -CheckoutRoot $clone } 6>&1 | Out-String
