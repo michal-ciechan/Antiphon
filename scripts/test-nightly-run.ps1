@@ -437,7 +437,8 @@ function Test-C1313_ReusedCloneEolRepair {
     Assert-C487 (-not ($after -contains 13) -and $after.Length -eq 4) 'C1313 reused clone selector is LF after sync' ([string]$after.Length)
     $other = [IO.File]::ReadAllBytes((Join-Path $clone 'other.txt'))
     Assert-C487 ($other -contains 13) 'C1313 reused clone leaves a file without an eol attribute as configured' ([string]$other.Length)
-    $status = Invoke-EolFixtureGit $clone @('status', '--porcelain')
+    # The ownership marker is untracked by design; only tracked paths must be clean.
+    $status = Invoke-EolFixtureGit $clone @('status', '--porcelain', '--untracked-files=no')
     Assert-C487 ([string]::IsNullOrWhiteSpace($status)) 'C1313 reused clone is clean after the eol repair' $status
 }
 

@@ -42,7 +42,8 @@ function Get-NightlyStaleEolPaths {
         if (($wantLf -and ($work -eq 'crlf' -or $work -eq 'mixed')) -or
             ($wantCrlf -and ($work -eq 'lf' -or $work -eq 'mixed'))) { $stale.Add($path) }
     }
-    return ,$stale.ToArray()
+    # No unary comma: callers wrap in @(), and @(,@()) would be one empty element.
+    return $stale.ToArray()
 }
 
 function Repair-NightlyCheckoutLineEndings {
