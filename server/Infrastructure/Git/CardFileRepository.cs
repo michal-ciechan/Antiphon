@@ -403,8 +403,7 @@ public sealed class CardFileRepository(
             // Windows: Kill(true) ends one process, then re-reads the process table for its
             // children. git's conhost was ended first, and the still-running hook saw its next
             // child fail and ran its own failure branch after the cancel (rc run 0b292fa4 g82).
-            // One TerminateJobObject call ends every job member together. Kill(true) stays
-            // as the fallback for a process outside the job.
+            // One TerminateJobObject call ends every job member together.
             owned?.TerminateMembers(process.Id, LogJob);
         }
         catch
@@ -414,6 +413,11 @@ public sealed class CardFileRepository(
 
         try
         {
+            // Fallback only while git has not exited: job create/assign failed, or the job
+            // kill threw. Attach runs after Process.Start and AssignedBeforeSpawn stays false,
+            // so a grandchild started before the assignment is outside the job. A successful
+            // job kill has already exited git, HasExited is true, and this walk is skipped.
+            // It does not collect that grandchild. Same attach-after-start limit as LandingGit.
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
