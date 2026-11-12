@@ -17,6 +17,19 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyScriptsTests
 {
+    /// <summary>rc ae84478d g126: the sync rewrites working files whose bytes predate an eol attribute.</summary>
+    [Test]
+    public Task C1313_ReusedCloneEolRepair() =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1313",
+            nameof(C1313_ReusedCloneEolRepair), 5,
+            [
+                "C1313 reused clone checked the selector out CRLF",
+                "C1313 reused clone sync completes",
+                "C1313 reused clone selector is LF after sync",
+                "C1313 reused clone leaves a file without an eol attribute as configured",
+                "C1313 reused clone is clean after the eol repair"
+            ]);
+
     [Test]
     public void The_three_scripts_are_ascii_only()
     {

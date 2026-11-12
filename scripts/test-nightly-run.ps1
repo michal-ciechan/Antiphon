@@ -393,6 +393,54 @@ function Test-C487_G026 {
     }
 }
 
+# ---- rc ae84478d g126: a reused clone predating an eol attribute keeps CRLF bytes ----
+# The live run's C:\Antiphon\releases\checkout was cloned 2026-10-18 under core.autocrlf=true,
+# before 3afdc2798 pinned *.ps1 eol=lf. fetch + reset --hard rewrites only changed index
+# entries, so every unchanged *.ps1 kept CRLF and C1313_SelectorLineEndings refused the
+# selector. The fixture sets core.autocrlf in the clone itself, so it reproduces on Linux too.
+function Test-C1313_ReusedCloneEolRepair {
+    $root = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    $seed = Join-Path $root 'seed'
+    $remote = $seed.Replace('\', '/')
+    $clone = Join-Path $root 'clone'
+    $state = Join-Path $root 'state'
+    New-Item -ItemType Directory -Path $seed -Force | Out-Null
+    function Invoke-EolFixtureGit {
+        param([string]$Directory, [string[]]$GitArgs)
+        $output = & git -C $Directory @GitArgs 2>&1
+        if ($LASTEXITCODE -ne 0) { throw ('fixture git failed: ' + ($output | Out-String)) }
+        return ($output | Out-String)
+    }
+    $commit = @('-c', 'user.name=Eol Test', '-c', 'user.email=eol@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m')
+    Invoke-EolFixtureGit $seed @('init', '-q', '-b', 'master') | Out-Null
+    Invoke-EolFixtureGit $seed @('config', '--local', 'core.autocrlf', 'false') | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $seed 'sel.ps1'), [Text.Encoding]::ASCII.GetBytes("a`nb`n"))
+    [IO.File]::WriteAllBytes((Join-Path $seed 'other.txt'), [Text.Encoding]::ASCII.GetBytes("c`nd`n"))
+    Invoke-EolFixtureGit $seed @('add', 'sel.ps1', 'other.txt') | Out-Null
+    Invoke-EolFixtureGit $seed ($commit + 'before-attribute') | Out-Null
+    Invoke-EolFixtureGit $root @('clone', '-q', '-c', 'core.autocrlf=true', $remote, $clone) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $clone '.antiphon-nightly-owned'), ('{"origin":"' + $remote + '","kind":"nightly-clone"}'))
+    $before = [IO.File]::ReadAllBytes((Join-Path $clone 'sel.ps1'))
+    Assert-C487 ($before -contains 13) 'C1313 reused clone checked the selector out CRLF' ([string]$before.Length)
+    # The attribute lands later; the selector blob itself does not change.
+    [IO.File]::WriteAllBytes((Join-Path $seed '.gitattributes'), [Text.Encoding]::ASCII.GetBytes("*.ps1 text eol=lf`n"))
+    Invoke-EolFixtureGit $seed @('add', '.gitattributes') | Out-Null
+    Invoke-EolFixtureGit $seed ($commit + 'pin-ps1-lf') | Out-Null
+    $args = @{
+        CheckoutRoot = $clone; StateRoot = $state; LogRoot = (Join-Path $state 'logs')
+        RemoteUrl = $remote; Ref = 'master'; Trigger = 'manual'; WhatIf = $true
+        CoordinationRoot = (Join-Path $root 'coord'); PassThru = $true
+    }
+    $run = Invoke-AntiphonNightlyRun @args
+    Assert-C487 ($run.ExitCode -eq 0 -and $run.Phase -eq 'whatif') 'C1313 reused clone sync completes' ($run | ConvertTo-Json -Compress)
+    $after = [IO.File]::ReadAllBytes((Join-Path $clone 'sel.ps1'))
+    Assert-C487 (-not ($after -contains 13) -and $after.Length -eq 4) 'C1313 reused clone selector is LF after sync' ([string]$after.Length)
+    $other = [IO.File]::ReadAllBytes((Join-Path $clone 'other.txt'))
+    Assert-C487 ($other -contains 13) 'C1313 reused clone leaves a file without an eol attribute as configured' ([string]$other.Length)
+    $status = Invoke-EolFixtureGit $clone @('status', '--porcelain')
+    Assert-C487 ([string]::IsNullOrWhiteSpace($status)) 'C1313 reused clone is clean after the eol repair' $status
+}
+
 # ---- CARD-0545 D-10: the wrapper's last stdout line is the JSON completion record ----
 
 function Invoke-C545ResultLineRun {
