@@ -87,7 +87,8 @@ public sealed class C0747LandReceiptReplayTests
     /// case: an outcome committed eight days ago, still unconfirmed. mutation: remove the aged
     /// settlement from ReconcileAsync. red: the note stays open, its untyped row stays Pending and
     /// the caller's next idle turn types an eight-day-old note. Controls: a six-day-old note, an
-    /// aged Held snapshot of a still-pending request and a row already typed once are untouched.
+    /// aged Held snapshot of a still-pending request and a RetryPending note are untouched, and a row
+    /// typed once stays on the ordinary path and confirms on its receipt.
     /// </summary>
     [Test]
     [Timeout(180_000)]
@@ -131,6 +132,8 @@ public sealed class C0747LandReceiptReplayTests
                 r.LastDeliveryBaselineSequence = Floor;
                 r.LastDeliveryStartedAt = DateTime.UtcNow.AddMinutes(-1);
             });
+        if (arm == "typed-pending-control")
+            await h.IngestEventsAsync(h.SessionId, [h.Event(h.SessionId, Floor + 5, TranscriptKinds.UserPrompt, note.Body)]);
         var before = note.QueueMessageId is Guid linked ? await h.RowAsync(linked) : null;
 
         await h.Service.ReconcileAsync(note.Id, ct);
@@ -145,7 +148,13 @@ public sealed class C0747LandReceiptReplayTests
             saved.ConfirmedAt.ShouldBeNull("an expired note was never proven delivered");
         }
         else
-            saved.State.ShouldBe(arm == "retry-pending-control" ? LandNotificationState.RetryPending : LandNotificationState.AwaitingReceipt);
+            saved.State.ShouldBe(arm switch
+            {
+                "retry-pending-control" => LandNotificationState.RetryPending,
+                // An uncertain typed attempt stays on the ordinary path, so its late receipt still confirms.
+                "typed-pending-control" => LandNotificationState.Confirmed,
+                _ => LandNotificationState.AwaitingReceipt,
+            });
         if (arm is "unlinked-destination-unavailable" or "retry-pending-control")
         {
             saved.QueueMessageId.ShouldBeNull();
