@@ -27,7 +27,7 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
     /// <summary>What happened, or would happen, to one scanned row.</summary>
     public enum Outcome { TypedPending, Busy, Changed, WouldCancel, Canceled }
 
-    private const int PageSize = 256;
+    internal const int BatchSize = 256;
 
     /// <param name="lockWait">
     /// The hosted cleanup passes a bound: a session whose queue lock stays held is skipped for the
@@ -48,7 +48,7 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
             if (cursor is Guid after) query = query.Where(m => m.Id.CompareTo(after) > 0);
             var page = await query.OrderBy(m => m.Id)
                 .Select(m => new Row(m.Id, m.AgentSessionId, m.Origin, m.DeliveryAttempts, m.CreatedAt))
-                .Take(PageSize).ToListAsync(ct);
+                .Take(BatchSize).ToListAsync(ct);
             scanned += page.Count;
             var typed = page.Count(r => r.DeliveryAttempts > 0);
             if (typed > 0) outcomes[nameof(Outcome.TypedPending)] = outcomes.GetValueOrDefault(nameof(Outcome.TypedPending)) + typed;
@@ -86,7 +86,7 @@ public sealed class AgedQueueRowExpiry(AppDbContext db, SessionMessageQueueServi
                     failures += rows.Count;
                 }
             }
-            if (page.Count < PageSize) break;
+            if (page.Count < BatchSize) break;
             cursor = page[^1].Id;
         }
         return new AgedQueueRowExpiryDto(scanned, outcomes, eligibleByKind, oldest, newest, failures);

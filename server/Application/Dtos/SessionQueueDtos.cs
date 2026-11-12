@@ -80,6 +80,13 @@ public sealed record SessionQueueDto(
     bool ModalBlocked = false,
     string? ModalBlockedReason = null);
 
+/// <summary>
+/// CARD-0747. One page of aged queue rows just canceled. <see cref="CanceledIds"/> is that page
+/// (at most the expiry batch) and <see cref="PendingRemaining"/> is a count. The notice carries
+/// no message bodies and is not a <see cref="SessionQueueDto"/> snapshot.
+/// </summary>
+public sealed record SessionQueueExpiryNotice(Guid SessionId, IReadOnlyList<Guid> CanceledIds, int PendingRemaining);
+
 /// <summary>One pending note on the read-only poll. <see cref="WithholdReason"/> is the current queue withhold, when one is active.</summary>
 public sealed record PendingNoteDto(
     Guid Id,
