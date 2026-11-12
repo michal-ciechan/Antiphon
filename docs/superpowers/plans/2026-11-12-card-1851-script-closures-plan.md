@@ -25,7 +25,9 @@ request, message or deployment is authorized or needed for these tests.
 - R-1: existing restart compatibility behaviors and ASCII/parser coverage stay green.
   Extend the existing ASCII/parser inventory to the nightly entry and imported helpers.
 - R-2: impacted index `nightly-live-lane` selects `LiveLaneRunnerTests` and
-  `NightlyCoreTests`. Run both classes; record the actual base..HEAD index resolution.
+  `NightlyCoreTests`. The full base..HEAD derived resolution also selects
+  `ProcessSpawnLimitTests` in Antiphon.Tests, SessionRunner.Tests and Agents.Pty.Tests,
+  plus the touched compatibility class. Run these classes and retain the resolution.
 - R-3: existing nightly job adapter and bounded-result-fetch integration methods remain green.
 - V-3: manually inspect every changed closure and transitive helper; run ASCII byte checks,
   OS witness declaration/lint, full-range evidence-diff and merge-tree. Record native Windows
@@ -41,11 +43,13 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-green/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-2 | all listed, 0 failed | 5 | 4 |
+| CP-1 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-green/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(ProcessSpawnLimitTests*)/*` | R-2 | all listed, 0 failed | 6 | 4 |
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
+| CP-4 | S2 | CP-1 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 1 |
+| CP-5 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1851-pty/ | pty-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 2 |
 
-Code runs CP-1 once at S1 for the expected red witness, then all three rows at S2 with
+Code ran CP-1 at S1 for the expected red witness, then runs all five rows at S2 with
 `--expected-source-sha <committed HEAD>`. Inspect fresh TRX by class/method/arguments and
 validate receipt source/build provenance. Preserve all original CHECKPOINT lines.
 Use a fresh output name for each new run after red, because failed checkpoints retain their
@@ -57,7 +61,7 @@ Windows rows are pending obligations, never native green certificates.
 
 ### Cost
 
-Ordinary final checkpoint estimate: 9 minutes, plus the initial red CP-1 (3 minutes),
+Ordinary final checkpoint estimate: 12 minutes, plus the initial red CP-1 (3 minutes),
 authoring and manual checks. Mutation floor is provisional 8 minutes for the eight
 variants below plus discovery/reporting. No full assembly is justified by this scope.
 
