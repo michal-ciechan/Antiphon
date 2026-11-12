@@ -19,7 +19,7 @@ public sealed class NightlyScriptsTests
 {
     [Test]
     public Task C1854_EolRepairHardening() =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1854_EolRepairHardening",
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-run.ps1", "C1854",
             nameof(C1854_EolRepairHardening), 11,
             [
                 "C1854 real reused clone has three stale tracked files",
@@ -33,7 +33,8 @@ public sealed class NightlyScriptsTests
                 "C1854 real non-ASCII paths repair when decoded correctly",
                 "C1854 clean repair remains silent",
                 "C1854 repaired clone has clean tracked status"
-            ]);
+            ], new ScriptHarnessOptions(TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(10)),
+            CancellationToken.None);
 
     /// <summary>rc ae84478d g126: the sync rewrites working files whose bytes predate an eol attribute.</summary>
     [Test]
