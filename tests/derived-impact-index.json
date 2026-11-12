@@ -20928,6 +20928,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.SessionRunner.Tests/StandingRunnerCwdTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.SessionRunner.Tests/TestHelpers/PhoneHomeTestWebSocket.cs",
       "classes": [
         "Card1619RunnerExitTests",
