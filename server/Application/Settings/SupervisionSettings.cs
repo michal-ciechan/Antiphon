@@ -366,6 +366,9 @@ public sealed class DeliveryVerificationSettings
     /// disables it. The operator sweep (<c>POST /api/agent-tasks/land-notifications/expire</c>)
     /// applies the same rule on demand and never below seven days; its apply needs the operator token
     /// and is refused (409 <c>land_note_expiry_disabled</c>) while this is zero or negative.
+    /// The same cutoff drives the aged queue-row rule (<c>AgedQueueRowExpiry</c>, Debug 3b0adade): a never-typed
+    /// Pending Delegation or Check row of a terminal task that no open land note owns is canceled by the
+    /// hosted cleanup (at boot, then hourly) and by the sweep.
     /// </summary>
     public int LandNoteReceiptExpiryDays { get; set; } = 7;
 
