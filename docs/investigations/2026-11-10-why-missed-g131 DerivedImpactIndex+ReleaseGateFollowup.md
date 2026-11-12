@@ -108,13 +108,44 @@ why the failing test was outside that selection (lane/category/path):
   `tests/Antiphon.Tests/Scripts/DerivedImpactIndexTests.cs`. It was inside every selection, as
   part of the Merge guard union. It was green wherever a lane had built the driver, and the
   Merge regenerate step always builds it right before the tests. Only a checkout whose only
-  build is the solution build, which is the rc qualification, lacks the dll. The one lane that
-  did see it red (Review `09847c78`) classified it as foreign instead of filing it.
+  build is the solution build, which is the rc qualification, lacks the dll. Two lanes saw it
+  red and neither filed it. Review `09847c78` recorded it as outside its card. Merge batch 182
+  (`d12e11f0`, the lane that pushed this cut, `3db1a43b0`) saw 25 passed, 1 failed, built the
+  driver by running the regenerate script, re-ran the method 1/1 and pushed.
 - Why the Merge guard union does not prove the index family: it runs after a regenerate step that
   builds and rewrites, so it certifies the Merge worktree, not the qualification build graph.
   For stale bytes the union is sufficient: `committed_index_matches_the_builder` passed here.
   For the driver it was structurally blind. `solution_build_produces_the_regenerate_driver` now
   closes that, because it reads `Antiphon.sln` and does not depend on any lane's build history.
+
+## Family: the mirror-project split
+
+Both reds belong to the mirror-project split family (CARD-1729 umbrella: CARD-1546, CARD-1829,
+CARD-1830, plus the CARD-1838 driver project). The split adds projects, and two consumers
+enumerate projects by hand:
+
+- The qualification builds only `Antiphon.sln`. Any project a test runs from a prebuilt output
+  (`-NoBuild`, `--no-build`, a copied exe) must be listed there with a `Debug|Any CPU.Build.0`
+  entry. Selection that would have caught it: `solution_build_produces_the_regenerate_driver`,
+  or any lane that runs `DerivedImpactIndexTests` after only `dotnet build Antiphon.sln`.
+- C1336 drives the nightly workload over every suite in the policy. Any new test project
+  must be in its executable list, which now derives from the policy. Selection that would have
+  caught it: `ReleaseGateFollowupTests/C1336_NightlyCandidateIdentity` on any range that
+  touches `tests/test-execution-policy.json`. That is every suite registration.
+
+Rule for the next mirror slice: a new test project is in `Antiphon.sln`, and its plan names
+the C1336 row.
+
+The driver could instead be built by the test itself, without `-NoBuild`. That was rejected:
+it is a nested `dotnet build` of a project that references `Antiphon.Tests`, run from inside
+the `Antiphon.Tests` host. It would be a second build under the outer slot and take several
+minutes per run. It would also rebuild `Antiphon.Tests` while that assembly is loaded. The
+solution entry costs one more project in a build the qualification already runs.
+
+Land graph: on this branch `audit-land-verification-graph.ps1 -Check` refuses only with
+`manifest does not match the selected graph` (count 79, unchanged from master; the driver
+csproj record already exists since Merge batch 176). The `Antiphon.sln` record changed. That
+is the sanctioned `land-graph-land-refresh.ps1` step at Merge.
 
 ## Cheapest pre-land check
 
