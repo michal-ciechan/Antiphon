@@ -62,6 +62,16 @@ public static class TestSessionTeardown
         while (DateTime.UtcNow < until && IsHost(pid, start))
             await Task.Delay(100);
 
+        KillHost((pid, start));
+    }
+
+    /// <summary>Hang task d268c50c: kill a host whose session the runtime already holds as exited,
+    /// so <see cref="KillAndAwaitHostExitAsync"/> would only wait. Its tree goes too, child included.</summary>
+    public static void KillHost((int Pid, DateTime StartedAtUtc)? host)
+    {
+        if (host is not { } known)
+            return;
+        var (pid, start) = known;
         try
         {
             using var process = Process.GetProcessById(pid);
