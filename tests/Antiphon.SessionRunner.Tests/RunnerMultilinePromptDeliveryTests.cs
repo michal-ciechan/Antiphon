@@ -76,23 +76,41 @@ public class RunnerMultilinePromptDeliveryTests
         }), NullLogger<SessionRunnerRuntime>.Instance);
         var sessionId = Guid.NewGuid();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await runtime.StartAsync(new RunnerLaunchRequest(
-            sessionId,
-            HerdrTestProcess.ShellPath, // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere
-            HerdrTestProcess.InteractiveArgs,
-            new Dictionary<string, string>(),
-            Path.GetTempPath(),
-            80, 24), cts.Token);
-        await Task.Delay(300, cts.Token);
+        int? hostPid = null;
+        DateTime? hostStartedAtUtc = null;
+        try
+        {
+            var started = await runtime.StartAsync(new RunnerLaunchRequest(
+                sessionId,
+                HerdrTestProcess.ShellPath, // CARD-1652: cmd.exe on Windows, /bin/sh elsewhere
+                HerdrTestProcess.InteractiveArgs,
+                new Dictionary<string, string>(),
+                Path.GetTempPath(),
+                80, 24), cts.Token);
+            hostPid = started.HostPid;
+            if (hostPid is int pid)
+            {
+                using var host = System.Diagnostics.Process.GetProcessById(pid);
+                hostStartedAtUtc = host.StartTime.ToUniversalTime();
+            }
+            await Task.Delay(300, cts.Token);
 
-        await runtime.SendInputAsync(sessionId, Prompt, cts.Token);
+            await runtime.SendInputAsync(sessionId, Prompt, cts.Token);
 
-        var write = runtime.SnapshotBackendWrites().Single(w => w.SessionId == sessionId).Input;
-        write.ShouldBe(Prompt);
-        write.Split('\n')[0].ShouldBe(Marker + " role=Custom tier=High workspace=Worktree");
-        write.ShouldContain("YOUR MESSAGE IS NOT IN THIS MESSAGE.");
-
-        await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), cts.Token);
+            var write = runtime.SnapshotBackendWrites().Single(w => w.SessionId == sessionId).Input;
+            write.ShouldBe(Prompt);
+            write.Split('\n')[0].ShouldBe(Marker + " role=Custom tier=High workspace=Worktree");
+            write.ShouldContain("YOUR MESSAGE IS NOT IN THIS MESSAGE.");
+        }
+        finally
+        {
+            // Hang task d268c50c: a bare KillAsync leaves the host to its shutdown ack. The ack is
+            // sent off the read loop and races this runtime's disposal, and without it the host
+            // lingers PtyHostLingerHours (72s) under a root the CARD-0206 sweep did not cover.
+            await TestSessionTeardown.KillAndAwaitHostExitAsync(runtime, sessionId, hostPid, hostStartedAtUtc);
+        }
+        hostPid.ShouldNotBeNull("the modern backend reports its pty-host");
+        TestSessionTeardown.AssertHostGone(hostPid.Value, hostStartedAtUtc!.Value);
     }
 
     private static PhoneHomeFrame Frame(PhoneHomeOperation operation, object payload) =>

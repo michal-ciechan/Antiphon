@@ -73,6 +73,12 @@ public static class TestSessionTeardown
         catch { /* Already gone. */ }
     }
 
+    /// <summary>Hang task d268c50c: the leak check after the teardown. A host still alive at its
+    /// recorded start outlives the test, and the assembly, and holds the chunk harness open
+    /// (run ae84478d session-runner all-group-4 completed-but-hung on a live Antiphon.PtyHost).</summary>
+    public static void AssertHostGone(int hostPid, DateTime hostStartedAtUtc) =>
+        IsHost(hostPid, hostStartedAtUtc).ShouldBeFalse($"pty-host pid {hostPid} must not outlive the test");
+
     private static bool IsHost(int pid, DateTime hostStart) =>
         TryGetStartTimeUtc(pid) is DateTime start && IsHostStart(start, hostStart);
 
@@ -175,9 +181,16 @@ public class PtyHostLeakSweep
         var temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var full = Path.GetFullPath(exePath);
         if (!full.StartsWith(temp, StringComparison.OrdinalIgnoreCase)) return null;
-        var match = System.Text.RegularExpressions.Regex.Match(full, @"^(.*[\\/]antiphon-(?:cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto)-[0-9a-f]{32})[\\/]pty-hosts[\\/]bin[\\/]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var match = HostRoot.Match(full);
         return match.Success ? match.Groups[1].Value : null;
     }
+
+    // Hang task d268c50c: one list. A hand-written subset left every later prefix unswept.
+    private static readonly System.Text.RegularExpressions.Regex HostRoot = new(
+        @"^(.*[\\/]antiphon-(?:"
+        + string.Join("|", TestSessionLogRoot.KnownPrefixes.Select(System.Text.RegularExpressions.Regex.Escape))
+        + @")-[0-9a-f]{32})[\\/]pty-hosts[\\/]bin[\\/]",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     private static bool HasLiveNonConsoleChild(int pid)
