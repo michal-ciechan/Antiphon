@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Management;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Contracts;
 using Shouldly;
 using TUnit.Core;
 
@@ -73,11 +74,34 @@ public static class TestSessionTeardown
         catch { /* Already gone. */ }
     }
 
+    /// <summary>Hang task d268c50c: a session's pty-host pid and start time, read while it runs so
+    /// a later kill or leak check cannot follow a reused pid.</summary>
+    public static (int Pid, DateTime StartedAtUtc)? CaptureHost(RunnerSessionDto dto) =>
+        dto.HostPid is int pid && TryGetStartTimeUtc(pid) is DateTime start ? (pid, start) : null;
+
     /// <summary>Hang task d268c50c: the leak check after the teardown. A host still alive at its
-    /// recorded start outlives the test, and the assembly, and holds the chunk harness open
-    /// (run ae84478d session-runner all-group-4 completed-but-hung on a live Antiphon.PtyHost).</summary>
-    public static void AssertHostGone(int hostPid, DateTime hostStartedAtUtc) =>
-        IsHost(hostPid, hostStartedAtUtc).ShouldBeFalse($"pty-host pid {hostPid} must not outlive the test");
+    /// start after <paramref name="bound"/> would outlive the test and the assembly and hold the
+    /// chunk harness open (run ae84478d session-runner all-group-4 completed-but-hung on a live
+    /// Antiphon.PtyHost). It fails the test, after killing that host so the failure leaks nothing.</summary>
+    public static async Task AssertHostGoneAsync((int Pid, DateTime StartedAtUtc)? host, TimeSpan bound)
+    {
+        host.ShouldNotBeNull("the session reported a live pty-host");
+        var (pid, start) = host.Value;
+        var until = DateTime.UtcNow + bound;
+        while (IsHost(pid, start) && DateTime.UtcNow < until)
+            await Task.Delay(50);
+        if (!IsHost(pid, start))
+            return;
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(5_000);
+        }
+        catch { /* Already gone. */ }
+        throw new ShouldAssertException(
+            $"pty-host pid {pid} outlived the test's teardown by {bound.TotalSeconds:0.#}s and would hold the chunk harness");
+    }
 
     private static bool IsHost(int pid, DateTime hostStart) =>
         TryGetStartTimeUtc(pid) is DateTime start && IsHostStart(start, hostStart);
