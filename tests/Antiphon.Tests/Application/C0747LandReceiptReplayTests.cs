@@ -282,6 +282,8 @@ public sealed class C0747LandReceiptReplayTests
 
         var services = new ServiceCollection();
         services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)));
+        // Debug 3b0adade: the sweep also applies the aged queue-row rule through the queue.
+        services.AddSingleton(h.Bridge.Queue);
         services.AddScoped(sp => new AgentTaskLandNotificationService(sp.GetRequiredService<AppDbContext>(), h.Bridge.Queue,
             new CompletionNoteFlushQueue(), h.Runtime, TimeProvider.System));
         await using var provider = services.BuildServiceProvider();
