@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -12,6 +13,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// in the lexical cases is <c>/work</c>. Nothing here touches a live runner.
 /// </summary>
 [Category("Unit")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class StandingRunnerCwdTests
 {
     private const string Root = "/work";
@@ -176,7 +178,7 @@ public sealed class StandingRunnerCwdTests
             var absentWorktree = Path.Combine(root, "worktrees", "task-absent");
             Should.NotThrow(() => dispatcher.RejectUnsupportedLaunch(Launch(absentWorktree)));
 
-            Directory.CreateSymbolicLink(linked, outside);
+            CreateDirectoryLink(linked, outside);
             var linkRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
                 dispatcher.RejectUnsupportedLaunch(Launch(linked)));
             linkRefusal.Message.Contains("symlink", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(linkRefusal.Message);
@@ -193,7 +195,7 @@ public sealed class StandingRunnerCwdTests
             // the agents directory, so only an lstat of the agents directory itself refuses this.
             var target = Path.Combine(agentsRoot, "target-agents");
             Directory.CreateDirectory(Path.Combine(target, "ok-agent"));
-            Directory.CreateSymbolicLink(agentsLink, target);
+            CreateDirectoryLink(agentsLink, target);
             var agentsRefusal = Should.Throw<PhoneHomeAdmissionException>(() =>
                 NewDispatcher(agentsRoot).RejectUnsupportedLaunch(Launch(Path.Combine(agentsLink, "ok-agent"))));
             agentsRefusal.Message.Contains("agents", StringComparison.OrdinalIgnoreCase).ShouldBeTrue(agentsRefusal.Message);
@@ -202,10 +204,8 @@ public sealed class StandingRunnerCwdTests
         }
         finally
         {
-            if (File.Exists(linked) || Directory.Exists(linked))
-                File.Delete(linked);
-            if (File.Exists(agentsLink) || Directory.Exists(agentsLink))
-                File.Delete(agentsLink);
+            DeleteDirectoryLink(linked);
+            DeleteDirectoryLink(agentsLink);
             Directory.Delete(root, recursive: true);
             Directory.Delete(agentsRoot, recursive: true);
         }
@@ -286,9 +286,7 @@ public sealed class StandingRunnerCwdTests
         }
         finally
         {
-            var link = new DirectoryInfo(leaf);
-            if (link.Exists && link.LinkTarget is not null)
-                File.Delete(leaf);
+            DeleteDirectoryLink(leaf);
             if (Directory.Exists(root))
                 Directory.Delete(root, recursive: true);
         }
@@ -533,6 +531,54 @@ public sealed class StandingRunnerCwdTests
         return dispatcher.DispatchAsync(frame, CancellationToken.None);
     }
 
+    /// <summary>
+    /// A directory symlink, or a junction on a Windows host without SeCreateSymbolicLinkPrivilege
+    /// (ERROR_PRIVILEGE_NOT_HELD; the native desktop qualification lane). StandingCheckoutLink
+    /// refuses both as one reparse-point class, so the junction runs the same refusal, not a skip.
+    /// </summary>
+    private static void CreateDirectoryLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return;
+        }
+        catch (Exception ex) when (IsMissingSymlinkPrivilege(ex, OperatingSystem.IsWindows()))
+        {
+        }
+
+        // mklink reads a leading '/' as a switch and needs an absolute junction target.
+        var commandInterpreter = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = commandInterpreter,
+            Arguments = $"/d /c mklink /J \"{Path.GetFullPath(linkPath)}\" \"{Path.GetFullPath(targetPath)}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        }) ?? throw new InvalidOperationException("Could not start mklink for the standing junction.");
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new IOException($"Could not create the standing junction (exit code {process.ExitCode}).");
+        new DirectoryInfo(linkPath).Attributes.HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue(linkPath);
+    }
+
+    private static bool IsMissingSymlinkPrivilege(Exception error, bool windows) =>
+        windows && error is IOException or UnauthorizedAccessException
+        && error.HResult == unchecked((int)0x80070522); // HRESULT_FROM_WIN32(ERROR_PRIVILEGE_NOT_HELD)
+
+    // Removes only the link. File.Delete refuses a Windows directory link, and Directory.Delete
+    // without recursion never follows one.
+    private static void DeleteDirectoryLink(string linkPath)
+    {
+        var link = new DirectoryInfo(linkPath);
+        if (link.Exists && link.LinkTarget is not null)
+            Directory.Delete(linkPath);
+        else if (new FileInfo(linkPath).LinkTarget is not null)
+            File.Delete(linkPath);
+    }
+
     private static RunnerLaunchRequest Launch(string cwd) =>
         new(Guid.NewGuid(), "grok", [], new Dictionary<string, string>(), cwd, 80, 24);
 
@@ -572,7 +618,7 @@ public sealed class StandingRunnerCwdTests
         public Task<RunnerProviderAuthDto> ProbeAsync(string provider, CancellationToken ct)
         {
             Directory.Delete(leaf, recursive: true);
-            Directory.CreateSymbolicLink(leaf, outside);
+            CreateDirectoryLink(leaf, outside);
             return Task.FromResult(new RunnerProviderAuthDto(provider, true, "test", null, DateTimeOffset.UtcNow, null));
         }
     }
