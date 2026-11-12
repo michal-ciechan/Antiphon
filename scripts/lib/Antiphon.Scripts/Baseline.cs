@@ -31,7 +31,15 @@ namespace Antiphon.Scripts
         private static readonly string[] RequiredFiles = { "authority/authority.json", "authority/execution-plan.json", "authority/discovery.json",
             "authority/ledger.json", "authority/publication-authority.json", "release-manifest.json", "publish.json", "complete-green.json" };
         private static readonly string[] RcSuites = { "antiphon", "session-runner", "pty-host", "agents-pty", "messaging", "client", "scripts", "e2e" };
-        private const string ObservabilityProject = "tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj";
+        // Get-ReleaseAuthorityPinnedPolicy: each mirrored test project, once declared in projectDispositions, adds its rc
+        // suite (CARD-1564 observability, CARD-1546 server-git, CARD-1829 resilience, CARD-1830 git-in-process).
+        private static readonly (string Project, string Suite)[] DispositionSuites =
+        {
+            ("tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj", "observability"),
+            ("tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj", "server-git"),
+            ("tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "resilience"),
+            ("tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj", "git-in-process"),
+        };
         private static readonly Regex Sha256 = new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex LongLivedRef = new Regex(@"^rc/(?<y>\d{4})-(?<m>\d{2})-(?<d>\d{2})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly Regex StampRef = new Regex(@"^release/rc-(?<stamp>\d{8}T\d{6}Z)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -302,8 +310,9 @@ namespace Antiphon.Scripts
             {
                 required.Add("markdown-pdf");
                 TestSelection.ProjectDispositions(obj);
-                if (List(obj.Get("projectDispositions") ?? new List<object>(), "dispositions").Any(row => Doc(row, "dispositions").Get("project") is string p && p == ObservabilityProject))
-                    required.Add("observability");
+                var dispositions = List(obj.Get("projectDispositions") ?? new List<object>(), "dispositions");
+                foreach (var (project, suite) in DispositionSuites)
+                    if (dispositions.Any(row => Doc(row, "dispositions").Get("project") is string p && p == project)) required.Add(suite);
             }
             if (required.Any(r => !suites.Contains(r)) || suites.Any(s => !required.Contains(s))) throw Refused("policy-rc-suites");
             PsObject suiteMap = Doc(obj.Get("suites"), "policy-rc-suite-undefined");
