@@ -13,7 +13,8 @@ request, message or deployment is authorized or needed for these tests.
 
 - V-1: the real `New-RunnerRestartPlatform` PID reader stops `Invoke-RunnerRestart`
   before any control for directory-at-file, exclusive lock, malformed or overflowing PID,
-  and missing-parent errors. Only `FileNotFoundException` means an absent PID file.
+  zero PID, unreadable wrapper PID and missing-parent errors. Only `FileNotFoundException`
+  means an absent PID file.
   Missing PID and live child PID are positive controls for the expected restart paths.
   Preserve the unreadable PID path. Drive the factory under a separate `&` script scope;
   replace only control and health boundaries so no host process is stopped.
@@ -43,7 +44,7 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-green/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 13 executed, 0 failed; native Windows rows pending on Linux | 13 | 3 |
+| CP-1 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1851-final/ | script-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,V-2,R-1 | >= 15 executed, 0 failed; native Windows rows pending on Linux | 15 | 3 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1851-nightly/ | nightly-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(ProcessSpawnLimitTests*)/*` | R-2 | all listed, 0 failed | 6 | 4 |
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
 | CP-4 | S2 | CP-1 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 1 |
@@ -90,6 +91,7 @@ Candidate pack: `docs/superpowers/mutations/2026-11-12-card-1851-script-closures
 - PC-1 / swallowed-read: restore catch-all PID read suppression. Exact method:
   `RunnerRestartScriptCompatibilityTests/Pid_read_errors_stop_restart_before_any_control`.
   Directory, exclusive lock, invalid, overflow and missing-parent arguments must detect it.
+  The final fixture additionally covers zero and the service-wrapper PID read.
 - PC-2 / registration-http-name, schedule-http-name, jobs-http-name, result-http-name:
   change each captured HTTP helper call back to a by-name call (four variants).
   Exact method: `RunnerRestartScriptCompatibilityTests/Nightly_health_closures_resolve_helpers_under_the_call_operator`.

@@ -92,6 +92,8 @@ public class RunnerRestartScriptCompatibilityTests
     [Arguments("pwsh.exe", "locked"), Arguments("powershell.exe", "locked")]
     [Arguments("pwsh.exe", "invalid"), Arguments("powershell.exe", "invalid")]
     [Arguments("pwsh.exe", "overflow"), Arguments("powershell.exe", "overflow")]
+    [Arguments("pwsh.exe", "zero"), Arguments("powershell.exe", "zero")]
+    [Arguments("pwsh.exe", "wrapper-directory"), Arguments("powershell.exe", "wrapper-directory")]
     [Arguments("pwsh.exe", "missing-parent"), Arguments("powershell.exe", "missing-parent")]
     [Arguments("pwsh.exe", "missing"), Arguments("powershell.exe", "missing")]
     [Arguments("pwsh.exe", "live"), Arguments("powershell.exe", "live")]
@@ -111,6 +113,12 @@ public class RunnerRestartScriptCompatibilityTests
                 'locked' { [IO.File]::WriteAllText($pidPath, [string]$PID); $lock=[IO.File]::Open($pidPath, 'Open', 'ReadWrite', 'None') }
                 'invalid' { [IO.File]::WriteAllText($pidPath, 'not-a-pid') }
                 'overflow' { [IO.File]::WriteAllText($pidPath, '999999999999999999999') }
+                'zero' { [IO.File]::WriteAllText($pidPath, '0') }
+                'wrapper-directory' {
+                    [IO.File]::WriteAllText($pidPath, [string]$PID)
+                    $pidPath=Join-Path $logDir 'session-runner.service.pid'
+                    $null=New-Item -ItemType Directory -Path $pidPath
+                }
                 'missing-parent' { Remove-Item -LiteralPath $logDir }
                 'live' { [IO.File]::WriteAllText($pidPath, [string]$PID) }
             }
@@ -191,7 +199,7 @@ public class RunnerRestartScriptCompatibilityTests
                         $data+=@{ id='running'; type='QueuedJob'; running=$true; schedule_path='u/fixture/nightly' }
                     }
                     '*/get_result/j2' { throw 'fixture result unavailable' }
-                    '*/get_result/j3' { $data=@{ nativeRunId='r3' } }
+                    '*/get_result/j3' { $data=@{ nativeRunId='r3' }; break }
                     '*/get_result/j*' { $data=@{ nativeRunId='native-run'; sha='fixture-sha'; localDueDate='{{date}}' } }
                     default { throw 'unexpected HTTP route' }
                 }
