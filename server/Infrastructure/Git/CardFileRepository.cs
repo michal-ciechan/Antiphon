@@ -323,6 +323,7 @@ public sealed class CardFileRepository(
         string workingDirectory, string? input, CancellationToken ct, params string[] arguments)
     {
         Process? process = null;
+        OwnedChildMarker? owned = null;
         try
         {
             var psi = new ProcessStartInfo
@@ -348,6 +349,12 @@ public sealed class CardFileRepository(
             process = Process.Start(psi);
             if (process is null)
                 return new GitCommandResult(-1, "", $"{_gitSettings.ExecutableName} failed to start");
+            // Windows: hold git, its conhost and its hooks in one job so a kill ends them together.
+            if (OperatingSystem.IsWindows())
+            {
+                owned = OwnedChildMarker.Create(LogJob);
+                owned.Attach(process, LogJob);
+            }
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             var timeout = TimeSpan.FromSeconds(Math.Max(1, _gitSettings.TimeoutSeconds));
@@ -364,7 +371,7 @@ public sealed class CardFileRepository(
         }
         catch (OperationCanceledException)
         {
-            TryKill(process);
+            TryKill(process, owned);
             if (ct.IsCancellationRequested)
                 throw;
 
@@ -373,20 +380,37 @@ public sealed class CardFileRepository(
         }
         catch (Exception)
         {
-            TryKill(process);
+            TryKill(process, owned);
             _logger.LogDebug("Card-file Git command failed");
             return new GitCommandResult(-1, "", "Git command failed");
         }
         finally
         {
+            owned?.Dispose();
             process?.Dispose();
         }
     }
 
-    private static void TryKill(Process? process)
+    private void LogJob(string line) => _logger.LogDebug("Card-file Git {Line}", line);
+
+    private void TryKill(Process? process, OwnedChildMarker? owned)
     {
         if (process is null)
             return;
+
+        try
+        {
+            // Windows: Kill(true) ends one process, then re-reads the process table for its
+            // children. git's conhost was ended first, and the still-running hook saw its next
+            // child fail and ran its own failure branch after the cancel (rc run 0b292fa4 g82).
+            // One TerminateJobObject call ends every job member together. Kill(true) stays
+            // as the fallback for a process outside the job.
+            owned?.TerminateMembers(process.Id, LogJob);
+        }
+        catch
+        {
+            // The tree walk below still runs.
+        }
 
         try
         {
