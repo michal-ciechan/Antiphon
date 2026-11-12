@@ -674,7 +674,7 @@ public sealed class DerivedImpactIndexTests
         using (var json = JsonDocument.Parse(service.Stdout))
         {
             Strings(json.RootElement, "classes").ShouldContain("PreDispatchFailureDeliveryTests");
-            OwedCount(json.RootElement, NotificationServicePath).ShouldBe(15);
+            OwedCount(json.RootElement, NotificationServicePath).ShouldBe(16);
         }
 
         var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
