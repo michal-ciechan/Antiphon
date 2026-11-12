@@ -27,7 +27,7 @@ public sealed class RcQualificationWatcherScriptTests
     // last-run.json readers allow FileShare.Delete for nightly-run's File.Replace (Review 230d1f5d A-1).
     [Test]
     public Task Supervisor_detaches_and_observe_classifies_lost_supervisor() => ScriptHarness.RunHarnessCaseAsync(
-        "test-qualification-supervisor.ps1", "C1667", "Smoke", 38,
+        "test-qualification-supervisor.ps1", "C1667", "Smoke", 39,
         "C1667 observe classifies a gone supervisor with live nightly-run as supervisor-lost-run-alive",
         "C1667 observe treats a stale heartbeat as supervisor lost while the run is alive",
         "C1667 observe treats last-run completedAt as the end signal without commission-exit",
@@ -46,6 +46,7 @@ public sealed class RcQualificationWatcherScriptTests
         "C1667 start-supervisor refuses a run id the TaskRoot copy own-last-run.json already records",
         "C1667 last-run.json readers open with FileShare.Delete so the nightly-run File.Replace is never blocked",
         "C1667 launch-rc refuses a launch whose -RunId is missing or differs from the bound run id",
+        "C1667 launch-rc refuses a checkout whose working files break their eol attribute before build-slot",
         "C1667 supervisor log lines are on disk at return and the file is not held open",
         "C1667 supervisor runs in its own session or console, not the wrapper's",
         "C1667 supervisor survives teardown of the starting group and records the launch exit code",

@@ -379,6 +379,30 @@ try {
     Assert-C1667 ($l.Code -eq 3 -and $l.Text -match 'held by live pid' -and $l.Text -match 'c1667other' -and $g.Code -eq 2 -and $g.Text -match 'checkout HEAD') `
         'launch-rc refuses a live run.lock and leaves a dead owner to nightly-run' ($l.Text + ' | ' + $g.Text)
 
+    # Run ae84478d g126: a reused checkout moved to the expected SHA kept a CRLF working copy of an
+    # eol=lf script (git checkout never rewrites a file whose blob is unchanged). The launch must refuse
+    # that tree before build-slot, and must launch once the working file honours its attribute.
+    $eolRepo = New-OwnedDirectory 'eol-checkout'
+    $lfUtf8 = New-Object System.Text.UTF8Encoding $false
+    [void][IO.Directory]::CreateDirectory((Join-Path $eolRepo 'scripts'))
+    [IO.File]::WriteAllText((Join-Path $eolRepo '.gitattributes'), "*.ps1 text eol=lf`n", $lfUtf8)
+    [IO.File]::WriteAllText((Join-Path $eolRepo 'scripts/selector.ps1'), "param()`nWrite-Output 'selector'`n", $lfUtf8)
+    [IO.File]::WriteAllText((Join-Path $eolRepo 'scripts/build-slot.ps1'), "Write-Output 'C1667 fake build-slot'`nexit 7`n", $lfUtf8)
+    $eolGit = @('-C', $eolRepo, '-c', 'core.autocrlf=false', '-c', 'user.name=c1667', '-c', 'user.email=c1667@example.invalid')
+    [void](& git @eolGit init -q 2>&1)
+    [void](& git @eolGit add -A 2>&1)
+    [void](& git @eolGit commit -q -m 'eol fixture' 2>&1)
+    $eolSha = ('' + (& git -C $eolRepo rev-parse HEAD)).Trim()
+    $eolState = New-OwnedDirectory 'eol-state'
+    $eolRecord = [ordered]@{ checkoutRoot = $eolRepo; expectedSha = $eolSha; nightlyArguments = @('-RunId', 'c1667run', '-StateRoot', $eolState) }
+    [IO.File]::WriteAllText((Join-Path $eolRepo 'scripts/selector.ps1'), "param()`r`nWrite-Output 'selector'`r`n", $lfUtf8)
+    $crlf = Invoke-Launch 'eolcrlf' $eolRecord 'c1667run'
+    [IO.File]::WriteAllText((Join-Path $eolRepo 'scripts/selector.ps1'), "param()`nWrite-Output 'selector'`n", $lfUtf8)
+    $lf = Invoke-Launch 'eollf' $eolRecord 'c1667run'
+    Assert-C1667 ($eolSha -match '^[0-9a-f]{40}$' -and $crlf.Code -eq 2 -and $crlf.Text -match 'line endings' -and $crlf.Text -match 'scripts/selector\.ps1' -and
+        $crlf.Text -notmatch 'fake build-slot' -and $lf.Code -eq 7 -and $lf.Text -match 'C1667 fake build-slot') `
+        'launch-rc refuses a checkout whose working files break their eol attribute before build-slot' ($crlf.Text + ' | ' + $lf.Text)
+
     # Line-flushed log: every line is on disk when the call returns, and no handle stays open.
     $logDir = New-OwnedDirectory 'log'
     $log = Join-Path $logDir 'supervisor.log'
