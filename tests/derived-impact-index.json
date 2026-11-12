@@ -2095,9 +2095,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 59,
+      "classes": 60,
       "reason": "cap",
-      "owed": 34,
+      "owed": 35,
       "first": [
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
