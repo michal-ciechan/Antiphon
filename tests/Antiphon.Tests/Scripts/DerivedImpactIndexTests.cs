@@ -246,6 +246,29 @@ public sealed class DerivedImpactIndexTests
         Should.Throw<ShouldAssertException>(() => AssertRegenDocs(loop, guardBlind));
     }
 
+    // rc run ae84478d g131. regenerate_script_reports_changed_then_unchanged runs the driver with
+    // -NoBuild. The qualification builds only Antiphon.sln, and the Merge step builds the driver
+    // itself, so only this read sees a driver that the solution build does not produce.
+    [Test]
+    public void solution_build_produces_the_regenerate_driver()
+    {
+        var solution = File.ReadAllText(Path.Combine(RepoRoot(), "Antiphon.sln"));
+        AssertSolutionBuildsDriver(solution);
+
+        var unbuilt = solution.Replace(".Debug|Any CPU.Build.0 = Debug|Any CPU", ".Debug|Any CPU.Skip = Debug|Any CPU", StringComparison.Ordinal);
+        unbuilt.ShouldNotBe(solution);
+        Should.Throw<ShouldAssertException>(() => AssertSolutionBuildsDriver(unbuilt));
+    }
+
+    private static void AssertSolutionBuildsDriver(string solution)
+    {
+        const string driver = "\"scripts\\regenerate-derived-impact-index\\Antiphon.DerivedImpactIndex.csproj\"";
+        var line = solution.Split('\n').SingleOrDefault(l => l.StartsWith("Project(", StringComparison.Ordinal) && l.Contains(driver, StringComparison.Ordinal));
+        line.ShouldNotBeNull("Antiphon.sln does not list the regenerate driver");
+        var guid = line.TrimEnd('\r').Split(", ")[^1].Trim('"');
+        solution.ShouldContain(guid + ".Debug|Any CPU.Build.0 = Debug|Any CPU", Case.Sensitive);
+    }
+
     private static void AssertChanged(string stdout)
     {
         stdout.ShouldContain("derived-impact-index changed", Case.Sensitive);
