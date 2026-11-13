@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -25,6 +26,8 @@ public static class HistoricalEvidence
     private const int BufferSize = 65536, FileCountLimit = 10000;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly JsonSerializerOptions Json = new() { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly SearchValues<char> StringStops = SearchValues.Create(
+        new string(Enumerable.Range(0, 32).Select(i => (char)i).Concat(new[] { '"', '\\' }).ToArray()));
     private static readonly HashSet<string> Scalars = new(StringComparer.Ordinal)
     {
         "runId", "candidateSha", "candidateId", "sourceSha", "platform", "complete", "outcome",
@@ -109,8 +112,10 @@ public static class HistoricalEvidence
     }
     public static Result Export(string sourceRoot, string evidenceRoot, string repositoryRoot, string checkoutRoot,
         string[]? selected = null, Action? afterOpen = null)
+        => Budget.Run(budget => ExportCore(sourceRoot, evidenceRoot, repositoryRoot, checkoutRoot, selected, afterOpen, budget));
+    private static Result ExportCore(string sourceRoot, string evidenceRoot, string repositoryRoot, string checkoutRoot,
+        string[]? selected, Action? afterOpen, Budget watch)
     {
-        var watch = Stopwatch.StartNew();
         sourceRoot = Full(sourceRoot); evidenceRoot = Full(evidenceRoot);
         if (Inside(evidenceRoot, sourceRoot) || Inside(sourceRoot, evidenceRoot) ||
             Inside(evidenceRoot, Full(repositoryRoot)) || Inside(evidenceRoot, Full(checkoutRoot)) ||
@@ -175,13 +180,15 @@ public static class HistoricalEvidence
             file.Flush(true);
         }
         if (new FileInfo(temporary).Length > 16 * 1024 * 1024) throw Refuse("evidence-inventory-limit");
+        Deadline(watch);
         File.Move(temporary, inventoryPath);
-        return Verify(evidenceRoot, null);
+        return VerifyCore(evidenceRoot, null, watch);
     }
     public static Result Verify(string evidenceRoot, string? expectedInventorySha256)
+        => Budget.Run(budget => VerifyCore(evidenceRoot, expectedInventorySha256, budget));
+    private static Result VerifyCore(string evidenceRoot, string? expectedInventorySha256, Budget watch)
     {
         evidenceRoot = Full(evidenceRoot); NoLinks(evidenceRoot);
-        var watch = Stopwatch.StartNew();
         var seal = Digest(evidenceRoot, "inventory.json", watch);
         if (seal.length > 16 * 1024 * 1024) throw Refuse("evidence-inventory-limit");
         if (!string.IsNullOrEmpty(expectedInventorySha256) && seal.sha256 != expectedInventorySha256) throw Refuse("evidence-digest");
@@ -216,19 +223,16 @@ public static class HistoricalEvidence
         }
     }
     private static StreamReader Reader(string path) => new(path, Utf8, false, BufferSize);
-    private static void Deadline(Stopwatch watch)
-    {
-        if (watch.Elapsed > TimeSpan.FromMinutes(20)) throw Refuse("evidence-deadline");
-    }
-    private static Entry Digest(string root, string path, Stopwatch watch) => Freeze(root, path, null, null, watch);
-    private static Entry Freeze(string root, string relative, string? destination, Action? afterOpen, Stopwatch watch)
+    private static void Deadline(Budget watch) => watch.Check();
+    private static Entry Digest(string root, string path, Budget watch) => Freeze(root, path, null, null, watch);
+    private static Entry Freeze(string root, string relative, string? destination, Action? afterOpen, Budget watch)
     {
         var path = Path.Combine(root, Relative(relative)); NoLinks(path);
         using var handle = OpenRegular(path);
         var before = Inspect(handle, root, path);
         if (before.Size > (ulong)FileLimit) throw Refuse("evidence-file-limit");
         using var stream = new FileStream(handle, FileAccess.Read, BufferSize, false);
-        try { afterOpen?.Invoke(); }
+        try { watch.Hook(afterOpen); }
         catch (Exception ex) { throw new InvalidDataException("evidence-changing", ex); }
         using var output = destination == null ? null : new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -236,23 +240,24 @@ public static class HistoricalEvidence
         for (;;)
         {
             Deadline(watch);
-            var readWatch = Stopwatch.StartNew();
-            // Only verified regular local handles are read; no pipes/devices/network executor.
+            // The budget thread owns the handles, buffers and private sinks even
+            // when an OS syscall cannot be cancelled. A late read cannot publish.
             var n = stream.Read(buffer, 0, buffer.Length);
-            if (readWatch.Elapsed > TimeSpan.FromSeconds(60)) throw Refuse("evidence-io-deadline");
+            watch.Progress();
             if (n == 0) break;
             length += n;
             if (length > FileLimit) throw Refuse("evidence-file-limit");
             hash.AppendData(buffer, 0, n); output?.Write(buffer, 0, n);
         }
         output?.Flush(true);
+        Deadline(watch);
         var after = Inspect(handle, root, path);
         using var current = OpenRegular(path);
         if (before != after || before != Inspect(current, root, path) || length != (long)before.Size)
             throw Refuse("evidence-changing");
         return new Entry { relativePath = relative, length = length, sha256 = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant() };
     }
-    private static void ReadTrx(string file, string path, Action<object> emit, Stopwatch watch)
+    private static void ReadTrx(string file, string path, Action<object> emit, Budget watch)
     {
         var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
             MaxCharactersInDocument = FileLimit, MaxCharactersFromEntities = 0, IgnoreComments = true, IgnoreWhitespace = true };
@@ -262,7 +267,7 @@ public static class HistoricalEvidence
             string owner = "";
             while (reader.Read())
             {
-                Deadline(watch);
+                watch.Progress();
                 if (reader.Depth > 64) throw Refuse("evidence-depth");
                 if (reader.NodeType == XmlNodeType.Element && reader.LocalName == "UnitTest") owner = reader.GetAttribute("id") ?? "";
                 if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "UnitTest") owner = "";
@@ -287,15 +292,15 @@ public static class HistoricalEvidence
     {
         private readonly TextReader reader;
         private readonly Action<string, object?>? emit;
-        private readonly Stopwatch watch;
+        private readonly Budget watch;
         private readonly char[] buffer = new char[32768];
         private int offset, count, entries, retainedNames;
         public int MaxBufferedBytes { get; private set; } = BufferSize * 4;
-        public JsonScanner(TextReader reader, Action<string, object?>? emit, Stopwatch watch)
+        public JsonScanner(TextReader reader, Action<string, object?>? emit, Budget watch)
         { this.reader = reader; this.emit = emit; this.watch = watch; }
         private int Peek()
         {
-            if (offset == count) { Deadline(watch); count = reader.Read(buffer, 0, buffer.Length); offset = 0; }
+            if (offset == count) { Deadline(watch); count = reader.Read(buffer, 0, buffer.Length); watch.Progress(); offset = 0; }
             return count == 0 ? -1 : buffer[offset];
         }
         private int Take() { var c = Peek(); if (c >= 0) offset++; return c; }
@@ -378,6 +383,16 @@ public static class HistoricalEvidence
             }
             for (;;)
             {
+                if (!capture)
+                {
+                    if (Peek() < 0) throw Refuse("evidence-json");
+                    // Strict UTF-8 decoding already validates raw Unicode. Scan
+                    // ordinary ignored text in blocks, stopping at every escape,
+                    // quote and forbidden control character for grammar checks.
+                    var stop = buffer.AsSpan(offset, count - offset).IndexOfAny(StringStops);
+                    if (stop < 0) { offset = count; continue; }
+                    offset += stop;
+                }
                 var c = Take(); if (c == '"') return s?.ToString();
                 if (c < 32) throw Refuse("evidence-json");
                 if (c == '\\')
@@ -402,6 +417,61 @@ public static class HistoricalEvidence
                 else if (char.IsLowSurrogate((char)c)) throw Refuse("evidence-json");
                 Add(c);
             }
+        }
+    }
+
+    // A dedicated worker owns the entire extraction/read and all its sinks.
+    // Refusing the caller never disposes a stream underneath a stuck syscall.
+    // On return from that syscall the worker sees Stopped before publication.
+    private sealed class Budget
+    {
+        private readonly object gate = new();
+        private readonly Stopwatch total = Stopwatch.StartNew();
+        private long progress = Stopwatch.GetTimestamp();
+        private bool stopped, completed, hookCompleted;
+        private Action? hook;
+        private Exception? hookError;
+        private string? Reason() => stopped || total.Elapsed >= TimeSpan.FromMinutes(20) ? "evidence-deadline" :
+            Stopwatch.GetElapsedTime(progress) >= TimeSpan.FromSeconds(60) ? "evidence-io-deadline" : null;
+        public void Check() { lock (gate) { if (Reason() is string reason) throw Refuse(reason); } }
+        public void Progress() { lock (gate) { if (Reason() is string reason) throw Refuse(reason); progress = Stopwatch.GetTimestamp(); } }
+        public void Hook(Action? action)
+        {
+            if (action == null) return;
+            lock (gate)
+            {
+                Check(); hook = action; hookCompleted = false; Monitor.PulseAll(gate);
+                while (!hookCompleted && !stopped) Monitor.Wait(gate, 100);
+                Check(); if (hookError != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(hookError).Throw();
+            }
+        }
+        public static T Run<T>(Func<Budget, T> action)
+        {
+            var budget = new Budget(); T result = default!; Exception? error = null;
+            var worker = new Thread(() =>
+            {
+                try { result = action(budget); }
+                catch (Exception ex) { error = ex; }
+                finally { lock (budget.gate) { budget.completed = true; Monitor.PulseAll(budget.gate); } }
+            }) { IsBackground = true, Name = "rc-historical-evidence" };
+            worker.Start();
+            for (;;)
+            {
+                Action? hook;
+                lock (budget.gate)
+                {
+                    if (budget.Reason() is string reason) { budget.stopped = true; Monitor.PulseAll(budget.gate); throw Refuse(reason); }
+                    if (budget.completed) break;
+                    hook = budget.hook; budget.hook = null;
+                    if (hook == null) { Monitor.Wait(budget.gate, 100); continue; }
+                }
+                // PowerShell fixture callbacks run on their caller's runspace.
+                Exception? hookError = null;
+                try { hook(); } catch (Exception ex) { hookError = ex; }
+                lock (budget.gate) { budget.hookError = hookError; budget.hookCompleted = true; Monitor.PulseAll(budget.gate); }
+            }
+            if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            return result;
         }
     }
 
