@@ -54,6 +54,9 @@ public static class HistoricalEvidence
         public string inventorySha256 { get; set; } = "";
         public List<Entry> files { get; set; } = new();
         public int maxBufferedBytes { get; set; }
+        public double freezeSeconds { get; set; }
+        public double parseSeconds { get; set; }
+        public double verifySeconds { get; set; }
     }
     private static InvalidDataException Refuse(string reason) => new(reason);
     private static string Full(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -129,6 +132,7 @@ public static class HistoricalEvidence
         using var owner = new FileStream(Path.Combine(evidenceRoot, ".writer"), FileMode.CreateNew, FileAccess.Write, FileShare.None);
         Directory.CreateDirectory(Path.Combine(evidenceRoot, "objects"));
         var inventory = new Inventory();
+        double freezeSeconds = 0, parseSeconds = 0;
         var rowsPath = Path.Combine(evidenceRoot, "rows.jsonl");
         long rowCount = 0;
         using (var rows = new StreamWriter(new FileStream(rowsPath, FileMode.CreateNew, FileAccess.Write, FileShare.None), Utf8, BufferSize))
@@ -137,7 +141,9 @@ public static class HistoricalEvidence
             {
                 Deadline(watch);
                 var pending = Path.Combine(evidenceRoot, "objects", Guid.NewGuid().ToString("N"));
+                var phase = Stopwatch.StartNew();
                 var entry = Freeze(sourceRoot, path, pending, afterOpen, watch);
+                freezeSeconds += phase.Elapsed.TotalSeconds;
                 entry.bundlePath = "objects/" + entry.sha256;
                 var target = Path.Combine(evidenceRoot, entry.bundlePath);
                 if (File.Exists(target))
@@ -152,6 +158,7 @@ public static class HistoricalEvidence
                     if (++rowCount > EntryLimit) throw Refuse("evidence-entry-count");
                     rows.WriteLine(JsonSerializer.Serialize(row));
                 }
+                phase.Restart();
                 if (path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 {
                     using var reader = Reader(target);
@@ -160,6 +167,7 @@ public static class HistoricalEvidence
                     inventory.maxBufferedBytes = Math.Max(inventory.maxBufferedBytes, parser.MaxBufferedBytes);
                 }
                 else if (path.EndsWith(".trx", StringComparison.OrdinalIgnoreCase)) ReadTrx(target, path, Emit, watch);
+                parseSeconds += phase.Elapsed.TotalSeconds;
                 // Other retained files are opaque. Their bytes remain bound for later adapters.
                 inventory.files.Add(entry);
             }
@@ -182,7 +190,10 @@ public static class HistoricalEvidence
         if (new FileInfo(temporary).Length > 16 * 1024 * 1024) throw Refuse("evidence-inventory-limit");
         Deadline(watch);
         File.Move(temporary, inventoryPath);
-        return VerifyCore(evidenceRoot, null, watch);
+        var verification = Stopwatch.StartNew();
+        var result = VerifyCore(evidenceRoot, null, watch);
+        result.freezeSeconds = freezeSeconds; result.parseSeconds = parseSeconds; result.verifySeconds = verification.Elapsed.TotalSeconds;
+        return result;
     }
     public static Result Verify(string evidenceRoot, string? expectedInventorySha256)
         => Budget.Run(budget => VerifyCore(evidenceRoot, expectedInventorySha256, budget));
