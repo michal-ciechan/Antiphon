@@ -468,3 +468,6 @@ Antiphon.Tests.Application.CardFileGitFailureAcceptanceTests
 
 # CARD-1841: real dotnet builds of a Lib/Helper/Consumer fixture through the shipped CopyStagedHelpers target, shared and native output.
 Antiphon.Tests.TestHelpers.StagedHelperBuildTests
+
+# CARD-1886: three real Program boots against one isolated PostgreSQL clone; host startup exceeds the five-second tripwire.
+Antiphon.Tests.Infrastructure.PostgresJitPolicyTestsComposition
