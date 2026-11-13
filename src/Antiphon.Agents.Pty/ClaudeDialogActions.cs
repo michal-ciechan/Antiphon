@@ -18,10 +18,14 @@ public static class ClaudeDialogActions
         var question = lines.Length - 4;
         // Long command previews scroll the Bash heading off the terminal. Only the warning
         // immediately above the exact choices matters; command text is not warning evidence.
+        // The warning border aligns with the question; command preview borders sit further right.
         const string warningPrefix = "│ Dangerous rm operation on possibly-empty variable path:";
         var warningStart = Array.FindLastIndex(lines, question - 1, question,
             l => l.TrimStart().StartsWith(warningPrefix, StringComparison.Ordinal));
         if (warningStart < 0 || question - warningStart > 12) return false;
+        var warningColumn = lines[warningStart].Length - lines[warningStart].TrimStart().Length;
+        var questionColumn = lines[question].Length - lines[question].TrimStart().Length;
+        if (warningColumn != questionColumn) return false;
         var warningLines = lines[warningStart..question];
         if (warningLines.Any(l => !l.TrimStart().StartsWith("│ ", StringComparison.Ordinal))) return false;
         var warning = string.Join(" ", warningLines.Select(l => l.Trim().TrimStart('│').Trim()));
