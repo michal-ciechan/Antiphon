@@ -26,6 +26,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly HostStatsSettings _settings;
     private readonly ILogger<HostStatsSamplerService> _logger;
     private readonly HostLoadCaptureService? _history;
+    private readonly Func<double?> _threadCpu;
     private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
     private static int _selfPid;
@@ -40,8 +41,10 @@ public sealed class HostStatsSamplerService : BackgroundService
         Func<int, long?> workingSet,
         TimeProvider time,
         IOptions<HostStatsSettings> settings,
-        ILogger<HostStatsSamplerService> logger, HostLoadCaptureService? history = null)
+        ILogger<HostStatsSamplerService> logger, HostLoadCaptureService? history = null,
+        Func<double?>? threadCpu = null)
     {
+        _threadCpu = threadCpu ?? ThreadCpuMilliseconds;
         _probe = probe;
         _store = store;
         _cpu = cpu;
@@ -57,7 +60,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     {
         ct.ThrowIfCancellationRequested();
         var tickStarted = Stopwatch.GetTimestamp();
-        var cpuStarted = ThreadCpuMilliseconds();
+        var cpuStarted = _threadCpu();
         HostSample? read;
         try
         {
@@ -84,7 +87,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         if (logTick)
         {
             // Wall time charges time this thread was not running. The tick budget is its own CPU.
-            var elapsedMs = cpuStarted is double started && ThreadCpuMilliseconds() is double cpuNow
+            var elapsedMs = cpuStarted is double started && _threadCpu() is double cpuNow
                 ? cpuNow - started
                 : Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds;
             _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", elapsedMs);
@@ -260,7 +263,10 @@ public sealed class HostStatsSamplerService : BackgroundService
     [DllImport("kernel32", EntryPoint = "GetCurrentThread")]
     private static extern IntPtr GetCurrentThread();
 
-    private static double _windowsCyclesPerMs;
+    private static bool ReadCurrentThreadCycles(out ulong cycles) => QueryThreadCycleTime(GetCurrentThread(), out cycles);
+
+    /// <summary>The process-wide Windows clock; calibrated once on first use.</summary>
+    private static readonly WindowsThreadCycleClock WindowsThreadClock = new(ReadCurrentThreadCycles);
 
     /// <summary>
     /// The calling thread's own CPU in milliseconds: Linux <c>CLOCK_THREAD_CPUTIME_ID</c>, Windows
@@ -270,31 +276,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     {
         if (OperatingSystem.IsLinux())
             return ClockGetTime(ClockThreadCpuTimeId, out var time) == 0 ? time.Seconds * 1000d + time.Nanoseconds / 1_000_000d : null;
-        if (!OperatingSystem.IsWindows() || !QueryThreadCycleTime(GetCurrentThread(), out var cycles))
-            return null;
-        var rate = Volatile.Read(ref _windowsCyclesPerMs);
-        if (rate <= 0)
-            Volatile.Write(ref _windowsCyclesPerMs, rate = CalibrateWindowsCyclesPerMs());
-        return rate > 0 ? cycles / rate : null;
-    }
-
-    /// <summary>
-    /// Thread cycles accrue only while the thread runs, so a descheduled spin lowers cycles per wall
-    /// millisecond. The highest of three short spins is the running rate; any error over-charges a tick.
-    /// </summary>
-    private static double CalibrateWindowsCyclesPerMs()
-    {
-        var best = 0d;
-        for (var i = 0; i < 3; i++)
-        {
-            if (!QueryThreadCycleTime(GetCurrentThread(), out var before)) return 0;
-            var started = Stopwatch.GetTimestamp();
-            while (Stopwatch.GetElapsedTime(started).TotalMilliseconds < 2d) { }
-            var wall = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            if (!QueryThreadCycleTime(GetCurrentThread(), out var after)) return 0;
-            best = Math.Max(best, (after - before) / wall);
-        }
-        return best;
+        return OperatingSystem.IsWindows() ? WindowsThreadClock.Milliseconds() : null;
     }
 
     private TimeSpan? ReadProcessCpu(int pid, DateTime startedAt)
@@ -305,6 +287,48 @@ public sealed class HostStatsSamplerService : BackgroundService
             && LinuxProcessFacts.TryCpu(pid, startedAt, out var read))
             return read;
         return _cpu.TryGetTotalCpuTime(pid, startedAt);
+    }
+}
+
+/// <summary>
+/// Windows thread CPU: <c>QueryThreadCycleTime</c> cycles over a cycles-per-millisecond rate measured once.
+/// The cycle reader is injected so a test can fail it after calibration; production reads the calling thread.
+/// </summary>
+internal sealed class WindowsThreadCycleClock(WindowsThreadCycleClock.CycleReader readCycles)
+{
+    internal delegate bool CycleReader(out ulong cycles);
+
+    private double _cyclesPerMs;
+
+    internal double CyclesPerMs => Volatile.Read(ref _cyclesPerMs);
+
+    internal double? Milliseconds()
+    {
+        if (!readCycles(out var cycles))
+            return null;
+        var rate = Volatile.Read(ref _cyclesPerMs);
+        if (rate <= 0)
+            Volatile.Write(ref _cyclesPerMs, rate = Calibrate());
+        return rate > 0 ? cycles / rate : null;
+    }
+
+    /// <summary>
+    /// Thread cycles accrue only while the thread runs, so a descheduled spin lowers cycles per wall
+    /// millisecond. The highest of three short spins is the running rate; any error over-charges a tick.
+    /// </summary>
+    private double Calibrate()
+    {
+        var best = 0d;
+        for (var i = 0; i < 3; i++)
+        {
+            if (!readCycles(out var before)) return 0;
+            var started = Stopwatch.GetTimestamp();
+            while (Stopwatch.GetElapsedTime(started).TotalMilliseconds < 2d) { }
+            var wall = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (!readCycles(out var after)) return 0;
+            best = Math.Max(best, (after - before) / wall);
+        }
+        return best;
     }
 }
 
