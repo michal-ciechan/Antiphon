@@ -16,11 +16,16 @@ public static class ClaudeDialogActions
             || !Regex.IsMatch(lines[^3], @"^\s*❯\s*1\. Yes\s*$", RegexOptions.CultureInvariant)
             || !Regex.IsMatch(lines[^4], @"^\s*Do you want to proceed\?\s*$", RegexOptions.CultureInvariant)) return false;
         var question = lines.Length - 4;
-        var bash = Array.FindLastIndex(lines, question - 1, question, l => l.Trim() == "Bash command");
-        if (bash < 0 || question - bash > 12) return false;
-        var warning = string.Join(" ", lines[(bash + 1)..question].Select(l => l.Trim().TrimStart('│').Trim()));
-        return warning.Contains("Dangerous rm operation on possibly-empty variable path:", StringComparison.Ordinal)
-            && warning.Contains("rm -rf", StringComparison.Ordinal);
+        // Long command previews scroll the Bash heading off the terminal. Only the warning
+        // immediately above the exact choices matters; command text is not warning evidence.
+        const string warningPrefix = "│ Dangerous rm operation on possibly-empty variable path:";
+        var warningStart = Array.FindLastIndex(lines, question - 1, question,
+            l => l.TrimStart().StartsWith(warningPrefix, StringComparison.Ordinal));
+        if (warningStart < 0 || question - warningStart > 12) return false;
+        var warningLines = lines[warningStart..question];
+        if (warningLines.Any(l => !l.TrimStart().StartsWith("│ ", StringComparison.Ordinal))) return false;
+        var warning = string.Join(" ", warningLines.Select(l => l.Trim().TrimStart('│').Trim()));
+        return warning.Contains("rm -rf", StringComparison.Ordinal);
     }
 
     public static bool AllowsTrustKey(string screen, string key)
