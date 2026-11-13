@@ -16,6 +16,21 @@ if (-not (Test-Path -LiteralPath $lib)) {
     . $lib
     $map = Read-RcBoundaryMap
     switch ($Case) {
+        'LoneSurrogatesFailClosed' {
+            foreach ($code in @(0xd800, 0xdc00)) {
+                $bad = [string][char]$code
+                foreach ($key in @(($bad + 'Tests/M'), ('ATests/' + $bad))) {
+                    Note (Refuses { Get-RcBoundaryChunkId antiphon core @($key) }) 'lone surrogate identity accepted'
+                    Note (Refuses { New-RcBoundaryChunk -Identities @((Row core $key)) }) 'lone surrogate chunk accepted'
+                }
+                Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @($bad) }) 'lone surrogate case key accepted'
+            }
+            # A well-formed pair and the replacement character remain legal and distinct.
+            $pair = [char]::ConvertFromUtf32(0x1f600)
+            $replacement = [string][char]0xfffd
+            $valid = Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @($pair)
+            Note ($valid -cne (Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @($replacement))) 'valid Unicode collapsed'
+        }
         'StableIdIgnoresOrder' {
             $id = Get-RcBoundaryChunkId -Suite antiphon -Boundary core -IdentityKeys @('ZTests/B', 'ATests/A')
             # Independently pinned SHA-256 of length-delimited UTF-8 membership bytes.
