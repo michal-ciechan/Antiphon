@@ -346,4 +346,3 @@ internal interface ILinuxOwnedGitMembers : IDisposable
         CancellationToken cancellationToken);
     void SetMarker(string marker);
 }
-
