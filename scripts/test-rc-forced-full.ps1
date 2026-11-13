@@ -2,6 +2,9 @@
 # CARD-1836 S8a: outcome witnesses, no qualification launch or external services.
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
+if (-not [string]::IsNullOrWhiteSpace($ResultsDirectory)) {
+    [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
+}
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
 . (Join-Path $PSScriptRoot 'lib/rc-forced-full.ps1')
 Set-StrictMode -Version Latest
