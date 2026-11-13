@@ -498,6 +498,49 @@ public class OutputDistillationDeliveryTests
         foreach (var task in new[] { first.Task, second.Task })
             (await File.ReadAllTextAsync(task.ResultFilePath!)).ShouldBe(task.Result);
     }
+    [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task Failed_fixture_setup_releases_workspace_database_and_provider(bool afterBuild)
+    {
+        DeliveryFixture? fixture = null;
+        var probe = new FixtureDisposalProbe();
+        var failure = new InvalidOperationException("fixture setup failure");
+        try
+        {
+            var actual = await Should.ThrowAsync<InvalidOperationException>(() => DeliveryFixture.CreateAsync(
+                created: f => fixture = f,
+                configure: services => {
+                    if (!afterBuild) throw failure;
+                    services.AddSingleton(_ => probe);
+                    services.AddSingleton<PtyDeliveryProfile>(p => {
+                        p.GetRequiredService<FixtureDisposalProbe>();
+                        throw failure;
+                    });
+                }));
+            actual.ShouldBeSameAs(failure);
+            fixture.ShouldNotBeNull();
+            Directory.Exists(fixture.Workspace.Root).ShouldBeFalse("failed setup must remove its owned repository");
+            probe.Disposed.ShouldBe(afterBuild, "only the constructed provider owns a resolved probe");
+            var database = new Npgsql.NpgsqlConnectionStringBuilder(fixture.ConnectionString).Database;
+            await using var connection = new Npgsql.NpgsqlConnection(TestDbFixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var query = new Npgsql.NpgsqlCommand("SELECT count(*) FROM pg_database WHERE datname = @name", connection);
+            query.Parameters.AddWithValue("name", database!);
+            ((long)(await query.ExecuteScalarAsync())!).ShouldBe(0, "failed setup must drop its cloned database");
+        }
+        finally
+        {
+            // A failed regression assertion must not itself leak the fixture under test.
+            if (fixture is not null && Directory.Exists(fixture.Workspace.Root)) await fixture.DisposeAsync();
+        }
+    }
+
+    private sealed class FixtureDisposalProbe : IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public void Dispose() => Disposed = true;
+    }
+
     internal sealed class DeliveryFixture : IAsyncDisposable
     {
         private IsolatedTestSchema _schema = null!;
@@ -511,9 +554,11 @@ public class OutputDistillationDeliveryTests
         private CompletionNoteWorkHostedService? _flush;
         private readonly List<Guid> _parents = [];
         public static async Task<DeliveryFixture> CreateAsync(bool modern = true, OutputDistillerMode mode = OutputDistillerMode.Apply,
-            bool enabled = true, bool worktree = false, Action<IServiceCollection>? configure = null)
+            bool enabled = true, bool worktree = false, Action<IServiceCollection>? configure = null,
+            Action<DeliveryFixture>? created = null)
         {
             var f = new DeliveryFixture();
+            created?.Invoke(f);
             f._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             await f.Workspace.InitializeAsync(worktree);
             f.Settings = new() { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
