@@ -2,9 +2,10 @@
 
 Debug task: 37cb8e72. Follow-up: Antiphon CARD-1899 (High).
 
-The source diagnosis is inherited Linux fixture debt after CARD-1224, rather than
-an S1 JIT policy effect. Runtime attribution is pending the requested runs; do not
-credit the source diagnosis as a passing or failing test receipt.
+Inherited Linux fixture debt after CARD-1224 is confirmed at all three requested
+revisions. The same 19 ceiling-assertion failures recur at master, S1 base and S1
+tip, and a single selected batching test fails in a fresh process. Two additional
+tip failures have unresolved attribution and are recorded separately below.
 
 ## Cause and intended behavior
 
@@ -84,10 +85,94 @@ one build at a time. The DerivedImpactIndex driver build runs first. Every
 build and test takes a slot through `scripts/build-slot.ps1`; no unleased retry
 or timeout change is authorized.
 
-Requested verification: the complete class at each revision, plus isolated named
-methods and a singleton same-root witness to distinguish ordering. Since the
-three requested methods are one class, its class run is also the together run.
-Runtime results will be appended after the queued build and executions settle.
+Completed verification: the complete class at each revision, plus isolated named
+methods and a singleton same-root witness. Since the three requested methods are
+one class, its class run is also the together run. Every test run exited 2 with a
+fresh, nonzero TRX; no run is claimed green.
+
+| Run / TRX basename | Total | Passed | Failed | Ceiling failures | Outer wall seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `master-class` | 78 | 59 | 19 | 19 | 250.52 |
+| `master-singleton` | 1 | 0 | 1 | 1 | 102.49 |
+| `master-fallback` | 12 | 6 | 6 | 6 | 137.44 |
+| `master-admission` | 16 | 8 | 8 | 8 | 124.20 |
+| `s1base-class` | 78 | 59 | 19 | 19 | 379.09 |
+| `s1tip-class` | 78 | 57 | 21 | 19 | 465.63 |
+
+Each TRX is `<evidence-root>/<basename>/<basename>.trx`. Native TRX run IDs:
+
+| Basename | TRX run ID |
+| --- | --- |
+| `master-class` | `2d3ac682-42d3-49b2-aa67-82cc23b10b4a` |
+| `master-singleton` | `7a3b677b-1048-4b5b-a133-c5f0fa2e26bc` |
+| `master-fallback` | `12ec0e83-b607-4363-a961-38fee4cb5421` |
+| `master-admission` | `e99bbcff-dc8f-4b75-8be7-94a07db7d464` |
+| `s1base-class` | `ee214e44-fa78-435c-a92f-0a715ba1f866` |
+| `s1tip-class` | `bb0b95da-98a4-4185-b04e-83b46aed702e` |
+
+`results-summary.json` records TRX SHA-256, test DLL SHA-256, exact source SHA,
+tracked-source cleanliness and every failing identity. `phase-provenance.json`
+records process IDs and assembly module version IDs; `phases/` contains the six
+completed runs' per-test/fixture journals. Unrecorded startup components remain
+unknown; outer wall includes admission and cannot be treated as test-body time.
+All runs were Linux x64, .NET 9.0.23, TUnit 1.44 / MTP 2.2.2. No test selection
+included another class.
+
+The 19 matching ceiling identities comprise one `Report_boundaries(3500, False)`,
+two `Target_canonical_unavailable_retains_legacy_backstop_without_relabeling_author_file`
+cases, one `Canonical_selection_preserves_but_never_advertises_different_legacy_author_file`,
+six conservative fallback cases, eight conservative admission cases, and the
+same-root batching singleton. The three brief-named methods contribute 15 cases
+to this complete failure set. The review's ten observations were partial.
+
+The class filter was `/*/*/OutputDistillationDeliveryTests/*`. Isolation used that
+class with the exact method name after the final slash, respectively
+`Same_root_applied_notes_batch_into_one_intact_spill_file`,
+`Fallback_delivers_original_raw_or_marked_excerpt`, and
+`Admission_and_deadline_fallbacks_reach_parent`. The parameterized method runs
+execute 12 and 16 cases; the batching run executes exactly one case. Every
+conservative case fails before delivery logic; modern cases pass in the isolated
+fallback/admission runs. No preceding test or mutable global option is required.
+
+The prerequisite driver and all three test-project builds succeeded with zero
+errors. Native build times: prerequisite 4.62 seconds; master 4m11.31s; base
+4m34.24s; tip 6m50.65s. The first slot wait was 585 seconds. Test slot waits were
+0/30/45/30/150/75 seconds in table order. Existing compiler/analyzer warnings are
+retained in the build logs. No timeout was widened, no unleased build ran, and no
+private manually created database container was used.
+
+Two diagnostic-wrapper interruptions are retained as execution history: an
+initial PowerShell invocation was stopped before it launched a test child or
+acquired a test lease, then replaced with literal ProcessStartInfo arguments;
+a void-task return value interrupted orchestration after the successful base
+build, then was suppressed. Neither interruption caused a completed build or
+test row to be rerun. Their time is not included in passing execution credit.
+
+All runs are joined. Exact owned fixture roots were inventoried and deleted:
+34 master + 19 base + 19 tip nested fixture repositories. All three diagnostic
+`.antiphon` directories contain zero nested Git directories. Their fresh detached
+worktrees and native build outputs are retained for follow-up; no live host,
+qualification run or session was restarted or modified.
+
+## Separate unresolved tip failures
+
+Follow-up: Antiphon CARD-1900 (Normal), filed separately from CARD-1899.
+
+The tip's two extra failures are not ceiling failures:
+
+- `Mode_and_terminal_status_preserve_report(Shadow, False, True)` expected a
+  canonical `seed.Task.ResultFilePath`, but received null (4.329-second body).
+- `Apply_preserves_handoff_warnings_and_generated_deliverables(False)` failed
+  with `ShouldAssertException: Value cannot be null. (Parameter 'value')`.
+
+Both passed in the master and base full-class runs. Their cause is unresolved:
+neither S1 causation nor a flake is established. The explicit 60-minute time box
+left no room for isolated base/tip reruns; follow-up must target only these two
+methods and inspect report-store/custody timing without widening budgets.
+Their original failed receipts remain intact.
+
+This diagnosis does not complete Review 43aa1954's timed-out 38-class union, grant
+S1 land credit, or qualify the rc run. Those verification gates remain incomplete.
 
 The desktop-only rc run `97150a0b` was not accessed. The caller must inspect
 `C:\Antiphon\releases\candidates\rc-2026-11-19-ab7af12c6990\logs\2026-11-13-0558-97150a0b\*.trx`
