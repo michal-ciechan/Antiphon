@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 11,
+      "classes": 12,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 8,
+      "classes": 9,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 5,
+      "classes": 6,
       "reason": "allowlist"
     },
     {
@@ -23824,7 +23824,14 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
+        "ReleaseImpactProjectTests",
         "ReleaseImpactRelationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactProjectGraph.cs",
+      "classes": [
+        "ReleaseImpactProjectTests"
       ]
     },
     {
