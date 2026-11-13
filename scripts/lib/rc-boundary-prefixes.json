@@ -1,0 +1,13 @@
+{
+  "format": "antiphon-rc-boundary-prefixes-v1",
+  "_comment": "Fallbacks derived from the seven layers in tests/Antiphon.Tests/Layering/layers.txt. Lane paths and literal production paths win. Generic Infrastructure stays unassigned.",
+  "prefixes": [
+    { "prefix": "Antiphon.Tests.Application", "boundary": "application" },
+    { "prefix": "Antiphon.Tests.Domain", "boundary": "core" },
+    { "prefix": "Antiphon.Tests.Infrastructure.Agents.Pty", "boundary": "runners" },
+    { "prefix": "Antiphon.Tests.Infrastructure.Agents.SessionRunner", "boundary": "runners" },
+    { "prefix": "Antiphon.Tests.Infrastructure.Agents.Tui", "boundary": "runners" },
+    { "prefix": "Antiphon.Tests.Infrastructure.Data", "boundary": "persistence" },
+    { "prefix": "Antiphon.Tests.Infrastructure.Git", "boundary": "git" }
+  ]
+}
