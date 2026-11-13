@@ -137,7 +137,7 @@ public sealed class C1895OutputDropEngineTests
     {
         using var s = Create();
         var m = s.Mirror();
-        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin");
+        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin", "tests/bin");
         var outside = s.Root + "/outside-dir";
         Directory.CreateDirectory(outside);
         File.WriteAllText(outside + "/secret.txt", "keep-me");
