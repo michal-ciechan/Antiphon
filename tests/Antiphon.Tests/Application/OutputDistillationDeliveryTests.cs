@@ -526,6 +526,11 @@ public class OutputDistillationDeliveryTests
                 f.Settings.BriefInlineMaxBytes = f.Settings.ModernPtyBriefInlineMaxBytes;
                 f.Settings.PtySingleChunkBytes = f.Settings.ModernPtySingleWriteMaxBytes;
             }
+            // Unix ignores the Windows selector. Configure its instance options with the
+            // same simulated envelope, preserving the conservative spill/batch witnesses.
+            f.Settings.UnixPtyReplyInlineMaxChars = f.Settings.ReplyInlineMaxChars;
+            f.Settings.UnixPtyBriefInlineMaxBytes = f.Settings.BriefInlineMaxBytes;
+            f.Settings.UnixPtySingleWriteMaxBytes = f.Settings.PtySingleChunkBytes;
             f.Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
                 s.AddLogging(b => b.AddProvider(f._logs));
                 s.AddSingleton(Options.Create(f.Settings)); s.AddSingleton<ISessionRunnerClient, FakeSessionRunnerClient>();
@@ -539,8 +544,10 @@ public class OutputDistillationDeliveryTests
                 s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
                 configure?.Invoke(s);
             }, f.ConnectionString);
-            (await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None))
-                .ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
+            var ceilings = await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None);
+            ceilings.ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
+            ceilings.BriefInlineMaxBytes.ShouldBe(modern ? 43200 : 900);
+            ceilings.SingleWriteMaxBytes.ShouldBe(modern ? 86400 : 1024);
             return f;
         }
         public async Task<Settled> SettleAsync(string report, bool failed = false, string? cwd = null, bool authorFile = false,
