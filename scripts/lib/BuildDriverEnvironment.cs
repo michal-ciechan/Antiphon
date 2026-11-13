@@ -5,6 +5,18 @@ using System.Diagnostics;
 
 namespace Antiphon.Build
 {
+    // S1 red baseline: stock preparation, before the opted-in implementation.
+    public static class LinuxSharedCompilerPolicy
+    {
+        public static bool Enabled(bool windows, string setting) { return false; }
+        public static bool Compiles(string executable, string[] args) { return false; }
+        public static string SelectCpus(string allowed, int grant) { return allowed; }
+        public static string Identity(string sdk, string scope, string cpus) { return sdk; }
+        public static string[] Arguments(string[] args, string toolset, string pipe) { return args; }
+        public static bool CacheMatches(string expected, string actual, bool trusted) { return true; }
+        public static Dictionary<string, string> CompilerEnvironment(int count) { return new Dictionary<string, string>(); }
+    }
+
     // Shared by the server, checkpoint tool and PowerShell. Apply before child startup:
     // project properties are too late to configure the driver's GC or MSBuild server.
     public sealed class BuildDriverEnvironment
