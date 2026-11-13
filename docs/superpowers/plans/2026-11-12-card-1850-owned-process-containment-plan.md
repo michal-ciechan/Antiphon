@@ -524,6 +524,22 @@ whole-row costs under the budget above.
 | CP-23 | E8 | `tests/Antiphon.Server.Git.Tests -> bin-c1850-e8g/` | any-git-project | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)\|(OwnedGitProcessContractTests*)/*` | V-1,R-5 | all 3 named classes, 0 failed | 3 | 2 | 3 | true |
 | CP-24 | E8 | `tests/Antiphon.GitInProcess.Tests -> bin-c1850-e8i/` | any-inprocess-project | `/*/*/(InProcessGitCommandsTests*)\|(LibGit2VsGitDifferentialTests*)\|(LibGit2VsGitWorktreeListTests*)/*` | R-5 | all 3 named classes, 0 failed | 3 | 3 | 5 | true |
 | CP-25 | E8-windows | `tests/Antiphon.Tests -> bin-c1850-e8w/` | windows-adoption | `/*/*/AgentTaskLandHalfResetWindowsTests/*` | R-4,R-5 | AgentTaskLandHalfResetWindowsTests; all listed, 0 failed | 1 | 12 | 12 | true |
+| CP-S1-2 | S1-adjacent | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-adjacent/` | any-git-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-5 | both impacted classes, 0 failed | 2 | 1 | 2 | true |
+| CP-S1-3 | S1-guards | `tests/Antiphon.Tests -> bin-c1850-s1-guards/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-4,R-5 | all 10 classes, 0 failed | 10 | 6 | 10 | true |
+
+S1 dispatch amendment (task 9124df63): CP-S1-2 covers the actual
+`server-git-start-sites` impact selection in the small Git project and the
+pre-existing project-wide frozen method census. Its first execution is an
+expected census red after adding the S1 witness; the corrected census must
+remain strict over the two migrated classes. CP-S1-3 covers the remaining
+selected integration class and the mandatory batched source guards. Neither
+row expands S1 into caller migration or native containment. Record every
+original V/R outside S1 as deferred to its assigned slice, never passed.
+S1 exposes a mandatory external membership-I/O port for the Linux stream
+adapter; S2 supplies the bounded `/proc` census and signal implementation.
+There is no default/optimistic membership provider or production selection
+until that implementation exists. No Windows native behavior is selected in
+S1; S3's structural and native obligations remain owed by the orchestrator.
 
 ### Cost and completion
 
