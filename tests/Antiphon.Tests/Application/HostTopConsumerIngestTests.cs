@@ -53,20 +53,23 @@ public class HostTopConsumerIngestTests
         var current = ServerCanonical(sample);
         var local = Canonicalize(JsonSerializer.SerializeToElement(sample, PhoneHomeFraming.Json));
         local.ShouldBe(current, "the witness canonical writer must match HostLoadIngestService");
+        current.ShouldNotContain("topConsumers");
 
         var absent = JsonNode.Parse(current)!.AsObject();
-        absent.ContainsKey("topConsumers").ShouldBeTrue();
-        absent.Remove("topConsumers");
+        absent.ContainsKey("topConsumers").ShouldBeFalse();
         var preupgrade = Canonicalize(JsonSerializer.SerializeToElement(absent, PhoneHomeFraming.Json));
-        preupgrade.ShouldNotContain("topConsumers");
+        preupgrade.ShouldBe(current);
 
         var replay = JsonSerializer.Deserialize<HostLoadSample>(preupgrade, PhoneHomeFraming.Json);
         replay.ShouldNotBeNull();
         replay.TopConsumers.ShouldBeEmpty();
         ServerCanonical(replay).ShouldBe(preupgrade);
 
-        var explicitEmpty = JsonSerializer.Deserialize<HostLoadSample>(current, PhoneHomeFraming.Json);
+        var explicitNode = JsonNode.Parse(current)!.AsObject();
+        explicitNode["topConsumers"] = new JsonArray();
+        var explicitEmpty = JsonSerializer.Deserialize<HostLoadSample>(explicitNode.ToJsonString(), PhoneHomeFraming.Json);
         explicitEmpty.ShouldNotBeNull();
+        explicitEmpty.TopConsumers.ShouldBeEmpty();
         ServerCanonical(explicitEmpty).ShouldBe(preupgrade);
 
         var changed = sample with { TopConsumers = [new HostLoadTopConsumer(1, 10, "VBCSCompiler", "compiler", 5.3, 409600)] };
@@ -119,15 +122,19 @@ public class HostTopConsumerIngestTests
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element, bool omitEmptyTopConsumers = true)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
             writer.WriteStartObject();
             foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
             {
+                if (omitEmptyTopConsumers && property.NameEquals("topConsumers"u8)
+                    && (property.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                        || (property.Value.ValueKind == JsonValueKind.Array && property.Value.GetArrayLength() == 0)))
+                    continue;
                 writer.WritePropertyName(property.Name);
-                WriteCanonical(writer, property.Value);
+                WriteCanonical(writer, property.Value, omitEmptyTopConsumers: false);
             }
 
             writer.WriteEndObject();
@@ -136,7 +143,7 @@ public class HostTopConsumerIngestTests
         {
             writer.WriteStartArray();
             foreach (var item in element.EnumerateArray())
-                WriteCanonical(writer, item);
+                WriteCanonical(writer, item, omitEmptyTopConsumers: false);
             writer.WriteEndArray();
         }
         else
