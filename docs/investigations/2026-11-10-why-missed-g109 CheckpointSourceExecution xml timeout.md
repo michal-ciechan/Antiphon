@@ -36,7 +36,10 @@ tens of ms per case). A slow host stretches the run without failing it; a child 
 cancelled within one step budget, and the `TimeoutException` names the phase: "before the first
 step finished" (startup) or "after k/N steps; stalled in step '<key>'". On success the helper prints
 the observed startup and slowest step, so later budgets can be derived from TRX output (R5/R6).
-Witnesses: `CheckpointFixtureProcessTests.step_deadline_*` (FakeTimeProvider, deterministic on
+Measured on the same desktop during run 97150a0b (loaded), with the fix: XML corpus child
+326/326 steps in 20.1 s, first step 1.23 s (budget 30 s), slowest later step 0.69 s (budget 10 s,
+200-ms polling granularity); the encoding corpora 7 and 13 steps in 1.5 s and 2.4 s.
+Witnesses: `CheckpointStepDeadlineTests.step_deadline_*` (FakeTimeProvider, deterministic on
 Linux) and `step_child_that_never_finishes_a_step_times_out_naming_startup` (real pwsh).
 
 ## Introducing commit/card
@@ -69,7 +72,7 @@ the cheapest pre-land check as a path-glob -> class-filter entry for the impacte
 
 `scripts/validate-checkpoint-receipt.ps1`, `scripts/lib/checkpoint-*.ps1`,
 `tests/Antiphon.Tests/Checkpoints/C1217ConditionalSkipFixture.cs` ->
-`/*/Antiphon.Tests.Checkpoints/(CheckpointSourceExecutionTests*)|(CheckpointFixtureProcessTests*)/*`
+`/*/Antiphon.Tests.Checkpoints/(CheckpointSourceExecutionTests*)|(CheckpointStepDeadlineTests*)/*`
 
 That row only selects the classes; it would have passed on Linux. The check that would have caught
 this cause is a headroom rule: a corpus-sized child must use a per-step deadline (as now) or the
