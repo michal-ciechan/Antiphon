@@ -176,15 +176,19 @@ public class HostTopConsumerUpgradeReplayTests(C1514HostLoadFixture fixture)
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element, bool omitEmptyTopConsumers = true)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
             writer.WriteStartObject();
             foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
             {
+                if (omitEmptyTopConsumers && property.NameEquals("topConsumers"u8)
+                    && (property.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                        || (property.Value.ValueKind == JsonValueKind.Array && property.Value.GetArrayLength() == 0)))
+                    continue;
                 writer.WritePropertyName(property.Name);
-                WriteCanonical(writer, property.Value);
+                WriteCanonical(writer, property.Value, omitEmptyTopConsumers: false);
             }
 
             writer.WriteEndObject();
@@ -193,7 +197,7 @@ public class HostTopConsumerUpgradeReplayTests(C1514HostLoadFixture fixture)
         {
             writer.WriteStartArray();
             foreach (var item in element.EnumerateArray())
-                WriteCanonical(writer, item);
+                WriteCanonical(writer, item, omitEmptyTopConsumers: false);
             writer.WriteEndArray();
         }
         else

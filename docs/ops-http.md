@@ -1031,5 +1031,7 @@ delta over the sample window, across the host pid namespace. A row is `pid`,
 `cpuCores` (null until a second sample can form a delta; one full core is 1.0),
 and `rssBytes`. Command lines and environment are not stored. `schemaVersion`
 stays 1. A stored sample that predates the field deserializes with an empty list.
+The canonical ingest hash omits an absent or empty `topConsumers` array, so that
+replay keeps the pre-upgrade identity. A different non-empty list still conflicts.
 `GET /host-stats` repeats the same rows on `current.topConsumers`. The `processes`
 list remains only `runner`, `session`, and `pty-host`.
