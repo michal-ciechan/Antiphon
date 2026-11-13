@@ -16,7 +16,6 @@ Mutation owns red/restore/green, missing-control discovery and additional varian
 | PC-3 | Enter, body-to-Enter, re-Enter | revert unknown attempt to Pending | SessionMessageQueuePhoneHomeDropTests/Drop_under_an_in_flight_Enter_keeps_the_attempt_and_late_confirms_without_retyping; Drop_between_the_body_and_the_Enter_keeps_the_attempt_and_presses_Enter_without_retyping; Drop_between_the_Enter_and_its_re_Enter_keeps_the_attempt_and_late_confirms_without_retyping |
 | PC-3 | expired rules deadline | fail a charged verdict-less rules attempt by time alone | GrokRulesReadyOrderingTests/Ambiguous_input_preserves_launch_and_waits_for_transcript |
 | PC-4 | wait, hold, threshold | omit structured timing or emit below threshold | C1677RetentionDispatchTests/Mutation_lock_reports_slow_owner_wait_and_hold |
-
 | PC-5 | external caller cancellation | swallow cancellation after retaining the process | AgentSessionLaunchFailureTests/External_cancellation_during_rc_setup_is_not_reported_as_degraded |
 
 Use one exact `/*/*/ClassName/ExactTestMethod` filter per cycle, with all native
