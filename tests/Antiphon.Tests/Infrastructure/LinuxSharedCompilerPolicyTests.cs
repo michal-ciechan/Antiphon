@@ -49,6 +49,7 @@ public sealed class LinuxSharedCompilerPolicyTests
     }
 
     [Test]
+    [NotInParallel]
     public void Cache_and_pipe_identity_are_stable_across_worktrees()
     {
         var key = LinuxSharedCompilerPolicy.Identity("sdk-content", "uid-container", "2,4");
@@ -56,6 +57,15 @@ public sealed class LinuxSharedCompilerPolicyTests
         key.ShouldNotBe(LinuxSharedCompilerPolicy.Identity("sdk-next", "uid-container", "2,4"));
         key.ShouldNotBe(LinuxSharedCompilerPolicy.Identity("sdk-content", "other-container", "2,4"));
         key.ShouldNotBe(LinuxSharedCompilerPolicy.Identity("sdk-content", "uid-container", "2"));
+        var originalDirectory = Environment.CurrentDirectory;
+        string otherDirectoryKey;
+        try
+        {
+            Environment.CurrentDirectory = Path.GetTempPath();
+            otherDirectoryKey = LinuxSharedCompilerPolicy.Identity("sdk-content", "uid-container", "2,4");
+        }
+        finally { Environment.CurrentDirectory = originalDirectory; }
+        otherDirectoryKey.ShouldBe(key, "the same SDK/user/container/CPU policy shares a generation across caller directories");
         LinuxSharedCompilerPolicy.Arguments(["build", "/work/a.csproj"], "/cache/" + key, key)[1]
             .ShouldBe("-p:RoslynTargetsPath=/cache/" + key);
         LinuxSharedCompilerPolicy.Arguments(["build", "/other/b.csproj"], "/cache/" + key, key)[1]
