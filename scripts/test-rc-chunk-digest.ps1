@@ -109,6 +109,76 @@ switch ($Case) {
         Put 'unknown/file.txt' 'unknown'; $after=Manifest (Commit)
         Note ($after.unknown.Count -gt 0 -and (Compare-RcChunkInputManifest $after $after).dirty) 'unowned-never-clean'
     }
+    'CaseKeyedMultipleCasesMatchMembership' {
+        $chunk=New-RcBoundaryChunk @(foreach ($row in $cases) {
+            @{suite=$row.suite;boundary='application';identityKey=($row.className+'/'+$row.method);caseKey=$row.caseKey}
+        })
+        try {
+            $manifest=Manifest $baseline
+            Note ($manifest.unknown.Count -eq 0 -and $manifest.methods.Count -eq 2 -and $manifest.cases.Count -eq 3) 'case-keyed-complete'
+            Note ($manifest.methods[0].cases.Count -eq 2) 'method-keys-deduplicated'
+            Note ($manifest.membershipDigest -ceq $chunk.fullDigest) 'canonical-membership'
+            Refuses { Manifest $baseline @($cases[0],$cases[2]) } 'case-membership-mismatch'
+            $renamed=@($cases | ForEach-Object { $copy=$_.Clone(); if ($copy.caseKey -ceq 'row:a') { $copy.caseKey='row:c' }; $copy })
+            Refuses { Manifest $baseline $renamed } 'case-membership-mismatch'
+            $forged=$chunk.Clone(); $forged.fullDigest='f'*64
+            Refuses { New-RcChunkInputManifest (Read-RcInputInventory $root $baseline) server $forged $cases $actual } 'chunk-membership-mismatch'
+        } catch { Note $false ('case-keyed-manifest:'+ $_.Exception.Message) }
+    }
+    'CaseKeyedSingletonsMatchMembership' {
+        $cases=@($cases[0],$cases[2])
+        $chunk=New-RcBoundaryChunk @(foreach ($row in $cases) {
+            @{suite=$row.suite;boundary='application';identityKey=($row.className+'/'+$row.method);caseKey=$row.caseKey}
+        })
+        try {
+            $manifest=Manifest $baseline
+            Note ($manifest.unknown.Count -eq 0 -and $manifest.methods.Count -eq 2 -and $manifest.cases.Count -eq 2) 'case-keyed-singletons-complete'
+            Note ($manifest.membershipDigest -ceq $chunk.fullDigest) 'singleton-canonical-membership'
+            Refuses { Manifest $baseline @($cases+@{suite='antiphon';className='Example.Queue';method='Check';caseKey='extra';stable=$true}) } 'case-membership-mismatch'
+        } catch { Note $false ('singleton-manifest:'+ $_.Exception.Message) }
+    }
+    'CaseOnlyMembershipChangesDigest' {
+        $manifests=@(foreach ($caseKey in @('row:a','row:b')) {
+            $chunk=New-RcBoundaryChunk @(@{suite='antiphon';boundary='application';identityKey='Example.Queue/Check';caseKey=$caseKey})
+            $rows=@(@{suite='antiphon';className='Example.Queue';method='Check';caseKey=$caseKey;stable=$true})
+            try {
+                $manifest=Manifest $baseline $rows
+                Note ($manifest.membershipDigest -ceq $chunk.fullDigest) "canonical-case-digest:$caseKey"
+                $manifest
+            } catch { Note $false ('case-digest-manifest:'+ $_.Exception.Message) }
+        })
+        Note ($manifests.Count -eq 2) 'two-case-memberships'
+        if ($manifests.Count -eq 2) {
+            Note ($manifests[0].membershipDigest -cne $manifests[1].membershipDigest) 'case-only-membership-different'
+            Note ((Compare-RcChunkInputManifest $manifests[0] $manifests[1]).reasons -ccontains 'membership-changed') 'case-only-membership-dirty'
+        }
+    }
+    'CanonicalCaseOrderAndEncoding' {
+        # JSON escaping reverses these two case keys; S2 compares their raw strings.
+        $rows=@(@{suite='antiphon';className='Example.Queue';method='Check';caseKey='#';stable=$true},
+            @{suite='antiphon';className='Example.Queue';method='Check';caseKey='"';stable=$true},$cases[2])
+        $manifest=Manifest $baseline $rows
+        Note ($manifest.cases[0].caseKey -ceq '"' -and $manifest.cases[1].caseKey -ceq '#') 'canonical-global-case-order'
+        Note ($manifest.methods[0].cases[0].caseKey -ceq '"') 'canonical-method-case-order'
+        Note ((Manifest $baseline @($rows[2],$rows[1],$rows[0])).digest -ceq $manifest.digest) 'case-order-independent'
+        # S2 replaces invalid UTF-16 with U+FFFD before length-prefixing UTF-8.
+        try {
+            $surrogate=Get-RcManifestDigest @(@('row',[string][char]0xd800),@('other'))
+            $replacement=Get-RcManifestDigest @(@('row',[string][char]0xfffd),@('other'))
+            Note ($surrogate -ceq $replacement) 'shared-utf8-replacement'
+        } catch { Note $false ('shared-utf8:'+ $_.Exception.Message) }
+    }
+    'DependencyEdgesAffectDigest' {
+        $snapshot=Read-RcInputInventory $root $baseline
+        $owner=@($snapshot.suites | Where-Object id -CEQ server)[0]
+        Note ($owner.edges.Count -gt 0) 'fixture-has-dependency-edges'
+        $inputRecords=ConvertTo-TestSelectionCanonicalJson $owner.inputs
+        $owner.edges=@()
+        $withoutEdges=New-RcChunkInputManifest $snapshot server $chunk $cases $actual
+        Note ((ConvertTo-TestSelectionCanonicalJson $withoutEdges.inputs) -ceq $inputRecords) 'edge-only-change-keeps-input-records'
+        Note ($withoutEdges.inputDigest -cne $before.inputDigest) 'dependency-edges-bound-independently'
+        Note ((Compare-RcChunkInputManifest $before $withoutEdges).reasons -ccontains 'inputs-changed') 'dependency-edge-only-dirty'
+    }
     'RenameSymlinkAndCaseCollision' {
         [void](Git @('mv','src/Core/Input.txt','src/Core/Renamed.txt')); $after=Manifest (Commit)
         Note ($after.inputDigest -cne $before.inputDigest -and (Compare-RcChunkInputManifest $before $after).dirty) 'path-only-rename'
