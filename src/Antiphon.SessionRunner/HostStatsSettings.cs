@@ -13,6 +13,9 @@ public sealed class HostStatsSettings
     /// <summary>How often the sampler reads the host. The ring stores one slot per whole second of this.</summary>
     public int IntervalMs { get; set; } = 5000;
 
+    /// <summary>How often the top-consumer scan runs. The sampler tick only reads the latest result.</summary>
+    public int TopConsumerScanIntervalMs { get; set; } = 5000;
+
     public int RetentionMinutes { get; set; } = 30;
 
     /// <summary>Per-process CPU and working set for the runner and live session pids.</summary>
@@ -39,6 +42,8 @@ public sealed class HostStatsSettings
     {
         if (IntervalMs < 1000)
             throw new InvalidOperationException($"{SectionName}:IntervalMs must be at least 1000.");
+        if (TopConsumerScanIntervalMs is < 1000 or > 60_000)
+            throw new InvalidOperationException($"{SectionName}:TopConsumerScanIntervalMs must be from 1000 through 60000.");
         if (RetentionMinutes < 1)
             throw new InvalidOperationException($"{SectionName}:RetentionMinutes must be at least 1.");
         if (HistoryPath is not null && string.IsNullOrWhiteSpace(HistoryPath))

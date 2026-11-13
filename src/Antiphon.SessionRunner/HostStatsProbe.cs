@@ -33,6 +33,9 @@ public readonly record struct HostSample(
     IReadOnlyList<HostProcessSample> Processes)
 {
     public IReadOnlyList<HostTopConsumerSample> TopConsumers { get; init; } = [];
+    public double? TopConsumersAgeSeconds { get; init; }
+    public bool TopConsumersTruncated { get; init; }
+    public bool TopConsumersStale { get; init; }
     public string? CpuUnknownReason { get; init; }
     public double? IoWaitPercent { get; init; }
     public double? EffectiveCoreLimit { get; init; }

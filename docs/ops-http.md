@@ -1033,5 +1033,16 @@ and `rssBytes`. Command lines and environment are not stored. `schemaVersion`
 stays 1. A stored sample that predates the field deserializes with an empty list.
 The canonical ingest hash omits an absent or empty `topConsumers` array, so that
 replay keeps the pre-upgrade identity. A different non-empty list still conflicts.
+The scan is not on the sampler tick. It runs on `TopConsumerScanIntervalMs`
+(default 5 seconds). The tick reads the latest cached rows. A scan that spends
+about 10 ms of thread CPU stops and sets `topConsumersTruncated`. `topConsumersAgeSeconds`
+is absent until a scan exists. `topConsumersStale` is true when that age is more
+than twice the cadence. Age, truncated, and stale are omitted when they are the
+default, so a pre-upgrade payload hash does not change.
+Eight public-wire rows add 743 bytes to a sample (923 bytes with an empty
+`topConsumers` array, 1666 bytes with eight rows). One hundred twenty such
+samples are 199920 bytes, under the 1 MiB history-chunk cap, so the 120-record
+cap binds first. The CapsPersist fixture still caps the spool at 8192 bytes;
+one eight-row sample fits inside that fixture. Those caps are unchanged.
 `GET /host-stats` repeats the same rows on `current.topConsumers`. The `processes`
 list remains only `runner`, `session`, and `pty-host`.

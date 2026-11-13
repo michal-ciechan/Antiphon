@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Antiphon.SessionRunner.Contracts;
 
 /// <summary>Durable identity: retries preserve all four fields; sequence is positive within a boot.</summary>
@@ -50,6 +52,18 @@ public sealed record HostLoadSample
     public int? ProcessCount { get; init; }
     public IReadOnlyList<HostLoadProcess> Processes { get; init; } = [];
     public IReadOnlyList<HostLoadTopConsumer> TopConsumers { get; init; } = [];
+
+    /// <summary>Seconds since the scan that produced <see cref="TopConsumers"/>. Null until the first scan.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public double? TopConsumersAgeSeconds { get; init; }
+
+    /// <summary>The scan stopped early because its CPU budget was spent.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TopConsumersTruncated { get; init; }
+
+    /// <summary>The cached scan is older than twice the scan cadence.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TopConsumersStale { get; init; }
     public IReadOnlyDictionary<string, string> UnknownReasons { get; init; } = new Dictionary<string, string>();
     public HostAdmissionSnapshot Authority { get; init; } = HostAdmissionSnapshot.Unknown();
 }

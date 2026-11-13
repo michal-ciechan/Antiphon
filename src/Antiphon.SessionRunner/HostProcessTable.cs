@@ -19,6 +19,9 @@ internal readonly record struct HostProcessObservation(
 internal interface IHostProcessTable
 {
     IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids);
+
+    /// <summary>True when the last <see cref="Read"/> stopped because the CPU budget was spent.</summary>
+    bool LastReadTruncated { get; }
 }
 
 internal static class HostTopConsumerLimits
@@ -26,6 +29,7 @@ internal static class HostTopConsumerLimits
     public const int TopCount = 8;
     public const int ScanCap = 512;
     public static readonly TimeSpan MinScanInterval = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan ScanCpuBudget = TimeSpan.FromMilliseconds(10);
 }
 
 internal static class HostProcessTables
@@ -43,6 +47,8 @@ internal static class HostProcessTables
 internal sealed class EmptyHostProcessTable : IHostProcessTable
 {
     public static readonly EmptyHostProcessTable Instance = new();
+
+    public bool LastReadTruncated => false;
 
     public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids) => [];
 }
@@ -160,14 +166,14 @@ internal static class HostConsumerClassifier
 
 internal static class LinuxProcessStat
 {
-    public static HostProcessObservation? Parse(int pid, string stat, ReadOnlySpan<byte> cmdline, int pageSize, long ticksPerSecond)
+    public static HostProcessObservation? Parse(int pid, ReadOnlySpan<char> stat, ReadOnlySpan<byte> cmdline, int pageSize, long ticksPerSecond)
     {
         if (pid <= 0 || pageSize <= 0 || ticksPerSecond <= 0) return null;
         var open = stat.IndexOf('(');
         var close = stat.LastIndexOf(')');
         if (open < 0 || close <= open || close + 2 >= stat.Length) return null;
-        var comm = stat[(open + 1)..close];
-        var fields = stat.AsSpan(close + 2);
+        var comm = stat.Slice(open + 1, close - open - 1).ToString();
+        var fields = stat.Slice(close + 2);
         if (!Field(fields, 11, out var utime) || !Field(fields, 12, out var stime)
             || !Field(fields, 19, out var startTicks) || !Field(fields, 21, out var rss))
             return null;
@@ -226,21 +232,35 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
     private readonly string _root;
     private readonly int _pageSize;
     private readonly long _ticksPerSecond;
+    private readonly Func<double?>? _threadCpu;
+    private readonly TimeSpan _cpuBudget;
+    private readonly byte[] _statBytes = new byte[1024];
+    private readonly char[] _statChars = new char[1024];
+
+    public bool LastReadTruncated { get; private set; }
 
     public LinuxHostProcessTable(string root)
-        : this(root, 0, 0)
+        : this(root, 0, 0, null, HostTopConsumerLimits.ScanCpuBudget)
     {
     }
 
     internal LinuxHostProcessTable(string root, int pageSize, long ticksPerSecond)
+        : this(root, pageSize, ticksPerSecond, null, TimeSpan.Zero)
+    {
+    }
+
+    internal LinuxHostProcessTable(string root, int pageSize, long ticksPerSecond, Func<double?>? threadCpu, TimeSpan cpuBudget)
     {
         _root = root;
         _pageSize = pageSize;
         _ticksPerSecond = ticksPerSecond;
+        _threadCpu = threadCpu;
+        _cpuBudget = cpuBudget;
     }
 
     public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
     {
+        LastReadTruncated = false;
         var pageSize = _pageSize > 0 ? _pageSize : Environment.SystemPageSize;
         var ticks = _ticksPerSecond > 0 ? _ticksPerSecond : TicksPerSecond();
         if (pageSize <= 0 || ticks <= 0) return [];
@@ -256,12 +276,19 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
 
         var chosen = HostProcessSelection.Choose(pids, retainPids, maxProcesses);
         var list = new List<HostProcessObservation>(chosen.Count);
+        var origin = ThreadCpu();
         foreach (var pid in chosen)
         {
+            if (OverBudget(origin))
+            {
+                LastReadTruncated = true;
+                break;
+            }
+
             try
             {
                 var dir = Path.Combine(_root, pid.ToString(CultureInfo.InvariantCulture));
-                var stat = File.ReadAllText(Path.Combine(dir, "stat"));
+                if (!TryReadStat(Path.Combine(dir, "stat"), out var stat)) continue;
                 var cmdline = Array.Empty<byte>();
                 if (NeedsCommandLine(stat))
                 {
@@ -282,6 +309,25 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
         return list;
     }
 
+    private double? ThreadCpu() => (_threadCpu ?? HostStatsSamplerService.ThreadCpuMilliseconds)();
+
+    private bool OverBudget(double? origin)
+    {
+        if (_cpuBudget <= TimeSpan.Zero) return false;
+        return origin is double start && ThreadCpu() is double now && now - start >= _cpuBudget.TotalMilliseconds;
+    }
+
+    private bool TryReadStat(string path, out ReadOnlySpan<char> stat)
+    {
+        stat = default;
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var read = stream.Read(_statBytes, 0, _statBytes.Length);
+        if (read <= 0 || read == _statBytes.Length) return false;
+        var chars = Encoding.UTF8.GetChars(_statBytes, 0, read, _statChars, 0);
+        stat = _statChars.AsSpan(0, chars);
+        return chars > 0;
+    }
+
     private List<int> ListPids()
     {
         var pids = new List<int>();
@@ -296,12 +342,12 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
         return pids;
     }
 
-    private static bool NeedsCommandLine(string stat)
+    private static bool NeedsCommandLine(ReadOnlySpan<char> stat)
     {
         var open = stat.IndexOf('(');
         var close = stat.LastIndexOf(')');
         if (open < 0 || close <= open) return false;
-        var comm = stat.AsSpan(open + 1, close - open - 1);
+        var comm = stat.Slice(open + 1, close - open - 1);
         if (comm.Length >= 15) return true;
         return comm.Equals("dotnet", StringComparison.OrdinalIgnoreCase);
     }
@@ -340,8 +386,11 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const long TicksPerSecond = 10_000_000;
 
+    public bool LastReadTruncated { get; private set; }
+
     public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
     {
+        LastReadTruncated = false;
         if (!OperatingSystem.IsWindows()) return [];
         Dictionary<int, string> names;
         try
@@ -358,8 +407,16 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         ids.Sort();
         var chosen = HostProcessSelection.Choose(ids, retainPids, maxProcesses);
         var list = new List<HostProcessObservation>(chosen.Count);
+        var origin = HostStatsSamplerService.ThreadCpuMilliseconds();
         foreach (var pid in chosen)
         {
+            if (origin is double cpuStart && HostStatsSamplerService.ThreadCpuMilliseconds() is double cpuNow
+                && cpuNow - cpuStart >= HostTopConsumerLimits.ScanCpuBudget.TotalMilliseconds)
+            {
+                LastReadTruncated = true;
+                break;
+            }
+
             if (!names.TryGetValue(pid, out var exe)) continue;
             if (!TryTimes(pid, out var start, out var cpu, out var rss)) continue;
             var (name, role) = HostConsumerClassifier.Classify(exe, []);

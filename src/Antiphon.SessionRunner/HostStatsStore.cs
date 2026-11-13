@@ -241,6 +241,9 @@ public sealed class HostStatsStore : IHostStatsSource
             disks,
             sample.ProcessCount,
             processes,
-            top);
+            top,
+            sample.TopConsumersAgeSeconds,
+            sample.TopConsumersTruncated,
+            sample.TopConsumersStale);
     }
 }

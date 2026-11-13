@@ -86,11 +86,13 @@ public class HostTopConsumerTests
             var time = new FakeTimeProvider(T0);
             var store = new HostStatsStore(new HostStatsSettings(), time);
             var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+            sampler.ScanTopConsumers();
             await sampler.SampleOnceAsync();
             store.Latest().ShouldNotBeNull().TopConsumers.ShouldBeEmpty();
 
             WriteProc(root, 1, "VBCSCompiler", 2000, 650, 100, 100, secret, "TASK_TOKEN=SUPERSECRET");
             time.Advance(TimeSpan.FromSeconds(5));
+            sampler.ScanTopConsumers();
             await sampler.SampleOnceAsync();
             var row = store.Latest().ShouldNotBeNull().TopConsumers.ShouldHaveSingleItem();
             row.Pid.ShouldBe(1);
@@ -377,19 +379,94 @@ public class HostTopConsumerTests
     }
 
     [Test]
-    [NativeLinuxOnly("CARD-1884 live /proc scan. Windows owes the production-factory witness and the sampler overhead budget.")]
-    public void Live_proc_scan_stays_inside_the_tick_budget()
+    public void Eight_rows_add_a_bounded_wire_delta()
+    {
+        var empty = Wire(Array.Empty<HostLoadTopConsumer>());
+        var rows = new HostLoadTopConsumer[8];
+        for (var i = 0; i < 8; i++)
+            rows[i] = new HostLoadTopConsumer(1000 + i, 100, "pwsh", "other", 1.25, 409600);
+        var full = Wire(rows);
+        var emptyBytes = Encoding.UTF8.GetByteCount(empty);
+        var fullBytes = Encoding.UTF8.GetByteCount(full);
+        var delta = fullBytes - emptyBytes;
+        Console.WriteLine("CARD-1884 wire emptyBytes=" + emptyBytes.ToString(CultureInfo.InvariantCulture)
+            + " fullBytes=" + fullBytes.ToString(CultureInfo.InvariantCulture)
+            + " delta=" + delta.ToString(CultureInfo.InvariantCulture));
+        delta.ShouldBeGreaterThan(0);
+        delta.ShouldBeLessThan(2048);
+        full.ShouldContain("pwsh");
+    }
+
+    private static string Wire(IReadOnlyList<HostLoadTopConsumer> top)
+    {
+        var sample = new HostLoadSample
+        {
+            Source = new HostLoadSource("runner-a", Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                Guid.Parse("22222222-2222-2222-2222-222222222222"), 1),
+            SampledAt = T0,
+            IntervalSeconds = 5,
+            CpuPercent = 10,
+            TopConsumers = top,
+        };
+        return JsonSerializer.Serialize(sample, PhoneHomeFraming.Json);
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1884 live /proc scan. The tick no longer waits for it. Windows owes toolhelp and the overhead budget.")]
+    public void Live_proc_scan_reads_proc_off_the_tick()
     {
         OperatingSystem.IsLinux().ShouldBeTrue();
         var table = new LinuxHostProcessTable("/proc");
-        table.Read(HostTopConsumerLimits.TopCount, Array.Empty<int>());
-        var watch = Stopwatch.StartNew();
         var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
-        watch.Stop();
-        Console.WriteLine("CARD-1884 proc scan rows=" + rows.Count.ToString(CultureInfo.InvariantCulture) + " elapsedMs=" + watch.Elapsed.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture));
+        Console.WriteLine("CARD-1884 proc scan rows=" + rows.Count.ToString(CultureInfo.InvariantCulture)
+            + " truncated=" + table.LastReadTruncated.ToString());
         rows.Count.ShouldBeGreaterThan(0);
         rows.Count.ShouldBeLessThanOrEqualTo(HostTopConsumerLimits.ScanCap);
-        watch.Elapsed.TotalMilliseconds.ShouldBeLessThan(25);
+    }
+
+    [Test]
+    public void Scan_stops_when_the_cpu_budget_is_spent()
+    {
+        var root = NewRoot();
+        try
+        {
+            for (var pid = 1; pid <= 4; pid++)
+                WriteProc(root, pid, "pwsh", 10, 10, 1, 1);
+            double cpu = 0;
+            var table = new LinuxHostProcessTable(root, 4096, 100, () =>
+            {
+                cpu += 6;
+                return cpu;
+            }, TimeSpan.FromMilliseconds(10));
+            var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
+            table.LastReadTruncated.ShouldBeTrue();
+            rows.Count.ShouldBeGreaterThan(0);
+            rows.Count.ShouldBeLessThan(4);
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Test]
+    public void Cached_scan_is_stale_after_twice_the_cadence()
+    {
+        var (time, tracker, table) = Start(Obs(1, 1, 0, "csc", "compiler"));
+        var unseen = tracker.View(time, TimeSpan.FromSeconds(5));
+        unseen.AgeSeconds.ShouldNotBeNull();
+        unseen.Stale.ShouldBeFalse();
+        table.Rows[0] = Obs(1, 1, 200, "csc", "compiler");
+        time.Advance(TimeSpan.FromSeconds(5));
+        tracker.Sample(table, time).ShouldHaveSingleItem();
+        var fresh = tracker.View(time, TimeSpan.FromSeconds(5));
+        fresh.Stale.ShouldBeFalse();
+        fresh.AgeSeconds.ShouldNotBeNull().ShouldBeLessThan(1);
+        time.Advance(TimeSpan.FromSeconds(11));
+        var old = tracker.View(time, TimeSpan.FromSeconds(5));
+        old.Stale.ShouldBeTrue();
+        old.AgeSeconds.ShouldNotBeNull().ShouldBeGreaterThan(10);
+        old.Rows.ShouldHaveSingleItem().Name.ShouldBe("csc");
     }
 
     [Test]
@@ -400,6 +477,7 @@ public class HostTopConsumerTests
         source.ShouldNotContain("GetProcesses");
         source.ShouldNotContain("/environ");
         source.ShouldNotContain("\"environ\"");
+        source.ShouldNotContain("ReadAllText");
     }
 
     private static (string Name, string Role) Classify(string comm, string[] args)
@@ -492,6 +570,7 @@ public class HostTopConsumerTests
         public List<HostProcessObservation> Rows { get; } = [];
         public int Reads { get; private set; }
         public bool Fault { get; set; }
+        public bool LastReadTruncated => false;
         public ManualResetEventSlim? Gate { get; init; }
         public ManualResetEventSlim? Entered { get; init; }
 
