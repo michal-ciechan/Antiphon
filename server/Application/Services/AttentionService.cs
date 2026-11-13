@@ -2175,7 +2175,21 @@ public sealed partial class AttentionService
                 && i.Kind != AgentIncidentKind.HerdrSupervisionHeld
                 && i.Kind != AgentIncidentKind.StandingSpecialistHealth
                 && i.Kind != AgentIncidentKind.StandingContinuityHeld)
-            .Select(i => new { i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason })
+            // Keep the append-only incident, but stop saying an attempt is held once
+            // its episode is resolved. A different remaining attempt still needs attention.
+            .Where(i => i.Kind != AgentIncidentKind.DeliveryTransportFailed
+                || i.FailureReason != "input-delivery-unknown"
+                || _db.SessionQueuedMessages.Any(m => m.AgentSessionId == i.SessionId
+                    && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null
+                    && m.DeliveryAttempts > 0 && m.MaintenanceKind == RemoteControlMaintenanceKind.None
+                    && (m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt) <= i.CreatedAt))
+            .Select(i => new
+            {
+                i.Id, i.AgentId, i.SessionId, i.Kind, i.Severity, i.Message, i.CreatedAt, i.FailureReason,
+                TaskId = _db.AgentTasks.Where(t => i.SessionId != null && t.AgentSessionId == i.SessionId
+                        && t.CreatedAt <= i.CreatedAt)
+                    .OrderByDescending(t => t.CreatedAt).Select(t => (Guid?)t.Id).FirstOrDefault()
+            })
             .ToListAsync(ct);
 
         var fresh = recent.Where(i => !attachedIncidents.Contains(i.Id)).ToList();
@@ -2234,7 +2248,7 @@ public sealed partial class AttentionService
             items.Add(new AttentionItemDto(
                 AttentionKind.RecentCriticalIncident,
                 severity,
-                null,
+                newest.TaskId,
                 newest.SessionId,
                 group.Key.AgentId,
                 null,

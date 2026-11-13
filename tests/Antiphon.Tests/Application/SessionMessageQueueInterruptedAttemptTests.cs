@@ -130,6 +130,56 @@ public class SessionMessageQueueInterruptedAttemptTests
     }
 
     [Test]
+    public async Task C1892_Notice_keeps_remaining_unknown_attempt_and_unrelated_error()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        const string secondBody = "a separate unresolved instruction awaiting its own complete receipt";
+        var started = h.Now - InterruptedAge - TimeSpan.FromSeconds(5);
+        await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: started);
+        var second = await h.SeedPendingMessageAsync(secondBody, deliveryAttempts: 1,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: started);
+        await using (var setup = h.CreateObserverContext())
+            await setup.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                .SetProperty(s => s.GrokRulesState, GrokRulesState.Ready));
+
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, Body, timestamp: h.Now);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await using var db = h.CreateObserverContext();
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == second)).DeliveryVerdict.ShouldBeNull();
+        var reader = new AttentionService(db, h.Runner,
+            Options.Create(new SupervisionSettings()), Options.Create(h.Delegation), h.Clock,
+            NullLogger<AttentionService>.Instance);
+        var partial = await reader.GetAsync(CancellationToken.None, includeProgressProbe: false);
+        partial.Items.ShouldContain(i => i.SessionId == h.SessionId
+            && i.Kind == AttentionKind.RecentCriticalIncident
+            && (i.Evidence ?? "").Contains("orchestrator decision"),
+            "remaining-unknown-notice: confirming one row cannot resolve another unknown attempt");
+
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(), AgentId = h.AgentId, SessionId = h.SessionId,
+            Kind = AgentIncidentKind.DeliveryTransportFailed, Severity = AlertSeverity.Error,
+            Message = "unrelated transport error", FailureReason = "different-transport-failure", CreatedAt = h.Now
+        });
+        await db.SaveChangesAsync();
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, secondBody, timestamp: h.Now);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        var resolved = await reader.GetAsync(CancellationToken.None, includeProgressProbe: false);
+        var incident = resolved.Items.Single(i => i.SessionId == h.SessionId
+            && i.Kind == AttentionKind.RecentCriticalIncident);
+        incident.Evidence.ShouldContain("unrelated transport error", "unrelated-error-visible");
+        incident.Evidence.ShouldNotContain("orchestrator decision", "resolved-episode-hidden");
+        h.Adapter.Inputs.ShouldBeEmpty();
+        h.Adapter.Killed.ShouldBeFalse();
+    }
+
+    [Test]
     public async Task Delivered_outcome_stamps_the_verdict()
     {
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync();

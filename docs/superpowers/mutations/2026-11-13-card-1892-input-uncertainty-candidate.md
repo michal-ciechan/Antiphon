@@ -19,6 +19,10 @@ Mutation owns red/restore/green, missing-control discovery and additional varian
 | PC-5 | external caller cancellation | swallow cancellation after retaining the process | AgentSessionLaunchFailureTests/External_cancellation_during_rc_setup_is_not_reported_as_degraded |
 | PC-6 | re-send on uncertain, fresh Enter-only, aged retype; normal and rules rows; visible and absent head | allow screen classification to retry a composer-less Sent/null-verdict attempt at a later flush | SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping |
 | PC-7 | omit overdue attention, repeat its note, drop discovery outside the retry window, or lower Error to Warning | leave a lost composer-less attempt without a bounded decision in the real ATTENTION projection | SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping |
+| PC-8 | remove resolved-episode suppression (Review caeec914 D-1 survived mutant) | keep the held-attempt notice after complete late UserPrompt | SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping |
+| PC-8 | hide while a second attempt remains unknown; hide unrelated errors of the same kind | suppress an unresolved attempt or unrelated transport failure | SessionMessageQueueInterruptedAttemptTests/C1892_Notice_keeps_remaining_unknown_attempt_and_unrelated_error |
+| PC-9 | omit TaskId; select the later task in the same session | lose or misattribute an incident's task link | AttentionServiceTests/recent_incident_links_the_task_in_its_session_at_incident_time |
+| PC-10 | include Codex in the composer-less hold | block existing complete-composer recovery for the interrupted-sent-complete variant | SessionMessageQueueCodexPointerTests/C1521_Recovery_reconciles_before_input |
 
 Use one exact `/*/*/ClassName/ExactTestMethod` filter per cycle, with all native
 parameterized results inspected. Keep true readiness/spawn failure and generation
