@@ -221,5 +221,58 @@ function New-RcBoundaryChunk {
     [string[]]$keys = @($sorted | ForEach-Object { ([string]$_.class + '/' + [string]$_.method) })
     [string[]]$caseKeys = @($sorted | ForEach-Object { [string]$_.caseKey })
     $id = Get-RcBoundaryChunkId $suite $boundary $keys $caseKeys
-    return [ordered]@{ chunkId=$id; suite=$suite; boundary=$boundary; identityKeys=@($keys); caseKeys=@($caseKeys); alwaysDirty=($boundary -ceq 'unassigned') }
+    $digest = Get-RcBoundaryCanonicalDigest -Suite $suite -Boundary $boundary -Identities $sorted
+    if ($digest.Length -ne 64 -or $id -cne ('b-' + $boundary + '-' + $digest.Substring(0, 16))) { throw 'boundary-chunk: digest mismatch' }
+    return [ordered]@{ chunkId=$id; suite=$suite; boundary=$boundary; identityKeys=@($keys); caseKeys=@($caseKeys); fullDigest=$digest; collision=$false; alwaysDirty=($boundary -ceq 'unassigned') }
+}
+
+function Resolve-RcBoundaryChunks {
+    param([Parameter(Mandatory)][object[]]$Memberships)
+    # Group by the 16-hex prefix. Two different full digests under one prefix
+    # are rebuilt as unassigned and stay dirty. One shared full digest is not.
+    $built = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($membership in @($Memberships)) {
+        $rows = New-Object 'System.Collections.Generic.List[object]'
+        foreach ($identity in @($membership.identities)) {
+            $row = @{
+                suite = [string]$membership.suite
+                boundary = [string]$membership.boundary
+                identityKey = [string]$identity.identityKey
+            }
+            if ($null -ne $identity.caseKey) { $row.caseKey = [string]$identity.caseKey }
+            $rows.Add($row)
+        }
+        $built.Add((New-RcBoundaryChunk -Identities @($rows.ToArray())))
+    }
+    $digests = @{}
+    foreach ($chunk in $built) {
+        $prefix = ([string]$chunk.fullDigest).Substring(0, 16)
+        if (-not $digests.ContainsKey($prefix)) {
+            $digests[$prefix] = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        }
+        [void]$digests[$prefix].Add([string]$chunk.fullDigest)
+    }
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($chunk in $built) {
+        $prefix = ([string]$chunk.fullDigest).Substring(0, 16)
+        if ($digests[$prefix].Count -gt 1) {
+            $rows = New-Object 'System.Collections.Generic.List[object]'
+            $keys = @($chunk.identityKeys)
+            $cases = @($chunk.caseKeys)
+            for ($i = 0; $i -lt $keys.Count; $i++) {
+                $rows.Add(@{
+                    suite = [string]$chunk.suite
+                    boundary = 'unassigned'
+                    identityKey = [string]$keys[$i]
+                    caseKey = [string]$cases[$i]
+                })
+            }
+            $rebuilt = New-RcBoundaryChunk -Identities @($rows.ToArray())
+            $rebuilt['collision'] = $true
+            $result.Add($rebuilt)
+        } else {
+            $result.Add($chunk)
+        }
+    }
+    return @($result.ToArray())
 }
