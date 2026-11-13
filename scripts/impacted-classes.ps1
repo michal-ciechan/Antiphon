@@ -583,7 +583,7 @@ $script:selectorTiming.tableMs = $tableClock.Elapsed.TotalMilliseconds
 $censusClock = [Diagnostics.Stopwatch]::StartNew()
 
 # One walk: class declarations and downgrade-pattern files. bin/obj are build output.
-# The walk reads ~2,600 files (~42 MB). A file is a derive hit when ANY pattern matches, so the patterns are
+# The compiled walker reads each current source file once. A file is a derive hit when ANY pattern matches, so the patterns are
 # joined into one alternation (each in its own non-capturing group): one pass per file instead of one per pattern,
 # same verdict. Both regexes are compiled; matching is unchanged.
 $deriveRegexes = New-Object System.Collections.Generic.List[regex]
@@ -593,57 +593,17 @@ if ($derivePatterns.Count -gt 0) {
     [void]$deriveRegexes.Add([regex]::new(($deriveAlternatives -join '|'), 'CultureInvariant, Compiled'))
 }
 $classDecl = [regex]::new('(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b', 'Compiled')
-$classWord = @{}
-$filesByClass = @{}
-$script:classesByFile = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
+# Compile code only; Scan creates new maps and rereads every current file on each call.
+$compileClock = [Diagnostics.Stopwatch]::StartNew()
+Add-Type -Path (Join-Path $PSScriptRoot 'lib/SelectorCensus.cs')
+$script:selectorTiming['censusCompileMs'] = $compileClock.Elapsed.TotalMilliseconds
+$walkClock = [Diagnostics.Stopwatch]::StartNew()
+$scan = [Antiphon.Selector.SelectorCensus]::Scan($Repo, $classDecl, $deriveRegexes.ToArray())
+$script:selectorTiming['censusWalkMs'] = $walkClock.Elapsed.TotalMilliseconds
+$filesByClass = $scan.FilesByClass
+$script:classesByFile = $scan.ClassesByFile
+$derivedSet = $scan.DerivedFiles
 $script:derivedIndexState = $null
-$derivedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-$testsRoot = Join-Path $Repo 'tests'
-$repoSlash = $Repo.Replace('\', '/').TrimEnd('/')
-if (Test-Path -LiteralPath $testsRoot) {
-    $stack = New-Object System.Collections.Generic.Stack[string]
-    $stack.Push($testsRoot)
-    while ($stack.Count -gt 0) {
-        $dir = $stack.Pop()
-        foreach ($child in [IO.Directory]::EnumerateDirectories($dir)) {
-            $name = [IO.Path]::GetFileName($child)
-            if ($name -eq 'bin' -or $name -eq 'obj') { continue }
-            $stack.Push($child)
-        }
-        foreach ($file in [IO.Directory]::EnumerateFiles($dir, '*.cs')) {
-            $full = $file.Replace('\', '/')
-            $relative = $full
-            $prefix = $repoSlash + '/'
-            if ($full.StartsWith($prefix)) { $relative = $full.Substring($prefix.Length) }
-            if ($relative.Contains('/bin/') -or $relative.Contains('/obj/')) { continue }
-            $text = [IO.File]::ReadAllText($file)
-            foreach ($match in $classDecl.Matches($text)) {
-                $className = $match.Groups[1].Value
-                if (-not $classWord.ContainsKey($className)) {
-                    $classWord[$className] = New-Object System.Collections.Generic.List[string]
-                }
-                [void]$classWord[$className].Add($relative)
-                $declared = $null
-                if (-not $script:classesByFile.TryGetValue($relative, [ref]$declared)) {
-                    $declared = New-Object System.Collections.Generic.List[string]
-                    $script:classesByFile[$relative] = $declared
-                }
-                if (-not $declared.Contains($className)) { [void]$declared.Add($className) }
-            }
-            $hit = $false
-            foreach ($regex in $deriveRegexes) {
-                if ($regex.IsMatch($text)) { $hit = $true; break }
-            }
-            if ($hit) { [void]$derivedSet.Add($relative) }
-        }
-    }
-}
-foreach ($className in @($classWord.Keys)) {
-    $owned = New-StringList
-    Fill-Sorted $classWord[$className] $owned
-    $filesByClass[$className] = $owned
-}
-
 $script:selectorTiming.censusMs = $censusClock.Elapsed.TotalMilliseconds
 
 # Named classes are refused for audit and select. Hashtables ignore case, so the census is ordinal.
