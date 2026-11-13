@@ -30,12 +30,12 @@ The new Linux-only advertisement is the OS-selected behavior (`RetentionFeatures
 
 ## Performance budget
 
-CP-1 is real git per case, budgeted at 8 minutes from the CARD-1677 retention engine shape (60s git floor, cases well under that). CP-2 is shared Postgres, budgeted at 10 minutes. CP-3 reuses the CP-2 build and is budgeted at 15 minutes. No selection is expected past 30 minutes. The checkpoint tool's own bootstrap takes its own build slot. Two earlier `--list-tests` probes of the guard union listed the whole assembly (23251) because TUnit discovery ignores `--treenode-filter`; they are not receipts. CP-3 Min is the counted case floor: policy 42, merge 5, tripwire 2, guard 1, native Linux 3, derived impact 27.
+CP-1 is real git per case, budgeted at 8 minutes from the CARD-1677 retention engine shape (60s git floor, cases well under that). CP-2 is shared Postgres, budgeted at 10 minutes. CP-3 reuses the CP-2 build and is budgeted at 15 minutes. No selection is expected past 30 minutes. The checkpoint tool's own bootstrap takes its own build slot. Two earlier `--list-tests` probes of the guard union listed the whole assembly (23251) because TUnit discovery ignores `--treenode-filter`; they are not receipts. CP-3 Min is the counted case floor: policy 42, merge 5, tripwire 2, guard 1, native Linux 3, derived impact 27. Run 20261113-173348-624e kept `bin-c1895-runner/` and `bin-c1895-server/` after CP-3 saw a stale index. The closed rerun uses `bin-c1895b-runner/` and `bin-c1895b-server/`.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | code | tests/Antiphon.SessionRunner.Tests -> bin-c1895-runner/ | output-drop-runner | /*/*/C1895OutputDropEngineTests/* | V-1 V-2 V-3 V-4 V-5 V-6 V-7 V-8 | 19 executed, 0 failed | 19 | 8 | true | TEMP=/tmp |
-| CP-2 | code | tests/Antiphon.Tests -> bin-c1895-server/ | output-drop-server | /*/*/C1895OutputDropServerTests/* | V-9 V-10 V-11 | 7 executed, 0 failed | 7 | 10 | true | TEMP=/tmp |
+| CP-1 | code | tests/Antiphon.SessionRunner.Tests -> bin-c1895b-runner/ | output-drop-runner | /*/*/C1895OutputDropEngineTests/* | V-1 V-2 V-3 V-4 V-5 V-6 V-7 V-8 | 19 executed, 0 failed | 19 | 8 | true | TEMP=/tmp |
+| CP-2 | code | tests/Antiphon.Tests -> bin-c1895b-server/ | output-drop-server | /*/*/C1895OutputDropServerTests/* | V-9 V-10 V-11 | 7 executed, 0 failed | 7 | 10 | true | TEMP=/tmp |
 | CP-3 | code | CP-2 | output-drop-guards | /*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)/* | R-1 | 80 executed, 0 failed | 80 | 15 | true | TEMP=/tmp |

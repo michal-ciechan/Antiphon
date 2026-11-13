@@ -19180,6 +19180,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/RunnerWorkspaceNoFollowDelete.cs",
+      "classes": [
+        "C1895OutputDropEngineTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceParkService.cs",
       "classes": [
         "BlockedParkWireTests",
