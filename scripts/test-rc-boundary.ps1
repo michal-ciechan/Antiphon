@@ -16,6 +16,46 @@ if (-not (Test-Path -LiteralPath $lib)) {
     . $lib
     $map = Read-RcBoundaryMap
     switch ($Case) {
+        'DuplicateMembershipsAndUnassignedCollisions' {
+            $one = @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='' }) }
+            $overlap = @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='' }, @{ identityKey='BTests/M' }) }
+            $otherBoundary = @{ suite='antiphon'; boundary='git'; identities=@(@{ identityKey='ATests/M'; caseKey='' }) }
+            Note (Refuses { Resolve-RcBoundaryChunks -Memberships @($one, $one) }) 'identical memberships accepted'
+            Note (Refuses { Resolve-RcBoundaryChunks -Memberships @($one, $overlap) }) 'overlapping memberships accepted'
+            Note (Refuses { Resolve-RcBoundaryChunks -Memberships @($one, $otherBoundary) }) 'one identity assigned to two boundaries'
+            Note (Refuses { New-RcBoundaryChunk -Identities @((Row core 'ATests/M'), (Row core 'ATests/M')) }) 'duplicate within chunk accepted'
+            $distinct = @(Resolve-RcBoundaryChunks -Memberships @($one,
+                @{ suite='scripts'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='' }) },
+                @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='case' }) }
+            ))
+            Note ($distinct.Count -eq 3) 'distinct suite/case identities refused'
+            foreach ($chunk in $distinct) { Note (-not $chunk.collision -and -not $chunk.alwaysDirty) 'distinct identity marked dirty' }
+            # Force only the digest prefix; retain the real SHA suffix and all real
+            # construction/rebuild paths. A real unassigned 64-bit collision is costly.
+            $script:realDigest = ${function:Get-RcBoundaryCanonicalDigest}
+            try {
+                function Get-RcBoundaryCanonicalDigest {
+                    param($Suite, $Boundary, $Identities)
+                    $hex = & $script:realDigest -Suite $Suite -Boundary $Boundary -Identities $Identities
+                    if ($Boundary -ceq 'unassigned') { return ('0000000000000000' + $hex.Substring(16)) }
+                    return $hex
+                }
+                $chunks = @(Resolve-RcBoundaryChunks -Memberships @(
+                    @{ suite='antiphon'; boundary='unassigned'; identities=@(@{ identityKey='ATests/M'; caseKey='left' }) },
+                    @{ suite='antiphon'; boundary='unassigned'; identities=@(@{ identityKey='BTests/M'; caseKey='right' }) }
+                ))
+                Note ($chunks.Count -eq 2) 'unassigned collision lost membership'
+                $byId = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+                foreach ($chunk in $chunks) {
+                    Note ($chunk.collision -and $chunk.alwaysDirty -and $chunk.boundary -ceq 'unassigned') 'unassigned collision became clean'
+                    Note ($chunk.fullDigest -cmatch '^[0-9a-f]{64}$') 'unassigned full digest lost'
+                    Note ($chunk.chunkId -ceq ('b-unassigned-' + $chunk.fullDigest)) 'collision key is not full digest'
+                    $byId[$chunk.chunkId] = $chunk
+                }
+                Note ($byId.Count -eq 2) 'dictionary overwrite erased colliding membership'
+                Note ((@($chunks | ForEach-Object { $_.caseKeys[0] }) -join ',') -ceq 'left,right') 'colliding cases lost'
+            } finally { Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest }
+        }
         'LoneSurrogatesFailClosed' {
             foreach ($code in @(0xd800, 0xdc00)) {
                 $bad = [string][char]$code
@@ -146,14 +186,10 @@ if (-not (Test-Path -LiteralPath $lib)) {
                 foreach ($row in @($clean)) {
                     Note ($row.boundary -ceq 'core' -and $row.collision -eq $false -and $row.alwaysDirty -eq $false) 'distinct short ids refused'
                 }
-                $same = @(Resolve-RcBoundaryChunks -Memberships @(
+                Note (Refuses { Resolve-RcBoundaryChunks -Memberships @(
                     @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) },
                     @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) }
-                ))
-                Note (@($same).Count -eq 2) 'identical digest dropped'
-                foreach ($row in @($same)) {
-                    Note ($row.boundary -ceq 'core' -and $row.collision -eq $false) 'identical full digest treated as collision'
-                }
+                ) }) 'identical membership accepted twice'
             }
         }
         default { throw ('unknown case ' + $Case) }
