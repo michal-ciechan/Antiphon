@@ -186,6 +186,15 @@ function ConvertTo-RcBoundaryIdentity {
     return @{ class = $IdentityKey.Substring(0, $slash); method = $IdentityKey.Substring($slash + 1); caseKey = [string]$CaseKey }
 }
 
+function Get-RcBoundaryMembershipKey {
+    param([string]$Suite, [string]$IdentityKey, [string]$CaseKey)
+    # Length framing keeps embedded NULs and delimiters unambiguous. Boundary
+    # is deliberately absent: one suite/case cannot belong to two boundaries.
+    return ($Suite.Length.ToString([Globalization.CultureInfo]::InvariantCulture) + ':' + $Suite +
+        $IdentityKey.Length.ToString([Globalization.CultureInfo]::InvariantCulture) + ':' + $IdentityKey +
+        $CaseKey.Length.ToString([Globalization.CultureInfo]::InvariantCulture) + ':' + $CaseKey)
+}
+
 function Get-RcBoundaryChunkId {
     param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys, [string[]]$CaseKeys)
     if ($Suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $Boundary -cnotin @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')) { throw 'boundary-chunk: invalid suite/boundary' }
@@ -197,7 +206,7 @@ function Get-RcBoundaryChunkId {
         $key = [string]$IdentityKeys[$i]
         $caseKey = ''
         if ($CaseKeys) { $caseKey = [string]$CaseKeys[$i] }
-        $seenKey = ([string]$key + [char]0 + [string]$caseKey)
+        $seenKey = Get-RcBoundaryMembershipKey $Suite $key $caseKey
         if (-not $seen.Add($seenKey)) { throw 'boundary-chunk: invalid/duplicate identity' }
         $parsed.Add((ConvertTo-RcBoundaryIdentity -IdentityKey $key -CaseKey $caseKey))
     }
@@ -230,8 +239,10 @@ function New-RcBoundaryChunk {
 function Resolve-RcBoundaryChunks {
     param([Parameter(Mandatory)][object[]]$Memberships)
     # Group by the 16-hex prefix. Two different full digests under one prefix
-    # are rebuilt as unassigned and stay dirty. One shared full digest is not.
+    # are rebuilt as unassigned and stay dirty, keyed by the full digest.
+    # Membership may occur once per suite, irrespective of boundary or chunk.
     $built = New-Object 'System.Collections.Generic.List[object]'
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     foreach ($membership in @($Memberships)) {
         $rows = New-Object 'System.Collections.Generic.List[object]'
         foreach ($identity in @($membership.identities)) {
@@ -241,6 +252,8 @@ function Resolve-RcBoundaryChunks {
                 identityKey = [string]$identity.identityKey
             }
             if ($null -ne $identity.caseKey) { $row.caseKey = [string]$identity.caseKey }
+            $key = Get-RcBoundaryMembershipKey $row.suite $row.identityKey ([string]$row.caseKey)
+            if (-not $seen.Add($key)) { throw 'boundary-chunk: duplicate membership across chunks' }
             $rows.Add($row)
         }
         $built.Add((New-RcBoundaryChunk -Identities @($rows.ToArray())))
@@ -270,10 +283,15 @@ function Resolve-RcBoundaryChunks {
             }
             $rebuilt = New-RcBoundaryChunk -Identities @($rows.ToArray())
             $rebuilt['collision'] = $true
+            $rebuilt['chunkId'] = 'b-unassigned-' + $rebuilt.fullDigest
             $result.Add($rebuilt)
         } else {
             $result.Add($chunk)
         }
+    }
+    $ids = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($chunk in $result) {
+        if (-not $ids.Add([string]$chunk.chunkId)) { throw 'boundary-chunk: duplicate resolved chunk id' }
     }
     return @($result.ToArray())
 }
