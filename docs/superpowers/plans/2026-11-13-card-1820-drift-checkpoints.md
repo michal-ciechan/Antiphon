@@ -37,7 +37,10 @@ process-spawning arguments and existing assembly-local limiter.
 Full V-6 (DeletedDependencyUsesOldGraph, NewCandidateClassUsesNewGraph,
 CompleteUnionHasReasons, UnknownNeverYieldsCarry) remains deferred to full S1R6.
 Other upstream V/R IDs remain inherited or deferred, reported individually.
-Native W1/R-5 is pending and orchestrator-owned. Restart: none.
+Native W1/R-5 is pending and orchestrator-owned. The scripts/lib path also
+retains the native Windows pre-rc probe/restore rehearsal obligation in
+docs/release-gates.md#startup-path-rc-picks at the eventual exact integration
+candidate. No host action is authorized by this test receipt. Restart: none.
 
 No PCs/variants are declared as executed. All PC discovery and deliberate
 red/restore/green cycles remain pending for SourceLanding Mutation, under the
@@ -47,7 +50,7 @@ operator's 2026-11-12 execution waiver; ordinary reds do not discharge PCs.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-108 | S1R6D | `tests/Antiphon.Tests -> bin-c1820-drift-red2/` | drift-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | V-1, V-6D, cleanup | ten argument-expanded results, zero failed/skipped after repair | 10 | 3 | true |
+| CP-108 | S1R6D | `tests/Antiphon.Tests -> bin-c1820-drift-final/` | drift-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | V-1, V-6D, cleanup | ten argument-expanded results, zero failed/skipped after repair | 10 | 3 | true |
 | CP-8 | S1R6D | CP-108 | hand-contracts | `/*/*/ImpactedClassesSelectorTests/(contract_snapshot_ranges_select_contract_snapshot_tests*)\|(label_remote_budget_and_checkpoint_ranges_select_their_rows*)\|(malformed_table_is_refused*)\|(C1843_mirror_test_paths_select_their_own_project*)` | R-2 | all named methods and arguments, zero failed/skipped | 4 | 3 | true |
 | CP-9 | S1R6D | CP-108 | legacy-index | `/*/*/DerivedImpactIndexTests/(migration_only_diff_keeps_hand_classes_and_the_derive_set*)\|(merge_subset_matches_the_hand_selector*)\|(committed_index_matches_the_builder*)\|(windows_only_classes_stay_out_of_linux_filters*)\|(linux_only_methods_stay_off_the_windows_filter*)` | R-3 | five methods, zero failed/skipped | 5 | 4 | true |
 | CP-101 | S1R6D | CP-108 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy/mechanical/platform/layering | all nine classes, zero failed/skipped | 78 | 4 | true |
@@ -66,7 +69,10 @@ Admission is separately bounded at 45m. No new timeout or relaxed assertion.
 Red: CP-108 at the committed pre-fix source. The first run (14e283a8b)
 had 8 passed / 2 failed at an incorrect clean-status setup assertion, not the
 production guard. Correct that fixture to prove filtered-hash equality and raw-hash
-inequality directly, then rerun CP-108 before the production fix. Green: all rows once, fresh
+inequality directly. That corrected run at 5162524e7 reproduced two actual
+production assertion failures: exit 0 instead of 2 on both CRLF variants.
+The original production module is byte-identical to the task base in both red
+commits. Green: all rows once, fresh
 owned output/evidence. No repetitions after green (cap 3 normal + 2 loaded).
 
 Declared preparation outside checkpoint rows: leased native checkpoint-tool

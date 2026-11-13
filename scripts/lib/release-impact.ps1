@@ -39,7 +39,8 @@ function Get-ReleaseImpactAlgorithmIdentity {
     $inventory = New-Object 'System.Collections.Generic.List[string]'
     foreach ($path in @('scripts/impacted-classes.ps1', 'scripts/lib/release-impact.ps1')) {
         $blob = Invoke-ReleaseImpactGit $SourceRoot @('rev-parse', '--verify', ($sha + ':' + $path))
-        $disk = Invoke-ReleaseImpactGit $SourceRoot @('hash-object', '--', $path)
+        # Bind the bytes being executed, not a clean-filter/eol-normalized view.
+        $disk = Invoke-ReleaseImpactGit $SourceRoot @('hash-object', '--no-filters', '--', $path)
         if ($blob -cne $disk) { throw 'release-impact algorithm source drift' }
         [void]$inventory.Add($path + "`0" + $blob + "`n")
     }
