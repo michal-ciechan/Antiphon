@@ -100,6 +100,12 @@ public sealed class PhoneHomeSettings
     /// </summary>
     public int RetentionRecentUseMinutes { get; set; } = 10;
 
+    /// <summary>
+    /// CARD-1895. Copied from <c>RunnerWorktreeRetention:OutputDrop:Mode</c>. Off refuses, Preview forces
+    /// DryRun, Execute honors the request. Default Off so a deploy does not delete output.
+    /// </summary>
+    public string OutputDropMode { get; set; } = RunnerOutputDropMode.Off;
+
     /// <summary>CARD-1817. Explicit gc of repositories under <see cref="RepositoryPolicy"/>'s root.</summary>
     public RunnerRepositoryMaintenanceOptions RepositoryMaintenance { get; set; } = new();
 

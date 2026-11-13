@@ -164,6 +164,23 @@ public static class WorkspaceOutputDropModes
 }
 
 /// <summary>
+/// CARD-1895. Server and runner switch for output deletion. Off sends and deletes nothing.
+/// Preview logs the paths and bytes and never deletes. Execute honors a request's own DryRun or Execute.
+/// Unknown text is Off.
+/// </summary>
+public static class RunnerOutputDropMode
+{
+    public const string Off = "Off";
+    public const string Preview = "Preview";
+    public const string Execute = "Execute";
+
+    public static string Normalize(string? mode) =>
+        string.Equals(mode, Execute, StringComparison.Ordinal) ? Execute
+        : string.Equals(mode, Preview, StringComparison.Ordinal) ? Preview
+        : Off;
+}
+
+/// <summary>
 /// CARD-1895. Verdicts for one output drop. Eligibility refusals reuse <see cref="WorkspaceRetentionCodes"/>
 /// reason strings with verdict <see cref="Kept"/>. A refusal deletes nothing.
 /// </summary>
@@ -176,6 +193,8 @@ public static class WorkspaceOutputDropCodes
     public const string Symlink = "symlink";
     public const string TrackedContent = "tracked_content";
     public const string DeleteFailed = "delete_failed";
+    public const string ChangedDuringDrop = "changed_during_drop";
+    public const string OutputDropOff = "output_drop_off";
 }
 
 /// <summary>
@@ -198,4 +217,6 @@ public sealed record PhoneHomeWorkspaceOutputDropResponse(
     long? Bytes = null,
     int? Directories = null,
     IReadOnlyList<WorkspaceOutputDropEntry>? Entries = null,
-    string? Detail = null);
+    string? Detail = null,
+    int? FilesRemoved = null,
+    int? FilesLeft = null);
