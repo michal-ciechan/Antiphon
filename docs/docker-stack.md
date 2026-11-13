@@ -441,6 +441,14 @@ with the host census and require `sessions=0`, `queuedTasks=0`, `retiredAt` set,
 `draining=true`, `retireWhenIdle=true`, `redirectTo=server2`, and nothing routed there.
 Unknown counters or failed observations otherwise stop removal.
 
+Temp's V2 Git audit classifies a no-remote test repository under an enclosing
+checkout's `.antiphon/selector-evidence/` as disposable only when that checkout's
+own ignore rules ignore both the scratch root and the fixture path. The enclosing
+checkout must still be independently audited, clean and published before Ready.
+A repository outside that root, or with any remote configuration, keeps the normal
+Git audit and its refusals. New selector fixture repositories belong in system temp,
+so repeated tests do not populate the work volume with independent repositories.
+
 Before removing work, apply CARD-0831: enumerate every runner-side mirror and its
 worktrees, run `git worktree list --porcelain` in each repository, and run
 `git -C <worktree-or-mirror-path> rev-list --count HEAD --not --remotes` for every
