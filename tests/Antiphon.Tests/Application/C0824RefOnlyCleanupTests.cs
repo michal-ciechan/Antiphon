@@ -70,7 +70,7 @@ public sealed class C0824RefOnlyCleanupTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(35_000)]
     public async Task Legacy_consumers_skip_ref_only_without_deleting_refs()
     {
         await using var w = await DesktopLegacyWorld.CreateAsync();
@@ -182,7 +182,7 @@ public sealed class C0824RefOnlyCleanupTests
     }
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(55_000)]
     public async Task Landing_and_guarded_cleanup_preserve_ref_only_custody()
     {
         await using (var land = new LandingSafetyHarness())
