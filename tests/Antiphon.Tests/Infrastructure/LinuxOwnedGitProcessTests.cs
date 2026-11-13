@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Text;
 using Antiphon.Server.Infrastructure.Git;
 using Antiphon.Tests.TestHelpers;
@@ -28,6 +29,12 @@ public sealed class LinuxOwnedGitProcessTests
         var input = owner.StandardInput;
         var output = owner.StandardOutput;
         var error = owner.StandardError;
+        var inputPipe = input.BaseStream;
+        var outputPipe = output.BaseStream;
+        var errorPipe = error.BaseStream;
+        var inputHandle = ((PipeStream)inputPipe).SafePipeHandle;
+        var outputHandle = ((PipeStream)outputPipe).SafePipeHandle;
+        var errorHandle = ((PipeStream)errorPipe).SafePipeHandle;
         try
         {
             await input.WriteLineAsync("roundtrip".AsMemory(), ct);
@@ -36,8 +43,14 @@ public sealed class LinuxOwnedGitProcessTests
             input.Close();
             (await owner.WaitForRootExitAsync(ct)).ShouldBeTrue();
             owner.Dispose();
-            output.BaseStream.CanRead.ShouldBeFalse("Dispose must close used stdout");
-            error.BaseStream.CanRead.ShouldBeFalse("Dispose must close used stderr");
+            // AnonymousPipeClientStream.CanRead describes its direction even after close.
+            // Assert actual native-handle closure and rejected I/O on each retained pipe.
+            inputHandle.IsClosed.ShouldBeTrue("Dispose must close used stdin");
+            outputHandle.IsClosed.ShouldBeTrue("Dispose must close used stdout");
+            errorHandle.IsClosed.ShouldBeTrue("Dispose must close used stderr");
+            Should.Throw<ObjectDisposedException>(() => inputPipe.WriteByte(0));
+            Should.Throw<ObjectDisposedException>(() => outputPipe.ReadByte());
+            Should.Throw<ObjectDisposedException>(() => errorPipe.ReadByte());
         }
         finally { input.Dispose(); output.Dispose(); error.Dispose(); }
     }

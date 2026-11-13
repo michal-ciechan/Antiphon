@@ -500,7 +500,7 @@ whole-row costs under the budget above.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-final/` | any-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1850-s2/` | linux-members | `/*/*/LinuxOwnedGitProcessTests/*` | V-1,V-2 | LinuxOwnedGitProcessTests; all listed, 0 failed | 8 | 5 | n/a | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1850-s2-green/` | linux-members | `/*/*/LinuxOwnedGitProcessTests/*` | V-1,V-2 | LinuxOwnedGitProcessTests; all listed, 0 failed | 8 | 5 | n/a | true |
 | CP-S2-R1 | S2-red-contract | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s2-red-contract/` | any-contract-red | `/*/*/OwnedGitProcessContractTests/Unexpected_launch_exception_is_ambiguous_and_cannot_start_again` | V-1,A2 | Expected unexpected-launch assertion red before fix | 1 | 1 | 2 | true |
 | CP-S2-R2 | S2-red-pipes | `tests/Antiphon.Tests -> bin-c1850-s2-red-pipes/` | linux-pipes-red | `/*/*/LinuxOwnedGitProcessTests/Disposal_closes_all_used_streams` | V-1,A1 | Expected stdout still readable assertion red before fix | 1 | 5 | n/a | true |
 | CP-S2-1 | S2-contract | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s2-contract/` | any-contract | `/*/*/(GitIndexLockTests*)\|(OwnedGitProcessContractTests*)\|(ServerGitAssemblyTests*)/*` | V-1,R-5,A2-A4 | all 3 impacted classes, 0 failed | 3 | 1 | 2 | true |
@@ -509,7 +509,9 @@ whole-row costs under the budget above.
 | CP-S2-4 | S2 | CP-2 | any-platform-policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | R-5 | both selected platform policy methods, 0 failed | 2 | 1 | 2 | true |
 | CP-S2-5 | S2-pty-roster | `tests/Antiphon.Agents.Pty.Tests -> bin-c1850-s2-pty/` | any-spawn-roster | `/*/*/ProcessSpawnLimitTests/*` | R-5 | selected assembly-local spawn roster, 0 failed | 1 | 2 | 3 | true |
 | CP-S2-6 | S2-runner-roster | `tests/Antiphon.SessionRunner.Tests -> bin-c1850-s2-runner/` | any-spawn-roster | `/*/*/ProcessSpawnLimitTests/*` | R-5 | selected assembly-local spawn roster, 0 failed | 1 | 2 | 3 | true |
-| CP-S2-7 | S2 | CP-2 | any-impact-consumers | `/*/*/(ImpactedClassesSelectorTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(ReleaseImpactEnvelopeTests*)\|(TimeoutAuditTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-5 | all 6 actual policy/index consumers, 0 failed | 6 | 6 | 10 | true |
+| CP-S2-7 | S2 | CP-2 | any-impact-consumers | `/*/*/(ImpactedClassesSelectorTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreTests*)\|(ReleaseImpactEnvelopeTests*)\|(TimeoutAuditTests*)/*` | R-5 | all 5 portable actual policy/index consumers, 0 failed | 5 | 5 | 9 | true |
+| CP-S2-8 | S2 | CP-2 | any-platform-impact | `/*/*/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)\|(C1210_Host_roster_matches_windows_shaped_observation*)\|(C1226_Pin_inspection_methods_skip_off_linux*)` | R-5 | all 6 portable methods from actual impacted class, 0 failed | 6 | 1 | 2 | true |
+| CP-S2-9 | S2-windows-policy | `tests/Antiphon.Tests -> bin-c1850-s2-windows-policy/` | windows-platform-impact | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Windows_linux_only_outcomes_are_exact` | R-5 | native Windows-only method; orchestrator owed, never a passed Linux skip | 1 | 2 | 2 | true |
 | CP-3 | S3a | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s3a/` | any-native-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1,V-4 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
 | CP-4 | S3b | `tests/Antiphon.Tests -> bin-c1850-s3b/` | windows-native | `/*/*/WindowsOwnedGitProcessTests/*` | V-3,V-4 | WindowsOwnedGitProcessTests; all listed, 0 failed | 6 | 10 | 10 | true |
 | CP-5 | S4a-red-linux | `tests/Antiphon.Tests -> bin-c1850-s4rl/` | linux-land-red | `/*/*/OwnedGitLandingCancellationTests/Cancel_kills_dead_parent_orphan` | V-2,V-5 | Expected survivor assertion failure; prerequisites passed | 1 | 5 | n/a | true |
@@ -597,3 +599,35 @@ source revisions, impacted-selection/capped-debt disclosure, clean source
 receipts, and ordinary Review. A later Windows rc group-82 run can provide
 additional evidence, but this task must not touch or wait on the live run named
 in the brief. No deployment or current-host mutation is part of this Plan.
+
+S2 execution amendment (Code task 0485dc70): the actual base..tip selector adds
+CP-S2-1 through CP-S2-9. CP-S2-7 originally selected all six classes and ran
+at 51f1b7f4c1877ce1fe70bd6ad04e5fed9935c9dd: one real pinned-input digest
+failure and one intentional Windows skip. Its portable six-method subset now
+has CP-S2-8; CP-S2-9 preserves the native obligation for the orchestrator.
+No assertion or timeout was loosened. CP-2's first execution was 34/35 because
+AnonymousPipeClientStream.CanRead remains true after close. The corrected
+witness retains all three SafePipeHandles and asserts IsClosed plus rejected
+I/O, rather than treating stream direction as liveness. A gated diagnostic
+against the retained, source-verified S1 assembly from CP-S2-R2 found two open
+handles after real owner disposal; it is baseline red evidence, not a mutant.
+The original TRX/lines remain historical and are not relabeled green.
+Fresh CP-2 and repaired impact rows use bin-c1850-s2-green/. Passing unchanged
+rows are not repeated. The exact policy input digest refresh preserves the
+live-lane sentinel and CRLF assertions.
+
+S2 preliminary measurements: Linux kernel 4.15, UID 1654, /proc without hidepid,
+SDK 10.0.404, runtime net9.0, Git 2.47.3. Run 20261113-084944-7a20 cold build
+323.262 s; CP-2 execution 12.893 s with host startup 10.287 s and body wall
+1.150 s. Six native topology/factory cases have maximum 0.394 s; the whole
+35-case helper class has provisional per-case p95 0.104 s. These are single-run
+small samples, not established p95. The six-second product cleanup exception
+and ten-second native watchdog remain bounded CARD-1850 failure-path budgets
+(root wait, readiness, independent rescue), not claims of measured steady-state
+cost. No further unchanged repetitions are required after green. Guard row
+CP-S2-3 measured 235.448 s; DerivedImpactIndexTests summed 160 s, consistent
+with CARD-1876 A5's roughly 170-second history. Its new estimate is six minutes
+with the cold build charged to CP-2 and an explicit ten-minute execution cap;
+the original S1 historical costs/cap remain recorded unchanged. Other phases
+are in ignored per-row phase JSONL; uninstrumented subphases/remainder are
+unknown. No native witness uses AppHost, containers or database migrations.
