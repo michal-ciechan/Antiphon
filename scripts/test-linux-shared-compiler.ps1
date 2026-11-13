@@ -72,6 +72,9 @@ function Test-C1885Adapter {
     Assert-Compiler ($argsNow[1] -clike '-p:RoslynTargetsPath=*') 'toolset property is present'
     Assert-Compiler ($argsNow[2] -clike '-p:RoslynTasksAssembly=*/Microsoft.Build.Tasks.CodeAnalysis.dll') 'task assembly property is present'
     Assert-Compiler ($argsNow[3] -clike '-p:SharedCompilationId=ac1885-*') 'private stable pipe property is present'
+    foreach ($name in @('DOTNET_PROCESSOR_COUNT', 'DOTNET_GCHeapHardLimit')) {
+        Assert-Compiler (-not $prepared.Environment.ContainsKey($name)) "prepared driver has no $name override"
+    }
     Assert-Compiler (($argsNow[4..($argsNow.Count - 1)] -join "`n") -ceq ($tokens[1..($tokens.Count - 1)] -join "`n")) 'literal argv including application boundary is retained'
     $result = Invoke-CompilerChild $prepared
     Assert-Compiler ($result.Exit -eq 7) 'fake driver retains command exit status'
@@ -103,6 +106,15 @@ function Test-C1885Adapter {
     $missingTaskset.Environment['PATH'] = $scratch
     Set-AntiphonBuildDriverEnvironment -StartInfo $missingTaskset
     Assert-Compiler (($missingTaskset.ArgumentList -join "`n") -ceq ($tokens -join "`n")) 'missing affinity utility preserves a usable stock driver'
+    Assert-Compiler ((Invoke-CompilerChild $missingTaskset).Exit -eq 7) 'stock driver still starts without the affinity utility'
+    $fakeTaskset = Join-Path $scratch 'taskset'
+    [IO.File]::WriteAllText($fakeTaskset, "#!/bin/sh`nexit 77`n")
+    & chmod 700 -- $fakeTaskset
+    $denied = New-CompilerStart $fake $tokens $scratch
+    $denied.Environment['PATH'] = $scratch + ':' + $denied.Environment['PATH']
+    Set-AntiphonBuildDriverEnvironment -StartInfo $denied
+    Assert-Compiler (($denied.ArgumentList -join "`n") -ceq ($tokens -join "`n")) 'denied cpuset fails open before driver launch'
+    Assert-Compiler ((Invoke-CompilerChild $denied).Exit -eq 7) 'stock driver still starts after an affinity refusal'
     foreach ($setting in @($null, '', '0')) {
         $off = New-CompilerStart $fake $tokens $scratch
         if ($null -eq $setting) { [void]$off.Environment.Remove('ANTIPHON_LINUX_COMPILER_POLICY') }

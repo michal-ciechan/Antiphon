@@ -289,8 +289,11 @@ namespace Antiphon.Build
                 foreach (string row in Probe(stat, statArgs.ToArray(), "/", env).Split('\n'))
                 {
                     string[] parts = row.Trim().Split(':');
-                    if (parts[0] != uid || (Convert.ToInt32(parts[1], 8) & 18) != 0 || (statOrdinal < cached.Count && parts[2] != "1"))
+                    int fileMode = Convert.ToInt32(parts[1], 8);
+                    if (parts[0] != uid || (fileMode & 18) != 0 || (statOrdinal < cached.Count && parts[2] != "1"))
                         throw new IOException("untrusted compiler cache contents");
+                    if (statOrdinal < cached.Count && cached[statOrdinal] == Path.Combine(entry, "bincore/VBCSCompiler") && (fileMode & 64) == 0)
+                        throw new IOException("private compiler launcher is not executable");
                     statOrdinal++;
                 }
                 string manifest = Path.Combine(entry, "manifest.sha256"); NoLinks(manifest);
