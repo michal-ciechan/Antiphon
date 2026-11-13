@@ -1,3 +1,4 @@
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Shouldly;
@@ -210,7 +211,7 @@ public sealed class TestDbFixtureLifecycleTests
         lifecycle.Migrate.ShouldBe(1);
         lifecycle.Protect.ShouldBe(1);
         foreach (var result in results)
-            result.Result.ShouldBe(ControlledTestDbOperations.Shared);
+            AssertPublishedApplicationConnection(result.Result);
         var names = clones.Select(c => new NpgsqlConnectionStringBuilder(c.Result.ConnectionString).Database).ToArray();
         names.Distinct().Count().ShouldBe(2);
         await clones[0].Result.DisposeAsync();
@@ -291,7 +292,7 @@ public sealed class TestDbFixtureLifecycleTests
             TaskScheduler.Default);
         _ = Task.Delay(100).ContinueWith(_ => start.TrySetResult());
         var cs = await call.WaitAsync(Bound);
-        cs.ShouldBe(ControlledTestDbOperations.Shared);
+        AssertPublishedApplicationConnection(cs);
         ops.BootstrapContext.ShouldBeNull();
         await lifecycle.DisposeAsync();
     }
@@ -478,6 +479,7 @@ public sealed class TestDbFixtureLifecycleTests
         var lifecycle = new TestDbFixtureLifecycle(ops);
         var shared = lifecycle.ConnectionString;
         lifecycle.ClearedPools.ToArray().ShouldBe([shared]);
+        AssertPublishedApplicationConnection(shared);
         ops.ClearAll.ShouldBe(0);
         await lifecycle.DisposeAsync();
     }
@@ -539,6 +541,22 @@ public sealed class TestDbFixtureLifecycleTests
         declared.ShouldContain(LandQueueRaceWorker.Marker);
         TestWorkerModes.All.Select(mode => mode.Marker).OrderBy(marker => marker, StringComparer.Ordinal).ToArray()
             .ShouldBe(declared, "all-owned-worker-markers-registered");
+    }
+
+    private static void AssertPublishedApplicationConnection(string published)
+    {
+        var actual = new NpgsqlConnectionStringBuilder(published);
+        var raw = new NpgsqlConnectionStringBuilder(ControlledTestDbOperations.Shared);
+        (actual.Options ?? "").EndsWith(ApplicationPostgresConnection.JitOffOption, StringComparison.Ordinal)
+            .ShouldBeTrue("published application connection missing final jit=off");
+        actual.Host.ShouldBe(raw.Host);
+        actual.Port.ShouldBe(raw.Port);
+        actual.Database.ShouldBe(raw.Database);
+        actual.Username.ShouldBe(raw.Username);
+        string.Equals(actual.Password, raw.Password, StringComparison.Ordinal)
+            .ShouldBeTrue("published password field changed");
+        string.Equals(published, ControlledTestDbOperations.Shared, StringComparison.Ordinal)
+            .ShouldBeFalse("published connection still equals the raw container string");
     }
 
     private static System.Reflection.MethodInfo Sample(string name) =>
