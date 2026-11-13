@@ -516,16 +516,20 @@ whole-row costs under the budget above.
 | CP-15 | S5-windows | `tests/Antiphon.Tests -> bin-c1850-s5gw/` | windows-card-green | `/*/*/(OwnedGitCardFileCancellationTests*)\|(CardFileGitFailureAcceptanceTests*)/*` | V-4,V-6,R-3 | both classes; g82 spawning test 8/8 internal rounds, 0 failed | 12 | 12 | 12 | true |
 | CP-16 | E1 | `tests/Antiphon.Tests -> bin-c1850-e1/` | any-launch-callers | `/*/*/(GitPushUrlCacheTests*)\|(InProcessObservationPinTests*)\|(LandingGitProcessSavingTests*)\|(LandingGitBatchingTests*)\|(LandingGitProfileTests*)\|(LandingSourceOptionalLockTests*)\|(ServerImagePushCredentialTests*)\|(ServerGitProcessTests*)/*` | R-4 | all 8 named classes, 0 failed | 8 | 10 | 17 | true |
 | CP-17 | E2 | `tests/Antiphon.Tests -> bin-c1850-e2/` | any-card-callers | `/*/*/(CardFileBoardLookupTests*)\|(CardFileIgnoreAcceptanceTests*)\|(CardFileIgnoreTests*)\|(CardFilePrivacyGitTests*)\|(CardFilePrivacyRecoveryTests*)\|(CardReviewServiceIntegrationTests*)\|(CardTaskFileServiceTests*)/*` | R-3,R-5 | all 7 named classes, 0 failed | 7 | 10 | 17 | true |
-| CP-18 | E3 | `tests/Antiphon.Tests -> bin-c1850-e3/` | any-land-callers-a | `/*/*/(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandBareRepositoryCleanupTests*)\|(AgentTaskLandHalfResetTests*)\|(AgentTaskLandNestedRepositoryCleanupTests*)\|(AgentTaskLandPublicationTests*)/*` | R-4,R-5 | all 5 named classes, 0 failed | 5 | 11 | 18 | true |
-| CP-19 | E4 | `tests/Antiphon.Tests -> bin-c1850-e4/` | any-land-callers-b | `/*/*/(AgentTaskLandRegistrationSafetyTests*)\|(AgentTaskLandSourceFreshnessTests*)\|(AgentTaskLandTargetRaceTests*)\|(LandNonCodeSkipTests*)\|(LandRecoveryCheckoutTests*)\|(LandRecoveryIgnoredNestedRepositoryTests*)\|(LandRecoveryIgnoredObstructionTests*)/*` | R-5 | all 7 named classes, 0 failed | 7 | 11 | 18 | true |
+| CP-18 | E3a | `tests/Antiphon.Tests -> bin-c1850-e3a/` | any-land-callers-a-1 | `/*/*/(AgentTaskLandAdoptionConcurrencyTests*)\|(AgentTaskLandBareRepositoryCleanupTests*)\|(AgentTaskLandHalfResetTests*)\|(AgentTaskLandNestedRepositoryCleanupTests*)/*` | R-4,R-5 | all 4 named classes, 0 failed | 4 | 9 | 14 | true |
+| CP-18b | E3b | `tests/Antiphon.Tests -> bin-c1850-e3b/` | any-land-callers-a-2 | `/*/*/(AgentTaskLandPublicationTests*)/*` | R-4,R-5 | all 1 named classes, 0 failed | 1 | 2 | 4 | true |
+| CP-19 | E4a | `tests/Antiphon.Tests -> bin-c1850-e4a/` | any-land-callers-b-1 | `/*/*/(AgentTaskLandRegistrationSafetyTests*)\|(AgentTaskLandSourceFreshnessTests*)\|(AgentTaskLandTargetRaceTests*)\|(LandNonCodeSkipTests*)/*` | R-5 | all 4 named classes, 0 failed | 4 | 6 | 10 | true |
+| CP-19b | E4b | `tests/Antiphon.Tests -> bin-c1850-e4b/` | any-land-callers-b-2 | `/*/*/(LandRecoveryCheckoutTests*)\|(LandRecoveryIgnoredNestedRepositoryTests*)\|(LandRecoveryIgnoredObstructionTests*)/*` | R-5 | all 3 named classes, 0 failed | 3 | 5 | 8 | true |
 | CP-20 | E5 | `tests/Antiphon.Tests -> bin-c1850-e5/` | any-worktree-callers | `/*/*/(AgentTaskWorktreeBaseCreateTests*)\|(AgentTaskWorktreeBaseResolverTests*)\|(AgentTaskWorktreeBaseSyncDebtTests*)\|(DefaultRunnerPinTests*)\|(DelegationWorktreeTests*)\|(DispatchBaseNotificationTests*)\|(DispatchSiblingInspectionTests*)\|(StartRefAvailabilityTests*)\|(WorktreeBaseSelectionTests*)\|(WorktreeDefaultCallerTests*)\|(WorktreeRemovalAuthorityTests*)/*` | R-5 | all 11 named classes, 0 failed | 11 | 12 | 19 | true |
-| CP-21 | E6 | `tests/Antiphon.Tests -> bin-c1850-e6/` | any-git-callers | `/*/*/(AdvisoryChangePolicyTests*)\|(C1708ReflogSalvageTests*)\|(GatedCommitServiceTests*)\|(GitTreeTemplateTests*)\|(LandRefRetentionTests*)\|(LandSourceIdentityTests*)\|(LandVerificationWindowNativeTests*)\|(LandWarmArtifactsTests*)\|(LandingRegistrationFreshnessTests*)\|(LandingSourceFreshnessTests*)\|(RepositoryMaintenanceTests*)\|(TaskProgressGitTests*)/*` | R-5 | all 12 named classes, 0 failed | 12 | 12 | 19 | true |
+| CP-21 | E6a | `tests/Antiphon.Tests -> bin-c1850-e6a/` | any-git-callers-1 | `/*/*/(AdvisoryChangePolicyTests*)\|(C1708ReflogSalvageTests*)\|(GatedCommitServiceTests*)\|(GitTreeTemplateTests*)\|(LandRefRetentionTests*)\|(LandSourceIdentityTests*)\|(LandVerificationWindowNativeTests*)\|(LandWarmArtifactsTests*)/*` | R-5 | all 8 named classes, 0 failed | 8 | 8 | 13 | true |
+| CP-21b | E6b | `tests/Antiphon.Tests -> bin-c1850-e6b/` | any-git-callers-2 | `/*/*/(LandingRegistrationFreshnessTests*)\|(LandingSourceFreshnessTests*)\|(RepositoryMaintenanceTests*)\|(TaskProgressGitTests*)/*` | R-5 | all 4 named classes, 0 failed | 4 | 4 | 6 | true |
 | CP-22 | E7 | `tests/Antiphon.Tests -> bin-c1850-e7/` | any-guards | `/*/*/(RunnerAlarmCoordinatorTests*)\|(RunnerAlarmHostedServiceTests*)\|(RunnerAlarmWiringTests*)\|(ImpactedClassesSelectorTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-5 | all 15 named classes; mandatory 9-class guard union included, 0 failed | 15 | 8 | 15 | true |
 | CP-23 | E8 | `tests/Antiphon.Server.Git.Tests -> bin-c1850-e8g/` | any-git-project | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)\|(OwnedGitProcessContractTests*)/*` | V-1,R-5 | all 3 named classes, 0 failed | 3 | 2 | 3 | true |
 | CP-24 | E8 | `tests/Antiphon.GitInProcess.Tests -> bin-c1850-e8i/` | any-inprocess-project | `/*/*/(InProcessGitCommandsTests*)\|(LibGit2VsGitDifferentialTests*)\|(LibGit2VsGitWorktreeListTests*)/*` | R-5 | all 3 named classes, 0 failed | 3 | 3 | 5 | true |
 | CP-25 | E8-windows | `tests/Antiphon.Tests -> bin-c1850-e8w/` | windows-adoption | `/*/*/AgentTaskLandHalfResetWindowsTests/*` | R-4,R-5 | AgentTaskLandHalfResetWindowsTests; all listed, 0 failed | 1 | 12 | 12 | true |
 | CP-S1-2 | S1-adjacent | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-adjacent-green/` | any-git-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-5 | both impacted classes, 0 failed | 2 | 1 | 2 | true |
 | CP-S1-3 | S1-guards | `tests/Antiphon.Tests -> bin-c1850-s1-guards-final/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-4,R-5 | all 10 classes, 0 failed | 10 | 6 | 10 | true |
+| CP-S1-4 | S1-derived-adjacent | `tests/Antiphon.Tests -> bin-c1850-s1-derived-adjacent/` | any-derived-impact | `/*/*/ReleaseImpactEnvelopeTests/*` | R-5 | ReleaseImpactEnvelopeTests; all 4 methods, 0 failed | 4 | 6 | 10 | true |
 
 S1 dispatch amendment (task 9124df63): CP-S1-2 covers the actual
 `server-git-start-sites` impact selection in the small Git project and the
@@ -548,6 +552,22 @@ index and built its native-output driver prerequisite. Rerun the same exact
 ten-class filter and budgets using the fresh final output path; preserve the
 original receipt and do not attribute the timeout to a particular test without
 per-case evidence. No test assertion or timeout changes are authorized here.
+
+S1 recovery amendment (task ace1a342): CP-18/18b, CP-19/19b and
+CP-21/21b partition their original exact class unions into independent E3a/E3b,
+E4a/E4b and E6a/E6b groups, with at most four land classes per row. Their
+aggregate Linux/Windows estimates remain 11/18, 11/18 and 12/19 minutes.
+No class coverage was removed. These future integration rows remain deferred
+outside this S1 dispatch. The three original S1 rows, timeouts and assertions
+are unchanged. The current-master index regeneration built its driver first
+and produced byte-identical bytes; the separate regeneration commit records
+that outcome without changing the generated index. The actual base..tip
+selector additionally names ReleaseImpactEnvelopeTests, bound in CP-S1-4.
+Its provisional six-minute whole-row estimate includes a separate cold build
+and four script/fixture methods; use a twelve-minute execution cap, then stop
+for Debug if exceeded. The selector reports no capped-path debt or native
+Windows filters for this S1 diff. Native Windows execution remains owed by
+the orchestrator under S3 and later slices.
 
 ### Cost and completion
 
