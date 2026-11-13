@@ -79,7 +79,10 @@ function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData, [ha
         }
     }
     $start.Environment['DOTNET_ENVIRONMENT'] = 'Development'
-    foreach ($key in $Overrides.Keys) { $start.Environment[$key] = $Overrides[$key] }
+    foreach ($key in $Overrides.Keys) {
+        if ($null -eq $Overrides[$key]) { [void]$start.Environment.Remove($key) }
+        else { $start.Environment[$key] = $Overrides[$key] }
+    }
     $process = [System.Diagnostics.Process]::Start($start)
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
@@ -150,6 +153,11 @@ try {
     Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=environment reason=invalid') 'F1 malformed environment fails closed'
     $result = Invoke-Child $probeArgs $nestedRoot @{ DOTNET_ENVIRONMENT = 'Production' }
     Assert-Endpoint ($result.ExitCode -eq 0 -and $result.Stdout.Trim() -ceq 'database-endpoint host=localhost port=17280 mode=local') 'F1 Production does not load Development secrets'
+    $result = Invoke-Child $probeArgs $nestedRoot @{ DOTNET_ENVIRONMENT = $null }
+    Assert-Endpoint ($result.ExitCode -eq 0 -and $result.Stdout.Trim() -ceq 'database-endpoint host=db.example.test port=5432 mode=remote') 'F1 absent host environment follows the normal AppHost launch profile'
+    Set-Content -LiteralPath (Join-Path $flatDir 'secrets.json') -Encoding ascii -Value '{"ConnectionStrings:DefaultConnection":""}'
+    $result = Invoke-Child $probeArgs $flatRoot @{ DOTNET_ENVIRONMENT = $null }
+    Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=user-secrets reason=empty') 'F1 empty secret without a parent host environment fails closed'
 
     # ---- library: host, port and mode only ----------------------------------------------
     Assert-Endpoint (Test-Path -LiteralPath $library -PathType Leaf) 'lib scripts/lib/DatabaseEndpoint.ps1 exists'
