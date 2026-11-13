@@ -2,9 +2,9 @@
 # CARD-1836 S8a: outcome witnesses, no qualification launch or external services.
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
 . (Join-Path $PSScriptRoot 'lib/rc-forced-full.ps1')
+Set-StrictMode -Version Latest
 $script:Errors = [Collections.Generic.List[string]]::new()
 function Note([bool]$Ok, [string]$Why) { if (-not $Ok) { $script:Errors.Add($Why) } }
 $script:Now = [DateTimeOffset]'2026-11-13T12:00:00Z'
@@ -76,7 +76,7 @@ try {
                 $unknown = New-Args
                 $unknown.CurrentContract[$field] = $null
                 $unknown.BaselineContract[$field] = $null
-                Expect-Decision (Get-RcForcedFullDecision @unknown) @('contract-baseline-unknown:' + $field, 'contract-current-unknown:' + $field) ('unknown both ' + $field)
+                Expect-Decision (Get-RcForcedFullDecision @unknown) @(('contract-baseline-unknown:' + $field), ('contract-current-unknown:' + $field)) ('unknown both ' + $field)
             }
             foreach ($bad in @('', 42, @('a'), ('x' * 64))) {
                 $invalid = New-Args
