@@ -65,12 +65,30 @@ if (-not (Test-Path -LiteralPath $lib)) {
             foreach ($example in $examples) {
                 Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'tests/Antiphon.Tests/Other/Foo.cs' -Source ('namespace Antiphon.Tests.Domain; string p = "' + $example[0] + '";')) -ceq $example[1]) ('production glob: ' + $example[0])
             }
-            $multi = 'string a="server/Application/Services/Foo.cs"; string b="server/Domain/Foo.cs";'
-            Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source $multi) -ceq 'core') 'rule order lost'
+            $multi = 'namespace Antiphon.Tests.Domain; string a="server/Application/Services/Foo.cs"; string b="server/Domain/Foo.cs";'
+            Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source $multi) -ceq 'unassigned') 'conflicting rules assigned'
+            $same = 'string a="server/Domain/Foo.cs"; string b="server/Domain/Bar.cs";'
+            Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source $same) -ceq 'core') 'same boundary treated as conflict'
             Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source 'namespace Antiphon.Tests.Domain.Sub;') -ceq 'core') 'namespace fallback missing'
             Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source 'namespace Antiphon.Tests.DomainExtra;') -ceq 'unassigned') 'namespace prefix boundary lost'
             Note (@($map.edges.host).Count -eq 6 -and @($map.edges.git)[0] -ceq 'core') 'layer edges missing'
             Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source 'string p="server/Infrastructure/Agents/nested/Foo.cs";') -ceq 'unassigned') 'single star crossed directory'
+        }
+        'CaseKeyChangesIdentity' {
+            $script:held = $null
+            $threw = Refuses {
+                $script:held = New-RcBoundaryChunk -Identities @(
+                    @{ boundary = 'core'; suite = 'antiphon'; identityKey = 'ATests/A'; caseKey = 'one<' },
+                    @{ boundary = 'core'; suite = 'antiphon'; identityKey = 'ATests/A'; caseKey = "two&'" }
+                )
+            }
+            Note (-not $threw) 'distinct case keys refused'
+            if (-not $threw) {
+                Note (@($script:held.caseKeys).Count -eq 2) 'caseKey collapsed'
+                $methodOnly = Get-RcBoundaryChunkId antiphon core @('ATests/A')
+                Note ($script:held.chunkId -cne $methodOnly) 'caseKey omitted from digest'
+                Note ((@($script:held.caseKeys) -join '|') -ceq "one<|two&'") 'case key order lost'
+            }
         }
         'CanonicalEncodingKeepsSpecialCharacters' {
             # Key contains < > & '. Independently computed length-delimited SHA-256,
