@@ -30,12 +30,14 @@ $ErrorActionPreference = 'Continue'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 . (Join-Path (Join-Path $PSScriptRoot 'lib') 'DatabaseEndpoint.ps1')
-$databaseResolution = Resolve-AntiphonDatabaseEndpoint -RepoRoot $repoRoot -ConnectionString $ConnectionString
+$databaseArguments = @{ RepoRoot = $repoRoot }
+if ($PSBoundParameters.ContainsKey('ConnectionString')) { $databaseArguments.ConnectionString = $ConnectionString }
+$databaseResolution = Resolve-AntiphonDatabaseEndpoint @databaseArguments
 $databaseEndpoint = $databaseResolution.Endpoint
 
 if ($DatabaseProbeOnly) {
     if ($null -eq $databaseEndpoint) {
-        Write-Output ('database-endpoint unresolved source={0}' -f $databaseResolution.Source)
+        Write-Output ('database-endpoint unresolved source={0} reason={1}' -f $databaseResolution.Source, $databaseResolution.Reason)
         exit 1
     }
     Write-Output (Format-AntiphonDatabaseEndpoint $databaseEndpoint)
@@ -408,7 +410,7 @@ foreach ($dir in $conventionDirs) {
 
 $composeFile = $null
 if ($null -eq $databaseEndpoint) {
-    Write-Check 'database / endpoint' 'FAIL' ('no host and port from {0}' -f $databaseResolution.Source) 'Set ConnectionStrings:DefaultConnection with Host and Port in the AppHost user secret (aspire-antiphon-apphost) or Antiphon.AppHost/appsettings.json. Value not displayed.'
+    Write-Check 'database / endpoint' 'FAIL' ('no host and port from {0}; reason={1}' -f $databaseResolution.Source, $databaseResolution.Reason) 'Set ConnectionStrings:DefaultConnection with Host and Port in the effective AppHost configuration. Value not displayed.'
 } else {
     Write-Check 'database / endpoint' 'PASS' ('{0}:{1} mode={2} from {3}' -f $databaseEndpoint.Host, $databaseEndpoint.Port, $databaseEndpoint.Mode, $databaseResolution.Source)
 }

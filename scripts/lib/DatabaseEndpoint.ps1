@@ -74,7 +74,7 @@ function Read-AntiphonDefaultConnection {
     }
     if ($null -eq $json) { return $result }
     $flat = $json.PSObject.Properties['ConnectionStrings:DefaultConnection']
-    if ($null -ne $flat -and -not [string]::IsNullOrWhiteSpace([string]$flat.Value)) {
+    if ($null -ne $flat) {
         $result.Found = $true
         $result.Value = [string]$flat.Value
         return $result
@@ -82,7 +82,7 @@ function Read-AntiphonDefaultConnection {
     $section = $json.PSObject.Properties['ConnectionStrings']
     if ($null -ne $section -and $null -ne $section.Value) {
         $nested = $section.Value.PSObject.Properties['DefaultConnection']
-        if ($null -ne $nested -and -not [string]::IsNullOrWhiteSpace([string]$nested.Value)) {
+        if ($null -ne $nested) {
             $result.Found = $true
             $result.Value = [string]$nested.Value
         }
@@ -90,31 +90,57 @@ function Read-AntiphonDefaultConnection {
     return $result
 }
 
-# Resolves the effective AppHost endpoint: -ConnectionString when given, else
-# the AppHost user-secrets file when it holds DefaultConnection, else the
-# tracked Antiphon.AppHost/appsettings.json. Returns @{ Endpoint; Source }
-# where Endpoint is $null when no source yields a host and port. Does not run
-# dotnet user-secrets.
-function Resolve-AntiphonDatabaseEndpoint {
+# Private configuration value, never written to a diagnostic. AppHost uses
+# DistributedApplication.CreateBuilder(args) with the standard host providers.
+# The bootstrap command-line parameter represents the final command-line key.
+# Environment > Development secrets > environment JSON > base JSON > defaults.
+# With no host environment override the normal AppHost launch profile is Development.
+function Resolve-AntiphonDefaultConnection {
     param(
         [string]$RepoRoot,
         [string]$ConnectionString
     )
-    if (-not [string]::IsNullOrEmpty($ConnectionString)) {
-        return @{ Endpoint = (Get-AntiphonDatabaseEndpoint -ConnectionString $ConnectionString); Source = 'parameter' }
+    if ($PSBoundParameters.ContainsKey('ConnectionString')) {
+        return @{ Found = $true; Value = $ConnectionString; Source = 'parameter'; Error = $false }
     }
-    $secrets = Read-AntiphonDefaultConnection (Get-AntiphonAppHostUserSecretsPath)
-    if ($secrets.Error) {
-        return @{ Endpoint = $null; Source = 'user-secrets' }
+    # EnvironmentVariablesConfigurationProvider normalizes __ to : and maps
+    # the four connection-string prefixes. Match keys case-insensitively.
+    $variables = [Environment]::GetEnvironmentVariables()
+    foreach ($key in $variables.Keys) {
+        $normalized = ([string]$key).Replace('__', ':')
+        if ($normalized -ieq 'ConnectionStrings:DefaultConnection' -or
+            $normalized -imatch '^(CUSTOMCONNSTR_|SQLCONNSTR_|SQLAZURECONNSTR_|MYSQLCONNSTR_)DefaultConnection$') {
+            return @{ Found = $true; Value = [string]$variables[$key]; Source = 'environment'; Error = $false }
+        }
     }
-    if ($secrets.Found) {
-        return @{ Endpoint = (Get-AntiphonDatabaseEndpoint -ConnectionString $secrets.Value); Source = 'user-secrets' }
+    $environmentName = $env:DOTNET_ENVIRONMENT
+    if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = $env:ASPNETCORE_ENVIRONMENT }
+    if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = 'Development' }
+    if ($environmentName -ieq 'Development') {
+        $secrets = Read-AntiphonDefaultConnection (Get-AntiphonAppHostUserSecretsPath)
+        if ($secrets.Found -or $secrets.Error) { $secrets.Source = 'user-secrets'; return $secrets }
     }
-    $tracked = Read-AntiphonDefaultConnection ([System.IO.Path]::Combine($RepoRoot, 'Antiphon.AppHost', 'appsettings.json'))
-    if ($tracked.Found) {
-        return @{ Endpoint = (Get-AntiphonDatabaseEndpoint -ConnectionString $tracked.Value); Source = 'appsettings' }
+    foreach ($file in @("appsettings.$environmentName.json", 'appsettings.json')) {
+        $settings = Read-AntiphonDefaultConnection ([System.IO.Path]::Combine($RepoRoot, 'Antiphon.AppHost', $file))
+        if ($settings.Found -or $settings.Error) { $settings.Source = 'appsettings'; return $settings }
     }
-    return @{ Endpoint = $null; Source = 'appsettings' }
+    # There is no DefaultConnection in the host's in-memory defaults.
+    return @{ Found = $false; Value = $null; Source = 'defaults'; Error = $false }
+}
+
+function Resolve-AntiphonDatabaseEndpoint {
+    param([string]$RepoRoot, [string]$ConnectionString)
+    $value = Resolve-AntiphonDefaultConnection @PSBoundParameters
+    $reason = ''
+    $endpoint = $null
+    if ($value.Error) { $reason = 'invalid-json' }
+    elseif (-not $value.Found) { $reason = 'absent' }
+    elseif ([string]::IsNullOrWhiteSpace($value.Value)) { $reason = 'empty' }
+    else {
+        $endpoint = Get-AntiphonDatabaseEndpoint -ConnectionString $value.Value
+        if ($null -eq $endpoint) { $reason = 'invalid' }
+    }
+    return @{ Endpoint = $endpoint; Source = $value.Source; Reason = $reason }
 }
 
 # The one probe line. Host and port only.
