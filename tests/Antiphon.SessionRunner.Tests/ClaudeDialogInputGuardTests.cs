@@ -186,6 +186,86 @@ public class ClaudeDialogInputGuardTests
         blocked.InputHistoryKnown.ShouldBeTrue();
     }
 
+    // Captured runner-rendered screen of Review 87596cc5, 2026-11-13. The command
+    // scrolled the Bash heading off the 30-row terminal; the warning and choices remain.
+    [Test]
+    public async Task C566_ScrolledUnsafeDeleteDialogOnlyAcceptsNo()
+    {
+        const string screen = """
+            
+               │ S=/tmp/claude-1654/-work-worktrees-task-87596cc5/2e9a8fdb-f4aa-47d6-b0ab-fae74c5ebdfa/scratchpad; cd $S && for m
+               │ in m1 m2 m3 m4 m5 m6 m7; do rm -rf $S/$m; cp -r $S/orig $S/$m; done; C=scripts/lib/rc-historical-stream.cs
+               │ node -e '
+               │ const fs=require("fs");const S=process.argv[1];const C="scripts/lib/rc-historical-stream.cs";
+               │ function mut(m,a,b){const p=S+"/"+m+"/"+C;let s=fs.readFileSync(p,"utf8");if(!s.includes(a))throw new Error(m+"
+               │ missing");s=s.replace(a,()=>b);fs.writeFileSync(p,s);}
+               │ mut("m1","Want(\x27\"\x27); var s = capture ? new StringBuilder() : null;","Want(\x27\"\x27); capture = true;
+               │ var s = new StringBuilder();");
+               │ mut("m1","if (s.Length >= ScalarLimit / 2) throw Refuse(\"evidence-scalar\");","");
+               │ mut("m2","if (s.Length >= ScalarLimit / 2) throw Refuse(\"evidence-scalar\");","");
+               │ mut("m3","if (actual.sha256 != entry.sha256 || actual.length != entry.length) throw
+               │ Refuse(\"evidence-digest\");","");
+               │ mut("m4","if (before != after || before != Inspect(current, root, path) || length != (long)before.Size)","if
+               │ (length != (long)before.Size)");
+               │ mut("m5","private string? Reason() => stopped ||","private string? Reason() => false && stopped ||");
+               │ mut("m6","if (depth > 64) throw Refuse(\"evidence-depth\");","");
+               │ mut("m7","DtdProcessing = DtdProcessing.Prohibit","DtdProcessing = DtdProcessing.Parse");
+               │ ' $S; for m in m1 m2 m3 m4 m5 m6 m7; do echo "$m: $(diff $S/orig/$C $S/$m/$C | grep -c '^>')"; done
+               Run shell command
+            
+             │ Dangerous rm operation on possibly-empty variable path: $S/$m in `rm -rf $S/$m` (rewrite it as "${S:?}"/"${m:?}" or
+             │ use a literal path)
+            
+             Do you want to proceed?
+             ❯ 1. Yes
+               2. No
+            
+             Esc to cancel · Tab to amend
+            """;
+        await using var f = new Fixture();
+        f.Session.RenderDialogScreenForTest(screen);
+        var request = await f.RequestAsync("2");
+        (await f.Runtime.SendConditionalInputAsync(f.Id, request, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked, "ordinary input stays blocked");
+        foreach (var key in new[] { "1", "2\r", "\r", "task text" })
+        {
+            request = await f.RequestAsync(key);
+            (await f.Runtime.SendConditionalInputAsync(f.Id,
+                request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+                .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked, key);
+        }
+        f.Child.Inputs.ShouldBeEmpty();
+        request = await f.RequestAsync("2");
+        (await f.Runtime.SendConditionalInputAsync(f.Id,
+            request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written, "exact No with the heading scrolled away");
+        f.Child.Inputs.ShouldBe(["2"], "No is one byte with no Enter");
+
+        foreach (var changed in new[]
+        {
+            screen + "\n" + Clear,
+            screen.Replace("Dangerous rm operation on possibly-empty variable path:", "Approve command:"),
+            screen.Replace("❯ 1. Yes", "❯ 1. No").Replace("2. No", "2. Yes"),
+            screen.Replace("Esc to cancel · Tab to amend", "Enter to confirm"),
+            screen.Replace("│ use a literal path)", "unrelated prose"),
+        })
+        {
+            f.Session.RenderDialogScreenForTest(changed);
+            request = await f.RequestAsync("2");
+            (await f.Runtime.SendConditionalInputAsync(f.Id,
+                request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+                .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked, "changed or historical modal");
+        }
+        f.Child.Inputs.ShouldBe(["2"]);
+        await using var adopted = new Fixture(adopted: true);
+        adopted.Session.RenderDialogScreenForTest(screen);
+        request = await adopted.RequestAsync("2");
+        (await adopted.Runtime.SendConditionalInputAsync(adopted.Id,
+            request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        adopted.Child.Inputs.ShouldBeEmpty();
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));
