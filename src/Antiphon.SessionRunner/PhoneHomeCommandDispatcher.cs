@@ -40,6 +40,14 @@ public interface IPhoneHomeRuntimeSurface
     /// <summary>CARD-1677 S2. One bounded temp sweep of the registered families; runs outside the lock. Default refuses.</summary>
     Task<PhoneHomeTempSweepResponse> TempSweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1895. Eligibility under the mutation lock. Default refuses so an old surface never deletes output.</summary>
+    Task<WorkspaceOutputDropStep> CheckWorkspaceOutputsAsync(PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1895. The allow-listed delete, after the mutation lock is released.</summary>
+    Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
     Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
         Task.FromResult(RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
@@ -634,6 +642,7 @@ public sealed class PhoneHomeCommandDispatcher
                     AbsenceFrame(request, await _runtime.CertifyAbsenceAsync(ReadAbsenceRequest(request), ct))),
                 PhoneHomeOperation.WorkspaceRetentionInventory => await RetentionInventoryAsync(request, ct),
                 PhoneHomeOperation.WorkspaceRetain => await RetainAsync(request, ct),
+                PhoneHomeOperation.WorkspaceDropOutputs => await DropOutputsAsync(request, ct),
                 PhoneHomeOperation.TempSweep => await TempSweepAsync(request, ct),
                 PhoneHomeOperation.SetCapacity => await MutateAsync(request, () =>
                 {
@@ -1053,6 +1062,31 @@ public sealed class PhoneHomeCommandDispatcher
         if (step is not { Moved: true })
             return locked;
         return Result(request, await _runtime.RetainWorkspaceCompleteAsync(step, ct));
+    }
+
+    /// <summary>
+    /// CARD-1895. Recent-use and the retention checks run under the mutation lock. The output delete runs after
+    /// the lock is released so a multi-gigabyte bin cannot stall a session's Input.
+    /// </summary>
+    private async Task<PhoneHomeFrame> DropOutputsAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        if (_runtime.Capabilities().Features?.Contains(RunnerCapabilityFeatures.WorkspaceOutputDropV1, StringComparer.Ordinal) != true)
+            throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+                "Workspace output drop is not supported on this runner.", 501);
+        var body = request.Payload?.Deserialize<PhoneHomeWorkspaceOutputDropRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Workspace output drop body is required.");
+        WorkspaceOutputDropStep? step = null;
+        var locked = await MutateAsync(request, async () =>
+        {
+            var live = _runtime.List().Where(session => session.Status != "Exited").Select(session => session.SessionId);
+            if (_workspaceActivity.Covers(body.Path ?? "", TimeSpan.FromMinutes(_settings.RetentionRecentUseMinutes), live) is { } use)
+                return Result(request, new PhoneHomeWorkspaceOutputDropResponse(WorkspaceOutputDropCodes.Kept, use.Reason, Detail: use.Detail));
+            step = await _runtime.CheckWorkspaceOutputsAsync(body, ct);
+            return Result(request, step.Response ?? new PhoneHomeWorkspaceOutputDropResponse(WorkspaceOutputDropCodes.Kept));
+        });
+        if (step is not { Eligible: true })
+            return locked;
+        return Result(request, await _runtime.ApplyWorkspaceOutputsAsync(step, ct));
     }
 
     private async Task<PhoneHomeFrame> RetentionInventoryAsync(PhoneHomeFrame request, CancellationToken ct)

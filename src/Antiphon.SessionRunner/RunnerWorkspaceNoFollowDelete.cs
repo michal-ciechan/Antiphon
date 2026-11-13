@@ -188,6 +188,144 @@ internal static class RunnerWorkspaceNoFollowDelete
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
+    /// <summary>
+    /// CARD-1895. Bytes of regular files under a real directory. A symlink child is not followed and
+    /// contributes nothing; <paramref name="delete"/> unlinks that link and then the directory.
+    /// Call with <paramref name="delete"/> false first: a refusal then happens before any unlink.
+    /// </summary>
+    internal static long MeasureOrDelete(string directory, bool delete, CancellationToken ct)
+    {
+        if (IsReparse(directory))
+            throw new Refusal("symlink", directory);
+        var bytes = OperatingSystem.IsWindows()
+            ? WalkOutputWindows(directory, delete, ct, 0)
+            : WalkOutputLinux(directory, delete, ct, 0);
+        if (!delete)
+            return bytes;
+        if (OperatingSystem.IsWindows())
+            DeleteOutputRootWindows(directory);
+        else
+            DeleteOutputRootLinux(directory);
+        return bytes;
+    }
+
+    private static bool IsReparse(string path)
+    {
+        try
+        {
+            return new FileInfo(path).LinkTarget is not null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static long WalkOutputLinux(string directory, bool delete, CancellationToken ct, int depth)
+    {
+        if (depth > 64)
+            throw new Refusal("unproven_content", directory);
+        using var handle = OpenLinuxPath(directory);
+        var fd = handle.DangerousGetHandle().ToInt32();
+        long bytes = 0;
+        foreach (var child in ListChildren("/proc/self/fd/" + fd.ToString(System.Globalization.CultureInfo.InvariantCulture), ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(child);
+            if (LinuxIsLink(fd, name))
+            {
+                if (delete && unlinkat(fd, name, 0) != 0)
+                    throw Failure("unlink", name);
+                continue;
+            }
+
+            var listed = LinuxMetadata(fd, name);
+            var childPath = directory.TrimEnd('/') + "/" + name;
+            if (listed.Directory)
+            {
+                bytes += WalkOutputLinux(childPath, delete, ct, depth + 1);
+                if (delete && unlinkat(fd, name, 0x200) != 0)
+                    throw Failure("unlink", name);
+            }
+            else if (listed.Regular)
+            {
+                bytes += listed.Size;
+                if (delete && unlinkat(fd, name, 0) != 0)
+                    throw Failure("unlink", name);
+            }
+            else
+                throw new Refusal("unproven_content", childPath);
+        }
+
+        return bytes;
+    }
+
+    private static void DeleteOutputRootLinux(string directory)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        var parent = Path.GetDirectoryName(full) ?? throw new Refusal("unproven_content", directory);
+        using var handle = OpenLinuxPath(parent);
+        if (unlinkat(handle.DangerousGetHandle().ToInt32(), Path.GetFileName(full), 0x200) != 0)
+            throw Failure("unlink", full);
+    }
+
+    private static long WalkOutputWindows(string directory, bool delete, CancellationToken ct, int depth)
+    {
+        if (depth > 64)
+            throw new Refusal("unproven_content", directory);
+        long bytes = 0;
+        foreach (var child in ListChildren(directory, ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (IsReparse(child))
+            {
+                if (!delete)
+                    continue;
+                using var link = OpenNoFollow(child, deleting: true);
+                MarkDeleted(link, child);
+                continue;
+            }
+
+            using var handle = OpenNoFollow(child, deleting: delete);
+            if (!GetFileInformationByHandle(handle, out var raw))
+                throw Failure("inspect", child);
+            if ((raw.FileAttributes & 0x400) != 0)
+            {
+                if (delete)
+                    MarkDeleted(handle, child);
+                continue;
+            }
+
+            var info = WindowsMetadata(handle, child);
+            if (info.Directory)
+            {
+                handle.Dispose();
+                bytes += WalkOutputWindows(child, delete, ct, depth + 1);
+                if (delete)
+                {
+                    using var again = OpenNoFollow(child, deleting: true);
+                    MarkDeleted(again, child);
+                }
+            }
+            else if (info.Regular)
+            {
+                bytes += info.Size;
+                if (delete)
+                    MarkDeleted(handle, child);
+            }
+            else
+                throw new Refusal("unproven_content", child);
+        }
+
+        return bytes;
+    }
+
+    private static void DeleteOutputRootWindows(string directory)
+    {
+        using var handle = OpenNoFollow(directory, deleting: true);
+        MarkDeleted(handle, directory);
+    }
+
     internal static async Task DeleteOwnedAsync(string root, string identity, IReadOnlyList<Entry> entries,
         Action<string>? beforeEntry, Action<string>? afterValidation, CancellationToken ct, bool allowLinks = false)
     {

@@ -39,6 +39,9 @@ public sealed class RunnerWorktreeRetentionService
 
     /// <summary>CARD-1895. Build-output drop on a tree whole-tree retention is still holding for age.</summary>
     public const string LaneOutputDrop = "RunnerOutputDrop";
+    public const string OutputDropEventPrefix = "runner_outputs_dropped";
+    public const string OutputDropCursorPrefix = "runner-output-drop:";
+    public const string OutputDropSendCursorPrefix = "runner-output-drop-sent:";
     public const string EventPrefix = "runner_mirror_retained";
 
     // \z, never $: in .NET $ also matches just before a final newline (review d0b57b9c A-3). A name holding a
@@ -601,6 +604,7 @@ public sealed class RunnerWorktreeRetentionService
         if (inventory is not null)
             await RecordInventoryAsync(run, inventory, population, runnerId, ct);
         await SweepTempAsync(run, client, runnerId, preview: writeAll, tickStarted, ct);
+        await DropSettlingOutputsAsync(run, client, runnerId, settings, execute, forced, writeAll, tickStarted, now, population, ct);
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
@@ -742,15 +746,205 @@ public sealed class RunnerWorktreeRetentionService
             : null;
     }
 
-    /// <summary>Plan §3.2, rechecked from the row right before each send. Null means eligible.</summary>
-    private async Task<string?> ClassifyAsync(AgentTask task, string runnerId, RunnerWorktreeRetentionSettings settings, CancellationToken ct)
+    /// <summary>
+    /// CARD-1895. After whole-tree retention, drop allow-listed build output from mirrors whose only hold is the
+    /// age floor. A runner that does not advertise <c>workspaceOutputDropV1</c> adds no rows and no sends.
+    /// An old enough tree is left to whole-tree removal. The path is never cleared and <c>run.Removed</c> is unchanged.
+    /// </summary>
+    private async Task DropSettlingOutputsAsync(WorktreeResidueRun run, PhoneHomeRunnerClient client, string runnerId,
+        RunnerWorktreeRetentionSettings settings, bool execute, bool forced, bool writeAll, DateTime tickStarted, DateTime now,
+        List<AgentTask> population, CancellationToken ct)
+    {
+        var descriptor = await _runners.DescribeAsync(runnerId, ct);
+        if (descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceOutputDropV1, StringComparer.Ordinal) != true)
+            return;
+
+        var holdCursors = await LoadCursorsAsync(population.Select(t => OutputDropCursorKey(t.Id)).ToList(), ct);
+        var settling = new List<AgentTask>();
+        foreach (var task in population)
+        {
+            var dropReason = await ClassifyAsync(task, runnerId, settings, ct, ignoreSettlingAge: true);
+            if (dropReason is not null)
+            {
+                DropHeldRow(run, holdCursors, task, dropReason, runnerId, writeAll, now);
+                continue;
+            }
+
+            // Null here means whole-tree retention already owns the tree. Anything else was not the age floor.
+            if (await ClassifyAsync(task, runnerId, settings, ct) == "settling")
+                settling.Add(task);
+        }
+
+        var sendCursors = await LoadCursorsAsync(settling.Select(t => OutputDropSendCursorKey(t.Id)).ToList(), ct);
+        var ordered = new List<AgentTask>();
+        var retries = new List<(AgentTask Task, DateTime LastSent)>();
+        foreach (var task in settling)
+        {
+            var key = OutputDropSendCursorKey(task.Id);
+            var cursor = sendCursors.TryGetValue(key, out var found) ? found : null;
+            var last = cursor is null ? null : SendState.Parse(cursor, Fingerprint(task));
+            if (last is null)
+                ordered.Add(task);
+            else if (cursor!.NotBefore is { } notBefore && notBefore > now)
+                DropHeldRow(run, holdCursors, task, "kept_recheck_pending", runnerId, writeAll, now);
+            else
+                retries.Add((task, cursor.LastEvaluatedAt));
+        }
+
+        ordered.AddRange(retries.OrderBy(r => r.LastSent).Select(r => r.Task));
+        var queue = ordered.Take(settings.MaxRemovalsPerTick).ToList();
+        var sent = 0;
+        string? stopped = null;
+        for (var index = 0; index < queue.Count; index++)
+        {
+            var candidate = queue[index];
+            if (sent > 0 && settings.PauseBetweenSeconds > 0)
+                await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
+            stopped = StopReason(execute, forced, tickStarted);
+            if (stopped is not null)
+            {
+                Row(run, LaneOutputDrop, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
+                foreach (var task in queue.Skip(index))
+                    DropHeldRow(run, holdCursors, task, "queued_next_tick", runnerId, writeAll, now);
+                break;
+            }
+
+            var fresh = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == candidate.Id, ct);
+            if (fresh is null || fresh.RemoteWorktreePath != candidate.RemoteWorktreePath)
+            {
+                if (fresh is not null)
+                    DropHeldRow(run, holdCursors, fresh, "path_changed", runnerId, writeAll: true, Now());
+                continue;
+            }
+
+            var dropReason = await ClassifyAsync(fresh, runnerId, settings, ct, ignoreSettlingAge: true);
+            if (dropReason is not null)
+            {
+                DropHeldRow(run, holdCursors, fresh, dropReason, runnerId, writeAll: true, Now());
+                continue;
+            }
+
+            if (await ClassifyAsync(fresh, runnerId, settings, ct) != "settling")
+                continue;
+
+            if (execute && !await TickLockStillHeldAsync())
+            {
+                stopped = "tick_lock_lost";
+                Row(run, LaneOutputDrop, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
+                foreach (var task in queue.Skip(index))
+                    DropHeldRow(run, holdCursors, task, "queued_next_tick", runnerId, writeAll, now);
+                _logger.LogWarning(
+                    "Runner output drop {RunnerId} stopped before a destructive send: tick lock lost tick={TickId}",
+                    runnerId, TickLockKey);
+                break;
+            }
+
+            var request = new PhoneHomeWorkspaceOutputDropRequest(fresh.Id, fresh.RemoteWorktreePath!, fresh.WorktreeBranch!,
+                execute ? WorkspaceOutputDropModes.Execute : WorkspaceOutputDropModes.DryRun, Guid.NewGuid());
+            sent++;
+            PhoneHomeWorkspaceOutputDropResponse? response = null;
+            string? failure = null;
+            try
+            {
+                using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                budget.CancelAfter(TimeSpan.FromSeconds(settings.RequestTimeoutSeconds));
+                response = await client.DropOutputsAsync(request, budget.Token);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                failure = ex.Message;
+            }
+
+            await RecordDropAsync(run, fresh, request, response, failure, runnerId, sendCursors, ct);
+        }
+
+        foreach (var task in ordered.Skip(settings.MaxRemovalsPerTick))
+            DropHeldRow(run, holdCursors, task, "queued_next_tick", runnerId, writeAll, now);
+        if (stopped is not null)
+            _logger.LogWarning("Runner output drop {RunnerId} stopped after {Sent} request(s): {Reason}", runnerId, sent, stopped);
+    }
+
+    private void DropHeldRow(WorktreeResidueRun run, Dictionary<string, WorktreeResidueCandidateCursor> cursors,
+        AgentTask task, string reason, string runnerId, bool writeAll, DateTime now)
+    {
+        if (!ShouldWriteRow(cursors, OutputDropCursorKey(task.Id), reason, writeAll, now, LaneOutputDrop))
+            return;
+        Row(run, LaneOutputDrop, WorktreeResidueCandidateOutcome.Held, reason, task.Id, task.RemoteWorktreePath, task.WorktreeBranch, runnerId);
+        _logger.LogInformation("Runner output drop {RunnerId} held task {TaskId} path {Path}: {Reason}",
+            runnerId, task.Id, task.RemoteWorktreePath, reason);
+    }
+
+    private async Task RecordDropAsync(WorktreeResidueRun run, AgentTask task, PhoneHomeWorkspaceOutputDropRequest request,
+        PhoneHomeWorkspaceOutputDropResponse? response, string? failure, string runnerId,
+        Dictionary<string, WorktreeResidueCandidateCursor> sendCursors, CancellationToken ct)
+    {
+        var now = Now();
+        var verdict = response?.Verdict;
+        WorktreeResidueCandidateOutcome outcome;
+        string reason;
+        switch (verdict)
+        {
+            case WorkspaceOutputDropCodes.Dropped:
+                outcome = WorktreeResidueCandidateOutcome.Dropped;
+                reason = WorkspaceOutputDropCodes.Dropped;
+                break;
+            case WorkspaceOutputDropCodes.WouldDrop:
+                outcome = WorktreeResidueCandidateOutcome.Preview;
+                reason = WorkspaceOutputDropCodes.WouldDrop;
+                break;
+            case WorkspaceOutputDropCodes.Kept when !string.IsNullOrWhiteSpace(response!.Reason):
+                outcome = WorktreeResidueCandidateOutcome.Held;
+                reason = response.Reason!;
+                break;
+            default:
+                outcome = WorktreeResidueCandidateOutcome.Deferred;
+                reason = string.IsNullOrWhiteSpace(response?.Reason) ? "unknown" : response!.Reason!;
+                break;
+        }
+
+        var bytes = response?.Bytes ?? 0;
+        if (outcome == WorktreeResidueCandidateOutcome.Dropped && bytes > 0)
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent
+            {
+                Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning, At = now,
+                Detail = $"{OutputDropEventPrefix}: runner '{runnerId}' dropped {bytes.ToString(System.Globalization.CultureInfo.InvariantCulture)} bytes "
+                    + $"in {response!.Directories?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} directories from {request.Path}.",
+            });
+        }
+
+        RecordSend(sendCursors, task, outcome, reason, now, OutputDropSendCursorKey(task.Id));
+        var row = Row(run, LaneOutputDrop, outcome, reason, task.Id, request.Path, task.WorktreeBranch, runnerId);
+        row.DirectoryRemoved = false;
+        row.RegistrationRemoved = false;
+        row.RequestDigest = bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        row.OperationId = request.RequestId;
+        await _db.SaveChangesAsync(ct);
+        if (failure is not null || outcome == WorktreeResidueCandidateOutcome.Deferred)
+            _logger.LogWarning(
+                "Runner output drop {RunnerId} task {TaskId} path {Path} mode {Mode}: {Outcome} {Reason} bytes {Bytes} failure={Failure}",
+                runnerId, task.Id, request.Path, request.Mode, outcome, reason, bytes, failure ?? "");
+        else if (bytes > 0)
+            _logger.LogInformation(
+                "Runner output drop {RunnerId} task {TaskId} path {Path} mode {Mode}: {Outcome} {Reason} bytes {Bytes}",
+                runnerId, task.Id, request.Path, request.Mode, outcome, reason, bytes);
+    }
+
+    /// <summary>
+    /// Plan §3.2, rechecked from the row right before each send. Null means eligible.
+    /// CARD-1895: <paramref name="ignoreSettlingAge"/> skips only the <c>MinTerminalHours</c> comparison.
+    /// A null <c>CompletedAt</c> is still <c>settling</c>, and every other refusal is unchanged.
+    /// </summary>
+    private async Task<string?> ClassifyAsync(AgentTask task, string runnerId, RunnerWorktreeRetentionSettings settings,
+        CancellationToken ct, bool ignoreSettlingAge = false)
     {
         if (task.RunnerId != runnerId || task.Workspace != WorkspaceMode.Worktree)
             return "outside_scope";
         if (!Terminal.Contains(task.Status))
             return "live_owner";
         // A null CompletedAt is the age floor's refusal, not the status set's (M-8).
-        if (task.CompletedAt is not { } completed || completed > Now().AddHours(-settings.MinTerminalHours))
+        if (task.CompletedAt is not { } completed
+            || (!ignoreSettlingAge && completed > Now().AddHours(-settings.MinTerminalHours)))
             return "settling";
         var path = task.RemoteWorktreePath ?? "";
         var root = settings.WorktreeRoot.TrimEnd('/');
@@ -938,7 +1132,8 @@ public sealed class RunnerWorktreeRetentionService
     /// D-8: an unchanged Held row is not rewritten every scheduled tick, in either mode (the CARD-1446 cursor
     /// rule); the operator preview route and a send-time recheck write every row.
     /// </summary>
-    private bool ShouldWriteRow(Dictionary<string, WorktreeResidueCandidateCursor> cursors, string key, string reason, bool writeAll, DateTime now)
+    private bool ShouldWriteRow(Dictionary<string, WorktreeResidueCandidateCursor> cursors, string key, string reason, bool writeAll, DateTime now,
+        string lane = LaneMirror)
     {
         if (writeAll)
             return true;
@@ -948,7 +1143,7 @@ public sealed class RunnerWorktreeRetentionService
             _db.WorktreeResidueCandidateCursors.Add(cursor);
             cursors[key] = cursor;
         }
-        var outcomeKey = LaneMirror + "|" + nameof(WorktreeResidueCandidateOutcome.Held) + "|" + reason;
+        var outcomeKey = lane + "|" + nameof(WorktreeResidueCandidateOutcome.Held) + "|" + reason;
         var unchanged = string.Equals(cursor.LastOutcomeKey, outcomeKey, StringComparison.Ordinal);
         cursor.LastOutcomeKey = outcomeKey;
         cursor.LastEvaluatedAt = now;
@@ -971,6 +1166,10 @@ public sealed class RunnerWorktreeRetentionService
 
     internal static string SendCursorKey(Guid taskId) => SendCursorPrefix + taskId.ToString("N");
 
+    internal static string OutputDropCursorKey(Guid taskId) => OutputDropCursorPrefix + taskId.ToString("N");
+
+    internal static string OutputDropSendCursorKey(Guid taskId) => OutputDropSendCursorPrefix + taskId.ToString("N");
+
     /// <summary>
     /// D-1. The runner's answer for a task that keeps its path. A keep backs the task off for
     /// <c>KeptRecheckMinutes x 2^(repeats - 1)</c>, at most <c>KeptRecheckMaxHours</c>. A reason that differs from the
@@ -979,9 +1178,9 @@ public sealed class RunnerWorktreeRetentionService
     /// they only move the task behind the never-sent ones.
     /// </summary>
     private void RecordSend(Dictionary<string, WorktreeResidueCandidateCursor> cursors, AgentTask task,
-        WorktreeResidueCandidateOutcome outcome, string reason, DateTime now)
+        WorktreeResidueCandidateOutcome outcome, string reason, DateTime now, string? cursorKey = null)
     {
-        var key = SendCursorKey(task.Id);
+        var key = cursorKey ?? SendCursorKey(task.Id);
         if (!cursors.TryGetValue(key, out var cursor))
         {
             cursor = new WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = now };
@@ -994,7 +1193,9 @@ public sealed class RunnerWorktreeRetentionService
         var bounded = reason.Length <= 80 ? reason : reason[..80];
         SendState next;
         DateTime? notBefore = null;
-        if (outcome is WorktreeResidueCandidateOutcome.Held or WorktreeResidueCandidateOutcome.Refused)
+        // CARD-1895: a successful output drop backs off on its own cursor. Whole-tree retention never records Dropped.
+        if (outcome is WorktreeResidueCandidateOutcome.Held or WorktreeResidueCandidateOutcome.Refused
+            or WorktreeResidueCandidateOutcome.Dropped)
         {
             var kept = previous is { Kind: SendState.Kept or SendState.KeptChanged };
             if (kept && previous!.Reason != bounded && previous.Kind == SendState.Kept)
