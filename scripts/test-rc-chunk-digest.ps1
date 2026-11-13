@@ -77,6 +77,9 @@ switch ($Case) {
         $snapshot.suites[1].inputs=[object[]]@($snapshot.suites[1].inputs)[($snapshot.suites[1].inputs.Count-1)..0]
         $reordered=New-RcChunkInputManifest $snapshot server $chunk @($cases[2],$cases[1],$cases[0]) @($actual[5..0])
         Note ($reordered.digest -ceq $after.digest) 'ordinal-order-independent'
+        Note ((ConvertTo-TestSelectionCanonicalJson $reordered.inputs) -ceq (ConvertTo-TestSelectionCanonicalJson $after.inputs)) 'canonical-record-order'
+        $renewed=@($actual | ForEach-Object { $copy=$_.Clone(); $copy.sourceSha=$sha; $copy.provenanceDigest='d'*64; $copy })
+        Note ((Manifest $sha $cases $renewed).digest -ceq $after.digest) 'run-provenance-is-not-input-equivalence'
         Note (-not $after.executionEvidence -and -not $after.gateCredit) 'no-carry-authority'
         # Independent fixed encoding vector: fields are UTF-8, uint32 big endian counts/lengths.
         if (Get-Command Get-RcManifestDigest -ErrorAction SilentlyContinue) {
@@ -93,6 +96,7 @@ switch ($Case) {
         Note ($before.caseDigest -cne $after.caseDigest) 'added-case-dirty'
         Refuses { Manifest $baseline @($cases+$cases[0]) } 'duplicate-case'
         Refuses { Manifest $baseline @($cases[0],$cases[1]) } 'incomplete-method-membership'
+        Refuses { Manifest $baseline @($cases+@{suite='antiphon';className='Example.Queue';method='Extra';caseKey='singleton';stable=$true}) } 'extra-method-membership'
         Refuses { Manifest $baseline @($cases+@{suite='another';className='Example.Queue';method='Check';caseKey='row:x';stable=$true}) } 'case-suite-mismatch'
         $unstable=@($cases | ForEach-Object { $copy=$_.Clone(); if ($copy.caseKey -ceq 'row:a') { $copy.stable=$false }; $copy })
         $after=Manifest $baseline $unstable
@@ -101,6 +105,7 @@ switch ($Case) {
         Note ($after.unknown.Count -eq 6 -and (Compare-RcChunkInputManifest $after $after).dirty) 'missing-actual-receipts-stay-dirty'
         $changed=@($actual | ForEach-Object { $copy=$_.Clone(); if ($copy.kind -ceq 'immutable-images') { $copy.digest='c'*64 }; $copy })
         Note ((Manifest $baseline $cases $changed).digest -cne $before.digest) 'actual-receipt-change-bound'
+        Refuses { Manifest $baseline $cases @($actual+$actual[0]) } 'duplicate-actual-receipt'
         Put 'unknown/file.txt' 'unknown'; $after=Manifest (Commit)
         Note ($after.unknown.Count -gt 0 -and (Compare-RcChunkInputManifest $after $after).dirty) 'unowned-never-clean'
     }
