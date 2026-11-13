@@ -285,6 +285,50 @@ public class ClaudeDialogInputGuardTests
         f.Child.Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task C1875_AlignedWarningsAndOtherDialogsRemainDistinct()
+    {
+        const string warning = "│ Dangerous rm operation on possibly-empty variable path: $S/$m in `rm -rf\n"
+            + "│ $S/$m`\n";
+        const string choices = "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel · Tab to amend";
+        var aligned = "  │ printf 'command preview'\n" + warning + choices;
+        foreach (var column in new[] { 0, 2, 5 })
+        {
+            await using var f = new Fixture();
+            var indent = new string(' ', column);
+            var screen = string.Join("\n", aligned.Split('\n').Select(line => indent + line));
+            f.Session.RenderDialogScreenForTest(screen);
+            var request = await f.RequestAsync("2");
+            (await f.Runtime.SendConditionalInputAsync(f.Id,
+                request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+                .Outcome.ShouldBe(ConditionalInputOutcomes.Written, "aligned warning without heading or description");
+            f.Child.Inputs.ShouldBe(["2"], "No remains one byte without Enter");
+        }
+
+        var cases = new (string Name, string Screen)[]
+        {
+            ("trust", "Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n2. No, exit\nEnter to confirm · Esc to cancel"),
+            ("plan approval", "Ready to code?\n❯ 1. Yes, clear context and auto-accept edits\n2. Yes, and manually approve edits\n3. No, keep planning\nEsc to cancel"),
+            ("login", "Login expired · Please run /login"),
+            ("two-option Bash", "Bash command\n  │ pwd\nRun shell command\n│ Compound command contains cd\n" + choices),
+            ("three-option Bash", "Bash command\n  │ pwd\nRun shell command\n" + choices.Replace("Esc to cancel", "  3. No, and tell Claude what to do differently\nEsc to cancel")),
+            ("three-option unsafe delete", aligned.Replace("Esc to cancel", "  3. No, and tell Claude what to do differently\nEsc to cancel")),
+            ("unboxed warning", aligned.Replace("│ Dangerous", "Dangerous")),
+            ("command contains warning with description", "Bash command\n  " + warning.Replace("\n│", "\n  │") + "Run shell command\n" + choices),
+            ("warning left of question", aligned.Replace("Do you want to proceed?", "  Do you want to proceed?")),
+        };
+        foreach (var row in cases)
+        {
+            await using var f = new Fixture();
+            f.Session.RenderDialogScreenForTest(row.Screen);
+            var request = await f.RequestAsync("2");
+            (await f.Runtime.SendConditionalInputAsync(f.Id,
+                request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+                .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked, row.Name);
+            f.Child.Inputs.ShouldBeEmpty(row.Name);
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));

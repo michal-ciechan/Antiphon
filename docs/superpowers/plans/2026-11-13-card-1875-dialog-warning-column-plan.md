@@ -74,8 +74,8 @@ runners to restart after landing; Code does not activate them.
 Before CP-4, separately lease a native-output build of
 `scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj` with
 `UseAppHost=false`, because its test invokes the driver with NoBuild. Bootstrap
-Antiphon.Checkpoints through a separate build slot; run its built DLL through the
-slot wrapper and pass committed HEAD as `--expected-source-sha`. Each checkpoint
+Antiphon.Checkpoints through a separate build slot; invoke its built DLL (no implicit
+build) and pass committed HEAD as `--expected-source-sha`. Each checkpoint
 driver then takes its own slot. Run CP-1 at S1, CP-2 through CP-5 at S2, serially.
 The deliberate red CP-1 is closed by the same case in CP-2 after the fix.
 
