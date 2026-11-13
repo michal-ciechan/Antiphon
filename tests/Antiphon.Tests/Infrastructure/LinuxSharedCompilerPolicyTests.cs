@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
-using Antiphon.Build;
+using System.Reflection;
+using LinuxSharedCompilerPolicy = Antiphon.Tests.Infrastructure.LinuxPolicyCalls;
 using Shouldly;
 using TUnit.Core;
 
@@ -29,12 +30,12 @@ public sealed class LinuxSharedCompilerPolicyTests
         LinuxSharedCompilerPolicy.Enabled(false, "0").ShouldBeFalse();
         LinuxSharedCompilerPolicy.Enabled(false, "1").ShouldBeTrue();
         var env = new StringDictionary();
-        new BuildDriverEnvironment().Apply(env, true);
+        LinuxPolicyCalls.ApplyWindowsPolicy(env, true);
         env["UseSharedCompilation"].ShouldBe("false");
         env["DOTNET_gcServer"].ShouldBe("0");
         env["ANTIPHON_BUILD_MEMORY_POLICY_OPTOUT"] = "1";
         env["UseSharedCompilation"] = "caller";
-        new BuildDriverEnvironment().Apply(env, true);
+        LinuxPolicyCalls.ApplyWindowsPolicy(env, true);
         env["UseSharedCompilation"].ShouldBe("caller");
     }
 
@@ -82,7 +83,7 @@ public sealed class LinuxSharedCompilerPolicyTests
     public void Compiler_limits_do_not_leak_to_driver_environment()
     {
         var env = new StringDictionary { ["unrelated"] = "retained" };
-        new BuildDriverEnvironment().Apply(env, false);
+        LinuxPolicyCalls.ApplyWindowsPolicy(env, false);
         env.Count.ShouldBe(1);
         var child = LinuxSharedCompilerPolicy.CompilerEnvironment(3);
         child["DOTNET_PROCESSOR_COUNT"].ShouldBe("3");
@@ -96,5 +97,30 @@ public sealed class LinuxSharedCompilerPolicyTests
         foreach (var setting in new[] { null, "", "true", "0", "01" })
             LinuxSharedCompilerPolicy.Enabled(false, setting!).ShouldBeFalse();
         LinuxSharedCompilerPolicy.Enabled(false, "1").ShouldBeTrue();
+    }
+}
+
+// The shared source is linked into both consumers. Bind this pure roster to the
+// checkpoint consumer; CP-5 exercises the PowerShell compilation of the same file.
+internal static class LinuxPolicyCalls
+{
+    static Assembly Consumer => typeof(Antiphon.Checkpoints.ProcessDriver).Assembly;
+    static T Call<T>(string method, params object?[] args)
+    {
+        try { return (T)Consumer.GetType("Antiphon.Build.LinuxSharedCompilerPolicy")!.GetMethod(method)!.Invoke(null, args)!; }
+        catch (TargetInvocationException e) when (e.InnerException is not null)
+        { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw(); throw; }
+    }
+    public static bool Enabled(bool windows, string setting) => Call<bool>(nameof(Enabled), windows, setting);
+    public static bool Compiles(string exe, string[] args) => Call<bool>(nameof(Compiles), exe, args);
+    public static string SelectCpus(string allowed, int grant) => Call<string>(nameof(SelectCpus), allowed, grant);
+    public static string Identity(string sdk, string scope, string cpus) => Call<string>(nameof(Identity), sdk, scope, cpus);
+    public static string[] Arguments(string[] args, string tools, string pipe) => Call<string[]>(nameof(Arguments), args, tools, pipe);
+    public static bool CacheMatches(string expected, string actual, bool trusted) => Call<bool>(nameof(CacheMatches), expected, actual, trusted);
+    public static Dictionary<string, string> CompilerEnvironment(int count) => Call<Dictionary<string, string>>(nameof(CompilerEnvironment), count);
+    public static void ApplyWindowsPolicy(StringDictionary environment, bool windows)
+    {
+        dynamic policy = Activator.CreateInstance(Consumer.GetType("Antiphon.Build.BuildDriverEnvironment")!)!;
+        policy.Apply(environment, windows);
     }
 }
