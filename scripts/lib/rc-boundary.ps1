@@ -199,13 +199,14 @@ function Get-RcBoundaryChunkId {
     param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys, [string[]]$CaseKeys)
     if ($Suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $Boundary -cnotin @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')) { throw 'boundary-chunk: invalid suite/boundary' }
     if (-not $IdentityKeys -or $IdentityKeys.Count -eq 0) { throw 'boundary-chunk: empty membership' }
-    if ($CaseKeys -and @($CaseKeys).Count -ne @($IdentityKeys).Count) { throw 'boundary-chunk: case key count' }
+    $hasCaseKeys = $PSBoundParameters.ContainsKey('CaseKeys')
+    if ($hasCaseKeys -and @($CaseKeys).Count -ne @($IdentityKeys).Count) { throw 'boundary-chunk: case key count' }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $parsed = New-Object 'System.Collections.Generic.List[object]'
     for ($i = 0; $i -lt @($IdentityKeys).Count; $i++) {
         $key = [string]$IdentityKeys[$i]
         $caseKey = ''
-        if ($CaseKeys) { $caseKey = [string]$CaseKeys[$i] }
+        if ($hasCaseKeys) { $caseKey = [string]$CaseKeys[$i] }
         $seenKey = Get-RcBoundaryMembershipKey $Suite $key $caseKey
         if (-not $seen.Add($seenKey)) { throw 'boundary-chunk: invalid/duplicate identity' }
         $parsed.Add((ConvertTo-RcBoundaryIdentity -IdentityKey $key -CaseKey $caseKey))
