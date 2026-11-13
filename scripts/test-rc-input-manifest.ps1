@@ -49,6 +49,7 @@ Put 'server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk"><Import Project="..
 Put 'server/Application/SessionMessageQueueService.cs' 'old product'
 Put 'build/common.props' '<Project><ItemGroup><Compile Include="../linked/Shared.cs" /></ItemGroup></Project>'
 Put 'linked/Shared.cs' 'linked source'
+Put 'build/wildcard-only.txt' 'owned only by the wildcard rule'
 Put 'tests/Server/Server.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../server/Server.csproj" /></ItemGroup></Project>'
 Put 'tests/Server/SessionMessageQueueServiceTests.cs' 'unchanged test'
 Put 'tests/Runner/Runner.csproj' '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../src/Core/Core.csproj" Condition="false" /></ItemGroup></Project>'
@@ -69,11 +70,17 @@ $baseline=Commit
 switch ($Case) {
     'ProductAndHelperFanout' {
         foreach ($path in @('server/Application/SessionMessageQueueService.cs','src/Core/Queue.cs','tests/Shared/Helper.cs','linked/Shared.cs')) {
+            # Compare only this edit: earlier product edits must not dirty a missing helper owner.
+            $baseline=Git @('rev-parse','HEAD')
             Put $path ('changed '+$path); $a=Commit; $s=Select-Manifest $a
             Note ($s.changes.Count -eq 1 -and $s.changes[0].path -ceq $path) "isolated-fanout-change:$path"
             Note ($s.dirtySuites -ccontains 'server') "product-or-helper-dirty:$path"
             Note (Has $s 'server' $path) "product-or-helper-inventory:$path"
-            if ($path -ceq 'src/Core/Queue.cs' -or $path -ceq 'tests/Shared/Helper.cs') { Note ($s.dirtySuites -ccontains 'runner') "fanout:$path" }
+            if ($path -ceq 'src/Core/Queue.cs' -or $path -ceq 'tests/Shared/Helper.cs') {
+                Note ($s.dirtySuites -ccontains 'runner') "fanout:$path"
+                Note (Has $s 'runner' $path) "fanout-inventory:$path"
+            }
+            Note ($s.unresolved.Count -eq 0) "fanout-no-fallback:$path"
             Note ($s.dirtySuites -cnotcontains 'other') "proven-unrelated:$path"
         }
         Note ((Git @('rev-parse',($baseline+':tests/Server/SessionMessageQueueServiceTests.cs'))) -ceq (Git @('rev-parse',($a+':tests/Server/SessionMessageQueueServiceTests.cs')))) 'unchanged-test-shape'
@@ -81,6 +88,52 @@ switch ($Case) {
         if (@($s.snapshots).Count -eq 2) {
             Note (@((Suite $s 'server').edges | Where-Object { $_.reason -ceq 'ProjectReference' -and $_.to -ceq 'src/Core/Core.csproj' }).Count -gt 0) 'transitive-edge-reason'
         }
+
+        # No project/import reaches this input. Only build/** -> * can fan it out.
+        $baseline=Git @('rev-parse','HEAD')
+        Put 'build/wildcard-only.txt' 'changed wildcard input'; $s=Select-Manifest (Commit)
+        Note ($s.changes.Count -eq 1 -and $s.changes[0].path -ceq 'build/wildcard-only.txt') 'wildcard-isolated-change'
+        Note ($s.unresolved.Count -eq 0) 'wildcard-no-fallback'
+        foreach ($id in @('server','runner','other')) {
+            Note ($s.dirtySuites -ccontains $id) "wildcard-dirty:$id"
+            Note (Has $s $id 'build/wildcard-only.txt') "wildcard-inventory:$id"
+            foreach ($snapshot in $s.snapshots) {
+                $suite=@($snapshot.suites | Where-Object id -CEQ $id)[0]
+                Note (@($suite.edges | Where-Object to -CEQ 'build/wildcard-only.txt').Count -eq 0) "wildcard-not-project-reached:$id"
+            }
+        }
+
+        # Exercise shipped map bytes, not a lookalike rule. Known fixture closure
+        # prevents dirty-all fallback from hiding missing owners in either snapshot.
+        $sourceRoot=Split-Path -Parent $PSScriptRoot
+        $sourceSha=(Invoke-TestSelectionGit $sourceRoot @('rev-parse','HEAD')).Stdout.Trim()
+        $mapText=Get-TestSelectionBlob $sourceRoot $sourceSha 'scripts/lib/rc-input-owners.json'
+        $committedMap=ConvertFrom-Json -InputObject $mapText -AsHashtable
+        Put 'scripts/lib/rc-input-owners.json' $mapText
+        $baseline=Commit
+        Put 'docs/contract.md' 'committed-map fanout'; $s=Select-Manifest (Commit)
+        $expectedSuites=@('tests/Other/Other.csproj','tests/Runner/Runner.csproj','tests/Server/Server.csproj')
+        Note ($s.unresolved.Count -eq 0) 'committed-map-no-fallback'
+        Note (($s.dirtySuites -join ';') -ceq ($expectedSuites -join ';')) 'committed-map-all-projects-dirty'
+        $tracked=@((Git @('ls-tree','-r','--name-only',$s.candidateSha)).Split([char]10))
+        $covered=0
+        foreach ($rule in $committedMap.roots) {
+            if ($rule.consumers -cnotcontains '*') { continue }
+            $pattern=New-RcInputPattern $rule.path
+            foreach ($path in $tracked) {
+                if (-not $pattern.IsMatch($path)) { continue }
+                $covered++
+                foreach ($snapshot in $s.snapshots) {
+                    Note (($snapshot.suites.id -join ';') -ceq ($expectedSuites -join ';')) 'committed-map-suite-census'
+                    foreach ($suite in $snapshot.suites) {
+                        $record=@($suite.inputs | Where-Object path -CEQ $path)
+                        Note ($record.Count -eq 1 -and $record[0].present -and
+                            $record[0].reason.Split(';') -ccontains $rule.reason) "committed-map-owned:$($snapshot.sha):$($suite.id):$path"
+                    }
+                }
+            }
+        }
+        Note ($covered -gt 0) 'committed-map-wildcard-coverage-nonempty'
     }
     'DynamicAndUnownedAreDirty' {
         Put 'unowned/new.txt' 'unknown'; $s=Select-Manifest (Commit)
