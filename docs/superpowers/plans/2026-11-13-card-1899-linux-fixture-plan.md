@@ -82,7 +82,7 @@ resource cleanup and the explicitly named guards. No unbounded shared impact.
 | CP-1 | S1-S2 | `tests/Antiphon.Tests -> bin-c1899/` | delivery-fixture | `/*/*/OutputDistillationDeliveryTests/*` | V-1,V-3 | 80 passed, zero failed/skipped | 80 | 5 |
 | CP-2 | S1-S2 | CP-1 | isolated-batching | `/*/*/OutputDistillationDeliveryTests/Same_root_applied_notes_batch_into_one_intact_spill_file` | V-2 | 1 passed, zero failed/skipped | 1 | 2 |
 | CP-3 | S1-S2 | CP-1 | classification-impact-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)/*` | R-1,R-4 | all six classes, zero failed/skipped | 6 | 5 |
-| CP-4 | S1-S2 | CP-1 | final-contract-guards | `/*/*/(MechanicalPcContractTests)\|(TaskPlatformGuidanceTests)\|(C1729LayeringGuardTests)/*` | R-2 | all three classes, zero failed/skipped | 3 | 2 |
+| CP-4 | S1-S2 | CP-1 | final-contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-2 | all three classes, zero failed/skipped | 3 | 2 |
 | CP-5 | S1-S2 | CP-1 | impacted-apply-race | `/*/*/OutputDistillationApplyRaceTests/*` | R-4 | complete class, zero failed/skipped | 1 | 1 |
 | CP-6 | S1-S2 | CP-1 | impacted-category-guard | `/*/*/TestLaneCategoryGuardTests/*` | R-4 | complete class, zero failed/skipped | 1 | 1 |
 
