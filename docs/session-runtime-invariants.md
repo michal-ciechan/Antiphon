@@ -13,10 +13,10 @@ rendered screen cannot resolve an unknown attempt. Never send another Enter or
 retype that Sent/null-verdict row from either screen classification, including
 the rules row itself. Keep Claude and Codex's existing composer recovery paths.
 After InterruptedAttemptAge (80 seconds with production defaults), the next
-flush/watchdog pass records a durable warning requiring an orchestrator decision,
+flush/watchdog pass records a durable Error-level incident in ATTENTION requiring an orchestrator decision,
 without changing the attempt or stopping the process. Receipt/attention discovery
 continues beyond the retry window and while the session is working. A complete
-matching UserPrompt may still confirm the original attempt after that warning.
+matching UserPrompt may still confirm the original attempt after that incident.
 Input and ConditionalInput use the runtime's per-session gate, independently of
 the workspace mutation gate. Retention remains serialized with Launch/Mirror and
 keeps its live/recent-use and holder checks. Slow workspace gate owners log their

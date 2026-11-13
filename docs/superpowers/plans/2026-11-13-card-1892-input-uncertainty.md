@@ -82,15 +82,35 @@ variants wrote extra Enters; two aged clear variants retyped the body; two fresh
 variants reached the later attention assertion with no notice. Fresh TRX inspection
 confirmed each argument tuple and failure. Build/source provenance was verified, dirty=0.
 The repair retains the existing InterruptedAttemptAge deadline (80 seconds by default),
-then raises a deduplicated warning on the first subsequent flush/watchdog pass. The
+then raises a deduplicated Error-level ATTENTION incident on the first subsequent flush/watchdog pass. The
 receipt-only sweep ignores input-admission and retry-window gates; it never writes input.
+
+The six-row run 20261113-190233-548b at 24a5889ffab22344492278cf42e579fea3162fef
+passed 455/455, source-clean/build-verified, exact-source validator exit 0. Its 33m33s
+wall time triggered the caller-owned Debug request in
+docs/investigations/2026-11-13-card-1892-round2-performance-debug-request.md.
+
+Author inspection found that Warning incidents are excluded from the general ATTENTION
+reader. The test-first reader assertion (31fc7a0e9f3ce034d7e3fa3cd4385e65d9433784)
+calls real AttentionService.GetAsync against each isolated database. CP-R2 run
+20261113-193746-57dd executed all eight cases: 0 passed, 8 failures specifically at
+the missing ATTENTION item assertion, no skips or fixture/build errors. Its source
+was clean and build provenance verified. The correction raises this incident to Error
+without changing row status, attempts, delivery verdict, deadlines or process ownership.
+PC-7 includes lowering that severity back to Warning; all PC variants remain pending.
+
+Repair-only selection is CP-2 and CP-3 below (15 estimated row minutes, one shared cold
+server build). The new output root avoids reusing historical evidence. Other closed
+rows retain their green receipts at the actual 24a5889ffab22344492278cf42e579fea3162fef
+source; they are not relabeled as testing the reader correction. No whole-lane run or
+full green-selection profiling repeat is required. Native Windows remains caller-owned.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | all | tests/Antiphon.SessionRunner.Tests -> bin-c1892-final2-runner/ | runner-input-retention | `/*/*/(C1677RetentionDispatchTests*)\|(PhoneHomeCommandDispatcherTests*)\|(C1722GitTimeoutBudgetTests*)/*` | V-1,R-1,V-3 | all listed, 0 failed | 3 | 6 |
-| CP-2 | all | tests/Antiphon.Tests -> bin-c1892-final2-server/ | adjacent-integration | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)\|(RunnerTerminalSessionGenerationTests*)\|(AgentSessionCancelledTurnTests*)\|(AgentSessionInterruptedLaunchResumeTests*)/*` | V-2,R-2 | all listed, 0 failed | 8 | 12 |
+| CP-2 | all | tests/Antiphon.Tests -> bin-c1892-r2-attn/ | adjacent-integration | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)\|(RunnerTerminalSessionGenerationTests*)\|(AgentSessionCancelledTurnTests*)\|(AgentSessionInterruptedLaunchResumeTests*)/*` | V-2,R-2 | all listed, 0 failed | 8 | 12 |
 | CP-3 | all | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-3,V-4 | all listed, 0 failed | 10 | 3 |
 | CP-4 | all | CP-2 | rules-readiness-uncertainty | `/*/*/GrokRulesReadyOrderingTests/*` | V-2,R-2 | all listed, 0 failed | 5 | 1 |
 | CP-5 | all | CP-2 | launch-failure-and-uncertainty | `/*/*/AgentSessionLaunchFailureTests/*` | V-2,R-2 | all listed, 0 failed | 3 | 4 |
