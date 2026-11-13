@@ -121,8 +121,13 @@ try
             .WriteTo.Sink(Antiphon.Server.Infrastructure.Supervision.AlertingLogSink.Instance);
     }, preserveStaticLogger: false);
 
-    // Database
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    // Database. CARD-1886: application pools start with jit=off unless Postgres:DisableJit is false.
+    // Hangfire and CREATE DATABASE re-read the raw configuration string and stay on the server default.
+    var postgres = builder.Configuration.GetSection(PostgresSettings.SectionName).Get<PostgresSettings>()
+        ?? new PostgresSettings();
+    var connectionString = ApplicationPostgresConnection.ApplyPolicy(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        postgres.DisableJit);
     builder.Services.AddSingleton<SessionStateCommandMetrics>();
     builder.Services.AddSingleton<DbCommandMetrics>();
     builder.Services.AddDbContext<AppDbContext>((services, options) =>
@@ -137,6 +142,7 @@ try
             }));
 
     // Typed settings — IOptions<T> pattern (never inject IConfiguration into services)
+    builder.Services.Configure<PostgresSettings>(builder.Configuration.GetSection(PostgresSettings.SectionName));
     builder.Services.Configure<GitSettings>(builder.Configuration.GetSection("Git"));
     builder.Services.AddSingleton<IValidateOptions<GitSettings>, GitInspectionSettingsValidator>();
     builder.Services.AddOptions<GitSettings>()

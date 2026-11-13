@@ -542,8 +542,9 @@ internal sealed class TestDbFixtureLifecycle
             Interlocked.Increment(ref Start);
             await _ops.AfterStartAsync().ConfigureAwait(false);
             ContainerId = container.Id ?? ContainerId;
-            var shared = _ops.GetConnectionString(container);
-            var maintenance = DeriveMaintenance(shared);
+            var raw = _ops.GetConnectionString(container);
+            var maintenance = DeriveMaintenance(raw);
+            var shared = ApplicationPostgresConnection.SuppressJit(raw);
 
             var templateReady = false;
             if (baked)
