@@ -18,8 +18,8 @@ if (-not (Test-Path -LiteralPath $lib)) {
     switch ($Case) {
         'StableIdIgnoresOrder' {
             $id = Get-RcBoundaryChunkId -Suite antiphon -Boundary core -IdentityKeys @('ZTests/B', 'ATests/A')
-            # Independently pinned SHA-256 of compact JSON [suite,boundary,sorted keys].
-            Note ($id -ceq 'b-core-793b6fdbcbb93ce8') ('canonical id: ' + $id)
+            # Independently pinned SHA-256 of length-delimited UTF-8 membership bytes.
+            Note ($id -ceq 'b-core-eca0b76b8b1ed195') ('canonical id: ' + $id)
             Note ($id -ceq (Get-RcBoundaryChunkId antiphon core @('ATests/A','ZTests/B'))) 'packing order changed id'
             Note ($id -cne (Get-RcBoundaryChunkId scripts core @('ATests/A','ZTests/B'))) 'suite omitted'
             Note ($id -cne (Get-RcBoundaryChunkId antiphon git @('ATests/A','ZTests/B'))) 'boundary omitted'
