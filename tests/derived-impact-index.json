@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 314,
+      "classes": 315,
       "reason": "allowlist"
     },
     {
@@ -26442,7 +26442,8 @@
     {
       "path": "tests/derived-impact-index.json",
       "classes": [
-        "DerivedImpactIndexTests"
+        "DerivedImpactIndexTests",
+        "ReleaseImpactEnvelopeTests"
       ]
     },
     {
