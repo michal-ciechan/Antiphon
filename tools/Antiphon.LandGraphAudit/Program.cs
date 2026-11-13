@@ -40,6 +40,7 @@ public static class Program
     {
         // The emulation pre-check (scripts/audit-land-verification-precheck.ps1 runs it). It loads no MSBuild,
         // evaluates nothing and is not an approval: the graph script still requires the evaluation below.
+        if (args.Length > 0 && args[0] == "release-inputs") return ReleaseInputCommand.Run(args[1..]);
         if (args.Length > 0 && args[0] == "precheck") return Precheck(args);
         // The graph audit (scripts/audit-land-verification-graph.ps1 runs it): LandGraphAuditGate, with the pre-check
         // in this process and the evaluation below as a child process of this one. Dispatched before MSBuild is located;
