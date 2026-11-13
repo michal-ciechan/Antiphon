@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Npgsql;
 
 namespace Antiphon.Server.Infrastructure.Data;
 
