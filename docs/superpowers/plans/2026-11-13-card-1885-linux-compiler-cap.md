@@ -196,7 +196,7 @@ Closed ordinary Code list. Import this table with the checkpoint tool, one run p
 | CP-1 | all | `tests/Antiphon.Tests -> bin-c1885-a/` | policy-portable | `/*/*/LinuxSharedCompilerPolicyTests/*` | V-1 | all eight named methods, 0 failed/skipped | 8 | 5 | true |
 | CP-2 | all | CP-1 | wrappers-linux | `/*/*/(BuildSlotScriptTests*)\|(RunCheckpointScriptTests*)/*` | V-2, R-1, R-2 | every portable/Linux method; Windows-only skips explicitly owed | 1 | 4 | true |
 | CP-3 | all | CP-1 | receipts-portable | `/*/*/(CheckpointColdBuildTests*)\|(CheckpointReceiptSafetyTests*)\|(CheckpointTerminalReceiptTests*)\|(HostCleanupCheckpointReceiptTests*)\|(LandVerificationBuildSlotTests*)/*` | R-2 | all listed classes, 0 failed; named platform-only skips recorded | 1 | 6 | true |
-| CP-4 | all | CP-1 | guards-portable | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)/*` | R-3 | all listed classes, 0 failed; recount parameterized results at import | 1 | 3 | true |
+| CP-4 | all | CP-1 | guards-portable | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)\|(DerivedImpactIndexTests*)/*` | R-3 | all listed classes, 0 failed; recount parameterized results at import | 1 | 3 | true |
 | CP-5 | all | n/a | environment-portable | `pwsh -NoProfile -File scripts/test-build-driver-environment.ps1` | R-1 | all existing child/direct cases, 0 failed | n/a | 1 | true |
 | CP-6 | all | n/a | compiler-adapter-portable | `pwsh -NoProfile -File scripts/test-linux-shared-compiler.ps1 -Case Adapter` | V-2 | named positive and negative adapter assertions, 0 failed | n/a | 1 | true |
 | CP-7 | all | n/a | compiler-native-linux | `pwsh -NoProfile -File scripts/test-linux-shared-compiler.ps1 -Case Native` | V-3 | two server requests; one build; native affinity, no fallback, idle-exit and no-residue assertions | n/a | 1 | true |
@@ -215,3 +215,32 @@ Do not proceed by weakening assertions, raising the RSS/CPU limit, changing the 
 next: code
 handoff: Implement the compiler-only affinity launcher behind opt-in, preserve Windows policy and warm sharing, execute the closed correctness rows and bounded private-pipe solution experiment, and enable by default only after CPU, RSS, no-fallback and <=10% wall-time gates pass. Do not alter live compilers or restart services.
 artifact: docs/superpowers/plans/2026-11-13-card-1885-linux-compiler-cap.md
+
+## CARD-1885 commissioned Debug correction (17799819)
+
+The 2026-11-13 Debug brief supersedes the solution-only measurement selection for
+this bounded experiment. Use `server/Antiphon.Server.csproj`: a standard production
+project with its reference graph, less expensive than the complete solution or
+Antiphon.Tests. SessionRunner.Tests has an Exec that starts another build without
+forwarding the private compiler properties, so it cannot isolate this comparison.
+This smaller-project evidence cannot qualify default-on solution/fleet acceptance.
+
+The previous CP-1..4 invocation explicitly set `rowTimeoutMinutes: 6`; this replaced
+the imported shared-build deadline (18 minutes), despite zero admission wait. The
+compiler policy was OFF. Keep one shared isolated build for these four rows. Do not
+repeat the six-minute override. The next run uses an explicit provisional 16-minute
+execution bound, approximately twice the observed uncapped 477.858-second solution
+build, with a 30-minute hard wall cap. The timeout is not a measured p95: one
+solution sample and a censored test build are insufficient. Collect one successful
+checkpoint build and the three A/B samples, then record p95/sample limits and revise
+the estimates from those measurements. This is a CARD-1885/R5 provisional exception;
+no test assertion or acceptance threshold changes.
+
+Each performance command retains its own build-slot lease. Pass
+`-Project server/Antiphon.Server.csproj -ExperimentId debug-17799819
+-CompilerCacheRoot /tmp/card-1885-debug-17799819-cache` to every invocation. Restore
+once, then P-0A/P-0B prime, P-1A/P-1B, P-2B/P-2A, P-3A/P-3B. Record all attempts,
+evaluate the 30-minute phase cost after priming, and stop expansion if it cannot
+fit. No concurrent worktrees or production-idle witness in this authorized reduced
+inventory. Shut down only these two private pipes after collection. Preserve the
+original solution/concurrent/Windows obligations as unqualified; default stays OFF.
