@@ -55,6 +55,26 @@ The task-base range matched the `test-lane-category` glob row in tests/impacted-
 Ordinary floor 29 minutes plus authoring. Bounded named classes; no full assembly or Unit lane.
 Red rows intentionally fail before fixes, then rerun once green. No repeats after green. Final CP-4/CP-5 expand the red method rows to their full named classes; CP-2 excludes those classes, so cases are not duplicated. The runner budget roster witness remains named and unchanged.
 
+## Round 2 D-1 repair
+
+Review d552541f found later-flush duplication for composer-less agents. Eight
+C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping cases in
+SessionMessageQueueInterruptedAttemptTests pin normal/rules rows, fresh/aged attempts,
+and visible/absent submitted heads with a Waiting for response screen and zero transcript
+rows. Each also flushes beyond the discovery window, checks one durable attention note,
+and late-confirms only from a complete UserPrompt. Existing Claude Enter-only and clear
+composer recovery methods retain the composer-box regression proof.
+V-2 adds these later-flush assertions; R-2 includes unchanged composer recovery. Unknown
+composer-less attempts stay Sent with null verdict; InterruptedAttemptAge bounds the
+unattended wait to an orchestrator decision/attention note, never an automatic retype or kill.
+
+Red-first selection: 2026-11-13-card-1892-round2-red.md. Final reruns exactly CP-1 through
+CP-6 below, including the requested guard union in CP-3. Build the derived-index driver
+first, then regenerate the index in its own commit. Current-master compatibility uses
+merge-tree; the brief authorizes these rows on this task branch instead of scratch master.
+PC-6 (fresh Enter, aged retype, uncertain resend; normal and rules rows) remains pending
+method-scoped SourceLanding Mutation. Code executes no deliberate mutants.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
