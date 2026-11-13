@@ -106,7 +106,7 @@ public sealed class ReleaseImpactEnvelopeTests
     }
 
     // CARD-1866 A-1 / M7: exercise a private committed copy of the real algorithm.
-    // Text attributes can conceal changed raw bytes from status and hash-object.
+    // Text attributes can conceal changed raw bytes from filtered hash-object.
     [Test]
     [Arguments("scripts/impacted-classes.ps1", false)]
     [Arguments("scripts/lib/release-impact.ps1", false)]
@@ -126,8 +126,12 @@ public sealed class ReleaseImpactEnvelopeTests
             ? original.Replace("\n", "\r\n", StringComparison.Ordinal)
             : original + "\n# changed algorithm bytes\n");
         if (normalized)
-            (await fixture.GitAsync("status", "--porcelain")).ShouldBeNullOrWhiteSpace(
-                "the fixture must hide CRLF drift through its committed text attributes");
+        {
+            var committed = (await fixture.GitAsync("rev-parse", "HEAD:" + path)).Trim();
+            (await fixture.GitAsync("hash-object", "--", path)).Trim().ShouldBe(committed,
+                "text normalization must conceal the changed bytes from the old guard");
+            (await fixture.GitAsync("hash-object", "--no-filters", "--", path)).Trim().ShouldNotBe(committed);
+        }
         else
             (await fixture.GitAsync("status", "--porcelain")).ShouldContain(path);
 
