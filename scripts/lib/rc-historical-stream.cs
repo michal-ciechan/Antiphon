@@ -23,7 +23,7 @@ public static class HistoricalEvidence
 {
     public const long FileLimit = 4L * 1024 * 1024 * 1024;
     public const int ScalarLimit = 1024 * 1024, EntryLimit = 1_000_000;
-    private const int BufferSize = 65536, FileCountLimit = 10000;
+    private const int BufferSize = 65536, HashBufferSize = 262144, FileCountLimit = 10000;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly JsonSerializerOptions Json = new() { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private static readonly SearchValues<char> StringStops = SearchValues.Create(
@@ -177,7 +177,7 @@ public static class HistoricalEvidence
         if ((selected == null || selected.Length == 0) && !paths.SequenceEqual(Paths(sourceRoot, null))) throw Refuse("evidence-changing");
         inventory.rows = Digest(evidenceRoot, "rows.jsonl", watch);
         inventory.rows.bundlePath = "rows.jsonl";
-        inventory.maxBufferedBytes = Math.Max(inventory.maxBufferedBytes, BufferSize * 4);
+        inventory.maxBufferedBytes = Math.Max(inventory.maxBufferedBytes, HashBufferSize + BufferSize * 4);
         var inventoryPath = Path.Combine(evidenceRoot, "inventory.json");
         // This terminal inventory is written only once, after all bytes are durable.
         // An interrupted export has no terminal inventory and cannot verify.
@@ -247,7 +247,7 @@ public static class HistoricalEvidence
         catch (Exception ex) { throw new InvalidDataException("evidence-changing", ex); }
         using var output = destination == null ? null : new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        var buffer = new byte[BufferSize]; long length = 0;
+        var buffer = new byte[HashBufferSize]; long length = 0;
         for (;;)
         {
             Deadline(watch);

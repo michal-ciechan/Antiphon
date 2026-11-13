@@ -45,12 +45,14 @@ try {
             $source = New-Root 'large'
             $summary = Join-Path $source 'summary.json'
             $watch = [Diagnostics.Stopwatch]::StartNew()
-            $writer = [IO.StreamWriter]::new($summary, $false, [Text.UTF8Encoding]::new($false), 65536)
+            $writer = [IO.FileStream]::new($summary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None, 1048576, [IO.FileOptions]::SequentialScan)
             try {
-                $writer.Write('{"runId":"fixture-run","candidateSha":"0123456789012345678901234567890123456789","stdout":"')
-                $block = 'x' * 1048576
-                for ($i = 0; $i -lt 885; $i++) { $writer.Write($block) }
-                $writer.Write('","nested":[{"ignored":true}],"complete":true}')
+                [byte[]]$prefix = [Text.Encoding]::UTF8.GetBytes('{"runId":"fixture-run","candidateSha":"0123456789012345678901234567890123456789","stdout":"')
+                $writer.Write($prefix, 0, $prefix.Length)
+                [byte[]]$block = [Text.Encoding]::ASCII.GetBytes(('x' * 1048576))
+                for ($i = 0; $i -lt 885; $i++) { $writer.Write($block, 0, $block.Length) }
+                [byte[]]$suffix = [Text.Encoding]::UTF8.GetBytes('","nested":[{"ignored":true}],"complete":true}')
+                $writer.Write($suffix, 0, $suffix.Length)
             } finally { $writer.Dispose() }
             $generationSeconds = $watch.Elapsed.TotalSeconds
             $block = $null
