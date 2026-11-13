@@ -389,6 +389,12 @@ public sealed class C1895OutputDropEngineTests
         public Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceCompleteAsync(WorkspaceRetainStep step, CancellationToken ct) =>
             engine.CompleteAsync(step, ct);
 
+        public Task<WorkspaceOutputDropStep> CheckWorkspaceOutputsAsync(PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct) =>
+            engine.CheckOutputsAsync(request, ct);
+
+        public Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
+            engine.ApplyOutputsAsync(step, ct);
+
         public RunnerCapabilitiesDto Capabilities() =>
             new("InboxConhost", "inbox", "test", false,
                 Features: [RunnerCapabilityFeatures.WorkspaceRetentionV1, RunnerCapabilityFeatures.WorkspaceOutputDropV1]);

@@ -554,6 +554,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeWorkspaceRetainResponse>(frame) ?? throw Missing("workspace-retain");
     }
 
+    /// <summary>CARD-1895. Delete allow-listed build output from one finished mirror. The tree stays.</summary>
+    public async Task<PhoneHomeWorkspaceOutputDropResponse> DropOutputsAsync(
+        PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceDropOutputs, request, ct);
+        return Read<PhoneHomeWorkspaceOutputDropResponse>(frame) ?? throw Missing("workspace-output-drop");
+    }
+
     /// <summary>CARD-1677 S2. One bounded temp sweep of the runner's registered families (DryRun or Execute).</summary>
     public async Task<PhoneHomeTempSweepResponse> TempSweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct)
     {
