@@ -8,6 +8,14 @@ required to reproduce both defects before their fix. At 512d58221 they executed
 7 cases: 4 passed, 3 assertion failures, 0 skipped. Failures: ignored fixture Ready,
 unpublished parent reaching its publication refusal, fixture location outside checkout.
 The fixed selection also includes a real linked-worktree parent.
+Safety refinement at 754306353: the additional exact method
+Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof executed
+1 case and failed its exit-code assertion (expected refusal 2, actual Ready 0).
+This separately committed red witness required one additional native-default build
+(384 seconds) and 23 seconds execution. The first checkpoint attempt
+20261113-110706-6655 was stopped during its first build before any tests, to close
+that edge; it receives no green credit. The fixed parent now requires origin and
+the ordinary full publication proof; known disposable seed parents cannot substitute.
 
 ## Verification design
 
