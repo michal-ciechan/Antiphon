@@ -94,7 +94,8 @@ function Read-AntiphonDefaultConnection {
 # DistributedApplication.CreateBuilder(args) with the standard host providers.
 # The bootstrap command-line parameter represents the final command-line key.
 # Environment > Development secrets > environment JSON > base JSON > defaults.
-# With no host environment override the normal AppHost launch profile is Development.
+# HostApplicationBuilder defaults to Production. dotnet run's AppHost launch
+# profile supplies DOTNET_ENVIRONMENT=Development before this provider chain.
 function Resolve-AntiphonDefaultConnection {
     param(
         [string]$RepoRoot,
@@ -106,16 +107,17 @@ function Resolve-AntiphonDefaultConnection {
     # EnvironmentVariablesConfigurationProvider normalizes __ to : and maps
     # the four connection-string prefixes. Match keys case-insensitively.
     $variables = [Environment]::GetEnvironmentVariables()
+    $environmentValue = $null
     foreach ($key in $variables.Keys) {
         $normalized = ([string]$key).Replace('__', ':')
         if ($normalized -ieq 'ConnectionStrings:DefaultConnection' -or
             $normalized -imatch '^(CUSTOMCONNSTR_|SQLCONNSTR_|SQLAZURECONNSTR_|MYSQLCONNSTR_)DefaultConnection$') {
-            return @{ Found = $true; Value = [string]$variables[$key]; Source = 'environment'; Error = $false }
+            $environmentValue = @{ Found = $true; Value = [string]$variables[$key]; Source = 'environment'; Error = $false }
         }
     }
+    if ($null -ne $environmentValue) { return $environmentValue }
     $environmentName = $env:DOTNET_ENVIRONMENT
-    if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = $env:ASPNETCORE_ENVIRONMENT }
-    if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = 'Development' }
+    if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = 'Production' }
     if ($environmentName -ieq 'Development') {
         $secrets = Read-AntiphonDefaultConnection (Get-AntiphonAppHostUserSecretsPath)
         if ($secrets.Found -or $secrets.Error) { $secrets.Source = 'user-secrets'; return $secrets }
@@ -124,7 +126,12 @@ function Resolve-AntiphonDefaultConnection {
         $settings = Read-AntiphonDefaultConnection ([System.IO.Path]::Combine($RepoRoot, 'Antiphon.AppHost', $file))
         if ($settings.Found -or $settings.Error) { $settings.Source = 'appsettings'; return $settings }
     }
-    # There is no DefaultConnection in the host's in-memory defaults.
+    # The host's DOTNET_-prefixed environment is below the application providers.
+    foreach ($key in $variables.Keys) {
+        if (([string]$key).Replace('__', ':') -ieq 'DOTNET_ConnectionStrings:DefaultConnection') {
+            return @{ Found = $true; Value = [string]$variables[$key]; Source = 'host-defaults'; Error = $false }
+        }
+    }
     return @{ Found = $false; Value = $null; Source = 'defaults'; Error = $false }
 }
 

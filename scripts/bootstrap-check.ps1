@@ -6,10 +6,13 @@
 # Exit code = number of FAILs. WARN-only items never affect the exit code.
 #
 # CARD-1844: the database checks follow the effective AppHost endpoint
-# (-ConnectionString, else the AppHost user-secrets file, else the tracked
-# Antiphon.AppHost/appsettings.json). A loopback host on port 17280 keeps the
+# (command line, environment, Development user-secrets, environment/base JSON).
+# A loopback host on port 17280 keeps the
 # desktop container, volume and TCP checks; any other endpoint is remote and
-# only its host and port are TCP-checked. Host and port are the only parts of
+# its readiness and expected database name are verified with psql after TCP.
+# The remote check requires the PostgreSQL psql client on PATH; it fails closed
+# if unavailable. The query is read-only and bounded to five seconds.
+# Host and port are the only parts of
 # the connection string that are ever printed. -DatabaseProbeOnly prints one
 # "database-endpoint host=<host> port=<port> mode=<local|remote>" line and
 # exits before any docker call or socket.
@@ -43,6 +46,8 @@ if ($DatabaseProbeOnly) {
     Write-Output (Format-AntiphonDatabaseEndpoint $databaseEndpoint)
     exit 0
 }
+
+. (Join-Path (Join-Path $PSScriptRoot 'lib') 'RemoteDatabase.ps1')
 
 $script:FailCount = 0
 $script:WarnCount = 0
@@ -497,7 +502,12 @@ if ($null -eq $databaseEndpoint) {
 }
 } else {
     if (Test-TcpPort -HostName $databaseEndpoint.Host -Port $databaseEndpoint.Port) {
-        Write-Check 'database' 'PASS' ('TCP {0}:{1} open (remote)' -f $databaseEndpoint.Host, $databaseEndpoint.Port)
+        $remoteDatabase = Test-AntiphonRemoteDatabase @databaseArguments
+        if ($remoteDatabase.Succeeded) {
+            Write-Check 'database' 'PASS' ('PostgreSQL {0}:{1} ready; database identity verified (remote); elapsed={2}ms' -f $databaseEndpoint.Host, $databaseEndpoint.Port, $remoteDatabase.ElapsedMs)
+        } else {
+            Write-Check 'database' 'FAIL' ('PostgreSQL {0}:{1} {2} (remote); elapsed={3}ms' -f $databaseEndpoint.Host, $databaseEndpoint.Port, $remoteDatabase.Reason, $remoteDatabase.ElapsedMs) 'Check the effective AppHost database configuration, credentials, remote server readiness, and the PostgreSQL psql client on PATH. Values and client output are not displayed.'
+        }
     } else {
         Write-Check 'database' 'FAIL' ('TCP {0}:{1} closed (remote)' -f $databaseEndpoint.Host, $databaseEndpoint.Port) ("The remote database is owned by the server2 host compose (docker-compose.server2-postgres.yml, project antiphon-server2-postgres).`nOn that host check: docker compose -p antiphon-server2-postgres ps, and the tailnet path to {0}:{1}." -f $databaseEndpoint.Host, $databaseEndpoint.Port)
     }

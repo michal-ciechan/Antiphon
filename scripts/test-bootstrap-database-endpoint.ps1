@@ -148,6 +148,8 @@ try {
     Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=parameter reason=empty') 'F1 explicitly empty command line fails closed'
     $result = Invoke-Child $probeArgs $appData @{ ConnectionStrings__DefaultConnection = 'not a connection string' }
     Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=environment reason=invalid') 'F1 malformed environment fails closed'
+    $result = Invoke-Child $probeArgs $nestedRoot @{ DOTNET_ENVIRONMENT = 'Production' }
+    Assert-Endpoint ($result.ExitCode -eq 0 -and $result.Stdout.Trim() -ceq 'database-endpoint host=localhost port=17280 mode=local') 'F1 Production does not load Development secrets'
 
     # ---- library: host, port and mode only ----------------------------------------------
     Assert-Endpoint (Test-Path -LiteralPath $library -PathType Leaf) 'lib scripts/lib/DatabaseEndpoint.ps1 exists'
@@ -282,4 +284,6 @@ function Test-AntiphonRemoteDatabase { param($RepoRoot, $ConnectionString) $call
 
 Write-Host "bootstrap-database-endpoint passed=$($script:passed) failed=$($script:failed)"
 if ($script:failed -gt 0) { exit 1 }
+& $pwsh -NoProfile -File (Join-Path $SourceRoot 'scripts/test-bootstrap-remote-database.ps1') -SourceRoot $SourceRoot
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 exit 0
