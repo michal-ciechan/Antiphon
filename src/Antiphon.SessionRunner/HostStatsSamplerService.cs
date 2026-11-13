@@ -31,6 +31,12 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly Func<double?> _threadCpu;
     private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
+    private readonly object _scanState = new();
+    private int _epoch;
+    private int _disposed;
+    private int _abandoned;
+    private int _disposeOnce;
+    private static readonly TimeSpan ScanJoinBudget = TimeSpan.FromSeconds(2);
     private static int _selfPid;
     private static DateTime _selfStartedUtc;
     private static bool _selfCached;
@@ -121,31 +127,49 @@ public sealed class HostStatsSamplerService : BackgroundService
         _top.Sample(_processTable, _time, TimeSpan.FromMilliseconds(_settings.TopConsumerScanIntervalMs));
     }
 
+    public override void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposeOnce, 1) != 0)
+            return;
+        InvalidateScan();
+        base.Dispose();
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!_settings.Enabled)
             return;
 
-        var scanning = ScanLoop(stoppingToken);
-        // The cold call pays JIT. Logged ticks are the steady sample the overhead budget measures.
-        await SampleOnceAsync(stoppingToken, logTick: false);
-        await SampleOnceAsync(stoppingToken);
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_settings.IntervalMs), _time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var scanning = ScanLoop(linked.Token);
         try
         {
+            // The cold call pays JIT. Logged ticks are the steady sample the overhead budget measures.
+            await SampleOnceAsync(stoppingToken, logTick: false);
+            await SampleOnceAsync(stoppingToken);
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(_settings.IntervalMs), _time);
             while (await timer.WaitForNextTickAsync(stoppingToken))
                 await SampleOnceAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
-
-        try
+        finally
         {
-            await scanning.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
-        }
-        catch (TimeoutException)
-        {
+            InvalidateScan();
+            linked.Cancel();
+            try
+            {
+                await scanning.WaitAsync(ScanJoinBudget);
+            }
+            catch (TimeoutException)
+            {
+                AbandonScan();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogFault(ex);
+            }
         }
     }
 
@@ -155,16 +179,48 @@ public sealed class HostStatsSamplerService : BackgroundService
             return;
         await Task.Yield();
         var interval = TimeSpan.FromMilliseconds(_settings.TopConsumerScanIntervalMs);
-        while (!stoppingToken.IsCancellationRequested)
+        while (!stoppingToken.IsCancellationRequested && Volatile.Read(ref _abandoned) == 0 && Volatile.Read(ref _disposed) == 0)
         {
-            try
+            var epoch = Volatile.Read(ref _epoch);
+            IReadOnlyList<HostProcessObservation>? rows = null;
+            var truncated = false;
+            Exception? fault = null;
+            var worker = new Thread(() =>
             {
-                ScanTopConsumers();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+                try
+                {
+                    rows = _processTable.Read(HostTopConsumerLimits.ScanCap, _top.RetainPids(), stoppingToken);
+                    truncated = _processTable.LastReadTruncated;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    fault = ex;
+                }
+            })
             {
-                LogFault(ex);
+                IsBackground = true,
+                Name = "host-top-consumer-scan",
+            };
+            worker.Start();
+            while (!worker.Join(TimeSpan.FromMilliseconds(50)))
+            {
+                if (!stoppingToken.IsCancellationRequested && Volatile.Read(ref _disposed) == 0)
+                    continue;
+                if (worker.Join(ScanJoinBudget))
+                    break;
+                AbandonScan();
+                return;
             }
+
+            if (Volatile.Read(ref _abandoned) != 0)
+                return;
+            if (fault is not null)
+                LogFault(fault);
+            else if (rows is not null && ScanStillCurrent(epoch))
+                _top.Observe(rows, truncated, _time);
 
             try
             {
@@ -174,6 +230,30 @@ public sealed class HostStatsSamplerService : BackgroundService
             {
                 break;
             }
+        }
+    }
+
+    private bool ScanStillCurrent(int epoch)
+    {
+        lock (_scanState)
+            return _disposed == 0 && _abandoned == 0 && _epoch == epoch;
+    }
+
+    private void InvalidateScan()
+    {
+        lock (_scanState)
+        {
+            _disposed = 1;
+            _epoch++;
+        }
+    }
+
+    private void AbandonScan()
+    {
+        lock (_scanState)
+        {
+            _abandoned = 1;
+            _epoch++;
         }
     }
 
