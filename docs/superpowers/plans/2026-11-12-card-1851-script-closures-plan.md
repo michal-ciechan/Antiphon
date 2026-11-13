@@ -62,6 +62,14 @@ single-node cap also bounds MSBuild through the command-shell boundary. No neste
 test-time build, solution build or dependency cycle is required. This amendment
 does not replace the historical CARD-1851 outcomes or their timing evidence.
 
+CARD-1860 also supersedes the historical V-1 missing-parent expectation above:
+an absent `logs/` directory now means absent PIDs and creates nothing during Census.
+The old missing-parent argument is replaced by
+`Missing_logs_is_an_absent_pid_without_creating_the_directory`, covering both
+`-File` and `&`. Unreadable and malformed PID content still fails closed, including
+Hard/WaitOnly. Current ordinary scope and measured follow-up costs belong to the
+CARD-1860 plan/evidence; the original nightly acceptance and outcomes are retained.
+
 Code ran CP-1 at S1 for the expected red witness, then runs all five rows at S2 with
 `--expected-source-sha <committed HEAD>`. Inspect fresh TRX by class/method/arguments and
 validate receipt source/build provenance. Preserve all original CHECKPOINT lines.

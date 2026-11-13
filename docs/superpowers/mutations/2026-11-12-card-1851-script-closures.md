@@ -25,3 +25,11 @@ The tests assert setup isolation (helpers absent globally), real production fact
 HTTP shape, fetch cap and failure handling. Missing controls and additional surviving defects
 belong to Mutation discovery, including when a candidate proves noncompiling/equivalent.
 No evidence from a different source revision can bind this pack. Restart: none.
+
+CARD-1860 follow-up: this table records the historical CARD-1851 source contract.
+Missing-parent is now intentionally permissive and is covered by the separate
+missing-logs method under both entry forms; it must not be counted among the
+current swallowed-read failure arguments. The current restart candidate is
+`docs/superpowers/mutations/2026-11-12-card-1860-restart-and-driver.md`, including
+Hard/WaitOnly refusal variants. Historical outcomes and all unexecuted controls
+remain pending; the nightly closure controls are unchanged by CARD-1860.
