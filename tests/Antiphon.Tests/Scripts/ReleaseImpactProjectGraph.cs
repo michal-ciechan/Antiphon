@@ -130,14 +130,20 @@ internal static class ReleaseImpactProjectGraph
                 if (owners.TryGetValue(path, out var typeOwners)) set.UnionWith(typeOwners);
             }
         foreach (var (path, root) in scans)
+        {
+            var bindings = ReflectionBindings.Read(root);
             foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                if (!TryReflectionCall(call, out var method, out var receiver)) continue;
-                var typeLookup = method == "GetType" && receiver is not null && (receiver == "Type" || receiver.EndsWith(".Type", StringComparison.Ordinal));
-                var assemblyLookup = method == "Load" && receiver is not null && (receiver == "Assembly" || receiver.EndsWith(".Assembly", StringComparison.Ordinal));
+                if (!TryReflectionCall(call, out var method, out var receiverExpression, out var receiver)) continue;
+                var arguments = call.ArgumentList.Arguments.Count;
+                var expanded = ExpandReceiver(receiverExpression, receiver, bindings);
+                var typeLookup = method == "GetType" && receiver is not null
+                    && (receiver == "Type" || receiver.EndsWith(".Type", StringComparison.Ordinal) || expanded == "System.Type");
+                var assemblyLookup = method == "Load" && receiver is not null
+                    && (receiver == "Assembly" || receiver.EndsWith(".Assembly", StringComparison.Ordinal) || expanded == "System.Reflection.Assembly");
                 if (!typeLookup && !assemblyLookup)
                 {
-                    if (IsUnrecognisedReflection(method, receiver, call.ArgumentList.Arguments.Count))
+                    if (IsUnrecognisedReflection(method, arguments, expanded, receiverExpression is null && bindings.HasReflectiveStaticUsing))
                         unknown.Add("reflection-target-unresolved:" + path);
                     continue;
                 }
@@ -165,6 +171,7 @@ internal static class ReleaseImpactProjectGraph
                 }
                 foreach (var owner in targets) reverse[owner].UnionWith(callers);
             }
+        }
 
         var hits = relation.Edges.ToDictionary(e => e.Path, e => e.Classes.ToDictionary(
             c => new ReleaseImpactIdentity(c.Project, c.FullName), c => c.Kinds.ToHashSet(StringComparer.Ordinal)), StringComparer.Ordinal);
@@ -232,38 +239,181 @@ internal static class ReleaseImpactProjectGraph
         return new ReleaseImpactGraph(oldGraph.Schema, oldGraph.Complete && newGraph.Complete, fallback, reasons.ToArray(), universe, edges);
     }
 
-    private static bool TryReflectionCall(InvocationExpressionSyntax call, out string method, out string? receiver)
+    private static bool TryReflectionCall(InvocationExpressionSyntax call, out string method, out ExpressionSyntax? receiverExpression, out string? receiver)
     {
         switch (call.Expression)
         {
             case MemberAccessExpressionSyntax member:
                 method = member.Name.Identifier.ValueText;
-                receiver = member.Expression.ToString();
+                receiverExpression = Peel(member.Expression);
+                receiver = receiverExpression.ToString();
+                return true;
+            case MemberBindingExpressionSyntax binding:
+                method = binding.Name.Identifier.ValueText;
+                receiverExpression = call.Parent is ConditionalAccessExpressionSyntax access ? Peel(access.Expression) : null;
+                receiver = receiverExpression?.ToString();
                 return true;
             case IdentifierNameSyntax name:
                 method = name.Identifier.ValueText;
+                receiverExpression = null;
                 receiver = null;
                 return true;
             default:
                 method = "";
+                receiverExpression = null;
                 receiver = null;
                 return false;
         }
     }
 
-    // Recognised Type.GetType and Assembly.Load are bound above. Every other reflective
-    // load adds an incomplete reason. Parameterless GetType is Object.GetType(), not a name load.
-    private static bool IsUnrecognisedReflection(string method, string? receiver, int arguments)
+    // Constant Type.GetType and Assembly.Load bind above, including aliases of those types.
+    // Any other call whose receiver is a reflection/loader/native type, or whose member is a
+    // known load/invoke name, is incomplete. Parameterless GetType is Object.GetType().
+    private static bool IsUnrecognisedReflection(string method, int arguments, string? expandedReceiver, bool bareStaticReflective)
     {
-        if (method is "LoadFrom" or "LoadFile" or "GetTypes" or "GetExportedTypes"
-            or "CreateInstance" or "LoadFromAssemblyName" or "LoadFromAssemblyPath")
-            return true;
-        if (method == "GetType" && arguments > 0) return true;
-        if (method == "Load" && arguments > 0)
-            return receiver is null
-                || receiver.Contains("AppDomain", StringComparison.Ordinal)
-                || receiver.EndsWith(".CurrentDomain", StringComparison.Ordinal);
+        if (method == "GetType" && arguments == 0) return false;
+        if (bareStaticReflective || (expandedReceiver is not null && IsReflectiveType(expandedReceiver))) return true;
+        return method is "LoadFrom" or "LoadFile" or "LoadFromStream" or "LoadFromAssemblyName" or "LoadFromAssemblyPath"
+            or "GetTypes" or "GetExportedTypes" or "GetTypeFromProgID" or "GetTypeFromCLSID"
+            or "CreateInstance" or "CreateInstanceFrom" or "CreateInstanceAndUnwrap"
+            or "Invoke" or "InvokeMember" or "GetMethod" or "GetMethods" or "GetField" or "GetFields"
+            or "GetProperty" or "GetProperties" or "GetMember" or "GetMembers" or "GetConstructor"
+            or "GetConstructors" or "GetInterface" or "GetNestedType" or "GetNestedTypes"
+            or "GetDelegateForFunctionPointer"
+            || method == "GetType" && arguments > 0
+            || method == "Load" && arguments > 0;
+    }
+
+    private static string? ExpandReceiver(ExpressionSyntax? expression, string? receiver, ReflectionBindings bindings)
+    {
+        if (expression is null) return null;
+        if (expression is IdentifierNameSyntax identifier)
+        {
+            var name = identifier.Identifier.ValueText;
+            if (bindings.Aliases.TryGetValue(name, out var aliased)) return bindings.Expand(aliased);
+            if (bindings.Locals.TryGetValue(name, out var types))
+            {
+                string? first = null;
+                foreach (var type in types)
+                {
+                    var expanded = bindings.Expand(type);
+                    first ??= expanded;
+                    if (IsReflectiveType(expanded)) return expanded;
+                }
+                return first;
+            }
+            return bindings.Expand(name);
+        }
+        return bindings.Expand(receiver ?? expression.ToString());
+    }
+
+    private static ExpressionSyntax Peel(ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            if (expression is ParenthesizedExpressionSyntax paren) { expression = paren.Expression; continue; }
+            if (expression.IsKind(SyntaxKind.SuppressNullableWarningExpression) && expression is PostfixUnaryExpressionSyntax postfix)
+            { expression = postfix.Operand; continue; }
+            return expression;
+        }
+    }
+
+    private static bool IsReflectiveType(string name)
+    {
+        if (name.Length == 0) return false;
+        if (IsReflectiveQualified(name)) return true;
+        var built = "";
+        foreach (var part in name.Split('.'))
+        {
+            built = built.Length == 0 ? part : built + "." + part;
+            if (IsReflectiveQualified(built)) return true;
+        }
         return false;
+    }
+
+    private static bool IsReflectiveQualified(string name) =>
+        name is "System.Type" or "System.Activator" or "System.AppDomain" or "System.Reflection" or "System.Runtime.Loader"
+            or "System.Runtime.InteropServices.NativeLibrary"
+        || name.StartsWith("System.Type.", StringComparison.Ordinal)
+        || name.StartsWith("System.Activator.", StringComparison.Ordinal)
+        || name.StartsWith("System.AppDomain.", StringComparison.Ordinal)
+        || name.StartsWith("System.Reflection.", StringComparison.Ordinal)
+        || name.StartsWith("System.Runtime.Loader.", StringComparison.Ordinal)
+        || name.StartsWith("System.Runtime.InteropServices.NativeLibrary.", StringComparison.Ordinal);
+
+    private static string NormalizeType(string raw)
+    {
+        raw = raw.Replace(" ", "").Replace("global::", "");
+        while (raw.EndsWith('?') || raw.EndsWith("[]", StringComparison.Ordinal))
+            raw = raw.EndsWith('?') ? raw[..^1] : raw[..^2];
+        var generic = raw.IndexOf('<');
+        return generic < 0 ? raw : raw[..generic];
+    }
+
+    private sealed class ReflectionBindings
+    {
+        internal Dictionary<string, string> Aliases { get; } = new(StringComparer.Ordinal);
+        internal List<string> Namespaces { get; } = new();
+        internal List<string> StaticTypes { get; } = new();
+        internal Dictionary<string, List<string>> Locals { get; } = new(StringComparer.Ordinal);
+        internal bool HasReflectiveStaticUsing { get; private set; }
+
+        internal static ReflectionBindings Read(SyntaxNode root)
+        {
+            var bindings = new ReflectionBindings();
+            foreach (var node in root.DescendantNodes())
+            {
+                switch (node)
+                {
+                    case UsingDirectiveSyntax directive:
+                        var name = NormalizeType(directive.Name?.ToString() ?? "");
+                        if (name.Length == 0) break;
+                        if (directive.Alias is { } alias) bindings.Aliases[alias.Name.Identifier.ValueText] = name;
+                        else if (directive.StaticKeyword.RawKind != 0) bindings.StaticTypes.Add(name);
+                        else bindings.Namespaces.Add(name);
+                        break;
+                    case ParameterSyntax parameter when parameter.Type is not null:
+                        bindings.AddLocal(parameter.Identifier.ValueText, parameter.Type.ToString());
+                        break;
+                    case VariableDeclarationSyntax declaration:
+                        var typeName = declaration.Type.ToString();
+                        if (typeName == "var") break;
+                        foreach (var variable in declaration.Variables)
+                            bindings.AddLocal(variable.Identifier.ValueText, typeName);
+                        break;
+                    case ForEachStatementSyntax loop when loop.Type.ToString() != "var":
+                        bindings.AddLocal(loop.Identifier.ValueText, loop.Type.ToString());
+                        break;
+                }
+            }
+            foreach (var type in bindings.StaticTypes)
+                if (IsReflectiveType(bindings.Expand(type))) bindings.HasReflectiveStaticUsing = true;
+            return bindings;
+        }
+
+        internal string Expand(string raw)
+        {
+            raw = NormalizeType(raw);
+            if (raw.Length == 0) return raw;
+            var head = raw.Split('.')[0];
+            if (Aliases.TryGetValue(head, out var aliased)) raw = NormalizeType(aliased) + raw[head.Length..];
+            if (!raw.Contains('.'))
+            {
+                foreach (var space in Namespaces)
+                {
+                    var candidate = space + "." + raw;
+                    if (IsReflectiveType(candidate)) return candidate;
+                }
+            }
+            return raw;
+        }
+
+        private void AddLocal(string identifier, string type)
+        {
+            if (identifier.Length == 0 || type.Length == 0) return;
+            if (!Locals.TryGetValue(identifier, out var types)) Locals[identifier] = types = new();
+            types.Add(type);
+        }
     }
 
     private static bool HasExpression(string value) => value.Contains("$(", StringComparison.Ordinal)
