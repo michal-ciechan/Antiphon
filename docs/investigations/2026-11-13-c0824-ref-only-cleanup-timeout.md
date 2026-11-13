@@ -106,3 +106,31 @@ These 373/80 results bind the earlier, stricter-budget SHA above. The final cali
 The changed paths do not intersect the nightly policy or live-lane ProtectedInputs census. policyHash remains 7763a891c3bdde500976e5391b028f3667590ba1186e036abfbf7ce826857fcb and PinnedInputDigest remains 2b9353e8b21fd177508ada0e40db00cdb4d1833933f70af9adc160a8ac709324. No re-pin was necessary.
 
 At the pre-calibration repair, evidence-diff passed (2 commits, 0 violations) and merge-tree against fetched origin/master 6f5ce63cb209b856d757691c08426f6fad3dfab5 was clean (tree 4bf4c24bfb3575ffa0357b9eab530702cc689847). Final-tip checks are recorded below.
+
+## Final calibrated-source samples and remaining obligation
+
+Calibrated source: cb598ae4ddae7117b39e9fc0651dfc258d6632de. Native test-project build passed (0 errors) with UseAppHost=false and BuildProjectReferences=false; raw build log: .antiphon/debug-6130909c/calibrated-build.log. Each class invocation used identical properties, --no-build, its own build-slot lease and fresh results. No source was edited during any run.
+
+| Fresh-process run | Results | Sum of body seconds | Largest body seconds | Outer seconds | Load 1/5/15 before queue |
+|---|---|---:|---:|---:|---|
+| 1 | 8 passed, 1 failed, 0 skipped | 155.237 | 61.012 | 362.914 | 66.45/53.47/41.62 |
+
+| Method / case | n | p50 / p95 / max seconds |
+|---|---:|---|
+| Landing_and_guarded_cleanup_preserve_ref_only_custody | 1 | 17.810 / 17.810 / 17.810 |
+| Persistent_reports_survive_ref_only_cleanup(True) | 1 | 16.255 / 16.255 / 16.255 |
+| Residue_and_health_preserve_ref_only_custody | 1 | 15.600 / 15.600 / 15.600 |
+| Legacy_missing_and_dirty_checkouts_keep_their_guards | 1 | 12.655 / 12.655 / 12.655 |
+| Persistent_reports_survive_ref_only_cleanup(False) | 1 | 3.718 / 3.718 / 3.718 |
+| Retirement_consumers_skip_ref_only_without_deleting_refs | 1 | 5.477 / 5.477 / 5.477 |
+| Legacy_consumers_skip_ref_only_without_deleting_refs | 1 | 16.230 / 16.230 / 16.230 |
+| Completed_card_consumers_skip_ref_only_without_deleting_refs | 1 | 6.479 / 6.479 / 6.479 |
+| Remote_cleanup_still_uses_its_binding_and_generation | 1 | 61.012 / 61.012 / 61.012 |
+
+Final-source stress evidence: 1/10 requested class repetitions completed, 8 passed, 1 failed, 0 skipped. The 90-minute task timebox and leased build/test queueing prevent credit for 9 unexecuted repetitions. This is incomplete verification, not a green ten-run matrix. Do not approve landing from this report alone. Calibration samples remain provisional. The earlier 373/373 CP-2 and 80/80 guard results are preserved at their exact, stricter-budget SHA.
+
+Continuation: run the exact class filter 9 more times, each through its own build-slot lease, without changing source; retain fresh TRX and phase/load evidence per run. On this same worktree the ignored helper can resume with: node .antiphon/debug-6130909c/repeat.cjs class 9 2. It gates each invocation separately. On a fresh worktree, first build normally through build-slot with native output, then run dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/C0824RefOnlyCleanupTests/*' --report-trx with a fresh results directory for each invocation and matching build/run properties. The final run also timed out in unchanged Remote_cleanup_still_uses_its_binding_and_generation at 61.012 seconds. All seven split desktop cases and the existing legacy-dirty guard passed. Remote failure attribution is unresolved: reproduce that exact method at unchanged base 3457d890c9723150785a37fa5745e0cf8a8d81b0 before calling it inherited, then debug its phone-home/replay phases under load. Do not merely retry the nine omitted runs or raise its 60-second deadline. After resolution, commission valid whole-class stress qualification and Grok ordinary Review.
+
+Fixture hygiene: .antiphon/test-output/c1017 is empty after all completed runs. After the final remote-test timeout, the exact literal absolute path /work/worktrees/task-6130909c/.antiphon/test-output/c1017/7df6b03a73ab48f5b381d5bf8da6cebc was recursively removed after the host exited. Its fixture-owner.txt matched task 70241dfc-b72f-42f4-82ea-9196b242352b and the run log named that exact root. No wildcard, variable-built deletion, or git clean was used. No live Windows run, services, sessions, volumes, or production ports were modified. All locally inherited commands and test/build children were awaited. Generated logs, traces, JSON and TRX remain ignored; essential counts and source provenance are committed in this report.
+
+Final status: the desktop-family candidate repair passed at high load, but whole-class verification is blocked by an unresolved remote-test timeout and incomplete stress collection at the commissioned timebox. No green/full verdict is claimed. Standing Debug authority was used without an approval pause.
