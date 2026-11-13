@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 317,
+      "classes": 318,
       "reason": "allowlist"
     },
     {
@@ -17563,8 +17563,21 @@
       ]
     },
     {
+      "path": "src/Antiphon.Server.Git/LinuxOwnedGitMembers.cs",
+      "classes": [
+        "LinuxOwnedGitProcessTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.Server.Git/LinuxOwnedGitProcess.cs",
+      "classes": [
+        "LinuxOwnedGitProcessTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.Server.Git/OwnedGitProcess.cs",
       "classes": [
+        "LinuxOwnedGitProcessTests",
         "OwnedGitProcessContractTests"
       ]
     },
@@ -25295,6 +25308,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/OwnedProcessContainmentFixture.cs",
+      "classes": [
+        "LinuxOwnedGitProcessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/OwnedPtyFixtureCleanup.cs",
       "classes": [
         "OwnedPtyFixtureCleanupTests",
@@ -26430,6 +26449,7 @@
         "CheckpointShapeConflictTests",
         "CheckpointTrackedBaselineTests",
         "LandingRemovalPolicyControlTests",
+        "LinuxOwnedGitProcessTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",

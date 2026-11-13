@@ -133,8 +133,14 @@ public sealed class LinuxOwnedGitProcessTests
         if (fault == "environment") io.EnvironmentRead = _ => throw new UnauthorizedAccessException();
         if (fault == "truncated") io.EnvironmentBytes = new byte[LinuxOwnedGitMembers.MaxEnvironmentBytes + 1];
         if (fault == "unterminated") io.EnvironmentBytes = Encoding.UTF8.GetBytes("ANTIPHON_REPOSITORY_CHILD=mine");
-        if (fault == "entries") io.Entries = Enumerable.Range(100, LinuxOwnedGitMembers.MaxEntries + 1).Select(x => x.ToString());
-        if (fault == "members") io.Entries = Enumerable.Range(100, LinuxOwnedGitMembers.MaxMembers + 1).Select(x => x.ToString());
+        if (fault == "entries")
+        {
+            io.Entries = Enumerable.Range(100, LinuxOwnedGitMembers.MaxEntries + 2)
+                .Where(x => x != Environment.ProcessId).Take(LinuxOwnedGitMembers.MaxEntries + 1).Select(x => x.ToString());
+            io.EnvironmentBytes = [];
+        }
+        if (fault == "members") io.Entries = Enumerable.Range(100, LinuxOwnedGitMembers.MaxMembers + 2)
+            .Where(x => x != Environment.ProcessId).Take(LinuxOwnedGitMembers.MaxMembers + 1).Select(x => x.ToString());
         if (fault == "deadline") io.EnvironmentRead = _ => { clock.Advance(); return io.EnvironmentBytes; };
         using var members = Census(io);
         var result = await members.ProbeAsync(null, new(clock, TimeSpan.FromSeconds(1)), default);

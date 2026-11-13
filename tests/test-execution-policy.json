@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a1d534f78407944871f438cc0d0d008d6aa0b107db645ee1396796bfa504e99c",
+  $114a1abb7129fa8c20142424b181f2d05fab30fa148ae6a300e4c2067f913d49a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1482,6 +1482,18 @@
           "platform": "windows",
           "reason": "Linux-only by construction: POSIX pipe-holder/process stand-ins and mode-bit status witnesses; native Windows landing acceptance remains required.",
           "owner": "CARD-0448"
+        },
+        {
+          "suite": "antiphon",
+          "class": "LinuxOwnedGitProcessTests",
+          "methods": [
+            "Disposal_closes_all_used_streams",
+            "Termination_kills_reparented_member_before_rescue",
+            "A_child_born_during_signaling_is_joined_by_a_later_pass"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: native managed pipes, setsid orphan and late-fork containment; Windows transport is owed by S3.",
+          "owner": "CARD-1850"
         },
         {
           "suite": "antiphon",
