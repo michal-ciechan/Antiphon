@@ -9,6 +9,10 @@ public readonly record struct HostProcessSample(string Name, string? SessionId, 
     public bool WorkingSetKnown { get; init; } = true;
 }
 
+/// <summary>CARD-1884. One ranked process. <paramref name="CpuCores"/> is null on the first sighting.</summary>
+public readonly record struct HostTopConsumerSample(
+    int Pid, long StartTicks, string Name, string Role, double? CpuCores, long? RssBytes);
+
 /// <summary>
 /// CARD-0718 D-1. One host reading. Null metrics are absent (the first CPU sample, load on Windows),
 /// never a zero standing in for "unknown".
@@ -28,6 +32,7 @@ public readonly record struct HostSample(
     int? ProcessCount,
     IReadOnlyList<HostProcessSample> Processes)
 {
+    public IReadOnlyList<HostTopConsumerSample> TopConsumers { get; init; } = [];
     public string? CpuUnknownReason { get; init; }
     public double? IoWaitPercent { get; init; }
     public double? EffectiveCoreLimit { get; init; }

@@ -7,6 +7,13 @@ public sealed record HostLoadSwap(long? TotalBytes, long? FreeBytes, long? UsedB
 public sealed record HostLoadVolume(string Path, long? FreeBytes, long? TotalBytes);
 public sealed record HostLoadProcess(string Name, Guid? SessionId, double? CpuPercent, long? WorkingSetBytes);
 
+/// <summary>
+/// CARD-1884. One process outside the session list, ranked by CPU delta. <paramref name="Name"/> is an
+/// executable basename. <paramref name="CpuCores"/> is null until a second sample can form a delta.
+/// </summary>
+public sealed record HostLoadTopConsumer(
+    int Pid, long StartTicks, string Name, string Role, double? CpuCores, long? RssBytes);
+
 /// <summary>Observation only. This object never acquires, renews, releases or changes admission.</summary>
 public sealed record HostAdmissionSnapshot(
     string? Id, string? PhysicalHostKey, long? Revision, DateTimeOffset? ObservedAt,
@@ -42,6 +49,7 @@ public sealed record HostLoadSample
     public IReadOnlyList<HostLoadVolume> Volumes { get; init; } = [];
     public int? ProcessCount { get; init; }
     public IReadOnlyList<HostLoadProcess> Processes { get; init; } = [];
+    public IReadOnlyList<HostLoadTopConsumer> TopConsumers { get; init; } = [];
     public IReadOnlyDictionary<string, string> UnknownReasons { get; init; } = new Dictionary<string, string>();
     public HostAdmissionSnapshot Authority { get; init; } = HostAdmissionSnapshot.Unknown();
 }

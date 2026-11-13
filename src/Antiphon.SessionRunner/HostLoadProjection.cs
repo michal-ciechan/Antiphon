@@ -53,7 +53,9 @@ public static class HostLoadProjection
             Volumes = read.Disks.Select(d => new HostLoadVolume(d.Path,
                 Bytes("volumes.freeBytes", d.FreeBytes), Bytes("volumes.totalBytes", d.TotalBytes))).ToArray(),
             ProcessCount = read.ProcessCount is >= 0 ? read.ProcessCount : null,
-            Processes = processes, UnknownReasons = reasons, Authority = authority,
+            Processes = processes, TopConsumers = Top(read), UnknownReasons = reasons, Authority = authority,
         };
     }
+
+    private static HostLoadTopConsumer[] Top(HostSample read) => [];
 }
