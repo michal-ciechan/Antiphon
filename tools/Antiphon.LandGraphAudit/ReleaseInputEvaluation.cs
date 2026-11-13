@@ -80,8 +80,25 @@ internal static class ReleaseInputEvaluation
                 var items = project.Items.Where(item => kinds.Contains(item.ItemType)).Select(item =>
                 {
                     var full = item.GetMetadataValue("FullPath");
-                    var path = ReleaseInputCommand.Relative(repo, full);
-                    var hash = Bound(full);
+                    var local = Path.GetRelativePath(repo, full).Replace('\\', '/');
+                    string path;
+                    string hash;
+                    if (local != ".." && !local.StartsWith("../", StringComparison.Ordinal) && !Path.IsPathRooted(local))
+                    {
+                        path = local;
+                        hash = Bound(full);
+                    }
+                    else
+                    {
+                        // The SDK supplies its own analyzer assemblies as evaluated inputs.
+                        // Bind those bytes to SDK identity, never pretend they are Git inputs.
+                        var sdkRelative = Path.GetRelativePath(sdk, full).Replace('\\', '/');
+                        if (sdkRelative == ".." || sdkRelative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(sdkRelative))
+                            throw new InvalidDataException("unbound-external-item:" + item.ItemType);
+                        path = "sdk:" + sdkRelative;
+                        hash = ReleaseInputCommand.HashFile(full);
+                        sdkInputs[full] = hash;
+                    }
                     if (item.ItemType == "ProjectReference" && new[] { "SetTargetFramework", "SetConfiguration",
                         "SetPlatform", "AdditionalProperties", "GlobalPropertiesToRemove" }.Any(name => item.GetMetadataValue(name).Length > 0))
                         unknown.Add("reference-properties-uncomposed:" + relative);
