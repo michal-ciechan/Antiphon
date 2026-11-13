@@ -12,7 +12,12 @@ Provisional performance: four tiny Git fixtures, no DB/host/browser. Each child 
 
 ### Checkpoints
 
+Committed-range impact selects spawn-limit-rosters and test-lane-category. CP-90 covers the Antiphon.Tests classes; CP-91/92 add the two other projects' identically named spawn census classes. CP-93 checks derived-index consistency after the new rostered class/harness. No other impact rows match the red committed range. The checkpoint-tool bootstrap is an unlisted gated native-output build required because this worktree has no tool binary.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 4 named methods, 0 failed/skipped | 4 | 8 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s3b-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
+| CP-91 | S3b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3b-runner/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
+| CP-92 | S3b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3b-pty/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
+| CP-93 | all | `CP-90` | index-consistency | `/*/*/DerivedImpactIndexTests/*` | derived index consistency | all methods, 0 failed/skipped | 1 | 2 |
