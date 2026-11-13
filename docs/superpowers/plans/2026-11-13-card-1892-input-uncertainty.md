@@ -61,7 +61,7 @@ Review d552541f found later-flush duplication for composer-less agents. Eight
 C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping cases in
 SessionMessageQueueInterruptedAttemptTests pin normal/rules rows, fresh/aged attempts,
 and visible/absent submitted heads with a Waiting for response screen and zero transcript
-rows. Each also flushes beyond the discovery window, checks one durable attention note,
+rows. Each also sweeps beyond the discovery window, checks the attention deadline and one durable note,
 and late-confirms only from a complete UserPrompt. Existing Claude Enter-only and clear
 composer recovery methods retain the composer-box regression proof.
 V-2 adds these later-flush assertions; R-2 includes unchanged composer recovery. Unknown
@@ -72,8 +72,18 @@ Red-first selection: 2026-11-13-card-1892-round2-red.md. Final reruns exactly CP
 CP-6 below, including the requested guard union in CP-3. Build the derived-index driver
 first, then regenerate the index in its own commit. Current-master compatibility uses
 merge-tree; the brief authorizes these rows on this task branch instead of scratch master.
-PC-6 (fresh Enter, aged retype, uncertain resend; normal and rules rows) remains pending
+PC-6 (fresh Enter, aged retype, uncertain resend; normal and rules rows) and PC-7
+(missing/repeated attention and missing out-of-window discovery) remain pending
 method-scoped SourceLanding Mutation. Code executes no deliberate mutants.
+
+Red-first run 20261113-184743-e73f at 687c55b4541a274c475df2512bfce85f24abf567
+executed all eight cases: 0 passed, 8 assertion failures, no skips. Four visible-head
+variants wrote extra Enters; two aged clear variants retyped the body; two fresh clear
+variants reached the later attention assertion with no notice. Fresh TRX inspection
+confirmed each argument tuple and failure. Build/source provenance was verified, dirty=0.
+The repair retains the existing InterruptedAttemptAge deadline (80 seconds by default),
+then raises a deduplicated warning on the first subsequent flush/watchdog pass. The
+receipt-only sweep ignores input-admission and retry-window gates; it never writes input.
 
 ### Checkpoints
 

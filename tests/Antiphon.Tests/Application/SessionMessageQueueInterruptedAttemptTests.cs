@@ -61,13 +61,17 @@ public class SessionMessageQueueInterruptedAttemptTests
 
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
         await AssertUnknownAsync();
+        await using (var deadline = h.CreateObserverContext())
+            (await deadline.AgentIncidents.CountAsync(i => i.SessionId == h.SessionId
+                && i.FailureReason == "input-delivery-unknown")).ShouldBe(aged ? 1 : 0);
 
         // The same live TUI later scrolls the head away, beyond even the discovery window.
         await using (var age = h.CreateObserverContext())
             await age.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
                 .SetProperty(m => m.LastDeliveryStartedAt, h.Now - TimeSpan.FromMinutes(90)));
         h.Adapter.RenderedScreenOverride = "Waiting for response";
-        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        await AssertUnknownAsync();
         await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
         await AssertUnknownAsync();
         await using (var attention = h.CreateObserverContext())

@@ -8,6 +8,15 @@ queue attempt retains its generation, transcript baseline and clock with no
 delivery verdict; transcript/composer reconciliation owns confirmation or retry.
 The rules deadline cannot convert that unresolved attempt into failed-start
 cleanup. Confirmed spawn, readiness and provider failures retain their cleanup.
+For agents without a composer reader, submitted text in scrollback and a clear
+rendered screen cannot resolve an unknown attempt. Never send another Enter or
+retype that Sent/null-verdict row from either screen classification, including
+the rules row itself. Keep Claude and Codex's existing composer recovery paths.
+After InterruptedAttemptAge (80 seconds with production defaults), the next
+flush/watchdog pass records a durable warning requiring an orchestrator decision,
+without changing the attempt or stopping the process. Receipt/attention discovery
+continues beyond the retry window and while the session is working. A complete
+matching UserPrompt may still confirm the original attempt after that warning.
 Input and ConditionalInput use the runtime's per-session gate, independently of
 the workspace mutation gate. Retention remains serialized with Launch/Mirror and
 keeps its live/recent-use and holder checks. Slow workspace gate owners log their

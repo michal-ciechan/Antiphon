@@ -1882,6 +1882,32 @@ public sealed partial class SessionMessageQueueService
     /// </summary>
     public async Task<int> FlushStrandedQueuesAsync(CancellationToken ct)
     {
+        // CARD-1892: receipt/attention work must outlive the retry discovery window
+        // and must not depend on an idle screen, a rules ACK, or an always-on owner.
+        List<Guid> unknownSessions;
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+            unknownSessions = await ComposerlessUnknownAttempts(
+                    scope.ServiceProvider.GetRequiredService<AppDbContext>())
+                .Select(m => m.AgentSessionId).Distinct().ToListAsync(ct);
+        foreach (var sessionId in unknownSessions)
+        {
+            var sem = GetLock(sessionId);
+            await sem.WaitAsync(ct);
+            FlushResult? result;
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                result = await HoldComposerlessUnknownLockedAsync(
+                    scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
+            }
+            finally
+            {
+                sem.Release();
+            }
+            if (result is FlushResult.LateConfirmed or FlushResult.Failed)
+                await PublishQueueChangedAsync(await GetQueueAsync(sessionId, ct), ct);
+        }
+
         // A delivered spill owes a receipt, not another input attempt. Discover it before the
         // ordinary Pending/InterruptedSent early return and all input-admission gates.
         List<Guid> receiptSessions;
@@ -2521,6 +2547,11 @@ public sealed partial class SessionMessageQueueService
                 await ChargeDurableWithholdAsync(db, sessionId, flushWithhold.Text, ct);
             return TemporaryBlock();
         }
+
+        // A rendered Grok prompt may be submitted scrollback, not an unsubmitted draft.
+        // Unknown attempts without a composer reader never authorize either write.
+        if (await HoldComposerlessUnknownLockedAsync(db, sessionId, ct, lateConfirmed) is { } unknown)
+            return unknown;
 
         // A completed delivery call can leave a fresh uncertain attempt. Reconcile its
         // receipt immediately, or submit only its still-visible body; the age window
@@ -3473,6 +3504,67 @@ public sealed partial class SessionMessageQueueService
         }
         // Not the caller's token: when the revert is racing shutdown, completing it is the point.
         await db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    // Claude has a real composer region and Codex has its provider-specific pointer
+    // reader. Keep their recovery paths; a whole-screen substring is no such reader.
+    private static IQueryable<SessionQueuedMessage> ComposerlessUnknownAttempts(AppDbContext db) =>
+        db.SessionQueuedMessages.Where(m => m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryVerdict == null && m.DeliveryAttempts > 0
+            && m.MaintenanceKind == RemoteControlMaintenanceKind.None
+            && db.AgentSessions.Any(s => s.Id == m.AgentSessionId && s.Status == SessionStatus.Running
+                && s.AgentKind != AgentKind.ClaudeCode && s.AgentKind != AgentKind.Codex));
+
+    private async Task<FlushResult?> HoldComposerlessUnknownLockedAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct, LateConfirmCollector? lateConfirmed = null)
+    {
+        var unknown = await ComposerlessUnknownAttempts(db).Where(m => m.AgentSessionId == sessionId)
+            .OrderBy(m => m.Sequence).ToListAsync(ct);
+        if (unknown.Count == 0) return null;
+
+        await _runtime.CatchUpTranscriptAsync(sessionId, ct);
+        var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, unknown, ct);
+        lateConfirmed?.Record(late);
+        var remaining = unknown.Where(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null).ToList();
+        if (remaining.Count > 0)
+            await RecordUnknownInputAttentionAsync(sessionId, remaining, ct);
+
+        // No screen classification, attempt charge, generation reset, Enter, or body write.
+        // An operator owns recovery after attention; a complete UserPrompt still wins later.
+        return late.Confirmed > 0 ? FlushResult.LateConfirmed
+            : late.Truncated > 0 ? FlushResult.Failed : FlushResult.Nothing;
+    }
+
+    private async Task RecordUnknownInputAttentionAsync(
+        Guid sessionId, IReadOnlyList<SessionQueuedMessage> remaining, CancellationToken ct)
+    {
+        var started = remaining.Min(m => m.LastDeliveryStartedAt ?? m.SentAt ?? m.CreatedAt);
+        if (UtcNow() - started < InterruptedAttemptAge) return;
+        const string reason = "input-delivery-unknown";
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // Durable episode dedup survives service recreation. A genuinely new attempt
+            // has a later start and therefore owes its own decision if it too stays unknown.
+            if (await db.AgentIncidents.AnyAsync(i => i.SessionId == sessionId
+                    && i.FailureReason == reason && i.CreatedAt >= started, ct)) return;
+            var owner = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, sessionId, ct);
+            await scope.ServiceProvider.GetRequiredService<AgentSupervisorService>().RecordIncidentAsync(
+                owner, sessionId, AgentIncidentKind.DeliveryTransportFailed, AlertSeverity.Warning,
+                "Input delivery is still unknown after the transcript confirmation deadline; "
+                + "orchestrator decision required. The attempt is held for a complete UserPrompt "
+                + "or explicit recovery. No automatic Enter, retype, or process stop is authorized.",
+                failureReason: reason, ct: ct);
+            await db.SaveChangesAsync(ct);
+            if (owner is Guid agentId)
+                await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agentId), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Keep the unknown attempt held; the next watchdog pass retries the notice.
+            _logger.LogError(ex, "Failed to record unknown Input attention for session {SessionId}", sessionId);
+        }
     }
 
     private async Task<List<SessionQueuedMessage>> LoadInterruptedSentRunAsync(
