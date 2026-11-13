@@ -238,6 +238,8 @@ Commit each slice and push. Invoke the checkpoint tool once per committed `After
 
 ### Checkpoints
 
+S2 Code amendment (f56921e1): execute CP-2 and CP-10 only for the commissioned S2 slice. CP-10 includes DerivedImpactIndexTests per the brief. CP-5/CP-8 estimates are rounded up to integer minutes because the importer refuses fractional estimates; those S4/S5 rows remain out of this slice. An initial committed CP-2 run retains the legacy query to prove the plan-budget test red before the SQL replacement. No migrations or OS-selected production behavior change.
+
 Every row below is portable server/Postgres lane; ordinary scope is exactly these rows. Reuse cells refer only to an earlier build with the same `After`. Grouped run S5 includes CP-6–CP-9. CP-10 is the final integrated source guard run. EstimatedMinutes are provisional under the budget above.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
@@ -246,10 +248,10 @@ Every row below is portable server/Postgres lane; ordinary scope is exactly thes
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1886-s2/ | action-claim | `/*/*/(RuntimeActionClaimQueryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2 | all listed, 0 failed | 6 | 6 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1888-s4/ | ingest-identity | `/*/*/(TranscriptIdentityWindowTests*)\|(AgentSessionRuntimeTests*)\|(SessionStateCommitTests*)\|(SessionStateWarmupTests*)\|(TranscriptSinceClientTests*)/*` | V-4 | all listed, 0 failed | 5 | 5 |
-| CP-5 | S4 | CP-4 | transcript-index-regression | `/*/*/TranscriptHotPathQueryTests/*` | V-4 | all listed, 0 failed | 4 | 2.5 |
+| CP-5 | S4 | CP-4 | transcript-index-regression | `/*/*/TranscriptHotPathQueryTests/*` | V-4 | all listed, 0 failed | 4 | 3 |
 | CP-6 | S5 | tests/Antiphon.Tests -> bin-c1888-s5/ | transcript-read-budget | `/*/*/(TranscriptReadBudgetTests*)\|(TranscriptPromptSpanTests*)\|(TaskReportTurnSelectorTests*)/*` | V-5 | all listed, 0 failed | 3 | 4 |
 | CP-7 | S5 | CP-6 | refresh-and-reply | `/*/*/(PolicyRefreshServiceTests*)\|(ChannelReplyLateConfirmDispatchTests*)/*` | V-5 | all listed, 0 failed | 2 | 2 |
-| CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 0.5 |
+| CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 1 |
 | CP-9 | S5 | CP-6 | channel-ttl | `/*/*/ChannelReplyDurabilityTests/(Ttl_with_no_matching_prompt_is_stale_ttl*)\|(Ttl_with_a_matching_prompt_but_no_turn_end_is_turn_incomplete*)\|(Ttl_with_a_completed_answer_captures_before_recording_expired_preparation*)` | V-5 | all listed, 0 failed | 3 | 1 |
 | CP-10 | all | tests/Antiphon.Tests -> bin-c1886-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
 
