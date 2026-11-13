@@ -6,34 +6,61 @@ namespace Antiphon.SessionRunner;
 /// CARD-1884. CPU deltas are keyed by pid and start ticks. A recycled pid has no previous counter.
 /// A scan closer than five seconds returns the previous ranking.
 /// </summary>
+internal readonly record struct HostTopConsumerView(
+    IReadOnlyList<HostTopConsumerSample> Rows, double? AgeSeconds, bool Stale, bool Truncated);
+
 internal sealed class HostTopConsumerTracker
 {
+    private sealed class Published
+    {
+        public static readonly Published Empty = new();
+        public IReadOnlyList<HostTopConsumerSample> Rows { get; init; } = [];
+        public long ScannedAt { get; init; } = long.MinValue;
+        public bool Truncated { get; init; }
+    }
+
     private readonly Dictionary<(int Pid, long StartTicks), long> _cpu = new();
     private long _lastScan = long.MinValue;
-    private IReadOnlyList<HostTopConsumerSample> _published = [];
+    private Published _published = Published.Empty;
 
-    public IReadOnlyList<HostTopConsumerSample> Sample(IHostProcessTable? table, TimeProvider time)
+    /// <summary>The latest ranking. This does not read the process table.</summary>
+    public HostTopConsumerView View(TimeProvider time, TimeSpan cadence)
+    {
+        var snap = Volatile.Read(ref _published);
+        if (snap.ScannedAt == long.MinValue)
+            return new(snap.Rows, null, false, snap.Truncated);
+        var age = time.GetElapsedTime(snap.ScannedAt, time.GetTimestamp());
+        var stale = cadence > TimeSpan.Zero && age.Ticks > cadence.Ticks * 2;
+        return new(snap.Rows, age.TotalSeconds, stale, snap.Truncated);
+    }
+
+    public IReadOnlyList<HostTopConsumerSample> Sample(IHostProcessTable? table, TimeProvider time, TimeSpan? minimumInterval = null)
     {
         if (table is null) return [];
+        var minimum = minimumInterval ?? HostTopConsumerLimits.MinScanInterval;
         var now = time.GetTimestamp();
-        if (_lastScan != long.MinValue && time.GetElapsedTime(_lastScan, now) < HostTopConsumerLimits.MinScanInterval)
-            return _published;
+        var current = Volatile.Read(ref _published);
+        if (_lastScan != long.MinValue && time.GetElapsedTime(_lastScan, now) < minimum)
+            return current.Rows;
         IReadOnlyList<HostProcessObservation> rows;
+        bool truncated;
         try
         {
             var retain = new List<int>(_cpu.Count);
             foreach (var key in _cpu.Keys) retain.Add(key.Pid);
             rows = table.Read(HostTopConsumerLimits.ScanCap, retain);
+            truncated = table.LastReadTruncated;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return _published;
+            return current.Rows;
         }
 
         var elapsed = _lastScan == long.MinValue ? TimeSpan.Zero : time.GetElapsedTime(_lastScan, now);
         _lastScan = now;
-        _published = Rank(rows, elapsed);
-        return _published;
+        var ranked = Rank(rows, elapsed);
+        Volatile.Write(ref _published, new Published { Rows = ranked, ScannedAt = now, Truncated = truncated });
+        return ranked;
     }
 
     private IReadOnlyList<HostTopConsumerSample> Rank(IReadOnlyList<HostProcessObservation> rows, TimeSpan elapsed)

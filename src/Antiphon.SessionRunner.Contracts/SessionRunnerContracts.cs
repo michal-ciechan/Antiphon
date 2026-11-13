@@ -1119,7 +1119,10 @@ public sealed record RunnerHostCurrentDto(
     IReadOnlyList<RunnerHostDiskDto> Disks,
     int? ProcessCount,
     IReadOnlyList<RunnerHostProcessDto> Processes,
-    IReadOnlyList<RunnerHostTopConsumerDto>? TopConsumers = null);
+    IReadOnlyList<RunnerHostTopConsumerDto>? TopConsumers = null,
+    double? TopConsumersAgeSeconds = null,
+    bool TopConsumersTruncated = false,
+    bool TopConsumersStale = false);
 
 /// <summary>CARD-0718. Build-slot broker listing folded into the host sample. In-process on the runner.</summary>
 public sealed record RunnerHostBuildSlotsDto(int Occupied, int Budget, int Waiters, long? AvailableMb);

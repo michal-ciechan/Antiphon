@@ -81,12 +81,25 @@ public sealed class HostStatsSamplerService : BackgroundService
 
         var now = _time.GetUtcNow();
         var processes = _settings.ProcessSampling ? ReadProcesses(_time.GetTimestamp()) : [];
-        var top = _settings.ProcessSampling ? _top.Sample(_processTable, _time) : [];
+        var topView = _settings.ProcessSampling
+            ? _top.View(_time, TimeSpan.FromMilliseconds(_settings.TopConsumerScanIntervalMs))
+            : new HostTopConsumerView([], null, false, false);
+        var top = topView.Rows;
         var percent = read.Value.CpuPercent;
         var reason = read.Value.CpuUnknownReason;
         if (percent is { } value && (!double.IsFinite(value) || value < 0 || value > 100))
         { percent = null; reason = "invalid"; }
-        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, TopConsumers = top, CpuUnknownReason = reason };
+        var sample = read.Value with
+        {
+            At = now,
+            CpuPercent = percent,
+            Processes = processes,
+            TopConsumers = top,
+            CpuUnknownReason = reason,
+            TopConsumersAgeSeconds = topView.AgeSeconds,
+            TopConsumersTruncated = topView.Truncated,
+            TopConsumersStale = topView.Stale,
+        };
         _store.Add(sample);
         _history?.TryCapture(sample);
         if (logTick)
@@ -101,11 +114,19 @@ public sealed class HostStatsSamplerService : BackgroundService
         return Task.CompletedTask;
     }
 
+    /// <summary>CARD-1884. Reads the process table off the tick and publishes the cached ranking.</summary>
+    internal void ScanTopConsumers()
+    {
+        if (!_settings.ProcessSampling) return;
+        _top.Sample(_processTable, _time, TimeSpan.FromMilliseconds(_settings.TopConsumerScanIntervalMs));
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!_settings.Enabled)
             return;
 
+        var scanning = ScanLoop(stoppingToken);
         // The cold call pays JIT. Logged ticks are the steady sample the overhead budget measures.
         await SampleOnceAsync(stoppingToken, logTick: false);
         await SampleOnceAsync(stoppingToken);
@@ -117,6 +138,42 @@ public sealed class HostStatsSamplerService : BackgroundService
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
+        }
+
+        try
+        {
+            await scanning.WaitAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+        }
+        catch (TimeoutException)
+        {
+        }
+    }
+
+    private async Task ScanLoop(CancellationToken stoppingToken)
+    {
+        if (!_settings.ProcessSampling || _processTable is null)
+            return;
+        await Task.Yield();
+        var interval = TimeSpan.FromMilliseconds(_settings.TopConsumerScanIntervalMs);
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                ScanTopConsumers();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogFault(ex);
+            }
+
+            try
+            {
+                await Task.Delay(interval, _time, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 
