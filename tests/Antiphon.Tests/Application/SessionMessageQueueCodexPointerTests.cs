@@ -190,6 +190,7 @@ public sealed class SessionMessageQueueCodexPointerTests
 
     [Test]
     [Arguments("complete-idle")]
+    [Arguments("interrupted-sent-complete")]
     [Arguments("working")]
     [Arguments("unreadable")]
     [Arguments("two-empty-screens")]
@@ -204,10 +205,11 @@ public sealed class SessionMessageQueueCodexPointerTests
         var generation = await GenerationAsync(h);
         var id = await h.SeedPendingMessageAsync(body,
             deliveryAttempts: variant == "legacy-refunded-stamp" ? 0 : 1,
+            status: variant == "interrupted-sent-complete" ? QueuedMessageStatus.Sent : QueuedMessageStatus.Pending,
             origin: QueuedMessageOrigin.Delegation, lastDeliveryStartedAt: h.Now.AddMinutes(-2),
             lastDeliveryGeneration: generation);
         h.Adapter.PrimeComposer(body);
-        h.Adapter.RenderedScreenOverride = Frame(variant == "complete-idle" ? body : body[..10]);
+        h.Adapter.RenderedScreenOverride = Frame(variant is "complete-idle" or "interrupted-sent-complete" ? body : body[..10]);
         var original = await RowAsync(h, id);
         if (variant == "working") await h.MarkWorkingAsync();
         if (variant == "unreadable") h.Adapter.ThrowOnRenderedSnapshot = true;
@@ -231,11 +233,12 @@ public sealed class SessionMessageQueueCodexPointerTests
             h.Adapter.RenderedScreenOverride = Frame(body);
         }
         await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
-        if (variant == "complete-idle") h.Adapter.Inputs.ShouldBe(["\r"]);
+        if (variant is "complete-idle" or "interrupted-sent-complete")
+            h.Adapter.Inputs.ShouldBe(["\r"], "Codex keeps complete-composer recovery outside the composerless hold");
         else if (variant is "new-generation" or "changed-generation-stale-receipt")
             h.Adapter.Inputs.ShouldBe([body, "\r"], "an old generation receipt cannot confirm the fresh attempt");
         else h.Adapter.Inputs.ShouldBeEmpty();
-        if (variant is "complete-idle" or "new-generation" or "changed-generation-stale-receipt")
+        if (variant is "complete-idle" or "interrupted-sent-complete" or "new-generation" or "changed-generation-stale-receipt")
             h.Adapter.SubmittedBodies.ShouldBe([body]);
         if (variant is "working" or "unreadable" or "two-empty-screens" or "legacy-refunded-stamp")
             await AssertStampAsync(h, id, original);

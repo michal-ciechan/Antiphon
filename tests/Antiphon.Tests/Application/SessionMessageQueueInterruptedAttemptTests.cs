@@ -103,6 +103,17 @@ public class SessionMessageQueueInterruptedAttemptTests
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         row.DeliveryAttempts.ShouldBe(1);
         h.Adapter.Inputs.ShouldBeEmpty();
+        var afterReader = new AttentionService(confirmed, h.Runner,
+            Options.Create(new SupervisionSettings()), Options.Create(h.Delegation), h.Clock,
+            NullLogger<AttentionService>.Instance);
+        var after = await afterReader.GetAsync(CancellationToken.None, includeProgressProbe: false);
+        after.Items.ShouldNotContain(i => i.SessionId == h.SessionId
+            && i.Kind == AttentionKind.RecentCriticalIncident
+            && (i.Evidence ?? "").Contains("orchestrator decision"),
+            "late-confirm-clears-notice: a complete UserPrompt resolves the held-attempt notice");
+        (await confirmed.AgentIncidents.CountAsync(i => i.SessionId == h.SessionId
+            && i.FailureReason == "input-delivery-unknown")).ShouldBe(1,
+            "the append-only incident history remains available");
 
         async Task AssertUnknownAsync()
         {
