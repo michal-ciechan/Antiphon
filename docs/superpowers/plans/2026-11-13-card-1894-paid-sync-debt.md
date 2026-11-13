@@ -15,8 +15,8 @@ CardSiblingInventory's sibling-selection semantics stay outside this change.
 S1 commits regression tests first; CP-1 must show an assertion failure in each
 policy's paid Ready case before S2 changes production. S2 implements the predicate.
 S3 regenerates the derived index in its own commit if changed, building its driver
-first. Final qualification runs CP-1/CP-2/CP-3 once at the resulting committed HEAD.
-CP-1 is rerun after the fix using fresh final output; CP-2/CP-3 reuse that build.
+first. Final qualification runs CP-1 through CP-5 once at the resulting committed HEAD.
+CP-1 is rerun after the fix using fresh final output; CP-2/CP-3 reuse that build; CP-4/CP-5 build their own projects.
 
 ## Verification design
 
@@ -26,9 +26,11 @@ V-2: desktop Ready equal SHA retires the subject through the real guarded remova
 unpaid cases preserve filesystem/git and do not invoke git for the subject.
 V-3: both policy methods cover Pending/Held even with equal SHA, Superseded,
 and a paid Ready row alongside a separate Held debt (13 variants each).
-R-1: all eight selected adjacent integration classes preserve the existing server,
+R-1: all nine selected adjacent integration classes preserve the existing server,
 release, switch, ref-only, temp-sweep and salvage invariants.
-R-2: guard union, mechanical PC contract, platform guidance and layering remain green.
+R-2: guard union, mechanical PC contract, platform guidance, layering, category and
+process-spawn rosters remain green. The full-diff selector also requires the
+ProcessSpawnLimitTests class in Antiphon.SessionRunner.Tests and Antiphon.Agents.Pty.Tests.
 R-3: impact selection, fresh TRX class/method counts, clean-source provenance,
 evidence-diff and conflict-free merge-tree over full task history.
 M-1: inspect recovery logic and explain whether desktop fast-forward clears the
@@ -41,10 +43,12 @@ No runner changes.
 
 ### Performance budget
 
-Bounded selection: 8 impacted integration classes plus 9 guard/contract classes;
+Bounded selection: 9 impacted integration classes plus 11 main guard/contract classes
+and the ProcessSpawnLimitTests class in two adjacent projects;
 no full assembly or Unit lane. Shared Postgres with per-test schema isolation and
 the existing process limiters; fixtures own temporary directories and disposal.
-Provisional cold build 3 minutes; integration row 8 minutes and guard row 3 minutes.
+Provisional main cold build 4 minutes; integration row 8 minutes and guard row 3 minutes;
+adjacent project build/roster rows 2 minutes each (19 minutes total).
 Capture slot waits, phase timings, per-test TRX durations and actual wall cost.
 Importer floor (15 min, 3x estimate) is an existing tooling budget, not measured p95;
 do not widen it. A selection exceeding 30 minutes needs Debug per CARD-1894.
@@ -53,17 +57,24 @@ whole-class integration row (three ordinary executions total). No extra repetiti
 
 ### Checkpoints
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-|---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2-S3 | tests/Antiphon.Tests -> bin-c1894-final/ | paid-debt-witness | /*/*/(C1677RetentionServerTests*)\|(C0824DesktopLegacyReleasePolicyTests*)/C1894_Only_confirmed_Ready_debt_is_paid | V-1,V-2,V-3 | all listed, 0 failed | 26 | 4 |
-| CP-2 | S2-S3 | CP-1 | impacted-retention | /*/*/(C0824DesktopLegacyReleasePolicyTests*)\|(C0824DesktopLegacyReleaseSettingsTests*)\|(C0824DesktopLegacyReleaseSwitchTests*)\|(C0824RefOnlyBoundaryTests*)\|(C0824RefOnlyCleanupTests*)\|(C1677RetentionServerTests*)\|(C1677TempSweepServerTests*)\|(C1708ReflogSalvageTests*)/* | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 8 |
-| CP-3 | S2-S3 | CP-1 | guards | /*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/* | R-2 | all listed, 0 failed | 9 | 3 |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | S2-S3 | tests/Antiphon.Tests -> bin-c1894-final/ | paid-debt-witness | /*/*/(C1677RetentionServerTests*)\|(C0824DesktopLegacyReleasePolicyTests*)/C1894_Only_confirmed_Ready_debt_is_paid | V-1,V-2,V-3 | all listed, 0 failed | 26 | 4 | false |
+| CP-2 | S2-S3 | CP-1 | impacted-retention | /*/*/(C0824DesktopLegacyReleasePolicyTests*)\|(C0824DesktopLegacyReleaseSettingsTests*)\|(C0824DesktopLegacyReleaseSwitchTests*)\|(C0824RefOnlyBoundaryTests*)\|(C0824RefOnlyCleanupTests*)\|(C0824TransportLimiterTests*)\|(C1677RetentionServerTests*)\|(C1677TempSweepServerTests*)\|(C1708ReflogSalvageTests*)/* | V-1,V-2,V-3,R-1 | all listed, 0 failed | 9 | 8 | false |
+| CP-3 | S2-S3 | CP-1 | guards | /*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)/* | R-2 | all listed, 0 failed | 11 | 3 | false |
+| CP-4 | S2-S3 | tests/Antiphon.SessionRunner.Tests -> bin-c1894-runner/ | runner-roster | /*/*/ProcessSpawnLimitTests/* | R-2 | all listed, 0 failed | 1 | 2 | true |
+| CP-5 | S2-S3 | tests/Antiphon.Agents.Pty.Tests -> bin-c1894-pty/ | pty-roster | /*/*/ProcessSpawnLimitTests/* | R-2 | all listed, 0 failed | 1 | 2 | true |
 
 S1's original CP-1 used bin-c1894-red/ at 51d1980d8464327553d2f8f87034720c1d62d659:
 26 executed, 24 passed, 2 failed, 0 skipped; both paid Ready cases failed their
 recipient assertions. Keep that historical receipt unchanged. This final table
 rebinds CP-1 to fresh output for its required green rerun; verify all 26 results
 in CP-1 and again within CP-2's required whole-class scope.
+S3 regeneration built the driver first and reported derived-impact-index unchanged.
+The full-range selector adds spawn-limit-rosters/test-lane-category because the
+new runner witness carries the existing workspace-rig limiter. No protected nightly
+policy input changed; master pins remain unchanged.
+
 Tool bootstrap and derived-index driver/regeneration are the only allowed unlisted
 build/run drivers; both take host slots. Generated evidence remains ignored.
 
