@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -21,6 +22,7 @@ public class HostTopConsumerTests
     private static readonly DateTimeOffset T0 = new(2026, 11, 13, 0, 0, 0, TimeSpan.Zero);
 
     [Test]
+    [NativeLinuxOnly("CARD-1884 reads /proc. The Windows production-factory witness is Production_factory_observes_this_process_on_windows.")]
     public void Production_factory_selects_the_linux_proc_table()
     {
         OperatingSystem.IsLinux().ShouldBeTrue();
@@ -38,10 +40,38 @@ public class HostTopConsumerTests
     public void Factory_selects_the_platform_reader()
     {
         HostProcessTables.Select(isWindows: false, isLinux: true).ShouldBeOfType<LinuxHostProcessTable>();
-        var windows = HostProcessTables.Select(isWindows: true, isLinux: false);
-        windows.ShouldBeOfType<WindowsHostProcessTable>();
-        windows.Read(HostTopConsumerLimits.TopCount, Array.Empty<int>()).ShouldBeEmpty();
+        HostProcessTables.Select(isWindows: true, isLinux: false).ShouldBeOfType<WindowsHostProcessTable>();
         HostProcessTables.Select(isWindows: false, isLinux: false).ShouldBeOfType<EmptyHostProcessTable>();
+    }
+
+    /// <summary>
+    /// Runs on Windows only. An empty <see cref="WindowsHostProcessTable"/> fails this witness:
+    /// the production factory must see this process, its start time, a nonzero working set, and a CPU
+    /// counter that moves after a spin. Toolhelp and GetProcessTimes are not called on Linux.
+    /// </summary>
+    [Test]
+    public void Production_factory_observes_this_process_on_windows()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Skip.Test("CARD-1884 Windows production-factory witness runs on Windows only. This Linux host does not call toolhelp or GetProcessTimes.");
+            return;
+        }
+
+        using var self = Process.GetCurrentProcess();
+        var table = HostProcessTables.Create();
+        table.ShouldBeOfType<WindowsHostProcessTable>();
+        var first = table.Read(HostTopConsumerLimits.ScanCap, [self.Id]).Single(row => row.Pid == self.Id);
+        first.StartTicks.ShouldBeGreaterThan(0);
+        first.RssBytes.ShouldNotBeNull().ShouldBeGreaterThan(0);
+        var spinUntil = Stopwatch.StartNew();
+        while (spinUntil.ElapsedMilliseconds < 40)
+        {
+        }
+
+        var second = table.Read(HostTopConsumerLimits.ScanCap, [self.Id]).Single(row => row.Pid == self.Id);
+        second.StartTicks.ShouldBe(first.StartTicks);
+        second.CpuTicks.ShouldBeGreaterThan(first.CpuTicks);
     }
 
     [Test]
@@ -318,6 +348,7 @@ public class HostTopConsumerTests
     }
 
     [Test]
+    [NativeLinuxOnly("CARD-1884 live /proc scan. Windows owes the production-factory witness and the sampler overhead budget.")]
     public void Live_proc_scan_stays_inside_the_tick_budget()
     {
         OperatingSystem.IsLinux().ShouldBeTrue();
