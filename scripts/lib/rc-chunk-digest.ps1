@@ -4,25 +4,19 @@
 . (Join-Path $PSScriptRoot 'rc-boundary.ps1')
 function Get-RcManifestDigest {
     param([object[]]$Rows)
-    # v1: counts and UTF-8 byte lengths are unsigned 32-bit big endian.
-    $hash=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
-    $utf8=[Text.UTF8Encoding]::new($false,$true)
+    # Domain-specific rows use S2's one length-prefix and UTF-8 encoding rule.
+    $buffer=[IO.MemoryStream]::new()
     try {
-        $count=[BitConverter]::GetBytes([uint32]$Rows.Count)
-        if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($count) }; $hash.AppendData($count)
+        Add-RcBoundaryU32 $buffer ([uint32]$Rows.Count)
         foreach ($row in $Rows) {
-            $count=[BitConverter]::GetBytes([uint32]$row.Count)
-            if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($count) }; $hash.AppendData($count)
+            Add-RcBoundaryU32 $buffer ([uint32]$row.Count)
             foreach ($field in $row) {
                 if ($field -isnot [string]) { throw 'digest-field-must-be-string' }
-                $bytes=$utf8.GetBytes($field)
-                $length=[BitConverter]::GetBytes([uint32]$bytes.Length)
-                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($length) }
-                $hash.AppendData($length); $hash.AppendData($bytes)
+                Add-RcBoundaryString $buffer $field
             }
         }
-        return [Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
-    } finally { $hash.Dispose() }
+        return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($buffer.ToArray())).ToLowerInvariant()
+    } finally { $buffer.Dispose() }
 }
 
 function Assert-RcDigestText {
@@ -38,8 +32,13 @@ function New-RcChunkInputManifest {
     $owners=@($Snapshot.suites | Where-Object id -CEQ $InputSuite)
     if ($owners.Count -ne 1) { throw 'missing-or-duplicate-input-suite' }
     $owner=$owners[0]
-    $membershipId=Get-RcBoundaryChunkId $Chunk.suite $Chunk.boundary @($Chunk.identityKeys)
-    if ($membershipId -cne $Chunk.chunkId) { throw 'chunk-membership-mismatch' }
+    $membershipId=Get-RcBoundaryChunkId $Chunk.suite $Chunk.boundary @($Chunk.identityKeys) @($Chunk.caseKeys)
+    $identities=@(for ($i=0; $i -lt $Chunk.identityKeys.Count; $i++) {
+        ConvertTo-RcBoundaryIdentity $Chunk.identityKeys[$i] $Chunk.caseKeys[$i]
+    })
+    $identities=@(Sort-RcBoundaryIdentities $identities)
+    $membershipDigest=Get-RcBoundaryCanonicalDigest $Chunk.suite $Chunk.boundary $identities
+    if ($membershipId -cne $Chunk.chunkId -or $membershipDigest -cne $Chunk.fullDigest) { throw 'chunk-membership-mismatch' }
     $unknown=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     foreach ($reason in $Snapshot.unresolved) { Assert-RcDigestText $reason 'unresolved'; [void]$unknown.Add($reason) }
     if ($Chunk.boundary -ceq 'unassigned') { [void]$unknown.Add('unassigned-boundary') }
@@ -76,8 +75,11 @@ function New-RcChunkInputManifest {
 
     # A suite shard aggregates methods only after every case has been accounted for.
     $methods=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    foreach ($key in $Chunk.identityKeys) { $methods.Add($key,[Collections.Generic.List[object]]::new()) }
+    foreach ($key in $Chunk.identityKeys) {
+        if (-not $methods.ContainsKey($key)) { $methods.Add($key,[Collections.Generic.List[object]]::new()) }
+    }
     $caseMap=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $caseIdentities=[Collections.Generic.List[object]]::new()
     foreach ($case in $Cases) {
         Assert-TestSelectionKeys $case @('suite','className','method','caseKey','stable')
         foreach ($field in @('suite','className','method','caseKey')) { Assert-RcDigestText $case[$field] "case-$field" }
@@ -88,24 +90,38 @@ function New-RcChunkInputManifest {
         $key=ConvertTo-Json -InputObject @($case.suite,$case.className,$case.method,$case.caseKey) -Compress
         if ($caseMap.ContainsKey($key)) { throw 'duplicate-case' }
         $normalized=@{key=$key;suite=$case.suite;className=$case.className;method=$case.method;caseKey=$case.caseKey;stable=$case.stable}
-        $caseMap.Add($key,$normalized); $methods[$methodKey].Add($normalized)
+        $caseMap.Add($key,$normalized)
+        $caseIdentities.Add(@{class=$case.className;method=$case.method;caseKey=$case.caseKey;record=$normalized})
         if (-not $case.stable) { [void]$unknown.Add("ambiguous-case:$methodKey") }
     }
     $caseRows=[Collections.Generic.List[object]]::new()
     $caseRows.Add(@('antiphon-rc-cases','1',[string]$Chunk.suite,[string]$Chunk.boundary))
-    $methodRows=[Collections.Generic.List[object]]::new()
-    foreach ($method in (Get-TestSelectionSorted @($methods.Keys))) {
-        if (-not $methods[$method].Count) { throw 'incomplete-method-membership' }
-        $keys=@(Get-TestSelectionSorted @($methods[$method].key))
-        $methodRows.Add(@{identityKey=$method;cases=@(foreach ($key in $keys) { $caseMap[$key] });
-            ambiguous=($unknown.Contains("ambiguous-case:$method"))})
+    $sortedCases=@(Sort-RcBoundaryIdentities $caseIdentities.ToArray())
+    if (@($Chunk.caseKeys | Where-Object { $_ -cne '' }).Count -gt 0) {
+        if ($identities.Count -ne $sortedCases.Count) { throw 'case-membership-mismatch' }
+        for ($i=0; $i -lt $identities.Count; $i++) {
+            if ((Compare-RcBoundaryIdentity $identities[$i] $sortedCases[$i]) -ne 0) { throw 'case-membership-mismatch' }
+        }
     }
-    $caseRecords=@(foreach ($key in (Get-TestSelectionSorted @($caseMap.Keys))) {
-        $case=$caseMap[$key]
+    $caseRecords=@(foreach ($identity in $sortedCases) {
+        $case=$identity.record
+        $methods[$case.className+'/'+$case.method].Add($case)
         $caseRows.Add(@('case',[string]$case.suite,[string]$case.className,[string]$case.method,[string]$case.caseKey,
             $(if ($case.stable) {'stable'} else {'ambiguous'})))
         $case
     })
+    foreach ($method in $methods.Keys) {
+        if (-not $methods[$method].Count) { throw 'incomplete-method-membership' }
+    }
+    $methodRows=[Collections.Generic.List[object]]::new()
+    $seenMethods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($identity in $sortedCases) {
+        $method=$identity.class+'/'+$identity.method
+        if ($seenMethods.Add($method)) {
+            $methodRows.Add(@{identityKey=$method;cases=$methods[$method].ToArray();
+                ambiguous=($unknown.Contains("ambiguous-case:$method"))})
+        }
+    }
     $caseDigest=Get-RcManifestDigest $caseRows.ToArray()
 
     $required=@('sdk-runtime-os-architecture','powershell-node-browser-native','configuration-environment',
@@ -125,10 +141,6 @@ function New-RcChunkInputManifest {
         else { $receiptRows.Add(@($kind,[string]$receiptMap[$kind].digest)) }
     }
     $receiptDigest=Get-RcManifestDigest $receiptRows.ToArray()
-    $membershipRows=[Collections.Generic.List[object]]::new()
-    $membershipRows.Add(@('antiphon-rc-membership','1',[string]$Chunk.suite,[string]$Chunk.boundary))
-    foreach ($key in (Get-TestSelectionSorted @($Chunk.identityKeys))) { $membershipRows.Add(@($key)) }
-    $membershipDigest=Get-RcManifestDigest $membershipRows.ToArray()
     $combined=[Collections.Generic.List[object]]::new()
     $combined.Add(@('antiphon-rc-chunk-input','1',$InputSuite,[string]$Chunk.suite,[string]$Chunk.boundary,
         $inputDigest,$caseDigest,$receiptDigest,$membershipDigest))
