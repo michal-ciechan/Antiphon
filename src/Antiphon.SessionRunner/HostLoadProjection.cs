@@ -57,5 +57,16 @@ public static class HostLoadProjection
         };
     }
 
-    private static HostLoadTopConsumer[] Top(HostSample read) => [];
+    private static HostLoadTopConsumer[] Top(HostSample read)
+    {
+        var top = new List<HostLoadTopConsumer>(Math.Min(read.TopConsumers.Count, HostConsumerRules.MaxCount));
+        foreach (var row in read.TopConsumers)
+        {
+            if (top.Count == HostConsumerRules.MaxCount) break;
+            var mapped = new HostLoadTopConsumer(row.Pid, row.StartTicks, row.Name, row.Role, row.CpuCores, row.RssBytes);
+            if (HostConsumerRules.IsPublishable(mapped)) top.Add(mapped);
+        }
+
+        return top.ToArray();
+    }
 }

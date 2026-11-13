@@ -97,7 +97,9 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
             if (sample.SchemaVersion != 1 || sample.Source.RunnerStoreId != page.Source.RunnerStoreId || sample.Source.BootId == Guid.Empty
                 || sample.Source.Sequence <= 0 || sample.IntervalSeconds != 5 || sample.SampledAt.Offset != TimeSpan.Zero
                 || HostLoadCounterCache.Canonical(sample.Source.RunnerId) != HostLoadCounterCache.Canonical(batch.RunnerId)
-                || sample.CpuPercent is < 0 or > 100 || sample.Processes.Any(p => p.Name is not ("runner" or "session" or "pty-host")))
+                || sample.CpuPercent is < 0 or > 100 || sample.Processes.Any(p => p.Name is not ("runner" or "session" or "pty-host"))
+                || sample.TopConsumers.Count > HostConsumerRules.MaxCount
+                || sample.TopConsumers.Any(row => !HostConsumerRules.IsPublishable(row)))
                 throw new ValidationException("history", "Invalid host sample.");
         }
         if (page.Gaps.Any(g => g.RunnerStoreId != page.Source.RunnerStoreId || g.FromSequence <= 0 || g.ToSequence < g.FromSequence))

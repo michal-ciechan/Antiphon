@@ -1023,3 +1023,13 @@ The runner's separate `GET /host-stats/history` and phone-home operation 50 carr
 at most 120 records/1 MiB. Receipt acknowledgement follows the committed server
 cursor; bounded spool eviction leaves persistent gap evidence. Existing v1 live
 host-stat routes and operation ordinals are retained.
+
+Each sample may also carry `topConsumers`: at most eight processes ranked by CPU
+delta over the sample window, across the host pid namespace. A row is `pid`,
+`startTicks`, `name` (executable basename only), `role` (`compiler`, `build`,
+`test`, `agent-cli`, `antiphon-runner`, `pty-host`, `docker`, or `other`),
+`cpuCores` (null until a second sample can form a delta; one full core is 1.0),
+and `rssBytes`. Command lines and environment are not stored. `schemaVersion`
+stays 1. A stored sample that predates the field deserializes with an empty list.
+`GET /host-stats` repeats the same rows on `current.topConsumers`. The `processes`
+list remains only `runner`, `session`, and `pty-host`.
