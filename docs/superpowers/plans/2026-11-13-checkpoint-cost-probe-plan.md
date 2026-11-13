@@ -1,7 +1,7 @@
 # Checkpoint cost: shared ordinary classification probe
 
 The guard union already uses one process. Its classification cases unnecessarily
-rebuild the same ordinary probe six times. Preserve the distinct method-level Slow
+rebuild the same ordinary probe five times. Preserve the distinct method-level Slow
 probe and its live assembly inspection; share only the immutable ordinary result,
 after existing owned temporary-directory cleanup completes. No slot policy,
 checkpoint selection, output deletion or timeout changes.
@@ -10,10 +10,13 @@ checkpoint selection, output deletion or timeout changes.
 
 Debian 12/server2, SDK 10.0.404, 24 cores, contended four-slot broker. Historical
 S4a TestClassificationPolicyTests 41 cases cost approximately 141 seconds (one
-loaded observation, not p95). A shared ordinary probe should avoid five builds
-and fifteen probe launches per full class. Build, admission and output cleanup
+loaded observation, not p95). A shared ordinary probe should avoid four builds
+and twelve probe launches for the existing cases. Build, admission and output cleanup
 remain separate checkpoint phases. Record the two-request witness elapsed time
-before/after on this host; retain the narrow green class's TRX. Expected witness
+before/after on this host; retain the narrow green class's TRX. Count the shared
+cold setup separately if another method populates the lazy before the witness.
+The witness adds two more ordinary requests, which also reuse that one result.
+Expected witness
 execution under 120 seconds, full class under 180 seconds, provisional; importer
 15-minute row floor retained rather than changed here. No p95 or full CP-90
 speedup is claimed. Collect next required Review and three ordinary run samples

@@ -8,8 +8,13 @@ namespace Antiphon.Tests.TestHelpers;
 
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
+[ClassDataSource<ClassificationProbeSession>(Shared = SharedType.PerClass)]
 public sealed class TestClassificationPolicyTests
 {
+    private readonly ClassificationProbeSession _probes;
+
+    public TestClassificationPolicyTests(ClassificationProbeSession probes) => _probes = probes;
+
     [Test]
     [Arguments("blank")]
     [Arguments("overwritten")]
@@ -527,10 +532,21 @@ public sealed class TestClassificationPolicyTests
         return (process.ExitCode, await stdout + await stderr);
     }
 
-    private sealed record ProbeResult(string Dir, string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
+    internal sealed record ProbeResult(string Dir, string Source, int DiscoveryCount, int DefaultPassed, int SlowCount, bool ManualAbsent, string DiscoveryJson);
 
-    private static Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false, Action<string>? inspect = null)
-        => WithTempDirectoryAsync("c487-probe-", dir => BuildAndRunProbeAsync(dir, includeMethodSlow, inspect));
+    private Task<ProbeResult> RunProbeAsync(bool includeMethodSlow = false, Action<string>? inspect = null)
+        => !includeMethodSlow && inspect is null
+            ? _probes.OrdinaryAsync()
+            : WithTempDirectoryAsync("c487-probe-", dir => BuildAndRunProbeAsync(dir, includeMethodSlow, inspect));
+
+    internal static async Task<ProbeResult> BuildOrdinaryProbeAsync()
+    {
+        var watch = Stopwatch.StartNew();
+        // Only the immutable result survives the existing owned-directory cleanup.
+        var result = await WithTempDirectoryAsync("c487-probe-", dir => BuildAndRunProbeAsync(dir, false, null));
+        Console.WriteLine($"C1864 ordinary probe setup seconds={watch.Elapsed.TotalSeconds:F3}");
+        return result;
+    }
 
     private static async Task<ProbeResult> BuildAndRunProbeAsync(string dir, bool includeMethodSlow, Action<string>? inspect)
     {
@@ -637,4 +653,14 @@ public sealed class TestClassificationPolicyTests
             return dir?.FullName ?? throw new DirectoryNotFoundException("repo");
         }
     }
+}
+
+// TUnit owns this lazy for one class in one process. A failed setup remains failed;
+// variants that inspect a live assembly still take the fresh path above.
+public sealed class ClassificationProbeSession
+{
+    private readonly Lazy<Task<TestClassificationPolicyTests.ProbeResult>> _ordinary =
+        new(TestClassificationPolicyTests.BuildOrdinaryProbeAsync);
+
+    internal Task<TestClassificationPolicyTests.ProbeResult> OrdinaryAsync() => _ordinary.Value;
 }
