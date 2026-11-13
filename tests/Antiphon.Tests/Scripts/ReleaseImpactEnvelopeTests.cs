@@ -16,7 +16,7 @@ public sealed class ReleaseImpactEnvelopeTests
         var fixture = await Fixture.CreateAsync();
         File.Exists(Path.Combine(fixture.Root, "tests/derived-impact-index.json")).ShouldBeFalse();
         var result = await fixture.ReleaseAsync();
-        AssertIncomplete(result, fixture.Baseline, fixture.Candidate);
+        AssertIncomplete(result, fixture.Baseline, fixture.Candidate, await fixture.AlgorithmShaAsync());
         result.GetProperty("incompleteReasons").EnumerateArray().Select(x => x.GetString())
             .ShouldContain("release-graph-unavailable");
         result.GetProperty("inputManifestDigest").ValueKind.ShouldBe(JsonValueKind.Null);
@@ -30,7 +30,7 @@ public sealed class ReleaseImpactEnvelopeTests
         await File.WriteAllTextAsync(Path.Combine(fixture.Root, "input.txt"), "uncommitted input\n");
         (await fixture.GitAsync("status", "--porcelain")).ShouldContain("input.txt");
         var result = await fixture.ReleaseAsync();
-        AssertIncomplete(result, fixture.Baseline, fixture.Candidate);
+        AssertIncomplete(result, fixture.Baseline, fixture.Candidate, await fixture.AlgorithmShaAsync());
         // A schema-1 advisory index and working bytes must never become a release digest.
         result.GetProperty("candidateGraphDigest").ValueKind.ShouldBe(JsonValueKind.Null);
         result.GetProperty("baselineGraphDigest").ValueKind.ShouldBe(JsonValueKind.Null);
@@ -41,7 +41,7 @@ public sealed class ReleaseImpactEnvelopeTests
     {
         var fixture = await Fixture.CreateAsync(withIndex: true);
         var result = await fixture.ReleaseAsync(candidate: fixture.Baseline);
-        AssertIncomplete(result, fixture.Baseline, fixture.Baseline);
+        AssertIncomplete(result, fixture.Baseline, fixture.Baseline, await fixture.AlgorithmShaAsync());
         result.GetProperty("candidateSha").GetString().ShouldNotBe(fixture.Candidate);
         result.GetProperty("candidateGraphDigest").ValueKind.ShouldBe(JsonValueKind.Null);
         result.GetProperty("classes").GetArrayLength().ShouldBe(0);
@@ -61,7 +61,8 @@ public sealed class ReleaseImpactEnvelopeTests
         });
         json.RootElement.GetProperty("classes").EnumerateArray().Select(x => x.GetString()).ShouldBe(new[] { "EnvelopeProbeTests" });
         var result = await fixture.ReleaseAsync();
-        AssertIncomplete(result, fixture.Baseline, fixture.Candidate);
+        var algorithmSha = await fixture.AlgorithmShaAsync();
+        AssertIncomplete(result, fixture.Baseline, fixture.Candidate, algorithmSha);
         result.GetProperty("legacySelection").ValueKind.ShouldBe(JsonValueKind.Null);
 
         // CLI refusal is distinct from a valid but incomplete request. Both deny carry.
@@ -99,7 +100,7 @@ public sealed class ReleaseImpactEnvelopeTests
         var windows = await fixture.SelectAsync(fixture.ReleaseArguments().Select(x => x == "linux" ? "windows" : x).ToArray());
         windows.Exit.ShouldBe(0, windows.Text);
         using var windowsJson = JsonDocument.Parse(windows.Stdout);
-        AssertIncomplete(windowsJson.RootElement, fixture.Baseline, fixture.Candidate, "windows");
+        AssertIncomplete(windowsJson.RootElement, fixture.Baseline, fixture.Candidate, algorithmSha, "windows");
     }
 
     private static void AssertRefused(string stdout)
@@ -111,7 +112,7 @@ public sealed class ReleaseImpactEnvelopeTests
         value.GetProperty("fallback").GetString().ShouldBe("Full");
     }
 
-    private static void AssertIncomplete(JsonElement value, string baseline, string candidate, string platform = "linux")
+    private static void AssertIncomplete(JsonElement value, string baseline, string candidate, string algorithmSha, string platform = "linux")
     {
         value.TryGetProperty("complete", out var complete).ShouldBeTrue("advisory success lacks a release completeness bit");
         complete.ValueKind.ShouldBe(JsonValueKind.False);
@@ -120,7 +121,7 @@ public sealed class ReleaseImpactEnvelopeTests
         value.GetProperty("baselineSha").GetString().ShouldBe(baseline);
         value.GetProperty("candidateSha").GetString().ShouldBe(candidate);
         value.GetProperty("repository").GetString().ShouldNotBeNullOrWhiteSpace();
-        value.GetProperty("algorithmSha").GetString().ShouldMatch("^[0-9a-f]{40}$");
+        value.GetProperty("algorithmSha").GetString().ShouldBe(algorithmSha);
         value.GetProperty("algorithmDigest").GetString().ShouldMatch("^[0-9a-f]{64}$");
         value.GetProperty("target").GetProperty("platform").GetString().ShouldBe(platform);
         value.GetProperty("target").GetProperty("verified").GetBoolean().ShouldBeFalse();
@@ -160,6 +161,8 @@ public sealed class ReleaseImpactEnvelopeTests
         }
 
         private Task<string> CommitAsync() => GitAsync("-c", "user.name=Envelope fixture", "-c", "user.email=envelope@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
+
+        public async Task<string> AlgorithmShaAsync() => (await GitAsync("-C", RepoRoot(), "rev-parse", "HEAD")).Trim();
 
         public async Task<string> GitAsync(params string[] arguments)
         {
