@@ -44,6 +44,39 @@ internal static class CheckpointFixtureProcess
     public static Task<Output> RunAsync(ProcessStartInfo start, CancellationToken cancellationToken) =>
         Task.Run(() => Run(start, Timeout.Infinite, cancellationToken), cancellationToken);
 
+    // rc run 97150a0b g109: a child that loops over a known list of steps appends one byte to
+    // progressPath per finished step. It gets `startup` to finish its first step (process start,
+    // script load and that step) and then `perStep` between consecutive steps, instead of one fixed
+    // deadline over the whole loop, whose length scales with host load. Expiry names the phase.
+    public static async Task<Output> RunStepsAsync(ProcessStartInfo start, string progressPath,
+        IReadOnlyList<string> steps, TimeSpan startup, TimeSpan perStep, TimeProvider? time = null)
+    {
+        var deadline = new CheckpointStepDeadline(steps.Count, startup, perStep, time ?? TimeProvider.System);
+        using var cancel = new CancellationTokenSource();
+        var run = RunAsync(start, cancel.Token);
+        while (!run.IsCompleted)
+        {
+            await Task.WhenAny(run, Task.Delay(200)).ConfigureAwait(false);
+            var progress = new FileInfo(progressPath);
+            deadline.Observe(progress.Exists ? (int)Math.Min(progress.Length, int.MaxValue) : 0);
+            if (!run.IsCompleted && deadline.Expired)
+            {
+                cancel.Cancel();
+                break;
+            }
+        }
+        try
+        {
+            var output = await run.ConfigureAwait(false);
+            Console.WriteLine(Path.GetFileName(start.FileName) + " step child: " + deadline.Describe(steps));
+            return output;
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            throw new TimeoutException(Path.GetFileName(start.FileName) + " fixture child " + deadline.Describe(steps));
+        }
+    }
+
     // Installed Git in a scratch repository; exit 0 is required.
     public static string Git(string root, params string[] args) =>
         Git(root, environment: null, args);
