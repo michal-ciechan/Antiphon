@@ -1,5 +1,18 @@
 # Session runtime invariants
 
+## Input uncertainty (CARD-1892)
+
+A missing Input reply, cancellation or transport failure after readiness is not a
+failed launch verdict. Keep the process and runtime ownership alive. A charged
+queue attempt retains its generation, transcript baseline and clock with no
+delivery verdict; transcript/composer reconciliation owns confirmation or retry.
+The rules deadline cannot convert that unresolved attempt into failed-start
+cleanup. Confirmed spawn, readiness and provider failures retain their cleanup.
+Input and ConditionalInput use the runtime's per-session gate, independently of
+the workspace mutation gate. Retention remains serialized with Launch/Mirror and
+keeps its live/recent-use and holder checks. Slow workspace gate owners log their
+operation, request identity, wait and hold milliseconds after releasing the gate.
+
 ## Exit evidence (CARD-1619; combined qualification pending)
 
 Process exit evidence consists of an actual nullable code and a separate nullable
