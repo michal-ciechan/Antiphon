@@ -14,7 +14,7 @@ while ($null -ne ($requestLine = [Console]::In.ReadLine())) {
     $exitCode = 1
     try {
         [IO.Directory]::SetCurrentDirectory([string]$request.Root)
-        $ps.Runspace.SessionStateProxy.Path.SetLocation([string]$request.Root)
+        [void]$ps.Runspace.SessionStateProxy.Path.SetLocation([string]$request.Root)
         $ps.Runspace.SessionStateProxy.SetVariable('LASTEXITCODE', 0)
         [void]$ps.AddCommand([string]$request.Script)
         [void]$ps.AddParameter('Repo', [string]$request.Root)
