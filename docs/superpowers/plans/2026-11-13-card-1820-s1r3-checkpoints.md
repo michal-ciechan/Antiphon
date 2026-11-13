@@ -23,7 +23,7 @@ once per class/host, in memory; no subprocess, database, server or disk fixture 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-4 | S1R3 | `tests/Antiphon.Tests -> bin-c1820-r3-red2/` | linux-project | `/*/*/ReleaseImpactProjectTests/*` | V-3 | four named methods, no failed/skipped | 4 | 12 | true |
+| CP-4 | S1R3 | `tests/Antiphon.Tests -> bin-c1820-r3-green/` | linux-project | `/*/*/ReleaseImpactProjectTests/*` | V-3 | four named methods, no failed/skipped | 4 | 12 | true |
 | CP-101 | S1R3 | CP-4 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | Final guards and impacted test-lane-category | all named classes, no failed/skipped | 78 | 4 | true |
 | CP-102 | S1R3 | CP-4 | ordinary-index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 index drift | named method, no failed/skipped | 1 | 2 | true |
 | CP-103 | S1R3 | CP-4 | relation-regression | `/*/*/ReleaseImpactRelationTests/*` | V-2 adjacent module | all four, no failed/skipped | 4 | 1 | true |

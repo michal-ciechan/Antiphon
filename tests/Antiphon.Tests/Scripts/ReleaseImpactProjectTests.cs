@@ -97,8 +97,13 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         graph.IncompleteReasons.ShouldContain("project-evaluation-unavailable");
     }
 
-    // Red adapter: exercise the landed relation until the conservative project module exists.
-    private static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> sources) => ReleaseImpactGraphBuilder.Build(sources);
+    private static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> sources)
+    {
+        var watch = Stopwatch.StartNew();
+        var graph = ReleaseImpactProjectGraph.Build(sources);
+        Console.WriteLine($"C1820 phase=project-closure elapsedMs={watch.ElapsedMilliseconds}");
+        return graph;
+    }
 }
 
 public sealed class ReleaseImpactProjectFixture
