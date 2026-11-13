@@ -149,11 +149,11 @@ internal static class ReleaseImpactProjectGraph
                         targets = new(typeOwners, StringComparer.Ordinal);
                         if (parts.Length > 1)
                         {
-                            if (assemblies.TryGetValue(parts[1], out var assemblyOwners)) targets.IntersectWith(assemblyOwners);
+                            if (assemblies.TryGetValue(parts[1], out var qualifiedAssemblies)) targets.IntersectWith(qualifiedAssemblies);
                             else targets.Clear();
                         }
                     }
-                    else if (assemblyLookup && assemblies.TryGetValue(parts[0], out var assemblyOwners)) targets = assemblyOwners;
+                    else if (assemblyLookup && assemblies.TryGetValue(parts[0], out var loadedAssemblies)) targets = loadedAssemblies;
                 }
                 if (targets is null || targets.Count == 0 || !owners.TryGetValue(path, out var callers))
                 {
