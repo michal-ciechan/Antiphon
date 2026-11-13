@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Antiphon.Server.Infrastructure.Git;
 
@@ -30,7 +29,9 @@ internal sealed class OwnedChildMarker : IDisposable
     public string Value { get; }
 
     /// <summary>Test seam: reads one <c>/proc/&lt;pid&gt;/environ</c> path.</summary>
-    internal Func<string, byte[]> ReadEnviron { get; set; } = File.ReadAllBytes;
+    internal Func<string, byte[]> ReadEnviron { get; set; } = path => new LinuxProcOperations().ReadEnvironmentAsync(
+        int.Parse(Path.GetFileName(Path.GetDirectoryName(path))!, CultureInfo.InvariantCulture),
+        CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     /// <summary>Test seam: a stand-in job's active process count, read in place of the Windows job.</summary>
     internal Func<uint?>? JobProbe { get; set; }
@@ -113,82 +114,18 @@ internal sealed class OwnedChildMarker : IDisposable
     /// root, which no descendant can (review bd90f6b5 D-1). A process that is gone by the read is skipped.</summary>
     internal static bool? AnyEnvironCarries(string value, long? rootStartTime, Func<string, byte[]> readEnviron)
     {
-        var needle = Encoding.UTF8.GetBytes(Variable + "=" + value + "\0");
-        if (HidesOtherProcesses()) return null;
-        var unknown = false;
-        IEnumerable<string> entries;
-        try { entries = Directory.EnumerateDirectories("/proc"); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        try
-        {
-            foreach (var entry in entries)
-            {
-                if (!int.TryParse(Path.GetFileName(entry), NumberStyles.None, CultureInfo.InvariantCulture, out var pid)) continue;
-                if (pid == Environment.ProcessId) continue;
-                byte[] environ;
-                try { environ = readEnviron(Path.Combine(entry, "environ")); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    if (!Directory.Exists(entry)) continue;
-                    if (rootStartTime is long root && StartTime(entry) is long started && started < root) continue;
-                    unknown = true;
-                    continue;
-                }
-                if (Carries(environ, needle)) return true;
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-        return unknown ? null : false;
+        using var members = new LinuxOwnedGitMembers(new LinuxProcOperations(readEnviron));
+        members.SetMarker(value);
+        var result = members.ProbeAsync(new OwnedGitRoot(0, null, rootStartTime),
+            new OwnedGitDeadline(TimeProvider.System, TimeSpan.FromSeconds(6)), CancellationToken.None)
+            .AsTask().GetAwaiter().GetResult();
+        return result.Survivors > 0 ? true : result.State == OwnedGitMembershipState.Empty ? false : null;
     }
 
-    /// <summary>Field 22 of <c>&lt;entry&gt;/stat</c>, read after the last <c>)</c> because the
-    /// command name may hold spaces and parentheses. The file is readable for every listed pid.</summary>
     private static long? StartTime(string entry)
     {
-        try
-        {
-            var stat = File.ReadAllText(Path.Combine(entry, "stat"));
-            var fields = stat[(stat.LastIndexOf(')') + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return fields.Length > 19 && long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
-                ? ticks
-                : null;
-        }
+        try { return LinuxProcOperations.ReadIdentityFile(int.Parse(Path.GetFileName(entry), CultureInfo.InvariantCulture))?.StartTicks; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
-    }
-
-    /// <summary>A /proc mounted with hidepid (other than 0/off) leaves other users' processes out
-    /// of the listing, so the scan cannot inspect every live process. An unreadable mount table
-    /// counts as hidden.</summary>
-    private static bool HidesOtherProcesses()
-    {
-        try
-        {
-            foreach (var line in File.ReadLines("/proc/self/mountinfo"))
-            {
-                var fields = line.Split(' ');
-                var separator = Array.IndexOf(fields, "-");
-                if (fields.Length < 5 || fields[4] != "/proc" || separator < 0 || separator + 3 >= fields.Length) continue;
-                foreach (var option in fields[separator + 3].Split(','))
-                    if (option.StartsWith("hidepid=", StringComparison.Ordinal) && option is not ("hidepid=0" or "hidepid=off"))
-                        return true;
-            }
-            return false;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return true; }
-    }
-
-    private static bool Carries(ReadOnlySpan<byte> environ, ReadOnlySpan<byte> needle)
-    {
-        var offset = 0;
-        while (offset < environ.Length)
-        {
-            var found = environ[offset..].IndexOf(needle);
-            if (found < 0) return false;
-            var at = offset + found;
-            if (at == 0 || environ[at - 1] == 0) return true;
-            offset = at + 1;
-        }
-        return false;
     }
 
     private uint? ActiveJobProcesses()
