@@ -525,7 +525,7 @@ whole-row costs under the budget above.
 | CP-24 | E8 | `tests/Antiphon.GitInProcess.Tests -> bin-c1850-e8i/` | any-inprocess-project | `/*/*/(InProcessGitCommandsTests*)\|(LibGit2VsGitDifferentialTests*)\|(LibGit2VsGitWorktreeListTests*)/*` | R-5 | all 3 named classes, 0 failed | 3 | 3 | 5 | true |
 | CP-25 | E8-windows | `tests/Antiphon.Tests -> bin-c1850-e8w/` | windows-adoption | `/*/*/AgentTaskLandHalfResetWindowsTests/*` | R-4,R-5 | AgentTaskLandHalfResetWindowsTests; all listed, 0 failed | 1 | 12 | 12 | true |
 | CP-S1-2 | S1-adjacent | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-adjacent-green/` | any-git-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-5 | both impacted classes, 0 failed | 2 | 1 | 2 | true |
-| CP-S1-3 | S1-guards | `tests/Antiphon.Tests -> bin-c1850-s1-guards/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-4,R-5 | all 10 classes, 0 failed | 10 | 6 | 10 | true |
+| CP-S1-3 | S1-guards | `tests/Antiphon.Tests -> bin-c1850-s1-guards-final/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-4,R-5 | all 10 classes, 0 failed | 10 | 6 | 10 | true |
 
 S1 dispatch amendment (task 9124df63): CP-S1-2 covers the actual
 `server-git-start-sites` impact selection in the small Git project and the
@@ -540,6 +540,14 @@ adapter; S2 supplies the bounded `/proc` census and signal implementation.
 There is no default/optimistic membership provider or production selection
 until that implementation exists. No Windows native behavior is selected in
 S1; S3's structural and native obligations remain owed by the orchestrator.
+The first CP-S1-3 execution at `fe666cd432f24e1f0c2f06938ff9f05082b3844a`
+exhausted its unchanged 12-minute execution budget without TRX. That attempt is
+incomplete timeout evidence, not an assertion red or a pass. The required
+regeneration script subsequently added eight lines to the committed impact
+index and built its native-output driver prerequisite. Rerun the same exact
+ten-class filter and budgets using the fresh final output path; preserve the
+original receipt and do not attribute the timeout to a particular test without
+per-case evidence. No test assertion or timeout changes are authorized here.
 
 ### Cost and completion
 
