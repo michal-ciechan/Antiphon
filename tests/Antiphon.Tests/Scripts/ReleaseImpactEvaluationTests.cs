@@ -26,6 +26,10 @@ public sealed class ReleaseImpactEvaluationTests
         app.GetProperty("references").EnumerateArray().Select(x => x.GetString()).ShouldBe(new[] { "Product/Product.csproj" });
         app.GetProperty("imports").EnumerateArray().Select(x => x.GetProperty("path").GetString()).ShouldContain("shared.props");
         items.Single(i => i.GetProperty("kind").GetString() == "AdditionalFiles").GetProperty("path").GetString().ShouldBe("schema.json");
+        var analyzers = items.Where(i => i.GetProperty("kind").GetString() == "Analyzer").ToArray();
+        analyzers.ShouldNotBeEmpty("the real SDK contributes analyzer assemblies");
+        analyzers.All(i => i.GetProperty("path").GetString()!.StartsWith("sdk:", StringComparison.Ordinal)
+            && i.GetProperty("sha256").GetString()!.Length == 64).ShouldBeTrue();
         // Changing the requested framework must change actual evaluated reference membership.
         var alternate = await Run(repo, framework: "net8.0");
         alternate.ExitCode.ShouldBe(0, alternate.Text);
