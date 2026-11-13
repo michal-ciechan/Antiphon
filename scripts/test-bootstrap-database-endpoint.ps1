@@ -63,7 +63,7 @@ if ($IsWindows) {
 }
 $shimPath = $shimDir + [IO.Path]::PathSeparator + $env:PATH
 
-function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData) {
+function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData, [hashtable]$Overrides = @{}) {
     $start = New-Object System.Diagnostics.ProcessStartInfo $pwsh
     foreach ($a in $Arguments) { $start.ArgumentList.Add($a) }
     $start.RedirectStandardOutput = $true
@@ -72,6 +72,14 @@ function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData) {
     $start.WorkingDirectory = $scratch
     $start.Environment['APPDATA'] = $AppDataRoot
     $start.Environment['PATH'] = $shimPath
+    # Never inherit a developer's effective database configuration into a fixture.
+    foreach ($key in @($start.Environment.Keys)) {
+        if ($key -match '(?i)^(ConnectionStrings[:_]|CUSTOMCONNSTR_|SQLCONNSTR_|SQLAZURECONNSTR_|MYSQLCONNSTR_|DOTNET_|ASPNETCORE_)') {
+            [void]$start.Environment.Remove($key)
+        }
+    }
+    $start.Environment['DOTNET_ENVIRONMENT'] = 'Development'
+    foreach ($key in $Overrides.Keys) { $start.Environment[$key] = $Overrides[$key] }
     $process = [System.Diagnostics.Process]::Start($start)
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
@@ -120,6 +128,26 @@ try {
     Set-Content -LiteralPath (Join-Path $nestedDir 'secrets.json') -Encoding ascii -Value (@{ ConnectionStrings = @{ DefaultConnection = "Server=db.example.test;Password=$secret;Username=antiphon" } } | ConvertTo-Json)
     Invoke-Probe 'V-3 user-secrets nested key, default port' $null 'database-endpoint host=db.example.test port=5432 mode=remote' $nestedRoot
     Assert-Endpoint (-not (Test-Path -LiteralPath $dockerMarker)) 'V-3 the probes run no docker'
+
+    # F1: effective configuration, including explicitly present empty/invalid providers.
+    $envConnection = "Host=env-target.invalid;Port=5432;Password=$secret;Username=antiphon"
+    $probeArgs = @('-NoProfile', '-NonInteractive', '-File', $bootstrap, '-DatabaseProbeOnly')
+    foreach ($envKey in @('ConnectionStrings__DefaultConnection', 'ConnectionStrings:DefaultConnection', 'CUSTOMCONNSTR_DefaultConnection')) {
+        $result = Invoke-Child $probeArgs $flatRoot @{ $envKey = $envConnection }
+        Assert-Endpoint ($result.ExitCode -eq 0 -and $result.Stdout.Trim() -ceq 'database-endpoint host=env-target.invalid port=5432 mode=remote') "F1 $envKey outranks secret and appsettings"
+        Assert-Endpoint (-not ($result.Stdout + $result.Stderr).Contains($secret)) "F1 $envKey stays credential-safe"
+    }
+    $result = Invoke-Child ($probeArgs + @('-ConnectionString', 'Host=cli.invalid;Port=5432')) $flatRoot @{ ConnectionStrings__DefaultConnection = $envConnection }
+    Assert-Endpoint ($result.ExitCode -eq 0 -and $result.Stdout.Trim() -ceq 'database-endpoint host=cli.invalid port=5432 mode=remote') 'F1 command line outranks environment'
+    foreach ($value in @('', 'not a connection string', 'Host=h;Port=broken')) {
+        Set-Content -LiteralPath (Join-Path $flatDir 'secrets.json') -Encoding ascii -Value (@{ 'ConnectionStrings:DefaultConnection' = $value } | ConvertTo-Json)
+        $result = Invoke-Child $probeArgs $flatRoot
+        Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=user-secrets reason=(empty|invalid)') 'F1 empty or malformed secret fails closed with a reason'
+    }
+    $result = Invoke-Child ($probeArgs + @('-ConnectionString', '')) $appData
+    Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=parameter reason=empty') 'F1 explicitly empty command line fails closed'
+    $result = Invoke-Child $probeArgs $appData @{ ConnectionStrings__DefaultConnection = 'not a connection string' }
+    Assert-Endpoint ($result.ExitCode -ne 0 -and $result.Stdout -match 'unresolved source=environment reason=invalid') 'F1 malformed environment fails closed'
 
     # ---- library: host, port and mode only ----------------------------------------------
     Assert-Endpoint (Test-Path -LiteralPath $library -PathType Leaf) 'lib scripts/lib/DatabaseEndpoint.ps1 exists'
