@@ -14,7 +14,8 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(600_000)]
-public sealed class DerivedImpactIndexTests
+[ClassDataSource<DerivedSelectorReplay>(Shared = SharedType.PerClass)]
+public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
 {
     private const string MigrationPath = "server/Migrations/20261108121426_Card1773TranscriptPromptStampIndex.cs";
 
@@ -1091,7 +1092,7 @@ public sealed class DerivedImpactIndexTests
         IReadOnlyList<string> LinuxOnly,
         JsonElement Json);
 
-    private static async Task<LaneProbe> SelectDeclarationAsync(string className, string source, string? overrides)
+    private async Task<LaneProbe> SelectDeclarationAsync(string className, string source, string? overrides)
     {
         using var fixture = new Fixture();
         fixture.Add("tests/Antiphon.Tests/" + className + ".cs", source);
@@ -1107,7 +1108,7 @@ public sealed class DerivedImpactIndexTests
         return new LaneProbe(index.WindowsOnly.ToArray(), index.LinuxOnly.ToArray(), document.RootElement.Clone());
     }
 
-    private static async Task<JsonElement> SelectBuiltAsync(Fixture fixture, string path)
+    private async Task<JsonElement> SelectBuiltAsync(Fixture fixture, string path)
     {
         var index = DerivedImpactIndexBuilder.Build(fixture.Root);
         DerivedImpactIndexBuilder.Write(fixture.Root, index);
@@ -1308,7 +1309,7 @@ public sealed class DerivedImpactIndexTests
         return stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
     }
 
-    private static Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
+    private Task<(int Exit, string Stdout, string Text)> SelectAsync(string root, params string[] args) =>
         SelectScriptAsync(root, Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), args);
 
     private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
@@ -1345,44 +1346,15 @@ public sealed class DerivedImpactIndexTests
         return (process.ExitCode, stdout, stdout + stderr);
     }
 
-    private static async Task<(int Exit, string Stdout, string Text)> SelectScriptAsync(
+    private async Task<(int Exit, string Stdout, string Text)> SelectScriptAsync(
         string root, string script, params string[] args)
     {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        start.ArgumentList.Add("-Repo");
-        start.ArgumentList.Add(root);
-        foreach (var arg in args)
-            start.ArgumentList.Add(arg);
-        var processClock = Stopwatch.StartNew();
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException("impacted-classes exceeded 120s");
-        }
-
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var clock = Stopwatch.StartNew();
+        var result = await replay.SelectAsync(root, script, args);
         if (Environment.GetEnvironmentVariable("ANTIPHON_SELECTOR_TIMING") == "1")
-            Console.WriteLine("SELECTOR_PROCESS elapsedMs=" + processClock.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
-                + " script=" + Path.GetFileName(script) + " args=" + string.Join(" ", args) + " " + stderr.Trim());
-        return (process.ExitCode, stdout, stdout + stderr);
+            Console.WriteLine("SELECTOR_HOSTED elapsedMs=" + clock.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+                + " script=" + Path.GetFileName(script) + " args=" + string.Join(" ", args) + " " + result.Text[result.Stdout.Length..].Trim());
+        return result;
     }
 
     private static string RepoRoot()

@@ -22,6 +22,10 @@ checks are waived by the operator. No whole CARD-1860 rerun is authorized.
 | CP-4 | green | `tests/Antiphon.Tests -> bin-c1862-after/` | replay-after | `/*/*/DerivedImpactIndexTests/*` | all original replay cases and assertions | 27 passed | 27 | 6 |
 | CP-5 | final | n/a | census-final | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | freshness, full-census differential, cost | 9 script groups pass | n/a | 1 |
 | CP-6 | final | `tests/Antiphon.Tests -> bin-c1862-final/` | replay-final | `/*/*/DerivedImpactIndexTests/*` | all original cases after parsing repair | 27 passed | 27 | 6 |
+| CP-7 | hosted | n/a | hosted-freshness | `pwsh -NoProfile -File scripts/test-selector-census.ps1 -Hosted` | fresh request scopes, refusal recovery, lifecycle | 9 script groups; one joined host | n/a | 1 |
+| CP-8 | hosted | `tests/Antiphon.Tests -> bin-c1862-hosted/` | hosted-replay | `/*/*/DerivedImpactIndexTests/*` | unchanged 27 cases and assertions | 27 passed | 27 | 6 |
+| CP-9 | hosted | n/a | cold-freshness | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | normal standalone CLI unchanged | 9 script groups | n/a | 1 |
+| CP-10 | hosted | CP-8 | limiter | `/*/*/ProcessSpawnLimitTests/*` | retained assembly-local lane | 2 passed | 2 | 1 |
 
 Run --after baseline, red, green or final with --serial and --expected-source-sha.
 The unlisted builds are the leased native-output checkpoint-tool bootstrap in
@@ -65,3 +69,29 @@ CP-5/6 rerun only because executable parsing/scanning code changed; they retain
 the original full class, deadlines, source proof and host gate. No full CARD-1860
 selection is run. Nested file-read/declaration/derive and index-hydration spans
 are recorded in the final process records.
+
+## Hosted replay refinement
+
+Final fec8773 behavior passes 27/27 at 420.559s, only 98.775s saved. S1's
+exact ten-class native filter still exhausts its unchanged 12m budget without
+TRX. Per-invocation helper compilation totals 51.216s and process startup/exit/
+transport remainder 67.035s. These are measured remaining costs, not credits.
+A leased SDK feasibility probe verifies independent request exit codes 0,1,0
+without exiting its host. The next slice shares one lazily started owned host
+per class through TUnit PerClass data, and creates/disposes an entirely new
+runspace for every request. It rereads the real script, table, index, git and
+all current test files; only immutable runtime/code is retained. The hosted
+freshness script uses that same transport for all changed/new/removed/OS/table/
+project witnesses, including invalid-then-valid exit codes and a stable pid.
+Request ids prevent cross-request response reuse. The existing 120s request
+bound, 600s methods, 60s selector assertion and ProcessSpawnLimit remain;
+fixture teardown closes stdin, joins exit/drains, and kills/joins only its own
+host on failure. No restart or retry masks a failed request. CP-7/8/9/10 verify
+the new lifecycle and both hosted and ordinary CLI paths. Regenerate the index
+with the unchanged native builder input before committing its new fixture edge.
+The native regeneration driver input code is unchanged; its existing native
+prerequisite remains usable. These rows are the exact new-code reruns; no whole
+CARD-1860 selection is added. Current same-source output may recover an exact
+missing row through tool row --no-build when an overall budget expires, with
+its original source stamp/properties and finite unchanged execution cap; the
+failed report remains ineligible and is never rewritten.

@@ -547,7 +547,9 @@ if ($derivePatterns.Count -gt 0) {
 $classDecl = [regex]::new('(?m)^[ \t]*(?:(?:public|internal|file|private|protected)[ \t]+)?(?:(?:sealed|static|abstract|partial)[ \t]+)*class[ \t]+([A-Za-z_][A-Za-z0-9_]*)\b', 'Compiled')
 # Compile code only; Scan creates new maps and rereads every current file on each call.
 $compileClock = [Diagnostics.Stopwatch]::StartNew()
-Add-Type -Path (Join-Path $PSScriptRoot 'lib/SelectorCensus.cs')
+if (-not ('Antiphon.Selector.SelectorCensus' -as [type])) {
+    Add-Type -Path (Join-Path $PSScriptRoot 'lib/SelectorCensus.cs')
+}
 $script:selectorTiming['censusCompileMs'] = $compileClock.Elapsed.TotalMilliseconds
 $walkClock = [Diagnostics.Stopwatch]::StartNew()
 $scan = [Antiphon.Selector.SelectorCensus]::Scan($Repo, $classDecl, $deriveRegexes.ToArray())

@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # Fresh-input and bounded census witnesses. Fixtures are retained for evidence, never swept.
-param([string]$EvidenceRoot = '.antiphon/c1862-census')
+param([string]$EvidenceRoot = '.antiphon/c1862-census', [switch]$Hosted)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -20,7 +20,35 @@ function Reject-Stale([scriptblock]$Check, [string]$Label) {
     catch { if ($_.Exception.Message.StartsWith('ASSERT ')) { Write-Host ('BLINDNESS red=' + $Label); return }; throw }
     throw ('blindness control accepted stale ' + $Label)
 }
+$script:replayProcess = $null
+$script:replayErrors = $null
+$script:replayRequests = 0
 function Invoke-SelectorProbe([string]$Root, [string]$Changed) {
+    if ($Hosted) {
+        if ($null -eq $script:replayProcess) {
+            $start = [Diagnostics.ProcessStartInfo]::new('pwsh')
+            $start.WorkingDirectory = $repo
+            $start.RedirectStandardInput = $true
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            foreach ($arg in @('-NoProfile','-NonInteractive','-File',(Join-Path $repo 'scripts/selector-replay-host.ps1'))) { $start.ArgumentList.Add($arg) }
+            $start.Environment['ANTIPHON_SELECTOR_TIMING'] = '1'
+            $script:replayProcess = [Diagnostics.Process]::Start($start)
+            $script:replayErrors = $script:replayProcess.StandardError.ReadToEndAsync()
+        }
+        $script:replayRequests++
+        $id = [string]$script:replayRequests
+        $request = @{ Id=$id; Root=$Root; Script=$selector; Args=@('-Path',$Changed,'-Json') } | ConvertTo-Json -Compress
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $script:replayProcess.StandardInput.WriteLine($request)
+        $script:replayProcess.StandardInput.Flush()
+        $read = $script:replayProcess.StandardOutput.ReadLineAsync()
+        if (-not $read.Wait(120000)) { throw 'hosted selector exceeded existing 120s budget' }
+        $response = $read.GetAwaiter().GetResult() | ConvertFrom-Json
+        Assert ($response.Id -ceq $id -and $response.ProcessId -eq $script:replayProcess.Id) 'fresh response and stable owned host'
+        Write-Host ('HOSTED elapsedMs=' + $clock.Elapsed.TotalMilliseconds + ' ' + $response.Stderr.Trim())
+        return [pscustomobject]@{ Exit=$response.Exit; Json=($response.Stdout | ConvertFrom-Json); Error=$response.Stderr }
+    }
     $psi = [Diagnostics.ProcessStartInfo]::new('pwsh')
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -54,6 +82,7 @@ function Good([string]$Changed) {
 function Names($Selected, [string[]]$Expected) {
     Assert ((@($Selected.classes | Sort-Object) -join ',') -ceq (@($Expected | Sort-Object) -join ',')) ('fresh classes: ' + ($Selected.classes -join ','))
 }
+try {
 $table = '{"schema":1,"kinds":[{"id":"anchor","globs":["server/anchor.cs"],"classes":["AnchorTests"]}]}'
 Put 'tests/impacted-classes.json' $table
 Put 'tests/Antiphon.Tests/Anchor.cs' 'public sealed class AnchorTests {}'
@@ -215,3 +244,26 @@ try {
 }
 finally { $child.Dispose() }
 Write-Host 'SELECTOR CENSUS WITNESS passed=9 failed=0 blindnessRed=7'
+
+}
+finally {
+    if ($null -ne $script:replayProcess) {
+        $process = $script:replayProcess
+        try {
+            $process.StandardInput.Close()
+            if (-not $process.WaitForExit(5000)) {
+                $process.Kill($true)
+                if (-not $process.WaitForExit(10000)) { throw 'owned replay host did not exit after kill' }
+                throw 'owned replay host did not shut down in five seconds'
+            }
+            if (-not $script:replayErrors.Wait(5000)) { throw 'owned replay host stderr did not drain' }
+            Assert ($process.ExitCode -eq 0) 'owned host graceful exit'
+            Assert ([string]::IsNullOrWhiteSpace($script:replayErrors.GetAwaiter().GetResult())) 'owned host uncaptured errors'
+            Write-Host ('HOSTED requests=' + $script:replayRequests + ' processId=' + $process.Id + ' joined=true')
+        }
+        finally {
+            if (-not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+            $process.Dispose()
+        }
+    }
+}
