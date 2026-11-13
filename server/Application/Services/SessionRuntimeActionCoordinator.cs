@@ -162,24 +162,7 @@ public sealed class SessionRuntimeActionCoordinator(
             // Late-confirmed sources count too, even when the carried key is a different chat
             // (CARD-1826).
             var now = clock.GetUtcNow().UtcDateTime;
-            var action = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId
-                    && (a.TriggerKind != ChannelReplyDebt || (a.DueAt <= now
-                        && !db.SessionRuntimeActions.Any(b => b.AgentSessionId == sessionId
-                            && b.TriggerKind == ChannelReplyDebt && b.Sequence < a.Sequence
-                            && (b.ConversationKey == null || a.ConversationKey == null
-                                || b.ConversationKey == a.ConversationKey
-                                || db.SessionQueuedMessages.Any(m => m.AgentSessionId == sessionId
-                                    && m.ConversationKey != null
-                                    && ((a.LateConfirmedChannelMessageIds.Contains(m.Id)
-                                            && m.ConversationKey == b.ConversationKey)
-                                        || (b.LateConfirmedChannelMessageIds.Contains(m.Id)
-                                            && m.ConversationKey == a.ConversationKey)
-                                        || (a.LateConfirmedChannelMessageIds.Contains(m.Id)
-                                            && db.SessionQueuedMessages.Any(n => n.AgentSessionId == sessionId
-                                                && b.LateConfirmedChannelMessageIds.Contains(n.Id)
-                                                && n.ConversationKey == m.ConversationKey)))))))))
-                .OrderBy(a => a.Phase >= QueuePhase).ThenBy(a => a.Sequence).ThenBy(a => a.TriggerKind)
-                .FirstOrDefaultAsync(ct);
+            var action = (await SessionRuntimeActionClaimQuery.Query(db, sessionId, now).ToListAsync(ct)).SingleOrDefault();
             if (action is null) return false;
             // A queue wakeup is coalescible only after all of its routing has completed.
             // New work must be able to replace a deferred wakeup before its retry is due.
