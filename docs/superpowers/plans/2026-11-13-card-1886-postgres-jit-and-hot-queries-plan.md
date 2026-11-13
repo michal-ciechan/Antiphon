@@ -236,8 +236,6 @@ Before execution compare each suffix pattern against declarations in `tests/`; e
 
 Commit each slice and push. Invoke the checkpoint tool once per committed `After` group, selecting `--rows` when needed, with `--expected-source-sha <full-sha>`, `--serial`, provisional `--row-timeout 10m --total-timeout 20m --total-timeout-override-reason 'CARD-1886/1887/1888 provisional bounded commissioning; collect p95'` and bounded admission. For the 10m admission bound, import the plan to an ignored manifest and set only `build.slotWaitMinutes: 10`; run it as `run <manifest.yaml>` with the same row selections and source binding. Bootstrap the tool through `scripts/build-slot.ps1` if no built tool exists; report that bootstrap separately. Wait on exit 75 until terminal; never end a delegate turn with an owned run in flight. The checkpoint executor takes build slots itself. Direct builds, if a justified extra is needed, use the host gate and native default output; no `-o`/`OutputPath`. Keep source frozen during runs. A red checkpoint is not green because its failure appears inherited: reproduce the exact failing case at base, preserve both receipts, then report the real outcome.
 
-### Checkpoints
-
 S2 Code amendment (f56921e1): execute CP-2 and CP-10 only for the commissioned S2 slice. CP-10 includes DerivedImpactIndexTests per the brief. CP-5/CP-8 estimates are rounded up to integer minutes because the importer refuses fractional estimates; those S4/S5 rows remain out of this slice. An initial committed CP-2 run retains the legacy query to prove the plan-budget test red before the SQL replacement. No migrations or OS-selected production behavior change. Initial red receipt 20261113-201257-24fb retains bin-c1886-s2/ by design; the corrected CP-2 run uses fresh bin-c1886-s2b/ with the same row/filter, preserving red artifacts. The actual diff's only matching impacted-classes policy row is `test-lane-category`, covered by CP-10. Derived reverse-edge candidates extend well beyond this query; the named CP-2 classes bound this slice's unchanged execution/retry/delivery behavior. No full assembly or Unit lane run is commissioned.
 
 S2 pending SourceLanding Mutation inventory (all pending; Code's legacy red is ordinary regression evidence):
@@ -250,6 +248,8 @@ S2 pending SourceLanding Mutation inventory (all pending; Code's legacy red is o
 | PC-S2-4 | Small_and_debt_heavy_plans_bound_cost_and_seek_queued_messages | Restore the legacy correlated selector (cost assertion); replace the keyed queued-message join with a compiling table-wide scan (scan assertion). |
 
 Unique `(session, sequence, kind)` storage prevents two `channel` rows at the same sequence. The ties fixture therefore uses channel/transcript/status/catchup ties, preserving the existing strict-earlier rule without manufacturing invalid rows. No numeric PC budget from the original plan is superseded; Mutation owns method-scoped execution, missing-control discovery and any newly discovered variant.
+
+### Checkpoints
 
 Every row below is portable server/Postgres lane; ordinary scope is exactly these rows. Reuse cells refer only to an earlier build with the same `After`. Grouped run S5 includes CP-6–CP-9. CP-10 is the final integrated source guard run. EstimatedMinutes are provisional under the budget above.
 
