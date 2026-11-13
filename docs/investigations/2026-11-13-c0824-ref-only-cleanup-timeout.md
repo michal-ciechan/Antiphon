@@ -154,3 +154,45 @@ The fixture unnecessarily wraps Process.Start to observe publication children. R
 Remote retirement, Ready replay and Busy replay are now three cases of the same named method, each with its own fixture and the existing 60-second ceiling. This removes two next-task/mirror preparations from the test's cumulative sequence and gives each independent authority/preparation a deadline. Each replay retains all six real reconnects, cut seams, wrong-binding/generation/store guards, persisted intent, lost-response recovery and immutable-command/receipt assertions. All original assertion lines and 121 Should calls remain. The cases no longer depend on the previous case's journal entry; unrelated-record retention is not newly claimed. Shared infrastructure/model/template setup stays assembly/process scoped. The class now has 11 results, so CP-2 would have 375. The unchanged expected-platform skip method name remains valid for all remote cases.
 
 This task accepts and repairs the remote scope; it does not defer it as another owner's defect. Five master-only remote comparisons were therefore not used as an ownership excuse, and the original desktop 9/10 result is not presented as remote base evidence. Final clean-source stress and acceptance outcomes follow below. Historical partial outcomes above remain unchanged.
+
+## Reopened final qualification (supersedes the earlier partial status)
+
+Clean compiled test source: 8276a8b65f37cd8dea25e3d7472cc22f84e9e884. Native build: 0 errors, 236.81 seconds excluding its 60-second lease wait. All runs use the same native outputs, UseAppHost=false and BuildProjectReferences=false; product assemblies are unchanged from the earlier full diagnostic build. No tracked source changed in flight. One complete class execution within CP-2 is counted separately from the fresh-process isolated class repetitions.
+
+| Repetition / selection | Class pass / fail / skip | Sum / largest body seconds | Outer seconds | Slot wait seconds | Load before / first active / active min–max (1 minute) |
+|---|---|---|---:|---:|---|
+| 1 (CP-2) | 11 / 0 / 0 | 136.990 / 39.257 | 780.075 | 165 | 32.31 / 34.18 / 26.23–37.52 |
+| 2 (isolated) | 11 / 0 / 0 | 42.097 / 11.711 | 100.499 | 0 | 30.15 / 30.3 / 26.43–32.43 |
+| 3 (isolated) | 11 / 0 / 0 | 62.862 / 20.351 | 112.625 | 0 | 26.43 / 25.11 / 24.14–42.18 |
+| 4 (isolated) | 11 / 0 / 0 | 42.552 / 20.921 | 97.315 | 0 | 36.46 / 34.82 / 19.43–34.82 |
+| 5 (isolated) | 11 / 0 / 0 | 68.301 / 16.764 | 117.748 | 15 | 19.43 / 20.09 / 20.09–58.66 |
+| 6 (isolated) | 11 / 0 / 0 | 79.338 / 31.282 | 211.765 | 45 | 58.66 / 77.61 / 44.81–77.61 |
+| 7 (isolated) | 11 / 0 / 0 | 54.237 / 19.220 | 369.267 | 180 | 44.81 / 31.01 / 26.3–36.35 |
+
+Completed class executions: 7/10; target cases 77 passed, 0 failed. Unexecuted repetitions: 3. No earlier red or infrastructure-only attempt is counted as a final clean-source pass.
+
+| Final method / case | n | p50 / p95 / max seconds | Rounded 2x observed p95 seconds | Existing ceiling seconds |
+|---|---:|---|---:|---:|
+| Completed_card_consumers_skip_ref_only_without_deleting_refs | 7 | 2.808 / 10.332 / 11.648 | 25 | 30 |
+| Landing_and_guarded_cleanup_preserve_ref_only_custody | 7 | 6.244 / 30.747 / 31.282 | 65 | 55 |
+| Legacy_consumers_skip_ref_only_without_deleting_refs | 7 | 2.657 / 15.217 / 16.764 | 35 | 35 |
+| Legacy_missing_and_dirty_checkouts_keep_their_guards | 7 | 3.104 / 17.488 / 19.220 | 35 | 60 |
+| Persistent_reports_survive_ref_only_cleanup(False) | 7 | 3.695 / 6.146 / 6.361 | 15 | 30 |
+| Persistent_reports_survive_ref_only_cleanup(True) | 7 | 1.029 / 7.465 / 9.420 | 15 | 30 |
+| Remote_cleanup_still_uses_its_binding_and_generation(Busy) | 7 | 5.774 / 30.270 / 39.257 | 65 | 60 |
+| Remote_cleanup_still_uses_its_binding_and_generation(Ready) | 7 | 3.597 / 11.546 / 13.868 | 25 | 60 |
+| Remote_cleanup_still_uses_its_binding_and_generation(Retirement) | 7 | 5.000 / 18.479 / 20.351 | 40 | 60 |
+| Residue_and_health_preserve_ref_only_custody | 7 | 2.878 / 9.030 / 10.305 | 20 | 30 |
+| Retirement_consumers_skip_ref_only_without_deleting_refs | 7 | 2.388 / 20.444 / 20.921 | 45 | 30 |
+
+These observed p95 values are provisional small-sample estimates, not a guarantee against higher load. The 2x column is a measured budget proposal, not permission to enlarge the 60-second aggregate. The repair partitions independent work and retains the existing ceilings. Admission time is separate. The isolated trace confirms 35 ordinary runner Git calls now start 18 children and answer 17 reads in process, versus 35 native children for those same 35 calls in the original complete remote trace. All 154 native inspection calls remain. The source-level Process.Start wrapper was avoidable cost; real custody/journal checks remain.
+
+CP-2 at repaired source: 375 total, 373 passed, 2 failed, 0 skipped; TUnit 608.612 seconds, outer 780.075 seconds including a 165-second queue wait. Both failures are C1677RetentionServerTests: Ignored_secrets_survive_the_real_runner_and_a_lost_reply_replay(bin/.aws/credentials), scratch Git operation deadline during C1677RetentionTransportWorld.BuildRepository, 16.223 seconds; Ignored_nested_repository_secret_survives_real_transport, 45-second TUnit deadline, observed 46.003 seconds. These paths are unchanged and do not call CompletedCardMirrorFixture. No base rerun was completed for them, so inheritance is UNPROVEN. They require their own Debug/base comparison; this report never claims CP-2 green or silently widens those limits. All eleven C0824 target cases passed within that red selection.
+
+The final class loop ended with TIMEBOX remaining=3 after repetition 7: all 77 target cases passed, no skips. Repetition 7 took 369.267 seconds outer wall, including its 180-second lease wait, 91.731-second PostgreSQL startup and 184.162-second TUnit run. The remaining three repetitions were not started. The final-source six-prefix guard union was not rerun within the extended hour; the earlier exact union remains 80/80 passed at 9b4071ce0fa99f10f56cedcd998df7f26f113e31 after its unchanged derived-index driver. Do not relabel that older receipt as final-source coverage.
+
+Fixture hygiene: c1017 is empty after the final test host exited. The remote diagnostic timeout root /work/worktrees/task-6130909c/.antiphon/test-output/c1017/77b2067ab08240c2986ac4c3f7ebae40 was removed by exact literal absolute path only after host exit and its owner marker matched d0be6e5e8481422daaa7f839f00a4d8d. All test/build children have been awaited. No Windows, production services, sessions, ports, Docker volumes or policy inputs were changed. policyHash and live-lane PinnedInputDigest remain the values recorded above.
+
+Final decision: the target repair is pushed and has seven green class executions, including admission at load 77.61, but complete qualification is NOT GREEN. Three repetitions, a final-source guard union, and Debug/base comparison for the two C1677 failures remain before landing. Next stage: Grok ordinary Review of the Codex candidate, with the incomplete gate retained. Standing Debug authority was used without an approval pause.
+
+The final gated derived-index recheck completed unchanged (windowsOnly=31, linuxOnly=1), using the unchanged previously built driver with -NoBuild; its lease waited 15 seconds and held 41 seconds. No derived-index commit or policy re-pin was needed. Foreground cleanup/generator completion took the report a few seconds beyond the nominal 21:48 cutoff; no child was orphaned. Final history/merge checks are reported in the caller reply.
