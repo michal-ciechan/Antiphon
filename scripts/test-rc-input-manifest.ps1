@@ -70,6 +70,7 @@ switch ($Case) {
     'ProductAndHelperFanout' {
         foreach ($path in @('server/Application/SessionMessageQueueService.cs','src/Core/Queue.cs','tests/Shared/Helper.cs','linked/Shared.cs')) {
             Put $path ('changed '+$path); $a=Commit; $s=Select-Manifest $a
+            Note ($s.changes.Count -eq 1 -and $s.changes[0].path -ceq $path) "isolated-fanout-change:$path"
             Note ($s.dirtySuites -ccontains 'server') "product-or-helper-dirty:$path"
             Note (Has $s 'server' $path) "product-or-helper-inventory:$path"
             if ($path -ceq 'src/Core/Queue.cs' -or $path -ceq 'tests/Shared/Helper.cs') { Note ($s.dirtySuites -ccontains 'runner') "fanout:$path" }
