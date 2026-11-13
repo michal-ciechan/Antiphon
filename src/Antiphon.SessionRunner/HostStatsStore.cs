@@ -225,6 +225,9 @@ public sealed class HostStatsStore : IHostStatsSource
         var processes = new List<RunnerHostProcessDto>(sample.Processes.Count);
         foreach (var process in sample.Processes)
             processes.Add(new RunnerHostProcessDto(process.Name, process.SessionId, process.CpuPercent, process.WorkingSetBytes));
+        var top = new List<RunnerHostTopConsumerDto>(sample.TopConsumers.Count);
+        foreach (var row in sample.TopConsumers)
+            top.Add(new RunnerHostTopConsumerDto(row.Pid, row.StartTicks, row.Name, row.Role, row.CpuCores, row.RssBytes));
         return new RunnerHostCurrentDto(
             sample.CpuPercent,
             sample.Load1,
@@ -237,6 +240,7 @@ public sealed class HostStatsStore : IHostStatsSource
             sample.SwapTotalBytes,
             disks,
             sample.ProcessCount,
-            processes);
+            processes,
+            top);
     }
 }

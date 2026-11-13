@@ -26,13 +26,15 @@ public sealed class HostStatsSamplerService : BackgroundService
     private readonly HostStatsSettings _settings;
     private readonly ILogger<HostStatsSamplerService> _logger;
     private readonly HostLoadCaptureService? _history;
+    private readonly IHostProcessTable? _processTable;
+    private readonly HostTopConsumerTracker _top = new();
     private readonly Dictionary<(int Pid, DateTime StartedAt), (TimeSpan Cpu, long At)> _last = new();
     private DateTimeOffset _lastFault = DateTimeOffset.MinValue;
     private static int _selfPid;
     private static DateTime _selfStartedUtc;
     private static bool _selfCached;
 
-    public HostStatsSamplerService(
+    internal HostStatsSamplerService(
         IHostStatsProbe probe,
         HostStatsStore store,
         IProcessCpuProbe cpu,
@@ -40,7 +42,8 @@ public sealed class HostStatsSamplerService : BackgroundService
         Func<int, long?> workingSet,
         TimeProvider time,
         IOptions<HostStatsSettings> settings,
-        ILogger<HostStatsSamplerService> logger, HostLoadCaptureService? history = null)
+        ILogger<HostStatsSamplerService> logger, HostLoadCaptureService? history = null,
+        IHostProcessTable? processTable = null)
     {
         _probe = probe;
         _store = store;
@@ -51,6 +54,7 @@ public sealed class HostStatsSamplerService : BackgroundService
         _settings = settings.Value;
         _logger = logger;
         _history = history;
+        _processTable = processTable;
     }
 
     public Task SampleOnceAsync(CancellationToken ct = default, bool logTick = true)
@@ -74,11 +78,12 @@ public sealed class HostStatsSamplerService : BackgroundService
 
         var now = _time.GetUtcNow();
         var processes = _settings.ProcessSampling ? ReadProcesses(_time.GetTimestamp()) : [];
+        var top = _settings.ProcessSampling ? _top.Sample(_processTable, _time) : [];
         var percent = read.Value.CpuPercent;
         var reason = read.Value.CpuUnknownReason;
         if (percent is { } value && (!double.IsFinite(value) || value < 0 || value > 100))
         { percent = null; reason = "invalid"; }
-        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, CpuUnknownReason = reason };
+        var sample = read.Value with { At = now, CpuPercent = percent, Processes = processes, TopConsumers = top, CpuUnknownReason = reason };
         _store.Add(sample);
         _history?.TryCapture(sample);
         if (logTick)
