@@ -132,14 +132,15 @@ public class SessionStatePinQueryTests
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         var timer = Stopwatch.StartNew();
         await using (var tasks = new NpgsqlCommand("""
-            WITH prototype AS MATERIALIZED (SELECT to_jsonb(t) AS payload FROM "AgentTasks" t WHERE "Id" = @prototype)
-            INSERT INTO "AgentTasks"
-            SELECT (jsonb_populate_record(NULL::"AgentTasks", payload || jsonb_build_object(
+            WITH prototype AS MATERIALIZED (SELECT to_jsonb(t) AS payload FROM "AgentTasks" t WHERE "Id" = @prototype),
+            tasks AS MATERIALIZED (
+            SELECT jsonb_populate_record(NULL::"AgentTasks", payload || jsonb_build_object(
                 'Id', gen_random_uuid(), 'ConcurrencyToken', gen_random_uuid(),
                 'Status', CASE WHEN n < 256 THEN n % 4 ELSE 4 END,
                 'AgentSessionId', CASE WHEN n % 3 = 0 THEN NULL ELSE (@ids)[n % 32 + 1] END,
-                'ParentSessionId', CASE WHEN n % 3 = 1 THEN NULL ELSE (@ids)[n % 32 + 1] END))).*
-            FROM prototype CROSS JOIN generate_series(0, 27694) n;
+                'ParentSessionId', CASE WHEN n % 3 = 1 THEN NULL ELSE (@ids)[n % 32 + 1] END))) AS item
+            FROM prototype CROSS JOIN generate_series(0, 27694) n)
+            INSERT INTO "AgentTasks" SELECT (item).* FROM tasks;
             DELETE FROM "AgentTasks" WHERE "Id" = @prototype;
             """, connection) { CommandTimeout = 60 })
         {
