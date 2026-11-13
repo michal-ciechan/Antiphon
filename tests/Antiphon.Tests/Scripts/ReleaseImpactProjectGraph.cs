@@ -191,28 +191,45 @@ internal static class ReleaseImpactProjectGraph
 
     internal static ReleaseImpactGraph Union(ReleaseImpactGraph oldGraph, ReleaseImpactGraph newGraph)
     {
-        var reasons = oldGraph.IncompleteReasons.Intersect(newGraph.IncompleteReasons, StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal).ToArray();
-        var rightIds = newGraph.Universe.Select(c => new ReleaseImpactIdentity(c.Project, c.FullName)).ToHashSet();
-        var universe = oldGraph.Universe.Where(c => rightIds.Contains(new ReleaseImpactIdentity(c.Project, c.FullName))).ToArray();
-        var rightEdges = newGraph.Edges.ToDictionary(e => e.Path, e => e.Classes.ToDictionary(
-            c => new ReleaseImpactIdentity(c.Project, c.FullName), c => c.Kinds.ToHashSet(StringComparer.Ordinal)));
-        var edges = new List<ReleaseImpactEdge>();
-        foreach (var edge in oldGraph.Edges)
+        var reasons = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var reason in oldGraph.IncompleteReasons) reasons.Add(reason);
+        foreach (var reason in newGraph.IncompleteReasons) reasons.Add(reason);
+        var classes = new Dictionary<ReleaseImpactIdentity, (SortedSet<string> Paths, SortedSet<string> Platforms)>();
+        void AddClass(ReleaseImpactClass type)
         {
-            if (!rightEdges.TryGetValue(edge.Path, out var rightClasses)) continue;
-            var classes = new List<ReleaseImpactConsumer>();
+            var id = new ReleaseImpactIdentity(type.Project, type.FullName);
+            if (!classes.TryGetValue(id, out var sets))
+            {
+                sets = (new SortedSet<string>(StringComparer.Ordinal), new SortedSet<string>(StringComparer.Ordinal));
+                classes[id] = sets;
+            }
+            foreach (var path in type.DeclarationPaths) sets.Paths.Add(path);
+            foreach (var platform in type.Platforms) sets.Platforms.Add(platform);
+        }
+        foreach (var type in oldGraph.Universe) AddClass(type);
+        foreach (var type in newGraph.Universe) AddClass(type);
+        var universe = classes.OrderBy(p => p.Key.Project, StringComparer.Ordinal).ThenBy(p => p.Key.FullName, StringComparer.Ordinal)
+            .Select(p => new ReleaseImpactClass(p.Key.Project, p.Key.FullName, p.Value.Paths.ToArray(), p.Value.Platforms.ToArray())).ToArray();
+        var hits = new Dictionary<string, Dictionary<ReleaseImpactIdentity, SortedSet<string>>>(StringComparer.Ordinal);
+        void AddEdge(ReleaseImpactEdge edge)
+        {
+            if (!hits.TryGetValue(edge.Path, out var consumers))
+                hits[edge.Path] = consumers = new Dictionary<ReleaseImpactIdentity, SortedSet<string>>();
             foreach (var consumer in edge.Classes)
             {
                 var id = new ReleaseImpactIdentity(consumer.Project, consumer.FullName);
-                if (!rightClasses.TryGetValue(id, out var rightKinds)) continue;
-                var kinds = consumer.Kinds.Where(rightKinds.Contains).Order(StringComparer.Ordinal).ToArray();
-                if (kinds.Length == 0) continue;
-                classes.Add(consumer with { Kinds = kinds });
+                if (!consumers.TryGetValue(id, out var kinds))
+                    consumers[id] = kinds = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (var kind in consumer.Kinds) kinds.Add(kind);
             }
-            if (classes.Count > 0) edges.Add(edge with { Classes = classes.ToArray() });
         }
-        return oldGraph with { IncompleteReasons = reasons, Universe = universe, Edges = edges.ToArray() };
+        foreach (var edge in oldGraph.Edges) AddEdge(edge);
+        foreach (var edge in newGraph.Edges) AddEdge(edge);
+        var edges = hits.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => new ReleaseImpactEdge(p.Key,
+            p.Value.OrderBy(c => c.Key.Project, StringComparer.Ordinal).ThenBy(c => c.Key.FullName, StringComparer.Ordinal)
+                .Select(c => new ReleaseImpactConsumer(c.Key.Project, c.Key.FullName, c.Value.ToArray())).ToArray())).ToArray();
+        var fallback = oldGraph.Fallback == "Full" || newGraph.Fallback == "Full" ? "Full" : oldGraph.Fallback;
+        return new ReleaseImpactGraph(oldGraph.Schema, oldGraph.Complete && newGraph.Complete, fallback, reasons.ToArray(), universe, edges);
     }
 
     private static bool TryReflectionCall(InvocationExpressionSyntax call, out string method, out string? receiver)
