@@ -17,6 +17,8 @@ Mutation owns red/restore/green, missing-control discovery and additional varian
 | PC-3 | expired rules deadline | fail a charged verdict-less rules attempt by time alone | GrokRulesReadyOrderingTests/Ambiguous_input_preserves_launch_and_waits_for_transcript |
 | PC-4 | wait, hold, threshold | omit structured timing or emit below threshold | C1677RetentionDispatchTests/Mutation_lock_reports_slow_owner_wait_and_hold |
 | PC-5 | external caller cancellation | swallow cancellation after retaining the process | AgentSessionLaunchFailureTests/External_cancellation_during_rc_setup_is_not_reported_as_degraded |
+| PC-6 | re-send on uncertain, fresh Enter-only, aged retype; normal and rules rows; visible and absent head | allow screen classification to retry a composer-less Sent/null-verdict attempt at a later flush | SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping |
+| PC-7 | omit overdue attention, repeat its note, or drop discovery outside the retry window | leave a lost composer-less attempt without a bounded orchestrator decision | SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping |
 
 Use one exact `/*/*/ClassName/ExactTestMethod` filter per cycle, with all native
 parameterized results inspected. Keep true readiness/spawn failure and generation
