@@ -301,3 +301,25 @@ real but does not prove a continuously active minute or the original concurrent
 stress/production-idle gates. Do not extrapolate it to full-solution acceptance
 or default enablement. Thresholds remain <=10% slowdown, <=6 minute cores,
 <=8 GiB RSS and zero fallback; report small-N and load/cache limitations.
+
+### Foreground compiler lifetime correction
+
+The first small-project measured stock call was refused by its unchanged warm
+assertion: its primed process was absent and a new PID/start identity served it.
+Both primed pipes were gone across separate command lifetimes, well before their
+600-second setting. The exact terminating actor is unproven. Retain that failed
+receipt and both primes at source `e504feef864765df5ad30dbedc4be83f98403c0a`;
+they are not three-pair acceptance.
+
+Run `pwsh -NoProfile -File scripts/run-card-1885-bounded-experiment.ps1` in the
+foreground, without an outer build lease. This local controller runs the nine
+explicit commands above, with a distinct `debug-held-17799819` identity and fresh
+`.antiphon/c1885-debug/held-performance` evidence. Each command independently
+invokes `scripts/build-slot.ps1 -SlotWaitMinutes 5`; there is still exactly one
+lease and one build per child. The standing controller owns compiler lifetime
+across these child commands, awaits every child, checks the priming projection,
+enforces the collection bound, and shuts down only its exact private pipes in
+finally. No external executor, service, detached controller or global shutdown.
+This is a repaired lifetime protocol, not permission to credit the failed cold
+replacement or repeat until the throughput ratio passes. Collect exactly three
+measured pairs after the new priming pair, preserving all earlier costs.
