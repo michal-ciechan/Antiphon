@@ -90,8 +90,7 @@
         "ReportBudgetWorkspacePortabilityTests",
         "VolumeRetirementContentTests",
         "WorkspaceParkPublicationTests",
-        "BlockedParkWireTests",
-        "C1677RetentionEngineTests"
+        "BlockedParkWireTests"
       ]
     },
     {
