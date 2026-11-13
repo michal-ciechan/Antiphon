@@ -571,9 +571,9 @@ the orchestrator under S3 and later slices.
 
 ### Cost and completion
 
-The table's portable/Linux/default cost column sums to 201 minutes across
+The table's portable/Linux/default cost column sums to 214 minutes across
 independent authoring and verification slices, including required red runs and
-cold builds. It is not authorization for a single 201-minute run. Most portable
+cold builds. It is not authorization for a single 214-minute run. Most portable
 regressions run once on the default lane; Windows-specific rows are separately
 mandatory. `-ExpectAbout` for an individual authoring dispatch is its selected
 row cost plus 25–45 minutes authoring; verification-only dispatches use only
