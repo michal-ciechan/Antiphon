@@ -23365,6 +23365,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointStepDeadline.cs",
+      "classes": [
+        "CheckpointFixtureProcessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTempRootSweep.cs",
       "classes": [
         "CheckpointNamespaceCensusUsageTests",
