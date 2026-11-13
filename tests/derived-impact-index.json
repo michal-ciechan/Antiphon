@@ -1375,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 271,
+      "classes": 272,
       "reason": "cap",
-      "owed": 246,
+      "owed": 247,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1738,18 +1738,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/ConditionalInput.cs",
-      "classes": 38,
+      "classes": 39,
       "reason": "cap",
-      "owed": 13,
+      "owed": 14,
       "first": [
+        "PhoneHomeRollingRunnerTests",
         "SessionQueueReceiptPlumbingTests",
         "AgentTaskInputFallbackTests",
         "DelegateBranchDeliveryTests",
         "PhoneHomeStandingLaunchTests",
         "RunnerAbsenceEvidencePhoneHomeTests",
         "RunnerClaudeAdapterEffortPromptTests",
-        "RunnerClaudeAdapterTrustPromptTests",
-        "RunnerClaudeAdapterVerifiedPromptTests"
+        "RunnerClaudeAdapterTrustPromptTests"
       ]
     },
     {
@@ -1770,13 +1770,13 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 101,
+      "classes": 102,
       "reason": "cap",
-      "owed": 76,
+      "owed": 77,
       "first": [
+        "C1677RetentionDispatchTests",
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
-        "C1677RetentionServerTests",
         "PhoneHomeImmediateSendTests",
         "PhoneHomeRecoveryEligibilityTests",
         "C0824DesktopLegacyReleaseSwitchTests",
@@ -1786,15 +1786,15 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 72,
+      "classes": 73,
       "reason": "cap",
-      "owed": 47,
+      "owed": 48,
       "first": [
+        "DelegateBranchDeliveryTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeStrandedQueueTests",
         "C0824DesktopLegacyReleaseSwitchTests",
         "C1514HostLoadSampleTests",
-        "C1677RetentionServerTests",
         "C1677TempSweepDispatchTests",
         "Card1619RunnerExitTests",
         "ClaudeDialogDeliveryTests"
@@ -1818,34 +1818,34 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
-      "classes": 100,
+      "classes": 101,
       "reason": "cap",
-      "owed": 75,
+      "owed": 76,
       "first": [
+        "AgentSessionLaunchFailureTests",
         "CheckNoteDeliveryHandoffTests",
         "CompactionContinuationWireTests",
         "SessionGenerationExitTests",
         "AgentControlServiceIntegrationTests",
         "CheckCompactionReceiptTests",
         "CodexCliObservationTests",
-        "LegacyCheckNotePublicationTests",
-        "PhoneHomeStrandedQueueTests"
+        "LegacyCheckNotePublicationTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 428,
+      "classes": 429,
       "reason": "cap",
-      "owed": 403,
+      "owed": 404,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
         "PhoneHomeConnectionTests",
         "AgentSessionLaunchFailureTests",
         "C1677TempSweepDispatchTests",
+        "C1895OutputDropEngineTests",
         "Card1619RunnerExitTests",
-        "ProviderQuotaRefusalAcceptanceTests",
-        "RunnerCapacityCountTests"
+        "ProviderQuotaRefusalAcceptanceTests"
       ]
     },
     {
@@ -1911,34 +1911,43 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "RunnerCapacityCountTests",
         "RunnerMultilinePromptDeliveryTests",
         "RunnerReadJsonTests",
         "TranscriptSinceReadTests",
         "UnixPtyArgvAdmissionTests",
         "RunnerWorkspaceServiceTests",
         "CompletedCardWorkspaceRemovalTests",
-        "LegacyWorkspaceRemovalGateTests",
-        "C0824WorkspaceSlotOverflowTests"
+        "LegacyWorkspaceRemovalGateTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "CompletedCardWorkspaceContractTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeSettings.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
+        "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DockerStackContractTests",
         "HerdrSnapshotBoundedReadTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeEpochAgreementTests",
-        "PhoneHomeRollingRunnerTests",
-        "PhoneHomeSpillTransportTests"
+        "PhoneHomeRollingRunnerTests"
       ]
     },
     {
@@ -10354,7 +10363,8 @@
       "path": "server/Application/Services/RunnerWorktreeRetentionService.cs",
       "classes": [
         "C1677RetentionServerTests",
-        "C1677TempSweepServerTests"
+        "C1677TempSweepServerTests",
+        "C1895OutputDropServerTests"
       ]
     },
     {
@@ -12912,6 +12922,7 @@
         "C0824RefOnlyDebtTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionServerTests",
+        "C1895OutputDropServerTests",
         "LandRefRetentionTests",
         "RepositoryMaintenanceTests",
         "RunnerSettlementSyncTests",
@@ -17708,6 +17719,7 @@
         "BlockedParkWireTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
+        "C1895OutputDropEngineTests",
         "ClaudeDialogDeliveryTests",
         "ClaudeDialogInputGuardTests",
         "CodexProviderAuthRoutingTests",
@@ -17716,7 +17728,6 @@
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
         "PhoneHomeConnectionTests",
-        "PhoneHomeRollingRunnerTests",
         "PhoneHomeSessionRoutingTests",
         "PhoneHomeSpillTransportTests",
         "PhoneHomeTaskDispatchProjectionTests",
@@ -17868,7 +17879,7 @@
         "C0824WorkspaceSlotCustodyTests",
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
-        "C1677RetentionDispatchTests",
+        "C1677RetentionServerTests",
         "ClaudeCredentialProbeDispatcherTests",
         "CodexPhoneHomeCreateTests",
         "DefaultRunnerPinTests",
@@ -17900,11 +17911,11 @@
         "C1514HostLoadHistoryTests",
         "C1514HostLoadWireTests",
         "C1677RetentionDispatchTests",
+        "C1677RetentionServerTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "CardWorktreeMirrorCleanupTests",
         "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
-        "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
@@ -18041,10 +18052,10 @@
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
       "classes": [
-        "AgentSessionLaunchFailureTests",
         "AgentSessionRuntimeTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
+        "C1895OutputDropEngineTests",
         "CodexProviderAuthRoutingTests",
         "CodexStartupDeliveryTests",
         "DataRetentionServiceTests",
@@ -18170,7 +18181,9 @@
         "C1677TempSweepDispatchTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepServerTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1895OutputDropEngineTests",
+        "C1895OutputDropServerTests"
       ]
     },
     {
@@ -18770,6 +18783,7 @@
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
         "C1818GcOwnerRobustnessTests",
+        "C1895OutputDropEngineTests",
         "Card1619RunnerExitTests",
         "CodexProviderAuthRoutingTests",
         "DelegateBranchDeliveryTests",
@@ -18786,7 +18800,6 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "PtyConditionalReadTests",
         "RunnerAbsenceEvidencePhoneHomeTests",
-        "RunnerCapacityCountTests",
         "RunnerCodexCliEvidenceTests",
         "RunnerWorkspaceBindingTests",
         "StandingRunnerCwdTests"
@@ -18836,8 +18849,8 @@
         "C1022BackendLaunchTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
+        "C1895OutputDropEngineTests",
         "Card1619RunnerExitTests",
-        "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
         "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
@@ -18870,12 +18883,12 @@
         "C1677TempSweepDispatchTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "C1818GcOwnerRobustnessTests",
+        "C1895OutputDropEngineTests",
         "Card1619RunnerExitTests",
         "ClaudeAuthProbeTests",
         "CodexAuthProbeTests",
         "CodexProviderAuthRoutingTests",
         "CompletedCardWorkspaceRemovalTests",
-        "DelegateBranchDeliveryTests",
         "GrokAuthProbeTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
@@ -19188,10 +19201,19 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/RunnerWorkspaceRetention.OutputDrop.cs",
+      "classes": [
+        "C1677RetentionDispatchTests",
+        "C1677RetentionNativeProcessTests",
+        "C1895OutputDropEngineTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceRetention.cs",
       "classes": [
         "C1677RetentionDispatchTests",
-        "C1677RetentionNativeProcessTests"
+        "C1677RetentionNativeProcessTests",
+        "C1895OutputDropEngineTests"
       ]
     },
     {
@@ -19538,7 +19560,8 @@
         "C1677RetentionEngineTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1895OutputDropEngineTests"
       ]
     },
     {
@@ -20477,7 +20500,8 @@
         "C1677RetentionEngineTests",
         "C1677RetentionInventoryTests",
         "C1677RetentionNativeProcessTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1895OutputDropEngineTests"
       ]
     },
     {
@@ -22033,7 +22057,8 @@
     {
       "path": "tests/Antiphon.Tests/Application/C1677RetentionServerTests.cs",
       "classes": [
-        "C0824TransportLimiterTests"
+        "C0824TransportLimiterTests",
+        "C1895OutputDropServerTests"
       ]
     },
     {
@@ -26182,7 +26207,8 @@
       "classes": [
         "C0824TransportLimiterTests",
         "C0824WorkspaceSlotServerTests",
-        "C1677RetentionServerTests"
+        "C1677RetentionServerTests",
+        "C1895OutputDropServerTests"
       ]
     },
     {
