@@ -66,7 +66,8 @@ public sealed class ServerGitAssemblyTests
         const string witness = "Test_project_does_not_reference_the_server";
         CountDeclarations(mirror, witness).ShouldBe(1, witness);
         CountDeclarations(antiphon, witness).ShouldBe(0, witness);
-        CountTestAttributes(mirror).ShouldBe(MovedMethodNames.Length + 1);
+        var movedClasses = mirror.Where(file => Path.GetFileName(file) is "GitIndexLockTests.cs" or "ServerGitAssemblyTests.cs");
+        CountTestAttributes(movedClasses).ShouldBe(MovedMethodNames.Length + 1);
         foreach (var name in StayedMethodNames)
         {
             CountDeclarations(antiphon, name).ShouldBe(1, name);
