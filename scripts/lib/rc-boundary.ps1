@@ -181,14 +181,6 @@ function Get-RcBoundaryCanonicalDigest {
     } finally { $buffer.Dispose() }
 }
 
-function ConvertTo-RcBoundaryIdentity {
-    param([Parameter(Mandatory)][string]$IdentityKey, [AllowEmptyString()][string]$CaseKey = '')
-    if ([string]::IsNullOrWhiteSpace($IdentityKey) -or $IdentityKey -notmatch '^[^/\r\n]+/[^\r\n]+$') { throw 'boundary-chunk: invalid/duplicate identity' }
-    if ($null -eq $CaseKey -or $CaseKey -match '[\r\n]') { throw 'boundary-chunk: invalid/duplicate identity' }
-    $slash = $IdentityKey.IndexOf([char]'/')
-    return @{ class = $IdentityKey.Substring(0, $slash); method = $IdentityKey.Substring($slash + 1); caseKey = [string]$CaseKey }
-}
-
 function Get-RcBoundaryMembershipKey {
     param([string]$Suite, [string]$IdentityKey, [string]$CaseKey)
     # Length framing keeps embedded NULs and delimiters unambiguous. Boundary
@@ -210,9 +202,13 @@ function New-RcBoundaryChunkData {
         $key = [string]$IdentityKeys[$i]
         $caseKey = ''
         if ($hasCaseKeys) { $caseKey = [string]$CaseKeys[$i] }
-        $seenKey = Get-RcBoundaryMembershipKey $Suite $key $caseKey
+        if ([string]::IsNullOrWhiteSpace($key) -or $key -notmatch '^[^/\r\n]+/[^\r\n]+$' -or $caseKey -match '[\r\n]') { throw 'boundary-chunk: invalid/duplicate identity' }
+        # Suite is constant here. The key length delimits identityKey; the
+        # remainder is caseKey, including any embedded delimiters or NULs.
+        $seenKey = [string]$key.Length + ':' + $key + $caseKey
         if (-not $seen.Add($seenKey)) { throw 'boundary-chunk: invalid/duplicate identity' }
-        $parsed.Add((ConvertTo-RcBoundaryIdentity -IdentityKey $key -CaseKey $caseKey))
+        $slash = $key.IndexOf([char]'/')
+        $parsed.Add(@{ class=$key.Substring(0, $slash); method=$key.Substring($slash + 1); caseKey=$caseKey })
     }
     $sorted = @(Sort-RcBoundaryIdentities -Identities @($parsed.ToArray()))
     $hex = Get-RcBoundaryCanonicalDigest -Suite $Suite -Boundary $Boundary -Identities $sorted
