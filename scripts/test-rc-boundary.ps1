@@ -119,6 +119,10 @@ if (-not (Test-Path -LiteralPath $lib)) {
                     Note ($row.boundary -ceq 'unassigned' -and $row.alwaysDirty -eq $true -and $row.collision -eq $true) 'short-id collision accepted'
                     Note ($row.chunkId -like 'b-unassigned-*') 'colliding short id kept'
                 }
+                $caseJoin = (@($resolved) | ForEach-Object { [string]@($_.caseKeys)[0] }) -join '|'
+                Note ($caseJoin -ceq ($left + '|' + $right)) 'collision case keys dropped'
+                Note ($resolved[0].chunkId -cne $resolved[1].chunkId) 'collision rebuilt as one id'
+                Note ($resolved[0].fullDigest -cne $resolved[1].fullDigest) 'collision full digests collapsed'
                 $clean = @(Resolve-RcBoundaryChunks -Memberships @(
                     @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) },
                     @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ZTests/B'; caseKey = '' }) }
@@ -126,6 +130,14 @@ if (-not (Test-Path -LiteralPath $lib)) {
                 Note (@($clean).Count -eq 2) 'distinct chunks dropped'
                 foreach ($row in @($clean)) {
                     Note ($row.boundary -ceq 'core' -and $row.collision -eq $false -and $row.alwaysDirty -eq $false) 'distinct short ids refused'
+                }
+                $same = @(Resolve-RcBoundaryChunks -Memberships @(
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) },
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) }
+                ))
+                Note (@($same).Count -eq 2) 'identical digest dropped'
+                foreach ($row in @($same)) {
+                    Note ($row.boundary -ceq 'core' -and $row.collision -eq $false) 'identical full digest treated as collision'
                 }
             }
         }
