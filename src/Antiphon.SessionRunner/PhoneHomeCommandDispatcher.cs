@@ -1016,7 +1016,7 @@ public sealed class PhoneHomeCommandDispatcher
     /// <summary>
     /// CARD-1677 D-6. Phase A (the recent-use guard of D-2, every check, then <c>git worktree move</c>) runs under the mutation lock;
     /// phase B (the unforced <c>git worktree remove</c> of a multi-GiB tree) runs after the lock is
-    /// released, so it never stalls a session's Input. Phase B runs only for a moved tree.
+    /// released. Input uses only the runtime per-session gate, independently of both phases. Phase B runs only for a moved tree.
     /// </summary>
     private async Task<PhoneHomeFrame> RetainAsync(PhoneHomeFrame request, CancellationToken ct)
     {

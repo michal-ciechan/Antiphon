@@ -36,20 +36,20 @@ must fail. Mutation owns deliberate red/restore/green, missing-control discovery
 
 ## Performance budget
 
-Cold server build measured 336 s (400.9 s including driver audit), startup 33.7 s, red test body wall 17.3 s; admission 75 s is separate. Runner builds are smaller. Estimates remain provisional, not p95. Each integration host shares its database fixture and each new uncertainty test owns an isolated schema. All fake Input requests/held gates are joined in finally. No selection is expected over 30 minutes; if observed, preserve phase evidence and request caller Debug. Existing checkpoint 15-minute floor remains a documented tooling exception, not a measured per-case timeout.
+Cold server builds measured 336 s and 528 s (401 s and 613 s including driver audit). The valid red group took 23m58s wall: 969.957 s charged execution and 468.806 s admission-only union; the server build waited 285 s and runner test 450 s. Red rows inspected fresh TRX: CP-1 59/56/3, CP-4 3/0/3, CP-5 3/0/3, CP-6 5/2/3 (executed/passed/failed). The final rows share one server build and bound adjacent integration classes. Runner builds are smaller. Estimates remain provisional, not p95. Each integration host shares its database fixture and each new uncertainty test owns an isolated schema. All fake Input requests/held gates are joined in finally. No selection is expected over 30 minutes; if observed, preserve phase evidence and request caller Debug. Existing checkpoint 15-minute floor remains a documented tooling exception, not a measured per-case timeout.
 
 ### Cost
 
 Ordinary floor 29 minutes plus authoring. Bounded named classes; no full assembly or Unit lane.
-Red rows intentionally fail before fixes, then rerun once green. No repeats after green.
+Red rows intentionally fail before fixes, then rerun once green. No repeats after green. Final CP-4/CP-5 expand the red method rows to their full named classes; CP-2 excludes those classes, so cases are not duplicated. The runner budget roster witness remains named and unchanged.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1892-runner-red3/ | runner-input-retention | `/*/*/(C1677RetentionDispatchTests*)\|(PhoneHomeCommandDispatcherTests*)/*` | V-1,R-1,V-3 | all listed, 0 failed | 2 | 6 |
-| CP-2 | S3-S4 | tests/Antiphon.Tests -> bin-c1892-server-red3/ | launch-uncertainty | `/*/*/(AgentSessionLaunchFailureTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesInitializationTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)/*` | V-2,R-2 | all listed, 0 failed | 6 | 12 |
-| CP-3 | S5 | tests/Antiphon.Tests -> bin-c1892-guards/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-3,V-4 | all listed, 0 failed | 10 | 6 |
-| CP-4 | S3-S4 | CP-2 | uncertainty-witnesses | `/*/*/GrokRulesReadyOrderingTests/Ambiguous_input*` | V-2 | all listed, 0 failed | 3 | 1 |
-| CP-5 | S3-S4 | CP-2 | card-input-witnesses | `/*/*/AgentSessionLaunchFailureTests/Card_input_uncertainty*` | V-2,R-2 | all listed, 0 failed | 3 | 1 |
-| CP-6 | S3-S4 | CP-2 | queue-transport-recovery | `/*/*/SessionMessageQueuePhoneHomeDropTests/*` | V-2 | all listed, 0 failed | 1 | 3 |
+| CP-1 | all | tests/Antiphon.SessionRunner.Tests -> bin-c1892-final-runner/ | runner-input-retention | `/*/*/(C1677RetentionDispatchTests*)\|(PhoneHomeCommandDispatcherTests*)\|(C1722GitTimeoutBudgetTests*)/*` | V-1,R-1,V-3 | all listed, 0 failed | 3 | 6 |
+| CP-2 | all | tests/Antiphon.Tests -> bin-c1892-final-server/ | adjacent-integration | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)\|(RunnerTerminalSessionGenerationTests*)\|(AgentSessionCancelledTurnTests*)\|(AgentSessionInterruptedLaunchResumeTests*)/*` | V-2,R-2 | all listed, 0 failed | 8 | 12 |
+| CP-3 | all | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-3,V-4 | all listed, 0 failed | 10 | 3 |
+| CP-4 | all | CP-2 | rules-readiness-uncertainty | `/*/*/GrokRulesReadyOrderingTests/*` | V-2,R-2 | all listed, 0 failed | 5 | 1 |
+| CP-5 | all | CP-2 | launch-failure-and-uncertainty | `/*/*/AgentSessionLaunchFailureTests/*` | V-2,R-2 | all listed, 0 failed | 3 | 4 |
+| CP-6 | all | CP-2 | queue-transport-recovery | `/*/*/SessionMessageQueuePhoneHomeDropTests/*` | V-2 | all listed, 0 failed | 5 | 3 |
