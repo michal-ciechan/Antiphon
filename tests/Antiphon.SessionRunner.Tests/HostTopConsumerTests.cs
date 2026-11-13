@@ -633,9 +633,11 @@ public class HostTopConsumerTests
             for (var pid = 1; pid <= 4; pid++)
                 WriteProc(root, pid, "pwsh", 10, 10, 1, 1);
             double cpu = 0;
+            // The budget now includes directory enumeration. 1.8 ms per sample leaves four
+            // directories inside the 10 ms budget and stops on a later process read.
             var table = new LinuxHostProcessTable(root, 4096, 100, () =>
             {
-                cpu += 6;
+                cpu += 1.8;
                 return cpu;
             }, TimeSpan.FromMilliseconds(10));
             var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
@@ -807,7 +809,7 @@ public class HostTopConsumerTests
         public ManualResetEventSlim? Entered { get; init; }
         public int HoldFromRead { get; init; } = 1;
 
-        public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
+        public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default)
         {
             Reads++;
             if (Reads >= HoldFromRead)

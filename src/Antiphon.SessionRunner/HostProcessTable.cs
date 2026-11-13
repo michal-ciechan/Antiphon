@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -18,7 +19,7 @@ internal readonly record struct HostProcessObservation(
 /// <summary>CARD-1884. A bounded read of the host pid namespace. The cap is the number of processes read.</summary>
 internal interface IHostProcessTable
 {
-    IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids);
+    IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default);
 
     /// <summary>True when the last <see cref="Read"/> stopped because the CPU budget was spent.</summary>
     bool LastReadTruncated { get; }
@@ -50,7 +51,7 @@ internal sealed class EmptyHostProcessTable : IHostProcessTable
 
     public bool LastReadTruncated => false;
 
-    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids) => [];
+    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default) => [];
 }
 
 /// <summary>Keeps retained pids, then the highest pids, and stops at <paramref name="max"/>.</summary>
@@ -227,6 +228,69 @@ internal static class LinuxProcessStat
     }
 }
 
+/// <summary>
+/// CPU time for the whole scan, including enumeration. A clock that is missing, stuck, or
+/// moving backwards fails closed on a short wall budget and a hard read cap.
+/// </summary>
+internal sealed class ScanBudget
+{
+    public const int UnreadableClockProcessCap = 32;
+    private readonly TimeSpan _cpuBudget;
+    private readonly Func<double?> _clock;
+    private readonly long _wallStart;
+    private readonly double? _origin;
+    private bool _clockFailed;
+    private int _equalSamples;
+    private int _reads;
+
+    public ScanBudget(TimeSpan cpuBudget, Func<double?> clock)
+    {
+        _cpuBudget = cpuBudget;
+        _clock = clock;
+        _wallStart = Stopwatch.GetTimestamp();
+        if (cpuBudget > TimeSpan.Zero)
+        {
+            _origin = clock();
+            _clockFailed = _origin is null;
+        }
+    }
+
+    public bool ClockFailed => _clockFailed;
+
+    public bool Exhausted()
+    {
+        if (_cpuBudget <= TimeSpan.Zero)
+            return false;
+        if (!_clockFailed)
+        {
+            var now = _clock();
+            if (now is not double cpu || _origin is not double start || cpu < start)
+            {
+                _clockFailed = true;
+            }
+            else if (cpu == start)
+            {
+                var stalled = ++_equalSamples >= 8
+                    || Stopwatch.GetElapsedTime(_wallStart) >= _cpuBudget * 4;
+                if (!stalled)
+                    return false;
+                _clockFailed = true;
+            }
+            else if (cpu - start >= _cpuBudget.TotalMilliseconds)
+            {
+                return true;
+            }
+        }
+
+        if (!_clockFailed)
+            return false;
+        return Stopwatch.GetElapsedTime(_wallStart) >= _cpuBudget * 4
+            || _reads >= UnreadableClockProcessCap;
+    }
+
+    public void CountRead() => _reads++;
+}
+
 internal sealed class LinuxHostProcessTable : IHostProcessTable
 {
     private readonly string _root;
@@ -258,33 +322,53 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
         _cpuBudget = cpuBudget;
     }
 
-    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
+    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default)
     {
         LastReadTruncated = false;
         var pageSize = _pageSize > 0 ? _pageSize : Environment.SystemPageSize;
         var ticks = _ticksPerSecond > 0 ? _ticksPerSecond : TicksPerSecond();
         if (pageSize <= 0 || ticks <= 0) return [];
-        List<int> pids;
+        var budget = new ScanBudget(_cpuBudget, ThreadCpu);
+        var pids = new List<int>();
         try
         {
-            pids = ListPids();
+            foreach (var dir in Directory.EnumerateDirectories(_root))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (budget.Exhausted())
+                {
+                    LastReadTruncated = true;
+                    return [];
+                }
+
+                var name = Path.GetFileName(dir);
+                if (int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) && pid > 0)
+                    pids.Add(pid);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return [];
         }
 
-        var chosen = HostProcessSelection.Choose(pids, retainPids, maxProcesses);
+        pids.Sort();
+        var limit = maxProcesses;
+        if (budget.ClockFailed)
+            limit = Math.Min(limit, ScanBudget.UnreadableClockProcessCap);
+        if (budget.ClockFailed && pids.Count > limit)
+            LastReadTruncated = true;
+        var chosen = HostProcessSelection.Choose(pids, retainPids, limit);
         var list = new List<HostProcessObservation>(chosen.Count);
-        var origin = ThreadCpu();
         foreach (var pid in chosen)
         {
-            if (OverBudget(origin))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (budget.Exhausted())
             {
                 LastReadTruncated = true;
                 break;
             }
 
+            budget.CountRead();
             try
             {
                 var dir = Path.Combine(_root, pid.ToString(CultureInfo.InvariantCulture));
@@ -311,12 +395,6 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
 
     private double? ThreadCpu() => (_threadCpu ?? HostStatsSamplerService.ThreadCpuMilliseconds)();
 
-    private bool OverBudget(double? origin)
-    {
-        if (_cpuBudget <= TimeSpan.Zero) return false;
-        return origin is double start && ThreadCpu() is double now && now - start >= _cpuBudget.TotalMilliseconds;
-    }
-
     private bool TryReadStat(string path, out ReadOnlySpan<char> stat)
     {
         stat = default;
@@ -326,20 +404,6 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
         var chars = Encoding.UTF8.GetChars(_statBytes, 0, read, _statChars, 0);
         stat = _statChars.AsSpan(0, chars);
         return chars > 0;
-    }
-
-    private List<int> ListPids()
-    {
-        var pids = new List<int>();
-        foreach (var dir in Directory.EnumerateDirectories(_root))
-        {
-            var name = Path.GetFileName(dir);
-            if (int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out var pid) && pid > 0)
-                pids.Add(pid);
-        }
-
-        pids.Sort();
-        return pids;
     }
 
     private static bool NeedsCommandLine(ReadOnlySpan<char> stat)
@@ -388,35 +452,41 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
 
     public bool LastReadTruncated { get; private set; }
 
-    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
+    public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default)
     {
         LastReadTruncated = false;
         if (!OperatingSystem.IsWindows()) return [];
+        var budget = new ScanBudget(HostTopConsumerLimits.ScanCpuBudget, HostStatsSamplerService.ThreadCpuMilliseconds);
         Dictionary<int, string> names;
         try
         {
-            names = SnapshotNames();
+            names = SnapshotNames(budget, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             return [];
         }
 
+        if (LastReadTruncated)
+            return [];
         var ids = new List<int>(names.Count);
         foreach (var pid in names.Keys) ids.Add(pid);
         ids.Sort();
-        var chosen = HostProcessSelection.Choose(ids, retainPids, maxProcesses);
+        var limit = budget.ClockFailed ? Math.Min(maxProcesses, ScanBudget.UnreadableClockProcessCap) : maxProcesses;
+        if (budget.ClockFailed && ids.Count > limit)
+            LastReadTruncated = true;
+        var chosen = HostProcessSelection.Choose(ids, retainPids, limit);
         var list = new List<HostProcessObservation>(chosen.Count);
-        var origin = HostStatsSamplerService.ThreadCpuMilliseconds();
         foreach (var pid in chosen)
         {
-            if (origin is double cpuStart && HostStatsSamplerService.ThreadCpuMilliseconds() is double cpuNow
-                && cpuNow - cpuStart >= HostTopConsumerLimits.ScanCpuBudget.TotalMilliseconds)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (budget.Exhausted())
             {
                 LastReadTruncated = true;
                 break;
             }
 
+            budget.CountRead();
             if (!names.TryGetValue(pid, out var exe)) continue;
             if (!TryTimes(pid, out var start, out var cpu, out var rss)) continue;
             var (name, role) = HostConsumerClassifier.Classify(exe, []);
@@ -426,7 +496,7 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         return list;
     }
 
-    private static Dictionary<int, string> SnapshotNames()
+    private Dictionary<int, string> SnapshotNames(ScanBudget budget, CancellationToken cancellationToken)
     {
         var result = new Dictionary<int, string>();
         using var snapshot = CreateToolhelp32Snapshot(2, 0);
@@ -435,6 +505,13 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         if (!Process32FirstW(snapshot, ref entry)) return result;
         do
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (budget.Exhausted())
+            {
+                LastReadTruncated = true;
+                break;
+            }
+
             if (entry.Pid > 0) result[(int)entry.Pid] = entry.Exe ?? "";
         }
         while (Process32NextW(snapshot, ref entry));
