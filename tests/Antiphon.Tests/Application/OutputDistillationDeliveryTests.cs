@@ -608,6 +608,7 @@ public class OutputDistillationDeliveryTests
                     s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
                     configure?.Invoke(s);
                 }, f.ConnectionString);
+                UseCustodyIoBudget(f.Provider);
                 var ceilings = await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None);
                 ceilings.ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
                 ceilings.BriefInlineMaxBytes.ShouldBe(modern ? 43200 : 900);
@@ -718,6 +719,13 @@ public class OutputDistillationDeliveryTests
                 s.AddSingleton(Options.Create(Settings));
                 s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
             }, ConnectionString);
+            UseCustodyIoBudget(Provider);
+        }
+        // Report writes in this fixture are not the production two-second IO bound.
+        private static void UseCustodyIoBudget(IServiceProvider provider)
+        {
+            if (provider.GetService<IAgentReportStore>() is AgentReportStore store)
+                store.IoBudget = ReportWorkspace.CustodyIoBudget;
         }
         public async Task<SessionQueuedMessage> DeliverAsync(Settled seed, bool seedBaseline = true)
         {
