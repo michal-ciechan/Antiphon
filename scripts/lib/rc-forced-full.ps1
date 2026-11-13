@@ -34,12 +34,12 @@ function Test-RcFullText {
 
 function Test-RcFullDigest {
     param($Value)
-    return ($Value -is [string] -and $Value -cmatch '^[0-9a-f]{64}$')
+    return ($Value -is [string] -and $Value -cmatch '\A[0-9a-f]{64}\z')
 }
 
 function Test-RcFullSourceSha {
     param($Value)
-    return ($Value -is [string] -and $Value -cmatch '^(?:[0-9a-f]{40}|[0-9a-f]{64})$')
+    return ($Value -is [string] -and $Value -cmatch '\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z')
 }
 
 function Test-RcFullContractValue {
@@ -48,9 +48,9 @@ function Test-RcFullContractValue {
     if ($Field.EndsWith('Hash', [StringComparison]::Ordinal)) { return (Test-RcFullDigest $Value) }
     switch -CaseSensitive ($Field) {
         'format' { return ($Value -ceq 'antiphon-rc-input-contract-v1') }
-        'inputMapVersion' { return ($Value -cmatch '^[1-9][0-9]*$') }
-        'sdkVersion' { return ($Value -cmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$') }
-        'runtimeVersion' { return ($Value -cmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$') }
+        'inputMapVersion' { return ($Value -cmatch '\A[1-9][0-9]*\z') }
+        'sdkVersion' { return ($Value -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\z') }
+        'runtimeVersion' { return ($Value -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?\z') }
         'platform' { return (@('linux','windows') -ccontains $Value) }
         'executionImplementation' { return (@('compiled','fallback') -ccontains $Value) }
         default { return $false }
@@ -62,7 +62,7 @@ function ConvertTo-RcFullUtcTime {
     # Require explicit UTC and preserve tick precision at the seven-day boundary.
     # A local/unspecified timestamp, DateTime coercion or culture-dependent date
     # cannot be used as an admission clock. Missing time never means "now".
-    if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$') { return $null }
+    if ($Value -isnot [string] -or $Value -cnotmatch '\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z\z') { return $null }
     $parsed = [DateTimeOffset]::MinValue
     $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
     $formats = [string[]]@("yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'")
