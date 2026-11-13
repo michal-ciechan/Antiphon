@@ -45,7 +45,7 @@ try {
             $bad=Clone-Ra $manifest; $bad.inputs[0].objectId='f'*40
             Check $manifest $bad $facts 'manifest-rehash-mismatch'
             $bad=Clone-Ra $manifest; $bad.cases[0].caseKey='forged'
-            Check $manifest $bad $facts 'manifest-rehash-mismatch'
+            Check $manifest $bad $facts 'manifest-invalid'
             $bad=Clone-Ra $manifest; $bad.digest='f'*64
             Check $bad $bad $facts 'manifest-rehash-mismatch'
             # Also exercise the actual reader's byte and Git-object verification.
@@ -96,7 +96,7 @@ try {
         }
         'CollisionAndAlgorithmCoverageForceFull' {
             $members=@(foreach ($key in @('10788987499786589518','17490688019260441962')) {
-                @{suite='antiphon';boundary='core';identities=@(@{identityKey='Example.Tests/Check';caseKey=$key})}
+                @{suite='antiphon';boundary='core';identities=@(@{identityKey='CTests/M';caseKey=$key})}
             })
             $resolved=@(Resolve-RcBoundaryChunks $members)
             Note ($resolved.Count -eq 2 -and $resolved[0].collision -and $resolved[1].collision) 'real-s2-collision'
