@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 318,
+      "classes": 319,
       "reason": "allowlist"
     },
     {
@@ -2095,9 +2095,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
@@ -2111,18 +2111,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
+        "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
         "ChangeAwareReleaseBudgetTests",
         "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "C1514HostLoadScriptTests",
         "ReleaseGateFollowupTests",
-        "ReleaseSelectionCliTests",
-        "ClaudeEffortFixtureTraceTests"
+        "ReleaseSelectionCliTests"
       ]
     },
     {
@@ -23962,6 +23962,7 @@
         "QualificationEtaTests",
         "RcBoundaryChunkIdTests",
         "RcBoundaryPackTests",
+        "RcChunkInputDigestTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
@@ -23973,8 +23974,7 @@
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
-        "ScriptHarnessWindowsOwnershipTests",
-        "WatchQualEtaLineTests"
+        "ScriptHarnessWindowsOwnershipTests"
       ]
     },
     {
