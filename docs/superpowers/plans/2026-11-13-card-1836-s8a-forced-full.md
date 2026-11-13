@@ -35,7 +35,7 @@ a script test class. The existing six policy guards remain in the same union.
 
 ### Checkpoints
 
-| ID | After | Build | Group | Filter | Guards | Expect | Min | EstMin |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
 | CP-4 | S8a | `tests/Antiphon.Tests -> bin-c1836-s8a/` | linux-forced-full | `/*/*/RcForcedFullTests/*` | V-4 | all 3 named methods, 0 failed/skipped | 3 | 6 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)/*` | policy, categories, spawn census, index | all listed, 0 failed/skipped | 79 | 4 |
