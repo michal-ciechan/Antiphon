@@ -17,7 +17,9 @@ public sealed class ReleaseImpactEnvelopeTests
     {
         await using var fixture = await Fixture.CreateAsync();
         Path.GetRelativePath(Path.GetTempPath(), fixture.Root).ShouldNotStartWith("..");
-        Path.GetRelativePath(RepoRoot(), fixture.Root).ShouldStartWith("..");
+        var fromCheckout = Path.GetRelativePath(RepoRoot(), fixture.Root);
+        (Path.IsPathRooted(fromCheckout) || fromCheckout.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            .ShouldBeTrue("the fixture is outside the checkout, including when temp is on another drive");
         (await fixture.GitAsync("rev-parse", "--is-inside-work-tree")).Trim().ShouldBe("true");
     }
 
