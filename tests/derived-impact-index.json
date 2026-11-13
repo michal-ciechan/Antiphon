@@ -1375,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 271,
+      "classes": 272,
       "reason": "cap",
-      "owed": 246,
+      "owed": 247,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1391,34 +1391,34 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 419,
+      "classes": 420,
       "reason": "cap",
-      "owed": 394,
+      "owed": 395,
       "first": [
+        "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
         "DispatchHeldAttentionTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "TaskInputAttentionCostTests",
         "TerminalRunnerSeatReleaseTests",
-        "AgentTaskCheckSweepTests",
-        "AgentTaskPipelineStatusTests"
+        "AgentTaskCheckSweepTests"
       ]
     },
     {
       "path": "server/Domain/Entities/AgentTaskLandNotification.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "AgentTaskLandPublicationTests",
         "AgentTaskLandReceiptTests",
         "AgentTaskLandReceiptWatermarkSafetyTests",
         "AgentTaskWorktreeLockOutcomeTests",
         "BlockedTaskParkReleaseTests",
         "EntityScalarSnapshotTests",
         "PendingSettlementDeliveryTests",
-        "PreDispatchFailureDeliveryTests",
-        "ReceiptFailureDeliveryTests"
+        "PreDispatchFailureDeliveryTests"
       ]
     },
     {
@@ -1573,9 +1573,9 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
         "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
@@ -1605,9 +1605,9 @@
     },
     {
       "path": "server/Domain/Entities/TranscriptEntry.cs",
-      "classes": 122,
+      "classes": 123,
       "reason": "cap",
-      "owed": 97,
+      "owed": 98,
       "first": [
         "SessionMessageQueueServiceTests",
         "StaleWorkingTranscriptWatchdogTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 511,
+      "classes": 512,
       "reason": "cap",
-      "owed": 486,
+      "owed": 487,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -12750,7 +12750,6 @@
     {
       "path": "server/Domain/Entities/AgentTask.cs",
       "classes": [
-        "AgentTaskAutoTitleTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskConcurrencyLimitTests",
         "AgentTaskDeliveryWatchdogTests",
@@ -12774,6 +12773,7 @@
         "PipelineSpeedIntegrationTests",
         "RoutingPinCandidateDispatchTests",
         "RunnerSettlementSyncTests",
+        "SessionStatePinQueryTests",
         "WorktreeRetirementRaceTests"
       ]
     },
@@ -12795,6 +12795,7 @@
         "DispatchBaseNotificationTests",
         "PipelineDefinitionMigrationShapeTests",
         "ProjectCascadeForeignKeyTests",
+        "SessionStatePinQueryTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
       ]
     },
@@ -12807,7 +12808,6 @@
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandNotificationRescanTests",
-        "AgentTaskLandPublicationTests",
         "AgentTaskLandQueuedReceiptTests",
         "AgentTaskLandReceiptWatermarkTests",
         "AgentTaskReplyIntegrationTests",
@@ -12824,6 +12824,7 @@
         "PostLandMutationDeliveryTests",
         "ReceiptScanDestinationTests",
         "RemoteCompletionSpillTests",
+        "SessionStatePinQueryTests",
         "SettlementSyncRecoveryTests",
         "VerificationRoundDeliveryTests"
       ]
@@ -25867,6 +25868,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/SessionStatePinBaseline.cs",
+      "classes": [
+        "SessionStatePinQueryTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/SessionStateTestFixture.cs",
       "classes": [
         "CapacityRecoveryTranscriptTests",
@@ -25874,6 +25881,7 @@
         "SessionRuntimeActionRecoveryTests",
         "SessionRuntimeActionTests",
         "SessionStateCommitTests",
+        "SessionStatePinQueryTests",
         "SessionStateProjectionTests",
         "SessionStateWarmupTests",
         "WorkingTranscriptRecoveryTests"
@@ -26145,6 +26153,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/TranscriptHotPathFixture.cs",
       "classes": [
         "AgentSessionRuntimeTests",
+        "SessionStatePinQueryTests",
         "TranscriptHotPathMigrationTests",
         "TranscriptHotPathQueryTests",
         "TranscriptWorkingStateQueryTests"
