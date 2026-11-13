@@ -192,7 +192,7 @@ public class ClaudeDialogInputGuardTests
     public async Task C566_ScrolledUnsafeDeleteDialogOnlyAcceptsNo()
     {
         const string screen = """
-            
+
                │ S=/tmp/claude-1654/-work-worktrees-task-87596cc5/2e9a8fdb-f4aa-47d6-b0ab-fae74c5ebdfa/scratchpad; cd $S && for m
                │ in m1 m2 m3 m4 m5 m6 m7; do rm -rf $S/$m; cp -r $S/orig $S/$m; done; C=scripts/lib/rc-historical-stream.cs
                │ node -e '
@@ -212,14 +212,14 @@ public class ClaudeDialogInputGuardTests
                │ mut("m7","DtdProcessing = DtdProcessing.Prohibit","DtdProcessing = DtdProcessing.Parse");
                │ ' $S; for m in m1 m2 m3 m4 m5 m6 m7; do echo "$m: $(diff $S/orig/$C $S/$m/$C | grep -c '^>')"; done
                Run shell command
-            
+
              │ Dangerous rm operation on possibly-empty variable path: $S/$m in `rm -rf $S/$m` (rewrite it as "${S:?}"/"${m:?}" or
              │ use a literal path)
-            
+
              Do you want to proceed?
              ❯ 1. Yes
                2. No
-            
+
              Esc to cancel · Tab to amend
             """;
         await using var f = new Fixture();
