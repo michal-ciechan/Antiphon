@@ -80,7 +80,10 @@ function Invoke-Child([string[]]$Arguments, [string]$AppDataRoot = $appData, [ha
     }
     $start.Environment['DOTNET_ENVIRONMENT'] = 'Development'
     foreach ($key in $Overrides.Keys) {
-        if ($null -eq $Overrides[$key]) { [void]$start.Environment.Remove($key) }
+        if ($null -eq $Overrides[$key]) {
+            [void]$start.Environment.Remove($key)
+            if ($start.Environment.ContainsKey($key)) { throw 'fixture environment removal failed' }
+        }
         else { $start.Environment[$key] = $Overrides[$key] }
     }
     $process = [System.Diagnostics.Process]::Start($start)

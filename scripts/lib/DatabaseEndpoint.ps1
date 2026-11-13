@@ -94,8 +94,9 @@ function Read-AntiphonDefaultConnection {
 # DistributedApplication.CreateBuilder(args) with the standard host providers.
 # The bootstrap command-line parameter represents the final command-line key.
 # Environment > Development secrets > environment JSON > base JSON > defaults.
-# HostApplicationBuilder defaults to Production. dotnet run's AppHost launch
-# profile supplies DOTNET_ENVIRONMENT=Development before this provider chain.
+# An explicit host environment is already effective. When bootstrap is invoked
+# separately, mirror dev-aspire.ps1's normal dotnet run launch profile first;
+# its child-only DOTNET_ENVIRONMENT is otherwise absent from the bootstrap shell.
 function Resolve-AntiphonDefaultConnection {
     param(
         [string]$RepoRoot,
@@ -117,6 +118,29 @@ function Resolve-AntiphonDefaultConnection {
     }
     if ($null -ne $environmentValue) { return $environmentValue }
     $environmentName = $env:DOTNET_ENVIRONMENT
+    if ([string]::IsNullOrEmpty($environmentName)) {
+        $launchPath = [IO.Path]::Combine($RepoRoot, 'Antiphon.AppHost', 'Properties', 'launchSettings.json')
+        if (Test-Path -LiteralPath $launchPath -PathType Leaf) {
+            try {
+                $launch = [IO.File]::ReadAllText($launchPath) | ConvertFrom-Json
+                $profiles = $launch.PSObject.Properties['profiles']
+                if ($null -ne $profiles) {
+                    foreach ($profile in $profiles.Value.PSObject.Properties) {
+                        $commandName = $profile.Value.PSObject.Properties['commandName']
+                        if ($null -eq $commandName -or $commandName.Value -ine 'Project') { continue }
+                        $profileVariables = $profile.Value.PSObject.Properties['environmentVariables']
+                        if ($null -ne $profileVariables) {
+                            $profileEnvironment = $profileVariables.Value.PSObject.Properties['DOTNET_ENVIRONMENT']
+                            if ($null -ne $profileEnvironment) { $environmentName = [string]$profileEnvironment.Value }
+                        }
+                        break
+                    }
+                }
+            } catch {
+                return @{ Found = $false; Value = $null; Source = 'launch-settings'; Error = $true }
+            }
+        }
+    }
     if ([string]::IsNullOrEmpty($environmentName)) { $environmentName = 'Production' }
     if ($environmentName -ieq 'Development') {
         $secrets = Read-AntiphonDefaultConnection (Get-AntiphonAppHostUserSecretsPath)
