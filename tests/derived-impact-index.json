@@ -23730,6 +23730,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/DerivedSelectorReplay.cs",
+      "classes": [
+        "DerivedImpactIndexTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/DispatchConcurrencyScriptTests.cs",
       "classes": [
         "AgentTaskLandNotificationRescanTests"
