@@ -3,6 +3,7 @@ extern alias server;
 using ServerProgram = server::Program;
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
@@ -207,39 +208,24 @@ public sealed class PostgresJitPolicyTestsComposition
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // Program reads the connection string, Postgres:DisableJit, and Hangfire
+            // storage before Build. ConfigureAppConfiguration is applied during Build,
+            // so those reads never see it. Host settings become the command-line args
+            // CreateBuilder loads. A content root whose appsettings omits DisableJit
+            // is what makes the absent mode actually absent: command line cannot delete a key.
+            var contentRoot = WriteContentRoot(_raw, _mode);
+            builder.UseContentRoot(contentRoot);
+
+            var values = EarlySettings();
+            foreach (var pair in values)
+            {
+                if (pair.Value is not null)
+                    builder.UseSetting(pair.Key, pair.Value);
+            }
+
             builder.ConfigureAppConfiguration((_, config) =>
             {
-                var values = new Dictionary<string, string?>
-                {
-                    ["ConnectionStrings:DefaultConnection"] = _raw,
-                    ["Git:WorkspacePath"] = _workspace,
-                    ["Git:WorktreeBasePath"] = Path.Combine(_workspace, "worktrees"),
-                    ["AgentTui:KeyRingPath"] = Path.Combine(_workspace, "data-protection-keys"),
-                    ["AgentTui:ImportProfilesOnStartup"] = "false",
-                    ["GitHub:Enabled"] = "false",
-                    ["Agents:DefaultDefinition"] = "test-raw",
-                    ["Agents:Definitions:test-raw:Kind"] = "Raw",
-                    ["Agents:Definitions:test-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                    ["SessionRunner:BaseUrl"] = ProductionRunnerGuard.DeadRunnerBaseUrl,
-                    ["SessionRunner:Enabled"] = "false",
-                    ["Delegation:CheckInterpreterEnabled"] = "false",
-                    ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspace, "check-interpreter"),
-                    ["Delegation:DiagnoseEnabled"] = "false",
-                    ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspace, "diagnose"),
-                    ["Delegation:OutputDistillerEnabled"] = "false",
-                    ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspace, "output-distiller"),
-                    ["Hangfire:Storage"] = HangfireSettings.PostgreSqlStorageName,
-                    ["Hangfire:ServerEnabled"] = "false",
-                    [OperatorTokenFile.PathKey] = Path.Combine(_workspace, "operator-token"),
-                };
-                if (_mode == "enabled")
-                    values["Postgres:DisableJit"] = "true";
-                else if (_mode == "disabled")
-                    values["Postgres:DisableJit"] = "false";
-
                 config.AddInMemoryCollection(values);
-                if (_mode == "absent")
-                    config.Add(new HideDisableJitSource());
             });
 
             builder.ConfigureServices(services =>
@@ -250,25 +236,60 @@ public sealed class PostgresJitPolicyTestsComposition
                 services.AddSingleton<IZombieProcessCensus>(new RefusingZombieProcessCensus());
             });
         }
-    }
 
-    private sealed class HideDisableJitSource : IConfigurationSource
-    {
-        public IConfigurationProvider Build(IConfigurationBuilder builder) => new Provider();
-
-        private sealed class Provider : ConfigurationProvider
+        private Dictionary<string, string?> EarlySettings()
         {
-            public override bool TryGet(string key, out string? value)
+            var values = new Dictionary<string, string?>
             {
-                if (string.Equals(key, "Postgres:DisableJit", StringComparison.OrdinalIgnoreCase))
-                {
-                    value = null;
-                    return true;
-                }
+                ["ConnectionStrings:DefaultConnection"] = _raw,
+                ["Git:WorkspacePath"] = _workspace,
+                ["Git:WorktreeBasePath"] = Path.Combine(_workspace, "worktrees"),
+                ["AgentTui:KeyRingPath"] = Path.Combine(_workspace, "data-protection-keys"),
+                ["AgentTui:ImportProfilesOnStartup"] = "false",
+                ["GitHub:Enabled"] = "false",
+                ["Agents:DefaultDefinition"] = "test-raw",
+                ["Agents:Definitions:test-raw:Kind"] = "Raw",
+                ["Agents:Definitions:test-raw:Exe"] = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+                ["SessionRunner:BaseUrl"] = ProductionRunnerGuard.DeadRunnerBaseUrl,
+                ["SessionRunner:Enabled"] = "false",
+                ["Delegation:CheckInterpreterEnabled"] = "false",
+                ["Delegation:CheckInterpreterWorkingDirectory"] = Path.Combine(_workspace, "check-interpreter"),
+                ["Delegation:DiagnoseEnabled"] = "false",
+                ["Delegation:DiagnoseWorkingDirectory"] = Path.Combine(_workspace, "diagnose"),
+                ["Delegation:OutputDistillerEnabled"] = "false",
+                ["Delegation:OutputDistillerWorkingDirectory"] = Path.Combine(_workspace, "output-distiller"),
+                ["Hangfire:Storage"] = HangfireSettings.PostgreSqlStorageName,
+                ["Hangfire:ServerEnabled"] = "false",
+                [OperatorTokenFile.PathKey] = Path.Combine(_workspace, "operator-token"),
+            };
+            if (_mode == "enabled")
+                values["Postgres:DisableJit"] = "true";
+            else if (_mode == "disabled")
+                values["Postgres:DisableJit"] = "false";
+            return values;
+        }
 
-                value = null;
-                return false;
-            }
+        private static string WriteContentRoot(string raw, string mode)
+        {
+            var root = Path.Combine(Path.GetTempPath(), "antiphon-jit-content", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            var node = JsonNode.Parse(DockerStackDocuments.Read("server/appsettings.json"))?.AsObject()
+                ?? throw new InvalidOperationException("server appsettings could not be parsed");
+            var connections = node["ConnectionStrings"]?.AsObject()
+                ?? throw new InvalidOperationException("server appsettings has no ConnectionStrings");
+            connections["DefaultConnection"] = raw;
+            var postgres = node["Postgres"]?.AsObject()
+                ?? throw new InvalidOperationException("server appsettings has no Postgres");
+            if (mode == "absent")
+                postgres.Remove("DisableJit");
+            else
+                postgres["DisableJit"] = mode == "enabled";
+            var hangfire = node["Hangfire"]?.AsObject()
+                ?? throw new InvalidOperationException("server appsettings has no Hangfire");
+            hangfire["ServerEnabled"] = false;
+            hangfire["Storage"] = HangfireSettings.PostgreSqlStorageName;
+            File.WriteAllText(Path.Combine(root, "appsettings.json"), node.ToJsonString());
+            return root;
         }
     }
 }
