@@ -22,8 +22,17 @@ function Export-Fixture([string]$Root, [string[]]$Paths = @('summary.json')) {
     Export-RcHistoricalEvidence -SourceRunRoot $Root -EvidenceRoot (Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))) -RepositoryRoot (Join-Path $PSScriptRoot '..') -RelativePath $Paths
 }
 try {
-    . (Join-Path $PSScriptRoot 'lib/rc-historical-evidence.ps1')
-    switch ($Case) {
+    $library = Join-Path $PSScriptRoot 'lib/rc-historical-evidence.ps1'
+    if ([IO.File]::Exists($library)) { . $library }
+    else {
+        # Pre-S5a default denies extraction: assert its outcome, not a missing function.
+        function Export-RcHistoricalEvidence { [pscustomobject]@{ valid = $false } }
+    }
+    $probe = New-Root 'probe'
+    Write-Text (Join-Path $probe 'summary.json') '{"runId":"probe"}'
+    $available = Export-Fixture $probe
+    if (-not $available.valid) { $script:Errors.Add('default-deny extraction did not produce a verified immutable bundle') }
+    else { switch ($Case) {
         'LargeSummaryIsBounded' {
             $source = New-Root 'large'
             $summary = Join-Path $source 'summary.json'
@@ -105,7 +114,7 @@ try {
             Refuses { Export-Fixture $source @('scalar.json') } 'evidence-scalar'
         }
         default { throw ('unknown case ' + $Case) }
-    }
+    } }
     Assert-C487 ($script:Errors.Count -eq 0) ('RH ' + $Case + '.contract') ($script:Errors -join '; ')
 } catch { Assert-C487 $false ('RH ' + $Case + '.contract') $_.Exception.Message }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
