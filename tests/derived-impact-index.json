@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 314,
+      "classes": 315,
       "reason": "allowlist"
     },
     {
@@ -15184,6 +15184,7 @@
         "CardFileIgnoreTests",
         "CardFilePrivacyGitTests",
         "CardFilePrivacyRecoveryTests",
+        "CardFileRepositoryTryKillTests",
         "CardTaskFileServiceTests",
         "ImpactedClassesSelectorTests",
         "ServerGitProcessTests",
@@ -15306,6 +15307,7 @@
     {
       "path": "server/Infrastructure/Git/OwnedChildMarker.cs",
       "classes": [
+        "CardFileRepositoryTryKillTests",
         "LandingGitTests"
       ]
     },
