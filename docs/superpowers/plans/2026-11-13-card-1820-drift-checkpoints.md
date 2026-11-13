@@ -51,7 +51,7 @@ operator's 2026-11-12 execution waiver; ordinary reds do not discharge PCs.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-108 | S1R6D | `tests/Antiphon.Tests -> bin-c1820-drift-final/` | drift-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | V-1, V-6D, cleanup | ten argument-expanded results, zero failed/skipped after repair | 10 | 3 | true |
-| CP-8 | S1R6D | CP-108 | hand-contracts | `/*/*/ImpactedClassesSelectorTests/(contract_snapshot_ranges_select_contract_snapshot_tests*)\|(label_remote_budget_and_checkpoint_ranges_select_their_rows*)\|(malformed_table_is_refused*)\|(C1843_mirror_test_paths_select_their_own_project*)` | R-2 | all named methods and arguments, zero failed/skipped | 4 | 3 | true |
+| CP-8 | S1R6D | CP-108 | hand-contracts | `/*/*/ImpactedClassesSelectorTests/(contract_snapshot_ranges_select_contract_snapshot_tests*)\|(label_remote_budget_and_checkpoint_ranges_select_their_rows*)\|(malformed_table_is_refused*)\|(C1843_mirror_test_paths_select_their_own_project*)` | R-2 | all named methods and arguments, zero failed/skipped | 16 | 3 | true |
 | CP-9 | S1R6D | CP-108 | legacy-index | `/*/*/DerivedImpactIndexTests/(migration_only_diff_keeps_hand_classes_and_the_derive_set*)\|(merge_subset_matches_the_hand_selector*)\|(committed_index_matches_the_builder*)\|(windows_only_classes_stay_out_of_linux_filters*)\|(linux_only_methods_stay_off_the_windows_filter*)` | R-3 | five methods, zero failed/skipped | 5 | 4 | true |
 | CP-101 | S1R6D | CP-108 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy/mechanical/platform/layering | all nine classes, zero failed/skipped | 78 | 4 | true |
 | CP-104 | S1R6D | CP-108 | spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | process limiter census | all cases, zero failed/skipped | 57 | 1 | true |
@@ -94,3 +94,12 @@ inventory/lint; ordinary selector and conservative graph blob identity to base.
 No migrations or model changes, so downgrade/model execution is not applicable.
 Native Windows behavior/proof remains pending for the orchestrator, not credited
 by Linux argument variants. Unit lane remains nightly/rc-owned.
+
+## Final count alignment
+
+Fresh CP-8 TRX at 8445eeac1c173125444df7f5c0c93db706577717 contains 16
+passed cases: 13 malformed-table variants plus the three other exact methods.
+Raise its conservative floor from 4 to 16 using that observed roster. Filters,
+production/test code, budgets and all other rows are unchanged. The qualifying
+receipt remains bound to that tested SHA; the publication tip adds this count
+clarification and the Code report. No repetition after green is required.
