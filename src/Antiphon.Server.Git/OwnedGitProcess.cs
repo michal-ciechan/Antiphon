@@ -205,8 +205,10 @@ internal sealed class OwnedGitProcess : IDisposable, IAsyncDisposable
             {
                 if (!_disposeRequested) _state = result.Joined ? OwnedGitLifecycle.Joined : OwnedGitLifecycle.Unconfirmed;
                 else Close();
+                // Publish completion while holding the same gate as Dispose. Otherwise a
+                // disposer can observe a pending task after the last close check and leak it.
+                completion.TrySetResult(result);
             }
-            completion.TrySetResult(result);
         }
         catch (Exception ex)
         {
@@ -214,8 +216,8 @@ internal sealed class OwnedGitProcess : IDisposable, IAsyncDisposable
             {
                 if (!_disposeRequested) _state = OwnedGitLifecycle.Unconfirmed;
                 else Close();
+                completion.TrySetException(ex);
             }
-            completion.TrySetException(ex);
         }
     }
 

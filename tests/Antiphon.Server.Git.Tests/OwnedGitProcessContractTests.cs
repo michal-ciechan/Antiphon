@@ -256,6 +256,23 @@ public sealed class OwnedGitProcessContractTests
     }
 
     [Test]
+    public async Task Completed_termination_and_repeated_disposal_close_once()
+    {
+        var operations = new FakeOperations();
+        var owner = new OwnedGitProcess(operations);
+        owner.Start(StartInfo());
+        var cleanup = owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(1));
+        (await cleanup).Joined.ShouldBeTrue();
+        operations.Closes.ShouldBe(0);
+        owner.Dispose();
+        await owner.DisposeAsync();
+        owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(1)).ShouldBeSameAs(cleanup);
+        operations.Closes.ShouldBe(1);
+        operations.Signals.ShouldBe(1);
+        owner.State.ShouldBe(OwnedGitLifecycle.Disposed);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public void Dispose_preserves_crash_fencing_and_never_implies_termination(bool launched)
