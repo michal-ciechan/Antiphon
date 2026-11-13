@@ -52,7 +52,7 @@ public sealed class ReleaseImpactEvaluationTests
         {
             LibGit2Sharp.Commands.Stage(git, "unconsumed.txt");
             var who = new LibGit2Sharp.Signature("fixture", "fixture@antiphon.test", DateTimeOffset.Now);
-            git.Commit("input changed", who, who);
+            git.Commit("input changed", who, who, new LibGit2Sharp.CommitOptions());
         }
         var second = await Run(repo);
         second.ExitCode.ShouldBe(0, second.Text);

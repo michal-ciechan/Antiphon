@@ -34,7 +34,7 @@ deliberate execution is waived by the operator, not satisfied by ordinary green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-106 | S1R3E | `tests/Antiphon.Tests -> bin-c1820-eval-red2/` | evaluator | `/*/*/ReleaseImpactEvaluationTests/*` | V-3E | four named methods, zero failed/skipped | 4 | 3 | true |
+| CP-106 | S1R3E | `tests/Antiphon.Tests -> bin-c1820-eval-red3/` | evaluator | `/*/*/ReleaseImpactEvaluationTests/*` | V-3E | four named methods, zero failed/skipped | 4 | 3 | true |
 | CP-4 | S1R3E | CP-106 | project | `/*/*/ReleaseImpactProjectTests/*` | V-3 | four methods, zero failed/skipped | 4 | 1 | true |
 | CP-101 | S1R3E | CP-106 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy/mechanical/platform/layering | all named classes, zero failed/skipped | 78 | 4 | true |
 | CP-102 | S1R3E | CP-106 | index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 | named method, zero failed/skipped | 1 | 2 | true |
