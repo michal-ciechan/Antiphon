@@ -53,9 +53,16 @@ developing the new production path; they do not replace fresh checkpoint TRX.
 At `00b3be4029c780d2a3dc72df4abcc4e7a67dd1d5`, the initial case passed (wait
 315s, held 4s). The expanded constructor/case-collision witness was committed
 before its repair, then failed both intended assertions (wait 60s, held 5s).
+That red source was `21f1bbfe0957bf3a0dd22f9d87d95992e827f918`.
 The repair uses metadata class names for exact filters, retains constructor
 identities in case manifests, and refuses case-colliding classes before the
 legacy case-insensitive grouping. No timeout or assertion was loosened.
+The derived-index command built its native default-output driver (0 errors),
+reported `derived-impact-index changed`, and was committed separately; slot
+wait 105s, held 45s, nested build 5.77s. The wrapper's generic non-dotnet cap
+warning is expected: this script explicitly forwards the granted CPU cap.
+No deliberate mutant or redundant green repetition was run. Final runs use the
+checkpoint tool with the exact committed HEAD as expected source, parallel 1.
 
 ## Performance budget
 
