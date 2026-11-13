@@ -15,6 +15,7 @@ The initial red adapter calls the existing ordinary builder. Replace only that a
 
 CP-2/CP-3 are the upstream slice's closed rows. CP-101 batches the required Final guards;
 CP-102 verifies regenerated ordinary-index drift; CP-103 verifies spawn census (the red adapter launches Git).
+CP-104 exercises the existing driver changed/unchanged behavior because its entry point gains an explicit release mode.
 No csproj/limiter owner changes are intended; no migration, delivery, landing, lease or persistence behavior changes.
 After green, run only newly affected required rows, never repeat unchanged green selections.
 Every run binds committed HEAD with `--expected-source-sha`. Inspect fresh TRX identities and counts.
@@ -29,10 +30,11 @@ No manual acceptance or PC-n variants are declared by this slice; deliberate con
 | CP-101 | S1R2 | CP-2 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | Final guards and matched test-lane-category | all listed, 0 failed/skipped | 78 | 3 | true |
 | CP-102 | S1R2 | CP-2 | ordinary-index-drift | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 drift | named method, 0 failed/skipped | 1 | 1 | true |
 | CP-103 | S1R2 | CP-2 | spawn-census | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | all listed, 0 failed/skipped | 57 | 2 | true |
+| CP-104 | S1R2 | CP-2 | ordinary-driver | `/*/*/DerivedImpactIndexTests/regenerate_script_reports_changed_then_unchanged` | ordinary driver compatibility | named method, 0 failed/skipped | 1 | 1 | true |
 
 ## Performance budget
 
-17 minutes provisional including one cold build; test body/relation setup in memory after the red witness.
+18 minutes provisional including one cold build; test body/relation setup in memory after the red witness.
 Use the upstream 20-minute explicit build/row execution bound, finite 45-minute slot acquisition,
 and separate queue/admission from execution. No timeout or assertion is widened.
 No whole Unit lane or full assembly. No database/container/server/migration/snapshot phases apply.

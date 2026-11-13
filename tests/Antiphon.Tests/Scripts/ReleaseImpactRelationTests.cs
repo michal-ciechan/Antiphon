@@ -1,13 +1,10 @@
-using System.Diagnostics;
 using System.Text.Json;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ReleaseImpactRelationTests
 {
     [Test]
@@ -66,14 +63,14 @@ public sealed class ReleaseImpactRelationTests
         var sources = Sources();
         sources["tests/A/Real.cs"] = """"
             namespace Census;
-            public class Container<T> {
-                public partial class Actual<U> {
+            internal partial class Container<T> {
+                internal partial class Actual<U> {
                     [Test] public void Runs() { var text = """public class PhantomTests { [Test] public void Fake() {} }"""; }
                 }
             }
             // public class CommentTests {}
             """";
-        sources["tests/A/Other.cs"] = "namespace Census; public partial class Container<T> { public partial class Actual<U> {} }";
+        sources["tests/A/Other.cs"] = "namespace Census; internal partial class Container<T> { internal partial class Actual<U> {} }";
         var graph = Build(sources);
         graph.GetProperty("universe").EnumerateArray().Select(Identity)
             .ShouldBe(new[] { "tests/A/A.csproj::Census.Container`1+Actual`1" });
@@ -102,46 +99,7 @@ public sealed class ReleaseImpactRelationTests
 
     private static JsonElement Build(Dictionary<string, string> sources)
     {
-        // Red-first adapter exercises the real ordinary capped relation before release support.
-        // Retain these four isolated inputs with the failing run; no fixture deletion is needed.
-        var root = Path.Combine(RepoRoot(), ".antiphon/selector-evidence/ee621172/red-inputs", Guid.NewGuid().ToString("N"));
-        foreach (var (path, content) in sources)
-        {
-            var full = Path.Combine(root, path);
-            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            File.WriteAllText(full, content);
-        }
-        Git(root, "init", "-q");
-        Git(root, "add", ".");
-        using var ordinary = JsonDocument.Parse(DerivedImpactIndexBuilder.Build(root).Utf8);
-        var edges = ordinary.RootElement.GetProperty("edges").Clone();
-        return JsonSerializer.SerializeToElement(new
-        {
-            edges,
-            universe = edges.EnumerateArray().SelectMany(x => x.GetProperty("classes").EnumerateArray()).Select(x => x.GetString()).Distinct().ToArray(),
-            complete = false, fallback = "Full", incompleteReasons = new[] { "ordinary-index-is-advisory" },
-        });
-    }
-
-    private static string RepoRoot()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln"))) directory = directory.Parent;
-        return directory?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln");
-    }
-
-    private static void Git(string root, params string[] arguments)
-    {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" }) start.Environment.Remove(key);
-        var watch = Stopwatch.StartNew();
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(60_000)) { process.Kill(true); process.WaitForExit(30_000); throw new TimeoutException("fixture Git"); }
-        Task.WhenAll(output, error).Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
-        process.ExitCode.ShouldBe(0, error.Result);
-        Console.WriteLine($"C1820 phase=fixture-git elapsedMs={watch.ElapsedMilliseconds}");
+        using var document = JsonDocument.Parse(ReleaseImpactGraphBuilder.Serialize(ReleaseImpactGraphBuilder.Build(sources)));
+        return document.RootElement.Clone();
     }
 }
