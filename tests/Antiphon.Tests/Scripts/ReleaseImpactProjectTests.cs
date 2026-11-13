@@ -76,6 +76,72 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     }
 
     [Test]
+    public void AliasedAssemblyLoadFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        foreach (var source in new[]
+        {
+            "using Asm = System.Reflection.Assembly;\nnamespace Example { internal partial class ReflectionTests { object Read(string name) => Asm.Load(name); } }",
+            "using Asm = System.Reflection.Assembly;\nnamespace Example { internal partial class ReflectionTests { object Read(string name) => Asm.FutureLoad(name); } }",
+            "namespace Example; internal partial class ReflectionTests { object Read(string name) => System.Reflection.Assembly.FutureLoad(name); }",
+            "namespace Example; internal partial class ReflectionTests { object Read(string path) => System.Reflection.Assembly.LoadFrom(path); }",
+        })
+            AssertReflectionUnresolved(sources, source);
+    }
+
+    [Test]
+    public void VariableAppDomainLoadFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        AssertReflectionUnresolved(sources,
+            "namespace Example; internal partial class ReflectionTests { object Read(System.AppDomain domain, string name) => domain.Load(name); }");
+    }
+
+    [Test]
+    public void LoadFromStreamFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        AssertReflectionUnresolved(sources,
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Runtime.Loader.AssemblyLoadContext load, System.IO.Stream bytes) => load.LoadFromStream(bytes); }");
+    }
+
+    [Test]
+    public void ConditionalGetTypeFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        foreach (var source in new[]
+        {
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm?.GetType(\"Product.Queue\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm?.GetTypes(); }",
+        })
+            AssertReflectionUnresolved(sources, source);
+    }
+
+    [Test]
+    public void NativeLibraryLoadFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        AssertReflectionUnresolved(sources,
+            "namespace Example; internal partial class ReflectionTests { object Read(string path) => System.Runtime.InteropServices.NativeLibrary.Load(path); }");
+    }
+
+    [Test]
+    public void GetTypeFromProgIdFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        AssertReflectionUnresolved(sources,
+            "namespace Example; internal partial class ReflectionTests { object Read(string id) => System.Type.GetTypeFromProgID(id); }");
+    }
+
+    [Test]
+    public void MethodInfoInvokeFailsClosed()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources);
+        AssertReflectionUnresolved(sources,
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.MethodInfo method, object target) => method.Invoke(target, null); }");
+    }
+
+    [Test]
     public void GeneratedInputsExpand()
     {
         var graph = Build(fixture.Sources);
@@ -175,6 +241,12 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     private static ReleaseImpactConsumer ConsumerOf(string project, string name, params string[] kinds) => new(project, name, kinds);
     private static string[] Members(ReleaseImpactGraph graph, string path) => graph.Edges.Where(e => e.Path == path)
         .SelectMany(e => e.Classes).Select(c => c.Project + "::" + c.FullName).Distinct().Order(StringComparer.Ordinal).ToArray();
+    private static void AssertReflectionUnresolved(Dictionary<string, string> sources, string source)
+    {
+        sources["tests/Consumer/Reflection.cs"] = source;
+        Build(sources).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs", source);
+    }
+
     private static void AssertIncomplete(ReleaseImpactGraph graph)
     {
         graph.Complete.ShouldBeFalse();
