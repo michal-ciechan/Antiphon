@@ -35,7 +35,7 @@ deliberate execution is waived by the operator, not satisfied by ordinary green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-106 | S1R3E | `tests/Antiphon.Tests -> bin-c1820-eval-repair/` | evaluator | `/*/*/ReleaseImpactEvaluationTests/*` | V-3E | four named methods, zero failed/skipped | 4 | 3 | true |
+| CP-106 | S1R3E | `tests/Antiphon.Tests -> bin-c1820-eval-final/` | evaluator | `/*/*/ReleaseImpactEvaluationTests/*` | V-3E | four named methods, zero failed/skipped | 4 | 3 | true |
 | CP-4 | S1R3E | CP-106 | project | `/*/*/ReleaseImpactProjectTests/*` | V-3 | four methods, zero failed/skipped | 4 | 1 | true |
 | CP-101 | S1R3E | CP-106 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy/mechanical/platform/layering | all named classes, zero failed/skipped | 78 | 4 | true |
 | CP-102 | S1R3E | CP-106 | index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 | named method, zero failed/skipped | 1 | 2 | true |
@@ -71,3 +71,14 @@ and records evaluation-only/no-restore context. SDK imports and MSBuild binary
 are hashed separately. Environment, filesystem probes, generated code, assembly
 metadata, reference-property composition and platform closure remain unproven;
 these receipts cannot remove conservative source edges or authorize skipping.
+
+## Receipt repair disposition
+
+Run 20261113-084609-a072 has seven green rows and the evaluator's two SDK-input
+classification failures. Targeted repair run 20261113-090325-d9f2 passed V-3E 4/4
+and validates at 6a1181b9e0850db36ae20b763ccc7addf376e8af. The validator refuses
+the original mixed report as report_failed even when --rows selects its green
+rows. Preserve both outcomes. One final closed-list run with a fresh output root
+is required to obtain a wholly valid receipt, rather than relabel failed evidence.
+No production or test assertion changes accompany that run. This repeat resolves
+a demonstrated provenance gate; it stays within the unchanged-proof repeat budget.
