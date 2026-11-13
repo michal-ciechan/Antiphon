@@ -1019,6 +1019,229 @@ namespace Antiphon.Nightly
             o.Properties.Add(new PSNoteProperty("Universe", universe));
             return o;
         }
+
+        /// <summary>Times <see cref="IndexBoundaryDiscovery"/> has built a boundary index in this process.</summary>
+        public static int BoundaryIndexBuilds;
+
+        /// <summary>
+        /// One pass over discovery for a boundary pack: per bare class, the original nodes in discovery order,
+        /// full-class cost, and the namespace universe IndexNodes would have built. JsonByUid is the pwsh 7
+        /// ConvertTo-Json -Compress sort key of [className, method, uid]. Error is a boundary-pack message, or null.
+        /// </summary>
+        public static PSObject IndexBoundaryDiscovery(object[] discoveryNodes, IDictionary costTable,
+            double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor)
+        {
+            BoundaryIndexBuilds++;
+            var classes = new Hashtable(StringComparer.Ordinal);
+            var classCase = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var methodCase = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var seenUid = new HashSet<string>(StringComparer.Ordinal);
+            var universe = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            var jsonByUid = new Hashtable(StringComparer.Ordinal);
+            var builders = new Dictionary<string, ClassNodes>(StringComparer.Ordinal);
+            var order = new List<string>();
+            string error = null;
+            var nodes = discoveryNodes ?? new object[0];
+            foreach (var node in nodes)
+            {
+                var className = node == null ? "" : PsValue.Str(PsValue.Prop(node, "ClassName"));
+                var method = node == null ? "" : PsValue.Str(PsValue.Prop(node, "Method"));
+                var uid = node == null ? "" : PsValue.Str(PsValue.Prop(node, "Uid"));
+                var parts = BareTypeParts(className);
+                if (parts == null || string.IsNullOrWhiteSpace(method) || string.IsNullOrWhiteSpace(uid))
+                {
+                    error = "boundary-pack: incomplete discovery identity";
+                    break;
+                }
+                var bare = (string)parts.Properties["Bare"].Value;
+                var ns = (string)parts.Properties["Namespace"].Value;
+                var type = (string)parts.Properties["Type"].Value;
+                if (!seenUid.Add(uid)) { error = "boundary-pack: duplicate discovery UID"; break; }
+                if (classCase.TryGetValue(bare, out var existingBare) && !string.Equals(existingBare, bare, StringComparison.Ordinal))
+                {
+                    error = "boundary-pack: case-colliding class identity";
+                    break;
+                }
+                classCase[bare] = bare;
+                var methodKey = bare + "/" + method;
+                if (methodCase.TryGetValue(methodKey, out var existingMethod) && !string.Equals(existingMethod, methodKey, StringComparison.Ordinal))
+                {
+                    error = "boundary-pack: case-colliding method identity";
+                    break;
+                }
+                methodCase[methodKey] = methodKey;
+                if (!builders.TryGetValue(bare, out var builder))
+                {
+                    builder = new ClassNodes { Bare = bare, Namespace = ns, Type = type };
+                    builders[bare] = builder;
+                    order.Add(bare);
+                }
+                builder.Nodes.Add(node);
+                jsonByUid[uid] = CaseSortKey(className, method, uid);
+                if (!(universe[ns] is List<string> types)) universe[ns] = types = new List<string>();
+                types.Add(type);
+            }
+            if (error == null)
+            {
+                foreach (var bare in order)
+                {
+                    var builder = builders[bare];
+                    var classNodes = builder.Nodes.ToArray();
+                    var cost = ClassCost(classNodes, builder.Type, builder.Bare, costTable,
+                        nodeSeconds, slowNodeSeconds, laneSlowNodeSeconds, heavyFactor);
+                    var rec = new PSObject();
+                    rec.Properties.Add(new PSNoteProperty("Bare", builder.Bare));
+                    rec.Properties.Add(new PSNoteProperty("Namespace", builder.Namespace));
+                    rec.Properties.Add(new PSNoteProperty("Type", builder.Type));
+                    rec.Properties.Add(new PSNoteProperty("Nodes", classNodes));
+                    rec.Properties.Add(new PSNoteProperty("NodeCount", cost.Properties["NodeCount"].Value));
+                    rec.Properties.Add(new PSNoteProperty("Seconds", cost.Properties["Seconds"].Value));
+                    classes[bare] = rec;
+                }
+            }
+            var universeOut = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            foreach (DictionaryEntry entry in universe)
+                universeOut[entry.Key] = ((List<string>)entry.Value).ToArray();
+            var result = new PSObject();
+            result.Properties.Add(new PSNoteProperty("Error", error));
+            result.Properties.Add(new PSNoteProperty("Classes", classes));
+            result.Properties.Add(new PSNoteProperty("Universe", universeOut));
+            result.Properties.Add(new PSNoteProperty("JsonByUid", jsonByUid));
+            return result;
+        }
+
+        /// <summary>
+        /// Case membership for one packed chunk. Non-empty chunk nodes win; otherwise the class records' nodes
+        /// are taken in class order. Cases are ordered by <see cref="CaseSortKey"/>. Identities stay in member order.
+        /// </summary>
+        public static PSObject ChunkMembershipForChunk(object chunkNodes, object classNames, object classes,
+            object jsonByUid, HashSet<string> expected, HashSet<string> seen)
+        {
+            var members = new List<object>();
+            var direct = PsValue.AsArray(chunkNodes);
+            var directCount = 0;
+            foreach (var node in direct) if (node != null) directCount++;
+            if (directCount > 0)
+            {
+                foreach (var node in direct) if (node != null) members.Add(node);
+            }
+            else
+            {
+                var table = classes as Hashtable;
+                foreach (var nameObj in PsValue.AsArray(classNames))
+                {
+                    var bare = PsValue.Str(nameObj);
+                    var rec = table == null ? null : table[bare] as PSObject;
+                    var nodes = rec == null ? null : rec.Properties["Nodes"].Value;
+                    if (nodes == null) return MembershipResult("boundary-pack: case partition mismatch", null, null);
+                    foreach (var node in PsValue.AsArray(nodes)) if (node != null) members.Add(node);
+                }
+            }
+            var map = jsonByUid as Hashtable;
+            var identities = new object[members.Count];
+            var keyed = new List<CaseRow>(members.Count);
+            for (var i = 0; i < members.Count; i++)
+            {
+                var node = members[i];
+                var className = PsValue.Str(PsValue.Prop(node, "ClassName"));
+                var method = PsValue.Str(PsValue.Prop(node, "Method"));
+                var uid = PsValue.Str(PsValue.Prop(node, "Uid"));
+                if (expected != null && (!expected.Contains(uid) || !seen.Add(uid)))
+                    return MembershipResult("boundary-pack: case partition mismatch", null, null);
+                var bare = NightlyClassNames.Bare(className);
+                var ident = new Hashtable
+                {
+                    { "identityKey", bare + "/" + method },
+                    { "caseKey", uid }
+                };
+                identities[i] = ident;
+                var sortKey = map != null && map.ContainsKey(uid) ? (string)map[uid] : CaseSortKey(className, method, uid);
+                keyed.Add(new CaseRow { Key = sortKey, ClassName = className, Method = method, Uid = uid });
+            }
+            keyed.Sort((a, b) => string.CompareOrdinal(a.Key, b.Key));
+            var cases = new object[keyed.Count];
+            for (var i = 0; i < keyed.Count; i++)
+            {
+                var row = keyed[i];
+                var item = new PSObject();
+                item.Properties.Add(new PSNoteProperty("className", row.ClassName));
+                item.Properties.Add(new PSNoteProperty("method", row.Method));
+                item.Properties.Add(new PSNoteProperty("uid", row.Uid));
+                cases[i] = item;
+            }
+            return MembershipResult(null, cases, identities);
+        }
+
+        /// <summary>pwsh 7 ConvertTo-Json -Compress of a three-string array. Slash is not escaped; U+2028 and U+2029 are.</summary>
+        public static string CaseSortKey(string className, string method, string uid)
+        {
+            var sb = new StringBuilder((className == null ? 0 : className.Length) + (method == null ? 0 : method.Length) + (uid == null ? 0 : uid.Length) + 16);
+            sb.Append('[');
+            AppendJsonString(sb, className);
+            sb.Append(',');
+            AppendJsonString(sb, method);
+            sb.Append(',');
+            AppendJsonString(sb, uid);
+            sb.Append(']');
+            return sb.ToString();
+        }
+
+        private static void AppendJsonString(StringBuilder sb, string value)
+        {
+            sb.Append('"');
+            if (value != null)
+            {
+                foreach (var ch in value)
+                {
+                    switch (ch)
+                    {
+                        case '"': sb.Append("\\\""); break;
+                        case '\\': sb.Append("\\\\"); break;
+                        case '\b': sb.Append("\\b"); break;
+                        case '\f': sb.Append("\\f"); break;
+                        case '\n': sb.Append("\\n"); break;
+                        case '\r': sb.Append("\\r"); break;
+                        case '\t': sb.Append("\\t"); break;
+                        case '\u2028': sb.Append("\\u2028"); break;
+                        case '\u2029': sb.Append("\\u2029"); break;
+                        default:
+                            if (ch < 0x20)
+                            {
+                                sb.Append("\\u");
+                                sb.Append(((int)ch).ToString("x4", CultureInfo.InvariantCulture));
+                            }
+                            else sb.Append(ch);
+                            break;
+                    }
+                }
+            }
+            sb.Append('"');
+        }
+
+        private static PSObject MembershipResult(string error, object cases, object identities)
+        {
+            var o = new PSObject();
+            o.Properties.Add(new PSNoteProperty("Error", error));
+            o.Properties.Add(new PSNoteProperty("Cases", cases ?? new object[0]));
+            o.Properties.Add(new PSNoteProperty("Identities", identities ?? new object[0]));
+            return o;
+        }
+
+        private sealed class ClassNodes
+        {
+            public string Bare;
+            public string Namespace;
+            public string Type;
+            public readonly List<object> Nodes = new List<object>();
+        }
+
+        private sealed class CaseRow
+        {
+            public string Key;
+            public string ClassName;
+            public string Method;
+            public string Uid;
+        }
     }
 
     /// <summary>Per-row helpers of the test-phase summary in test-phase-evidence.ps1.</summary>

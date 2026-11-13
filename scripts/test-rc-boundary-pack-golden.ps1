@@ -16,6 +16,17 @@ foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','nightl
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
+# 2x the quiet post-change p95 (5.881s) is 12s. A later pack on this host took
+# 14.5s while other script cases were running, which overlaps the old quiet
+# samples (12.8s). Wall-clock is recorded, not asserted. The standing pin is
+# that NightlyLaunchPlan.BoundaryIndexBuilds increases by exactly one per pack.
+$script:BoundaryPackSecondsBound = 12
+
+function Assert-BoundaryIndexOnce([int]$Before, [int]$ExpectedDelta) {
+    if (-not (Test-NightlyCoreAvailable)) { return }
+    $delta = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds - $Before
+    if ($delta -ne $ExpectedDelta) { throw ('boundary index built ' + $delta + ' times, expected ' + $ExpectedDelta) }
+}
 
 $script:PackCanonicalFields = @(
     'id','classes','exactFilter','groupFilter','methodFilter','nodes','nodeCount','seconds',
@@ -90,7 +101,11 @@ function Get-FixtureLeaves([object[]]$Nodes) {
 }
 function Get-FixturePack([object[]]$Nodes, [hashtable]$Boundaries, [object[]]$InputLeaves = @(), [string]$Suite = 'antiphon') {
     if ($InputLeaves.Count -eq 0) { $InputLeaves = @(Get-FixtureLeaves $Nodes) }
-    @(ConvertTo-NightlyProfileLaunchGroups -Leaves $InputLeaves -DiscoveryNodes $Nodes -BoundaryAware -SuiteId $Suite -ClassBoundaries $Boundaries)
+    $before = 0
+    if (Test-NightlyCoreAvailable) { $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
+    $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $InputLeaves -DiscoveryNodes $Nodes -BoundaryAware -SuiteId $Suite -ClassBoundaries $Boundaries)
+    Assert-BoundaryIndexOnce $before 1
+    return $plan
 }
 
 function Get-FixtureGoldens {
@@ -191,18 +206,24 @@ if ($Target -eq 'fixtures') {
 
 $nodes = Get-RealTreeNodes
 $inputs = Get-RealTreeInputs $nodes
+$beforeOff = 0
+if (Test-NightlyCoreAvailable) { $beforeOff = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
 $offWatch = [Diagnostics.Stopwatch]::StartNew()
 $offJson = Get-PackJson @(ConvertTo-NightlyProfileLaunchGroups -Leaves $inputs.Leaves -DiscoveryNodes $nodes)
 $offWatch.Stop()
+Assert-BoundaryIndexOnce $beforeOff 0
 $offBytes = $utf8.GetByteCount($offJson)
 $times = New-Object System.Collections.Generic.List[double]
 $boundaryJson = $null
 $boundaryPlan = $null
 $runs = [Math]::Max(1, $TimingRuns)
 for ($i = 0; $i -lt $runs; $i++) {
+    $beforePack = 0
+    if (Test-NightlyCoreAvailable) { $beforePack = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $boundaryPlan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $inputs.Leaves -DiscoveryNodes $nodes -BoundaryAware -SuiteId antiphon -ClassBoundaries $inputs.Boundaries)
     $watch.Stop()
+    Assert-BoundaryIndexOnce $beforePack 1
     $times.Add($watch.Elapsed.TotalSeconds)
     if ($i -eq 0) { $boundaryJson = Get-PackJson $boundaryPlan }
 }
@@ -222,6 +243,8 @@ $record = [ordered]@{
     boundarySeconds = @($times)
     boundaryP50 = $p50
     boundaryP95 = $p95
+    boundSeconds = $script:BoundaryPackSecondsBound
+    boundEnforced = $false
 }
 if ($Capture) {
     Write-Golden 'real-tree-off.sha256' ($record.optOutSha256 + "`n")
