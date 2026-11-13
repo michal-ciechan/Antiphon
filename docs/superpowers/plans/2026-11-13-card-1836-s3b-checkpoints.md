@@ -1,0 +1,18 @@
+# CARD-1836 S3b reproducible chunk inputs
+
+Code owner/landing owner cb773340. Base 00b0f9c045a89773b52331928ed41141d01639d2. S3b is the next unblocked unit in the activation plan: S2a and S3a are already in this base; no prerequisite cherry-pick is needed. Source plan: 2c7f3548a, docs/superpowers/plans/2026-11-12-card-1836-incremental-activation-plan.md, D-2/D-4 and S3b. S2a/S3a/S4a/S5a/S8a are excluded from implementation here.
+
+Scope: scripts/lib/rc-chunk-digest.ps1, scripts/test-rc-chunk-digest.ps1 and RcChunkInputDigestTests. This library consumes object-only S3a snapshots and S2a membership, preserves complete case sets and returns deterministic input equivalence diagnostics. Admission still owns verifying actual receipt provenance and authorizing carries; executionEvidence and gateCredit remain false. No live launch wiring, Full behavior, publishing, migration, HTTP, or OS-selected production behavior changes. Restart: none. Portable Git object fixtures cover link and Windows case-collision refusal without native filesystem prerequisites. Native integrated Windows proof remains S7d, owed by the caller.
+
+V-5: TransitiveEditAndDeletionChangeDigest, ProvenUnrelatedProjectKeepsDigest, UnknownAndCaseSetChangesAreDirty, RenameSymlinkAndCaseCollision. Each contains outcome assertions against production functions. Red uses an explicitly default-deny adapter, not a missing function/build failure. No R-n belongs to this standalone unit. V-1..4 and V-6..18 / R-1..7 remain with their units, not claimed passed here. Mutation execution is waived; missing controls and any future PC variants remain pending for caller-commissioned Mutation. No PC IDs are specified for this unit.
+
+Encoding v1: uint32 big-endian row count; for each row uint32 field count, then for each UTF-8 string uint32 byte length and exact bytes. Domain/version rows separate input, case, receipt and combined digests. Ordinal order, path, presence, Git mode/type/object, suite/project and edge reasons are retained. Candidate commit/tree IDs are reported as provenance but excluded from equivalence. Receipt content identities enter equivalence; per-run provenance stays attached separately so it cannot accidentally make every candidate unequal. Missing actual receipts, unresolved inventories, ambiguous data rows and unassigned boundaries stay dirty even against themselves.
+
+Provisional performance: four tiny Git fixtures, no DB/host/browser. Each child 45s plus 10s joined cleanup, test 60s. No timeout relaxation. CP-5 8m and CP-90 4m include cold builds/discovery; these are not measured p95. Record first green and all red/retry costs; no redundant repetitions to fill samples. A bounded gated script preflight is permitted to diagnose script failures before paying for another cold TUnit build. Generator bootstrap/refresh is an explained unlisted gated driver if derived-index consistency is red, with generated-index changes committed separately.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+|---|---|---|---|---|---|---|---:|---:|
+| CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 4 named methods, 0 failed/skipped | 4 | 8 |
+| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s3b-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
