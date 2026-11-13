@@ -253,7 +253,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     [DllImport("libc", EntryPoint = "clock_gettime")]
     private static extern int ClockGetTime(int clockId, out ThreadCpuTime time);
 
-    private static double? ThreadCpuMilliseconds()
+    internal static double? ThreadCpuMilliseconds()
     {
         if (!OperatingSystem.IsLinux() || ClockGetTime(ClockThreadCpuTimeId, out var time) != 0)
             return null;
