@@ -122,14 +122,31 @@ public class SessionStatePinQueryTests
         await db.AgentSessions.ExecuteDeleteAsync();
         var ids = Enumerable.Range(0, 512).Select(_ => Guid.NewGuid()).ToArray();
         db.AgentSessions.AddRange(ids.Select(id => new AgentSession { Id = id, DefinitionName = "c1887-scale", Status = SessionStatus.Stopped, Cwd = "/synthetic", CreatedAt = DateTime.UtcNow }));
-        db.AgentTasks.AddRange(Enumerable.Range(0, 27695).Select(n => new AgentTask { Id = Guid.NewGuid(),
-            Status = n < 256 ? (AgentTaskStatus)(n % 4) : AgentTaskStatus.Succeeded,
-            AgentSessionId = n % 3 == 0 ? null : ids[n % 32], ParentSessionId = n % 3 == 1 ? null : ids[n % 32],
-            Goal = "synthetic task history" }));
+        // Populate wide task defaults once through EF; bulk-copy that owned prototype.
+        // Tracking 27,695 wide entities dominated setup in the first two receipts.
+        var prototype = new AgentTask { Id = Guid.NewGuid(), Status = AgentTaskStatus.Succeeded, Goal = "synthetic task history" };
+        db.AgentTasks.Add(prototype);
         await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
         await db.Database.OpenConnectionAsync();
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         var timer = Stopwatch.StartNew();
+        await using (var tasks = new NpgsqlCommand("""
+            WITH prototype AS MATERIALIZED (SELECT to_jsonb(t) AS payload FROM "AgentTasks" t WHERE "Id" = @prototype)
+            INSERT INTO "AgentTasks"
+            SELECT (jsonb_populate_record(NULL::"AgentTasks", payload || jsonb_build_object(
+                'Id', gen_random_uuid(), 'ConcurrencyToken', gen_random_uuid(),
+                'Status', CASE WHEN n < 256 THEN n % 4 ELSE 4 END,
+                'AgentSessionId', CASE WHEN n % 3 = 0 THEN NULL ELSE (@ids)[n % 32 + 1] END,
+                'ParentSessionId', CASE WHEN n % 3 = 1 THEN NULL ELSE (@ids)[n % 32 + 1] END))).*
+            FROM prototype CROSS JOIN generate_series(0, 27694) n;
+            DELETE FROM "AgentTasks" WHERE "Id" = @prototype;
+            """, connection) { CommandTimeout = 60 })
+        {
+            tasks.Parameters.AddWithValue("prototype", prototype.Id);
+            tasks.Parameters.AddWithValue("ids", ids);
+            await tasks.ExecuteNonQueryAsync();
+        }
         // Bound each insert independently; the first monolithic seed exceeded its 60s
         // call budget on the loaded host. Keep the same dataset and deadline.
         for (var first = 1; first <= 511;)
@@ -137,7 +154,7 @@ public class SessionStatePinQueryTests
             var last = Math.Min(first <= 32 ? first + 3 : first + 63, first <= 32 ? 32 : 511);
             await using var seed = new NpgsqlCommand("""
             INSERT INTO "TranscriptEntries" ("Id", "AgentSessionId", "Sequence", "Kind", "Text", "Timestamp", "CreatedAt")
-            SELECT gen_random_uuid(), (@ids)[s], n,
+            SELECT (lpad(s::text, 8, '0') || '-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid, (@ids)[s], n,
                 CASE WHEN n % 10 = 0 THEN 'TurnEnd' WHEN n % 3 = 0 THEN 'UserPrompt' ELSE 'AssistantText' END,
                 'synthetic', CASE WHEN n % 7 = 0 THEN NULL ELSE timestamptz '2026-01-01' + (n % 5) * interval '1 second' END,
                 timestamptz '2026-01-02'
@@ -155,7 +172,7 @@ public class SessionStatePinQueryTests
         Record("fixture", new { transcriptRows = 3118500, taskRows = 27695, seedMs = timer.Elapsed.TotalMilliseconds,
             load = File.Exists("/proc/loadavg") ? File.ReadAllText("/proc/loadavg") : "unknown",
             inventory = await ScalarAsync(connection, "SELECT jsonb_agg(row_to_json(i))::text FROM (SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename IN ('AgentTasks','TranscriptEntries') ORDER BY indexname) i"),
-            sizes = await ScalarAsync(connection, "SELECT jsonb_agg(row_to_json(s))::text FROM (SELECT relname,pg_relation_size(oid) bytes FROM pg_class WHERE relname IN ('AgentTasks','TranscriptEntries')) s") });
+            sizes = await ScalarAsync(connection, "SELECT jsonb_agg(row_to_json(s))::text FROM (SELECT relname,reltuples,pg_relation_size(oid) bytes FROM pg_class WHERE relname IN ('AgentTasks','TranscriptEntries')) s") });
         var loader = f.Services.GetRequiredService<ISessionStateLoader>();
         var comparisons = new List<(string Name, JsonElement Before, JsonElement After)>();
         foreach (var count in new[] { 1, 64, 512 })
@@ -163,7 +180,12 @@ public class SessionStatePinQueryTests
             capture.Commands.Clear();
             var snapshots = await loader.LoadAsync(ids.Take(count).ToArray(), default);
             snapshots[ids[0]].Count.ShouldBe(75000);
-            if (count == 512) snapshots[ids[511]].Count.ShouldBe(0);
+            if (count == 512)
+            {
+                snapshots[ids[511]].Count.ShouldBe(0);
+                snapshots[ids[32]].Count.ShouldBe(1500);
+                snapshots.Values.Sum(s => s.Count).ShouldBe(3118500);
+            }
             capture.Commands.Count.ShouldBe(1);
             var production = capture.Commands.Single();
             var baseline = new CapturedTranscriptCommand(SessionStatePinBaseline.Sql, production.Parameters);
