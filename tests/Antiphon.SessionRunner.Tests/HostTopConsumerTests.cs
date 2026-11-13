@@ -424,6 +424,206 @@ public class HostTopConsumerTests
         rows.Count.ShouldBeLessThanOrEqualTo(HostTopConsumerLimits.ScanCap);
     }
 
+    /// <summary>
+    /// CARD-1884 round 3. The hosted scan owns the read. Ticks keep serving the cached ranking,
+    /// and a second scan does not start while the first read is held.
+    /// </summary>
+    [Test, Timeout(8_000)]
+    public async Task Held_scan_keeps_ticks_moving_and_does_not_overlap()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        using var stopPump = new ManualResetEventSlim(false);
+        var table = new ScriptedTable { Gate = release, Entered = entered, HoldFromRead = 3 };
+        table.Rows.Add(Obs(1, 1, 0, "csc", "compiler"));
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+        // FakeTimeProvider runs timer callbacks on the thread that calls Advance. A held Read
+        // must not pin that thread, so the clock pump stays off the test thread and starts
+        // only after the first read, once the row has a CPU delta to publish.
+        Task pump = Task.CompletedTask;
+        try
+        {
+            await sampler.StartAsync(CancellationToken.None);
+            var first = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            while (table.Completed < 1 && DateTime.UtcNow < first)
+                await Task.Delay(10);
+            table.Completed.ShouldBeGreaterThanOrEqualTo(1);
+            table.Rows[0] = Obs(1, 1, 50_000, "csc", "compiler");
+            pump = Task.Run(async () =>
+            {
+                while (!entered.IsSet && !stopPump.IsSet)
+                {
+                    time.Advance(TimeSpan.FromSeconds(5));
+                    await Task.Delay(10);
+                }
+            });
+            entered.Wait(TimeSpan.FromSeconds(3)).ShouldBeTrue();
+            table.Reads.ShouldBeGreaterThanOrEqualTo(2);
+            var tick = Task.Run(() => sampler.SampleOnceAsync());
+            var finished = await Task.WhenAny(tick, Task.Delay(150));
+            finished.ShouldBe(tick, "a held scan must not stretch the sampler tick");
+            await tick;
+            time.Advance(TimeSpan.FromSeconds(11));
+            var aged = Task.Run(() => sampler.SampleOnceAsync());
+            (await Task.WhenAny(aged, Task.Delay(150))).ShouldBe(aged);
+            await aged;
+            var sample = store.Latest().ShouldNotBeNull();
+            sample.TopConsumersStale.ShouldBeTrue();
+            sample.TopConsumersAgeSeconds.ShouldNotBeNull().ShouldBeGreaterThan(10);
+            sample.TopConsumers.ShouldHaveSingleItem().Name.ShouldBe("csc");
+            await Task.Delay(50);
+            table.Reads.ShouldBe(3, "no further scan starts while one read is held");
+        }
+        finally
+        {
+            release.Set();
+            stopPump.Set();
+            await pump;
+            await sampler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    /// <summary>CARD-1884 round 3. Stop joins the scan with a bounded wait and drops a late read.</summary>
+    [Test, Timeout(8_000)]
+    public async Task Stop_while_scan_is_held_discards_the_late_result()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        var table = new ScriptedTable { Gate = release, Entered = entered };
+        table.Rows.Add(Obs(99, 5, 50_000, "VBCSCompiler", "compiler"));
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+        try
+        {
+            await sampler.StartAsync(CancellationToken.None);
+            entered.Wait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
+            var started = Stopwatch.StartNew();
+            await sampler.StopAsync(CancellationToken.None);
+            started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3), "stop must return within the bounded scan join");
+            table.Rows[0] = Obs(99, 5, 9_000_000, "VBCSCompiler", "compiler");
+            release.Set();
+            await Task.Delay(200);
+            await sampler.SampleOnceAsync();
+            var sample = store.Latest().ShouldNotBeNull();
+            sample.TopConsumers.ShouldBeEmpty();
+            sample.TopConsumersAgeSeconds.ShouldBeNull();
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    /// <summary>CARD-1884 round 3. Dispose is idempotent and a late read cannot publish after it.</summary>
+    [Test, Timeout(8_000)]
+    public async Task Dispose_twice_while_scan_is_held_drops_the_late_result()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        var table = new ScriptedTable { Gate = release, Entered = entered };
+        table.Rows.Add(Obs(99, 5, 50_000, "VBCSCompiler", "compiler"));
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+        try
+        {
+            await sampler.StartAsync(CancellationToken.None);
+            entered.Wait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
+            sampler.Dispose();
+            Should.NotThrow(() => sampler.Dispose());
+            release.Set();
+            await Task.Delay(200);
+            await sampler.SampleOnceAsync();
+            store.Latest().ShouldNotBeNull().TopConsumersAgeSeconds.ShouldBeNull();
+        }
+        finally
+        {
+            release.Set();
+            await sampler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    /// <summary>CARD-1884 round 3. A scan fault is logged once and does not fault the hosted loop.</summary>
+    [Test, Timeout(8_000)]
+    public async Task Scan_exception_is_logged_once_and_contained()
+    {
+        var table = new ScriptedTable { Fault = true };
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var logger = new ScanLogger();
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table, logger);
+        try
+        {
+            await sampler.StartAsync(CancellationToken.None);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+            while (table.Reads < 3 && DateTime.UtcNow < deadline)
+            {
+                time.Advance(TimeSpan.FromSeconds(5));
+                await Task.Delay(20);
+            }
+
+            table.Reads.ShouldBeGreaterThanOrEqualTo(3);
+            logger.Warnings.ShouldBe(1);
+            store.Latest().ShouldNotBeNull();
+        }
+        finally
+        {
+            await sampler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Test, Timeout(30_000)]
+    public void Missing_constant_and_backwards_clocks_fail_closed()
+    {
+        var root = WritePidDirectories(5000, statsFrom: 4980);
+        try
+        {
+            var backwards = 100d;
+            Func<double?>[] clocks =
+            [
+                () => null,
+                () => 5d,
+                () => backwards--,
+            ];
+            foreach (var clock in clocks)
+            {
+                var table = new LinuxHostProcessTable(root, 4096, 100, clock, TimeSpan.FromMilliseconds(10));
+                var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
+                table.LastReadTruncated.ShouldBeTrue();
+                rows.Count.ShouldBeLessThanOrEqualTo(32);
+            }
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    [Test, Timeout(30_000)]
+    public void Enumeration_cost_exhausts_the_budget_before_any_process_read()
+    {
+        var root = WritePidDirectories(5000, statsFrom: 4980);
+        try
+        {
+            double cpu = 0;
+            var table = new LinuxHostProcessTable(root, 4096, 100, () =>
+            {
+                cpu += 1;
+                return cpu;
+            }, TimeSpan.FromMilliseconds(10));
+            var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
+            table.LastReadTruncated.ShouldBeTrue();
+            rows.Count.ShouldBe(0);
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
     [Test]
     public void Scan_stops_when_the_cpu_budget_is_spent()
     {
@@ -501,7 +701,8 @@ public class HostTopConsumerTests
         HostStatsStore store,
         TimeProvider time,
         HostStatsSettings settings,
-        IHostProcessTable? table)
+        IHostProcessTable? table,
+        ILogger<HostStatsSamplerService>? logger = null)
         => new(
             probe,
             store,
@@ -510,7 +711,7 @@ public class HostTopConsumerTests
             static _ => null,
             time,
             Options.Create(settings),
-            NullLogger<HostStatsSamplerService>.Instance,
+            logger ?? NullLogger<HostStatsSamplerService>.Instance,
             null,
             table);
 
@@ -538,6 +739,20 @@ public class HostTopConsumerTests
             File.WriteAllText(Path.Combine(dir, "environ"), environ);
     }
 
+    private static string WritePidDirectories(int count, int statsFrom)
+    {
+        var root = NewRoot();
+        for (var pid = 1; pid <= count; pid++)
+        {
+            var dir = Path.Combine(root, pid.ToString(CultureInfo.InvariantCulture));
+            Directory.CreateDirectory(dir);
+            if (pid >= statsFrom)
+                WriteProc(root, pid, "pwsh", 10, 10, 1, 1);
+        }
+
+        return root;
+    }
+
     private static string NewRoot()
     {
         var root = Path.Combine(Path.GetTempPath(), "card-1884-" + Guid.NewGuid().ToString("N"));
@@ -560,6 +775,21 @@ public class HostTopConsumerTests
         return dir.FullName;
     }
 
+    private sealed class ScanLogger : ILogger<HostStatsSamplerService>
+    {
+        public int Warnings { get; private set; }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning) Warnings++;
+        }
+    }
+
     private sealed class NoCpu : IProcessCpuProbe
     {
         public TimeSpan? TryGetTotalCpuTime(int pid, DateTime startedAt) => null;
@@ -569,19 +799,28 @@ public class HostTopConsumerTests
     {
         public List<HostProcessObservation> Rows { get; } = [];
         public int Reads { get; private set; }
+        public int Completed => Volatile.Read(ref _completed);
+        private int _completed;
         public bool Fault { get; set; }
         public bool LastReadTruncated => false;
         public ManualResetEventSlim? Gate { get; init; }
         public ManualResetEventSlim? Entered { get; init; }
+        public int HoldFromRead { get; init; } = 1;
 
         public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
         {
             Reads++;
-            Entered?.Set();
-            Gate?.Wait();
+            if (Reads >= HoldFromRead)
+            {
+                Entered?.Set();
+                Gate?.Wait();
+            }
+
             if (Fault)
                 throw new IOException("scan failed");
-            return Rows.ToArray();
+            var rows = Rows.ToArray();
+            Interlocked.Increment(ref _completed);
+            return rows;
         }
     }
 }
