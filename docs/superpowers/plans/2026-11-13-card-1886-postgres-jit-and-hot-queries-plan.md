@@ -251,7 +251,7 @@ Every row below is portable server/Postgres lane; ordinary scope is exactly thes
 | CP-7 | S5 | CP-6 | refresh-and-reply | `/*/*/(PolicyRefreshServiceTests*)\|(ChannelReplyLateConfirmDispatchTests*)/*` | V-5 | all listed, 0 failed | 2 | 2 |
 | CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 0.5 |
 | CP-9 | S5 | CP-6 | channel-ttl | `/*/*/ChannelReplyDurabilityTests/(Ttl_with_no_matching_prompt_is_stale_ttl*)\|(Ttl_with_a_matching_prompt_but_no_turn_end_is_turn_incomplete*)\|(Ttl_with_a_completed_answer_captures_before_recording_expired_preparation*)` | V-5 | all listed, 0 failed | 3 | 1 |
-| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
+| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
 
 ## Nightly pins, publication and handoff
 
@@ -265,3 +265,28 @@ At Code completion run evidence-diff over base..HEAD, fetch master, and require 
 next: code
 handoff: Implement S1 first, then S2–S5 under the embedded verification design and closed checkpoints. Preserve replay and channel ordering semantics. Keep desktop run 97150a0b untouched; defer activation, CPU windows and traces until it ends. Add migrations or API paging only through a verification-complete plan amendment.
 artifact: docs/superpowers/plans/2026-11-13-card-1886-postgres-jit-and-hot-queries-plan.md
+
+## CARD-1887 Code scope clarification (ce95788a)
+
+This commissioned Code task implements S3 only: CP-3 (V-3) and CP-10 (R-1).
+CP-10 includes DerivedImpactIndexTests as explicitly commissioned in the brief.
+V-1/V-2/V-4/V-5 and CP-1/2/4-9 belong to their separate slice owners.
+The frozen pre-change SQL in SessionStatePinBaseline is the differential oracle;
+expected membership is independently enumerated across every enum state.
+The scale witness seeds once in its owned cloned database (512 sessions, 27,695 tasks,
+32 x 75,000 plus 479 x 1,500 transcript entries, one empty session), and explains
+seed batches of 1/64/512 and fleet pins before/after. No production data is queried.
+Large seed counts are reported separately; exact transcript totals remain range scans.
+The plan witness must show task enumeration once, existing status-index use, no
+transcript sequential scan, pins cost below 100,000, and >100x pins block reduction.
+It captures both plans before asserting, so the current query is the red witness.
+Scale body budget is provisionally 120s under the loaded-host commissioning (CARD-1887);
+no product/test timeout or assertion is relaxed. Each row remains bounded at 10m.
+
+Pending SourceLanding Mutation controls (not discharged by ordinary Code runs):
+PC-3-parent: remove ParentSessionId from task_pins;
+PC-3-queue: remove unsettled queue membership;
+PC-3-status: omit Blocked tasks;
+PC-3-correlation: restore the old OR-correlated task predicate.
+The first three bind SessionStatePinQueryTests.Pin_membership_preserves_all_reasons;
+the fourth binds SessionStatePinQueryTests.Scale_plans_enumerate_open_tasks_once.
