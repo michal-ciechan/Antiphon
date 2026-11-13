@@ -2946,21 +2946,30 @@ public sealed partial class SessionMessageQueueService
             await CancelJustClaimedExpiredBriefsAsync(db, run, ct);
             return FlushResult.Nothing;
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (InputDeliveryUncertainException.Is(ex))
         {
-            // Shutdown — but the run is already marked Sent, and a Sent-but-never-delivered
-            // message is invisible to every retry path (live miss 2026-08-09: four delegated
-            // tasks' briefs stranded this way). Revert before propagating.
-            await RevertRunAsync(db, run);
-            throw;
+            // Sent + null verdict is a persisted attempt awaiting evidence. The runner
+            // may have written/submitted it even though its reply was lost. Preserve
+            // its generation, baseline and clock for ordinary interrupted recovery.
+            _logger.LogWarning(
+                "Input delivery unknown for session {SessionId}; retaining {Count} attempt(s) pending transcript evidence",
+                sessionId, run.Count);
+            try
+            {
+                await RecordTransportFailureAsync(sessionId,
+                    new InputDeliveryUncertainException(sessionId), CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Diagnostic persistence cannot turn Input uncertainty into a launch failure.
+                _logger.LogWarning("Could not record unknown Input delivery for session {SessionId}", sessionId);
+            }
+            return FlushResult.Failed;
         }
         catch (Exception ex)
         {
-            // Transport failure: the runner 500'd, was unreachable, or timed out (an HttpClient
-            // timeout is an OperationCanceledException with OUR token not cancelled — treat it as
-            // transport, never as shutdown). The terminal never saw the write, so reverting to
-            // Pending cannot double-type; redelivery comes via the stranded-queue watchdog or the
-            // next turn-end flush, and the incident makes the failure visible on the agent.
+            // Definitive refusals and other non-transport errors retain the existing retry
+            // path. Ambiguous transport outcomes above retain the in-flight attempt instead.
             _logger.LogWarning(
                 ex,
                 "Delivery to session {SessionId} threw before the terminal accepted it; reverting {Count} message(s) to Pending",
@@ -3723,8 +3732,10 @@ public sealed partial class SessionMessageQueueService
             var supervisor = scope.ServiceProvider.GetRequiredService<AgentSupervisorService>();
             await supervisor.RecordIncidentAsync(
                 agent.Id, sessionId, AgentIncidentKind.DeliveryTransportFailed, AlertSeverity.Error,
-                $"Message delivery failed in transport before the terminal accepted it: {failure.Message} "
-                + "The message has been returned to the queue for redelivery.",
+                failure is InputDeliveryUncertainException
+                    ? "Input reply was lost. Delivery is unknown; the attempt is waiting for transcript evidence."
+                    : $"Message delivery failed in transport before the terminal accepted it: {failure.Message} "
+                        + "The message has been returned to the queue for redelivery.",
                 ct: ct);
             await db.SaveChangesAsync(ct);
             await _eventBus.PublishToAllAsync("AgentChanged", new AgentChangedEventDto(agent.Id), ct);

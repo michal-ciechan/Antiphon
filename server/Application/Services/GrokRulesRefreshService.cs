@@ -175,6 +175,11 @@ public sealed class GrokRulesRefreshService(
             if (session.GrokRulesState == GrokRulesState.Failed)
                 throw new ConflictException(session.GrokRulesFailure ?? "Rules initialization failed.", "grok_rules_initialization_failed");
             await queue.FlushSessionAsync(sessionId, ct);
+            if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(m =>
+                m.AgentSessionId == sessionId && m.RulesRefreshKey == launchKey
+                && (m.Status == QueuedMessageStatus.Sent || m.Status == QueuedMessageStatus.Pending) && m.DeliveryAttempts > 0
+                && m.DeliveryVerdict == null && m.RulesAcknowledgedAt == null, ct))
+                throw new InputDeliveryUncertainException(sessionId);
             await Task.Delay(TimeSpan.FromMilliseconds(250), clock, ct);
         }
     }
@@ -370,6 +375,10 @@ public sealed class GrokRulesRefreshService(
             }
             else
             {
+                // A written request without a reply is still pending evidence. Neither
+                // its reply deadline nor the rules deadline proves a failed startup.
+                if ((row.Status is QueuedMessageStatus.Sent or QueuedMessageStatus.Pending) && row.DeliveryVerdict is null)
+                    return;
                 using var attemptScope = scopes.CreateScope();
                 var ceiling = attemptScope.ServiceProvider.GetService<IOptions<Antiphon.Server.Application.Settings.SupervisionSettings>>()
                     ?.Value.DeliveryVerification.MaxDeliveryAttempts ?? 3;
