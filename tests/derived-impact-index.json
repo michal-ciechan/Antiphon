@@ -17563,9 +17563,16 @@
       ]
     },
     {
+      "path": "src/Antiphon.Server.Git/OwnedGitProcess.cs",
+      "classes": [
+        "OwnedGitProcessContractTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.Server.Git/ServerGitProcess.cs",
       "classes": [
         "ImpactedClassesSelectorTests",
+        "OwnedGitProcessContractTests",
         "ServerGitAssemblyTests",
         "ServerGitProcessTests"
       ]
@@ -22903,6 +22910,7 @@
         "CheckpointSlotContractTests",
         "ExpectationLedgerTests",
         "InboundUnconsumedMonitorTests",
+        "OwnedGitProcessContractTests",
         "SessionRunnerEventPumpTests",
         "UnixPtyArgvTests"
       ]
