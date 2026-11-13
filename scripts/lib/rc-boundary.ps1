@@ -81,14 +81,27 @@ function Get-RcClassBoundary {
     if ($path.StartsWith('client/', [StringComparison]::Ordinal)) { return 'client' }
     if ($Suite -cin @('scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf')) { return $Suite }
     if ($Suite -cne 'antiphon') { return 'unassigned' }
-    # Literal repo paths only: computed references remain unknown. Rule order wins,
-    # even if the source mentions a later rule's path first.
+    # Literal repo paths only: computed references remain unknown. Each path keeps
+    # the first matching rule. Two paths that resolve to different boundaries are
+    # conflicting evidence and fail closed to unassigned.
     $paths = @([regex]::Matches($Source, '"(server/[^"\r\n]+)"') | ForEach-Object { $_.Groups[1].Value })
-    foreach ($rule in $Map.rules) {
-        foreach ($literal in $paths) {
-            if ($literal.Split('/') -contains '..') { continue }
-            foreach ($glob in $rule.globs) { if ($glob.IsMatch($literal)) { return $rule.boundary } }
+    $matched = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($literal in @($paths)) {
+        if ($literal.Split('/') -contains '..') { continue }
+        foreach ($rule in $Map.rules) {
+            $hit = $false
+            foreach ($glob in @($rule.globs)) {
+                if ($glob.IsMatch($literal)) { $hit = $true; break }
+            }
+            if ($hit) { $matched.Add([string]$rule.boundary); break }
         }
+    }
+    if ($matched.Count -gt 0) {
+        $chosen = [string]$matched[0]
+        foreach ($candidate in $matched) {
+            if ([string]$candidate -cne $chosen) { return 'unassigned' }
+        }
+        return $chosen
     }
     $ns = [regex]::Match($Source, '\bnamespace\s+([A-Za-z_][A-Za-z0-9_.]*)\s*[;{]')
     if ($ns.Success) {
@@ -194,13 +207,19 @@ function Get-RcBoundaryChunkId {
 
 function New-RcBoundaryChunk {
     param([object[]]$Identities)
-    if (-not $Identities -or $Identities.Count -eq 0) { throw 'boundary-chunk: empty membership' }
-    $suite = [string]$Identities[0].suite; $boundary = [string]$Identities[0].boundary
-    foreach ($identity in $Identities) {
-        if ($identity.suite -cne $suite -or $identity.boundary -cne $boundary) { throw 'boundary-chunk: mixed suite/boundary' }
+    if (-not $Identities -or @($Identities).Count -eq 0) { throw 'boundary-chunk: empty membership' }
+    $rows = @($Identities)
+    $suite = [string]$rows[0].suite; $boundary = [string]$rows[0].boundary
+    $parsed = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($identity in $rows) {
+        if ([string]$identity.suite -cne $suite -or [string]$identity.boundary -cne $boundary) { throw 'boundary-chunk: mixed suite/boundary' }
+        $caseKey = ''
+        if ($null -ne $identity.caseKey) { $caseKey = [string]$identity.caseKey }
+        $parsed.Add((ConvertTo-RcBoundaryIdentity -IdentityKey ([string]$identity.identityKey) -CaseKey $caseKey))
     }
-    [string[]]$keys = @($Identities | ForEach-Object { [string]$_.identityKey })
-    $id = Get-RcBoundaryChunkId $suite $boundary $keys
-    [Array]::Sort($keys, [StringComparer]::Ordinal)
-    return [ordered]@{ chunkId=$id; suite=$suite; boundary=$boundary; identityKeys=@($keys); alwaysDirty=($boundary -ceq 'unassigned') }
+    $sorted = @(Sort-RcBoundaryIdentities -Identities @($parsed.ToArray()))
+    [string[]]$keys = @($sorted | ForEach-Object { ([string]$_.class + '/' + [string]$_.method) })
+    [string[]]$caseKeys = @($sorted | ForEach-Object { [string]$_.caseKey })
+    $id = Get-RcBoundaryChunkId $suite $boundary $keys $caseKeys
+    return [ordered]@{ chunkId=$id; suite=$suite; boundary=$boundary; identityKeys=@($keys); caseKeys=@($caseKeys); alwaysDirty=($boundary -ceq 'unassigned') }
 }
