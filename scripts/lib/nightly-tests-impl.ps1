@@ -405,6 +405,7 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
     $mapping = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     if ($null -ne $ClassBoundaries) { foreach ($key in $ClassBoundaries.Keys) { $mapping.Add([string]$key, $ClassBoundaries[$key]) } }
     $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $classNames = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     $byUid = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $names = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($node in $DiscoveryNodes) {
@@ -412,6 +413,8 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
         if ($null -eq $parts -or [string]::IsNullOrWhiteSpace([string]$node.Method) -or [string]::IsNullOrWhiteSpace([string]$node.Uid)) { throw 'boundary-pack: incomplete discovery identity' }
         if ($byUid.ContainsKey([string]$node.Uid)) { throw 'boundary-pack: duplicate discovery UID' }
         $byUid.Add([string]$node.Uid, $node)
+        if ($classNames.ContainsKey($parts.Bare) -and $classNames[$parts.Bare] -cne $parts.Bare) { throw 'boundary-pack: case-colliding class identity' }
+        $classNames[$parts.Bare] = $parts.Bare
         $key = $parts.Bare + '/' + [string]$node.Method
         if ($names.ContainsKey($key) -and $names[$key] -cne $key) { throw 'boundary-pack: case-colliding method identity' }
         $names[$key] = $key
@@ -426,7 +429,10 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
         if (-not $byClass.ContainsKey($bare)) { throw 'boundary-pack: leaf has no discovery membership' }
         $members = @($byClass[$bare].ToArray())
         if ($leaf.exactFilter) {
-            $members = @($members | Where-Object { ('/*/{0}/{1}/{2}' -f $_.Namespace, $_.Type, $_.Method) -ceq $leaf.exactFilter })
+            $members = @($members | Where-Object {
+                $parts = Get-NightlyBareTypeParts -ClassName ([string]$_.ClassName)
+                ('/*/{0}/{1}/{2}' -f $parts.Namespace, $parts.Type, $_.Method) -ceq $leaf.exactFilter
+            })
             [string[]]$declared = @($leaf.nodes | ForEach-Object { [string]$_.Uid })
             [string[]]$actual = @($members | ForEach-Object { [string]$_.Uid })
             [Array]::Sort($declared, [StringComparer]::Ordinal); [Array]::Sort($actual, [StringComparer]::Ordinal)

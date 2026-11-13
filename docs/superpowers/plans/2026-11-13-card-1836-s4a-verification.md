@@ -48,6 +48,15 @@ The failed red output is retained; the final row uses a fresh green output.
 Full-range impacted selectors require CP-91/92 (same-named class in two other
 projects); CP-8/90 cover nightly-live-lane and test-lane-category.
 
+Two direct gated RepackPreservesCaseUniverse diagnostics avoid cold builds while
+developing the new production path; they do not replace fresh checkpoint TRX.
+At `00b3be4029c780d2a3dc72df4abcc4e7a67dd1d5`, the initial case passed (wait
+315s, held 4s). The expanded constructor/case-collision witness was committed
+before its repair, then failed both intended assertions (wait 60s, held 5s).
+The repair uses metadata class names for exact filters, retains constructor
+identities in case manifests, and refuses case-colliding classes before the
+legacy case-insensitive grouping. No timeout or assertion was loosened.
+
 ## Performance budget
 
 Provisional under CARD-1836: 45s child/10s joined cleanup, 60s test timeout;
