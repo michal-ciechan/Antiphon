@@ -51,6 +51,5 @@ Red rows intentionally fail before fixes, then rerun once green. No repeats afte
 | CP-2 | S3-S4 | tests/Antiphon.Tests -> bin-c1892-server-red3/ | launch-uncertainty | `/*/*/(AgentSessionLaunchFailureTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesInitializationTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)/*` | V-2,R-2 | all listed, 0 failed | 6 | 12 |
 | CP-3 | S5 | tests/Antiphon.Tests -> bin-c1892-guards/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-3,V-4 | all listed, 0 failed | 10 | 6 |
 | CP-4 | S3-S4 | CP-2 | uncertainty-witnesses | `/*/*/GrokRulesReadyOrderingTests/Ambiguous_input*` | V-2 | all listed, 0 failed | 3 | 1 |
-
 | CP-5 | S3-S4 | CP-2 | card-input-witnesses | `/*/*/AgentSessionLaunchFailureTests/Card_input_uncertainty*` | V-2,R-2 | all listed, 0 failed | 3 | 1 |
 | CP-6 | S3-S4 | CP-2 | queue-transport-recovery | `/*/*/SessionMessageQueuePhoneHomeDropTests/*` | V-2 | all listed, 0 failed | 1 | 3 |
