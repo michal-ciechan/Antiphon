@@ -100,7 +100,10 @@ public sealed class ProcessDriver : IConfinedDriver
             foreach (var (name, value) in request.Environment)
                 psi.Environment[name] = value;
 
-        new Antiphon.Build.BuildDriverEnvironment().Apply(psi);
+        var buildEnvironment = new Antiphon.Build.BuildDriverEnvironment();
+        buildEnvironment.Apply(psi);
+        if (!string.IsNullOrEmpty(buildEnvironment.Preparation))
+            AppendLog(request.LogPath, buildEnvironment.Preparation);
 
         using var process = _factory.Create(psi);
         var stdout = new System.Text.StringBuilder();

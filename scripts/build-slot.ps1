@@ -115,6 +115,8 @@ function Start-AntiphonWrappedCommand {
     if ($IsWindows -and [IO.Path]::GetFileName($FileName) -ieq 'powershell.exe') {
         [void]$psi.Environment.Remove('PSModulePath')
     }
+    $compilerGrant = if ($null -ne $slot) { [int]$slot.MaxCpuCount } else { 0 }
+    Set-AntiphonBuildDriverEnvironment -StartInfo $psi -Windows $IsWindows -MaxCpuCount $compilerGrant
     $proc = [Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     try { [void]$proc.Start() }

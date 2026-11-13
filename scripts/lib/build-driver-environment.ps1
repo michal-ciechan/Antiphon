@@ -2,13 +2,16 @@
 # ASCII and C# 5 compatible for Windows PowerShell 5.1 callers.
 function Set-AntiphonBuildDriverEnvironment {
     param([Diagnostics.ProcessStartInfo]$StartInfo,
-          [bool]$Windows = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT))
-    if (-not $Windows) { return }
+          [bool]$Windows = ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT),
+          [int]$MaxCpuCount = 0)
+    if (-not $Windows -and (-not $StartInfo.EnvironmentVariables.ContainsKey('ANTIPHON_LINUX_COMPILER_POLICY') -or
+        $StartInfo.EnvironmentVariables['ANTIPHON_LINUX_COMPILER_POLICY'] -cne '1')) { return }
     if (-not ('Antiphon.Build.BuildDriverEnvironment' -as [type])) {
         Add-Type -Path (Join-Path $PSScriptRoot 'BuildDriverEnvironment.cs')
     }
     $policy = New-Object Antiphon.Build.BuildDriverEnvironment
-    $policy.Apply($StartInfo.EnvironmentVariables, $Windows)
+    if ($Windows) { $policy.Apply($StartInfo.EnvironmentVariables, $Windows) }
+    else { $policy.Apply($StartInfo, $MaxCpuCount) }
 }
 
 function Enter-AntiphonBuildDriverEnvironment {

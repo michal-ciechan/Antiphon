@@ -35,7 +35,10 @@ function Stop-C1885PrivateCompiler([string]$Dotnet, [string]$Dll, [string]$Pipe,
     try {
         if (-not $process.WaitForExit(15000)) { throw 'private-pipe shutdown deadline' }
         if ($process.ExitCode -ne 0) { throw "private-pipe shutdown failed: $($process.ExitCode)" }
-    } finally { $process.Dispose() }
+    } finally {
+        if (-not $process.HasExited) { $process.Kill($true); [void]$process.WaitForExit(1000) }
+        $process.Dispose()
+    }
 }
 function Get-C1885Set([string]$List) {
     $set = [Collections.Generic.HashSet[int]]::new()

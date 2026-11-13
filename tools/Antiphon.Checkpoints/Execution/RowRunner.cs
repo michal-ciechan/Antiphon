@@ -154,9 +154,13 @@ public sealed class RowRunner
             var shellArgs = _platform.IsWindows
                 ? new[] { "/d", "/s", "/c", request.Command }
                 : new[] { "-lc", request.Command };
+            // A command row owns this one lease; its script passes the typed grant to
+            // its one build. This is transport, never a second admission layer.
+            var commandEnvironment = new Dictionary<string, string>(request.Environment);
+            commandEnvironment["ANTIPHON_BUILD_SLOT_MAXCPUCOUNT"] = request.MaxCpuCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var ran = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: request.Environment),
+                new DriverRequest(shell, shellArgs, request.WorkingDirectory, Path.Combine(request.ResultsDirectory, "console.log"), Environment: commandEnvironment),
                 request.Deadline,
                 _time,
                 cancellationToken).ConfigureAwait(false);
