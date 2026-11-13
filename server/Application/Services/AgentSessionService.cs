@@ -349,6 +349,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             }
             RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
             await _db.SaveChangesAsync(CancellationToken.None);
+            ct.ThrowIfCancellationRequested();
             return new AgentSessionStartResult(session.Id, attempt.Id, attempt.WorktreeId!.Value, false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -745,6 +746,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Readiness already succeeded. Keep runtime ownership and the accepted
             // generation alive while the persisted attempt awaits transcript evidence.
             _logger.LogWarning("Input delivery unknown during launch for session {SessionId}; retaining the process", session.Id);
+            ct.ThrowIfCancellationRequested();
         }
         catch (Exception ex)
         {
@@ -1137,6 +1139,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
         {
             _logger.LogWarning("Input delivery unknown during recovered launch for session {SessionId}; retaining the process", sessionId);
+            ct.ThrowIfCancellationRequested();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2286,6 +2289,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
         {
             _logger.LogWarning("Input delivery unknown during resume for session {SessionId}; retaining the process", session.Id);
+            ct.ThrowIfCancellationRequested();
             return new AgentSessionResumeResult(session.Id, cardId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
