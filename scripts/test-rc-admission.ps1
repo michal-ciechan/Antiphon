@@ -7,7 +7,7 @@ $library=Join-Path $PSScriptRoot 'lib/rc-admission.ps1'
 if (Test-Path -LiteralPath $library) { . $library }
 $errors=[Collections.Generic.List[string]]::new()
 function Note($ok,[string]$label) { if (-not $ok) { $errors.Add($label) } }
-function Copy($value) { ConvertFrom-Json -AsHashtable -InputObject (ConvertTo-Json -Depth 60 -InputObject $value) }
+function Clone-Ra($value) { ConvertFrom-Json -AsHashtable -InputObject (ConvertTo-Json -Depth 60 -InputObject $value) }
 function Check($before,$after,$facts,[string]$reason) {
     $d=Get-RcCarryAdmissionDecision $before $after $facts -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
     Note (-not $d.eligible -and $d.reasons -ccontains $reason) ("missing-refusal:"+$reason)
@@ -40,56 +40,56 @@ $facts=@{inventoryValid=$true;provenanceValid=$true;outcome='Passed';complete=$t
 try {
     switch ($Case) {
         'FullProvenanceAdmitsAndReverifies' {
-            $d=Get-RcCarryAdmissionDecision $manifest (Copy $manifest) $facts -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
+            $d=Get-RcCarryAdmissionDecision $manifest (Clone-Ra $manifest) $facts -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
             Note ($d.eligible -and $d.reasons.Count -eq 0) 'complete-equal-proposal'
-            $bad=Copy $manifest; $bad.inputs[0].objectId='f'*40
+            $bad=Clone-Ra $manifest; $bad.inputs[0].objectId='f'*40
             Check $manifest $bad $facts 'manifest-rehash-mismatch'
-            $bad=Copy $manifest; $bad.cases[0].caseKey='forged'
+            $bad=Clone-Ra $manifest; $bad.cases[0].caseKey='forged'
             Check $manifest $bad $facts 'manifest-rehash-mismatch'
-            $bad=Copy $manifest; $bad.digest='f'*64
+            $bad=Clone-Ra $manifest; $bad.digest='f'*64
             Check $bad $bad $facts 'manifest-rehash-mismatch'
             # Also exercise the actual reader's byte and Git-object verification.
             & "$PSScriptRoot/test-rc-admission-reader.ps1" -Case $Case -ResultsDirectory $ResultsDirectory -RepositoryRoot $root -SourceSha $sha
             Note ($LASTEXITCODE -eq 0) 'reader-reverification'
         }
         'ShaLabelWithoutBuildProofIsUnproven' {
-            $bad=Copy $facts; $bad.provenanceValid=$false
+            $bad=Clone-Ra $facts; $bad.provenanceValid=$false
             Check $manifest $manifest $bad 'source-build-launch-unproven'
-            $bad=Copy $manifest; $bad.actualReceipts=@()
+            $bad=Clone-Ra $manifest; $bad.actualReceipts=@()
             Check $manifest $bad $facts 'manifest-rehash-mismatch'
         }
         'IncompleteChunkAndCaseAliasNeverCarry' {
             foreach ($outcome in @('Failed','Timeout','Aborted','partial','NotExecuted','passed','Unknown')) {
-                $bad=Copy $facts; $bad.outcome=$outcome
+                $bad=Clone-Ra $facts; $bad.outcome=$outcome
                 Check $manifest $manifest $bad 'chunk-not-passed'
             }
-            $bad=Copy $facts; $bad.complete=$false; Check $manifest $manifest $bad 'chunk-incomplete'
-            $bad=Copy $facts; $bad.caseOutcomes=@('Failed'); Check $manifest $manifest $bad 'cases-not-passed'
-            $bad=Copy $facts; $bad.caseOutcomes=@(); Check $manifest $manifest $bad 'cases-not-passed'
-            $bad=Copy $facts; $bad.caseOutcomes=@('Passed','Passed'); Check $manifest $manifest $bad 'cases-not-passed'
-            $bad=Copy $manifest; $bad.cases+=Copy $bad.cases[0]; Check $manifest $bad $facts 'manifest-invalid'
+            $bad=Clone-Ra $facts; $bad.complete=$false; Check $manifest $manifest $bad 'chunk-incomplete'
+            $bad=Clone-Ra $facts; $bad.caseOutcomes=@('Failed'); Check $manifest $manifest $bad 'cases-not-passed'
+            $bad=Clone-Ra $facts; $bad.caseOutcomes=@(); Check $manifest $manifest $bad 'cases-not-passed'
+            $bad=Clone-Ra $facts; $bad.caseOutcomes=@('Passed','Passed'); Check $manifest $manifest $bad 'cases-not-passed'
+            $bad=Clone-Ra $manifest; $bad.cases+=Clone-Ra $bad.cases[0]; Check $manifest $bad $facts 'manifest-invalid'
         }
         'ChangedEnvelopeHistoryAndOriginChainRefuse' {
             foreach ($pair in @(@('inventoryValid','inventory-unproven'),@('historyValid','failure-history-unproven'),@('originValid','origin-unproven'),@('contractValid','contract-unproven'))) {
-                $bad=Copy $facts; $bad[$pair[0]]=$false; Check $manifest $manifest $bad $pair[1]
+                $bad=Clone-Ra $facts; $bad[$pair[0]]=$false; Check $manifest $manifest $bad $pair[1]
             }
             & "$PSScriptRoot/test-rc-admission-reader.ps1" -Case $Case -ResultsDirectory $ResultsDirectory -RepositoryRoot $root -SourceSha $sha
             Note ($LASTEXITCODE -eq 0) 'reader-history-origin'
         }
         'EveryIngredientMustMatch' {
             foreach ($field in @('digest','inputDigest','caseDigest','receiptDigest','membershipDigest','chunkId','format')) {
-                $bad=Copy $manifest; $bad[$field]='wrong'
+                $bad=Clone-Ra $manifest; $bad[$field]='wrong'
                 $d=Get-RcCarryAdmissionDecision $manifest $bad $facts -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
                 Note (-not $d.eligible -and $d.reasons.Count -gt 0) ("field:"+$field)
             }
-            $bad=Copy $facts; $bad.algorithmDigest='d'*64; Check $manifest $manifest $bad 'algorithm-binding-mismatch'
-            $bad=Copy $facts; $bad.releaseStatus='incomplete'; Check $manifest $manifest $bad 'release-evidence-incomplete'
+            $bad=Clone-Ra $facts; $bad.algorithmDigest='d'*64; Check $manifest $manifest $bad 'algorithm-binding-mismatch'
+            $bad=Clone-Ra $facts; $bad.releaseStatus='incomplete'; Check $manifest $manifest $bad 'release-evidence-incomplete'
             foreach ($time in @('2026-11-06T12:00:00Z','2026-11-14T00:00:00Z','unknown',$null)) {
-                $bad=Copy $facts; $bad.anchorAtUtc=$time; Check $manifest $manifest $bad 'full-anchor-invalid-or-expired'
+                $bad=Clone-Ra $facts; $bad.anchorAtUtc=$time; Check $manifest $manifest $bad 'full-anchor-invalid-or-expired'
             }
-            $bad=Copy $facts; $bad.anchorVerified=$false; Check $manifest $manifest $bad 'full-anchor-invalid-or-expired'
+            $bad=Clone-Ra $facts; $bad.anchorVerified=$false; Check $manifest $manifest $bad 'full-anchor-invalid-or-expired'
             foreach ($field in @($facts.Keys)) {
-                $bad=Copy $facts; $bad.Remove($field)
+                $bad=Clone-Ra $facts; $bad.Remove($field)
                 $d=Get-RcCarryAdmissionDecision $manifest $manifest $bad -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
                 Note (-not $d.eligible) ("missing:"+$field)
             }
