@@ -1232,8 +1232,10 @@ function Get-NightlyDiscoveryKnownIdentities {
         if ($null -eq $node) { continue }
         $className = ''
         $method = ''
-        if ($node.PSObject.Properties.Name -contains 'ClassName') { $className = [string]$node.ClassName }
-        if ($node.PSObject.Properties.Name -contains 'Method') { $method = [string]$node.Method }
+        # The indexer is the same case-insensitive member lookup as -contains over the names, without listing them.
+        $properties = $node.PSObject.Properties
+        if ($null -ne $properties['ClassName']) { $className = [string]$node.ClassName }
+        if ($null -ne $properties['Method']) { $method = [string]$node.Method }
         if ([string]::IsNullOrWhiteSpace($className) -or [string]::IsNullOrWhiteSpace($method)) { continue }
         [void]$ids.Add($className + '.' + $method)
     }
