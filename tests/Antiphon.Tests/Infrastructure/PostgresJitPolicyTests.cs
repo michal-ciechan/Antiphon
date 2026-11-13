@@ -74,6 +74,37 @@ public sealed class PostgresJitPolicyTestsSetup
     }
 
     [Test]
+    public void suppress_respects_option_terminators_and_a_trailing_backslash()
+    {
+        var trailing = OptionsAfter("-c application_name=label\\");
+        trailing.StartsWith(ApplicationPostgresConnection.JitOffOption + " ", StringComparison.Ordinal)
+            .ShouldBeTrue("trailing backslash consumed the separator");
+        trailing.EndsWith("application_name=label\\", StringComparison.Ordinal)
+            .ShouldBeTrue("application_name bytes changed");
+        SameOptions("-c application_name=label\\");
+
+        var ended = OptionsAfter("--");
+        string.Equals(ended, "-c jit=off --", StringComparison.Ordinal)
+            .ShouldBeTrue("suppression was appended after the option terminator");
+        SameOptions("--");
+
+        var afterMarker = OptionsAfter("-- -c x");
+        var marker = afterMarker.IndexOf("--", StringComparison.Ordinal);
+        var suppressionAt = afterMarker.IndexOf(ApplicationPostgresConnection.JitOffOption, StringComparison.Ordinal);
+        (marker > 0 && suppressionAt >= 0 && suppressionAt < marker)
+            .ShouldBeTrue("suppression landed after the option terminator");
+        SameOptions("-- -c x");
+
+        var danglingJit = Connection(options: "-c jit=on\\").ConnectionString;
+        var kept = ApplicationPostgresConnection.SuppressJit(danglingJit);
+        string.Equals(kept, danglingJit, StringComparison.Ordinal)
+            .ShouldBeTrue("a trailing backslash on jit=on was rewritten");
+        var twice = ApplicationPostgresConnection.SuppressJit(kept);
+        string.Equals(kept, twice, StringComparison.Ordinal)
+            .ShouldBeTrue("dangling jit=on was not idempotent");
+    }
+
+    [Test]
     public void suppress_preserves_unrelated_fields()
     {
         var input = Connection(options: "-c jit=on");
@@ -156,6 +187,14 @@ public sealed class PostgresJitPolicyTestsSetup
         text.Contains("jit_", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
         text.Contains("pg_stat_statements_reset", StringComparison.Ordinal).ShouldBeFalse();
         text.Contains("docker stats", StringComparison.Ordinal).ShouldBeTrue("container sample missing");
+    }
+
+    private static void SameOptions(string options)
+    {
+        var once = ApplicationPostgresConnection.SuppressJit(Connection(options: options).ConnectionString);
+        var twice = ApplicationPostgresConnection.SuppressJit(once);
+        string.Equals(once, twice, StringComparison.Ordinal)
+            .ShouldBeTrue("repeated application changed the connection string");
     }
 
     private static string OptionsAfter(string options)
@@ -311,6 +350,19 @@ public sealed class PostgresJitPolicyTests
     }
 
     [Test]
+    public async Task option_token_boundaries_keep_a_working_connection()
+    {
+        var raw = RawShared();
+        await AssertBoundary(raw, "-c application_name=label\\", "trailing-backslash", "label", jitOff: true);
+        await AssertBoundary(raw, "--", "end-marker", null, jitOff: true);
+        await AssertBoundary(raw, "-- -c x", "end-marker-then-switch", null, jitOff: true, mustOpen: false);
+        await AssertBoundary(raw, "-c application_name=label\\ ", "escaped-trailing-space", "label ", jitOff: true);
+        await AssertBoundary(raw, "-c application_name=label\\\\", "escaped-trailing-backslash", "label\\", jitOff: true);
+        await AssertBoundary(raw, "", "empty", null, jitOff: true);
+        await AssertBoundary(raw, "-c jit=on\\", "dangling-jit-on", null, jitOff: false, unchanged: true);
+    }
+
+    [Test]
     public async Task startup_options_keep_timezone_and_final_jit_off_wins()
     {
         var raw = new NpgsqlConnectionStringBuilder(TestDbFixture.MaintenanceConnectionString)
@@ -391,6 +443,61 @@ public sealed class PostgresJitPolicyTests
         if (index < 0)
             throw new InvalidOperationException("canonical Options key missing");
         return string.Concat(connectionString.AsSpan(0, index), "options=", connectionString.AsSpan(index + marker.Length));
+    }
+
+    private readonly record struct Opened(bool Ok, string Jit, string Name, string State);
+
+    private static async Task AssertBoundary(
+        string basis,
+        string options,
+        string label,
+        string? applicationName,
+        bool jitOff,
+        bool mustOpen = true,
+        bool unchanged = false)
+    {
+        var input = WithOptions(basis, options);
+        var raw = await TryOpenAsync(input);
+        var once = ApplicationPostgresConnection.SuppressJit(input);
+        var twice = ApplicationPostgresConnection.SuppressJit(once);
+        if (!string.Equals(once, twice, StringComparison.Ordinal))
+            throw new InvalidOperationException("case " + label + " second application changed the string");
+        if (unchanged && !string.Equals(once, input, StringComparison.Ordinal))
+            throw new InvalidOperationException("case " + label + " changed a form that must stay unchanged");
+
+        var applied = await TryOpenAsync(once);
+        if (raw.Ok && !applied.Ok)
+            throw new InvalidOperationException("case " + label + " suppression closed a working connection state=" + applied.State);
+        if (mustOpen && !applied.Ok)
+            throw new InvalidOperationException("case " + label + " did not open state=" + applied.State);
+        if (!applied.Ok)
+            return;
+
+        if (jitOff && !string.Equals(applied.Jit, "off", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("case " + label + " jit=" + applied.Jit);
+        if (!jitOff && raw.Ok && !string.Equals(applied.Jit, raw.Jit, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("case " + label + " jit moved");
+        if (applicationName is not null && !string.Equals(applied.Name, applicationName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "case " + label + " application_name length="
+                + applied.Name.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    private static async Task<Opened> TryOpenAsync(string connectionString)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        try
+        {
+            await connection.OpenAsync();
+            return new Opened(true, await JitAsync(connection), await SettingAsync(connection, "application_name"), "");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            var state = ex is PostgresException postgres ? postgres.SqlState : ex.GetType().Name;
+            return new Opened(false, "", "", state);
+        }
     }
 
     private static async Task AssertStartup(
