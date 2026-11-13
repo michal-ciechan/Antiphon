@@ -173,8 +173,8 @@ public class SessionMessageQueueInterruptedAttemptTests
         var resolved = await reader.GetAsync(CancellationToken.None, includeProgressProbe: false);
         var incident = resolved.Items.Single(i => i.SessionId == h.SessionId
             && i.Kind == AttentionKind.RecentCriticalIncident);
-        incident.Evidence.ShouldContain("unrelated transport error", "unrelated-error-visible");
-        incident.Evidence.ShouldNotContain("orchestrator decision", "resolved-episode-hidden");
+        incident.Evidence.ShouldContain("unrelated transport error", customMessage: "unrelated-error-visible");
+        incident.Evidence.ShouldNotContain("orchestrator decision", customMessage: "resolved-episode-hidden");
         h.Adapter.Inputs.ShouldBeEmpty();
         h.Adapter.Killed.ShouldBeFalse();
     }
