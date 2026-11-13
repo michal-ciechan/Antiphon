@@ -128,6 +128,7 @@ switch ($Case) {
             foreach ($id in $plain.dirtySuites) { Note ($s.dirtySuites -ccontains $id) "index-cannot-subtract:$id" }
         }
         Note ($s.dirtySuites -ccontains 'other') 'positive-index-broadens'
+        Note (Has $s 'other' 'src/Core/Queue.cs') 'positive-index-unions-input-record'
         Note (-not $s.executionEvidence -and -not $s.gateCredit -and $s.activation -ceq 'shadow-only') 'no-execution-authority'
     }
     default { throw "unknown case:$Case" }
