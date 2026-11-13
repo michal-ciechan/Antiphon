@@ -135,8 +135,10 @@ internal sealed class OwnedGitProcess : IDisposable, IAsyncDisposable
                     if (_launch.State == OwnedGitLaunchState.NoChild && _launch.Root is not null)
                         _launch = new(OwnedGitLaunchState.Ambiguous, _launch.Root);
                 }
-                catch (Exception ex) when (IsObservationFailure(ex))
+                catch (Exception)
                 {
+                    // Creation may already have happened, including inside CaptureRoot.
+                    // Every exception consumes the launch; never permit an untracked retry.
                     _launch = new(OwnedGitLaunchState.Ambiguous, null);
                 }
             }
@@ -345,57 +347,3 @@ internal interface ILinuxOwnedGitMembers : IDisposable
     void SetMarker(string marker);
 }
 
-/// <summary>
-/// Linux managed-stream adapter, not yet selected by callers. The mandatory census provider
-/// owns marker discovery/signaling; Process owns its native handles. No dispose-time kill.
-/// The marker is applied to child start info before creation, never to the worker environment.
-/// </summary>
-internal sealed class LinuxOwnedGitProcess(ILinuxOwnedGitMembers members) : IOwnedGitProcessOperations
-{
-    private readonly Process _child = new();
-    public StreamWriter StandardInput => _child.StandardInput;
-    public StreamReader StandardOutput => _child.StandardOutput;
-    public StreamReader StandardError => _child.StandardError;
-    public bool? RootExited
-    {
-        get
-        {
-            try { return _child.HasExited; }
-            catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { return null; }
-        }
-    }
-    public int ExitCode => _child.ExitCode;
-
-    public OwnedGitLaunch Start(ProcessStartInfo start)
-    {
-        members.SetMarker(start.Environment[OwnedGitProcess.MarkerVariable]
-            ?? throw new InvalidOperationException("owned_git_marker_missing"));
-        _child.StartInfo = start;
-        if (!_child.Start()) return new(OwnedGitLaunchState.NoChild, null);
-        DateTime? startUtc;
-        try { startUtc = _child.StartTime.ToUniversalTime(); }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { startUtc = null; }
-        return new(OwnedGitLaunchState.Started, members.CaptureRoot(_child.Id, startUtc));
-    }
-
-    public async Task<bool> WaitForRootExitAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _child.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            return _child.HasExited;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception) { return false; }
-    }
-
-    public ValueTask<OwnedGitMembers> ProbeMembersAsync(OwnedGitRoot? root, OwnedGitDeadline deadline,
-        CancellationToken cancellationToken) => members.ProbeAsync(root, deadline, cancellationToken);
-    public ValueTask<int> TerminateMembersAsync(OwnedGitRoot? root, OwnedGitDeadline deadline,
-        CancellationToken cancellationToken) => members.SignalAsync(root, deadline, cancellationToken);
-
-    public void Dispose()
-    {
-        try { _child.Dispose(); }
-        finally { members.Dispose(); }
-    }
-}

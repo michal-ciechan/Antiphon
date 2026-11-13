@@ -108,12 +108,14 @@ public sealed class OwnedGitProcessContractTests
         var operations = new FakeOperations { Launch = new(OwnedGitLaunchState.NoChild, null) };
         await using var owner = new OwnedGitProcess(operations);
         owner.Start(StartInfo()).State.ShouldBe(OwnedGitLaunchState.NoChild);
+        owner.State.ShouldBe(OwnedGitLifecycle.Joined);
         var cleanup = await owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(1));
         cleanup.Joined.ShouldBeTrue();
         cleanup.Reason.ShouldBe(OwnedGitReason.NoChild);
         cleanup.SignalsAttempted.ShouldBe(0);
         operations.Signals.ShouldBe(0);
         operations.Probes.ShouldBe(0);
+        owner.State.ShouldBe(OwnedGitLifecycle.Joined);
     }
 
     [Test]
@@ -205,6 +207,19 @@ public sealed class OwnedGitProcessContractTests
         owner.State.ShouldBe(joined ? OwnedGitLifecycle.Joined : OwnedGitLifecycle.Unconfirmed);
         if (state == OwnedGitMembershipState.Live) cleanup.Members.Survivors.ShouldBe(3);
         operations.Events.ShouldBe(["signal", "wait", "probe"]);
+    }
+
+    [Test]
+    public async Task Unexpected_cleanup_exception_leaves_unconfirmed_and_disposes_once()
+    {
+        var operations = new FakeOperations { Signal = (_, _, _) => throw new NotSupportedException() };
+        var owner = new OwnedGitProcess(operations);
+        owner.Start(StartInfo());
+        await Should.ThrowAsync<NotSupportedException>(() => owner.TerminateAndJoinAsync(TimeSpan.FromSeconds(1)));
+        owner.State.ShouldBe(OwnedGitLifecycle.Unconfirmed);
+        owner.Dispose();
+        owner.State.ShouldBe(OwnedGitLifecycle.Disposed);
+        operations.Closes.ShouldBe(1);
     }
 
     [Test]
@@ -403,6 +418,17 @@ public sealed class OwnedGitProcessContractTests
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override long GetTimestamp() => _ticks;
         internal void Advance(TimeSpan duration) => _ticks += duration.Ticks;
+        // These tests advance the monotonic deadline synchronously. They never wait on a
+        // timer; a real 1 ms timer would race their fake timestamp under host contention.
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            new ManualTimer();
+
+        private sealed class ManualTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() { }
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     private sealed class FakeOperations : IOwnedGitProcessOperations
