@@ -558,35 +558,54 @@ public class OutputDistillationDeliveryTests
             Action<DeliveryFixture>? created = null)
         {
             var f = new DeliveryFixture();
-            created?.Invoke(f);
-            f._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            await f.Workspace.InitializeAsync(worktree);
-            f.Settings = new() { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
-                OutputDistillerAgentSlug = "c419-" + Guid.NewGuid().ToString("N"),
-                OutputDistillerWorkingDirectory = Path.Combine(f.Workspace.Main, ".antiphon", "specialist"), MaxConcurrentTasks = 512 };
-            // Model transport sizes on Unix too; this fixture does not launch a Windows backend.
-            if (modern)
+            try
             {
-                f.Settings.ReplyInlineMaxChars = f.Settings.ModernPtyReplyInlineMaxChars;
-                f.Settings.BriefInlineMaxBytes = f.Settings.ModernPtyBriefInlineMaxBytes;
-                f.Settings.PtySingleChunkBytes = f.Settings.ModernPtySingleWriteMaxBytes;
+                created?.Invoke(f);
+                f._schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+                await f.Workspace.InitializeAsync(worktree);
+                f.Settings = new() { OutputDistillerEnabled = enabled, OutputDistillerMode = mode,
+                    OutputDistillerAgentSlug = "c419-" + Guid.NewGuid().ToString("N"),
+                    OutputDistillerWorkingDirectory = Path.Combine(f.Workspace.Main, ".antiphon", "specialist"), MaxConcurrentTasks = 512 };
+                // Model transport sizes on Unix too; this fixture does not launch a Windows backend.
+                if (modern)
+                {
+                    f.Settings.ReplyInlineMaxChars = f.Settings.ModernPtyReplyInlineMaxChars;
+                    f.Settings.BriefInlineMaxBytes = f.Settings.ModernPtyBriefInlineMaxBytes;
+                    f.Settings.PtySingleChunkBytes = f.Settings.ModernPtySingleWriteMaxBytes;
+                }
+                // Unix ignores the Windows selector. Configure its instance options with the
+                // same simulated envelope, preserving the conservative spill/batch witnesses.
+                f.Settings.UnixPtyReplyInlineMaxChars = f.Settings.ReplyInlineMaxChars;
+                f.Settings.UnixPtyBriefInlineMaxBytes = f.Settings.BriefInlineMaxBytes;
+                f.Settings.UnixPtySingleWriteMaxBytes = f.Settings.PtySingleChunkBytes;
+                f.Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
+                    s.AddLogging(b => b.AddProvider(f._logs));
+                    s.AddSingleton(Options.Create(f.Settings)); s.AddSingleton<ISessionRunnerClient, FakeSessionRunnerClient>();
+                    s.AddScoped<IModelAvailability, ModelAvailability>();
+                    s.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
+                        NullLogger<PtyDeliveryProfile>.Instance, Options.Create(f.Settings), TimeProvider.System, modern ? "modern" : "inbox"));
+                    s.AddScoped(p => new OutputDistillerProvisioner(p.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>(),
+                        Options.Create(f.Settings), TimeProvider.System, NullLogger<OutputDistillerProvisioner>.Instance,
+                        claudeConfigJsonPath: Path.Combine(f.Workspace.Root, "test-claude.json")));
+                    s.AddScoped<OutputDistillationService>(); s.AddSingleton<OutputDistillationQueue>();
+                    s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
+                    configure?.Invoke(s);
+                }, f.ConnectionString);
+                var ceilings = await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None);
+                ceilings.ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
+                ceilings.BriefInlineMaxBytes.ShouldBe(modern ? 43200 : 900);
+                ceilings.SingleWriteMaxBytes.ShouldBe(modern ? 86400 : 1024);
+                return f;
             }
-            f.Provider = AgentTaskSettlementRaceTests.BuildHarness(s => {
-                s.AddLogging(b => b.AddProvider(f._logs));
-                s.AddSingleton(Options.Create(f.Settings)); s.AddSingleton<ISessionRunnerClient, FakeSessionRunnerClient>();
-                s.AddScoped<IModelAvailability, ModelAvailability>();
-                s.AddSingleton(p => new PtyDeliveryProfile(p.GetRequiredService<IServiceScopeFactory>(),
-                    NullLogger<PtyDeliveryProfile>.Instance, Options.Create(f.Settings), TimeProvider.System, modern ? "modern" : "inbox"));
-                s.AddScoped(p => new OutputDistillerProvisioner(p.GetRequiredService<Antiphon.Server.Infrastructure.Data.AppDbContext>(),
-                    Options.Create(f.Settings), TimeProvider.System, NullLogger<OutputDistillerProvisioner>.Instance,
-                    claudeConfigJsonPath: Path.Combine(f.Workspace.Root, "test-claude.json")));
-                s.AddScoped<OutputDistillationService>(); s.AddSingleton<OutputDistillationQueue>();
-                s.AddSingleton<CompletionNoteFlushQueue>(); s.AddSingleton<SpecialistFailureQueue>();
-                configure?.Invoke(s);
-            }, f.ConnectionString);
-            (await f.Provider.GetRequiredService<PtyDeliveryProfile>().RefreshAsync(CancellationToken.None))
-                .ReplyInlineMaxChars.ShouldBe(modern ? 14400 : 3000);
-            return f;
+            catch (Exception setupFailure)
+            {
+                try { await f.DisposeAsync(); }
+                catch (Exception cleanupFailure)
+                {
+                    throw new AggregateException("Fixture setup and cleanup failed", setupFailure, cleanupFailure);
+                }
+                throw;
+            }
         }
         public async Task<Settled> SettleAsync(string report, bool failed = false, string? cwd = null, bool authorFile = false,
             bool deliverables = false, Guid? parentId = null, Guid? rootId = null)
@@ -713,12 +732,36 @@ public class OutputDistillationDeliveryTests
         }
         public async ValueTask DisposeAsync()
         {
-            if (_worker is not null) { await _worker.StopAsync(CancellationToken.None); _worker.Dispose(); }
-            if (_flush is not null) { await _flush.StopAsync(CancellationToken.None); _flush.Dispose(); }
-            await using (var db = CreateContext())
-                await db.SessionQueuedMessages.Where(m => _parents.Contains(m.AgentSessionId) && m.Status == QueuedMessageStatus.Pending)
-                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled));
-            await Provider.DisposeAsync(); await _schema.DisposeAsync(); await Workspace.DisposeAsync();
+            try
+            {
+                try
+                {
+                    if (_worker is not null)
+                        try { await _worker.StopAsync(CancellationToken.None); }
+                        finally { _worker.Dispose(); }
+                }
+                finally
+                {
+                    if (_flush is not null)
+                        try { await _flush.StopAsync(CancellationToken.None); }
+                        finally { _flush.Dispose(); }
+                }
+                if (_schema is not null && _parents.Count > 0)
+                {
+                    await using var db = CreateContext();
+                    await db.SessionQueuedMessages.Where(m => _parents.Contains(m.AgentSessionId) && m.Status == QueuedMessageStatus.Pending)
+                        .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled));
+                }
+            }
+            finally
+            {
+                try { if (Provider is not null) await Provider.DisposeAsync(); }
+                finally
+                {
+                    try { if (_schema is not null) await _schema.DisposeAsync(); }
+                    finally { await Workspace.DisposeAsync(); }
+                }
+            }
         }
         internal static async Task UntilAsync(Func<Task<bool>> predicate)
         {
