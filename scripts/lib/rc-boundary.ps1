@@ -159,9 +159,15 @@ function Get-RcBoundaryCanonicalDigest {
         Add-RcBoundaryString -Buffer $buffer -Value $Boundary -Encoder $encoder
         Add-RcBoundaryU32 -Buffer $buffer -Value ([uint32]@($Identities).Count)
         foreach ($identity in @($Identities)) {
-            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.class) -Encoder $encoder
-            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.method) -Encoder $encoder
-            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.caseKey) -Encoder $encoder
+            # Keep the length framing in this hot loop: a PowerShell function
+            # invocation per field and prefix dominates large memberships.
+            foreach ($value in @([string]$identity.class, [string]$identity.method, [string]$identity.caseKey)) {
+                $bytes = $encoder.GetBytes($value)
+                $length = [BitConverter]::GetBytes([uint32]$bytes.Length)
+                if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($length) }
+                $buffer.Write($length, 0, $length.Length)
+                $buffer.Write($bytes, 0, $bytes.Length)
+            }
         }
         $sha = [Security.Cryptography.SHA256]::Create()
         try { return ([BitConverter]::ToString($sha.ComputeHash($buffer.ToArray())).Replace('-', '').ToLowerInvariant()) }
