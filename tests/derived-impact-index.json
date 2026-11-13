@@ -14971,7 +14971,8 @@
     {
       "path": "server/Infrastructure/Data/ApplicationPostgresConnection.cs",
       "classes": [
-        "PostgresJitPolicyTests"
+        "PostgresJitPolicyTests",
+        "TestDbFixtureLifecycleTests"
       ]
     },
     {
