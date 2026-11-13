@@ -471,3 +471,5 @@ Antiphon.Tests.TestHelpers.StagedHelperBuildTests
 
 # CARD-1887: production-scale PostgreSQL seed/pins EXPLAIN and differential membership.
 Antiphon.Tests.Application.SessionStatePinQueryTests
+# CARD-1886: isolated PostgreSQL destination/drain differential and 12,000-row prepared EXPLAIN matrix; methods measured 25.2s and 33.7s on loaded Linux.
+Antiphon.Tests.Application.RuntimeActionClaimQueryTests
