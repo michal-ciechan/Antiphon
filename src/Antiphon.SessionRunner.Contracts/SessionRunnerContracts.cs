@@ -1130,6 +1130,10 @@ public sealed record RunnerHostDiskDto(string Path, long FreeBytes, long TotalBy
 
 public sealed record RunnerHostProcessDto(string Name, string? SessionId, double? CpuPercent, long WorkingSetBytes);
 
+/// <summary>CARD-1884. Basename, role, and CPU delta. Absent on a runner that predates this field.</summary>
+public sealed record RunnerHostTopConsumerDto(
+    int Pid, long StartTicks, string Name, string Role, double? CpuCores, long? RssBytes);
+
 /// <summary>CARD-0718. The newest sample. Null fields are "cannot say", never a fabricated zero.</summary>
 public sealed record RunnerHostCurrentDto(
     double? CpuPercent,
@@ -1143,7 +1147,8 @@ public sealed record RunnerHostCurrentDto(
     long? SwapTotalBytes,
     IReadOnlyList<RunnerHostDiskDto> Disks,
     int? ProcessCount,
-    IReadOnlyList<RunnerHostProcessDto> Processes);
+    IReadOnlyList<RunnerHostProcessDto> Processes,
+    IReadOnlyList<RunnerHostTopConsumerDto>? TopConsumers = null);
 
 /// <summary>CARD-0718. Build-slot broker listing folded into the host sample. In-process on the runner.</summary>
 public sealed record RunnerHostBuildSlotsDto(int Occupied, int Budget, int Waiters, long? AvailableMb);

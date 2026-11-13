@@ -36,6 +36,7 @@ public static class HostStatsRoutes
             .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
         services.TryAddSingleton<IProcessCpuProbe, SystemProcessCpuProbe>();
+        services.TryAddSingleton<IHostProcessTable>(_ => HostProcessTables.Create());
         services.AddSingleton<SamplerProcessQuery>();
         services.TryAddSingleton<IHostStatsProbe>(sp =>
             new SystemHostStatsProbe(sp.GetRequiredService<IOptions<HostStatsSettings>>().Value));
@@ -65,7 +66,8 @@ public static class HostStatsRoutes
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<IOptions<HostStatsSettings>>(),
                 sp.GetRequiredService<ILogger<HostStatsSamplerService>>(),
-                sp.GetRequiredService<HostLoadCaptureService>());
+                sp.GetRequiredService<HostLoadCaptureService>(),
+                sp.GetRequiredService<IHostProcessTable>());
         });
         if (startSampler)
         {
