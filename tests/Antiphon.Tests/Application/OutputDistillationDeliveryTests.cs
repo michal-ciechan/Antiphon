@@ -268,6 +268,23 @@ public class OutputDistillationDeliveryTests
     }
 
     [Test]
+    public async Task Three_second_report_write_keeps_the_canonical_file()
+    {
+        AgentReportStore.DefaultIoBudget.ShouldBe(TimeSpan.FromSeconds(2));
+        await using var f = await DeliveryFixture.CreateAsync(enabled: false);
+        var store = (AgentReportStore)f.Provider.GetRequiredService<IAgentReportStore>();
+        store.BeforeIoAsync = async (phase, ct) =>
+        {
+            if (phase == "write")
+                await Task.Delay(TimeSpan.FromSeconds(3), ct);
+        };
+        var seed = await f.SettleAsync(ReportOfLength(5500));
+        seed.Task.ResultFilePath.ShouldBe(f.Workspace.Expected(seed.Task));
+        (await File.ReadAllTextAsync(seed.Task.ResultFilePath!)).ShouldBe(seed.Task.Result);
+        store.IoBudget.ShouldBe(ReportWorkspace.CustodyIoBudget);
+    }
+
+    [Test]
     public async Task Host_cancellation_during_storage_can_retry_settlement_once()
     {
         await using var f = await DeliveryFixture.CreateAsync(enabled: false);
