@@ -396,8 +396,100 @@ function Split-NightlyOversizedClass {
     }
 }
 
+function ConvertTo-NightlyBoundaryLaunchGroups {
+    # Opt-in metadata only. The caller supplies one suite and its boundary map;
+    # missing/conflicting mappings stay unassigned. This grants no carry credit.
+    param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
+    . (Join-Path $PSScriptRoot 'rc-boundary.ps1')
+    $boundaries = @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf')
+    $mapping = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    if ($null -ne $ClassBoundaries) { foreach ($key in $ClassBoundaries.Keys) { $mapping.Add([string]$key, $ClassBoundaries[$key]) } }
+    $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $byUid = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $names = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($node in $DiscoveryNodes) {
+        $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
+        if ($null -eq $parts -or [string]::IsNullOrWhiteSpace([string]$node.Method) -or [string]::IsNullOrWhiteSpace([string]$node.Uid)) { throw 'boundary-pack: incomplete discovery identity' }
+        if ($byUid.ContainsKey([string]$node.Uid)) { throw 'boundary-pack: duplicate discovery UID' }
+        $byUid.Add([string]$node.Uid, $node)
+        $key = $parts.Bare + '/' + [string]$node.Method
+        if ($names.ContainsKey($key) -and $names[$key] -cne $key) { throw 'boundary-pack: case-colliding method identity' }
+        $names[$key] = $key
+        if (-not $byClass.ContainsKey($parts.Bare)) { $byClass.Add($parts.Bare, [Collections.Generic.List[object]]::new()) }
+        $byClass[$parts.Bare].Add($node)
+    }
+    $partitions = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($leaf in $Leaves) {
+        if (@($leaf.classes).Count -ne 1) { throw 'boundary-pack: leaf must have one class' }
+        $bare = [string]@($leaf.classes)[0]
+        if (-not $byClass.ContainsKey($bare)) { throw 'boundary-pack: leaf has no discovery membership' }
+        $members = @($byClass[$bare].ToArray())
+        if ($leaf.exactFilter) {
+            $members = @($members | Where-Object { ('/*/{0}/{1}/{2}' -f $_.Namespace, $_.Type, $_.Method) -ceq $leaf.exactFilter })
+            [string[]]$declared = @($leaf.nodes | ForEach-Object { [string]$_.Uid })
+            [string[]]$actual = @($members | ForEach-Object { [string]$_.Uid })
+            [Array]::Sort($declared, [StringComparer]::Ordinal); [Array]::Sort($actual, [StringComparer]::Ordinal)
+            if ((ConvertTo-Json -InputObject @($declared) -Compress) -cne (ConvertTo-Json -InputObject @($actual) -Compress)) { throw 'boundary-pack: incomplete exact-method cases' }
+            # Use the discovery objects, not caller-supplied objects bearing those UIDs.
+            $leaf = [pscustomobject]@{ id=$leaf.id; classes=@($bare); exactFilter=$leaf.exactFilter; nodes=$members }
+        }
+        if ($members.Count -eq 0) { throw 'boundary-pack: empty leaf membership' }
+        foreach ($node in $members) { if (-not $expected.Add([string]$node.Uid)) { throw 'boundary-pack: overlapping leaves' } }
+        $boundary = 'unassigned'
+        if ($mapping.ContainsKey($bare) -and $mapping[$bare] -is [string] -and $mapping[$bare] -cin $boundaries) { $boundary = [string]$mapping[$bare] }
+        if (-not $partitions.ContainsKey($boundary)) { $partitions.Add($boundary, [Collections.Generic.List[object]]::new()) }
+        $partitions[$boundary].Add($leaf)
+    }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $ids = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    [string[]]$ordered = @($partitions.Keys); [Array]::Sort($ordered, [StringComparer]::Ordinal)
+    $result = [Collections.Generic.List[object]]::new()
+    foreach ($boundary in $ordered) {
+        # Keep the entire universe for prefix safety, including other boundaries
+        # and excluded siblings. The legacy packer owns cost and filter decisions.
+        $chunks = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $partitions[$boundary].ToArray() -DiscoveryNodes $DiscoveryNodes)
+        foreach ($chunk in $chunks) {
+            $members = @($chunk.nodes)
+            if ($members.Count -eq 0) { $members = @(foreach ($class in $chunk.classes) { $byClass[[string]$class].ToArray() }) }
+            $methods = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $cases = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+            foreach ($node in $members) {
+                if (-not $expected.Contains([string]$node.Uid) -or -not $seen.Add([string]$node.Uid)) { throw 'boundary-pack: case partition mismatch' }
+                $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
+                [void]$methods.Add($bare + '/' + [string]$node.Method)
+                $case = [ordered]@{ className=[string]$node.ClassName; method=[string]$node.Method; uid=[string]$node.Uid }
+                $cases.Add((ConvertTo-Json -InputObject @($case.className,$case.method,$case.uid) -Compress), $case)
+            }
+            [string[]]$keys = @($methods); [Array]::Sort($keys, [StringComparer]::Ordinal)
+            $id = Get-RcBoundaryChunkId -Suite $SuiteId -Boundary $boundary -IdentityKeys $keys
+            # S2 v1 canonical encoding; retain the full digest as collision proof.
+            $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($SuiteId,$boundary,@($keys)) -Depth 3 -Compress))
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+            if ($id -cne ('b-' + $boundary + '-' + $digest.Substring(0,16))) { throw 'boundary-pack: ID/digest mismatch' }
+            if ($ids.ContainsKey($id)) { throw 'boundary-pack: duplicate ID or short-hash collision' }
+            $ids.Add($id, $digest)
+            [string[]]$caseKeys = @($cases.Keys); [Array]::Sort($caseKeys, [StringComparer]::Ordinal)
+            $chunk.id = $id
+            foreach ($entry in @{
+                suite=$SuiteId; boundary=$boundary; membershipDigest=$digest; identityKeys=@($keys)
+                caseMembership=@(foreach ($key in $caseKeys) { $cases[$key] }); caseIdentityBasis='discovery-only'
+                alwaysDirty=($boundary -ceq 'unassigned')
+            }.GetEnumerator()) { Add-Member -InputObject $chunk -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force }
+            $result.Add($chunk)
+        }
+    }
+    if (-not $seen.SetEquals($expected)) { throw 'boundary-pack: incomplete case partition' }
+    return $result.ToArray()
+}
+
 function ConvertTo-NightlyProfileLaunchGroups {
-    param([object[]]$Leaves, [object[]]$DiscoveryNodes)
+    param([object[]]$Leaves, [object[]]$DiscoveryNodes, [switch]$BoundaryAware,
+        [string]$SuiteId = 'antiphon', [Collections.IDictionary]$ClassBoundaries = $null)
+    if ($BoundaryAware) {
+        return @(ConvertTo-NightlyBoundaryLaunchGroups -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
+    }
     $exact = New-Object System.Collections.ArrayList
     $classItems = New-Object System.Collections.ArrayList
     $oversized = New-Object System.Collections.ArrayList

@@ -30,8 +30,23 @@ No suffix-collision class matches are allowed; inspect fresh TRX per operand.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-s4a/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 3 new methods and every existing method, zero failed/skipped | 8 | 8 |
+| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-s4agreen/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 3 new methods and every existing method, zero failed/skipped | 8 | 8 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s4aguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)/*` | policy, categories, spawn census, index | each class nonzero, zero failed/skipped | 79 | 6 |
+| CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s4apty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
+| CP-92 | S4a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s4arunner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
+
+Red witness run `20261113-043938-d9be` tested committed SHA
+`64b002a42a753875b5bff5d297680cce1982f30b`: CP-8 executed 8, passed 5,
+failed the 3 new semantic contract assertions, skipped 0. Source clean and build
+verified. Build slot waited 75s; test slot waited 240s; test execution 75.300s;
+whole wall 742.303s, admission-only 315.121s, execution 427.183s. CP-90 was
+deferred until the implementation/index were ready; this red-only selection
+avoids repeating green guards. One earlier invocation refused an incorrectly
+typed expected SHA before any test/build; no credit claimed. Tool bootstrap
+used native default output under a granted slot, waited 0s, held 17s.
+The failed red output is retained; the final row uses a fresh green output.
+Full-range impacted selectors require CP-91/92 (same-named class in two other
+projects); CP-8/90 cover nightly-live-lane and test-lane-category.
 
 ## Performance budget
 
