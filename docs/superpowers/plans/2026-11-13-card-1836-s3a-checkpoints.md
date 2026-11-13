@@ -9,6 +9,8 @@ The committed-range impact selector also selects the identically named ProcessSp
 
 The first final attempt (20261113-005705-cfe9) refused the retained red build stamp before executing any test and was stopped through the tool. CP-2 and CP-90 now use fresh `-g/` outputs; this changes only physical isolation. The red outputs/evidence are retained. No filter, assertion, timeout or count floor changes.
 
+Run 20261113-005945-8056 was stopped through the tool during its first build after inspection found that positive index edges dirtied a suite without adding its input records. A committed assertion in PartialIndexNeverSubtracts failed on `positive-index-unions-input-record` through the bounded, gated script preflight. The repair unions these records into both Git snapshots, after unknown ownership is recorded. CP-2 uses a fresh `-union/` output for this repaired source. No test ran in the stopped group; no passing receipt is claimed for it.
+
 ## Performance budget
 
 Provisional CARD-1836: each small method <=30s, 60s test deadline; harness child 45s plus 10s joined cleanup. Tiny local Git repositories only, no database or AppHost. Existing hardened Git runner bounds each operation at 30s. Four fixture repositories are cheap per-case isolation; there is no expensive fixture setup. CP-2 estimate 8m and CP-90 4m include isolated build/discovery; no measured p95 yet. Preserve all red and green costs. Collect comparable samples during ordinary Review/pilots, not redundant repetitions. Timing phases not observed remain unknown.
@@ -17,7 +19,7 @@ Provisional CARD-1836: each small method <=30s, 60s test deadline; harness child
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-2 | S3a | `tests/Antiphon.Tests -> bin-c1836-s3a-g/` | linux-inputs | `/*/*/RcInputManifestTests/*` | V-2 | all 4 named methods, 0 failed/skipped | 4 | 8 |
+| CP-2 | S3a | `tests/Antiphon.Tests -> bin-c1836-s3a-union/` | linux-inputs | `/*/*/RcInputManifestTests/*` | V-2 | all 4 named methods, 0 failed/skipped | 4 | 8 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-guards-g/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
 | CP-91 | S3a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3a-runner/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
 | CP-92 | S3a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3a-pty/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |

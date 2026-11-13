@@ -54,7 +54,7 @@ function Add-RcInventoryInput {
 }
 
 function Read-RcInputInventory {
-    param([string]$RepositoryRoot, [string]$Sha)
+    param([string]$RepositoryRoot, [string]$Sha, $DerivedIndex)
     if ($Sha -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $folded=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -186,6 +186,23 @@ function Read-RcInputInventory {
     $owned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($suite in $suites.Values) { foreach ($path in $suite.inputMap.Keys) { [void]$owned.Add($path) } }
     foreach ($path in $paths) { if (-not $owned.Contains($path)) { $unresolved.Add("unknown-path:$path") } }
+    # Positive index edges add records in BOTH immutable revisions, even for an unchanged path.
+    # Check unknown ownership first: an index hit must never rescue an unowned path from dirty-all.
+    $indexBroadened=$false
+    if ($null -ne $DerivedIndex) {
+        foreach ($edge in @($DerivedIndex.edges)) {
+            $path=$edge.path
+            if ($path -isnot [string] -or -not $path -or $path -match '[\\:*?\x00-\x1f]' -or
+                $path.StartsWith('/') -or $path.Split('/') -contains '..') { $unresolved.Add('index-invalid-input'); continue }
+            foreach ($id in @($edge.suites)) {
+                if ($null -eq $id -or -not $suites.ContainsKey($id)) { $unresolved.Add('index-unknown-consumer'); continue }
+                if (-not $suites[$id].inputMap.ContainsKey($path)) { $indexBroadened=$true }
+                Add-RcInventoryInput $suites[$id] $tree $path 'derived-index-positive'
+                $suites[$id].edges.Add(@{from='derived-index';to=$path;project=$suites[$id].project;reason='derived-index-positive'})
+                if (-not $tree.ContainsKey($path)) { $unresolved.Add("index-missing-input:$path") }
+            }
+        }
+    }
     # Any unresolved closure broadens all suites. It can never become a negative dependency proof.
     if ($unresolved.Count) { foreach ($suite in $suites.Values) { foreach ($path in $paths) { Add-RcInventoryInput $suite $tree $path 'unresolved-conservative-all-inputs' } } }
     foreach ($suite in $suites.Values) {
@@ -193,14 +210,14 @@ function Read-RcInputInventory {
         $suite.Remove('inputMap')
     }
     return @{format='antiphon-rc-input-snapshot-v1';sha=$Sha;treeId=(Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${Sha}^{tree}")).Stdout.Trim()
-        mapObjectId=$tree[$mapPath].objectId;suites=@(foreach ($id in (Get-TestSelectionSorted @($suites.Keys))) { $suites[$id] })
+        mapObjectId=$tree[$mapPath].objectId;indexBroadened=$indexBroadened;suites=@(foreach ($id in (Get-TestSelectionSorted @($suites.Keys))) { $suites[$id] })
         unresolved=@(Get-TestSelectionSorted @($unresolved))}
 }
 
 function Get-RcInputManifest {
     param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, $DerivedIndex)
-    $old=Read-RcInputInventory $RepositoryRoot $BaselineSha
-    $new=Read-RcInputInventory $RepositoryRoot $CandidateSha
+    $old=Read-RcInputInventory $RepositoryRoot $BaselineSha $DerivedIndex
+    $new=Read-RcInputInventory $RepositoryRoot $CandidateSha $DerivedIndex
     $unresolved=[Collections.Generic.List[string]]::new()
     foreach ($reason in @($old.unresolved)+@($new.unresolved)) { $unresolved.Add($reason) }
     if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$BaselineSha,$CandidateSha) @(0,1)).Exit -ne 0) { $unresolved.Add('baseline-not-ancestor') }
@@ -229,7 +246,7 @@ function Get-RcInputManifest {
         }
         if ((ConvertTo-TestSelectionCanonicalJson $left.inputs) -cne (ConvertTo-TestSelectionCanonicalJson $right.inputs)) { [void]$dirty.Add($id) }
     }
-    $broadened=$false
+    $broadened=$old.indexBroadened -or $new.indexBroadened
     if ($null -ne $DerivedIndex) {
         foreach ($edge in @($DerivedIndex.edges)) {
             if (@($changes.path) -cnotcontains $edge.path) { continue }
