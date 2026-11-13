@@ -16,6 +16,45 @@ if (-not (Test-Path -LiteralPath $lib)) {
     . $lib
     $map = Read-RcBoundaryMap
     switch ($Case) {
+        'OrdinalSortAndSingleDigest' {
+            $ascending = @(for ($i = 0; $i -lt 800; $i++) { Row core ('A' + $i.ToString('D4') + 'Tests/M') })
+            $shuffled = @($ascending)
+            $random = New-Object Random 1871
+            for ($i = $shuffled.Length - 1; $i -gt 0; $i--) {
+                $j = $random.Next($i + 1)
+                $held = $shuffled[$i]; $shuffled[$i] = $shuffled[$j]; $shuffled[$j] = $held
+            }
+            $reversed = @($ascending); [Array]::Reverse($reversed)
+            $script:realDigest = ${function:Get-RcBoundaryCanonicalDigest}
+            $script:digestCalls = 0
+            try {
+                function Get-RcBoundaryCanonicalDigest {
+                    param($Suite, $Boundary, $Identities)
+                    $script:digestCalls++
+                    & $script:realDigest -Suite $Suite -Boundary $Boundary -Identities $Identities
+                }
+                foreach ($sample in @(@{name='random'; rows=$shuffled}, @{name='reversed'; rows=$reversed})) {
+                    $clock = [Diagnostics.Stopwatch]::StartNew()
+                    $chunk = New-RcBoundaryChunk -Identities $sample.rows
+                    $clock.Stop()
+                    Write-Host ('BOUNDARY TIMING count=800 order=' + $sample.name + ' seconds=' + $clock.Elapsed.TotalSeconds.ToString('F6', [Globalization.CultureInfo]::InvariantCulture))
+                    Note ($clock.Elapsed.TotalSeconds -lt 1) ('800 ' + $sample.name + ' identities exceeded 1s')
+                    Note ($chunk.identityKeys.Count -eq 800) 'sort dropped identities'
+                    for ($i = 0; $i -lt 800; $i++) {
+                        Note ($chunk.identityKeys[$i] -ceq ('A' + $i.ToString('D4') + 'Tests/M')) 'sort order changed membership'
+                    }
+                }
+                Note ($script:digestCalls -eq 2) ('digest calls for two chunks: ' + $script:digestCalls)
+            } finally { Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest }
+            $ordered = @(Sort-RcBoundaryIdentities @(
+                @{class='a'; method='M'; caseKey=''}, @{class='Z'; method='M'; caseKey=''},
+                @{class='A'; method='m'; caseKey=''}, @{class='A'; method='M'; caseKey='a'},
+                @{class='A'; method='M'; caseKey='Z'}, @{class='A'; method='M'; caseKey=''}
+            ))
+            $actual = (@($ordered | ForEach-Object { $_.class + '/' + $_.method + '/' + $_.caseKey }) -join ':')
+            Note ($actual -ceq 'A/M/:A/M/Z:A/M/a:A/m/:Z/M/:a/M/') 'sort is not ordinal by class, method, case'
+            Note ((Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A')) -ceq 'b-core-eca0b76b8b1ed195') 'canonical id changed during optimization'
+        }
         'ExplicitCaseKeyCount' {
             Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M','BTests/M') -CaseKeys @('') }) 'single empty CaseKeys bypassed count'
             Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @() }) 'empty CaseKeys bypassed count'
