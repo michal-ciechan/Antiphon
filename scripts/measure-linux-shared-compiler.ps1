@@ -5,7 +5,10 @@ param(
     [Parameter(Mandatory)][ValidateSet('Restore', 'Prime', 'Measured', 'Concurrent')][string]$Phase,
     [Parameter(Mandatory)][ValidateRange(0, 5)][int]$Sample,
     [string]$Worktree,
-    [string]$EvidenceRoot
+    [string]$EvidenceRoot,
+    [string]$Project = 'Antiphon.sln',
+    [string]$ExperimentId = 'measurement-58c3a29f',
+    [string]$CompilerCacheRoot
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -18,6 +21,9 @@ $grant = 0
 if (-not [int]::TryParse($env:ANTIPHON_BUILD_SLOT_MAXCPUCOUNT, [ref]$grant) -or $grant -lt 1) { throw 'one outer lease and its typed CPU grant are required' }
 if (($Phase -in @('Restore', 'Prime') -and $Sample -ne 0) -or ($Phase -eq 'Measured' -and $Sample -notin @(1, 2, 3)) -or
     ($Phase -eq 'Concurrent' -and ($Sample -notin @(4, 5) -or $Mode -ne 'Candidate'))) { throw 'invocation is outside the bounded experiment inventory' }
+if (-not (Test-Path -LiteralPath (Join-Path $Worktree $Project))) { throw 'measurement project does not exist' }
+if ($ExperimentId -notmatch '^[a-zA-Z0-9-]+$') { throw 'invalid private experiment identity' }
+if ($CompilerCacheRoot -and -not [IO.Path]::IsPathRooted($CompilerCacheRoot)) { throw 'compiler cache root must be absolute' }
 if (-not ('Antiphon.Build.BuildDriverEnvironment' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'lib/BuildDriverEnvironment.cs') }
 . (Join-Path $PSScriptRoot 'lib/linux-compiler-evidence.ps1')
 $sourceSha = (& git -C $Worktree rev-parse HEAD).Trim()
@@ -32,10 +38,11 @@ $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
 # This owned experimental child bypasses automatic policy selection. Both paths
 # explicitly install a private toolset/pipe; neither can use the live SDK pipe.
 [void]$start.Environment.Remove('ANTIPHON_LINUX_COMPILER_POLICY')
+if ($CompilerCacheRoot) { $start.Environment['XDG_CACHE_HOME'] = $CompilerCacheRoot }
 $tokens = if ($Phase -eq 'Restore') {
-    @('restore', 'Antiphon.sln', '-p:UseAppHost=false', "-maxcpucount:$grant", '--nologo')
+    @('restore', $Project, '-p:UseAppHost=false', "-maxcpucount:$grant", '--nologo')
 } else {
-    @('build', 'Antiphon.sln', '--configuration', 'Debug', '--no-incremental', '--no-restore', '-p:UseAppHost=false',
+    @('build', $Project, '--configuration', 'Debug', '--no-incremental', '--no-restore', '-p:UseAppHost=false',
         "-maxcpucount:$grant", '-nodeReuse:false', '--nologo')
 }
 foreach ($token in $tokens) { $start.ArgumentList.Add($token) }
@@ -47,7 +54,7 @@ if ($Phase -ne 'Restore') {
     # The same 600-second temporary lifetime in both serial modes prevents an
     # opposite-mode build from silently turning a warm sample into a respawn.
     $idleSeconds = if ($Phase -eq 'Concurrent') { 120 } else { 600 }
-    $diagnostic = [Antiphon.Build.LinuxCompilerToolset]::Prepare($start, $grant, $idleSeconds, 'measurement-58c3a29f', ($Mode -eq 'Candidate'))
+    $diagnostic = [Antiphon.Build.LinuxCompilerToolset]::Prepare($start, $grant, $idleSeconds, $ExperimentId, ($Mode -eq 'Candidate'))
     Write-Host $diagnostic
     $pipe = [regex]::Match($diagnostic, ' pipe=(\S+)').Groups[1].Value
     $sdk = [regex]::Match($diagnostic, ' sdk=(\S+)').Groups[1].Value
@@ -63,6 +70,7 @@ foreach ($compiler in $initial) { $previous["$($compiler.Pid):$($compiler.Start)
 $loadStart = [IO.File]::ReadAllText('/proc/loadavg').Trim()
 $memoryStart = [IO.File]::ReadAllText('/proc/meminfo')
 $driverAffinity = [Antiphon.Build.LinuxCompilerToolset]::StatusValue('/proc/self/status', 'Cpus_allowed_list')
+$shared = 0; $fallback = $null
 $process = $null; $exitCode = $null; $failure = $null; $bodySeconds = $null; $idleExitSeconds = $null
 $outTask = $null; $errTask = $null
 try {
@@ -95,11 +103,12 @@ try {
     $clock.Stop(); $bodySeconds = $clock.Elapsed.TotalSeconds
     $exitCode = $process.ExitCode
     if (-not $outTask.Wait(3000) -or -not $errTask.Wait(3000)) { throw 'measurement output drain deadline' }
-    if ($exitCode -ne 0) { throw "standard Linux solution command failed with exit $exitCode" }
+    if ($exitCode -ne 0) { throw "standard Linux project command failed with exit $exitCode" }
     if ($Phase -ne 'Restore') {
         $log = [IO.File]::ReadAllText($roslynLog)
         $shared = ([regex]::Matches($log, 'CompilerServer: server - server processed compilation')).Count
-        if ($shared -lt 2 -or $log -match 'CompilerServer: (?!server - server processed compilation)') { throw 'shared compiler acceptance failed: insufficient responses or fallback' }
+        $fallback = $log -match 'CompilerServer: (?!server - server processed compilation)'
+        if ($shared -lt 2 -or $fallback) { throw 'shared compiler acceptance failed: insufficient responses or fallback' }
         if ($known.Count -ne 1) { throw 'compiler warm identity changed or was not observed' }
         if ($Phase -eq 'Measured' -and $initial.Count -ne 1) { throw 'timing sample was not warm; no replacement attempt authorized' }
         if ($Phase -eq 'Concurrent') {
@@ -136,10 +145,10 @@ try {
     $sourceEnd = (& git -C $Worktree rev-parse HEAD).Trim()
     & git -C $Worktree diff --quiet HEAD --
     $cleanEnd = $LASTEXITCODE -eq 0 -and $sourceEnd -ceq $sourceSha
-    $receipt = @{ SourceSha = $sourceSha; SourceEndSha = $sourceEnd; SourceClean = $cleanEnd; Worktree = $Worktree;
+    $receipt = @{ SourceSha = $sourceSha; SourceEndSha = $sourceEnd; SourceClean = $cleanEnd; Worktree = $Worktree; Project = $Project; ExperimentId = $ExperimentId;
         Mode = $Mode; Phase = $Phase; Sample = $Sample; Grant = $grant; Diagnostic = $diagnostic; Pipe = $pipe; Sdk = $sdk;
         Command = @($start.ArgumentList); PrepareSeconds = $prepare.Elapsed.TotalSeconds; BuildBodySeconds = $bodySeconds; ExitCode = $exitCode;
-        Failure = $failure; LoadStart = $loadStart; LoadEnd = [IO.File]::ReadAllText('/proc/loadavg').Trim(); MemoryStart = $memoryStart;
+        Failure = $failure; SharedResponses = $shared; Fallback = $fallback; LoadStart = $loadStart; LoadEnd = [IO.File]::ReadAllText('/proc/loadavg').Trim(); MemoryStart = $memoryStart;
         DriverAffinity = $driverAffinity; ChosenCpus = $cpus; ClockTicksPerSecond = $clk; WarmAtStart = $initial; OwnedIdentities = @($known.Keys);
         PeakAggregateRssBytes = $peakRss; MaximumFullMinuteCores = $maxMinute; ThreadEscape = $threadEscape; IdleExitSeconds = $idleExitSeconds;
         Unknown = @('full driver/server GC CPU', 'exit-interval ticks if a server died between samples', 'unrelated default compiler context CPU', 'per-component restore timings') }
