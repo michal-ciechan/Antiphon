@@ -399,20 +399,16 @@ function Split-NightlyOversizedClass {
 function Complete-NightlyBoundaryLaunchGroups {
     # Keep resolution at the packer/S2 boundary so collision policy is shared.
     param([object[]]$Chunks, [object[]]$Memberships)
-    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    if ($Chunks.Count -ne $Memberships.Count) { throw 'boundary-pack: launch/membership count mismatch' }
+    if ($Chunks.Count -eq 0) { return @() }
+    $resolved = @(Resolve-RcBoundaryChunks -Memberships $Memberships)
     for ($i = 0; $i -lt $Chunks.Count; $i++) {
-        $chunk = $Chunks[$i]; $membership = $Memberships[$i]
-        [string[]]$keys = @($membership.identities.identityKey | Select-Object -Unique)
-        $id = Get-RcBoundaryChunkId -Suite $membership.suite -Boundary $membership.boundary -IdentityKeys $keys
-        $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($membership.suite,$membership.boundary,@($keys)) -Depth 3 -Compress))
-        $sha = [Security.Cryptography.SHA256]::Create()
-        try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
-        if ($id -cne ('b-' + $membership.boundary + '-' + $digest.Substring(0,16))) { throw 'boundary-pack: ID/digest mismatch' }
-        if (-not $ids.Add($id)) { throw 'boundary-pack: duplicate ID or short-hash collision' }
-        $chunk.id = $id
+        $chunk = $Chunks[$i]; $membership = $resolved[$i]
+        $chunk.id = $membership.chunkId
         foreach ($entry in @{
-            suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$digest; identityKeys=@($keys)
-            alwaysDirty=($membership.boundary -ceq 'unassigned')
+            suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$membership.fullDigest
+            identityKeys=@($membership.identityKeys); caseKeys=@($membership.caseKeys)
+            alwaysDirty=$membership.alwaysDirty; collision=$membership.collision
         }.GetEnumerator()) { Add-Member -InputObject $chunk -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force }
     }
     return $Chunks
@@ -473,23 +469,21 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
     $memberships = [Collections.Generic.List[object]]::new()
     [string[]]$ordered = @($partitions.Keys); [Array]::Sort($ordered, [StringComparer]::Ordinal)
     $result = [Collections.Generic.List[object]]::new()
+    $discoveryIndex = $null
+    if (Test-NightlyCoreAvailable) { $discoveryIndex = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
     foreach ($boundary in $ordered) {
         # Keep the entire universe for prefix safety, including other boundaries
         # and excluded siblings. The legacy packer owns cost and filter decisions.
-        $chunks = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $partitions[$boundary].ToArray() -DiscoveryNodes $DiscoveryNodes)
+        $chunks = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $partitions[$boundary].ToArray() -DiscoveryNodes $DiscoveryNodes -DiscoveryIndex $discoveryIndex)
         foreach ($chunk in $chunks) {
             $members = @($chunk.nodes)
             if ($members.Count -eq 0) { $members = @(foreach ($class in $chunk.classes) { $byClass[[string]$class].ToArray() }) }
-            $methods = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             $cases = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
             foreach ($node in $members) {
                 if (-not $expected.Contains([string]$node.Uid) -or -not $seen.Add([string]$node.Uid)) { throw 'boundary-pack: case partition mismatch' }
-                $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-                [void]$methods.Add($bare + '/' + [string]$node.Method)
                 $case = [ordered]@{ className=[string]$node.ClassName; method=[string]$node.Method; uid=[string]$node.Uid }
                 $cases.Add((ConvertTo-Json -InputObject @($case.className,$case.method,$case.uid) -Compress), $case)
             }
-            [string[]]$keys = @($methods); [Array]::Sort($keys, [StringComparer]::Ordinal)
             $memberships.Add(@{ suite=$SuiteId; boundary=$boundary; identities=@(foreach ($node in $members) {
                 @{ identityKey=((Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)) + '/' + [string]$node.Method); caseKey=[string]$node.Uid }
             }) })
@@ -505,7 +499,8 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
 
 function ConvertTo-NightlyProfileLaunchGroups {
     param([object[]]$Leaves, [object[]]$DiscoveryNodes, [switch]$BoundaryAware,
-        [string]$SuiteId = 'antiphon', [Collections.IDictionary]$ClassBoundaries = $null)
+        [string]$SuiteId = 'antiphon', [Collections.IDictionary]$ClassBoundaries = $null,
+        $DiscoveryIndex = $null)
     if ($BoundaryAware) {
         return @(ConvertTo-NightlyBoundaryLaunchGroups -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
     }
@@ -513,10 +508,10 @@ function ConvertTo-NightlyProfileLaunchGroups {
     $classItems = New-Object System.Collections.ArrayList
     $oversized = New-Object System.Collections.ArrayList
     $nodesByBare = @{}
-    $indexed = $null
-    if (Test-NightlyCoreAvailable) {
+    $indexed = $DiscoveryIndex
+    if ($null -ne $indexed -or (Test-NightlyCoreAvailable)) {
         # Compiled passes over the discovery (NightlyCore.cs): nodes by bare class and types by namespace.
-        $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes)
+        if ($null -eq $indexed) { $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
         $nodesByBare = $indexed.NodesByBare
         $DiscoveryNodesForIndex = @()
     } else { $DiscoveryNodesForIndex = @($DiscoveryNodes) }
