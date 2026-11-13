@@ -8,6 +8,11 @@
     <AssemblyName>Antiphon.DerivedImpactIndex</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\tests\Antiphon.Tests\Antiphon.Tests.csproj" />
+    <!-- Compile the same inputs as the drift witness without building the entire test,
+         server and staged-helper graph just to regenerate a syntax-only index. -->
+    <Compile Include="../../tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs" Link="DerivedImpactIndexBuilder.cs" />
+    <Compile Include="../../tests/Shared/PlatformTaxonomy.cs" Link="PlatformTaxonomy.cs" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageReference Include="TUnit.Core" Version="1.44.0" />
   </ItemGroup>
 </Project>
