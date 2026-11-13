@@ -1,5 +1,9 @@
 # CARD-1892 Code evidence
 
+Latest result: see **Round 2 Code df03fdd9 — current result** below. The original Code record and all historical failures/costs are preserved.
+
+Historical initial Code record:
+
 Implemented Input lock isolation and non-destructive ambiguous prompt delivery. Ordinary V/R selections are green across the committed groups below. Initial Grok Final Review, native Windows proof and all SourceLanding Mutation controls remain pending. No activation was performed.
 
 Original Code/landing owner: 13c4448d-6092-41e2-8ea0-4657c3b70bee. Branch: feat/card-task-13c4448d. Worktree: /work/worktrees/task-13c4448d. Assigned desktop mirror is not reachable from this host. Task base: e4c45f4b4bb58870bb8684087a6d218e1b988cbe.
@@ -238,3 +242,205 @@ adf6e478a22f7b47f1fa651b1ab5bfce7c838fd2 docs(card-1892): bind matched-glob impa
 9b6a4314352846aba95cf0a46ead04cb748a6c56 docs(card-1892): finalize review selection and pending cancellation control
 
 The publication commit adds this evidence and retains the actual tested SHAs above.
+
+
+## Round 2 Code df03fdd9 — current result
+
+D-1 is repaired. Composer-less Sent/null-verdict attempts cannot authorize Enter-only or retyping from screen visibility, age, a rules row, or expiry of the retry discovery window. The original attempt stays charged and unknown until a complete matching UserPrompt resolves it or an operator explicitly recovers. After InterruptedAttemptAge (80 seconds with defaults), the next flush/watchdog pass records one Error-level incident visible through the real ATTENTION reader. It does not stop the process or fail the delivery by time alone. Claude and Codex recovery paths are retained.
+
+Current Code task: df03fdd9-fdf7-4a76-98a1-9bea7698dbee. Original Code/landing owner remains 13c4448d-6092-41e2-8ea0-4657c3b70bee. Branch feat/card-task-df03fdd9; worktree /work/worktrees/task-df03fdd9. The assigned desktop mirror is unreachable from this runner. Task base e4c45f4b4bb58870bb8684087a6d218e1b988cbe; previous reviewed tip 01edf03f69ddfb6e5fe43de40d14db9e2ed382fe; Review d552541f.
+
+Plan: /work/worktrees/task-df03fdd9/docs/superpowers/plans/2026-11-13-card-1892-input-uncertainty.md. Red selection: /work/worktrees/task-df03fdd9/docs/superpowers/plans/2026-11-13-card-1892-round2-red.md. Mutation candidate: /work/worktrees/task-df03fdd9/docs/superpowers/mutations/2026-11-13-card-1892-input-uncertainty-candidate.md.
+
+### Ordinary results and exact source
+
+A = 24a5889ffab22344492278cf42e579fea3162fef: all six closed rows, 455 passed, 0 failed/skipped. B = 2429829d135b989719277db5e48d75f374ee3c7f: reader/severity repair, CP-2 and CP-3, 209 passed, 0 failed/skipped. Both GREEN reports passed the checkpoint exact-source validator (six rows at A, two at B). A is historical evidence for the hold plus the original note assertion; it is not relabeled as testing the later reader assertion. B contains the actual producer-to-ATTENTION proof. No reviewedSourceClean claim is made for the subsequent evidence-only publication commit.
+
+| Row | Executed/passed/failed/skipped | Source | slot= | waited= |
+|---|---|---|---|---|
+| CP-1 | 157/157/0/0 | A | granted | 105s |
+| CP-2 | 103/103/0/0 | B | granted | 0s |
+| CP-3 | 106/106/0/0 | B | granted | 90s |
+| CP-4 | 5/5/0/0 | A | granted | 150s |
+| CP-5 | 79/79/0/0 | A | granted | 120s |
+| CP-6 | 5/5/0/0 | A | granted | 120s |
+
+Every required ordinary ID completed:
+
+| ID | Outcome | Evidence |
+|---|---|---|
+| V-1 | PASS | CP-1 raw and conditional Input are not delayed by retention phase A |
+| R-1 | PASS | CP-1 retention/mutation gate, phase B and recent/live-use cases |
+| V-2 | PASS | CP-2/4/5/6; all eight later-flush variants, receipt resolution, actual ATTENTION reader |
+| R-2 | PASS | CP-2/4/5; true spawn/readiness/provider cleanup and composer recovery |
+| V-3 | PASS | CP-1 structured slow-lock timing, threshold and release ordering |
+| R-3 | PASS | CP-3 guards, category census, generated index; matched-glob category row |
+| V-4 | PASS | fresh TRX rosters, exact-source validators, evidence-diff, OS inventory and merge-tree |
+
+Fresh TRX inspection independently mapped every result testId to its definition and intended class, required nonzero counts, and checked all eight argument tuples. Qualified class roster (24 distinct classes; counts are executed/passed):
+
+| Row/source | Class | Count |
+|---|---|---:|
+| CP-1/A | Antiphon.SessionRunner.Tests.C1677RetentionDispatchTests | 14/14 |
+| CP-1/A | Antiphon.SessionRunner.Tests.C1722GitTimeoutBudgetTests | 98/98 |
+| CP-1/A | Antiphon.SessionRunner.Tests.PhoneHomeCommandDispatcherTests | 45/45 |
+| CP-2/B | Antiphon.Tests.Agents.RunnerTerminalSessionGenerationTests | 8/8 |
+| CP-2/B | Antiphon.Tests.Agents.RunnerTerminalSessionInputEncodingTests | 5/5 |
+| CP-2/B | Antiphon.Tests.Application.AgentSessionCancelledTurnTests | 20/20 |
+| CP-2/B | Antiphon.Tests.Application.AgentSessionInterruptedLaunchResumeTests | 9/9 |
+| CP-2/B | Antiphon.Tests.Application.GrokRulesFailureTests | 7/7 |
+| CP-2/B | Antiphon.Tests.Application.GrokRulesInitializationTests | 24/24 |
+| CP-2/B | Antiphon.Tests.Application.PhoneHomeLaunchTransportTests | 7/7 |
+| CP-2/B | Antiphon.Tests.Application.SessionMessageQueueInterruptedAttemptTests | 23/23 |
+| CP-3/B | Antiphon.Tests.Application.MechanicalPcContractTests | 11/11 |
+| CP-3/B | Antiphon.Tests.Application.TaskPlatformGuidanceTests | 5/5 |
+| CP-3/B | Antiphon.Tests.Infrastructure.C1729LayeringGuardTests | 9/9 |
+| CP-3/B | Antiphon.Tests.Infrastructure.SlowTestRegistryMergeTests | 5/5 |
+| CP-3/B | Antiphon.Tests.Scripts.DerivedImpactIndexTests | 27/27 |
+| CP-3/B | Antiphon.Tests.TestHelpers.SlowTestTripwireTests | 2/2 |
+| CP-3/B | Antiphon.Tests.TestHelpers.TestClassificationPolicyTests | 42/42 |
+| CP-3/B | Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests | 1/1 |
+| CP-3/B | Antiphon.TestSupport.NativeLinuxPolicyWitnessTests | 3/3 |
+| CP-3/B | Antiphon.TestSupport.TestClassificationGuardTests | 1/1 |
+| CP-4/A | Antiphon.Tests.Application.GrokRulesReadyOrderingTests | 5/5 |
+| CP-5/A | Antiphon.Tests.Application.AgentSessionLaunchFailureTests | 79/79 |
+| CP-6/A | Antiphon.Tests.Application.SessionMessageQueuePhoneHomeDropTests | 5/5 |
+
+The eight C1892 tuples cover rulesRow=false/true, aged=false/true, headVisible=false/true. Each requires zero transcript rows before receipt, no recovery Inputs or extra Enter, attempts=1, Sent/null verdict, one overdue attention incident through AttentionService.GetAsync, and later UserPrompt -> LateConfirmed without writing. The existing Verdict_less_Sent_with_head_on_screen_sends_Enter_only and Verdict_less_Sent_with_nothing_on_screen_is_reverted_then_retyped both passed at B, preserving real composer recovery.
+
+### Red-first and immutable receipts
+
+20261113-184743-e73f: 8/0/8/0. Four visible-head cases wrote extra Enters; two aged clear cases retyped; two fresh clear cases reached a missing overdue-note assertion. After the first fix all six rows passed at A. Author inspection then found Warning was excluded from general ATTENTION. The strengthened real-reader test went red in 20261113-193746-57dd: 8/0/8/0, all eight specifically missing the real ATTENTION item (no build/fixture failures). The severity correction and refreshed index passed the affected rows at B. Historical reds stay red. These were ordinary authoring failures, not deliberate SourceLanding mutants.
+
+#### 20261113-184743-e73f
+
+Actual tested SHA 687c55b4541a274c475df2512bfce85f24abf567. Source start/end known, dirty=0, identical SHA and fingerprint; buildSource=verified globally and on every row. Fingerprint cd560de87549de0ce04d7cd30ed6517dfe3551f92b84b1c0d49752df7fa79c23. Report /work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-184743-e73f/report.json; SHA-256 875b8e75192e21be7c953a7c9025f51bd714dfbeb83435af955dd9a7db213703.
+
+```text
+CHECKPOINT CP-R1 commit=687c55b4541a274c475df2512bfce85f24abf567 build=ok filter=/*/*/SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping executed=8 passed=0 failed=8 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-184743-e73f/rows/CP-R1/run.trx slot=granted waited=45s dirty=0 source=687c55b4541a274c475df2512bfce85f24abf567 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-R1 waited=45s executed=120.813s wall=166.405s
+PHASES CP-R1 slotWait=226s build=286.7188294s startup=40.8183657s testsWall=42.2343358s teardown=36.2586301s hostWall=119.3115287s
+BUDGET wall=658.582s execution=432.029s admissionOnly=226.554s
+unlisted: none (the tool ran no other build or test command)
+wall: 10m58s  sequential-equivalent: 2m46s  builds: 1  max-concurrent-builds: 1  rows: 0 green 1 red 0 skipped
+```
+
+CP-R1 TRX SHA-256 ed95da4fe9c4696734208ec676a2a961ecf4d2bfe19513b0bb1d3288628802f8.
+
+#### 20261113-190233-548b
+
+Actual tested SHA 24a5889ffab22344492278cf42e579fea3162fef. Source start/end known, dirty=0, identical SHA and fingerprint; buildSource=verified globally and on every row. Fingerprint 012386926e8c0c33ca1d98256edd074b127a981275bd130225ba138d4d1eed86. Report /work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/report.json; SHA-256 83380aeb5ad694806a224afbf125d30f467f3981f9e7302bff4bdc289e05ff42.
+
+```text
+CHECKPOINT CP-1 commit=24a5889ffab22344492278cf42e579fea3162fef build=ok filter=/*/*/(C1677RetentionDispatchTests*)|(PhoneHomeCommandDispatcherTests*)|(C1722GitTimeoutBudgetTests*)/* executed=157 passed=157 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-1/run.trx slot=granted waited=105s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-1 waited=105s executed=6.097s wall=111.299s
+PHASES CP-1 slotWait=165s build=137.7192999s startup=3.383443s testsWall=1.3471661s teardown=0.6447072s hostWall=5.3753279s
+CHECKPOINT CP-2 commit=24a5889ffab22344492278cf42e579fea3162fef build=ok filter=/*/*/(GrokRulesInitializationTests*)|(GrokRulesFailureTests*)|(PhoneHomeLaunchTransportTests*)|(SessionMessageQueueInterruptedAttemptTests*)|(RunnerTerminalSessionInputEncodingTests*)|(RunnerTerminalSessionGenerationTests*)|(AgentSessionCancelledTurnTests*)|(AgentSessionInterruptedLaunchResumeTests*)/* executed=103 passed=103 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-2/run.trx slot=granted waited=225s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-2 waited=225s executed=99.156s wall=324.427s
+PHASES CP-2 slotWait=330s build=659.259692s startup=38.8658619s testsWall=37.648885s teardown=21.7612947s hostWall=98.276041s
+CHECKPOINT CP-4 commit=24a5889ffab22344492278cf42e579fea3162fef build=reused filter=/*/*/GrokRulesReadyOrderingTests/* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-4/run.trx slot=granted waited=150s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-4 waited=150s executed=75.517s wall=226.035s
+PHASES CP-4 slotWait=150s build=0s startup=39.6938983s testsWall=16.0768807s teardown=18.0711842s hostWall=73.8419627s
+CHECKPOINT CP-3 commit=24a5889ffab22344492278cf42e579fea3162fef build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(DerivedImpactIndexTests*)/* executed=106 passed=106 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-3/run.trx slot=granted waited=270s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-3 waited=270s executed=283.126s wall=553.362s
+PHASES CP-3 slotWait=270s build=0s startup=23.0651601s testsWall=256.5717299s teardown=1.1734723s hostWall=280.8103635s
+CHECKPOINT CP-6 commit=24a5889ffab22344492278cf42e579fea3162fef build=reused filter=/*/*/SessionMessageQueuePhoneHomeDropTests/* executed=5 passed=5 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-6/run.trx slot=granted waited=120s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-6 waited=120s executed=103.198s wall=223.953s
+PHASES CP-6 slotWait=120s build=0s startup=69.2044033s testsWall=19.2495844s teardown=13.5271644s hostWall=101.9811525s
+CHECKPOINT CP-5 commit=24a5889ffab22344492278cf42e579fea3162fef build=reused filter=/*/*/AgentSessionLaunchFailureTests/* executed=79 passed=79 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-190233-548b/rows/CP-5/run.trx slot=granted waited=120s dirty=0 source=24a5889ffab22344492278cf42e579fea3162fef sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-5 waited=120s executed=142.458s wall=262.557s
+PHASES CP-5 slotWait=120s build=0s startup=71.9430606s testsWall=54.1996888s teardown=15.0730753s hostWall=141.2158264s
+BUDGET wall=2013.740s execution=1506.395s admissionOnly=507.344s
+unlisted: none (the tool ran no other build or test command)
+wall: 33m33s  sequential-equivalent: 28m21s  builds: 2  max-concurrent-builds: 1  rows: 6 green 0 red 0 skipped
+```
+
+CP-1 TRX SHA-256 605333088e1c8e09f1e1bc49ee151c3659a80b9a98838ea0a7dcba42634b955e.
+
+CP-2 TRX SHA-256 7fe3452be5b5987a53cd4f601ea282f80efea8f14e61c19ec650582197d46ee4.
+
+CP-4 TRX SHA-256 9b874ed3e8c6464a355b5bf7f66d82dedc1fbfc282e6cfeb3f70cfe5e8cfad60.
+
+CP-3 TRX SHA-256 d9d103a160874b116fccfb4b6320749d17eda92141fe17d50f60b99c077c8471.
+
+CP-6 TRX SHA-256 fed810149c184e52036c98cf7fe51771dd4de245652f66642647988279fcb362.
+
+CP-5 TRX SHA-256 5f9ecc5dc3ef133c22b48d2c7ae46e055e1829698f8b8515e61d8167e1b91c65.
+
+#### 20261113-193746-57dd
+
+Actual tested SHA 31fc7a0e9f3ce034d7e3fa3cd4385e65d9433784. Source start/end known, dirty=0, identical SHA and fingerprint; buildSource=verified globally and on every row. Fingerprint 3856849d3dbae2298e560428c5201031d686f84c1a73aa6de92cefada68eff63. Report /work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-193746-57dd/report.json; SHA-256 36b79d7cfabffccbd5f28e00a3deb434343c781f3293fd2b478f1aab1af29ab2.
+
+```text
+CHECKPOINT CP-R2 commit=31fc7a0e9f3ce034d7e3fa3cd4385e65d9433784 build=ok filter=/*/*/SessionMessageQueueInterruptedAttemptTests/C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping executed=8 passed=0 failed=8 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-193746-57dd/rows/CP-R2/run.trx slot=granted waited=0s dirty=0 source=31fc7a0e9f3ce034d7e3fa3cd4385e65d9433784 sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-R2 waited=0s executed=81.201s wall=82.643s
+PHASES CP-R2 slotWait=0s build=373.3679211s startup=45.3993781s testsWall=21.3740619s teardown=12.9945255s hostWall=79.7810012s
+BUDGET wall=494.054s execution=494.054s admissionOnly=0.001s
+unlisted: none (the tool ran no other build or test command)
+wall: 8m14s  sequential-equivalent: 1m22s  builds: 2  max-concurrent-builds: 1  rows: 0 green 1 red 0 skipped
+```
+
+CP-R2 TRX SHA-256 97f8cca70e0aeb090259047bb0160ffa7d71cb718fc2e79a40cb09ff173365db.
+
+#### 20261113-194904-9c38
+
+Actual tested SHA 2429829d135b989719277db5e48d75f374ee3c7f. Source start/end known, dirty=0, identical SHA and fingerprint; buildSource=verified globally and on every row. Fingerprint 6399ad639b00615ea4677272c784055334c55f18327f2052ffacba65ce7ebc2e. Report /work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-194904-9c38/report.json; SHA-256 f52a64c8373d453739cf9d10f390565f74c0ab7128b2de272b8215702c0c6698.
+
+```text
+CHECKPOINT CP-2 commit=2429829d135b989719277db5e48d75f374ee3c7f build=ok filter=/*/*/(GrokRulesInitializationTests*)|(GrokRulesFailureTests*)|(PhoneHomeLaunchTransportTests*)|(SessionMessageQueueInterruptedAttemptTests*)|(RunnerTerminalSessionInputEncodingTests*)|(RunnerTerminalSessionGenerationTests*)|(AgentSessionCancelledTurnTests*)|(AgentSessionInterruptedLaunchResumeTests*)/* executed=103 passed=103 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-194904-9c38/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=2429829d135b989719277db5e48d75f374ee3c7f sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-2 waited=0s executed=77.844s wall=77.926s
+PHASES CP-2 slotWait=15s build=468.485724s startup=25.4312055s testsWall=42.262673s teardown=9.1856658s hostWall=76.8795685s
+CHECKPOINT CP-3 commit=2429829d135b989719277db5e48d75f374ee3c7f build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(DerivedImpactIndexTests*)/* executed=106 passed=106 failed=0 skipped=0 trx=/work/worktrees/task-df03fdd9/.antiphon/checkpoints/20261113-194904-9c38/rows/CP-3/run.trx slot=granted waited=90s dirty=0 source=2429829d135b989719277db5e48d75f374ee3c7f sourceState=clean buildSource=verified
+CHECKPOINT-TIMING CP-3 waited=90s executed=295.894s wall=385.967s
+PHASES CP-3 slotWait=90s build=0s startup=25.6937643s testsWall=268.2537513s teardown=0.9297825s hostWall=294.8772982s
+BUDGET wall=982.478s execution=955.609s admissionOnly=26.869s
+unlisted: none (the tool ran no other build or test command)
+wall: 16m22s  sequential-equivalent: 7m43s  builds: 2  max-concurrent-builds: 1  rows: 2 green 0 red 0 skipped
+```
+
+CP-2 TRX SHA-256 3e74329fc5122642cd3256d4507abb7aa82f06a925ec4fbe1ade2d49ac4b44bf.
+
+CP-3 TRX SHA-256 1807e83086c80b43d35fa11e9fb1782ad022f279c402f2ab2fa540112ff6a07a.
+
+### Scope, cost and manual gates
+
+The final impacted selector matched only test-lane-category; TestLaneCategoryGuardTests passed 1/1. The derived dependency closure has 102 printed classes with four capped/owed source entries; those additional derived-only classes were not executed or represented as passed. This Final Code selection is the six closed rows plus the affected server/guard repair. Whole Unit remains nightly/rc. No migration files changed or matched: migrations not selected, downgrade callers 0, migration red/green counts 0/0 (not applicable).
+
+Unlisted prerequisite/code-generation drivers, all gated with native default output: DerivedImpactIndex build at 687c55b4541a274c475df2512bfce85f24abf567 (waited=375s, held=5s, 0 warnings/errors); checkpoint-tool build at the same SHA (waited=105s, held=34s, 11 inherited compiler/analyzer warnings, 0 errors); already-built index generation at 0c90d5f8dedbf18684fddb9e6c90ab03cf3e3bd8 (waited=30s, held=43s, changed); index generation at 0126d8eb0f46aa9aede483bcfc646016d4f8f57a (waited=15s, held=35s, changed). Each index change has its own commit. Checkpoint coordinators used internal row/build leases; no direct custom output or unleased build/test was used. The report build-definition counts can include unselected manifest builds; only selected builds were launched.
+
+The full run took 33m33s (2013.740s wall; 1506.395s execution; 507.344s admission-only), triggering a mandatory caller-owned Debug commissioning request: /work/worktrees/task-df03fdd9/docs/investigations/2026-11-13-card-1892-round2-performance-debug-request.md. This delegate is forbidden to sub-delegate and has not claimed a Debug task was commissioned. The exact selection, source, host/load limitations and phase evidence are there. Reader red: 8m14s; repair: 16m22s (982.478s wall; 955.609s execution; 26.869s admission-only). No timeout or assertion was loosened. No unchanged green selection was repeated for flake proof; no intentional loaded repetition ran.
+
+Manual inspection confirmed LF normalization -> bracketed multi-line paste -> separate delayed CR; CP-2 also passed InputEncoding 5/5 and generation 8/8. CARD-0079 stays under MutateAsync and lock timing remains after release at 250ms with no body. Native Windows and live-session acceptance remain caller-owned and unexecuted here. Restart required: server AND every session runner. No restart, deploy, running host/session, or Windows qualification 97150a0b was touched.
+
+Nightly protected inputs are byte-unchanged over the full task range. Stored policyHash 7763a891c3bdde500976e5391b028f3667590ba1186e036abfbf7ce826857fcb and live-lane PinnedInputDigest 2b9353e8b21fd177508ada0e40db00cdb4d1833933f70af9adc160a8ac709324 did not require repinning. OS declaration .antiphon/c1892-r2-os-witness.json inventories all 12 non-document paths and 12 base/head candidates. Lint exit 0; unchanged CWD and executable-fixture OS checks are non-behavior for this change. Pending native restart/Windows obligation is explicit; syntax success is not runtime proof.
+
+Fetched current master 6f5ce63cb209b856d757691c08426f6fad3dfab5; merge-tree --write-tree origin/master HEAD exit 0, tree 3f9767a445f6aac4e9d9f60de05dc4df9a242dc3 at B. The six rows ran on this task branch under the brief's explicit substitution, not on a scratch master checkout. Full-base evidence-diff through B: 21 commits, 0 entries, 0 violations; publication repeats it over the evidence tip.
+
+Fixture hygiene: no nested Git repositories or generated fixture directories remain under .antiphon. One inherited, tracked approved capture is present at .antiphon/fixtures/card-1521/partial-boot-pointers.approved.json (unchanged blob 79b22d98998ebea7ae1d1ca4ceca0e9c56847040). SessionMessageQueueCodexPointerTests.Fixture consumes it. It was preserved as repository source, not treated as disposable runtime residue. No cleanup of this unrelated tracked fixture was performed.
+
+### Mutation remains pending
+
+Every variant is pending method-scoped SourceLanding Mutation; neither the ordinary red/green tests nor nightly discharges it. Mutation owns deliberate mutants, restore/green, missing-control discovery and other variants.
+
+| PC | Pending variants |
+|---|---|
+| PC-1 | Restore global gate for raw Input and ConditionalInput |
+| PC-2 | Restore destructive catch: Grok timeout/cancellation/disconnect; card timeout/cancellation/transport |
+| PC-3 | Revert unknown attempt: Enter, body-to-Enter, re-Enter; fail expired rules deadline |
+| PC-4 | Remove wait/hold timing or violate quiet threshold |
+| PC-5 | Swallow external caller cancellation after retaining session |
+| PC-6 | Re-send uncertain; fresh Enter-only; aged retype; normal/rules rows and visible/absent heads |
+| PC-7 | Omit/repeat attention; drop out-of-window discovery; lower Error to Warning so the real reader hides it |
+
+### Round 2 commits
+
+```text
+687c55b4541a274c475df2512bfce85f24abf567 test(card-1892): pin composer-less uncertainty at later flushes
+0c90d5f8dedbf18684fddb9e6c90ab03cf3e3bd8 fix(card-1892): hold composer-less unknown input for transcript or decision
+24a5889ffab22344492278cf42e579fea3162fef chore(card-1892): regenerate impact index after uncertainty repair
+31fc7a0e9f3ce034d7e3fa3cd4385e65d9433784 test(card-1892): require unknown-input decisions in the attention reader
+0126d8eb0f46aa9aede483bcfc646016d4f8f57a fix(card-1892): surface overdue input decisions in attention
+2429829d135b989719277db5e48d75f374ee3c7f chore(card-1892): refresh impact index for attention reader coverage
+```
+
+All listed slices were pushed to the assigned task branch. The evidence-only publication commit is reported by full SHA in the final task report. Next: Grok ordinary Review, diff-only round 2 against 01edf03f69ddfb6e5fe43de40d14db9e2ed382fe; original landing owner remains 13c4448d.
