@@ -7011,6 +7011,7 @@ partial_repos=0
 top=''
 top_bare=''
 declare -A dirty_seen=() common_seen=() common_repo=() work_trees=() git_dirs=() tmp_registered=()
+declare -A selector_parents=() audited_checkouts=()
 tmp_nested=()
 path_out=''
 commons=()
@@ -7121,6 +7122,30 @@ read_record() {
     [ "${#path_out}" = "$size" ] || { path_out=''; return 1; }
     path_out="${path_out%$'\n'}"
     case "$path_out" in ''|*[[:cntrl:]]*) path_out=''; return 1 ;; esac
+}
+# Selector test repositories are disposable only inside their enclosing checkout's
+# own ignored scratch root, with no remote of any name. The enclosing checkout must
+# remain in the ordinary audit roster: its content and every recovery tip still
+# have to pass before retirement can become Ready. Inventory uses this same roster;
+# it does not grant publication or bypass the later full read-only audit.
+selector_fixture() {
+    local rep="$1" parent rel remote_status=0
+    selector_parent=''
+    [ "${C1609_CONTENT_V2:-}" = 1 ] || return 1
+    [ "$gitdir" = "$top" ] && [ "$gitdir" = "$rep/.git" ] &&
+        [ -d "$gitdir" ] && [ ! -L "$gitdir" ] || return 1
+    path_of git -C "${rep%/*}" rev-parse --show-toplevel 2>/dev/null || return 1
+    parent="$path_out"
+    [[ "$parent/" == "$root/"* ]] || return 1
+    case "$rep" in "$parent"/.antiphon/selector-evidence/*) ;; *) return 1 ;; esac
+    rel="${rep#"$parent"/}"
+    git -C "$parent" check-ignore -q -- .antiphon/selector-evidence/ || return 1
+    # Check each path separately: check-ignore with multiple arguments succeeds
+    # when only one is ignored (a negated fixture path must stay protected).
+    git -C "$parent" check-ignore -q -- "$rel/" || return 1
+    git -C "$rep" config --get-regexp '^remote\.' >/dev/null 2>&1 || remote_status=$?
+    [ "$remote_status" = 1 ] || return 1
+    selector_parent="$parent"
 }
 # Worktree content. Protected: tracked files (raw bytes against the index), staged
 # entries and untracked files that are not ignored. Ignored files (build output,
@@ -8339,6 +8364,13 @@ while IFS= read -r -d '' entry; do
     bare="$(git -C "$repo" rev-parse --is-bare-repository 2>/dev/null)" || fail $?
     case "$bare" in
         false)
+            if selector_fixture "$repo"; then
+                selector_parents[$selector_parent]=1
+                printf 'disposable-fixture classifier=selector-evidence-v1 path=%s parent=%s\n' \
+                    "$(rel_repo "$repo")" "$(rel_repo "$selector_parent")"
+                continue
+            fi
+            audited_checkouts[$repo]=1
             # Inventory only classifies ls-remote. A dirty tree is still a
             # publication refusal, so the proof path keeps queue_dirty.
             if [ "${C1008_AUDIT_MODE:-}" != inventory ]; then
@@ -8355,6 +8387,11 @@ while IFS= read -r -d '' entry; do
         commons+=("$top")
     fi
 done < "$scratch/repositories"
+# A fixture cannot supply its own enclosing-checkout proof. In either mode its
+# parent must be an independently enumerated checkout, never another skipped repo.
+for selector_parent in "${!selector_parents[@]}"; do
+    [ -n "${audited_checkouts[$selector_parent]+x}" ] || refuse_unknown selector-parent 2 "$selector_parent"
+done
 # Inventory lists authentication failures and exits before publication, dirty
 # drain, and link checks. Any other ls-remote failure already refused above.
 if [ "${C1008_AUDIT_MODE:-}" = inventory ]; then
