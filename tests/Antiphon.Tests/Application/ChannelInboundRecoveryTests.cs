@@ -2087,13 +2087,26 @@ public sealed partial class ChannelInboundRecoveryTests
         await RecoveryTriggerAsync(signal: false);
     }
 
-    private static async Task RecoveryTriggerAsync(bool signal)
+    /// <summary>
+    /// Run 97150a0b g76 witness: the periodic leg's first wake pass is held past the old fixed 8 s
+    /// wall deadline, as a loaded host stalled it. The recovery contract is that the pass completes
+    /// and the row is handed off, however long the pass takes; only a hang may fail the test.
+    /// </summary>
+    [Test]
+    public async Task C593_RecoveryTrigger_SlowFirstPassStillHandsOff()
+    {
+        await RecoveryTriggerAsync(signal: false, holdFirstPass: TimeSpan.FromSeconds(9));
+    }
+
+    private static async Task RecoveryTriggerAsync(bool signal, TimeSpan? holdFirstPass = null)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var gate = new C1716WakeScanGate();
         await using var h = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, ClockSpeed = signal ? null : 5,
             Bridge = Settings(timeout: 1), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            ConfigureDbContext = options => options.AddInterceptors(gate),
         });
         var chat = await h.BindChannelAsync();
         await InstallTranscriptReceipt(h);
@@ -2103,6 +2116,13 @@ public sealed partial class ChannelInboundRecoveryTests
         var native = $"trigger-{signal}-{Guid.NewGuid():N}";
         await Bridge(h).HandleInboundAsync(Message(chat, native, "recovered by worker trigger"), Ct);
         var worker = Bridge(h);
+        if (holdFirstPass is { } hold)
+        {
+            var first = gate.Arm();
+            _ = first.Entered.Task.ContinueWith(
+                _ => Task.Delay(hold).ContinueWith(_ => first.Release.TrySetResult(), TaskScheduler.Default),
+                TaskScheduler.Default);
+        }
         await worker.StartAsync(Ct);
         await WaitForAsync(() => Task.FromResult(worker.CompletedDrainIterations > 0));
         await using (var db = Db(schema.ConnectionString))
