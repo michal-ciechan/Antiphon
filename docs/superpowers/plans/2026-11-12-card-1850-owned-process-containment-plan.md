@@ -499,7 +499,7 @@ whole-row costs under the budget above.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-green/` | any-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
+| CP-1 | S1 | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-final/` | any-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1850-s2/` | linux-members | `/*/*/LinuxOwnedGitProcessTests/*` | V-1,V-2 | LinuxOwnedGitProcessTests; all listed, 0 failed | 8 | 5 | n/a | true |
 | CP-3 | S3a | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s3a/` | any-native-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1,V-4 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
 | CP-4 | S3b | `tests/Antiphon.Tests -> bin-c1850-s3b/` | windows-native | `/*/*/WindowsOwnedGitProcessTests/*` | V-3,V-4 | WindowsOwnedGitProcessTests; all listed, 0 failed | 6 | 10 | 10 | true |
