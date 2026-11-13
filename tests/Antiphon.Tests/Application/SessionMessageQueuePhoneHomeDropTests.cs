@@ -81,7 +81,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         // What made that possible: the in-flight loss charged the attempt and kept its floor.
-        afterDrop.Status.ShouldBe(QueuedMessageStatus.Pending);
+        afterDrop.Status.ShouldBe(QueuedMessageStatus.Sent);
         afterDrop.DeliveryAttempts.ShouldBe(1);
         afterDrop.LastDeliveryStartedAt.ShouldNotBeNull();
         afterDrop.LastDeliveryBaselineSequence.ShouldNotBeNull();
@@ -227,7 +227,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
         // What made that possible: a later write's loss charged the attempt and kept its floor.
-        afterDrop.Status.ShouldBe(QueuedMessageStatus.Pending);
+        afterDrop.Status.ShouldBe(QueuedMessageStatus.Sent);
         afterDrop.DeliveryAttempts.ShouldBe(1);
         afterDrop.LastDeliveryStartedAt.ShouldNotBeNull();
         afterDrop.LastDeliveryBaselineSequence.ShouldNotBeNull();
@@ -289,7 +289,7 @@ public class SessionMessageQueuePhoneHomeDropTests
         var row = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId);
         row.Status.ShouldBe(QueuedMessageStatus.Sent);
         row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
-        afterDrop.Status.ShouldBe(QueuedMessageStatus.Pending);
+        afterDrop.Status.ShouldBe(QueuedMessageStatus.Sent);
         afterDrop.DeliveryAttempts.ShouldBe(1);
         afterDrop.LastDeliveryStartedAt.ShouldNotBeNull();
         afterDrop.LastDeliveryBaselineSequence.ShouldNotBeNull();

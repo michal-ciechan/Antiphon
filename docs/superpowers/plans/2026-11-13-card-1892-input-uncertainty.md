@@ -34,16 +34,23 @@ uncertainty witness must fail. PC-3 pending Mutation: revert preserved uncertain
 queue state witness must fail. PC-4 pending Mutation: remove thresholded lock timing; timing witness
 must fail. Mutation owns deliberate red/restore/green, missing-control discovery and other variants.
 
+## Performance budget
+
+Cold server build measured 336 s (400.9 s including driver audit), startup 33.7 s, red test body wall 17.3 s; admission 75 s is separate. Runner builds are smaller. Estimates remain provisional, not p95. Each integration host shares its database fixture and each new uncertainty test owns an isolated schema. All fake Input requests/held gates are joined in finally. No selection is expected over 30 minutes; if observed, preserve phase evidence and request caller Debug. Existing checkpoint 15-minute floor remains a documented tooling exception, not a measured per-case timeout.
+
 ### Cost
 
-Ordinary floor 24 minutes plus authoring. Bounded named classes; no full assembly or Unit lane.
+Ordinary floor 29 minutes plus authoring. Bounded named classes; no full assembly or Unit lane.
 Red rows intentionally fail before fixes, then rerun once green. No repeats after green.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1892-runner/ | runner-input-retention | `/*/*/(C1677RetentionDispatchTests*)\|(PhoneHomeCommandDispatcherTests*)/*` | V-1,R-1,V-3 | all listed, 0 failed | 2 | 6 |
-| CP-2 | S3-S4 | tests/Antiphon.Tests -> bin-c1892-server/ | launch-uncertainty | `/*/*/(AgentSessionLaunchFailureTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesInitializationTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)/*` | V-2,R-2 | all listed, 0 failed | 6 | 12 |
+| CP-1 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1892-runner-red3/ | runner-input-retention | `/*/*/(C1677RetentionDispatchTests*)\|(PhoneHomeCommandDispatcherTests*)/*` | V-1,R-1,V-3 | all listed, 0 failed | 2 | 6 |
+| CP-2 | S3-S4 | tests/Antiphon.Tests -> bin-c1892-server-red3/ | launch-uncertainty | `/*/*/(AgentSessionLaunchFailureTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesInitializationTests*)\|(PhoneHomeLaunchTransportTests*)\|(SessionMessageQueueInterruptedAttemptTests*)\|(RunnerTerminalSessionInputEncodingTests*)/*` | V-2,R-2 | all listed, 0 failed | 6 | 12 |
 | CP-3 | S5 | tests/Antiphon.Tests -> bin-c1892-guards/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-3,V-4 | all listed, 0 failed | 10 | 6 |
 | CP-4 | S3-S4 | CP-2 | uncertainty-witnesses | `/*/*/GrokRulesReadyOrderingTests/Ambiguous_input*` | V-2 | all listed, 0 failed | 3 | 1 |
+
+| CP-5 | S3-S4 | CP-2 | card-input-witnesses | `/*/*/AgentSessionLaunchFailureTests/Card_input_uncertainty*` | V-2,R-2 | all listed, 0 failed | 3 | 1 |
+| CP-6 | S3-S4 | CP-2 | queue-transport-recovery | `/*/*/SessionMessageQueuePhoneHomeDropTests/*` | V-2 | all listed, 0 failed | 1 | 3 |
