@@ -129,12 +129,21 @@ function New-RcChunkInputManifest {
     $membershipRows.Add(@('antiphon-rc-membership','1',[string]$Chunk.suite,[string]$Chunk.boundary))
     foreach ($key in (Get-TestSelectionSorted @($Chunk.identityKeys))) { $membershipRows.Add(@($key)) }
     $membershipDigest=Get-RcManifestDigest $membershipRows.ToArray()
-    $digest=Get-RcManifestDigest @(@('antiphon-rc-chunk-input','1',$InputSuite,[string]$Chunk.suite,[string]$Chunk.boundary,
+    $combined=[Collections.Generic.List[object]]::new()
+    $combined.Add(@('antiphon-rc-chunk-input','1',$InputSuite,[string]$Chunk.suite,[string]$Chunk.boundary,
         $inputDigest,$caseDigest,$receiptDigest,$membershipDigest))
+    $digest=Get-RcManifestDigest $combined.ToArray()
     return @{format='antiphon-rc-chunk-input-v1';sourceSha=$Snapshot.sha;treeId=$Snapshot.treeId;inputSuite=$InputSuite;
         suite=$Chunk.suite;boundary=$Chunk.boundary;chunkId=$membershipId;membershipDigest=$membershipDigest;
         digest=$digest;inputDigest=$inputDigest;caseDigest=$caseDigest;receiptDigest=$receiptDigest;
-        inputs=@($owner.inputs);edges=@($owner.edges);cases=$caseRecords;methods=$methodRows.ToArray();
+        inputs=@(foreach ($path in (Get-TestSelectionSorted @($inputs.Keys))) {
+            $row=$inputs[$path]
+            @{version=1;suite=$row[2];project=$row[3];path=$row[4];present=($row[5] -ceq 'present');
+                mode=$(if ($row[6]) {$row[6]} else {$null});type=$(if ($row[7]) {$row[7]} else {$null});
+                objectId=$(if ($row[8]) {$row[8]} else {$null});reason=$row[9]}
+        });edges=@(foreach ($key in (Get-TestSelectionSorted @($edges.Keys))) {
+            $row=$edges[$key]; @{from=$row[1];to=$row[2];project=$row[3];reason=$row[4]}
+        });cases=$caseRecords;methods=$methodRows.ToArray();
         actualReceipts=@(foreach ($kind in (Get-TestSelectionSorted @($receiptMap.Keys))) { $receiptMap[$kind] });
         unknown=@($unknown);executionEvidence=$false;gateCredit=$false;activation='shadow-only'}
 }
