@@ -24,6 +24,11 @@ No full assembly or Unit lane is needed for this bounded shared predicate.
 Named consumers are ClaudeDialogInputGuardTests and WatchdogServiceTests.
 The impacted `pty-host-fixture` glob also selects Card1277PtyHostFixtureTests;
 the native Windows copy remains owed to the Windows lane, never credited by Linux.
+The full committed diff's derived reverse edges additionally select
+BlockedParkWireTests, ResumeReceiptReadinessTests, SessionRunnerCpuTests,
+TerminalSeatReleaseTests, TranscriptTailerBoundPollTests and
+TranscriptTailerObservationTests. CP-6 covers these bounded adjacent classes with
+the CP-2 build; its provisional estimate includes real loopback transport tests.
 Guard coverage includes the brief's six classes plus the standing mechanical,
 platform, layering and lane-category guards.
 
@@ -54,8 +59,8 @@ runners to restart after landing; Code does not activate them.
 | V-3 | Server watchdog class stays green, including C566 refusal, pending answers, episodes, failure continuation and the new command-preview negative. |
 | R-1 | Runner class retains epoch, revision, history, adoption and all guarded-write outcomes. |
 | R-2 | Guard union passes every named class with nonzero fresh TRX counts; prebuild the DerivedImpactIndex driver. |
-| R-3 | Impacted Linux Card1277PtyHostFixtureTests pass; report native Windows selection owed. |
-| R-4 | Full-range evidence diff, OS declaration lint and fetched-master merge-tree succeed. |
+| R-3 | All impacted Linux classes pass; report native Windows Card1277PtyHostFixtureTests owed. |
+| R-4 | Full-range evidence diff and OS declaration lint succeed; report fetched-master merge-tree truthfully. |
 | M-1 | Inspect shared call sites and unchanged input fences; do not send live dialog keys. |
 | M-2 | Report server plus session-runner activation required after landing. |
 
@@ -68,6 +73,7 @@ runners to restart after landing; Code does not activate them.
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c1875-server/` | server-watchdog | `/*/*/WatchdogServiceTests/*` | V-3 | all listed, 0 failed | 10 | 8 |
 | CP-4 | S2 | CP-3 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed | 105 | 6 |
 | CP-5 | S2 | CP-3 | impacted-pty | `/*/*/Card1277PtyHostFixtureTests/*` | R-3 | all listed, 0 failed | 3 | 2 |
+| CP-6 | S2 | CP-2 | impacted-runner | `/*/*/(BlockedParkWireTests*)\|(ResumeReceiptReadinessTests*)\|(SessionRunnerCpuTests*)\|(TerminalSeatReleaseTests*)\|(TranscriptTailerBoundPollTests*)\|(TranscriptTailerObservationTests*)/*` | R-3 | all listed, 0 failed | 60 | 6 |
 
 ### Supplemental commands and controls
 
@@ -77,7 +83,9 @@ Before CP-4, separately lease a native-output build of
 Antiphon.Checkpoints through a separate build slot; invoke its built DLL (no implicit
 build) and pass committed HEAD as `--expected-source-sha`. Each checkpoint
 driver then takes its own slot. Run CP-1 at S1, CP-2 through CP-5 at S2, serially.
-The deliberate red CP-1 is closed by the same case in CP-2 after the fix.
+The deliberate red CP-1 is closed by the same case in CP-2 after the fix. Run
+CP-6 in that same S2 run. Scope expansion is driven by the full-range selector,
+not a second proof repetition.
 
 PC-1 pending for SourceLanding Mutation: remove the border/question column guard;
 run only ClaudeDialogInputGuardTests/C1875_CommandPreviewWarningDoesNotAuthorizeNo
