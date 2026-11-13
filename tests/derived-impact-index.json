@@ -772,14 +772,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -788,14 +788,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -804,14 +804,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -820,14 +820,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -836,14 +836,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -852,14 +852,14 @@
       "reason": "cap",
       "owed": 18,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -868,14 +868,14 @@
       "reason": "cap",
       "owed": 21,
       "first": [
+        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests",
-        "SeatOccupancyAttentionTests"
+        "RunnerAlarmAttentionTests"
       ]
     },
     {
@@ -1338,7 +1338,7 @@
         "ModelAvailabilityTests",
         "RoutingPinCandidateDispatchTests",
         "SessionHealthTests",
-        "SessionMessageQueueServiceTests"
+        "SessionMessageQueueInterruptedAttemptTests"
       ]
     },
     {
@@ -1359,18 +1359,18 @@
     },
     {
       "path": "server/Domain/Entities/AgentIncident.cs",
-      "classes": 39,
+      "classes": 40,
       "reason": "cap",
-      "owed": 14,
+      "owed": 15,
       "first": [
+        "StandingSessionSwitchConcurrencyTests",
         "TaskProgressStallSweepTests",
         "TranscriptBindingIncidentTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskAutoTitleTests",
         "AgentTaskCheckInterpreterTests",
         "Card1619ExitPersistenceTests",
-        "OrchestratorInvestigationSweepTests",
-        "QueuedInputWatchdogTests"
+        "OrchestratorInvestigationSweepTests"
       ]
     },
     {
@@ -7115,9 +7115,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7145,9 +7145,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7175,9 +7175,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7205,9 +7205,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7235,9 +7235,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7265,9 +7265,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -7295,9 +7295,9 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
-        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "TaskInputAttentionCostTests",
         "TaskInputWeakArmBoundaryTests"
       ]
@@ -12616,12 +12616,12 @@
         "RemoteControlModalPersistenceTests",
         "RunnerSeatOrphanSweepTests",
         "RunnerSlotEndpointTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "SessionReconciliationServiceTests",
         "StandingBootAttentionTests",
         "StandingBootWatchdogTests",
         "StandingSessionOwnershipTests",
-        "StandingSessionSelectionTests",
-        "StandingSessionSwitchConcurrencyTests"
+        "StandingSessionSelectionTests"
       ]
     },
     {
