@@ -52,12 +52,15 @@ try {
                 for ($i = 0; $i -lt 885; $i++) { $writer.Write($block) }
                 $writer.Write('","nested":[{"ignored":true}],"complete":true}')
             } finally { $writer.Dispose() }
+            $generationSeconds = $watch.Elapsed.TotalSeconds
             $block = $null
             Write-Text (Join-Path $source 'chunk.timing.json') '{"suite":"antiphon","chunk":"one","runWallSeconds":1.25,"lastPhase":"complete"}'
             Write-Text (Join-Path $source 'chunk.trx') '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><Results><UnitTestResult testId="a" outcome="Passed" duration="00:00:01" /></Results><TestDefinitions><UnitTest id="a"><TestMethod className="Fixture.Tests" name="Runs" /></UnitTest></TestDefinitions></TestRun>'
             [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
             $baseline = [Diagnostics.Process]::GetCurrentProcess().PeakWorkingSet64
+            $exportClock = [Diagnostics.Stopwatch]::StartNew()
             $result = Export-Fixture $source @('summary.json','chunk.timing.json','chunk.trx')
+            $exportSeconds = $exportClock.Elapsed.TotalSeconds
             $peak = [Diagnostics.Process]::GetCurrentProcess().PeakWorkingSet64 - $baseline
             Note ($result.files.Count -eq 3) 'inventory lost files'
             $entry = @($result.files | Where-Object relativePath -CEQ 'summary.json')[0]
@@ -72,7 +75,7 @@ try {
             Note (@($rows | Where-Object { $_.field -ceq 'runWallSeconds' -and $_.value -eq 1.25 }).Count -eq 1) 'timing scalar row'
             Note (Test-RcHistoricalEvidence -EvidenceRoot $result.evidenceRoot).valid 'fresh bundle did not reverify'
             Note ($watch.Elapsed.TotalSeconds -le 60) ('streaming extraction exceeded the 60s target: ' + $watch.Elapsed.TotalSeconds)
-            Write-Output ('RH metrics bytes=' + $entry.length + ' peakDelta=' + $peak + ' maxBufferedBytes=' + $result.maxBufferedBytes + ' elapsed=' + $watch.Elapsed.TotalSeconds)
+            Write-Output ('RH metrics bytes=' + $entry.length + ' peakDelta=' + $peak + ' maxBufferedBytes=' + $result.maxBufferedBytes + ' elapsed=' + $watch.Elapsed.TotalSeconds + ' generation=' + $generationSeconds + ' export=' + $exportSeconds + ' freeze=' + $result.freezeSeconds + ' parse=' + $result.parseSeconds + ' verify=' + $result.verifySeconds)
         }
         'TamperAndChangingReadRefuse' {
             Test-NativeHistoricalHandle
