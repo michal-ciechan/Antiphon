@@ -25,7 +25,7 @@ No manual acceptance or PC-n variants are declared by this slice; deliberate con
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-2 | S1R2 | `tests/Antiphon.Tests -> bin-c1820-r2/` | linux-relation | `/*/*/ReleaseImpactRelationTests/*` | V-2 | all 4 named, 0 failed/skipped | 4 | 10 | true |
+| CP-2 | S1R2 | `tests/Antiphon.Tests -> bin-c1820-r2-green/` | linux-relation | `/*/*/ReleaseImpactRelationTests/*` | V-2 | all 4 named, 0 failed/skipped | 4 | 10 | true |
 | CP-3 | S1R2 | CP-2 | linux-ordinary-cap | `/*/*/DerivedImpactIndexTests/(a_path_with_26_classes_is_capped*)\|(solution_file_selects_no_derived_class*)` | R-1 | both methods, 0 failed/skipped | 2 | 1 | true |
 | CP-101 | S1R2 | CP-2 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | Final guards and matched test-lane-category | all listed, 0 failed/skipped | 78 | 3 | true |
 | CP-102 | S1R2 | CP-2 | ordinary-index-drift | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 drift | named method, 0 failed/skipped | 1 | 1 | true |
@@ -35,6 +35,7 @@ No manual acceptance or PC-n variants are declared by this slice; deliberate con
 ## Performance budget
 
 18 minutes provisional including one cold build; test body/relation setup in memory after the red witness.
+The red run retained `bin-c1820-r2/`; green uses a fresh owned output, with identical filters and assertions.
 Use the upstream 20-minute explicit build/row execution bound, finite 45-minute slot acquisition,
 and separate queue/admission from execution. No timeout or assertion is widened.
 No whole Unit lane or full assembly. No database/container/server/migration/snapshot phases apply.
