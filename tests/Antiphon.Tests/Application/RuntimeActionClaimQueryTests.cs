@@ -58,8 +58,8 @@ public class RuntimeActionClaimQueryTests
                     rows.Add(Action(session.Id, now, 0, "status", phase: 8)); break;
                 case "future-transcript": rows = [Action(session.Id, now, 0, due: false), later]; break;
                 case "carried": later.ConversationKey = "chat:a"; break;
-                case "wildcard-earlier": earlier.ConversationKey = null; earlier.LateConfirmedChannelMessageIds = [messages[1].Id]; break;
-                case "wildcard-later": later.ConversationKey = null; later.LateConfirmedChannelMessageIds = [messages[0].Id]; break;
+                case "wildcard-earlier": earlier.ConversationKey = null; earlier.LateConfirmedChannelMessageIds = [messages[2].Id]; break;
+                case "wildcard-later": later.ConversationKey = null; later.LateConfirmedChannelMessageIds = [messages[2].Id]; break;
                 case "late-carried": earlier.LateConfirmedChannelMessageIds = [messages[1].Id]; break;
                 case "carried-late": later.LateConfirmedChannelMessageIds = [messages[0].Id]; break;
                 case "late-late":
