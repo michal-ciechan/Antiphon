@@ -13,6 +13,15 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseImpactEnvelopeTests
 {
     [Test]
+    public async Task Fixture_repositories_live_under_system_temp_outside_the_checkout()
+    {
+        var fixture = await Fixture.CreateAsync();
+        Path.GetRelativePath(Path.GetTempPath(), fixture.Root).ShouldNotStartWith("..");
+        Path.GetRelativePath(RepoRoot(), fixture.Root).ShouldStartWith("..");
+        (await fixture.GitAsync("rev-parse", "--is-inside-work-tree")).Trim().ShouldBe("true");
+    }
+
+    [Test]
     public async Task MissingIndexIsIncomplete()
     {
         await using var fixture = await Fixture.CreateAsync();
