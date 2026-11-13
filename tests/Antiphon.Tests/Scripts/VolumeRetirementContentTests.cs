@@ -16,6 +16,58 @@ public sealed class VolumeRetirementContentTests
     internal const string NativeLinuxReason = "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly.";
 
     [Test]
+    [Arguments("ignored", "Ready")]
+    [Arguments("outside", "RecycleGitAuditUnknown")]
+    [Arguments("remote", "RecycleGitAuditUnknown")]
+    [Arguments("not-ignored", "RecycleGitAuditUnknown")]
+    [Arguments("dirty", "RecycleWorktreeDirty")]
+    [Arguments("unpublished", "RecycleUnpublishedWork")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent(string vector, string expected)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var (_, outer) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        var nested = Path.Combine(outer, vector == "outside" ? "other-scratch" : ".antiphon/selector-evidence/x/fixtures/y");
+        var setup = await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            git init -q -b main {{VolumeRetirementFixture.Quote(nested)}}
+            git -C {{VolumeRetirementFixture.Quote(nested)}} -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit --allow-empty -qm fixture
+            """);
+        setup.Exit.ShouldBe(0, setup.Output);
+        if (vector == "remote")
+        {
+            var remote = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(nested) +
+                " remote add backup " + VolumeRetirementFixture.Quote(Path.Combine(fixture.Root, "absent-origin.git")));
+            remote.Exit.ShouldBe(0, remote.Output);
+        }
+        if (vector == "dirty") await File.AppendAllTextAsync(Path.Combine(outer, "readme.txt"), "dirty\n");
+        if (vector == "unpublished" || vector == "not-ignored")
+        {
+            if (vector == "not-ignored") await File.WriteAllTextAsync(Path.Combine(outer, ".gitignore"), "");
+            var change = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(outer) +
+                " -c commit.gpgsign=false commit -qam change --allow-empty" +
+                (vector == "not-ignored" ? " && git -C " + VolumeRetirementFixture.Quote(outer) + " push -q origin HEAD" : ""));
+            change.Exit.ShouldBe(0, change.Output);
+        }
+        var preview = await VolumeRetirementFixture.Preview(fixture);
+        var text = preview.Output + await VolumeRetirementFixture.AuditText(fixture);
+        fixture.Removed.ShouldBeEmpty();
+        if (expected == "Ready")
+        {
+            preview.Exit.ShouldBe(0, text);
+            text.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+            text.ShouldContain("disposable-fixture classifier=selector-evidence-v1");
+        }
+        else
+        {
+            preview.Exit.ShouldBe(2, text);
+            text.ShouldContain(expected);
+            text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        }
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Current_tooling_and_missing_history_do_not_block()
     {
