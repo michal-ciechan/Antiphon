@@ -138,7 +138,7 @@ public sealed class C1895OutputDropEngineTests
     {
         using var s = Create();
         var m = s.Mirror();
-        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin", "tests/bin");
+        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin", "tests/bin", "*.csproj");
         var outside = s.Root + "/outside-dir";
         Directory.CreateDirectory(outside);
         File.WriteAllText(outside + "/secret.txt", "keep-me");
@@ -147,6 +147,7 @@ public sealed class C1895OutputDropEngineTests
         File.CreateSymbolicLink(link, outside);
         var obj = m.Path + "/tests/obj";
         Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Tests.csproj", "<Project />");
         File.WriteAllText(obj + "/world.txt", "world!");
         RequireClean(m.Path);
 
@@ -168,7 +169,9 @@ public sealed class C1895OutputDropEngineTests
     {
         using var s = Create();
         var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
         Directory.CreateDirectory(m.Path + "/src/bin");
+        File.WriteAllText(m.Path + "/src/Src.csproj", "<Project />");
         File.WriteAllText(m.Path + "/src/bin/tracked.txt", "tracked");
         Git(m.Path, "add", "-f", "src/bin/tracked.txt");
         Git(m.Path, "commit", "-q", "-m", "track bin");
@@ -176,6 +179,7 @@ public sealed class C1895OutputDropEngineTests
         Git(m.Path, "fetch", "origin", "refs/heads/" + m.Branch + ":refs/remotes/origin/" + m.Branch);
         var obj = m.Path + "/tests/obj";
         Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Tests.csproj", "<Project />");
         File.WriteAllText(obj + "/world.txt", "world!");
         RequireClean(m.Path);
 
@@ -436,6 +440,8 @@ public sealed class C1895OutputDropEngineTests
 
             response.Verdict.ShouldBe(WorkspaceOutputDropCodes.DeleteFailed, response.Detail);
             response.Bytes.ShouldBe(6, "a.dll was unlinked before zdir refused");
+            response.FilesRemoved.ShouldBe(1);
+            response.FilesLeft.ShouldBe(1);
             File.Exists(obj + "/a.dll").ShouldBeFalse();
             File.ReadAllText(blocked + "/b.dll").ShouldBe("blocked");
             Directory.Exists(obj).ShouldBeTrue();
@@ -454,6 +460,164 @@ public sealed class C1895OutputDropEngineTests
 
     [Test]
     [Timeout(60_000)]
+    public async Task First_directory_is_deleted_and_a_later_change_stops_the_rest(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var bin = m.Path + "/tests/Foo/bin";
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(bin);
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(bin + "/hello.txt", "hello");
+        File.WriteAllText(obj + "/world.txt", "world!");
+        RequireClean(m.Path);
+        var scans = 0;
+        s.Holders.Next = _ =>
+        {
+            if (++scans >= 3 && !File.Exists(obj + "/now-tracked.txt"))
+            {
+                File.WriteAllText(obj + "/now-tracked.txt", "late");
+                Git(m.Path, "add", "-f", "tests/Foo/obj/now-tracked.txt");
+            }
+            return new HolderScan(true, []);
+        };
+
+        var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+        Directory.Exists(bin).ShouldBeFalse("the directory validated before the change is deleted");
+        File.Exists(obj + "/now-tracked.txt").ShouldBeTrue();
+        Directory.Exists(obj).ShouldBeTrue();
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.DeleteFailed, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.ChangedDuringDrop, response.Detail);
+        response.Bytes.ShouldBe(5);
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Lost_reply_replays_the_ledger_and_deletes_nothing_more(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/c.dll", "zz");
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        engine.OutputDropLedgerRoot = s.Root + "/ledger";
+        engine.AfterLedgerPersisted = _ => throw new IOException("reply lost");
+        var request = DropRequest(m);
+
+        await Should.ThrowAsync<IOException>(async () => await engine.DropOutputsAsync(request, ct));
+
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        var recovered = await engine.DropOutputsAsync(request, ct);
+        recovered.Bytes.ShouldBe(6);
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Mount_ids_differ_across_mounts()
+    {
+        var root = RunnerWorkspaceNoFollowDelete.MountId("/");
+        var proc = RunnerWorkspaceNoFollowDelete.MountId("/proc");
+        root.ShouldNotBeNullOrWhiteSpace();
+        proc.ShouldNotBeNullOrWhiteSpace();
+        root.ShouldNotBe(proc);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Dispatcher_off_deletes_nothing(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        var planted = PlantOutputs(m, s.Root);
+        RequireClean(m.Path);
+        var dispatcher = Dispatcher(s, s.Engine(), RunnerOutputDropMode.Off);
+
+        var response = Read(await dispatcher.DispatchAsync(Frame(m), ct));
+
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.OutputDropOff);
+        Directory.Exists(planted.Bin).ShouldBeTrue();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Dispatcher_preview_does_not_delete(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        var planted = PlantOutputs(m, s.Root);
+        RequireClean(m.Path);
+        var dispatcher = Dispatcher(s, s.Engine(), RunnerOutputDropMode.Preview);
+
+        var response = Read(await dispatcher.DispatchAsync(Frame(m), ct));
+
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.WouldDrop, response.Detail);
+        response.Bytes.ShouldBe(14);
+        Directory.Exists(planted.Bin).ShouldBeTrue();
+        Directory.Exists(planted.Obj).ShouldBeTrue();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Dispatcher_holds_the_mutation_lock_through_delete(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        PlantOutputs(m, s.Root);
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        var dispatcher = Dispatcher(s, engine, RunnerOutputDropMode.Execute);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        engine.BeforeEachOutputDelete = _ =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        };
+
+        var dispatch = dispatcher.DispatchAsync(Frame(m), ct);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
+        dispatcher.MutationLockIsHeld().ShouldBeTrue();
+        release.TrySetResult();
+        var response = Read(await dispatch.WaitAsync(ct));
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Session_started_during_delete_stops_the_drop(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        var planted = PlantOutputs(m, s.Root);
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        var dispatcher = Dispatcher(s, engine, RunnerOutputDropMode.Execute);
+        engine.BeforeEachOutputDelete = _ => dispatcher.RecordWorkspaceLaunch(Guid.NewGuid(), m.Path);
+
+        var response = Read(await dispatcher.DispatchAsync(Frame(m), ct));
+
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.ChangedDuringDrop, response.Detail);
+        response.Detail.ShouldNotBeNull().ShouldContain(WorkspaceRetentionCodes.RecentlyMirrored);
+        Directory.Exists(planted.Bin).ShouldBeTrue();
+        (response.Bytes ?? 0).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(60_000)]
     public async Task Dispatcher_routes_execute_to_the_engine(CancellationToken ct)
     {
         using var s = Create();
@@ -464,7 +628,7 @@ public sealed class C1895OutputDropEngineTests
         {
             Enabled = true, AllowedCwd = s.Work, Capacity = 2, CapacityStatePath = s.Root + "/capacity",
             StoreIdPath = s.Root + "/runner-store-id", RunnerRepository = s.Repository, RunnerCloneSource = s.OriginGit,
-            AllowedCloneSources = [s.OriginGit],
+            AllowedCloneSources = [s.OriginGit], OutputDropMode = RunnerOutputDropMode.Execute,
         };
         var dispatcher = new PhoneHomeCommandDispatcher(new DropRuntime(s.Engine()), settings);
         dispatcher.UseWorkspace(s.Service());
@@ -480,9 +644,26 @@ public sealed class C1895OutputDropEngineTests
         s.MutatingVerbs().ShouldBeEmpty();
     }
 
+    private static PhoneHomeCommandDispatcher Dispatcher(C1677RetentionScratch s, RunnerWorkspaceRetention engine, string mode)
+    {
+        var settings = new PhoneHomeSettings
+        {
+            Enabled = true, AllowedCwd = s.Work, Capacity = 2, CapacityStatePath = s.Root + "/capacity",
+            StoreIdPath = s.Root + "/runner-store-id", RunnerRepository = s.Repository, RunnerCloneSource = s.OriginGit,
+            AllowedCloneSources = [s.OriginGit], OutputDropMode = mode,
+        };
+        var dispatcher = new PhoneHomeCommandDispatcher(new DropRuntime(engine), settings);
+        dispatcher.UseWorkspace(s.Service());
+        return dispatcher;
+    }
+
+    private static PhoneHomeFrame Frame(MirrorTree m) =>
+        new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceDropOutputs,
+            JsonSerializer.SerializeToElement(DropRequest(m), PhoneHomeFraming.Json));
+
     private static PhoneHomeWorkspaceOutputDropRequest DropRequest(MirrorTree m, string mode = Execute,
-        string? path = null, Guid? taskId = null) =>
-        new(taskId ?? m.TaskId, path ?? m.Path, m.Branch, mode, Guid.NewGuid());
+        string? path = null, Guid? taskId = null, Guid? requestId = null) =>
+        new(taskId ?? m.TaskId, path ?? m.Path, m.Branch, mode, requestId ?? Guid.NewGuid());
 
     private static void Kept(C1677RetentionScratch s, PhoneHomeWorkspaceOutputDropResponse response, string reason,
         string bin, MirrorTree m)
@@ -497,13 +678,14 @@ public sealed class C1895OutputDropEngineTests
 
     private static Planted PlantOutputs(MirrorTree m, string scratchRoot)
     {
-        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin");
+        Exclude(m.Path, "bin-*/", "bin-/", "node_modules/", "dist/", "binary/", "obj2/", "notes/bin", "*.csproj");
         var bin = m.Path + "/tests/Foo/bin";
         var obj = m.Path + "/tests/Foo/obj";
         var binCp = m.Path + "/tests/Foo/bin-cp1";
         Directory.CreateDirectory(bin);
         Directory.CreateDirectory(obj);
         Directory.CreateDirectory(binCp);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
         File.WriteAllText(bin + "/hello.txt", "hello");
         var outside = scratchRoot + "/outside-file.txt";
         File.WriteAllText(outside, "outside-bytes-should-not-count");

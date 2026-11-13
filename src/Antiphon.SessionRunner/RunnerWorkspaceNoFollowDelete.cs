@@ -1,7 +1,9 @@
 using Antiphon.SessionRunner.Contracts;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.SessionRunner;
@@ -448,6 +450,7 @@ internal static class RunnerWorkspaceNoFollowDelete
     [DllImport("libc", SetLastError = true)] private static extern int unlinkat(int fd, string path, int flags);
     [DllImport("libc", SetLastError = true)] private static extern int fstat(int fd, IntPtr stat);
     [DllImport("libc", SetLastError = true)] private static extern int fstatat(int fd, string path, IntPtr stat, int flags);
+    [DllImport("libc", SetLastError = true)] private static extern int readlink(string pathname, byte[] buf, nuint bufsiz);
 
     private static async Task DeleteWindowsAsync(string path, string root, Dictionary<string, Entry> allowed,
         Action<string>? beforeEntry, string? rootIdentity, Action<string>? afterValidation, CancellationToken ct)
@@ -610,4 +613,377 @@ internal static class RunnerWorkspaceNoFollowDelete
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
         ref FileDispositionInfo info, uint size);
+
+    /// <summary>CARD-1895. One proven output directory held by parent and directory descriptors.</summary>
+    internal sealed class HeldOutput : IDisposable
+    {
+        internal string Relative = "";
+        internal string Name = "";
+        internal string Identity = "";
+        internal long MeasuredBytes;
+        internal int MeasuredFiles;
+        internal SafeFileHandle Parent = null!;
+        internal SafeFileHandle Directory = null!;
+        private int _disposed;
+
+        internal int ParentFd => (int)Parent.DangerousGetHandle();
+        internal int DirectoryFd => (int)Directory.DangerousGetHandle();
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+            Directory.Dispose();
+            Parent.Dispose();
+        }
+    }
+
+    internal readonly record struct OutputDisposition(long BytesRemoved, int FilesRemoved, int FilesLeft, string? Error);
+
+    /// <summary>
+    /// Open <paramref name="directory"/> under <paramref name="workspaceRoot"/> without following links.
+    /// A Windows call fails closed: the Windows walk is not the identity path.
+    /// </summary>
+    internal static bool TryHoldOutput(string workspaceRoot, string directory, CancellationToken ct,
+        out HeldOutput? held, out string? refusal)
+    {
+        held = null;
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            refusal = "windows_output_hold_unexecuted";
+            return false;
+        }
+
+        var rootFull = Path.GetFullPath(workspaceRoot);
+        var dirFull = Path.GetFullPath(directory);
+        if (!IsUnder(dirFull, rootFull))
+        {
+            refusal = "outside_root";
+            return false;
+        }
+
+        var cursor = rootFull.TrimEnd('/');
+        foreach (var part in Path.GetRelativePath(rootFull, dirFull).Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            ct.ThrowIfCancellationRequested();
+            cursor += "/" + part;
+            if (new FileInfo(cursor).LinkTarget is not null)
+            {
+                refusal = "symlink";
+                return false;
+            }
+        }
+
+        var rootMount = MountId(rootFull);
+        var dirMount = MountId(dirFull);
+        if (rootMount is null || dirMount is null || !string.Equals(rootMount, dirMount, StringComparison.Ordinal))
+        {
+            refusal = "mount_boundary";
+            return false;
+        }
+
+        SafeFileHandle parent;
+        try
+        {
+            parent = OpenLinuxPath(Path.GetDirectoryName(dirFull)!);
+        }
+        catch (Exception ex) when (ex is IOException or PlatformNotSupportedException)
+        {
+            refusal = "unproven_content";
+            return false;
+        }
+
+        var name = Path.GetFileName(dirFull);
+        SafeFileHandle? directoryHandle = null;
+        try
+        {
+            var parentFd = (int)parent.DangerousGetHandle();
+            if (LinuxIsLink(parentFd, name))
+            {
+                refusal = "symlink";
+                return false;
+            }
+
+            var listed = LinuxMetadata(parentFd, name);
+            if (!listed.Directory)
+            {
+                refusal = "unproven_content";
+                return false;
+            }
+
+            var raw = openat(parentFd, name, 0x10000 | 0x20000 | 0x80000);
+            if (raw < 0)
+            {
+                refusal = "unproven_content";
+                return false;
+            }
+
+            directoryHandle = new SafeFileHandle((IntPtr)raw, ownsHandle: true);
+            var opened = LinuxMetadata(raw);
+            if (opened.Identity != listed.Identity || !opened.Directory)
+            {
+                refusal = "changed_during_drop";
+                return false;
+            }
+
+            using var rootHandle = OpenLinuxPath(rootFull);
+            var rootReal = ReadProcFd((int)rootHandle.DangerousGetHandle());
+            var dirReal = ReadProcFd(raw);
+            if (rootReal is null || dirReal is null || !IsUnder(dirReal, rootReal))
+            {
+                refusal = "outside_root";
+                return false;
+            }
+
+            var tally = new Tally();
+            WalkHeld(raw, delete: false, tally, ct, 0, null);
+            if (tally.Error is not null)
+            {
+                refusal = tally.Error;
+                return false;
+            }
+
+            held = new HeldOutput
+            {
+                Relative = Path.GetRelativePath(rootFull, dirFull).Replace('\\', '/'),
+                Name = name,
+                Identity = opened.Identity,
+                MeasuredBytes = tally.Bytes,
+                MeasuredFiles = tally.Removed,
+                Parent = parent,
+                Directory = directoryHandle,
+            };
+            parent = null!;
+            directoryHandle = null;
+            refusal = null;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            refusal = ex is Refusal refused ? refused.Reason : "unproven_content";
+            return false;
+        }
+        finally
+        {
+            directoryHandle?.Dispose();
+            parent?.Dispose();
+        }
+    }
+
+    /// <summary>Unlink through the held descriptors. A failed unlink keeps the bytes already removed.</summary>
+    internal static OutputDisposition DeleteHeld(HeldOutput held, CancellationToken ct, Action<OutputDisposition>? progress = null)
+    {
+        var named = LinuxMetadata(held.ParentFd, held.Name);
+        var opened = LinuxMetadata(held.DirectoryFd);
+        if (!opened.Directory || named.Identity != held.Identity || opened.Identity != held.Identity)
+            return new OutputDisposition(0, 0, held.MeasuredFiles, "changed_during_drop");
+
+        var tally = new Tally();
+        WalkHeld(held.DirectoryFd, delete: true, tally, ct, 0, progress);
+        if (tally.Error is null && unlinkat(held.ParentFd, held.Name, 0x200) != 0)
+        {
+            tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
+            tally.Left++;
+        }
+
+        return new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, tally.Error);
+    }
+
+    /// <summary>Mount id from <c>/proc/self/mountinfo</c>, longest mount-point prefix. Null when it cannot be read.</summary>
+    internal static string? MountId(string path)
+    {
+        if (!OperatingSystem.IsLinux())
+            return null;
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines("/proc/self/mountinfo");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        var full = Path.GetFullPath(path).TrimEnd('/');
+        if (full.Length == 0)
+            full = "/";
+        string? bestId = null;
+        var bestLen = -1;
+        foreach (var line in lines)
+        {
+            var fields = line.Split(' ');
+            if (fields.Length < 5 || fields[0].Length == 0)
+                continue;
+            var point = UnescapeMount(fields[4]);
+            var norm = point.Length > 1 ? point.TrimEnd('/') : point;
+            if (norm.Length == 0)
+                continue;
+            var matches = string.Equals(full, norm, StringComparison.Ordinal)
+                || full.StartsWith(norm == "/" ? "/" : norm + "/", StringComparison.Ordinal);
+            if (!matches || norm.Length <= bestLen)
+                continue;
+            bestLen = norm.Length;
+            bestId = fields[0];
+        }
+
+        return bestId;
+    }
+
+    private static void WalkHeld(int fd, bool delete, Tally tally, CancellationToken ct, int depth, Action<OutputDisposition>? progress)
+    {
+        if (tally.Error is not null)
+            return;
+        if (depth > 64)
+        {
+            tally.Error = "unproven_content";
+            return;
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            tally.Error = "cancelled";
+            return;
+        }
+
+        var children = ListChildren("/proc/self/fd/" + fd.ToString(CultureInfo.InvariantCulture), ct);
+        for (var index = 0; index < children.Count; index++)
+        {
+            if (ct.IsCancellationRequested)
+            {
+                tally.Error = "cancelled";
+                tally.Left += CountRegular(fd, children, index, ct, depth);
+                return;
+            }
+
+            var name = Path.GetFileName(children[index]);
+            if (LinuxIsLink(fd, name))
+            {
+                if (delete && unlinkat(fd, name, 0) != 0)
+                {
+                    tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
+                    tally.Left++;
+                    return;
+                }
+
+                continue;
+            }
+
+            var listed = LinuxMetadata(fd, name);
+            if (listed.Directory)
+            {
+                using var child = OpenLinuxEntry(fd, name);
+                WalkHeld((int)child.DangerousGetHandle(), delete, tally, ct, depth + 1, progress);
+                if (tally.Error is not null)
+                {
+                    tally.Left += CountRegular(fd, children, index + 1, ct, depth);
+                    return;
+                }
+                if (delete && unlinkat(fd, name, 0x200) != 0)
+                {
+                    tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
+                    tally.Left++;
+                    return;
+                }
+            }
+            else if (listed.Regular)
+            {
+                if (!delete)
+                {
+                    tally.Bytes += listed.Size;
+                    tally.Removed++;
+                    continue;
+                }
+
+                if (unlinkat(fd, name, 0) != 0)
+                {
+                    tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
+                    tally.Left += CountRegular(fd, children, index, ct, depth);
+                    return;
+                }
+
+                tally.Bytes += listed.Size;
+                tally.Removed++;
+                progress?.Invoke(new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, null));
+            }
+            else
+            {
+                tally.Error = "unproven_content";
+                tally.Left++;
+                return;
+            }
+        }
+    }
+
+    private static int CountRegular(int fd, IReadOnlyList<string> children, int from, CancellationToken ct, int depth)
+    {
+        var count = 0;
+        for (var index = from; index < children.Count; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(children[index]);
+            if (LinuxIsLink(fd, name))
+                continue;
+            var listed = LinuxMetadata(fd, name);
+            if (listed.Regular)
+                count++;
+            else if (listed.Directory && depth < 64)
+            {
+                using var child = OpenLinuxEntry(fd, name);
+                var nested = ListChildren("/proc/self/fd/" + ((int)child.DangerousGetHandle()).ToString(CultureInfo.InvariantCulture), ct);
+                count += CountRegular((int)child.DangerousGetHandle(), nested, 0, ct, depth + 1);
+            }
+        }
+
+        return count;
+    }
+
+    private static string? ReadProcFd(int fd)
+    {
+        var buffer = new byte[4096];
+        var read = readlink("/proc/self/fd/" + fd.ToString(CultureInfo.InvariantCulture), buffer, (nuint)buffer.Length);
+        if (read <= 0 || read >= buffer.Length)
+            return null;
+        return Encoding.UTF8.GetString(buffer, 0, read);
+    }
+
+    private static bool IsUnder(string child, string root)
+    {
+        child = child.TrimEnd('/');
+        root = root.TrimEnd('/');
+        if (root.Length == 0)
+            root = "/";
+        return string.Equals(child, root, StringComparison.Ordinal)
+            || child.StartsWith(root == "/" ? "/" : root + "/", StringComparison.Ordinal);
+    }
+
+    private static string UnescapeMount(string value)
+    {
+        if (!value.Contains('\\', StringComparison.Ordinal))
+            return value;
+        var built = new StringBuilder(value.Length);
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (value[i] == '\\' && i + 3 < value.Length
+                && IsOctal(value[i + 1]) && IsOctal(value[i + 2]) && IsOctal(value[i + 3]))
+            {
+                var code = ((value[i + 1] - '0') * 64) + ((value[i + 2] - '0') * 8) + (value[i + 3] - '0');
+                built.Append((char)code);
+                i += 3;
+            }
+            else
+                built.Append(value[i]);
+        }
+
+        return built.ToString();
+    }
+
+    private static bool IsOctal(char c) => c is >= '0' and <= '7';
+
+    private sealed class Tally
+    {
+        internal long Bytes;
+        internal int Removed;
+        internal int Left;
+        internal string? Error;
+    }
 }

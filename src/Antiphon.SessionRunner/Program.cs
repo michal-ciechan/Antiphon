@@ -65,6 +65,10 @@ builder.Services.PostConfigure<PhoneHomeSettings>(settings =>
     // CARD-0679 R5 repair 2: the launch-generation fence lives on the state volume, so it survives a restart.
     if (settings.Enabled)
         settings.LaunchGenerationsPath = settings.ResolvedLaunchGenerationsPath();
+    // CARD-1895. The server section is the operator switch. Unknown text stays Off.
+    var configuredMode = builder.Configuration["RunnerWorktreeRetention:OutputDrop:Mode"];
+    if (!string.IsNullOrWhiteSpace(configuredMode))
+        settings.OutputDropMode = RunnerOutputDropMode.Normalize(configuredMode);
 });
 builder.Services.AddHttpClient(nameof(PhoneHomeConnectionService));
 builder.Services.AddSingleton<PhoneHomeProcessIdentity>();
@@ -91,7 +95,11 @@ builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
         var workspace = new RunnerWorkspaceService(phoneHome.RepositoryPolicy(), phoneHome.AllowedCwd);
         workspace.WorkspaceUseGate = runtime.WorkspaceUseGate;
         workspace.Activity = sp.GetRequiredService<RunnerRepositoryActivity>();
-        retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe());
+        retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe())
+        {
+            // CARD-1895. Beside the store id, on the same state volume, so a lost reply can be replayed.
+            OutputDropLedgerRoot = Path.Combine(Path.GetDirectoryName(phoneHome.StoreIdPath) ?? ".", "output-drop-ledger"),
+        };
         // CARD-1677 S2: /tmp, registered families only; it acts only on a server TempSweep request, which ships off
         // (RunnerWorktreeRetention:TempSweep:Enabled=false, Execute=false).
         tempSweep = RunnerTempSweep.CreateDefault(retention.RetiringRoot);

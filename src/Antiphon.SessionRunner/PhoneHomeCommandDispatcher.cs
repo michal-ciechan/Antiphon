@@ -45,7 +45,7 @@ public interface IPhoneHomeRuntimeSurface
     Task<WorkspaceOutputDropStep> CheckWorkspaceOutputsAsync(PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
 
-    /// <summary>CARD-1895. The allow-listed delete, after the mutation lock is released.</summary>
+    /// <summary>CARD-1895. The allow-listed delete. The dispatcher runs it under the same mutation lock as the check.</summary>
     Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
     /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
@@ -1065,8 +1065,8 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
-    /// CARD-1895. Recent-use and the retention checks run under the mutation lock. The output delete runs after
-    /// the lock is released so a multi-gigabyte bin cannot stall a session's Input.
+    /// CARD-1895. Recent-use, the retention checks, and the delete all run under the mutation lock.
+    /// The runner switch can refuse or force a dry run even when the request says Execute.
     /// </summary>
     private async Task<PhoneHomeFrame> DropOutputsAsync(PhoneHomeFrame request, CancellationToken ct)
     {
@@ -1075,18 +1075,69 @@ public sealed class PhoneHomeCommandDispatcher
                 "Workspace output drop is not supported on this runner.", 501);
         var body = request.Payload?.Deserialize<PhoneHomeWorkspaceOutputDropRequest>(PhoneHomeFraming.Json)
             ?? throw new ArgumentException("Workspace output drop body is required.");
-        WorkspaceOutputDropStep? step = null;
-        var locked = await MutateAsync(request, async () =>
+        var mode = RunnerOutputDropMode.Normalize(_settings.OutputDropMode);
+        if (mode == RunnerOutputDropMode.Off)
+            return Result(request, new PhoneHomeWorkspaceOutputDropResponse(
+                WorkspaceOutputDropCodes.Kept, WorkspaceOutputDropCodes.OutputDropOff, Detail: "output drop is off"));
+        if (mode == RunnerOutputDropMode.Preview && body.Mode == WorkspaceOutputDropModes.Execute)
+            body = body with { Mode = WorkspaceOutputDropModes.DryRun };
+
+        return await MutateAsync(request, async () =>
         {
-            var live = _runtime.List().Where(session => session.Status != "Exited").Select(session => session.SessionId);
+            var live = LiveSessionIds();
             if (_workspaceActivity.Covers(body.Path ?? "", TimeSpan.FromMinutes(_settings.RetentionRecentUseMinutes), live) is { } use)
                 return Result(request, new PhoneHomeWorkspaceOutputDropResponse(WorkspaceOutputDropCodes.Kept, use.Reason, Detail: use.Detail));
-            step = await _runtime.CheckWorkspaceOutputsAsync(body, ct);
-            return Result(request, step.Response ?? new PhoneHomeWorkspaceOutputDropResponse(WorkspaceOutputDropCodes.Kept));
+            var step = await _runtime.CheckWorkspaceOutputsAsync(body, ct);
+            if (!step.Eligible)
+            {
+                if (step.Lease is { } refusedLease)
+                    await refusedLease.DisposeAsync();
+                return Result(request, step.Response ?? new PhoneHomeWorkspaceOutputDropResponse(WorkspaceOutputDropCodes.Kept));
+            }
+
+            step = step with
+            {
+                AdmissionRecheck = async token =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var again = _workspaceActivity.Covers(body.Path ?? "", TimeSpan.FromMinutes(_settings.RetentionRecentUseMinutes), LiveSessionIds());
+                    return again?.Reason;
+                },
+            };
+            try
+            {
+                var response = await _runtime.ApplyWorkspaceOutputsAsync(step, ct);
+                if (response.Verdict == WorkspaceOutputDropCodes.WouldDrop)
+                    _logger.LogInformation(
+                        "Output drop preview {Path} would drop {Bytes} bytes in {Directories} directories",
+                        body.Path, response.Bytes, response.Directories);
+                return Result(request, response);
+            }
+            finally
+            {
+                if (step.Lease is { } lease)
+                    await lease.DisposeAsync();
+            }
         });
-        if (step is not { Eligible: true })
-            return locked;
-        return Result(request, await _runtime.ApplyWorkspaceOutputsAsync(step, ct));
+    }
+
+    private IEnumerable<Guid> LiveSessionIds() =>
+        _runtime.List().Where(session => session.Status != "Exited").Select(session => session.SessionId);
+
+    /// <summary>CARD-1895. A launch stamp the per-directory recheck can see. Sessions have no cwd of their own.</summary>
+    internal void RecordWorkspaceLaunch(Guid sessionId, string cwd) =>
+        _workspaceActivity.RecordLaunch(sessionId, cwd);
+
+    /// <summary>True while this dispatcher is inside <see cref="MutateAsync"/> on another thread.</summary>
+    internal bool MutationLockIsHeld()
+    {
+        if (MutationLock.Wait(0))
+        {
+            MutationLock.Release();
+            return false;
+        }
+
+        return true;
     }
 
     private async Task<PhoneHomeFrame> RetentionInventoryAsync(PhoneHomeFrame request, CancellationToken ct)
