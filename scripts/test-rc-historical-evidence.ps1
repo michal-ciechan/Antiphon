@@ -21,6 +21,14 @@ function Refuses([scriptblock]$Action, [string]$Reason) {
 function Export-Fixture([string]$Root, [string[]]$Paths = @('summary.json')) {
     Export-RcHistoricalEvidence -SourceRunRoot $Root -EvidenceRoot (Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))) -RepositoryRoot (Join-Path $PSScriptRoot '..') -RelativePath $Paths
 }
+function Test-NativeHistoricalHandle {
+    $nativeSource = New-Root 'native-handle'
+    Write-Text (Join-Path $nativeSource 'summary.json') '{"runId":"native-handle"}'
+    $nativeOutput = Join-Path $ResultsDirectory ([guid]::NewGuid().ToString('N'))
+    $nativeBundle = [Antiphon.Rc.HistoricalEvidence]::Export($nativeSource, $nativeOutput, (Join-Path $PSScriptRoot '..'), (Join-Path $PSScriptRoot '..'), @('summary.json'), $null)
+    Note $nativeBundle.valid 'production native handle factory failed'
+    Note ($nativeBundle.files[0].length -eq 25) 'native handle read wrong bytes'
+}
 try {
     $library = Join-Path $PSScriptRoot 'lib/rc-historical-evidence.ps1'
     if ([IO.File]::Exists($library)) { . $library }
@@ -66,6 +74,7 @@ try {
             Write-Output ('RH metrics bytes=' + $entry.length + ' peakDelta=' + $peak + ' maxBufferedBytes=' + $result.maxBufferedBytes + ' elapsed=' + $watch.Elapsed.TotalSeconds)
         }
         'TamperAndChangingReadRefuse' {
+            Test-NativeHistoricalHandle
             $source = New-Root 'tamper'
             $path = Join-Path $source 'summary.json'
             Write-Text $path '{"runId":"first"}'
@@ -81,6 +90,7 @@ try {
             $hook = [Action]{ Write-Text $path '{"runId":"third"}' }
             Refuses { Export-RcHistoricalEvidence -SourceRunRoot $source -EvidenceRoot (Join-Path $ResultsDirectory 'changing') -RepositoryRoot (Join-Path $PSScriptRoot '..') -RelativePath @('summary.json') -AfterOpen $hook } 'evidence-changing'
             Note (-not [IO.File]::Exists((Join-Path $ResultsDirectory 'changing/inventory.json'))) 'changing read published inventory'
+            Refuses { Test-RcHistoricalEvidence -EvidenceRoot (Join-Path $ResultsDirectory 'changing') } 'inventory.json'
             # Replacement with equal length and a restored mtime must also refuse.
             $hook = [Action]{ $time = [IO.File]::GetLastWriteTimeUtc($path); Write-Text $path '{"runId":"forth"}'; [IO.File]::SetLastWriteTimeUtc($path, $time) }
             Refuses { Export-RcHistoricalEvidence -SourceRunRoot $source -EvidenceRoot (Join-Path $ResultsDirectory 'same-stat') -RepositoryRoot (Join-Path $PSScriptRoot '..') -RelativePath @('summary.json') -AfterOpen $hook } 'evidence-changing'
@@ -98,6 +108,7 @@ try {
             Refuses { Export-Fixture $source @('../summary.json') } 'evidence-path'
             Refuses { Export-Fixture $source @('summary.json','SUMMARY.json') } 'evidence-path'
             Refuses { Export-Fixture $source @('summary.json','summary.json') } 'evidence-path'
+            Refuses { Export-Fixture $source @('a/one.json','A/two.json') } 'evidence-path'
             Refuses { Export-RcHistoricalEvidence -SourceRunRoot $source -EvidenceRoot (Join-Path $source 'output') -RepositoryRoot (Join-Path $PSScriptRoot '..') } 'evidence-output'
             Refuses { Export-RcHistoricalEvidence -SourceRunRoot $source -EvidenceRoot (Join-Path $PSScriptRoot '../.antiphon/rh-output') -RepositoryRoot (Join-Path $PSScriptRoot '..') } 'evidence-output'
             $link = Join-Path $source 'link.json'

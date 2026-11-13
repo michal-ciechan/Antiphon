@@ -11,7 +11,8 @@ public sealed class RcHistoricalEvidenceTests
     private static Task Run(string name, CancellationToken token) =>
         ScriptHarness.RunHarnessCaseAsync("test-rc-historical-evidence.ps1", "RH", name, 1,
             ["RH " + name + ".contract"],
-            new ScriptHarnessOptions(TimeSpan.FromSeconds(110), TimeSpan.FromSeconds(10)), token);
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(name == nameof(LargeSummaryIsBounded) ? 110 : 45),
+                TimeSpan.FromSeconds(10)), token);
 
     [Test, Timeout(120_000)] public Task LargeSummaryIsBounded(CancellationToken token) => Run(nameof(LargeSummaryIsBounded), token);
     [Test, Timeout(60_000)] public Task TamperAndChangingReadRefuse(CancellationToken token) => Run(nameof(TamperAndChangingReadRefuse), token);
