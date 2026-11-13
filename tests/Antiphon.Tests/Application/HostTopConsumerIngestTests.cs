@@ -1,3 +1,8 @@
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Infrastructure.HostLoad;
 using Antiphon.SessionRunner.Contracts;
@@ -42,6 +47,36 @@ public class HostTopConsumerIngestTests
     }
 
     [Test]
+    public void Absent_or_empty_top_consumers_keep_the_pre_upgrade_canonical_hash()
+    {
+        var sample = Sample([]);
+        var current = ServerCanonical(sample);
+        var local = Canonicalize(JsonSerializer.SerializeToElement(sample, PhoneHomeFraming.Json));
+        local.ShouldBe(current, "the witness canonical writer must match HostLoadIngestService");
+
+        var absent = JsonNode.Parse(current)!.AsObject();
+        absent.ContainsKey("topConsumers").ShouldBeTrue();
+        absent.Remove("topConsumers");
+        var preupgrade = Canonicalize(JsonSerializer.SerializeToElement(absent, PhoneHomeFraming.Json));
+        preupgrade.ShouldNotContain("topConsumers");
+
+        var replay = JsonSerializer.Deserialize<HostLoadSample>(preupgrade, PhoneHomeFraming.Json);
+        replay.ShouldNotBeNull();
+        replay.TopConsumers.ShouldBeEmpty();
+        ServerCanonical(replay).ShouldBe(preupgrade);
+
+        var explicitEmpty = JsonSerializer.Deserialize<HostLoadSample>(current, PhoneHomeFraming.Json);
+        explicitEmpty.ShouldNotBeNull();
+        ServerCanonical(explicitEmpty).ShouldBe(preupgrade);
+
+        var changed = sample with { TopConsumers = [new HostLoadTopConsumer(1, 10, "VBCSCompiler", "compiler", 5.3, 409600)] };
+        var populated = ServerCanonical(changed);
+        populated.ShouldContain("VBCSCompiler");
+        populated.ShouldNotBe(preupgrade);
+        Sha(populated).ShouldNotBe(Sha(preupgrade));
+    }
+
+    [Test]
     public void Schema_stays_one_and_session_names_stay_closed()
     {
         Should.Throw<ValidationException>(() => Validate(Sample([], schema: 2)));
@@ -66,4 +101,47 @@ public class HostTopConsumerIngestTests
     private static void Validate(HostLoadSample sample) =>
         HostLoadIngestService.Validate(new HostLoadIngestBatch("runner-a", null,
             new HostLoadHistoryPage(1, sample.Source, [sample], [], null, false, true)));
+
+    private static string ServerCanonical(HostLoadSample sample)
+    {
+        var method = typeof(HostLoadIngestService).GetMethod("CanonicalPayload", BindingFlags.NonPublic | BindingFlags.Static);
+        method.ShouldNotBeNull();
+        return (string)method.Invoke(null, [sample])!;
+    }
+
+    private static string Sha(string payload) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+
+    private static string Canonicalize(JsonElement element)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+            WriteCanonical(writer, element);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            writer.WriteStartObject();
+            foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+            {
+                writer.WritePropertyName(property.Name);
+                WriteCanonical(writer, property.Value);
+            }
+
+            writer.WriteEndObject();
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            writer.WriteStartArray();
+            foreach (var item in element.EnumerateArray())
+                WriteCanonical(writer, item);
+            writer.WriteEndArray();
+        }
+        else
+        {
+            element.WriteTo(writer);
+        }
+    }
 }
