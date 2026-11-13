@@ -20,6 +20,16 @@ function Refuses([scriptblock]$operation,[string]$reason) {
     try { & $operation | Out-Null; Note $false "refusal:$reason" }
     catch { Note ($_.Exception.Message.Contains($reason,[StringComparison]::Ordinal)) "refusal-reason:$reason" }
 }
+function RefusesEncoding([scriptblock]$operation, [string]$label) {
+    try { & $operation | Out-Null; Note $false ("encoding-accepted:"+$label) }
+    catch {
+        $errorType=$_.Exception
+        while ($null -ne $errorType -and $errorType -isnot [Text.EncoderFallbackException]) {
+            $errorType=$errorType.InnerException
+        }
+        Note ($null -ne $errorType) ("encoding-error-type:"+$label+':'+$_.Exception.Message)
+    }
+}
 function Manifest([string]$sha, [object[]]$rows=$cases, [object[]]$receipts=$actual) {
     $snapshot=Read-RcInputInventory $root $sha
     New-RcChunkInputManifest -Snapshot $snapshot -InputSuite server -Chunk $chunk -Cases $rows -ActualReceipts $receipts
@@ -48,7 +58,7 @@ $actual=@(foreach ($kind in @('sdk-runtime-os-architecture','powershell-node-bro
     'resolved-package-graph-and-content','generated-fixture-recipes-and-outputs','immutable-images')) {
     @{kind=$kind;digest=('a'*64);provenanceDigest=('b'*64);sourceSha=$baseline}
 })
-$before=Manifest $baseline
+$before=if ($Case -cne 'LoneSurrogatesFailClosed') { Manifest $baseline }
 switch ($Case) {
     'TransitiveEditAndDeletionChangeDigest' {
         Note ($before.unknown.Count -eq 0 -and $before.digest -cmatch '^[a-f0-9]{64}$') 'known-baseline'
@@ -161,12 +171,29 @@ switch ($Case) {
         Note ($manifest.cases[0].caseKey -ceq '"' -and $manifest.cases[1].caseKey -ceq '#') 'canonical-global-case-order'
         Note ($manifest.methods[0].cases[0].caseKey -ceq '"') 'canonical-method-case-order'
         Note ((Manifest $baseline @($rows[2],$rows[1],$rows[0])).digest -ceq $manifest.digest) 'case-order-independent'
-        # S2 replaces invalid UTF-16 with U+FFFD before length-prefixing UTF-8.
+        # CARD-1871 rejects invalid UTF-16; S3b must use the same encoding rule.
+        RefusesEncoding { Get-RcManifestDigest @(@('row',[string][char]0xd800),@('other')) } 'canonical-field'
+        Note ((Get-RcManifestDigest @(@('row',[string][char]0xfffd),@('other'))) -cmatch '^[a-f0-9]{64}$') 'replacement-character-is-valid'
+    }
+    'LoneSurrogatesFailClosed' {
+        # No digest/decision is returned for malformed paths or case names.
+        foreach ($codeUnit in @(0xd800,0xdc00)) {
+            $invalid=[string][char]$codeUnit
+            RefusesEncoding { Get-RcManifestDigest @(@('row',$invalid),@('other')) } "field-$codeUnit"
+            $snapshot=Read-RcInputInventory $root $baseline
+            $owner=@($snapshot.suites | Where-Object id -CEQ server)[0]
+            $owner.inputs[0].path='src/Core/bad'+$invalid+'.txt'
+            RefusesEncoding { New-RcChunkInputManifest $snapshot server $chunk $cases $actual } "path-$codeUnit"
+            $badCases=@($cases | ForEach-Object { $_.Clone() })
+            $badCases[0].caseKey='row:'+$invalid
+            RefusesEncoding { Manifest $baseline $badCases } "case-$codeUnit"
+        }
+        $validCases=@($cases | ForEach-Object { $_.Clone() })
+        $validCases[0].caseKey='row:'+[char]0xfffd
         try {
-            $surrogate=Get-RcManifestDigest @(@('row',[string][char]0xd800),@('other'))
-            $replacement=Get-RcManifestDigest @(@('row',[string][char]0xfffd),@('other'))
-            Note ($surrogate -ceq $replacement) 'shared-utf8-replacement'
-        } catch { Note $false ('shared-utf8:'+ $_.Exception.Message) }
+            $valid=Manifest $baseline $validCases
+            Note ($valid.unknown.Count -eq 0 -and $valid.digest -cmatch '^[a-f0-9]{64}$') 'valid-unicode-still-accepted'
+        } catch { Note $false ('valid-unicode:'+ $_.Exception.Message) }
     }
     'DependencyEdgesAffectDigest' {
         $snapshot=Read-RcInputInventory $root $baseline
