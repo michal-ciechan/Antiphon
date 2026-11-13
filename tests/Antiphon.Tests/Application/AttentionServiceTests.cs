@@ -2032,6 +2032,25 @@ public partial class AttentionServiceTests
     // ---- 9. RecentCriticalIncident --------------------------------------------------------------
 
     [Test]
+    public async Task recent_incident_links_the_task_in_its_session_at_incident_time()
+    {
+        await using var scenario = new Scenario();
+        var agent = await scenario.AddAgentAsync();
+        var session = await scenario.AddSessionAsync();
+        var task = await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched,
+            dispatchedMinutesAgo: 20, agentId: agent);
+        await scenario.AddIncidentAsync(agent, session, AgentIncidentKind.DeliveryTransportFailed,
+            AlertSeverity.Error, "Input transport failed.", minutesAgo: 10);
+        // A later task on the same persistent session must not own an earlier incident.
+        await scenario.AddTaskAsync(session, AgentTaskStatus.Dispatched,
+            dispatchedMinutesAgo: 5, agentId: agent);
+
+        var item = (await ItemsForAsync(scenario)).Single(i => i.AgentId == agent
+            && i.Kind == AttentionKind.RecentCriticalIncident);
+        item.TaskId.ShouldBe(task, "incident-task-link: use the task that owned this session then");
+    }
+
+    [Test]
     public async Task recent_error_incidents_collapse_to_one_row_per_agent_and_kind()
     {
         // Ungrouped this condition is the noisiest by an order of magnitude: 107 raw Error+ rows in
