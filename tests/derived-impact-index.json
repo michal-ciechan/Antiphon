@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 319,
+      "classes": 320,
       "reason": "allowlist"
     },
     {
@@ -2015,9 +2015,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 127,
+      "classes": 128,
       "reason": "cap",
-      "owed": 102,
+      "owed": 103,
       "first": [
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -2111,18 +2111,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
+        "ScriptHarnessWindowsOwnershipTests",
         "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
         "ChangeAwareReleaseBudgetTests",
         "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
         "C1514HostLoadScriptTests",
-        "ReleaseGateFollowupTests",
-        "ReleaseSelectionCliTests"
+        "ReleaseGateFollowupTests"
       ]
     },
     {
@@ -23974,14 +23974,14 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcForcedFullTests",
+        "RcHistoricalEvidenceTests",
         "RcIncrementalLedgerTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcStoppedRunSeedTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
-        "ScriptHarnessProcessContractTests",
-        "ScriptHarnessWindowsOwnershipTests"
+        "ScriptHarnessProcessContractTests"
       ]
     },
     {
