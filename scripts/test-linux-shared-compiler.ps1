@@ -89,6 +89,20 @@ function Test-C1885Adapter {
     $again.Environment['XDG_CACHE_HOME'] = $scratch
     Set-AntiphonBuildDriverEnvironment -StartInfo $again
     Assert-Compiler ($again.ArgumentList[3] -ceq $argsNow[3]) 'cache and pipe are shared across working directories'
+    $tools = $argsNow[1].Substring('-p:RoslynTargetsPath='.Length)
+    $launcher = Join-Path $tools 'bincore/VBCSCompiler'
+    try {
+        & chmod 400 -- $launcher
+        $unstartable = New-CompilerStart $fake $tokens $scratch
+        $unstartable.Environment['XDG_CACHE_HOME'] = $scratch
+        Set-AntiphonBuildDriverEnvironment -StartInfo $unstartable
+        $stockWhenUnstartable = ($unstartable.ArgumentList -join "`n") -ceq ($tokens -join "`n")
+    } finally { & chmod 500 -- $launcher }
+    Assert-Compiler $stockWhenUnstartable 'unstartable private launcher fails open before the driver starts'
+    $missingTaskset = New-CompilerStart $fake $tokens $scratch
+    $missingTaskset.Environment['PATH'] = $scratch
+    Set-AntiphonBuildDriverEnvironment -StartInfo $missingTaskset
+    Assert-Compiler (($missingTaskset.ArgumentList -join "`n") -ceq ($tokens -join "`n")) 'missing affinity utility preserves a usable stock driver'
     foreach ($setting in @($null, '', '0')) {
         $off = New-CompilerStart $fake $tokens $scratch
         if ($null -eq $setting) { [void]$off.Environment.Remove('ANTIPHON_LINUX_COMPILER_POLICY') }
@@ -103,7 +117,6 @@ function Test-C1885Adapter {
         Set-AntiphonBuildDriverEnvironment -StartInfo $skip
         Assert-Compiler (($skip.ArgumentList -join "`n") -ceq ($negative -join "`n")) 'negative command/caller choice is preserved'
     }
-    $tools = $argsNow[1].Substring('-p:RoslynTargetsPath='.Length)
     $manifest = Join-Path $tools 'manifest.sha256'
     & chmod 700 -- $manifest
     [IO.File]::WriteAllText($manifest, 'corrupted fixture cache')
@@ -159,7 +172,7 @@ try {
     while (-not $process.WaitForExit(100)) {
         if ($timer.Elapsed.TotalSeconds -gt 30) { throw 'native build exceeded its provisional 30-second bound' }
         foreach ($compiler in @(Get-C1885Compilers $pipe)) {
-            $owned["$($compiler.Pid):$($compiler.Start)"] = $compiler
+            $owned[('{0}:{1}' -f $compiler.Pid, $compiler.Start)] = $compiler
             $samples.Add(@{ Seconds = $timer.Elapsed.TotalSeconds; Compiler = $compiler })
             foreach ($threadSet in $compiler.Threads) {
                 foreach ($cpu in (Get-C1885Set $threadSet)) { if (-not $chosen.Contains($cpu)) { throw 'compiler thread escaped selected CPU set' } }
