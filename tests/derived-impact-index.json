@@ -2031,9 +2031,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 84,
+      "classes": 85,
       "reason": "cap",
-      "owed": 59,
+      "owed": 60,
       "first": [
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
@@ -2047,9 +2047,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 87,
+      "classes": 88,
       "reason": "cap",
-      "owed": 62,
+      "owed": 63,
       "first": [
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
@@ -2159,9 +2159,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 46,
+      "classes": 47,
       "reason": "cap",
-      "owed": 21,
+      "owed": 22,
       "first": [
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
@@ -2170,7 +2170,7 @@
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
         "CheckpointStampSafetyTests",
-        "CheckpointTempLifecycleTests"
+        "CheckpointStepDeadlineTests"
       ]
     },
     {
@@ -23293,6 +23293,7 @@
         "CheckpointShapeConflictTests",
         "CheckpointSourceExecutionTests",
         "CheckpointStatePublicationTests",
+        "CheckpointStepDeadlineTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
@@ -23370,7 +23371,7 @@
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointStepDeadline.cs",
       "classes": [
-        "CheckpointFixtureProcessTests"
+        "CheckpointStepDeadlineTests"
       ]
     },
     {
