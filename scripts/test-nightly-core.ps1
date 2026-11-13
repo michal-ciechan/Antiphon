@@ -396,9 +396,49 @@ function Test-NCSourceGapsMatchFallback {
     Assert-NC ($one.Count -eq 0 -and $two.Count -eq 1 -and $three.Contains('Omega')) 'sourceTextCache' ('settled ' + $one.Count + ' rewritten ' + $two.Count)
 }
 
+# Read-NightlyTrxIdentities' row loop (NightlyTrx.cs) against the fallback: rows, column order and refusals.
+function Test-NCTrxMatchesFallback {
+    $dir = Join-Path $root 'trx'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $vs = 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'
+    $def = '<UnitTest id="{0}" name="{1}.{2}"><TestMethod className="{1}" name="{2}" /></UnitTest>'
+    $res = '<UnitTestResult testId="{0}" testName="{1}" outcome="{2}" />'
+    $cases = [ordered]@{
+        'ns-plain' = "<TestRun xmlns=`"$vs`"><TestDefinitions>" + ($def -f 'a', 'N.C', 'M1') + ($def -f 'b', 'N.C', 'M2') + '</TestDefinitions><Results>' + ($res -f 'a', 'M1', 'Passed') + ($res -f 'b', 'M2', 'Failed') + '</Results></TestRun>'
+        'bare' = '<TestRun><TestDefinitions>' + ($def -f 'a', 'N.C', 'M1') + '</TestDefinitions><Results>' + ($res -f 'a', 'M1', 'Skipped') + '</Results></TestRun>'
+        'no-results-wrapper' = '<TestRun><TestDefinitions>' + ($def -f 'a', 'N.C', 'M1') + '</TestDefinitions><Other>' + ($res -f 'a', 'M1', 'Passed') + '</Other></TestRun>'
+        'debug-trace' = "<TestRun xmlns=`"$vs`"><TestDefinitions>" + ($def -f 'a', 'N.C', 'M1') + '</TestDefinitions><Results><UnitTestResult testId="a" testName="M1" outcome="Failed"><Output><StdOut>x</StdOut><DebugTrace>first &amp; <b>bold</b></DebugTrace><DebugTrace>second</DebugTrace></Output><output><DebugTrace>lower</DebugTrace></output><Output><debugtrace>no</debugtrace><DebugTrace>last</DebugTrace></Output></UnitTestResult></Results></TestRun>'
+        'method-case' = '<TestRun><TestDefinitions><UnitTest id="a" name="x"> <testmethod className="N.C" name="M1" /><TestMethod className="N.D" name="M2" /></UnitTest></TestDefinitions><Results>' + ($res -f 'a', 'M1', 'Passed') + '</Results></TestRun>'
+        'id-case' = '<TestRun><TestDefinitions>' + ($def -f 'A', 'N.C', 'Up') + ($def -f 'a', 'N.C', 'Low') + '</TestDefinitions><Results>' + ($res -f 'A', 'x', 'Passed') + '</Results></TestRun>'
+        'duplicate' = '<TestRun><TestDefinitions>' + ($def -f 'a', 'N.C', 'M1') + '</TestDefinitions><Results>' + ($res -f 'a', 'M1', 'Passed') + ($res -f 'A', 'M1', 'Passed') + '</Results></TestRun>'
+        'missing-def' = '<TestRun><TestDefinitions>' + ($def -f 'a', 'N.C', 'M1') + '</TestDefinitions><Results>' + ($res -f 'z', 'Zed', 'Passed') + '</Results></TestRun>'
+        'missing-id' = '<TestRun><TestDefinitions><UnitTest name="n"><TestMethod className="N.C" name="M" /></UnitTest></TestDefinitions><Results><UnitTestResult testName="t" outcome="Passed" /></Results></TestRun>'
+        'no-method' = '<TestRun><TestDefinitions><UnitTest id="a" name="n" /></TestDefinitions><Results>' + ($res -f 'a', 'n', 'Passed') + '</Results></TestRun>'
+        'blank-class' = '<TestRun><TestDefinitions>' + ($def -f 'a', ' ', 'M1') + '</TestDefinitions><Results>' + ($res -f 'a', 'M1', 'Passed') + '</Results></TestRun>'
+        'empty' = "<TestRun xmlns=`"$vs`"><TestDefinitions /><Results /></TestRun>"
+        'one-row' = '<TestRun><TestDefinitions>' + ($def -f 'a', 'N.C(Arg)', 'M1') + '</TestDefinitions><Results>' + ($res -f 'a', 'M1', '') + '</Results></TestRun>'
+    }
+    $paths = [Collections.Generic.List[string]]::new()
+    foreach ($key in $cases.Keys) {
+        $path = Join-Path $dir ($key + '.trx')
+        [IO.File]::WriteAllText($path, $cases[$key])
+        $paths.Add($path)
+    }
+    $big = Join-Path $dir 'big.trx'
+    Write-C487Trx $big @(foreach ($n in @(Get-NCFixtureNodes 2500)) { [pscustomobject]@{ Id = $n.Uid; ClassName = $n.ClassName; MethodName = $n.Method; Outcome = 'Passed' } })
+    $paths.Add($big)
+    $r = Invoke-NCBothWays {
+        @(foreach ($path in $paths) {
+            try { , @(Read-NightlyTrxIdentities -TrxPath $path) } catch { 'refused: ' + $_.Exception.Message }
+        })
+    }
+    $refusals = ([regex]::Matches($r.Compiled, 'refused: ')).Count
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $refusals -eq 5) 'trxIdentities' ('refusals ' + $refusals + ' compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; $expected = 20 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; $expected = 21 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

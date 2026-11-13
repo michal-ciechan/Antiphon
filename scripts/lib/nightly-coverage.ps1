@@ -32,6 +32,12 @@ function Read-NightlyTrxIdentities {
     } catch {
         throw ('malformed TRX {0}: {1}' -f $TrxPath, $_.Exception.Message)
     }
+    if (Test-NightlyCoreAvailable) {
+        # Compiled row loop (Antiphon.Nightly/NightlyTrx.cs): the same rows and the same refusals.
+        $compiled = [Antiphon.Nightly.NightlyTrx]::IdentityRows($doc)
+        if ($compiled.Error) { throw $compiled.Error }
+        return $compiled.Rows
+    }
     $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
     $nsm = $doc.DocumentElement.NamespaceURI
     if ($nsm) { $ns.AddNamespace('t', $nsm) }
@@ -55,7 +61,7 @@ function Read-NightlyTrxIdentities {
         }
         $definitions[$id] = @{ ClassName = $className; MethodName = $methodName; Display = $unit.GetAttribute('name') }
     }
-    $rows = @()
+    $rows = New-Object System.Collections.Generic.List[object]
     $results = @(Select-Ns '//t:Results/t:UnitTestResult')
     if ($results.Count -eq 0) { $results = @(Select-Ns '//t:UnitTestResult') }
     $seenIds = @{}
@@ -87,7 +93,7 @@ function Read-NightlyTrxIdentities {
                 }
             }
         }
-        $rows += [pscustomobject]@{
+        $rows.Add([pscustomobject]@{
             TestId = $testId
             Uid = ''
             ClassName = $className
@@ -96,9 +102,9 @@ function Read-NightlyTrxIdentities {
             Outcome = $outcome
             Identity = ('{0}.{1}' -f $className, $methodName)
             DebugTrace = $debugTrace
-        }
+        })
     }
-    return $rows
+    return $rows.ToArray()
 }
 
 function ConvertFrom-NightlyDiscoveryDocument {

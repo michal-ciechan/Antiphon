@@ -13,7 +13,7 @@ public sealed class NightlyCoreTests
 {
     [Test]
     public Task CoreMatchesFallback(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-core.ps1", "NC", nameof(CoreMatchesFallback), 20,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-core.ps1", "NC", nameof(CoreMatchesFallback), 21,
             ["NC CoreMatchesFallback.coreLoaded", "NC CoreMatchesFallback.census", "NC CoreMatchesFallback.plan",
              "NC CoreMatchesFallback.indexView", "NC CoreMatchesFallback.crossCheck", "NC CoreMatchesFallback.json",
              "NC CoreMatchesFallback.diagnostics", "NC CoreMatchesFallback.summaryHelpers",
