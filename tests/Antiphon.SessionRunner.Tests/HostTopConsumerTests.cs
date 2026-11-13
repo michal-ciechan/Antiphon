@@ -281,9 +281,7 @@ public class HostTopConsumerTests
     [Test]
     public void Old_history_without_top_consumers_deserializes_empty()
     {
-        const string json = """
-            {"schemaVersion":1,"source":{"runnerId":"runner-a","runnerStoreId":"11111111-1111-1111-1111-111111111111","bootId":"22222222-2222-2222-2222-222222222222","sequence":1},"sampledAt":"2026-11-13T00:00:00+00:00","intervalSeconds":5,"processes":[{"name":"runner","sessionId":null,"cpuPercent":1,"workingSetBytes":2}]}
-            """;
+        const string json = "{\"schemaVersion\":1,\"source\":{\"runnerId\":\"runner-a\",\"runnerStoreId\":\"11111111-1111-1111-1111-111111111111\",\"bootId\":\"22222222-2222-2222-2222-222222222222\",\"sequence\":1},\"sampledAt\":\"2026-11-13T00:00:00+00:00\",\"intervalSeconds\":5,\"processes\":[{\"name\":\"runner\",\"sessionId\":null,\"cpuPercent\":1,\"workingSetBytes\":2}]}";
         var sample = JsonSerializer.Deserialize<HostLoadSample>(json, PhoneHomeFraming.Json);
         sample.ShouldNotBeNull();
         sample.SchemaVersion.ShouldBe(1);
