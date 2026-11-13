@@ -23914,6 +23914,7 @@
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
+        "RcForcedFullTests",
         "RcIncrementalLedgerTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
