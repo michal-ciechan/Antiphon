@@ -72,6 +72,12 @@ if (-not (Test-Path -LiteralPath $lib)) {
             Note (@($map.edges.host).Count -eq 6 -and @($map.edges.git)[0] -ceq 'core') 'layer edges missing'
             Note ((Get-RcClassBoundary -Map $map -Suite antiphon -TestPath 'other' -Source 'string p="server/Infrastructure/Agents/nested/Foo.cs";') -ceq 'unassigned') 'single star crossed directory'
         }
+        'CanonicalEncodingKeepsSpecialCharacters' {
+            # Key contains < > & '. Independently computed length-delimited SHA-256,
+            # not ConvertTo-Json (pwsh 7 and Windows PowerShell 5.1 escape those differently).
+            $id = Get-RcBoundaryChunkId -Suite antiphon -Boundary core -IdentityKeys @('A<T>/M>&''')
+            Note ($id -ceq 'b-core-f2e0eae2ff0cf3c2') ('json encoding survived: ' + $id)
+        }
         default { throw ('unknown case ' + $Case) }
     }
 }

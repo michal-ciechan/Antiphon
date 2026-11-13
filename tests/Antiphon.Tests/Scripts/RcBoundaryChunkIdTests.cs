@@ -17,4 +17,5 @@ public sealed class RcBoundaryChunkIdTests
     [Test, Timeout(120_000)] public Task MovedClassChangesId(CancellationToken token) => Run(nameof(MovedClassChangesId), token);
     [Test, Timeout(120_000)] public Task UnassignedStaysAlone(CancellationToken token) => Run(nameof(UnassignedStaysAlone), token);
     [Test, Timeout(120_000)] public Task TwoBoundariesNeverShare(CancellationToken token) => Run(nameof(TwoBoundariesNeverShare), token);
+    [Test, Timeout(120_000)] public Task CanonicalEncodingKeepsSpecialCharacters(CancellationToken token) => Run(nameof(CanonicalEncodingKeepsSpecialCharacters), token);
 }
