@@ -529,7 +529,7 @@ whole-row costs under the budget above.
 | CP-25 | E8-windows | `tests/Antiphon.Tests -> bin-c1850-e8w/` | windows-adoption | `/*/*/AgentTaskLandHalfResetWindowsTests/*` | R-4,R-5 | AgentTaskLandHalfResetWindowsTests; all listed, 0 failed | 1 | 12 | 12 | true |
 | CP-S1-2 | S1-adjacent | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s1-adjacent-green/` | any-git-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-5 | both impacted classes, 0 failed | 2 | 1 | 2 | true |
 | CP-S1-3 | S1-guards | `tests/Antiphon.Tests -> bin-c1850-s1-guards-final/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-4,R-5 | all 10 classes, 0 failed | 10 | 6 | 10 | true |
-| CP-S1-4 | S1-derived-adjacent | `tests/Antiphon.Tests -> bin-c1850-s1-derived-adjacent/` | any-derived-impact | `/*/*/ReleaseImpactEnvelopeTests/*` | R-5 | ReleaseImpactEnvelopeTests; all 4 methods, 0 failed | 4 | 6 | 10 | true |
+| CP-S1-4 | S1-derived-adjacent | `tests/Antiphon.Tests -> bin-c1850-s1-derived-adjacent/` | any-derived-impact | `/*/*/(ReleaseImpactEnvelopeTests*)\|(TestLaneCategoryGuardTests*)/*` | R-5 | both classes including all 4 envelope methods, 0 failed | 5 | 6 | 10 | true |
 
 S1 dispatch amendment (task 9124df63): CP-S1-2 covers the actual
 `server-git-start-sites` impact selection in the small Git project and the
@@ -563,8 +563,10 @@ are unchanged. The current-master index regeneration built its driver first
 and produced byte-identical bytes; the separate regeneration commit records
 that outcome without changing the generated index. The actual base..tip
 selector additionally names ReleaseImpactEnvelopeTests, bound in CP-S1-4.
-Its provisional six-minute whole-row estimate includes a separate cold build
-and four script/fixture methods; use a twelve-minute execution cap, then stop
+CP-S1-4 also includes TestLaneCategoryGuardTests to complete the standing
+nine-class guard union without changing the exact CP-S1-3 filter. Its
+provisional six-minute whole-row estimate includes a separate cold build,
+four script/fixture methods and the source census; use a twelve-minute execution cap, then stop
 for Debug if exceeded. The selector reports no capped-path debt or native
 Windows filters for this S1 diff. Native Windows execution remains owed by
 the orchestrator under S3 and later slices.
