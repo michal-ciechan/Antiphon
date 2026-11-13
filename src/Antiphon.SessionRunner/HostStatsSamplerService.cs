@@ -92,7 +92,8 @@ public sealed class HostStatsSamplerService : BackgroundService
         if (logTick)
         {
             // Wall time charges time this thread was not running. The tick budget is its own CPU.
-            var elapsedMs = cpuStarted is double started && _threadCpu() is double cpuNow
+            // A thread clock that failed or did not advance is unknown, never zero CPU: fall back to wall.
+            var elapsedMs = cpuStarted is double started && _threadCpu() is double cpuNow && cpuNow > started
                 ? cpuNow - started
                 : Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds;
             _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", elapsedMs);
@@ -309,7 +310,8 @@ internal sealed class WindowsThreadCycleClock(WindowsThreadCycleClock.CycleReade
 
     internal double? Milliseconds()
     {
-        if (!readCycles(out var cycles))
+        // A running thread has always accrued cycles, so a read of zero failed like a false return.
+        if (!readCycles(out var cycles) || cycles == 0)
             return null;
         var rate = Volatile.Read(ref _cyclesPerMs);
         if (rate <= 0)
