@@ -431,6 +431,194 @@ public sealed class OwnedGitProcessContractTests
         encode.Invoke(null, [value]).ShouldBe(expected);
     }
 
+    [Test]
+    public void Windows_environment_is_sorted_unicode_double_nul_and_distinguishes_removed_from_empty()
+    {
+        WindowsOwnedGitLaunch.BuildEnvironment(new Dictionary<string, string?>
+        {
+            ["z"] = "雪=λ", ["Absent"] = null, ["a"] = "", ["Middle"] = "two words"
+        }).ShouldBe("a=\0Middle=two words\0z=雪=λ\0\0");
+        WindowsOwnedGitLaunch.BuildEnvironment([]).ShouldBe("\0\0");
+        Should.Throw<ArgumentException>(() => WindowsOwnedGitLaunch.BuildEnvironment(
+            new Dictionary<string, string?> { ["Path"] = "one", ["PATH"] = "two" }));
+    }
+
+    [Test]
+    [Arguments("nul-arg")]
+    [Arguments("nul-key")]
+    [Arguments("nul-value")]
+    [Arguments("equals-key")]
+    [Arguments("empty-key")]
+    [Arguments("conflict")]
+    [Arguments("too-long")]
+    public void Windows_invalid_transport_is_rejected_before_native_allocation(string defect)
+    {
+        var start = WindowsStartInfo();
+        if (defect == "nul-arg") start.ArgumentList.Add("x\0y");
+        if (defect == "nul-key") start.Environment["x\0y"] = "z";
+        if (defect == "nul-value") start.Environment["x"] = "y\0z";
+        if (defect == "equals-key") start.Environment["x=y"] = "z";
+        if (defect == "empty-key") start.Environment[""] = "z";
+        if (defect == "conflict") { start.ArgumentList.Add("x"); start.Arguments = "y"; }
+        if (defect == "too-long") start.ArgumentList.Add(new string('x', 32767));
+        var native = new FakeWindowsNative();
+        Should.Throw<InvalidOperationException>(() => WindowsOwnedGitLaunch.Prepare(start, native));
+        native.Acquired.Count.ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments("shell")]
+    [Arguments("verb")]
+    [Arguments("credential")]
+    [Arguments("input")]
+    [Arguments("output")]
+    [Arguments("error")]
+    [Arguments("window")]
+    public void Windows_unsupported_launch_options_do_not_allocate(string option)
+    {
+        var start = WindowsStartInfo();
+        if (option == "shell") start.UseShellExecute = true;
+        if (option == "verb") start.Verb = "runas";
+        if (option == "credential") start.UserName = "other";
+        if (option == "input") start.RedirectStandardInput = false;
+        if (option == "output") start.RedirectStandardOutput = false;
+        if (option == "error") start.RedirectStandardError = false;
+        if (option == "window") start.CreateNoWindow = false;
+        var native = new FakeWindowsNative();
+        Should.Throw<ArgumentException>(() => WindowsOwnedGitLaunch.Prepare(start, native));
+        native.Acquired.Count.ShouldBe(0);
+        native.ResolveCalls.ShouldBe(0);
+    }
+
+    [Test]
+    [Arguments(1)]
+    [Arguments(2)]
+    [Arguments(3)]
+    [Arguments(4)]
+    [Arguments(5)]
+    [Arguments(6)]
+    public void Windows_preparation_failure_closes_every_acquired_resource(int failAt)
+    {
+        var native = new FakeWindowsNative { FailAt = failAt };
+        var error = Should.Throw<InvalidOperationException>(() =>
+            WindowsOwnedGitLaunch.Prepare(WindowsStartInfo(), native));
+        error.Message.ShouldBe("owned_git_windows_prepare_failed");
+        native.Steps.ShouldBe(failAt);
+        native.Acquired.Count.ShouldBe(failAt <= 2 ? 0 : (failAt - 2) * 2 - 1);
+        foreach (var handle in native.Handles) { handle.IsClosed.ShouldBeTrue(); handle.Closes.ShouldBe(1); }
+        foreach (var stream in native.Pipes) stream.CanRead.ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Windows_prepared_transport_uses_explicit_cwd_argv_and_exact_text_and_binary_streams()
+    {
+        var start = WindowsStartInfo();
+        start.FileName = "configured git.exe";
+        start.WorkingDirectory = Path.GetTempPath();
+        start.ArgumentList.Add("update-ref");
+        start.ArgumentList.Add("");
+        start.ArgumentList.Add("雪");
+        start.StandardInputEncoding = new UTF8Encoding(true);
+        var native = new FakeWindowsNative();
+        var launch = WindowsOwnedGitLaunch.Prepare(start, native);
+        try
+        {
+            native.RequestedExecutable.ShouldBe("configured git.exe");
+            launch.Executable.ShouldBe("C:\\Program Files\\Git\\cmd\\git.exe");
+            launch.CommandLine.ShouldBe("\"C:\\Program Files\\Git\\cmd\\git.exe\" \"update-ref\" \"\" \"雪\"");
+            launch.WorkingDirectory.ShouldBe(Path.GetFullPath(Path.GetTempPath()));
+            native.Directions.ShouldBe([true, false, false]);
+            native.Inherited.ShouldBe([launch.Input.Child, launch.Output.Child, launch.Error.Child]);
+            native.Inherited.ShouldNotContain(launch.Job);
+            await launch.Streams.StandardInput.WriteAsync("λ雪");
+            await launch.Streams.StandardInput.FlushAsync();
+            await launch.Streams.StandardInput.BaseStream.WriteAsync(new byte[] { 0, 255, 13, 10 });
+            ((MemoryStream)launch.Input.Parent).ToArray().ShouldBe(
+                Encoding.UTF8.GetBytes("λ雪").Concat(new byte[] { 0, 255, 13, 10 }).ToArray());
+            (await launch.Streams.StandardOutput.ReadToEndAsync()).ShouldBe("out雪");
+            using var binary = new MemoryStream();
+            await launch.Streams.StandardError.BaseStream.CopyToAsync(binary);
+            binary.ToArray().ShouldBe(new byte[] { 0, 255, 13, 10 });
+            launch.ReleaseChildHandles();
+            launch.ReleaseChildHandles();
+            launch.Job.IsClosed.ShouldBeFalse("dispose and explicit termination are different operations");
+            launch.Input.Parent.CanWrite.ShouldBeTrue();
+            launch.Attributes.IsClosed.ShouldBeTrue();
+            native.Inherited.All(h => h.IsClosed).ShouldBeTrue();
+        }
+        finally { launch.Dispose(); launch.Dispose(); }
+        foreach (var handle in native.Handles) handle.Closes.ShouldBe(1);
+        foreach (var stream in native.Pipes) stream.CanRead.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Windows_raw_arguments_remain_raw_and_stream_cleanup_survives_broken_input()
+    {
+        var start = WindowsStartInfo();
+        start.Arguments = "-c key=\"two words\" status";
+        WindowsOwnedGitLaunch.BuildCommandLine("git", start).ShouldBe("\"git\" -c key=\"two words\" status");
+        var native = new FakeWindowsNative();
+        var launch = WindowsOwnedGitLaunch.Prepare(start, native);
+        launch.Input.Parent.Dispose();
+        launch.Dispose();
+        launch.Dispose();
+        foreach (var handle in native.Handles) handle.Closes.ShouldBe(1);
+        foreach (var stream in native.Pipes) stream.CanRead.ShouldBeFalse();
+    }
+
+    private static ProcessStartInfo WindowsStartInfo() => new("git")
+    {
+        UseShellExecute = false, CreateNoWindow = true,
+        RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
+    };
+
+    private sealed class FakeWindowsNative : IWindowsOwnedGitLaunchNative
+    {
+        internal int FailAt, Steps, ResolveCalls;
+        internal string? RequestedExecutable;
+        internal List<IDisposable> Acquired { get; } = [];
+        internal List<TrackingWindowsHandle> Handles { get; } = [];
+        internal List<Stream> Pipes { get; } = [];
+        internal List<bool> Directions { get; } = [];
+        internal IReadOnlyList<System.Runtime.InteropServices.SafeHandle> Inherited { get; private set; } = [];
+        private void Step() { if (++Steps == FailAt) throw new IOException("private native detail"); }
+        public string ResolveExecutable(string fileName)
+        {
+            ResolveCalls++; Step(); RequestedExecutable = fileName;
+            return "C:\\Program Files\\Git\\cmd\\git.exe";
+        }
+        public System.Runtime.InteropServices.SafeHandle CreateJob() { Step(); return Handle(); }
+        public WindowsOwnedGitPipe CreatePipe(bool parentWrites)
+        {
+            Step(); Directions.Add(parentWrites);
+            var pipe = Directions.Count switch
+            {
+                2 => new MemoryStream(Encoding.UTF8.GetBytes("out雪")),
+                3 => new MemoryStream(new byte[] { 0, 255, 13, 10 }),
+                _ => new MemoryStream()
+            };
+            Pipes.Add(pipe); Acquired.Add(pipe);
+            return new(pipe, Handle());
+        }
+        public System.Runtime.InteropServices.SafeHandle CreateAttributes(System.Runtime.InteropServices.SafeHandle job,
+            IReadOnlyList<System.Runtime.InteropServices.SafeHandle> inheritedHandles)
+        {
+            Step(); Inherited = inheritedHandles.ToArray(); return Handle();
+        }
+        private TrackingWindowsHandle Handle()
+        {
+            var h = new TrackingWindowsHandle(Handles.Count + 1);
+            Handles.Add(h); Acquired.Add(h); return h;
+        }
+    }
+
+    private sealed class TrackingWindowsHandle : System.Runtime.InteropServices.SafeHandle
+    {
+        internal int Closes;
+        internal TrackingWindowsHandle(int value) : base(IntPtr.Zero, true) { SetHandle(new IntPtr(value)); }
+        public override bool IsInvalid => handle == IntPtr.Zero;
+        protected override bool ReleaseHandle() { Closes++; return true; }
+    }
     private static ProcessStartInfo StartInfo() => new("git") { UseShellExecute = false };
 
     private sealed class ManualClock : TimeProvider
