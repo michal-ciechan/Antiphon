@@ -33,6 +33,7 @@ public sealed class C1895OutputDropEngineTests
 
         response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
         response.Bytes.ShouldBe(14, "hello + world! + xyz, and the symlink target is not counted");
+        nameof(RunnerWorkspaceNoFollowDelete.MeasureOrDelete).ShouldBe("MeasureOrDelete");
         response.Directories.ShouldBe(3);
         response.HeadSha.ShouldBe(m.Head);
         Directory.Exists(planted.Bin).ShouldBeFalse();
