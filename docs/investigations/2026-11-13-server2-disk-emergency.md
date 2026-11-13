@@ -13,7 +13,9 @@ Authority: orchestrator operational autonomy (disk emergency, take the recommend
 | 15:11:39 | 77.08 | 71.8 | first reading |
 | 15:14:56 | 76.30 | 71.1 | |
 | 15:26:01 | 71.16 | 66.3 | last reading before any reclaim |
-| __AFTER_ROWS__ |
+| 15:42:55 | 131.89 | 122.8 | after execute run 7cc7519e (25 trees) |
+| 15:51:53 | 166.50 | 155.1 | after scheduled run 1591b561 (21 trees) |
+| 15:55:05 | 164.94 | 153.6 | growth check after reclaim |
 
 Growth before reclaim: 5.92 GB in 14.4 min = **~24.7 GB/h (~23 GiB/h)**, about double the 12 GB/h in the
 brief. At 15:26Z that left ~16 GiB above the 50 GiB floor, i.e. **~40 minutes**.
@@ -93,7 +95,18 @@ Preview verdicts joined with the tree sizes:
 
 Execute: the operator one-shot `POST .../runner-retention/server2/execute` (operator token read from its
 file, never printed), 202 at 15:26:44Z, run 7cc7519e-2714-4014-ba1a-c9719da2c64d.
-__EXECUTE_RESULT__
+It finished at 15:42:43Z with **25 removed, 0 refused, 0 partial, 0 deferred** (no RecycleUnpublishedWork,
+RecycleWorktreeDirty, RecycleGitAuditUnknown or other refusal). Free space went 71.16 -> 131.89 GB.
+
+My second one-shot at 15:43:16Z got 409 `tick_in_progress`: the scheduled 15:30 tick had waited for mine
+and started at 15:42:43Z (run 1591b561-7025-4c58-8e6f-cb394b4e7265, Execute). It took the 19 queued trees
+plus two that had just crossed 12 h: **21 removed, 0 refused, 1 deferred (`temp_report_truncated`, see
+section 3)**, finished 15:51:39Z. Free space went 131.89 -> 166.50 GB.
+
+`/work/worktrees` went from 269,162 MiB to 180,152 MiB (-86.9 GiB, 46 trees). A follow-up preview
+(run 7f6c7e1e-88a1-4bb9-a23d-ddfd6a5766c8, 15:52Z) shows eligible 8, all backed off (`kept_recheck_pending`),
+nothing more to send. Further trees become eligible as the 73 settling trees (102 GiB) pass 12 h; the
+scheduled `*/30` tick takes them (Execute=true is the shipped value).
 
 ### sync_debt holds (not cleared; reported)
 
@@ -122,7 +135,43 @@ debts are:
 
 ## 3. Runner /tmp sweep (CARD-1677 S2)
 
-__TEMP_RESULT__
+The sweep runs only inside a retention tick and only with `TempSweep:Enabled=true`; the preview includes it
+then, and the one-shot execute keeps it DryRun. To get its preview I added two user-secrets keys at
+15:43:13Z, `RunnerWorktreeRetention:TempSweep:Enabled=true` and `...:TempSweep:Families:claude-scratch=true`,
+with `TempSweep:Execute` left at the shipped `false`, so it could only dry-run. The scheduled tick 1591b561
+and the preview 7f6c7e1e both ran it. I **removed both keys again at 15:53:39Z** (the secrets file is back to
+56 keys, with only `MinTerminalHours=12` under `RunnerWorktreeRetention`).
+
+Dry-run result (run 7f6c7e1e, `RunnerTemp` lane):
+
+| Outcome | Family | Rows | GiB |
+|---|---|---:|---:|
+| would_remove | rcspeed | 199 | 0.01 |
+| would_remove | pty-test-root | 1 | 0.00 (run 1591b561) |
+| too_young | bridge-queue | 488 | 0.00 |
+| too_young | pty-test-root | 12 | 0.00 |
+| unregistered | (all) | 33,677 | 10.80+ (byte bound hit) |
+| Deferred `temp_report_truncated` | - | 1 | - |
+
+**Not run.** It would free ~0.01 GiB: `MaxEntriesPerTick` (200) is used up oldest-first by tiny `rcspeed`
+entries. The dry-run list is also incomplete: the report was truncated (`temp_report_truncated`), and no row
+at all came back for families that are present on disk and match their regexes: `c487-probe` (175 entries,
+8.4G, e.g. `c487-probe-009886dab56a407d83af4c13d034d2c7`), `claude-scratch` (842 dirs, 772 of them, 18.7 GiB,
+for task trees that are already gone), `c502-exit-cap` (3.9G), `land-verify` (1.9G), `c514-pty` (1.0G) and
+`c1514`. An unread list does not meet the "read the dry-run list first" rule, so the sweep stayed off.
+
+Defects seen:
+- **Unregistered entries are not aggregated.** The docs promise one row per normalized prefix, but the run
+  wrote 33,677 `unregistered` rows, mostly one per random `mkstemp` name (`/tmp/38RtFK`, `/tmp/u2ti1A`,
+  `clr-debug-pipe-*`). That truncates the report and drops the family rows, and every enabled tick would add
+  ~34k residue rows.
+- **The 200-entry bound is oldest-first across families,** so thousands of KB-sized entries
+  (`rcspeed`, `bridge-queue` 4023, `c487-tw`, `c459`) starve the GB-sized ones. It needs a byte-weighted or
+  per-family fair order.
+- **The big `/tmp` consumers are unregistered names:** review/master scratch clones (`antiphon-review-*`
+  6.4G, `card*-review*`, `card-*-master-scratch`, `c1877-comp-a/b` 9.3G, `rhp-*` 7.5G, `rh-*` 1.8G,
+  `antiphon-master-*` 2.0G; about 35G together). Briefs that tell agents to clone review scratch into `/tmp`
+  create these, and no sweep or retention owns them.
 
 ## 4. Docker build cache / dangling images
 
@@ -131,4 +180,46 @@ reclaimable, and `hermes-dashboard`'s writable layer 45.4GB.
 
 ## 5. Result and recommendations
 
-__RESULT__
+| Step | Freed (net of growth) |
+|---|---:|
+| 2a. Execute one-shot 7cc7519e (25 trees) | +60.7 GB (71.16 -> 131.89) in 16 min |
+| 2b. Scheduled tick 1591b561 (21 trees) | +34.6 GB (131.89 -> 166.50) in 9 min |
+| 3. /tmp sweep | 0 (not run) |
+| 4. Docker cache | 0 (report only) |
+| **Total** | **71.16 GB (66.3 GiB) -> 166.50 GB (155.1 GiB) free; 90% -> 78% used**; worktrees -86.9 GiB |
+
+Growth after the reclaim: 166.50 -> 164.94 GB in 3.2 min (15:51:53 -> 15:55:05), ~29 GB/h; before it,
+~24.7 GB/h. **Projected time to the 50 GiB floor** from 153.6 GiB: **~4-4.5 h at 23-27 GiB/h with no
+retention**. With the scheduled 12 h ticks working through the 73 settling trees (~102 GiB over the next
+12 h, ~8.5 GiB/h), the net decline is ~15-18 GiB/h, about **6-7 h**. That is still not a steady state.
+
+### Recommendations (in order)
+
+1. **Fix the paid-sync-debt hold (Code card, high).** `RunnerWorktreeRetentionService.OpenDebt` and
+   `DesktopLegacyReleasePolicyService` (line 57) count `Ready` as open debt. That holds 193 tasks whose debt
+   is paid (`ConfirmedSha == SourceSha`); 27 of their trees are still on disk (31.7 GiB), and every future
+   task with a debt is held forever. Treat Ready as paid, as `CardSiblingInventory` already does.
+2. **Drop build outputs at terminal time (Code card, high; this is the real fix).** bin+obj are 57-74%
+   of a finished tree, almost all under `tests/`. The source is ~0.6 GiB, the outputs 2.8-4.1 GiB. Neither
+   CARD-1677 retention (whole-tree move only) nor the runner deletes bin/obj of terminal trees: the
+   `WorktreeCleanup:DisposableIgnored` classifier (bin/obj/node_modules/dist) is desktop-only. A runner
+   op that deletes ignored `bin/` and `obj/` (`git clean -X` limited to those globs, holder-scanned) on a
+   terminal task's tree, at settlement or at the first retention tick, would cut the 12 h settling window
+   from ~100 GiB to ~30 GiB.
+3. **Keep 12 h.** The 24 h user-secrets override is gone (key now explicitly `12`). Deleting the key with
+   `dotnet user-secrets remove "RunnerWorktreeRetention:MinTerminalHours" --id antiphon-server` gives the
+   same 12 from `server/appsettings.json`. Revert to 24 only on purpose:
+   `dotnet user-secrets set "RunnerWorktreeRetention:MinTerminalHours" "24" --id antiphon-server`.
+4. **Temp sweep (Code card):** aggregate unregistered names per prefix (stop the 34k-row reports and the
+   truncation), use a byte-weighted or per-family fair order under the 200-entry bound, then re-read a
+   complete dry-run list before enabling `claude-scratch` (18.7 GiB orphaned) and `c487-probe` (8.4G).
+   Register, or move under the task tree, the review/master scratch clones (~35G unregistered).
+5. **Report-only items for the operator:** the Docker build cache is 23.6GB, all inactive (prune is an
+   operator call). `hermes-dashboard` has a 45.4GB writable layer (not Antiphon). The runner-state
+   `session-runner/*.ansi.log` files total 5,249, of which 4,274 (14.5 GiB) are older than 7 days with no
+   retention. The four temp-runner volumes (~23 GB) wait on the retire-temp gate-9 fix (Review 01e2734e).
+6. The 21 `settlement_sync_source_changed` debts are published branches whose desktop checkout never
+   fast-forwarded. They are a sync-recovery question, not a disk action; no task needs to publish anything.
+
+Read-only measurement files are on server2 at `/home/mc/disk-emergency-918ceea9/` (measure.sh, volumes.txt,
+worktrees.txt, tmp.txt, work-depth1.txt).
