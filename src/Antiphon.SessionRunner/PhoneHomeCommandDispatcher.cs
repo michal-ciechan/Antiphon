@@ -124,7 +124,6 @@ public sealed class PhoneHomeCommandDispatcher
     private readonly Guid _processBootId;
     private int _retireAccepted;
     private int _stopScheduled;
-    private readonly object _mutationGate = new();
     private readonly ILogger _logger;
     private readonly PhoneHomeLaunchGenerationStore _launchGenerations;
     private RunnerWorkspaceService? _workspace;
@@ -428,17 +427,7 @@ public sealed class PhoneHomeCommandDispatcher
                 PhoneHomeOperation.Buffer => ConditionalFrame(request, _runtime.ReadBuffer(ReadSessionId(request), ReadIfNoneMatch(request)), RunnerReadJson.PhoneBuffer),
                 PhoneHomeOperation.Snapshot => ConditionalFrame(request, await _runtime.ReadSnapshotAsync(ReadSessionId(request), ReadIfNoneMatch(request), ct), RunnerReadJson.PhoneSnapshot),
                 PhoneHomeOperation.Transcript => Result(request, _runtime.GetTranscript(ReadSessionId(request), ReadSince(request), ReadStream(request)), RunnerReadJson.PhoneTranscript),
-                PhoneHomeOperation.Input => await MutateAsync(request, async () =>
-                {
-                    var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
-                        ?? throw new ArgumentException("Input body is required.");
-                    // CARD-0604 G-21: a remote session's spilled body travels with the input and
-                    // is written HERE, inside the session's own cwd. The desktop never writes it:
-                    // its Cwd is a Windows path this process cannot see.
-                    await WriteSpillIfPresentAsync(request, ct);
-                    await _runtime.SendInputAsync(ReadSessionId(request), body.Input, ct);
-                    return Result(request, new { ok = true });
-                }),
+                PhoneHomeOperation.Input => await InputAsync(request, ct),
                 PhoneHomeOperation.WorkspaceMirror => await MutateAsync(request, async () =>
                 {
                     var raw = request.Payload?.GetRawText();
@@ -558,13 +547,7 @@ public sealed class PhoneHomeCommandDispatcher
                         ?? throw new ArgumentException("Verification remove body is required.");
                     return Result(request, await Workspace().RemoveVerificationAsync(body, ct));
                 }),
-                PhoneHomeOperation.ConditionalInput => await MutateAsync(request, async () =>
-                {
-                    var body = request.Payload?.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)
-                        ?? throw new ArgumentException("Conditional input body is required.");
-                    await WriteSpillIfPresentAsync(request, ct);
-                    return Result(request, await _runtime.SendConditionalInputAsync(ReadSessionId(request), body, ct));
-                }),
+                PhoneHomeOperation.ConditionalInput => await ConditionalInputAsync(request, ct),
                 PhoneHomeOperation.ClearBuffer => await MutateAsync(request, async () =>
                 {
                     await _runtime.ClearLiveBufferAsync(ReadSessionId(request), ct);
@@ -1110,21 +1093,43 @@ public sealed class PhoneHomeCommandDispatcher
 
     private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)
     {
-        lock (_mutationGate)
-        {
-            // Serialize mutating commands for the single session without blocking the receive pump:
-            // the caller awaits this task off the socket loop.
-        }
-
+        var waiting = _time.GetTimestamp();
         await MutationLock.WaitAsync();
+        var acquired = _time.GetTimestamp();
         try
         {
             return await action();
         }
         finally
         {
+            var waitMs = (long)_time.GetElapsedTime(waiting, acquired).TotalMilliseconds;
+            var holdMs = (long)_time.GetElapsedTime(acquired).TotalMilliseconds;
             MutationLock.Release();
+            if (waitMs >= 250 || holdMs >= 250)
+                _logger.LogInformation(
+                    "Runner lock timing lock={LockName} owner={OwnerLabel} waitMs={WaitMs} holdMs={HoldMs} requestId={RequestId}",
+                    "workspace-mutation", request.Operation, waitMs, holdMs, request.RequestId);
         }
+    }
+
+    // Input is serialized by SessionRunnerRuntime's per-session launch gate. It neither
+    // creates nor releases a session/workspace owner, so it must not wait for repository IO.
+    // Retention still serializes with Launch/Mirror and checks live/recent workspace owners.
+    private async Task<PhoneHomeFrame> InputAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<RunnerInputRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Input body is required.");
+        await WriteSpillIfPresentAsync(request, ct);
+        await _runtime.SendInputAsync(ReadSessionId(request), body.Input, ct);
+        return Result(request, new { ok = true });
+    }
+
+    private async Task<PhoneHomeFrame> ConditionalInputAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var body = request.Payload?.Deserialize<RunnerConditionalInputRequest>(PhoneHomeFraming.Json)
+            ?? throw new ArgumentException("Conditional input body is required.");
+        await WriteSpillIfPresentAsync(request, ct);
+        return Result(request, await _runtime.SendConditionalInputAsync(ReadSessionId(request), body, ct));
     }
 
     // Strict version 1 body (the HTTP route's parser) bound to this runner's store; a foreign store
