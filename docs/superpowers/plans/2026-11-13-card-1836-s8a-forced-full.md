@@ -25,9 +25,19 @@ injected UTC clock; no DB, host, browser, network, Git fixture or expensive setu
 Checkpoint receipts retain build/slot/run phases and per-method TRX.
 No selection is expected to exceed 30 minutes.
 
+Actual base..HEAD impact selects spawn-limit-rosters and test-lane-category.
+CP-90 covers their Antiphon.Tests classes. Add CP-91 and CP-92 for the two
+other assemblies explicitly selected by spawn-limit-rosters (2 methods each).
+Their provisional isolated build/run costs are 3 minutes each. No nightly-live-lane
+glob matches: this slice does not change nightly scripts or execution policy.
+DerivedImpactIndexTests is added to CP-90 to verify index freshness after adding
+a script test class. The existing six policy guards remain in the same union.
+
 ### Checkpoints
 
 | ID | After | Build | Group | Filter | Guards | Expect | Min | EstMin |
 |---|---|---|---|---|---|---|---|---|
 | CP-4 | S8a | `tests/Antiphon.Tests -> bin-c1836-s8a/` | linux-forced-full | `/*/*/RcForcedFullTests/*` | V-4 | all 3 named methods, 0 failed/skipped | 3 | 6 |
-| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
+| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)/*` | policy, categories, spawn census, index | all listed, 0 failed/skipped | 79 | 4 |
+| CP-91 | S8a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s8a-pty/` | linux-pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
+| CP-92 | S8a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s8a-runner/` | linux-runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
