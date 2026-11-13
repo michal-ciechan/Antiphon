@@ -326,7 +326,7 @@ public class HostTopConsumerTests
         var watch = Stopwatch.StartNew();
         var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
         watch.Stop();
-        Console.WriteLine($"CARD-1884 proc scan rows={rows.Count} elapsedMs={watch.Elapsed.TotalMilliseconds:F3}");
+        Console.WriteLine("CARD-1884 proc scan rows=" + rows.Count.ToString(CultureInfo.InvariantCulture) + " elapsedMs=" + watch.Elapsed.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture));
         rows.Count.ShouldBeGreaterThan(0);
         rows.Count.ShouldBeLessThanOrEqualTo(HostTopConsumerLimits.ScanCap);
         watch.Elapsed.TotalMilliseconds.ShouldBeLessThan(25);
@@ -393,7 +393,7 @@ public class HostTopConsumerTests
         var dir = Path.Combine(root, pid.ToString(CultureInfo.InvariantCulture));
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "stat"),
-            $"1 ({comm}) R 0 0 0 0 0 0 0 0 0 0 {utime} {stime} 0 0 20 0 1 0 {start} 0 {rssPages} 0\n");
+            "1 (" + comm + ") R 0 0 0 0 0 0 0 0 0 0 " + utime.ToString(CultureInfo.InvariantCulture) + " " + stime.ToString(CultureInfo.InvariantCulture) + " 0 0 20 0 1 0 " + start.ToString(CultureInfo.InvariantCulture) + " 0 " + rssPages.ToString(CultureInfo.InvariantCulture) + " 0\n");
         if (cmdline is not null)
             File.WriteAllBytes(Path.Combine(dir, "cmdline"), cmdline);
         if (environ is not null)
