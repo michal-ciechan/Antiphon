@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
@@ -5,10 +6,12 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Orchestration;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -21,7 +24,9 @@ namespace Antiphon.Tests.Application;
 /// so those rows survived both and were typed one a minute after the next restart. These witnesses
 /// pin the queue-row rule: a never-typed Pending Delegation or Check row whose source task is
 /// terminal, created at or before the cutoff and linked to no open land note, is canceled (never
-/// deleted) by the hosted cleanup and by the sweep apply.
+/// deleted) by the hosted cleanup and by the sweep apply. CARD-1857 adds the acceptance the
+/// first witnesses left out: a surviving row is delivered once, a claimed row is spared, a held
+/// lock waits a minute, and a pass that stops between batches resumes exactly once.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -278,6 +283,193 @@ public sealed class C0747QueueRowExpiryTests
         (await RowAsync(h, row.Id, ct)).Status.ShouldBe(QueuedMessageStatus.Pending, "expiry is off");
     }
 
+    /// <summary>
+    /// CARD-1857. case: one eight-day eligible row and one six-day row on a live idle caller.
+    /// Expiry cancels only the aged row. The survivor is then flushed. mutation: cancel every
+    /// pending row, or flush a canceled row. red: the survivor has no complete UserPrompt, or the
+    /// canceled body appears in one.
+    /// </summary>
+    [Test]
+    [Timeout(15_000)]
+    public async Task C1857_Survivor_reaches_the_recipient_once_and_a_cancelled_row_never_does(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
+        var kept = await SeedRowAsync(h, h.SessionId, QueuedMessageOrigin.Delegation, AgentTaskStatus.Succeeded, TimeSpan.FromDays(6), ct);
+        var aged = await SeedRowAsync(h, h.SessionId, QueuedMessageOrigin.Delegation, AgentTaskStatus.Succeeded, TimeSpan.FromDays(8), ct);
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+            await new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, ct);
+
+        (await RowAsync(h, aged.Id, ct)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+        (await RowAsync(h, kept.Id, ct)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        (await UserPromptTextsAsync(h, h.SessionId, ct)).ShouldBeEmpty("expiry never types");
+
+        await h.Queue.FlushIfIdleAsync(h.SessionId, ct);
+        await h.Queue.FlushIfIdleAsync(h.SessionId, ct);
+
+        var savedKept = await RowAsync(h, kept.Id, ct);
+        savedKept.Status.ShouldBe(QueuedMessageStatus.Sent);
+        savedKept.DeliveryAttempts.ShouldBe(1);
+        savedKept.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        var savedAged = await RowAsync(h, aged.Id, ct);
+        savedAged.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        savedAged.DeliveryAttempts.ShouldBe(0);
+        savedAged.CanceledAt.ShouldNotBeNull();
+        var prompts = await UserPromptTextsAsync(h, h.SessionId, ct);
+        prompts.Count.ShouldBe(1, "the survivor is delivered once");
+        PromptSubmissionMatch.IsCompleteIn(kept.Body, prompts[0]).ShouldBeTrue();
+        PromptSubmissionMatch.Normalize(prompts[0]).ShouldBe(PromptSubmissionMatch.Normalize(kept.Body));
+        prompts.ShouldAllBe(text => !PromptSubmissionMatch.IsCompleteIn(aged.Body, text),
+            "a canceled row never reaches the recipient");
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// CARD-1857. case: the expiry scan has already selected an eligible row, then delivery claims
+    /// it under the queue lock before the cancel write. mutation: cancel the selected ids without
+    /// reading eligibility again. red: the claimed row is Canceled and its UserPrompt is not the
+    /// delivery.
+    /// </summary>
+    [Test]
+    [Timeout(15_000)]
+    public async Task C1857_Delivery_claim_between_select_and_cancel_is_not_cancelled(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
+        var row = await SeedRowAsync(h, h.SessionId, QueuedMessageOrigin.Delegation, AgentTaskStatus.Succeeded, TimeSpan.FromDays(8), ct);
+        h.Queue.BeforeAgedExpiryRecheck = (_, token) => h.Queue.FlushPendingUnderHeldLockAsync(h.SessionId, token);
+
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        var result = await new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, ct);
+
+        result.Scanned.ShouldBe(1, "the scan selected the row before delivery claimed it");
+        result.Outcomes.ShouldBe(new Dictionary<string, int> { ["Changed"] = 1 }, ignoreOrder: true);
+        var saved = await RowAsync(h, row.Id, ct);
+        saved.Status.ShouldBe(QueuedMessageStatus.Sent, "the cancel re-reads eligibility under the lock");
+        saved.CanceledAt.ShouldBeNull();
+        saved.DeliveryAttempts.ShouldBe(1);
+        saved.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        var prompts = await UserPromptTextsAsync(h, h.SessionId, ct);
+        prompts.Count.ShouldBe(1);
+        PromptSubmissionMatch.IsCompleteIn(row.Body, prompts[0]).ShouldBeTrue();
+        PromptSubmissionMatch.Normalize(prompts[0]).ShouldBe(PromptSubmissionMatch.Normalize(row.Body));
+    }
+
+    /// <summary>
+    /// CARD-1857. case: the caller's queue lock is held across the hosted expiry pass. The row
+    /// stays pending, a pass 59 seconds later still skips it, and the pass at one minute cancels
+    /// it. mutation: retry on the next loop tick, or wait the full hour. red: the row is canceled
+    /// at 59 seconds, or still pending at one minute.
+    /// </summary>
+    [Test]
+    [Timeout(15_000)]
+    public async Task C1857_Held_queue_lock_is_retried_after_one_minute(CancellationToken ct)
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans, clock: clock);
+        var caller = await AddStoppedCallerAsync(h, ct);
+        var row = await SeedRowAsync(h, caller, QueuedMessageOrigin.Delegation, AgentTaskStatus.Succeeded, TimeSpan.FromDays(8), ct);
+        var worker = new AgentTaskLandNotificationHostedService(h.Provider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<AgentTaskLandNotificationHostedService>.Instance);
+        try
+        {
+            var gate = h.Queue.GetLock(caller);
+            await gate.WaitAsync(ct);
+            try
+            {
+                await ExpireDueAsync(worker, ct);
+                (await RowAsync(h, row.Id, ct)).Status.ShouldBe(QueuedMessageStatus.Pending, "a held queue lock skips the session");
+            }
+            finally
+            {
+                gate.Release();
+            }
+
+            clock.Advance(TimeSpan.FromSeconds(59));
+            await ExpireDueAsync(worker, ct);
+            (await RowAsync(h, row.Id, ct)).Status.ShouldBe(QueuedMessageStatus.Pending, "the busy retry waits a minute");
+
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await ExpireDueAsync(worker, ct);
+            var saved = await RowAsync(h, row.Id, ct);
+            saved.Status.ShouldBe(QueuedMessageStatus.Canceled);
+            saved.DeliveryAttempts.ShouldBe(0);
+            saved.CanceledAt.ShouldNotBeNull();
+        }
+        finally
+        {
+            worker.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// CARD-1857. case: one more eligible row than a batch. The pass is canceled after the first
+    /// batch commits. The next pass cancels only what is still pending, and a third pass cancels
+    /// nothing. mutation: restart from the first id and cancel again, or abandon the remainder.
+    /// red: a first-batch CanceledAt changes, or a pending row survives the second pass.
+    /// </summary>
+    [Test]
+    [Timeout(15_000)]
+    public async Task C1857_Stop_between_batches_resumes_and_cancels_the_rest_once(CancellationToken ct)
+    {
+        var rows = AgedQueueRowExpiry.BatchSize + 1;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var scans = new ScanCounter();
+        await using var h = await CreateHarnessAsync(schema.ConnectionString, scans);
+        var caller = await AddStoppedCallerAsync(h, ct);
+        await SeedScaleAsync(h, caller, rows, "C1857-RECOVERY", ct);
+        using var stop = new CancellationTokenSource();
+        var batches = 0;
+        h.Queue.OnAgedExpiryBatch = _ =>
+        {
+            if (Interlocked.Increment(ref batches) == 1)
+                stop.Cancel();
+        };
+
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+            await Should.ThrowAsync<OperationCanceledException>(() =>
+                new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, stop.Token));
+
+        batches.ShouldBe(1, "the pass stops after the first committed batch");
+        var first = await CanceledStampsAsync(h, caller, ct);
+        first.Count.ShouldBe(AgedQueueRowExpiry.BatchSize);
+        (await PendingCountAsync(h, caller, ct)).ShouldBe(1);
+        var firstNotice = h.EventBus.PublishedEvents.Where(e => e.EventName == "SessionQueueExpiry").ShouldHaveSingleItem()
+            .Payload.ShouldBeOfType<SessionQueueExpiryNotice>();
+        firstNotice.CanceledIds.Count.ShouldBe(AgedQueueRowExpiry.BatchSize);
+        firstNotice.CanceledIds.OrderBy(id => id).ShouldBe(first.Keys.OrderBy(id => id));
+
+        AgedQueueRowExpiryDto resumed;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+            resumed = await new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, ct);
+
+        resumed.Scanned.ShouldBe(1, "a canceled row is no longer a candidate");
+        resumed.Outcomes.ShouldBe(new Dictionary<string, int> { ["Canceled"] = 1 }, ignoreOrder: true);
+        var second = await CanceledStampsAsync(h, caller, ct);
+        second.Count.ShouldBe(rows);
+        foreach (var (id, at) in first)
+            second[id].ShouldBe(at, "the first batch is not canceled again");
+        (await PendingCountAsync(h, caller, ct)).ShouldBe(0);
+        var notices = h.EventBus.PublishedEvents.Where(e => e.EventName == "SessionQueueExpiry")
+            .Select(e => e.Payload.ShouldBeOfType<SessionQueueExpiryNotice>()).ToList();
+        notices.Count.ShouldBe(2);
+        notices[1].CanceledIds.Count.ShouldBe(1);
+        first.Keys.ShouldNotContain(notices[1].CanceledIds[0]);
+
+        AgedQueueRowExpiryDto again;
+        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString)))
+            again = await new AgedQueueRowExpiry(db, h.Queue).ExpireAsync(DateTime.UtcNow.AddDays(-7), apply: true, lockWait: null, ct);
+        again.Scanned.ShouldBe(0);
+        again.Outcomes.ShouldBeEmpty();
+        (await CanceledStampsAsync(h, caller, ct)).ShouldBe(second);
+        h.EventBus.PublishedEvents.Count(e => e.EventName == "SessionQueueExpiry").ShouldBe(2);
+    }
+
     private static readonly HashSet<string> Eligible = ["delegation-succeeded", "check-failed", "closed-note-canceled-task"];
 
     private static async Task<Dictionary<string, Guid>> SeedCohortAsync(BridgeQueueHarness h, Guid caller, bool withQueueLinkedOpenNote,
@@ -360,10 +552,12 @@ public sealed class C0747QueueRowExpiryTests
     }
 
     internal static Task<BridgeQueueHarness> CreateHarnessAsync(string connectionString, LandDeliveryBoundary scans,
-        Action<Antiphon.Server.Application.Settings.DeliveryVerificationSettings>? verification = null) =>
+        Action<Antiphon.Server.Application.Settings.DeliveryVerificationSettings>? verification = null,
+        TimeProvider? clock = null) =>
         ClaudeDialogFixture.CreateBridgeAsync(new()
         {
             AlwaysOn = false, ConnectionString = connectionString, ConfigureDeliveryVerification = verification,
+            TimeProvider = clock,
             ConfigureServices = services =>
             {
                 services.AddSingleton<CompletionNoteFlushQueue>();
@@ -472,6 +666,42 @@ public sealed class C0747QueueRowExpiryTests
     {
         await using var db = h.CreateObserverContext();
         return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == caller, ct);
+    }
+
+    /// <summary>
+    /// The hosted loop sleeps five real seconds between passes. The busy-retry witness drives the
+    /// due check itself so the minute is the test clock.
+    /// </summary>
+    private static async Task ExpireDueAsync(AgentTaskLandNotificationHostedService worker, CancellationToken ct)
+    {
+        var method = typeof(AgentTaskLandNotificationHostedService).GetMethod(
+            "ExpireAgedQueueRowsIfDueAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+        var task = (Task)method!.Invoke(worker, [ct])!;
+        await task;
+    }
+
+    private static async Task<List<string>> UserPromptTextsAsync(BridgeQueueHarness h, Guid sessionId, CancellationToken ct)
+    {
+        await using var db = h.CreateObserverContext();
+        return await db.TranscriptEntries.AsNoTracking()
+            .Where(e => e.AgentSessionId == sessionId && e.Kind == TranscriptKinds.UserPrompt)
+            .OrderBy(e => e.Sequence)
+            .Select(e => e.Text ?? "")
+            .ToListAsync(ct);
+    }
+
+    private static async Task<Dictionary<Guid, DateTime>> CanceledStampsAsync(BridgeQueueHarness h, Guid caller, CancellationToken ct)
+    {
+        await using var db = h.CreateObserverContext();
+        return await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == caller && m.Status == QueuedMessageStatus.Canceled && m.CanceledAt != null)
+            .ToDictionaryAsync(m => m.Id, m => m.CanceledAt!.Value, ct);
+    }
+
+    private static async Task<int> PendingCountAsync(BridgeQueueHarness h, Guid caller, CancellationToken ct)
+    {
+        await using var db = h.CreateObserverContext();
+        return await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == caller && m.Status == QueuedMessageStatus.Pending, ct);
     }
 
     internal sealed class ScanCounter : LandDeliveryBoundary
