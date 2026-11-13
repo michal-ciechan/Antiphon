@@ -16,27 +16,52 @@
 
 ## Verification design
 
-- V-1. `Shared_compiler_under_pid_1_is_ranked_compiler` builds a synthetic `/proc` pid 1 named `VBCSCompiler`, samples twice five seconds apart, and requires one top row: pid 1, role `compiler`, 5.3 cores, RSS `409600`. The session process list stays empty. The published JSON has no command-line secret.
-- V-2. `Pid_reuse_does_not_inherit_the_previous_counter` changes start ticks on the same pid. The next sample publishes nothing. The sample after that is 0.1 cores, not the pid-only delta.
-- V-3. `Vanished_pid_is_omitted_and_the_sibling_remains` lists a pid directory with no `stat`. The sibling compiler remains and the scan does not throw.
-- V-4. `Top_count_keeps_eight_highest` ranks nine processes and keeps the eight highest. `Projection_keeps_eight_publishable_rows` drops a slash name and an equals name and stops at eight.
-- V-5. `Command_line_and_environment_are_not_published` uses a 15-character `comm` so the command line is read, and writes an environment file. The published name is the basename and the JSON contains neither secret.
-- V-6. `Production_factory_selects_the_linux_proc_table` calls `HostProcessTables.Create` on Linux and resolves `IHostProcessTable` from `AddHostStats` as `LinuxHostProcessTable`. `Factory_selects_the_platform_reader` calls `HostProcessTables.Select(isWindows: false, isLinux: true)`, `Select(isWindows: true, isLinux: false)`, and `Select(isWindows: false, isLinux: false)`. The Windows reader's `Read` on this host returns empty.
-- V-7. `Live_proc_scan_stays_inside_the_tick_budget` warms up, then reads at most 512 live `/proc` entries in under 25 ms. `Short_interval_does_not_rescan_or_move_the_baseline` does not read again inside five seconds.
-- V-8. `Ninth_row_and_unsafe_name_are_rejected` and `Unknown_role_is_rejected` make `HostLoadIngestService.Validate` throw. `Valid_compiler_row_is_accepted`, `Null_cpu_and_rss_stay_publishable`, and `Schema_stays_one_and_session_names_stay_closed` keep schema 1. `Old_history_without_top_consumers_deserializes_empty` accepts a payload that has no `topConsumers` field.
-- R-1. Existing sampler, sample, wire, spool, authority, store, endpoint, and probe-parse tests stay green, plus `ProcessSpawnLimitTests` in the runner project.
-- R-2. Policy, classification, slow-test, native-Linux witness, derived-impact, mechanical contract, platform guidance, layering, and `ProcessSpawnLimitTests` in `Antiphon.Tests` stay green.
+V-1 `Shared_compiler_under_pid_1_is_ranked_compiler` builds a synthetic proc pid 1 named VBCSCompiler, samples twice five seconds apart, and requires one top row: pid 1, role compiler, 5.3 cores, RSS 409600. The session process list stays empty. The published JSON has no command-line secret.
 
-Red witnesses are the new tests committed while ranking, classification, `/proc` reads, and ingest checks return no rows. Mutation owns the deliberate pack. Every PC below stays pending.
+V-2 `Pid_reuse_does_not_inherit_the_previous_counter` changes start ticks on the same pid. The next sample publishes nothing. The sample after that is 0.1 cores, not the pid-only delta.
+
+V-3 `Vanished_pid_is_omitted_and_the_sibling_remains` lists a pid directory with no stat file. The sibling compiler remains and the scan does not throw.
+
+V-4 `Top_count_keeps_eight_highest` ranks nine processes and keeps the eight highest.
+
+V-4 `Projection_keeps_eight_publishable_rows` drops a slash name and an equals name and stops at eight.
+
+V-5 `Command_line_and_environment_are_not_published` uses a 15-character comm so the command line is read, and writes an environment file. The published name is the basename and the JSON contains neither secret.
+
+V-6 `Production_factory_selects_the_linux_proc_table` calls HostProcessTables.Create on Linux and resolves the process table from AddHostStats as LinuxHostProcessTable.
+
+V-6 `Factory_selects_the_platform_reader` selects the Linux reader, the Windows reader, and the empty reader. The Windows reader on this host returns no rows.
+
+V-7 `Live_proc_scan_stays_inside_the_tick_budget` warms up, then reads at most 512 live proc entries in under 25 ms.
+
+V-7 `Short_interval_does_not_rescan_or_move_the_baseline` does not read again inside five seconds.
+
+V-8 `Ninth_row_and_unsafe_name_are_rejected` makes HostLoadIngestService.Validate throw.
+
+V-8 `Unknown_role_is_rejected` makes HostLoadIngestService.Validate throw.
+
+V-8 `Valid_compiler_row_is_accepted` keeps schema 1.
+
+V-8 `Null_cpu_and_rss_stay_publishable` keeps a row whose counters are absent.
+
+V-8 `Schema_stays_one_and_session_names_stay_closed` keeps schema 1 and the closed session names.
+
+V-8 `Old_history_without_top_consumers_deserializes_empty` accepts a payload that has no topConsumers field.
+
+R-1 Existing sampler, sample, wire, spool, authority, store, endpoint, and probe-parse tests stay green, plus ProcessSpawnLimitTests in the runner project.
+
+R-2 Policy, classification, slow-test, native-Linux witness, derived-impact, mechanical contract, platform guidance, layering, and ProcessSpawnLimitTests in Antiphon.Tests stay green.
+
+Red witnesses are the new tests committed while ranking, classification, proc reads, and ingest checks return no rows. Mutation owns the deliberate pack. Every PC below stays pending.
 
 ### Positive controls
 
 | PC | Mutant or row | Witness | Expected red |
 |---|---|---|---|
-| PC-1 | Key the CPU delta by pid only | V-2 `Pid_reuse_does_not_inherit_the_previous_counter` | The reused pid publishes on the first sighting of the new start, with cores above 2. |
-| PC-2 | Publish the raw command line as the name | V-5 `Command_line_and_environment_are_not_published` | The JSON contains `SUPERSECRET`. |
-| PC-3 | Drop the eight-row cap | V-4 `Top_count_keeps_eight_highest` | Nine rows are published. |
-| PC-4 | Windows native row. Not a source mutant. | V-6 `Factory_selects_the_platform_reader` | Run on Windows. `Read` must use toolhelp and `GetProcessTimes`. This Linux host does not discharge it. |
+| PC-1 | Key the CPU delta by pid only | `/*/*/HostTopConsumerTests/Pid_reuse_does_not_inherit_the_previous_counter` | The reused pid publishes on the first sighting of the new start, with cores above 2. |
+| PC-2 | Publish the raw command line as the name | `/*/*/HostTopConsumerTests/Command_line_and_environment_are_not_published` | The JSON contains the command-line secret. |
+| PC-3 | Drop the eight-row cap | `/*/*/HostTopConsumerTests/Top_count_keeps_eight_highest` | Nine rows are published. |
+| PC-4 | Windows native row. Not a source mutant. | `/*/*/HostTopConsumerTests/Factory_selects_the_platform_reader` | Run on Windows so the reader uses toolhelp and process times. This Linux host does not discharge it. |
 
 ### Checkpoints
 
