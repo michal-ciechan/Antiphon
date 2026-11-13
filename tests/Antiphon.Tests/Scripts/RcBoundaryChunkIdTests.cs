@@ -23,4 +23,5 @@ public sealed class RcBoundaryChunkIdTests
     [Test, Timeout(120_000)] public Task LoneSurrogatesFailClosed(CancellationToken token) => Run(nameof(LoneSurrogatesFailClosed), token);
     [Test, Timeout(120_000)] public Task DuplicateMembershipsAndUnassignedCollisions(CancellationToken token) => Run(nameof(DuplicateMembershipsAndUnassignedCollisions), token);
     [Test, Timeout(120_000)] public Task ExplicitCaseKeyCount(CancellationToken token) => Run(nameof(ExplicitCaseKeyCount), token);
+    [Test, Timeout(120_000)] public Task OrdinalSortAndSingleDigest(CancellationToken token) => Run(nameof(OrdinalSortAndSingleDigest), token);
 }
