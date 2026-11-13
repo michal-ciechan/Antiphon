@@ -184,6 +184,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         AgentSession? session = null;
         IAgentProtocolAdapter? adapter = null;
         var claimedLaunch = false;
+        DateTime? bootWriteStartedAt = null;
+        var bootWriteInFlight = false;
+        long? bootWriteBaseline = null;
 
         try
         {
@@ -259,7 +262,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 return new AgentSessionStartResult(session.Id, attempt.Id, worktree.Id, false);
             }
 
+            bootWriteBaseline = await CaptureBootConfirmBaselineAsync(session.Id, ct);
+            bootWriteStartedAt = UtcNow();
+            bootWriteInFlight = true;
             await SendBootPromptWithRetryAsync(adapter, prompt, session.Id, ct);
+            bootWriteInFlight = false;
             var firstDeltaReceived = await adapter.WaitForFirstPromptOutputAsync(
                 TimeSpan.FromMilliseconds(Math.Max(100, _settings.FirstDeltaTimeoutMs)),
                 ct);
@@ -324,6 +331,25 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await _db.SaveChangesAsync(ct);
 
             return new AgentSessionStartResult(session.Id, attempt.Id, worktree.Id, firstDeltaReceived);
+        }
+        catch (Exception ex) when (session?.Status == SessionStatus.Running
+            && (ex is InputDeliveryUncertainException || bootWriteInFlight && InputDeliveryUncertainException.Is(ex)))
+        {
+            _logger.LogWarning("Input delivery unknown during card launch for session {SessionId}; retaining the process", session.Id);
+            await PersistDeferredOriginalWorkAsync(session, attempt, prompt, CancellationToken.None);
+            if (bootWriteStartedAt is { } writtenAt)
+            {
+                var row = await _db.SessionQueuedMessages.SingleAsync(m => m.DeferredFromRunAttemptId == attempt.Id, CancellationToken.None);
+                row.Status = QueuedMessageStatus.Sent;
+                row.SentAt = writtenAt;
+                row.DeliveryAttempts = 1;
+                row.LastDeliveryStartedAt = writtenAt;
+                row.LastDeliveryGeneration = SessionGeneration.Normalize(session.StartedAt);
+                row.LastDeliveryBaselineSequence = bootWriteBaseline;
+            }
+            RunAttemptStateMachine.Transition(attempt, RunPhase.AwaitingInput, UtcNow());
+            await _db.SaveChangesAsync(CancellationToken.None);
+            return new AgentSessionStartResult(session.Id, attempt.Id, attempt.WorktreeId!.Value, false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -714,6 +740,12 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.InteractiveLaunchCompletedAt = UtcNow();
             await _db.SaveChangesAsync(ct);
         }
+        catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
+        {
+            // Readiness already succeeded. Keep runtime ownership and the accepted
+            // generation alive while the persisted attempt awaits transcript evidence.
+            _logger.LogWarning("Input delivery unknown during launch for session {SessionId}; retaining the process", session.Id);
+        }
         catch (Exception ex)
         {
             // Read the adapter's output BEFORE tearing it down — that is where the "No conversation
@@ -1101,6 +1133,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 AlertSeverity.Warning,
                 $"Launch resumed after a server restart: the session sat Starting for {startingSeconds}s; ready re-verified.",
                 ct);
+        }
+        catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
+        {
+            _logger.LogWarning("Input delivery unknown during recovered launch for session {SessionId}; retaining the process", sessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2245,6 +2281,11 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 new { boardId = session.Card.BoardId, cardId = session.CardId },
                 ct);
 
+            return new AgentSessionResumeResult(session.Id, cardId);
+        }
+        catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
+        {
+            _logger.LogWarning("Input delivery unknown during resume for session {SessionId}; retaining the process", session.Id);
             return new AgentSessionResumeResult(session.Id, cardId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
