@@ -41,3 +41,25 @@ with the preceding red run 20261113-184743-e73f (658.582 s wall,
 Do not infer a product latency regression from nested per-class duration sums.
 The extra authoring runs only exercise a changed attention-reader assertion and its
 repair, then CP-2/CP-3; they do not repeat the full green selection for profiling.
+
+## Round 3 extension (Code 4e02b770)
+
+Keep this same request; do not file a duplicate performance card. The round-3
+closed green selection is CP-2/3/4/5/6/8/9 in
+docs/superpowers/plans/2026-11-13-card-1892-round3.md, all serial on Debian 12.
+Its conservative combined budget is 37 minutes (7 cold build plus 30 row minutes),
+which triggers R1 before execution. Caller: include this selection in the existing
+Debug commission. No extra full green profiling repetition is requested.
+
+Pre-fix run 20261113-214537-0f17 at
+2ee1199f9ab24effebde9442ccf99396438e6fef ran CP-90/91 serially in 1102.227 s wall,
+937.050 s charged execution and 165.177 s admission-only. Its server build phase
+was 595.8066299 s; MSBuild reported 471.78 s. This difference is driver/audit
+remainder, not compilation. Build waited 15 s; both rows waited 75 s. CP-90
+host startup/tests/teardown were 109.9061954/16.1503936/48.102711 s;
+CP-91 was 61.3584127/5.3802417/44.7533977 s. All nine expected assertion
+failures ran with clean source and verified build provenance, with no fixture error.
+Broker maxcpucount=6, repeatedly 4/4 occupied; CPU/memory samples are unknown.
+Immutable receipt and phase/per-test payloads remain under
+/work/worktrees/task-4e02b770/.antiphon/checkpoints/20261113-214537-0f17/.
+Append the green run's exact source, identity and timing when it completes.
