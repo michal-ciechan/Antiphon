@@ -1362,6 +1362,7 @@ public sealed class DerivedImpactIndexTests
         start.ArgumentList.Add(root);
         foreach (var arg in args)
             start.ArgumentList.Add(arg);
+        var processClock = Stopwatch.StartNew();
         using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start.");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
@@ -1378,6 +1379,9 @@ public sealed class DerivedImpactIndexTests
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
+        if (Environment.GetEnvironmentVariable("ANTIPHON_SELECTOR_TIMING") == "1")
+            Console.WriteLine("SELECTOR_PROCESS elapsedMs=" + processClock.Elapsed.TotalMilliseconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)
+                + " script=" + Path.GetFileName(script) + " args=" + string.Join(" ", args) + " " + stderr.Trim());
         return (process.ExitCode, stdout, stdout + stderr);
     }
 
