@@ -1802,18 +1802,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PromptSubmissionMatch.cs",
-      "classes": 58,
+      "classes": 59,
       "reason": "cap",
-      "owed": 33,
+      "owed": 34,
       "first": [
+        "AgentTaskLandPublicationTests",
         "AgentTaskLandQueueAgingTests",
         "AgentTaskWorktreeLockOutcomeTests",
         "C0824RefOnlyReceiptTests",
         "CheckCompactionFactEquivalenceTests",
         "CheckCompactionFactLoadTests",
         "CodexBootWedgeProbeTests",
-        "CompletionNoteDurableSweepTests",
-        "GrokDelegateEndToEndTests"
+        "CompletionNoteDurableSweepTests"
       ]
     },
     {
@@ -1834,9 +1834,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 427,
+      "classes": 428,
       "reason": "cap",
-      "owed": 402,
+      "owed": 403,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -17895,7 +17895,7 @@
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PromptSubmissionMatch.cs",
       "classes": [
-        "AgentTaskLandPublicationTests",
+        "C0747QueueRowExpiryTests",
         "C0824RefOnlyLandingTests",
         "CheckCompactionReceiptTests",
         "ClaudeDialogWatchdogCanaryTests",
