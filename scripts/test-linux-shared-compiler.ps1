@@ -104,4 +104,78 @@ if ($Case -eq 'Adapter') {
     return
 }
 
-throw 'Native fixture will be added with integration; no native proof claimed'
+if (-not $IsLinux) { throw 'Native compiler witness requires Linux; not a passed skip' }
+$grant = 0
+Assert-Compiler ([int]::TryParse($env:ANTIPHON_BUILD_SLOT_MAXCPUCOUNT, [ref]$grant) -and $grant -gt 0) 'checkpoint command transports its typed grant'
+. (Join-Path $PSScriptRoot 'lib/linux-compiler-evidence.ps1')
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('c1885-native-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory((Join-Path $scratch 'B'))
+[IO.File]::WriteAllText((Join-Path $scratch 'NuGet.Config'), '<configuration><packageSources><clear /></packageSources></configuration>')
+[IO.File]::WriteAllText((Join-Path $scratch 'A.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include="A.cs"/><ProjectReference Include="B/B.csproj"/></ItemGroup></Project>')
+[IO.File]::WriteAllText((Join-Path $scratch 'B/B.csproj'), '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>')
+[IO.File]::WriteAllText((Join-Path $scratch 'A.cs'), 'public class A : B { }')
+[IO.File]::WriteAllText((Join-Path $scratch 'B/B.cs'), 'public class B { }')
+$tokens = @('build', (Join-Path $scratch 'A.csproj'), '--no-incremental', '-p:UseAppHost=false', "-maxcpucount:$grant", '-nodeReuse:false', '--nologo')
+$start = New-CompilerStart (Get-Command dotnet).Source $tokens $scratch
+$start.Environment['RoslynCommandLineLogFile'] = Join-Path $scratch 'roslyn.log'
+$driverAffinity = [Antiphon.Build.LinuxCompilerToolset]::StatusValue('/proc/self/status', 'Cpus_allowed_list')
+$policy = [Antiphon.Build.BuildDriverEnvironment]::new()
+$policy.Apply($start)
+Assert-Compiler ($start.ArgumentList.Count -eq $tokens.Count + 3) 'production ProcessStartInfo factory selects the Linux compiler policy'
+# Same launcher generator, shorter fixture idle; no server starts for the production preparation.
+$start.ArgumentList.Clear(); foreach ($token in $tokens) { $start.ArgumentList.Add($token) }
+$diagnostic = [Antiphon.Build.LinuxCompilerToolset]::Prepare($start, $grant, 10, ('fixture-' + [IO.Path]::GetFileName($scratch)), $true)
+Write-Host $diagnostic
+$pipe = [regex]::Match($diagnostic, ' pipe=(\S+)').Groups[1].Value
+$sdk = [regex]::Match($diagnostic, ' sdk=(\S+)').Groups[1].Value
+$cpus = [regex]::Match($diagnostic, ' cpus=(\S+)').Groups[1].Value
+$chosen = Get-C1885Set $cpus
+$owned = @{}
+Assert-Compiler (@(Get-C1885Compilers $pipe).Count -eq 0) 'private fixture pipe starts without a compiler'
+$process = $null
+$samples = [Collections.Generic.List[object]]::new()
+$runRoot = Join-Path $repo ('.antiphon/c1885/native-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($runRoot)
+$timer = [Diagnostics.Stopwatch]::StartNew()
+try {
+    $process = [Diagnostics.Process]::Start($start)
+    $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+    while (-not $process.WaitForExit(100)) {
+        if ($timer.Elapsed.TotalSeconds -gt 30) { throw 'native build exceeded its provisional 30-second bound' }
+        foreach ($compiler in @(Get-C1885Compilers $pipe)) {
+            $owned["$($compiler.Pid):$($compiler.Start)"] = $compiler
+            $samples.Add(@{ Seconds = $timer.Elapsed.TotalSeconds; Compiler = $compiler })
+            foreach ($threadSet in $compiler.Threads) {
+                foreach ($cpu in (Get-C1885Set $threadSet)) { if (-not $chosen.Contains($cpu)) { throw 'compiler thread escaped selected CPU set' } }
+            }
+        }
+    }
+    Assert-Compiler ($process.ExitCode -eq 0) 'one native build succeeds'
+    Assert-Compiler ($stdout.Wait(1000) -and $stderr.Wait(1000)) 'native output drains within deadline'
+    [IO.File]::WriteAllText((Join-Path $runRoot 'build.log'), $stdout.Result + $stderr.Result)
+    Assert-Compiler ($owned.Count -eq 1) 'both dependent projects share one PID and start identity'
+    $log = [IO.File]::ReadAllText((Join-Path $scratch 'roslyn.log'))
+    [IO.File]::WriteAllText((Join-Path $runRoot 'roslyn.log'), $log)
+    $compilerPid = @($owned.Values)[0].Pid
+    Assert-Compiler (([regex]::Matches($log, "ID=VBCSCompiler $compilerPid TID=\d+: Writing Completed response")).Count -ge 2) 'two successful server responses use the observed compiler'
+    Assert-Compiler (([regex]::Matches($log, 'CompilerServer: server - server processed compilation')).Count -eq 2) 'both compilations use shared compilation without fallback'
+    Assert-Compiler ($log -notmatch 'CompilerServer: (?!server - server processed compilation)') 'no stand-alone compiler response is hidden'
+    Assert-Compiler (@($owned.Values)[0].Argv -ccontains (Join-Path $sdk 'Roslyn/bincore/VBCSCompiler.dll')) 'launcher execs the original selected compiler DLL'
+    Assert-Compiler ([Antiphon.Build.LinuxCompilerToolset]::StatusValue('/proc/self/status', 'Cpus_allowed_list') -ceq $driverAffinity) 'driver affinity is unchanged'
+    $idle = [Diagnostics.Stopwatch]::StartNew()
+    while (@(Get-C1885Compilers $pipe).Count -gt 0 -and $idle.Elapsed.TotalSeconds -lt 15) { Start-Sleep -Milliseconds 100 }
+    Assert-Compiler (@(Get-C1885Compilers $pipe).Count -eq 0) 'compiler automatically exits within the fixture idle allowance'
+    $samples | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'samples.json')
+    @{ Sha = (& git -C $repo rev-parse HEAD); Grant = $grant; Scratch = $scratch; Diagnostic = $diagnostic;
+        BuildSeconds = $timer.Elapsed.TotalSeconds - $idle.Elapsed.TotalSeconds; IdleSeconds = $idle.Elapsed.TotalSeconds; Assertions = $script:assertions;
+        SetupSeconds = $null; Unknown = @('restore separate span', 'GC CPU', 'SDK/cache IO individual spans') } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $runRoot 'receipt.json')
+    Write-Host "C1885 cases=Native assertions=$script:assertions failed=0 builds=1 evidence=$runRoot"
+} finally {
+    if ($null -ne $process) {
+        if (-not $process.HasExited) { $process.Kill($true); [void]$process.WaitForExit(1000) }
+        $process.Dispose()
+    }
+    if (@(Get-C1885Compilers $pipe).Count -gt 0) { Stop-C1885PrivateCompiler (Get-Command dotnet).Source (Join-Path $sdk 'Roslyn/bincore/VBCSCompiler.dll') $pipe $scratch }
+    if (@(Get-C1885Compilers $pipe).Count -gt 0) { throw 'task-owned compiler residue remains on the private pipe' }
+}
