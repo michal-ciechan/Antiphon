@@ -75,7 +75,7 @@ finally {
         }
         if ($receipt.Pipe) { $remaining += @(Get-C1885Compilers $receipt.Pipe).Count }
     }
-    @{ CollectionSeconds = $watch.Elapsed.TotalSeconds; Commands = @($outcomes); Failure = $failure; RemainingOwnedCompilers = $remaining } |
+    @{ CollectionSeconds = $watch.Elapsed.TotalSeconds; Commands = $outcomes.ToArray(); Failure = $failure; RemainingOwnedCompilers = $remaining } |
         ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'controller.json')
     Write-Host "C1885 CONTROLLER seconds=$($watch.Elapsed.TotalSeconds) commands=$($outcomes.Count) remaining=$remaining failure=$failure"
     if ($remaining) { throw 'owned compiler residue after exact-pipe shutdown' }
