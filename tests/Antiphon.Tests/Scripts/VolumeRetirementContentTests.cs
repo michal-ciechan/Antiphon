@@ -20,6 +20,7 @@ public sealed class VolumeRetirementContentTests
     [Arguments("linked", "Ready")]
     [Arguments("outside", "RecycleGitAuditUnknown")]
     [Arguments("remote", "RecycleGitAuditUnknown")]
+    [Arguments("named-remote", "RecycleGitAuditUnknown")]
     [Arguments("not-ignored", "RecycleGitAuditUnknown")]
     [Arguments("dirty", "RecycleWorktreeDirty")]
     [Arguments("unpublished", "RecycleUnpublishedWork")]
@@ -53,10 +54,11 @@ public sealed class VolumeRetirementContentTests
             git -C {{VolumeRetirementFixture.Quote(nested)}} -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit --allow-empty -qm fixture
             """);
         setup.Exit.ShouldBe(0, setup.Output);
-        if (vector == "remote")
+        if (vector == "remote" || vector == "named-remote")
         {
             var remote = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(nested) +
-                " remote add backup " + VolumeRetirementFixture.Quote(Path.Combine(fixture.Root, "absent-origin.git")));
+                " remote add " + (vector == "remote" ? "origin" : "backup") + " " +
+                VolumeRetirementFixture.Quote(Path.Combine(fixture.Root, "absent-origin.git")));
             remote.Exit.ShouldBe(0, remote.Output);
         }
         if (vector == "dirty") await File.AppendAllTextAsync(Path.Combine(outer, "readme.txt"), "dirty\n");
@@ -83,6 +85,27 @@ public sealed class VolumeRetirementContentTests
             text.ShouldContain(expected);
             text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
         }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var (_, outer) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        var seed = Path.Combine(outer, ".antiphon/test-output/card-1605/template");
+        var template = await SeedTemplate(seed, "exact");
+        template.Exit.ShouldBe(0, template.Output);
+        var nested = Path.Combine(seed, ".antiphon/selector-evidence/x/fixtures/y");
+        var setup = await VolumeRetirementFixture.Bash("git init -q " + VolumeRetirementFixture.Quote(nested));
+        setup.Exit.ShouldBe(0, setup.Output);
+        var preview = await VolumeRetirementFixture.Preview(fixture);
+        var text = preview.Output + await VolumeRetirementFixture.AuditText(fixture);
+        preview.Exit.ShouldBe(2, text);
+        text.ShouldContain("RecycleGitAuditUnknown");
+        text.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        fixture.Removed.ShouldBeEmpty();
     }
 
     [Test]
