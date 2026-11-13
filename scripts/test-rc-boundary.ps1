@@ -96,6 +96,39 @@ if (-not (Test-Path -LiteralPath $lib)) {
             $id = Get-RcBoundaryChunkId -Suite antiphon -Boundary core -IdentityKeys @('A<T>/M>&''')
             Note ($id -ceq 'b-core-f2e0eae2ff0cf3c2') ('json encoding survived: ' + $id)
         }
+        'ShortIdCollisionIsUnassigned' {
+            # Forced 64-bit prefix collision of CTests/M under suite antiphon, boundary core.
+            # The two case keys were found by a distinguished-point search over the canonical digest.
+            $left = '10788987499786589518'
+            $right = '17490688019260441962'
+            $idLeft = Get-RcBoundaryChunkId antiphon core @('CTests/M') -CaseKeys @($left)
+            $idRight = Get-RcBoundaryChunkId antiphon core @('CTests/M') -CaseKeys @($right)
+            Note ($idLeft -ceq $idRight) 'fixture is not a short-id collision'
+            Note ($idLeft -ceq 'b-core-360a4ef28b10a96c') ('pinned collision prefix moved: ' + $idLeft)
+            $one = New-RcBoundaryChunk -Identities @(@{ boundary = 'core'; suite = 'antiphon'; identityKey = 'ATests/A' })
+            Note ($one.fullDigest -match '^[0-9a-f]{64}$' -and $one.chunkId -ceq ('b-core-' + $one.fullDigest.Substring(0, 16))) 'full digest dropped'
+            if (-not (Get-Command Resolve-RcBoundaryChunks -ErrorAction SilentlyContinue)) {
+                Note $false 'collision resolver absent'
+            } else {
+                $resolved = @(Resolve-RcBoundaryChunks -Memberships @(
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'CTests/M'; caseKey = $left }) },
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'CTests/M'; caseKey = $right }) }
+                ))
+                Note (@($resolved).Count -eq 2) 'collision dropped a chunk'
+                foreach ($row in @($resolved)) {
+                    Note ($row.boundary -ceq 'unassigned' -and $row.alwaysDirty -eq $true -and $row.collision -eq $true) 'short-id collision accepted'
+                    Note ($row.chunkId -like 'b-unassigned-*') 'colliding short id kept'
+                }
+                $clean = @(Resolve-RcBoundaryChunks -Memberships @(
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ATests/A'; caseKey = '' }) },
+                    @{ suite = 'antiphon'; boundary = 'core'; identities = @(@{ identityKey = 'ZTests/B'; caseKey = '' }) }
+                ))
+                Note (@($clean).Count -eq 2) 'distinct chunks dropped'
+                foreach ($row in @($clean)) {
+                    Note ($row.boundary -ceq 'core' -and $row.collision -eq $false -and $row.alwaysDirty -eq $false) 'distinct short ids refused'
+                }
+            }
+        }
         default { throw ('unknown case ' + $Case) }
     }
 }
