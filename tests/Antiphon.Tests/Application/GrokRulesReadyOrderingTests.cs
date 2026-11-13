@@ -45,7 +45,7 @@ public sealed class GrokRulesReadyOrderingTests
         factory.Adapter = h.Adapter;
         var payload = new GrokRulesPayload("private rules\n", 1, Guid.NewGuid());
         var bytes = Encoding.UTF8.GetBytes(payload.Content);
-        var receipt = new GrokRulesReceipt($"/private/instructions/{h.SessionId:N}/rules.md",
+        var receipt = new GrokRulesReceipt($"/private/instructions/grok/{h.SessionId:N}/rules.md",
             GrokRulesTransport.Hash(bytes), bytes.Length, 1, payload.Generation);
         h.Runner.Capabilities = new("test", "test", "test", false, Features: [GrokRulesTransport.Capability]);
         h.Runner.SessionResponse = JsonSerializer.Deserialize<SessionRunnerSessionDto>("{}")! with { GrokRulesReceipt = receipt };
@@ -82,7 +82,7 @@ public sealed class GrokRulesReadyOrderingTests
         catch (Exception ex) { error = ex; }
         finally { deadline.Cancel(); try { await launch; } catch { } }
 
-        written.ShouldNotBeNull("the uncertain Input really reached the peer");
+        written.ShouldNotBeNull($"the uncertain Input really reached the peer: {error}");
         h.Adapter.Killed.ShouldBeFalse($"an ambiguous {fault} must not authorize launch cleanup: {error}");
         error.ShouldBeNull();
         attempts.ShouldBe(1, "no blind retry before transcript/composer reconciliation");

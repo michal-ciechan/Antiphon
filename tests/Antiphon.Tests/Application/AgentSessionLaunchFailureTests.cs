@@ -57,6 +57,43 @@ namespace Antiphon.Tests.Application;
 public class AgentSessionLaunchFailureTests
 {
     [Test]
+    [Arguments("timeout")]
+    [Arguments("cancellation")]
+    [Arguments("transport")]
+    public async Task Card_input_uncertainty_preserves_session_and_original_attempt(string fault)
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptFailure = _ => fault switch
+        {
+            "timeout" => new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestTimeout, "Input reply timed out"),
+            "cancellation" => new OperationCanceledException("Input reply canceled"),
+            _ => new HttpRequestException("Input transport lost"),
+        }};
+        await using var fixture = await LaunchFixture.CreateAsync(adapter);
+        var cardId = await fixture.CreateCardAsync();
+        Exception? error = null;
+        try { await fixture.StartCardSessionAsync(cardId, "uncertain original work body"); }
+        catch (Exception ex) { error = ex; }
+        adapter.Killed.ShouldBeFalse($"an ambiguous {fault} does not establish a failed launch: {error}");
+        error.ShouldBeNull();
+        await using var db = LaunchFixture.CreateContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.CardId == cardId);
+        session.Status.ShouldBe(SessionStatus.Running);
+        session.EndedAt.ShouldBeNull();
+        session.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
+        var attempt = await db.RunAttempts.SingleAsync(a => a.CardId == cardId);
+        attempt.Phase.ShouldBe(RunPhase.AwaitingInput);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == session.Id);
+        row.Body.ShouldBe(attempt.Prompt);
+        row.DeferredFromRunAttemptId.ShouldBe(attempt.Id);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBeNull();
+        row.DeliveryAttempts.ShouldBe(1);
+        row.LastDeliveryStartedAt.ShouldNotBeNull();
+        row.LastDeliveryGeneration.ShouldBe(SessionGeneration.Normalize(session.StartedAt));
+        adapter.Prompts.ShouldHaveSingleItem();
+    }
+
+    [Test]
     [Arguments(AgentKind.Grok)]
     [Arguments(AgentKind.ClaudeCode)]
     public async Task Sign_in_failure_records_incident_without_waiting_on_its_own_agent_lock(AgentKind kind)

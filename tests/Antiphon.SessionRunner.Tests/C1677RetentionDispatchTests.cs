@@ -19,6 +19,31 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class C1677RetentionDispatchTests
 {
     [Test]
+    public async Task Phase_a_waits_for_the_mutation_lock(CancellationToken ct)
+    {
+        // Retention must still serialize with destructive workspace/session mutations.
+        var runtime = new RetainRuntime { KillGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var dispatcher = Dispatcher(runtime);
+        var kill = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.KillGeneration, JsonSerializer.SerializeToElement(new
+            { sessionId = Guid.NewGuid(), expectedAcceptedStartedAt = DateTime.UtcNow }, PhoneHomeFraming.Json)), ct);
+        await runtime.KillStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        var retain = dispatcher.DispatchAsync(RetainFrame(), ct);
+        try
+        {
+            await Task.Delay(100, ct);
+            runtime.CheckAndMoveStarts.ShouldBe(0);
+        }
+        finally
+        {
+            runtime.KillGate.TrySetResult();
+            await kill.WaitAsync(TimeSpan.FromSeconds(2), ct);
+            await retain.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        }
+        runtime.CheckAndMoveStarts.ShouldBe(1);
+    }
+
+    [Test]
     public async Task Mutation_lock_reports_slow_owner_wait_and_hold(CancellationToken ct)
     {
         var clock = new FakeTimeProvider();
@@ -297,6 +322,8 @@ public sealed class C1677RetentionDispatchTests
     /// <summary>F-2. Advertises retention; each phase and Input can be held at a gate.</summary>
     private sealed class RetainRuntime : IPhoneHomeRuntimeSurface
     {
+        public TaskCompletionSource? KillGate { get; set; }
+        public TaskCompletionSource KillStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? CheckGate { get; set; }
         public TaskCompletionSource CheckStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public WorkspaceRetainStep Step { get; init; } = new(new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept));
@@ -349,7 +376,11 @@ public sealed class C1677RetentionDispatchTests
             Task.FromResult(new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unsupported, null, null));
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
-        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
-            Task.FromResult(new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null));
+        public async Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+        {
+            KillStarted.TrySetResult();
+            if (KillGate is { } gate) await gate.Task.WaitAsync(ct);
+            return new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null);
+        }
     }
 }
