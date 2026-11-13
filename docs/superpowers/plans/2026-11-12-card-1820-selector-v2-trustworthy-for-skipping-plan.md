@@ -8,7 +8,7 @@ The brief folds verification into this dispatch and requests `next: code`. The v
 
 ## Evidence and ground truth
 
-Read CARD-1820, board Antiphon, revision 23, and both investigation reports in full. Source reports:
+Read CARD-1820, board Antiphon, revision 23, and both investigation reports. Source reports:
 
 - `origin/feat/card-task-62e3aea4`, `docs/investigations/2026-11-12-card-1820-selector-v2-accuracy-on-real-diffs-smallest-path.md`, investigation commit prefix `4e8710dc7`.
 - `origin/feat/card-task-b9444a8c`, `docs/investigations/2026-11-12-card-1836-incremental-rc-qualification-result-ledger-boundary-chunks-dirty-marking-release-baseline.md`.
@@ -242,6 +242,7 @@ Only the selected slice's rows run in its Code task. `Group` names the lane; Lin
 | CP-27 | V3 | n/a | linux-master-41-50 | `pwsh -NoProfile -File scripts/replay-release-impact.ps1 -Batch 5 -Count 10 -ResumeManifest .antiphon/selector-replay/master50.json -Finalize` | V-16 | exit 0; 10 pair reports; summary accounts for all 52; 0 known misses | n/a | 4 | true |
 | CP-28 | W1 | `tests/Antiphon.Tests -> bin-c1820-w1/` | windows-contract | `/*/*/ReleaseImpactWindowsTests/*` | V-17 | all 4 named, 0 failed/skipped | 4 | 12 | true |
 | CP-29 | W1 | CP-28 | windows-legacy-readers | `/*/*/DerivedImpactIndexTests/(windows_only_classes_stay_out_of_linux_filters*)\|(linux_only_methods_stay_off_the_windows_filter*)\|(regenerate_script_reports_changed_then_unchanged*)` | R-5 | all 3 methods, 0 failed/skipped | 3 | 3 | true |
+| CP-30 | V2 | CP-21 | linux-final-index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 | named method, 0 failed/skipped | 1 | 1 | true |
 
 R-1 ordinary cap semantics; R-2 CARD-1782 hand contracts and malformed schema/project identity; R-3 ordinary index/merge/lane contracts; R-4 policy/catalog legacy integrity; R-5 native reader/regen compatibility. CP-8 Min is a conservative method floor; Code records actual argument-expanded count and raises the floor from fresh discovery/TRX, never uses internal assertions as executions. S4 additionally verifies unchanged stage-bundle blob IDs without running an unrelated bundle suite.
 
@@ -311,11 +312,11 @@ Add `scripts/lib/release-impact-admission.ps1`, `ReleaseImpactConsumerTests.cs` 
 
 ### V1 — independent replay oracle (45-60 minutes)
 
-Add `ReleaseImpactOracle.cs`, `ReleaseImpactOracleTests.cs`, the replay driver mode and `scripts/replay-release-impact.ps1`. Implement the independent metadata/project/text sweep, frozen roster, source-bound shared artifact cache, timing/provenance and raw-versus-fallback comparison. V-15 red rejects a deliberately incomplete fixture selection. CP-20. Can start after S1R2 format stabilizes; must remain independently implemented, not a call to the candidate graph.
+Add `ReleaseImpactOracle.cs`, `ReleaseImpactOracleTests.cs`, the replay driver mode and `scripts/replay-release-impact.ps1`. Implement the independent metadata/project/text sweep, frozen roster, source-bound shared artifact cache, timing/provenance and raw-versus-fallback comparison. V-15 red rejects a deliberately incomplete fixture selection. CP-20. Independent module work can start after S1R2 format stabilizes; schedule shared driver edits after S1R6 settles. The oracle must remain independently implemented, not a call to the candidate graph.
 
 ### V2 — two real-diff acceptance replays (35-55 minutes)
 
-Add `ReleaseImpactReplayTests.cs` and run the exact Cut/PostCut pairs with V1 oracle and final producer; retain full counts, named omissions, broadening and unknowns in ignored evidence plus a concise Markdown findings report. V-16 historical miss witnesses; CP-21. Depends S1R6/P1/P2/V1 and final S2/S3 inputs. A missing historical build does not silently shrink the oracle. If closure is unproven, report Full/unproven and the exact remaining work; do not claim a skipping acceptance pass.
+Add `ReleaseImpactReplayTests.cs` and run the exact Cut/PostCut pairs with V1 oracle and final producer; retain full counts, named omissions, broadening and unknowns in ignored evidence plus a concise Markdown findings report. V-16 historical miss witnesses; CP-21/CP-30. Depends S1R6/P1/P2/V1 and final S2/S3/S4/S5 inputs. Regenerate the ordinary index against this assembled source before committing and running its drift witness. A missing historical build does not silently shrink the oracle. If closure is unproven, report Full/unproven and the exact remaining work; do not claim a skipping acceptance pass.
 
 ### V3 — frozen 50-commit replay (30-60 minutes execution/evidence task)
 
@@ -326,6 +327,8 @@ Complete the remaining replay tests and freeze the first-parent roster at a fetc
 Add/run `ReleaseImpactWindowsTests.cs` and CP-28/CP-29 on an isolated task checkout using native Windows. Verify target universe, path/case/reader behavior and the graph envelope at the same algorithm source as Linux evidence. If the CARD-1836 bridge uses Windows PowerShell 5.1, include real-size 5.1 JSON roundtrip/refusal in NativeReaderEnvelopeRoundTrip; otherwise require pwsh 7 and record 5.1 as unsupported/incomplete. The old 2 MB issue must not be hidden by a tiny fixture. Depends P2/V2; this work grants no Windows test-outcome credit to Linux classes and never reads/stops the live 0b292fa4 run.
 
 Critical integration order: S1R1 -> S1R2 -> {S1R3, S1R4, S1R5} -> S1R6 -> P2 -> V2 -> V3/W1. P1 joins before P2. V1 can proceed beside modules. S2a -> S3a serialize selector edits; S2b/S3b are separate guards; S4 -> S5 serialize owner docs. Final V2/V3 use all completed producer inputs. CARD-1836 boundary mapping can proceed in parallel; digest/admission work consumes the settled contract and must not overlap these policy/doc files. Do not fill seats by dispatching overlapping edits. This is roughly 14-18 authoring/execution hours across the slice targets before queue waits, reviews and any Debug work, not a promise of next-cut readiness.
+
+Ordinary-index maintenance remains CARD-1838's combined-tree regeneration, not hand resolution of generated JSON. Each slice reports any stale ordinary index its added sources induce; regenerate when its assigned drift witness requires it, and the landing owner regenerates the assembled tree. The generator's necessary build is explicitly permitted preparation outside the ordinary test rows: report the command/reason, use `scripts/build-slot.ps1`, native outputs and matching `UseAppHost=false`, then commit/push the generated index before checkpoint execution. Never regenerate while a test run is in flight. Runtime release graphs remain ignored artifacts and do not inherit freshness from this ordinary index.
 
 ## Performance budget
 
@@ -357,3 +360,9 @@ Code cost is the sum of the selected group's table estimates, never the whole ta
 Build is ready to start S1R1; no new operator approval is needed for these reversible task-branch changes. The plan is complete, but selector correctness and release eligibility remain to be implemented and measured. A complete release certificate is deliberately harder to earn than an ordinary useful selection.
 
 No behavioral false-negative rate, 236-chunk join, old-run provenance, useful real-cut savings or native Windows execution was measured here. All unknowns have explicit Full outcomes. CARD-1836 still owes historical-run admission and complete execution/carry coverage; this artifact cannot replace either. If a complete graph remains unattainable for a candidate, the truthful outcome is Full with the unresolved dependency named, followed by O-1 only if the operator wants to pursue narrower proof.
+
+## Plan validation record
+
+At initial plan commit `0f097f8611526a3e845372c89ec2e19dabbab4ac`, the repository checkpoint importer accepted all 29 original rows with zero import warnings. Its tooling-only build used the host slot, native default output and `UseAppHost=false`: 8.10 seconds, 0 errors, 11 compiler/analyzer warnings. These are importer build results, not product tests or selector timing. The final table adds CP-30 for the assembled ordinary-index drift check and imports **30 rows, zero warnings**, with 223 total estimated minutes distributed across the separate tasks. Reusing the first YAML output path was refused with `unrecorded-existing` (exit 2); importing to fresh ignored `.antiphon/card1820-plan-checkpoints-final.yaml` passed (exit 0). The earlier output was left intact.
+
+The source census checked all 24 suffix operands then present against tracked test class/method declarations and found no prefix siblings. New class declarations and final fresh executed identities must still be checked by Code. Generated importer YAML is ignored. `git diff --check` passed; read-only `git merge-tree --write-tree origin/master HEAD` was conflict-free against `cc48c70050a2932eddf4abe18cea8659d478c33e`. No product test or live qualification ran in this Plan task.
