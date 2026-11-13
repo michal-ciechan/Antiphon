@@ -13,7 +13,7 @@ function Node([string]$Type, [string]$Method = 'Run', [int]$Row = 0) {
         Method=$Method; Uid="$Type/$Method/$Row"; Categories=@(); Excluded=$false }
 }
 function Leaves([object[]]$Nodes) {
-    foreach ($class in @($Nodes | Group-Object ClassName)) {
+    foreach ($class in @($Nodes | Group-Object { Get-NightlyBareClassIdentity -Name $_.ClassName })) {
         [pscustomobject]@{ id='all-profile-1'; classes=@($class.Name); exactFilter=''; nodes=@() }
     }
 }
@@ -30,15 +30,16 @@ function Pack([object[]]$Nodes, [hashtable]$Boundaries, [object[]]$InputLeaves =
 function Selected([object[]]$Plan, [object[]]$Nodes) {
     foreach ($chunk in $Plan) {
         foreach ($node in $Nodes) {
-            $path = '/*/{0}/{1}/{2}' -f $node.Namespace, $node.Type, $node.Method
+            $type = ($node.Type -split '\(', 2)[0]
+            $path = '/*/{0}/{1}/{2}' -f $node.Namespace, $type, $node.Method
             if ($chunk.exactFilter) { $hit = $path -ceq $chunk.exactFilter }
             elseif ($chunk.methodFilter) {
                 $parts = $chunk.methodFilter.Split('/')
-                $hit = $node.Namespace -ceq $parts[2] -and $node.Type -ceq $parts[3] -and $node.Method -cmatch ('^(?:' + $parts[4].Replace('*','.*') + ')$')
+                $hit = $node.Namespace -ceq $parts[2] -and $type -ceq $parts[3] -and $node.Method -cmatch ('^(?:' + $parts[4].Replace('*','.*') + ')$')
             } elseif ($chunk.groupFilter) {
                 $parts = $chunk.groupFilter.Split('/')
-                $hit = $node.Namespace -ceq $parts[2] -and $node.Type -cmatch ('^(?:' + $parts[3].Replace('*','.*') + ')$')
-            } else { $hit = @($chunk.classes) -ccontains $node.ClassName }
+                $hit = $node.Namespace -ceq $parts[2] -and $type -cmatch ('^(?:' + $parts[3].Replace('*','.*') + ')$')
+            } else { $hit = @($chunk.classes) -ccontains ($node.Namespace + '.' + $type) }
             if ($hit) { $node.Uid }
         }
     }
@@ -85,6 +86,15 @@ function Test-Repack {
     $partial = @(Pack $nodes $map @($exact))
     Note (SameBag @(Selected $partial $nodes) @('Matrix/Run/0','Matrix/Run/1')) 'exact leaf launches excluded sibling'
     Note (SameBag @($partial.caseMembership.uid) @('Matrix/Run/0','Matrix/Run/1')) 'exact leaf manifest includes excluded sibling'
+    $constructors = @((Node 'Matrix("a")' Run 0), (Node 'Matrix("b")' Run 0))
+    $ctorLeaf = [pscustomobject]@{ id='all-profile-1'; classes=@('Antiphon.Tests.Fixture.Matrix'); exactFilter='/*/Antiphon.Tests.Fixture/Matrix/Run'; nodes=$constructors }
+    try {
+        $ctorPlan = @(Pack $constructors $map @($ctorLeaf))
+        Note (SameBag @(Selected $ctorPlan $constructors) @($constructors.Uid)) 'constructor filter lost cases'
+        Note (SameBag @($ctorPlan.caseMembership.className) @($constructors.ClassName)) 'constructor identities collapsed'
+        Note (SameBag @($ctorPlan.identityKeys) @('Antiphon.Tests.Fixture.Matrix/Run')) 'constructor suffix entered method key'
+    } catch { Note $false ('constructor exact leaf refused: ' + $_.Exception.Message) }
+    Note (Refuses { Pack @((Node Upper Run), (Node upper Other)) @{} }) 'case-colliding classes accepted'
 }
 function Test-Default {
     $nodes = @((Node B), (Node C))
