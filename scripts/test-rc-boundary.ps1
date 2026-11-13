@@ -53,6 +53,16 @@ if (-not (Test-Path -LiteralPath $lib)) {
             ))
             $actual = (@($ordered | ForEach-Object { $_.class + '/' + $_.method + '/' + $_.caseKey }) -join ':')
             Note ($actual -ceq 'A/M/:A/M/Z:A/M/a:A/m/:Z/M/:a/M/') 'sort is not ordinal by class, method, case'
+            $nul = [string][char]0
+            $withNul = @(Sort-RcBoundaryIdentities @(
+                @{class=('A' + $nul); method='M'; caseKey=''},
+                @{class='A'; method=('M' + $nul); caseKey=''},
+                @{class='A'; method='M'; caseKey=$nul},
+                @{class='A'; method='M'; caseKey=''}
+            ))
+            Note ($withNul.Count -eq 4 -and $withNul[0].caseKey -ceq '' -and
+                $withNul[1].caseKey -ceq $nul -and $withNul[2].method -ceq ('M' + $nul) -and
+                $withNul[3].class -ceq ('A' + $nul)) 'NUL changed tuple order'
             Note ((Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A')) -ceq 'b-core-eca0b76b8b1ed195') 'canonical id changed during optimization'
         }
         'ExplicitCaseKeyCount' {
