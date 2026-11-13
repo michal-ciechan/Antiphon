@@ -77,7 +77,12 @@ internal static class ReleaseImpactProjectGraph
                 foreach (var element in xml.Descendants())
                 {
                     var kind = element.Name.LocalName;
-                    if (kind == "AssemblyName" && !HasExpression(element.Value)) Assembly(element.Value.Trim(), project);
+                    if (kind == "AssemblyName")
+                    {
+                        var assemblyName = element.Value.Trim();
+                        if (HasExpression(assemblyName)) unknown.Add($"project-expression-unresolved:{project}:{assemblyName}");
+                        else Assembly(assemblyName, project);
+                    }
                     if (kind is "Target" or "UsingTask" or "Sdk") unknown.Add("project-build-logic-unevaluated:" + project);
                     if (kind == "PackageReference") unknown.Add("package-input-unresolved:" + project);
                     if (kind is "Analyzer" or "AdditionalFiles") unknown.Add("generated-provenance-unavailable:" + project);
@@ -127,14 +132,12 @@ internal static class ReleaseImpactProjectGraph
         foreach (var (path, root) in scans)
             foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                if (call.Expression is not MemberAccessExpressionSyntax member) continue;
-                var method = member.Name.Identifier.ValueText;
-                var receiver = member.Expression.ToString();
-                var typeLookup = method == "GetType" && (receiver == "Type" || receiver.EndsWith(".Type", StringComparison.Ordinal));
-                var assemblyLookup = method == "Load" && (receiver == "Assembly" || receiver.EndsWith(".Assembly", StringComparison.Ordinal));
+                if (!TryReflectionCall(call, out var method, out var receiver)) continue;
+                var typeLookup = method == "GetType" && receiver is not null && (receiver == "Type" || receiver.EndsWith(".Type", StringComparison.Ordinal));
+                var assemblyLookup = method == "Load" && receiver is not null && (receiver == "Assembly" || receiver.EndsWith(".Assembly", StringComparison.Ordinal));
                 if (!typeLookup && !assemblyLookup)
                 {
-                    if (method is "LoadFrom" or "LoadFile" or "GetTypes" or "GetExportedTypes")
+                    if (IsUnrecognisedReflection(method, receiver, call.ArgumentList.Arguments.Count))
                         unknown.Add("reflection-target-unresolved:" + path);
                     continue;
                 }
@@ -184,6 +187,66 @@ internal static class ReleaseImpactProjectGraph
             p.Value.OrderBy(c => c.Key.Project, StringComparer.Ordinal).ThenBy(c => c.Key.FullName, StringComparer.Ordinal)
                 .Select(c => new ReleaseImpactConsumer(c.Key.Project, c.Key.FullName, c.Value.Order(StringComparer.Ordinal).ToArray())).ToArray())).ToArray();
         return relation with { IncompleteReasons = unknown.ToArray(), Edges = edges };
+    }
+
+    internal static ReleaseImpactGraph Union(ReleaseImpactGraph oldGraph, ReleaseImpactGraph newGraph)
+    {
+        var reasons = oldGraph.IncompleteReasons.Intersect(newGraph.IncompleteReasons, StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal).ToArray();
+        var rightIds = newGraph.Universe.Select(c => new ReleaseImpactIdentity(c.Project, c.FullName)).ToHashSet();
+        var universe = oldGraph.Universe.Where(c => rightIds.Contains(new ReleaseImpactIdentity(c.Project, c.FullName))).ToArray();
+        var rightEdges = newGraph.Edges.ToDictionary(e => e.Path, e => e.Classes.ToDictionary(
+            c => new ReleaseImpactIdentity(c.Project, c.FullName), c => c.Kinds.ToHashSet(StringComparer.Ordinal)));
+        var edges = new List<ReleaseImpactEdge>();
+        foreach (var edge in oldGraph.Edges)
+        {
+            if (!rightEdges.TryGetValue(edge.Path, out var rightClasses)) continue;
+            var classes = new List<ReleaseImpactConsumer>();
+            foreach (var consumer in edge.Classes)
+            {
+                var id = new ReleaseImpactIdentity(consumer.Project, consumer.FullName);
+                if (!rightClasses.TryGetValue(id, out var rightKinds)) continue;
+                var kinds = consumer.Kinds.Where(rightKinds.Contains).Order(StringComparer.Ordinal).ToArray();
+                if (kinds.Length == 0) continue;
+                classes.Add(consumer with { Kinds = kinds });
+            }
+            if (classes.Count > 0) edges.Add(edge with { Classes = classes.ToArray() });
+        }
+        return oldGraph with { IncompleteReasons = reasons, Universe = universe, Edges = edges.ToArray() };
+    }
+
+    private static bool TryReflectionCall(InvocationExpressionSyntax call, out string method, out string? receiver)
+    {
+        switch (call.Expression)
+        {
+            case MemberAccessExpressionSyntax member:
+                method = member.Name.Identifier.ValueText;
+                receiver = member.Expression.ToString();
+                return true;
+            case IdentifierNameSyntax name:
+                method = name.Identifier.ValueText;
+                receiver = null;
+                return true;
+            default:
+                method = "";
+                receiver = null;
+                return false;
+        }
+    }
+
+    // Recognised Type.GetType and Assembly.Load are bound above. Every other reflective
+    // load adds an incomplete reason. Parameterless GetType is Object.GetType(), not a name load.
+    private static bool IsUnrecognisedReflection(string method, string? receiver, int arguments)
+    {
+        if (method is "LoadFrom" or "LoadFile" or "GetTypes" or "GetExportedTypes"
+            or "CreateInstance" or "LoadFromAssemblyName" or "LoadFromAssemblyPath")
+            return true;
+        if (method == "GetType" && arguments > 0) return true;
+        if (method == "Load" && arguments > 0)
+            return receiver is null
+                || receiver.Contains("AppDomain", StringComparison.Ordinal)
+                || receiver.EndsWith(".CurrentDomain", StringComparison.Ordinal);
+        return false;
     }
 
     private static bool HasExpression(string value) => value.Contains("$(", StringComparison.Ordinal)
