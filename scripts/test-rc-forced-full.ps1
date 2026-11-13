@@ -78,7 +78,7 @@ try {
                 $unknown.BaselineContract[$field] = $null
                 Expect-Decision (Get-RcForcedFullDecision @unknown) @(('contract-baseline-unknown:' + $field), ('contract-current-unknown:' + $field)) ('unknown both ' + $field)
             }
-            foreach ($bad in @('', 42, @('a'), ('x' * 64))) {
+            foreach ($bad in @('', 42, @('a'), ('x' * 64), (('a' * 64) + "`n"))) {
                 $invalid = New-Args
                 $invalid.CurrentContract.policyHash = $bad
                 Expect-Decision (Get-RcForcedFullDecision @invalid) @('contract-current-unknown:policyHash') 'invalid hash type/value'
@@ -128,6 +128,11 @@ try {
                 $missing.FullAnchor.Remove($field)
                 Expect-Decision (Get-RcForcedFullDecision @missing) @('full-anchor-unproven') ('anchor missing ' + $field)
             }
+            foreach ($field in @('sourceSha','closureDigest')) {
+                $invalid = New-Args
+                $invalid.FullAnchor[$field] += "`n"
+                Expect-Decision (Get-RcForcedFullDecision @invalid) @('full-anchor-unproven') ('anchor malformed ' + $field)
+            }
             $carry = New-Args
             $carry.FullAnchor = New-Anchor '2026-11-01T12:00:00Z'
             $carry.Evidence['candidateCompletedAtUtc'] = '2026-11-13T11:59:00Z'
@@ -161,6 +166,8 @@ try {
                 @('failedCount',1,'closure-failed'), @('unexpectedSkipCount',1,'closure-unexpected-skip'),
                 @('executedCount',-1,'closure-counts-unknown'), @('executedCount','10','closure-counts-unknown'),
                 @('requiredCount',0,'closure-counts-unknown'), @('sourceSha','label','closure-origin-unknown'),
+                @('sourceSha',(('2' * 40) + "`n"),'closure-origin-unknown'),
+                @('closureDigest',(('b' * 64) + "`n"),'closure-origin-unknown'),
                 @('closureDigest',$null,'closure-origin-unknown'), @('completedAtUtc','2026-11-14T00:00:00Z','closure-time-future'))) {
                 $bad = New-Closure
                 $bad[$row[0]] = $row[1]
