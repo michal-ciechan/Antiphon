@@ -149,8 +149,9 @@ public sealed class ReleaseImpactEnvelopeTests
 
         public static async Task<Fixture> CreateAsync(bool withIndex = false)
         {
-            // Keep isolated inputs in ignored evidence; never delete another run's fixture.
-            var root = Path.Combine(RepoRoot(), ".antiphon", "selector-evidence", "f1903e95", "fixtures", Guid.NewGuid().ToString("N"));
+            // These repos are selector inputs, not retained evidence. Keep them
+            // outside the checkout so they cannot enter a runner retirement audit.
+            var root = Path.Combine(Path.GetTempPath(), "antiphon-release-impact", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(root, "tests", "Antiphon.Tests"));
             await File.WriteAllTextAsync(Path.Combine(root, "tests", "Antiphon.Tests", "EnvelopeProbeTests.cs"), "public sealed class EnvelopeProbeTests { }\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"),
