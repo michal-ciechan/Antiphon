@@ -468,3 +468,6 @@ Antiphon.Tests.Application.CardFileGitFailureAcceptanceTests
 
 # CARD-1841: real dotnet builds of a Lib/Helper/Consumer fixture through the shipped CopyStagedHelpers target, shared and native output.
 Antiphon.Tests.TestHelpers.StagedHelperBuildTests
+
+# CARD-1887: production-scale PostgreSQL seed/pins EXPLAIN and differential membership.
+Antiphon.Tests.Application.SessionStatePinQueryTests

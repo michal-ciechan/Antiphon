@@ -130,21 +130,28 @@ public class SessionStatePinQueryTests
         await db.Database.OpenConnectionAsync();
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         var timer = Stopwatch.StartNew();
-        await using (var seed = new NpgsqlCommand("""
+        // Bound each insert independently; the first monolithic seed exceeded its 60s
+        // call budget on the loaded host. Keep the same dataset and deadline.
+        for (var first = 1; first <= 511;)
+        {
+            var last = Math.Min(first <= 32 ? first + 3 : first + 63, first <= 32 ? 32 : 511);
+            await using var seed = new NpgsqlCommand("""
             INSERT INTO "TranscriptEntries" ("Id", "AgentSessionId", "Sequence", "Kind", "Text", "Timestamp", "CreatedAt")
             SELECT gen_random_uuid(), (@ids)[s], n,
                 CASE WHEN n % 10 = 0 THEN 'TurnEnd' WHEN n % 3 = 0 THEN 'UserPrompt' ELSE 'AssistantText' END,
                 'synthetic', CASE WHEN n % 7 = 0 THEN NULL ELSE timestamptz '2026-01-01' + (n % 5) * interval '1 second' END,
                 timestamptz '2026-01-02'
-            FROM generate_series(1, 511) s
+            FROM generate_series(@first, @last) s
             CROSS JOIN LATERAL generate_series(1, CASE WHEN s <= 32 THEN 75000 ELSE 1500 END) n;
-            ANALYZE "AgentTasks"; ANALYZE "AgentSessions"; ANALYZE "TranscriptEntries";
-            SET jit = off; SET statement_timeout = '60s';
-            """, connection) { CommandTimeout = 60 })
-        {
+            """, connection) { CommandTimeout = 60 };
             seed.Parameters.AddWithValue("ids", ids);
+            seed.Parameters.AddWithValue("first", first);
+            seed.Parameters.AddWithValue("last", last);
             await seed.ExecuteNonQueryAsync();
+            first = last + 1;
         }
+        await using (var analyze = new NpgsqlCommand("ANALYZE \"AgentTasks\"; ANALYZE \"AgentSessions\"; ANALYZE \"TranscriptEntries\"; SET jit = off; SET statement_timeout = '60s';", connection) { CommandTimeout = 60 })
+            await analyze.ExecuteNonQueryAsync();
         Record("fixture", new { transcriptRows = 3118500, taskRows = 27695, seedMs = timer.Elapsed.TotalMilliseconds,
             load = File.Exists("/proc/loadavg") ? File.ReadAllText("/proc/loadavg") : "unknown",
             inventory = await ScalarAsync(connection, "SELECT jsonb_agg(row_to_json(i))::text FROM (SELECT tablename,indexname,indexdef FROM pg_indexes WHERE schemaname='public' AND tablename IN ('AgentTasks','TranscriptEntries') ORDER BY indexname) i"),
@@ -160,6 +167,7 @@ public class SessionStatePinQueryTests
             capture.Commands.Count.ShouldBe(1);
             var production = capture.Commands.Single();
             var baseline = new CapturedTranscriptCommand(SessionStatePinBaseline.Sql, production.Parameters);
+            Record($"sql-seed-{count}", new { before = baseline.Evidence(), after = production.Evidence() });
             (await RowsAsync(connection, production)).ShouldBe(await RowsAsync(connection, baseline));
             comparisons.Add(($"seed-{count}", await ExplainAsync(connection, baseline), await ExplainAsync(connection, production)));
         }
@@ -167,6 +175,7 @@ public class SessionStatePinQueryTests
         (await loader.LoadPinnedIdsAsync(default)).Order().ShouldBe(ids.Take(32).Order());
         capture.Commands.Count.ShouldBe(1);
         var pins = capture.Commands.Single();
+        Record("sql-pins", new { before = SessionStatePinBaseline.PinsSql, after = pins.Evidence() });
         (await RowsAsync(connection, pins)).ShouldBe(await RowsAsync(connection, new(SessionStatePinBaseline.PinsSql, [])));
         comparisons.Add(("pins", await ExplainAsync(connection, new(SessionStatePinBaseline.PinsSql, [])), await ExplainAsync(connection, pins)));
         foreach (var (name, before, after) in comparisons) Record(name, new { before, after });
@@ -204,7 +213,7 @@ public class SessionStatePinQueryTests
         await using var command = new NpgsqlCommand("EXPLAIN (ANALYZE, BUFFERS, SETTINGS, FORMAT JSON, TIMING OFF) " + sql.Sql, connection) { CommandTimeout = 60 };
         command.Parameters.AddRange(sql.Parameters.Select(p => p.Clone()).ToArray());
         // Observe our owned backend while EXPLAIN is active; this reads no production backend.
-        await using var monitor = new NpgsqlConnection(connection.ConnectionString);
+        await using var monitor = new NpgsqlConnection(TestDbFixture.ConnectionString);
         await monitor.OpenAsync();
         var running = command.ExecuteScalarAsync();
         await using var activity = new NpgsqlCommand("SELECT jsonb_build_object('activity',(SELECT row_to_json(a) FROM (SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=@pid) a),'locks',(SELECT jsonb_agg(row_to_json(l)) FROM (SELECT locktype,mode,granted FROM pg_locks WHERE pid=@pid) l))::text", monitor);
