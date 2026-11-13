@@ -46,9 +46,7 @@ internal sealed class HostTopConsumerTracker
         bool truncated;
         try
         {
-            var retain = new List<int>(_cpu.Count);
-            foreach (var key in _cpu.Keys) retain.Add(key.Pid);
-            rows = table.Read(HostTopConsumerLimits.ScanCap, retain);
+            rows = table.Read(HostTopConsumerLimits.ScanCap, RetainPids());
             truncated = table.LastReadTruncated;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -56,6 +54,22 @@ internal sealed class HostTopConsumerTracker
             return current.Rows;
         }
 
+        return Observe(rows, truncated, time);
+    }
+
+    /// <summary>Pids from the previous ranking. The next read keeps them ahead of the cap.</summary>
+    public List<int> RetainPids()
+    {
+        var retain = new List<int>(_cpu.Count);
+        foreach (var key in _cpu.Keys)
+            retain.Add(key.Pid);
+        return retain;
+    }
+
+    /// <summary>Ranks a read the caller already finished. A discarded late read never calls this.</summary>
+    public IReadOnlyList<HostTopConsumerSample> Observe(IReadOnlyList<HostProcessObservation> rows, bool truncated, TimeProvider time)
+    {
+        var now = time.GetTimestamp();
         var elapsed = _lastScan == long.MinValue ? TimeSpan.Zero : time.GetElapsedTime(_lastScan, now);
         _lastScan = now;
         var ranked = Rank(rows, elapsed);
