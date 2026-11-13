@@ -48,10 +48,9 @@ an ordinary nested .git directory with no remote configuration is omitted from
 its own publication census only under .antiphon/selector-evidence when both that
 root and the fixture path are ignored by the enclosing checkout. The enclosing
 checkout must be independently enumerated and still passes the full existing
-content, admin, tip/reflog and publication checks before Ready. Other scratch roots,
-including a selector fixture inside a known disposable no-origin seed (which cannot
-provide publication proof), keep their refusal. Enclosing origin is required.
-Other scratch roots,
+content, admin, tip/reflog and publication checks before Ready. Enclosing origin
+is required: a known disposable no-origin seed cannot provide publication proof
+for a selector fixture nested inside it. Other scratch roots,
 Git admin evidence, remote-bearing repos and all existing apply/token/expiry rules
 keep their previous treatment. New selector fixtures use a unique system temp path.
 
