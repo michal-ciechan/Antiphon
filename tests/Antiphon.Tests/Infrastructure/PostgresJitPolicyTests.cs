@@ -46,6 +46,34 @@ public sealed class PostgresJitPolicyTestsSetup
     }
 
     [Test]
+    public void suppress_follows_forms_the_assignment_scan_misses_and_keeps_a_trailing_escape()
+    {
+        var longForm = OptionsAfter("-c jit=off --jit=on");
+        longForm.EndsWith(ApplicationPostgresConnection.JitOffOption, StringComparison.Ordinal)
+            .ShouldBeTrue("trailing --jit=on still won");
+        longForm.Contains("--jit=on", StringComparison.Ordinal)
+            .ShouldBeTrue("earlier option bytes changed");
+
+        var shortForm = OptionsAfter("-c jit=off -cjit=on");
+        shortForm.EndsWith(ApplicationPostgresConnection.JitOffOption, StringComparison.Ordinal)
+            .ShouldBeTrue("trailing -cjit=on still won");
+        shortForm.Contains("-cjit=on", StringComparison.Ordinal)
+            .ShouldBeTrue("glued jit=on was rewritten");
+
+        var escaped = "-c application_name=label\\ ";
+        var kept = OptionsAfter(escaped);
+        kept.StartsWith(escaped, StringComparison.Ordinal)
+            .ShouldBeTrue("escaped trailing space was trimmed");
+        kept.EndsWith(" " + ApplicationPostgresConnection.JitOffOption, StringComparison.Ordinal)
+            .ShouldBeTrue("suppression was not its own token");
+
+        var once = ApplicationPostgresConnection.SuppressJit(Connection(options: escaped).ConnectionString);
+        var twice = ApplicationPostgresConnection.SuppressJit(once);
+        string.Equals(once, twice, StringComparison.Ordinal)
+            .ShouldBeTrue("repeated application grew the options");
+    }
+
+    [Test]
     public void suppress_preserves_unrelated_fields()
     {
         var input = Connection(options: "-c jit=on");
@@ -128,6 +156,12 @@ public sealed class PostgresJitPolicyTestsSetup
         text.Contains("jit_", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
         text.Contains("pg_stat_statements_reset", StringComparison.Ordinal).ShouldBeFalse();
         text.Contains("docker stats", StringComparison.Ordinal).ShouldBeTrue("container sample missing");
+    }
+
+    private static string OptionsAfter(string options)
+    {
+        var applied = ApplicationPostgresConnection.SuppressJit(Connection(options: options).ConnectionString);
+        return new NpgsqlConnectionStringBuilder(applied).Options ?? "";
     }
 
     private static NpgsqlConnectionStringBuilder Connection(string options) => new()
@@ -240,6 +274,43 @@ public sealed class PostgresJitPolicyTests
     }
 
     [Test]
+    public async Task startup_option_forms_report_jit_off_on_the_shared_database()
+    {
+        var raw = RawShared();
+        await AssertStartup(raw, "no-options");
+        await AssertStartup(WithOptions(raw, ""), "empty-options");
+        await AssertStartup(WithOptions(raw, "-c statement_timeout=5s"), "statement-timeout", "5s");
+        await AssertStartup(WithOptions(raw, "-c jit=on"), "dash-c-jit-on");
+        await AssertStartup(WithOptions(raw, "-cjit=on"), "glued-jit-on");
+        await AssertStartup(WithOptions(raw, "--jit=on"), "long-jit-on");
+        await AssertStartup(WithOptions(raw, "-c jit=off --jit=on"), "off-then-long-on");
+        await AssertStartup(WithOptions(raw, "-c jit=off -cjit=on"), "off-then-glued-on");
+        await AssertStartup(WithOptions(raw, "-c jit=off"), "own-token-present");
+
+        var once = ApplicationPostgresConnection.SuppressJit(WithOptions(raw, "-c statement_timeout=5s"));
+        var twice = ApplicationPostgresConnection.SuppressJit(once);
+        if (!string.Equals(once, twice, StringComparison.Ordinal))
+            throw new InvalidOperationException("second application grew the connection string");
+        await AssertStartup(twice, "second-application", alreadyApplied: true);
+
+        var mixed = MixedCaseOptionsKey(WithOptions(raw, "-c jit=on"));
+        await AssertStartup(mixed, "mixed-case-options-key");
+
+        var escaped = WithOptions(raw, "-c application_name=label\\ ");
+        await using var named = new NpgsqlConnection(ApplicationPostgresConnection.SuppressJit(escaped));
+        await named.OpenAsync();
+        var jit = await JitAsync(named);
+        var applicationName = await SettingAsync(named, "application_name");
+        if (!string.Equals(jit, "off", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(applicationName, "label ", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "escaped application_name jit=" + jit
+                + " length=" + applicationName.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+
+    [Test]
     public async Task startup_options_keep_timezone_and_final_jit_off_wins()
     {
         var raw = new NpgsqlConnectionStringBuilder(TestDbFixture.MaintenanceConnectionString)
@@ -298,6 +369,48 @@ public sealed class PostgresJitPolicyTests
         (await JitAsync(connection)).ShouldBe("on");
     }
 
+    private static string RawShared() =>
+        new NpgsqlConnectionStringBuilder(TestDbFixture.MaintenanceConnectionString)
+        {
+            Database = TestDbFixture.SharedDatabaseName,
+            Pooling = false,
+            Options = null
+        }.ConnectionString;
+
+    private static string WithOptions(string connectionString, string? options)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(connectionString) { Pooling = false };
+        builder.Options = options;
+        return builder.ConnectionString;
+    }
+
+    private static string MixedCaseOptionsKey(string connectionString)
+    {
+        const string marker = "Options=";
+        var index = connectionString.IndexOf(marker, StringComparison.Ordinal);
+        if (index < 0)
+            throw new InvalidOperationException("canonical Options key missing");
+        return string.Concat(connectionString.AsSpan(0, index), "options=", connectionString.AsSpan(index + marker.Length));
+    }
+
+    private static async Task AssertStartup(
+        string connectionString, string label, string? statementTimeout = null, bool alreadyApplied = false)
+    {
+        var applied = alreadyApplied
+            ? connectionString
+            : ApplicationPostgresConnection.SuppressJit(connectionString);
+        await using var connection = new NpgsqlConnection(applied);
+        await connection.OpenAsync();
+        var jit = await JitAsync(connection);
+        if (!string.Equals(jit, "off", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("case " + label + " jit=" + jit);
+        if (statementTimeout is null)
+            return;
+        var timeout = await SettingAsync(connection, "statement_timeout");
+        if (!string.Equals(timeout, statementTimeout, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("case " + label + " statement_timeout=" + timeout);
+    }
+
     private static NpgsqlConnection NpgsqlOf(AppDbContext db)
     {
         if (db.Database.GetDbConnection() is not NpgsqlConnection connection)
@@ -317,7 +430,7 @@ public sealed class PostgresJitPolicyTests
 
     private static async Task<string> SettingAsync(NpgsqlConnection connection, string name)
     {
-        if (name is not ("jit" or "TimeZone"))
+        if (name is not ("jit" or "TimeZone" or "application_name" or "statement_timeout"))
             throw new ArgumentOutOfRangeException(nameof(name));
         await using var command = new NpgsqlCommand("SELECT current_setting(@name)", connection);
         command.Parameters.AddWithValue("name", name);
