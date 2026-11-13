@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
@@ -10,6 +11,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -19,6 +21,111 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public sealed class GrokRulesReadyOrderingTests
 {
+    [Test]
+    [Arguments("timeout")]
+    [Arguments("cancellation")]
+    [Arguments("disconnect")]
+    public async Task Ambiguous_input_preserves_launch_and_waits_for_transcript(string fault)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var transportClock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var host = await PhoneHomeTestHost.StartAsync(transportClock, connectionString: schema.ConnectionString);
+        await using var peer = await host.ConnectPeerAsync();
+        var live = await host.WaitLiveAsync();
+        host.Directory.MarkRecovered(live);
+        var client = new PhoneHomeRunnerClient(live);
+        var factory = new Factory();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() {
+            ConnectionString = schema.ConnectionString, AlwaysOn = false,
+            ConfigureServices = s => {
+                s.AddSingleton(Options.Create(new GrokRulesSettings { InitializationTimeoutSeconds = 1 }));
+                s.AddSingleton<GrokRulesRefreshService>();
+                s.AddSingleton<IAgentProtocolAdapterFactory>(factory);
+            }});
+        factory.Adapter = h.Adapter;
+        var payload = new GrokRulesPayload("private rules\n", 1, Guid.NewGuid());
+        var bytes = Encoding.UTF8.GetBytes(payload.Content);
+        var receipt = new GrokRulesReceipt($"/private/instructions/{h.SessionId:N}/rules.md",
+            GrokRulesTransport.Hash(bytes), bytes.Length, 1, payload.Generation);
+        h.Runner.Capabilities = new("test", "test", "test", false, Features: [GrokRulesTransport.Capability]);
+        h.Runner.SessionResponse = JsonSerializer.Deserialize<SessionRunnerSessionDto>("{}")! with { GrokRulesReceipt = receipt };
+        await using var db = h.CreateObserverContext();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+        session.AgentKind = AgentKind.Grok;
+        session.Status = SessionStatus.Starting;
+        await db.SaveChangesAsync();
+        var generation = session.StartedAt;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var attempts = 0;
+        PhoneHomeFrame? written = null;
+        h.Adapter.BeforeInput = async (input, ct) => {
+            if (++attempts > 1)
+                throw new PhoneHomeTransportException(PhoneHomeProblemTypes.RequestTimeout, "still uncertain");
+            peer.SilentFor(PhoneHomeOperation.Input);
+            using var inputCancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var pending = client.SendInputAsync(h.SessionId, input, inputCancel.Token);
+            written = await peer.WaitForAsync(PhoneHomeOperation.Input);
+            // The real production transport has written the frame and installed its reply waiter.
+            await Task.Delay(50, ct);
+            if (fault == "timeout") transportClock.Advance(PhoneHomeLiveConnection.RequestTimeoutFor(PhoneHomeOperation.Input) + TimeSpan.FromSeconds(1));
+            else if (fault == "cancellation") inputCancel.Cancel();
+            else peer.Socket.Abort();
+            await pending;
+        };
+        var spec = new AgentLaunchSpec("test", AgentKind.Grok, "grok", [], new Dictionary<string,string>(),
+            h.TempRoot, 120, 30, GrokRulesPayload: payload);
+        using var scope = h.Provider.CreateScope();
+        var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
+            h.SessionId, h.AgentId, spec, null, false, null, deadline.Token);
+        Exception? error = null;
+        try { await launch.WaitAsync(TimeSpan.FromSeconds(8)); }
+        catch (Exception ex) { error = ex; }
+        finally { deadline.Cancel(); try { await launch; } catch { } }
+
+        written.ShouldNotBeNull("the uncertain Input really reached the peer");
+        h.Adapter.Killed.ShouldBeFalse($"an ambiguous {fault} must not authorize launch cleanup: {error}");
+        error.ShouldBeNull();
+        attempts.ShouldBe(1, "no blind retry before transcript/composer reconciliation");
+        await db.Entry(session).ReloadAsync();
+        session.Status.ShouldBe(SessionStatus.Running);
+        session.StartedAt.ShouldBe(generation);
+        session.EndedAt.ShouldBeNull();
+        session.TerminationSource.ShouldBe(SessionTerminationSource.Unknown);
+        session.GrokRulesState.ShouldBe(GrokRulesState.Pending);
+        var refresh = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.RulesRefreshKey != null);
+        refresh.Status.ShouldBe(QueuedMessageStatus.Sent);
+        refresh.DeliveryVerdict.ShouldBeNull("delivery remains unknown until a UserPrompt arrives");
+        refresh.DeliveryAttempts.ShouldBe(1);
+        refresh.LastDeliveryStartedAt.ShouldNotBeNull();
+        refresh.LastDeliveryGeneration.ShouldBe(generation);
+        refresh.RulesDeadlineAt = DateTime.UtcNow.AddSeconds(-1);
+        await db.SaveChangesAsync();
+        var rules = h.Provider.GetRequiredService<GrokRulesRefreshService>();
+        await rules.ReconcileAsync(h.SessionId, CancellationToken.None);
+        await db.Entry(session).ReloadAsync();
+        session.GrokRulesState.ShouldBe(GrokRulesState.Pending, "time alone cannot turn uncertain input into a failed startup");
+        if (fault == "timeout")
+        {
+            await PhoneHomeFraming.WriteFrameAsync(peer.Socket,
+                new PhoneHomeFrame(PhoneHomeFrameKind.Result, written!.Epoch, written.RequestId, written.Operation,
+                    JsonSerializer.SerializeToElement(new { ok = true })), 16 * 1024 * 1024, CancellationToken.None);
+            await client.GetHealthAsync(CancellationToken.None);
+            await db.Entry(refresh).ReloadAsync();
+            refresh.DeliveryVerdict.ShouldBeNull("a late wire reply is not a UserPrompt receipt");
+        }
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, refresh.Body);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText,
+            $"ANTIPHON_RULES_ACK id={refresh.Id:N} generation={receipt.Generation:N} sha256={receipt.Sha256}");
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await rules.ReconcileAsync(h.SessionId, CancellationToken.None);
+        await db.Entry(refresh).ReloadAsync();
+        await db.Entry(session).ReloadAsync();
+        session.GrokRulesState.ShouldBe(GrokRulesState.Ready);
+        refresh.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        refresh.DeliveryAttempts.ShouldBe(1);
+        attempts.ShouldBe(1);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
