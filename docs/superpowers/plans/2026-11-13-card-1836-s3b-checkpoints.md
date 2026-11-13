@@ -20,9 +20,17 @@ Index regeneration changed stale derived bytes in its own commit 0f30b7596c46c00
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b-g2/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 4 named methods, 0 failed/skipped | 4 | 8 |
+| CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b-r2-a/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 9 named methods, 0 failed/skipped | 9 | 8 |
 | CP-90 | S3b | `CP-5` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
-| CP-91 | S3b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3b-runner-g/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
-| CP-92 | S3b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3b-pty-g/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
+| CP-91 | S3b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3b-r2-runner-a/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
+| CP-92 | S3b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3b-r2-pty-a/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
 | CP-93 | S3b | `CP-5` | index-consistency | `/*/*/DerivedImpactIndexTests/*` | derived index consistency | all methods, 0 failed/skipped | 1 | 2 |
 | CP-94 | S3b | `CP-5` | impact-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | derived index impact | all methods, 0 failed/skipped | 1 | 2 |
+
+## Round 2 on the new base
+
+Task 4df59744 replays the S3b source with -x onto fac5cc2de89cc82eb39e85cd2bf6c4df18d55ac6; original landing owner remains cb773340-7401-474c-b454-57fed2c587c8. The old index commit and report are excluded: regenerate the combined index after building its driver. Historical outcomes above remain historical, not evidence for this base.
+
+V-5 adds CaseKeyedMultipleCasesMatchMembership and CaseKeyedSingletonsMatchMembership (Review 1c23b333 D-1), CaseOnlyMembershipChangesDigest and CanonicalCaseOrderAndEncoding (D-2), and DependencyEdgesAffectDigest (A-1). Commit witnesses before the fix and use the permitted gated script preflight for semantic reds. The edge-only snapshot variation must change the input digest with identical input records. No deliberate source mutants are required (operator waiver); all future PCs/variants and missing-control discovery remain pending for Mutation. No named PC-n exists here.
+
+Final runs CP-5,90,93,94 together, then CP-91,92; exact filters above, fresh output roots, committed HEAD as expected SHA. Shared S2 primitives remain unchanged, but run RcBoundaryChunkIdTests as a named adjacent smoke (explained unlisted gated run) to verify unchanged canonical IDs. CP-5 now has nine methods; retain the existing deadlines. Portable standalone library: no production OS branch or startup behavior changes; restart none. S7d native Windows integrated proof remains caller-owned and pending. A-2 remains: Compare-RcChunkInputManifest trusts stored digest fields; S5b must rehash retained records and receipt bytes before any carry authority. V-1..4, V-6..18 and R-1..7 are deferred to their owning units, never passed by this slice.
