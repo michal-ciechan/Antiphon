@@ -279,14 +279,14 @@
       "reason": "cap",
       "owed": 112,
       "first": [
+        "LiveLaneIsolationTests",
         "OpenCodeAdapterTests",
         "PhoneHomeLaunchTransportTests",
         "PhoneHomeSessionRoutingTests",
         "PhoneHomeStrandedQueueTests",
         "SessionQueueReceiptPlumbingTests",
         "SessionRunnerCapabilityGateTests",
-        "StandingSessionSwitchConcurrencyTests",
-        "BootLivenessProbeScopeTests"
+        "StandingSessionSwitchConcurrencyTests"
       ]
     },
     {
@@ -580,14 +580,14 @@
       "reason": "cap",
       "owed": 38,
       "first": [
+        "AgentStartRecoveryTests",
         "AgentSupervisionTests",
         "BoardE2ETests",
         "BoardServiceIntegrationTests",
         "BootLivenessProbeScopeTests",
         "BootStallDetectionTests",
         "CapacityAdmissionLifecycleTests",
-        "CardCorrectionIntegrationTests",
-        "CardReviewServiceIntegrationTests"
+        "CardCorrectionIntegrationTests"
       ]
     },
     {
@@ -1770,9 +1770,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 101,
+      "classes": 103,
       "reason": "cap",
-      "owed": 76,
+      "owed": 78,
       "first": [
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
@@ -1786,18 +1786,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 72,
+      "classes": 74,
       "reason": "cap",
-      "owed": 47,
+      "owed": 49,
       "first": [
+        "C1817RunnerRepositoryMaintenanceTests",
+        "DelegateBranchDeliveryTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeStrandedQueueTests",
         "C0824DesktopLegacyReleaseSwitchTests",
         "C1514HostLoadSampleTests",
         "C1677RetentionServerTests",
-        "C1677TempSweepDispatchTests",
-        "Card1619RunnerExitTests",
-        "ClaudeDialogDeliveryTests"
+        "C1677TempSweepDispatchTests"
       ]
     },
     {
@@ -2287,9 +2287,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 63,
+      "classes": 64,
       "reason": "cap",
-      "owed": 38,
+      "owed": 39,
       "first": [
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 509,
+      "classes": 510,
       "reason": "cap",
-      "owed": 484,
+      "owed": 485,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -4490,7 +4490,7 @@
         "CodexPhoneHomeProjectionTests",
         "CodexResponseAnalyzerTests",
         "GrokFreshWorktreeQualificationTests",
-        "LiveLaneIsolationTests",
+        "GrokRulesReadyOrderingTests",
         "NativeWindowsRunnerProjectionTests",
         "PhoneHomeStandingLaunchTests",
         "PhoneHomeTaskRoutingTests",
@@ -6348,7 +6348,6 @@
         "AgentSessionInterruptedLaunchResumeTests",
         "AgentSessionLaunchFailureTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentStartRecoveryTests",
         "AgentTaskReplyIntegrationTests",
         "C0824WorkspaceSlotServerTests",
         "Card1619ExitConsumerTests",
@@ -6357,6 +6356,7 @@
         "DelegateLaunchArgvIntegrityTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokNativeSessionResumeTests",
+        "GrokRulesReadyOrderingTests",
         "GrokStartupReadyOrderingTests",
         "OrchestratorStateProjectionTests",
         "ReadyGateFailureNoticeDeliveryTests",
@@ -14610,6 +14610,7 @@
         "C0824DesktopLegacyReleaseSwitchTests",
         "DelegateBranchDeliveryTests",
         "DispatcherRemotePrepStarvationTests",
+        "GrokRulesReadyOrderingTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeDeferredKillTests",
@@ -14638,6 +14639,7 @@
         "ClaudeDialogDeliveryTests",
         "DefaultRunnerPinTests",
         "DelegateBranchDeliveryTests",
+        "GrokRulesReadyOrderingTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeConnectionTests",
@@ -17894,18 +17896,18 @@
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
       "classes": [
+        "AgentSessionLaunchFailureTests",
         "BlockedParkWireTests",
         "C0824WorkspaceSlotCustodyTests",
         "C0824WorkspaceSlotServerTests",
         "C1514HostLoadHistoryTests",
         "C1514HostLoadWireTests",
         "C1677RetentionDispatchTests",
-        "C1817RunnerRepositoryMaintenanceTests",
         "CardWorktreeMirrorCleanupTests",
         "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
-        "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "GrokRulesReadyOrderingTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
