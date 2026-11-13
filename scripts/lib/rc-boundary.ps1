@@ -99,22 +99,97 @@ function Get-RcClassBoundary {
     return 'unassigned'
 }
 
+function Add-RcBoundaryU32 {
+    param(
+        [Parameter(Mandatory)][System.IO.MemoryStream]$Buffer,
+        [Parameter(Mandatory)][uint32]$Value
+    )
+    $bytes = [BitConverter]::GetBytes($Value)
+    if ([BitConverter]::IsLittleEndian) { [Array]::Reverse($bytes) }
+    $Buffer.Write($bytes, 0, $bytes.Length)
+}
+
+function Add-RcBoundaryString {
+    param(
+        [Parameter(Mandatory)][System.IO.MemoryStream]$Buffer,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value
+    )
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    Add-RcBoundaryU32 -Buffer $Buffer -Value ([uint32]$bytes.Length)
+    $Buffer.Write($bytes, 0, $bytes.Length)
+}
+
+function Compare-RcBoundaryIdentity {
+    param($Left, $Right)
+    $class = [StringComparer]::Ordinal.Compare([string]$Left.class, [string]$Right.class)
+    if ($class -ne 0) { return $class }
+    $method = [StringComparer]::Ordinal.Compare([string]$Left.method, [string]$Right.method)
+    if ($method -ne 0) { return $method }
+    return [StringComparer]::Ordinal.Compare([string]$Left.caseKey, [string]$Right.caseKey)
+}
+
+function Sort-RcBoundaryIdentities {
+    param([object[]]$Identities)
+    $items = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($identity in @($Identities)) { $items.Add($identity) }
+    for ($i = 1; $i -lt $items.Count; $i++) {
+        $item = $items[$i]
+        $j = $i - 1
+        while ($j -ge 0 -and (Compare-RcBoundaryIdentity $items[$j] $item) -gt 0) {
+            $items[$j + 1] = $items[$j]
+            $j--
+        }
+        $items[$j + 1] = $item
+    }
+    return @($items.ToArray())
+}
+
+function Get-RcBoundaryCanonicalDigest {
+    param([Parameter(Mandatory)][string]$Suite, [Parameter(Mandatory)][string]$Boundary, [Parameter(Mandatory)][object[]]$Identities)
+    # Length-delimited UTF-8, no BOM: suite, boundary, uint32 count, then each
+    # identity as class, method, caseKey. No ConvertTo-Json escaping.
+    $buffer = New-Object System.IO.MemoryStream
+    try {
+        Add-RcBoundaryString -Buffer $buffer -Value $Suite
+        Add-RcBoundaryString -Buffer $buffer -Value $Boundary
+        Add-RcBoundaryU32 -Buffer $buffer -Value ([uint32]@($Identities).Count)
+        foreach ($identity in @($Identities)) {
+            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.class)
+            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.method)
+            Add-RcBoundaryString -Buffer $buffer -Value ([string]$identity.caseKey)
+        }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { return ([BitConverter]::ToString($sha.ComputeHash($buffer.ToArray())).Replace('-', '').ToLowerInvariant()) }
+        finally { $sha.Dispose() }
+    } finally { $buffer.Dispose() }
+}
+
+function ConvertTo-RcBoundaryIdentity {
+    param([Parameter(Mandatory)][string]$IdentityKey, [AllowEmptyString()][string]$CaseKey = '')
+    if ([string]::IsNullOrWhiteSpace($IdentityKey) -or $IdentityKey -notmatch '^[^/\r\n]+/[^\r\n]+$') { throw 'boundary-chunk: invalid/duplicate identity' }
+    if ($null -eq $CaseKey -or $CaseKey -match '[\r\n]') { throw 'boundary-chunk: invalid/duplicate identity' }
+    $slash = $IdentityKey.IndexOf([char]'/')
+    return @{ class = $IdentityKey.Substring(0, $slash); method = $IdentityKey.Substring($slash + 1); caseKey = [string]$CaseKey }
+}
+
 function Get-RcBoundaryChunkId {
-    param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys)
+    param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys, [string[]]$CaseKeys)
     if ($Suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $Boundary -cnotin @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')) { throw 'boundary-chunk: invalid suite/boundary' }
     if (-not $IdentityKeys -or $IdentityKeys.Count -eq 0) { throw 'boundary-chunk: empty membership' }
+    if ($CaseKeys -and @($CaseKeys).Count -ne @($IdentityKeys).Count) { throw 'boundary-chunk: case key count' }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    foreach ($key in $IdentityKeys) {
-        if ([string]::IsNullOrWhiteSpace($key) -or $key -notmatch '^[^/\r\n]+/[^\r\n]+$' -or -not $seen.Add($key)) { throw 'boundary-chunk: invalid/duplicate identity' }
+    $parsed = New-Object 'System.Collections.Generic.List[object]'
+    for ($i = 0; $i -lt @($IdentityKeys).Count; $i++) {
+        $key = [string]$IdentityKeys[$i]
+        $caseKey = ''
+        if ($CaseKeys) { $caseKey = [string]$CaseKeys[$i] }
+        $seenKey = ([string]$key + [char]0 + [string]$caseKey)
+        if (-not $seen.Add($seenKey)) { throw 'boundary-chunk: invalid/duplicate identity' }
+        $parsed.Add((ConvertTo-RcBoundaryIdentity -IdentityKey $key -CaseKey $caseKey))
     }
-    [string[]]$sorted = $IdentityKeys.Clone()
-    [Array]::Sort($sorted, [StringComparer]::Ordinal)
-    # v1 encoding: UTF-8 compact JSON [suite,boundary,[ordinal sorted keys]], no BOM/LF.
-    $json = ConvertTo-Json -InputObject @($Suite, $Boundary, @($sorted)) -Depth 3 -Compress
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { $hex = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json))).Replace('-','').ToLowerInvariant() }
-    finally { $sha.Dispose() }
-    return ('b-' + $Boundary + '-' + $hex.Substring(0,16))
+    $sorted = @(Sort-RcBoundaryIdentities -Identities @($parsed.ToArray()))
+    $hex = Get-RcBoundaryCanonicalDigest -Suite $Suite -Boundary $Boundary -Identities $sorted
+    return ('b-' + $Boundary + '-' + $hex.Substring(0, 16))
 }
 
 function New-RcBoundaryChunk {
