@@ -77,7 +77,10 @@ switch ($Case) {
         Require (-not (Freeze-And-Read).eligible) 'receipt-bytes-mismatch'
     }
     'ChangedEnvelopeHistoryAndOriginChainRefuse' {
-        $proof.kind='carried'; $proof.originPath='proof.json'
+        Write-Json 'origin.json' $proof
+        $proof.kind='carried'; $proof.originPath='origin.json'
+        Require ((Freeze-And-Read).eligible) 'valid-origin-chain'
+        $proof.originPath='proof.json'
         $bad=Freeze-And-Read
         Require (-not $bad.eligible -and ($bad.reasons -join ';').Contains('origin-cycle')) 'origin-cycle'
         $proof.originPath='missing.json'; Require (-not (Freeze-And-Read).eligible) 'origin-missing'

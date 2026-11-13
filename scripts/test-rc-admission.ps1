@@ -42,7 +42,7 @@ try {
         'FullProvenanceAdmitsAndReverifies' {
             $d=Get-RcCarryAdmissionDecision $manifest (Clone-Ra $manifest) $facts -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')
             Note ($d.eligible -and $d.reasons.Count -eq 0) 'complete-equal-proposal'
-            $bad=Clone-Ra $manifest; $bad.inputs[0].objectId='f'*40
+            $bad=Clone-Ra $manifest; @($bad.inputs | Where-Object present)[0].objectId='f'*40
             Check $manifest $bad $facts 'manifest-rehash-mismatch'
             $bad=Clone-Ra $manifest; $bad.cases[0].caseKey='forged'
             Check $manifest $bad $facts 'manifest-invalid'
@@ -113,6 +113,19 @@ try {
             }
             $c=Get-RcAdmissionAlgorithmCoverage -CoveredPaths $coverage.requiredPaths
             Note (-not $c.complete -and $c.reasons -ccontains 'release-graph-incomplete') 'no-coverage-override'
+            # A byte edit in EACH prerequisite changes the bound algorithm identity.
+            foreach ($path in $coverage.requiredPaths) { Put $path 'a' }
+            [void](Git @('add','--all')); [void](Git @('commit','-qm','algorithm fixture'))
+            $prior=Git @('rev-parse','HEAD')
+            $priorDigest=Get-RcAdmissionAlgorithmDigest $root $prior $coverage.requiredPaths
+            foreach ($path in $coverage.requiredPaths) {
+                Put $path 'b'
+                [void](Git @('add','--',$path)); [void](Git @('commit','-qm','one byte'))
+                $changed=Git @('rev-parse','HEAD')
+                $nextDigest=Get-RcAdmissionAlgorithmDigest $root $changed $coverage.requiredPaths
+                Note ($priorDigest -cne $nextDigest) ('algorithm-byte:'+ $path)
+                $priorDigest=$nextDigest
+            }
         }
         'ImportIsInertAndWritesUnprovenShard' {
             & "$PSScriptRoot/test-rc-admission-reader.ps1" -Case $Case -ResultsDirectory $ResultsDirectory -RepositoryRoot $root -SourceSha $sha
