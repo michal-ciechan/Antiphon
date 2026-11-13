@@ -155,6 +155,26 @@ public sealed class OwnedGitProcessContractTests
     }
 
     [Test]
+    public async Task Unexpected_launch_exception_is_ambiguous_and_cannot_start_again()
+    {
+        var clock = new ManualClock();
+        var operations = new FakeOperations { StartFailure = new NotSupportedException("private detail") };
+        operations.Probe = (_, _, _) =>
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(2));
+            return ValueTask.FromResult(new OwnedGitMembers(OwnedGitMembershipState.Empty));
+        };
+        await using var owner = new OwnedGitProcess(operations, clock);
+        owner.Start(StartInfo()).State.ShouldBe(OwnedGitLaunchState.Ambiguous);
+        owner.State.ShouldBe(OwnedGitLifecycle.Unconfirmed);
+        Should.Throw<InvalidOperationException>(() => owner.Start(StartInfo()));
+        (await owner.TerminateAndJoinAsync(TimeSpan.FromMilliseconds(1))).Joined.ShouldBeFalse();
+        owner.State.ShouldBe(OwnedGitLifecycle.Unconfirmed);
+        operations.Starts.ShouldBe(1);
+        operations.Signals.ShouldBe(1);
+    }
+
+    [Test]
     public void Missing_root_or_contradictory_no_child_are_ambiguous()
     {
         using var missing = new OwnedGitProcess(new FakeOperations { Launch = new(OwnedGitLaunchState.Started, null) });
