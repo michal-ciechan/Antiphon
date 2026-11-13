@@ -242,16 +242,17 @@ try {
     $gated = @($statements | Where-Object { $gates -contains $_ })
     Assert-Endpoint ($gated.Count -ge 2) 'R-2 both gated sections are top-level statements'
     $stubs = @'
-param($databaseEndpoint, $dockerUp, $dockerPath, $repoRoot, $tcpOpen, $calls)
+param($databaseEndpoint, $dockerUp, $dockerPath, $repoRoot, $tcpOpen, $calls, $readyReason)
 Set-StrictMode -Off
 function Write-Check { param($Name, $Status, $Detail, $Remedial) $calls.Add("check|$Name|$Status|$Detail|$Remedial") }
 function Test-TcpPort { param($HostName, $Port, $TimeoutMs) $calls.Add("tcp|$HostName|$Port"); return $tcpOpen }
 function Get-NativeOutput { param($File, $Arguments) $calls.Add('native|' + ($Arguments -join ' ')); return @{ Text = 'running|healthy'; ExitCode = 0; Succeeded = $true } }
+function Test-AntiphonRemoteDatabase { param($RepoRoot, $ConnectionString) $calls.Add('postgres|readiness-and-identity'); return @{ Succeeded = ($readyReason -eq 'ready'); Reason = $readyReason; ElapsedMs = 1 } }
 '@
     $sections = [scriptblock]::Create($stubs + "`n" + (($gated | ForEach-Object { $_.Extent.Text }) -join "`n"))
-    function Invoke-Sections($Endpoint, [bool]$TcpOpen) {
+    function Invoke-Sections($Endpoint, [bool]$TcpOpen, [string]$ReadyReason = 'ready') {
         $calls = New-Object System.Collections.Generic.List[string]
-        & $sections $Endpoint $true 'docker' $SourceRoot $TcpOpen $calls
+        & $sections $Endpoint $true 'docker' $SourceRoot $TcpOpen $calls $ReadyReason
         return , $calls
     }
     $remote = [pscustomobject][ordered]@{ Host = '100.64.0.2'; Port = 5432; Mode = 'remote' }
@@ -264,6 +265,11 @@ function Get-NativeOutput { param($File, $Arguments) $calls.Add('native|' + ($Ar
         Assert-Endpoint (-not [regex]::IsMatch($text, 'antiphon-postgres|antiphon_pgdata|17280|docker-compose\.dev\.yml')) "R-2 remote (tcp open=$open) names no local container, volume, port or compose file"
         $status = if ($open) { 'PASS' } else { 'FAIL' }
         Assert-Endpoint (@($calls | Where-Object { $_ -like "check|database|$status|*100.64.0.2:5432*" }).Count -eq 1) "R-2 remote (tcp open=$open) reports database $status with host and port"
+    }
+    foreach ($reason in @('protocol-failed', 'identity-mismatch', 'authentication-failed', 'timeout')) {
+        $calls = Invoke-Sections $remote $true $reason
+        Assert-Endpoint (@($calls | Where-Object { $_ -like "check|database|FAIL|*$reason*" }).Count -eq 1 -and
+            @($calls | Where-Object { $_ -like 'check|database|PASS|*' }).Count -eq 0) "F2 open TCP with $reason fails database check distinctly"
     }
     $calls = Invoke-Sections $local $true
     Assert-Endpoint ($calls.Contains('tcp|127.0.0.1|17280')) 'R-2 local TCP-checks 127.0.0.1:17280'
