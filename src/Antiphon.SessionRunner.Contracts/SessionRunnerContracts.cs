@@ -157,6 +157,9 @@ public static class RunnerCapabilityFeatures
     /// <summary>CARD-1677 S1: this (Linux) runner answers WorkspaceRetentionInventory and WorkspaceRetain.</summary>
     public const string WorkspaceRetentionV1 = "workspaceRetentionV1";
 
+    /// <summary>CARD-1895: this (Linux) runner deletes allow-listed build output directories from a finished mirror.</summary>
+    public const string WorkspaceOutputDropV1 = "workspaceOutputDropV1";
+
     /// <summary>CARD-1677 S2: this (Linux) runner answers TempSweep over its registered temp families.</summary>
     public const string TempSweepV1 = "tempSweepV1";
 

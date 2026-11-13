@@ -155,3 +155,47 @@ public sealed record PhoneHomeTempSweepResponse(
     string? Reason = null,
     string? Detail = null,
     string? Root = null);
+
+/// <summary>CARD-1895. Modes for <see cref="PhoneHomeOperation.WorkspaceDropOutputs"/>.</summary>
+public static class WorkspaceOutputDropModes
+{
+    public const string DryRun = "DryRun";
+    public const string Execute = "Execute";
+}
+
+/// <summary>
+/// CARD-1895. Verdicts for one output drop. Eligibility refusals reuse <see cref="WorkspaceRetentionCodes"/>
+/// reason strings with verdict <see cref="Kept"/>. A refusal deletes nothing.
+/// </summary>
+public static class WorkspaceOutputDropCodes
+{
+    public const string Kept = "kept";
+    public const string WouldDrop = "would_drop";
+    public const string Dropped = "dropped";
+
+    public const string Symlink = "symlink";
+    public const string TrackedContent = "tracked_content";
+    public const string DeleteFailed = "delete_failed";
+}
+
+/// <summary>
+/// CARD-1895. One finished task mirror. The runner rechecks the retention eligibility facts and, when they
+/// pass, deletes only directories whose name is exactly <c>bin</c>, <c>obj</c>, or <c>bin-*</c>. The tree stays.
+/// </summary>
+public sealed record PhoneHomeWorkspaceOutputDropRequest(
+    Guid TaskId, string Path, string Branch, string Mode, Guid RequestId);
+
+/// <summary>CARD-1895. One allow-listed output directory and what the drop did with it.</summary>
+public sealed record WorkspaceOutputDropEntry(
+    string RelativePath, string Name, long Bytes, string Verdict, string? Reason = null);
+
+/// <summary>CARD-1895. The saving is <see cref="Bytes"/> of regular files under the directories named by <see cref="Directories"/>.</summary>
+public sealed record PhoneHomeWorkspaceOutputDropResponse(
+    string Verdict,
+    string? Reason = null,
+    string? HeadSha = null,
+    string? OriginTip = null,
+    long? Bytes = null,
+    int? Directories = null,
+    IReadOnlyList<WorkspaceOutputDropEntry>? Entries = null,
+    string? Detail = null);
