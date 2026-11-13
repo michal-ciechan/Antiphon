@@ -25,9 +25,38 @@ if (-not (Test-Path -LiteralPath $lib)) {
                 $held = $shuffled[$i]; $shuffled[$i] = $shuffled[$j]; $shuffled[$j] = $held
             }
             $reversed = @($ascending); [Array]::Reverse($reversed)
+            # B-1: a 1s bound failed at 1.04s under ordinary load. The regression
+            # witness is structural. The wall clock is a 5s safety bound after one
+            # untimed warm-up. The insertion sort this replaced took 15-16s.
+            $sortAst = (Get-Command Sort-RcBoundaryIdentities).ScriptBlock.Ast
+            $pairLoops = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.WhileStatementAst] }, $true))
+            $pairCommands = @($sortAst.FindAll({
+                param($node)
+                ($node -is [System.Management.Automation.Language.CommandAst]) -and ($node.GetCommandName() -ceq 'Compare-RcBoundaryIdentity')
+            }, $true))
+            $nativeSorts = @($sortAst.FindAll({
+                param($node)
+                ($node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) -and
+                ($node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) -and
+                ($node.Member.Value -ceq 'Sort') -and $node.Static
+            }, $true))
+            Note (($pairLoops.Count -eq 0) -and ($pairCommands.Count -eq 0) -and ($nativeSorts.Count -eq 1)) (
+                'per-pair PowerShell comparator remains in Sort-RcBoundaryIdentities loops=' + $pairLoops.Count + ' compares=' + $pairCommands.Count + ' sorts=' + $nativeSorts.Count)
             $script:realDigest = ${function:Get-RcBoundaryCanonicalDigest}
             $script:digestCalls = 0
+            $script:pairCompares = 0
+            $script:realCompare = $null
             try {
+                if (Test-Path Function:Compare-RcBoundaryIdentity) {
+                    $script:realCompare = ${function:Compare-RcBoundaryIdentity}
+                    function Compare-RcBoundaryIdentity {
+                        param($Left, $Right)
+                        $script:pairCompares++
+                        & $script:realCompare $Left $Right
+                    }
+                }
+                New-RcBoundaryChunk -Identities $shuffled | Out-Null
+                Note ($script:pairCompares -eq 0) ('warm-up invoked a per-pair PowerShell comparator ' + $script:pairCompares + ' times')
                 function Get-RcBoundaryCanonicalDigest {
                     param($Suite, $Boundary, $Identities)
                     $script:digestCalls++
@@ -38,14 +67,18 @@ if (-not (Test-Path -LiteralPath $lib)) {
                     $chunk = New-RcBoundaryChunk -Identities $sample.rows
                     $clock.Stop()
                     Write-Host ('BOUNDARY TIMING count=800 order=' + $sample.name + ' seconds=' + $clock.Elapsed.TotalSeconds.ToString('F6', [Globalization.CultureInfo]::InvariantCulture))
-                    Note ($clock.Elapsed.TotalSeconds -lt 1) ('800 ' + $sample.name + ' identities exceeded 1s')
+                    Note ($clock.Elapsed.TotalSeconds -lt 5) ('800 ' + $sample.name + ' identities exceeded 5s')
                     Note ($chunk.identityKeys.Count -eq 800) 'sort dropped identities'
                     for ($i = 0; $i -lt 800; $i++) {
                         Note ($chunk.identityKeys[$i] -ceq ('A' + $i.ToString('D4') + 'Tests/M')) 'sort order changed membership'
                     }
                 }
                 Note ($script:digestCalls -eq 2) ('digest calls for two chunks: ' + $script:digestCalls)
-            } finally { Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest }
+                Note ($script:pairCompares -eq 0) ('per-pair PowerShell comparator ran ' + $script:pairCompares + ' times')
+            } finally {
+                Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest
+                if ($null -ne $script:realCompare) { Set-Item Function:Compare-RcBoundaryIdentity $script:realCompare }
+            }
             $ordered = @(Sort-RcBoundaryIdentities @(
                 @{class='a'; method='M'; caseKey=''}, @{class='Z'; method='M'; caseKey=''},
                 @{class='A'; method='m'; caseKey=''}, @{class='A'; method='M'; caseKey='a'},
