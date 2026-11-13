@@ -247,17 +247,54 @@ public sealed class HostStatsSamplerService : BackgroundService
         public readonly long Nanoseconds;
     }
 
-    /// <summary>Linux <c>CLOCK_THREAD_CPUTIME_ID</c>.</summary>
+    /// <summary>Linux <c>CLOCK_THREAD_CPUTIME_ID</c>. Windows uses thread cycles below.</summary>
     private const int ClockThreadCpuTimeId = 3;
 
     [DllImport("libc", EntryPoint = "clock_gettime")]
     private static extern int ClockGetTime(int clockId, out ThreadCpuTime time);
 
+    [DllImport("kernel32", EntryPoint = "QueryThreadCycleTime")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryThreadCycleTime(IntPtr thread, out ulong cycles);
+
+    [DllImport("kernel32", EntryPoint = "GetCurrentThread")]
+    private static extern IntPtr GetCurrentThread();
+
+    private static double _windowsCyclesPerMs;
+
+    /// <summary>
+    /// The calling thread's own CPU in milliseconds: Linux <c>CLOCK_THREAD_CPUTIME_ID</c>, Windows
+    /// <c>QueryThreadCycleTime</c> (GetThreadTimes moves only at the 15.6 ms clock tick). Null when neither is available.
+    /// </summary>
     internal static double? ThreadCpuMilliseconds()
     {
-        if (!OperatingSystem.IsLinux() || ClockGetTime(ClockThreadCpuTimeId, out var time) != 0)
+        if (OperatingSystem.IsLinux())
+            return ClockGetTime(ClockThreadCpuTimeId, out var time) == 0 ? time.Seconds * 1000d + time.Nanoseconds / 1_000_000d : null;
+        if (!OperatingSystem.IsWindows() || !QueryThreadCycleTime(GetCurrentThread(), out var cycles))
             return null;
-        return time.Seconds * 1000d + time.Nanoseconds / 1_000_000d;
+        var rate = Volatile.Read(ref _windowsCyclesPerMs);
+        if (rate <= 0)
+            Volatile.Write(ref _windowsCyclesPerMs, rate = CalibrateWindowsCyclesPerMs());
+        return rate > 0 ? cycles / rate : null;
+    }
+
+    /// <summary>
+    /// Thread cycles accrue only while the thread runs, so a descheduled spin lowers cycles per wall
+    /// millisecond. The highest of three short spins is the running rate; any error over-charges a tick.
+    /// </summary>
+    private static double CalibrateWindowsCyclesPerMs()
+    {
+        var best = 0d;
+        for (var i = 0; i < 3; i++)
+        {
+            if (!QueryThreadCycleTime(GetCurrentThread(), out var before)) return 0;
+            var started = Stopwatch.GetTimestamp();
+            while (Stopwatch.GetElapsedTime(started).TotalMilliseconds < 2d) { }
+            var wall = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (!QueryThreadCycleTime(GetCurrentThread(), out var after)) return 0;
+            best = Math.Max(best, (after - before) / wall);
+        }
+        return best;
     }
 
     private TimeSpan? ReadProcessCpu(int pid, DateTime startedAt)
