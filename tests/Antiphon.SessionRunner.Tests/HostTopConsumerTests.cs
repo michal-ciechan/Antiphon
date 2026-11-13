@@ -271,6 +271,35 @@ public class HostTopConsumerTests
         store.Latest().ShouldNotBeNull().TopConsumers.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// CARD-1884 review. The tick only reads the cached ranking. A scan that blocks inside Read
+    /// must not keep SampleOnceAsync from finishing.
+    /// </summary>
+    [Test, Timeout(5_000)]
+    public async Task Blocking_scan_does_not_stretch_the_tick()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        var table = new ScriptedTable { Gate = release, Entered = entered };
+        table.Rows.Add(Obs(1, 1, 500, "VBCSCompiler", "compiler"));
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+        var tick = Task.Run(() => sampler.SampleOnceAsync());
+        var finished = await Task.WhenAny(tick, Task.Delay(150));
+        try
+        {
+            finished.ShouldBe(tick, "the sampler tick must finish without waiting for the top-consumer scan");
+            entered.IsSet.ShouldBeFalse();
+            store.Latest().ShouldNotBeNull();
+        }
+        finally
+        {
+            release.Set();
+            await tick.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
     [Test]
     public void Unsafe_name_is_dropped()
     {
@@ -463,10 +492,14 @@ public class HostTopConsumerTests
         public List<HostProcessObservation> Rows { get; } = [];
         public int Reads { get; private set; }
         public bool Fault { get; set; }
+        public ManualResetEventSlim? Gate { get; init; }
+        public ManualResetEventSlim? Entered { get; init; }
 
         public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids)
         {
             Reads++;
+            Entered?.Set();
+            Gate?.Wait();
             if (Fault)
                 throw new IOException("scan failed");
             return Rows.ToArray();
