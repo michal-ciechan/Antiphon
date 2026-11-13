@@ -6,6 +6,7 @@ function Get-RcManifestDigest {
     param([object[]]$Rows)
     # Domain-specific rows use S2's one length-prefix and UTF-8 encoding rule.
     $buffer=[IO.MemoryStream]::new()
+    $encoder=[Text.UTF8Encoding]::new($false, $true)
     $hash=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
         Add-RcBoundaryU32 $buffer ([uint32]$Rows.Count)
@@ -14,7 +15,7 @@ function Get-RcManifestDigest {
             Add-RcBoundaryU32 $buffer ([uint32]$row.Count)
             foreach ($field in $row) {
                 if ($field -isnot [string]) { throw 'digest-field-must-be-string' }
-                Add-RcBoundaryString $buffer $field
+                Add-RcBoundaryString -Buffer $buffer -Value $field -Encoder $encoder
             }
             $hash.AppendData($buffer.GetBuffer(),0,[int]$buffer.Length); $buffer.SetLength(0)
         }
@@ -35,12 +36,10 @@ function New-RcChunkInputManifest {
     $owners=@($Snapshot.suites | Where-Object id -CEQ $InputSuite)
     if ($owners.Count -ne 1) { throw 'missing-or-duplicate-input-suite' }
     $owner=$owners[0]
-    $membershipId=Get-RcBoundaryChunkId $Chunk.suite $Chunk.boundary @($Chunk.identityKeys) @($Chunk.caseKeys)
-    $identities=@(for ($i=0; $i -lt $Chunk.identityKeys.Count; $i++) {
-        ConvertTo-RcBoundaryIdentity $Chunk.identityKeys[$i] $Chunk.caseKeys[$i]
-    })
-    $identities=@(Sort-RcBoundaryIdentities $identities)
-    $membershipDigest=Get-RcBoundaryCanonicalDigest $Chunk.suite $Chunk.boundary $identities
+    # S2 owns parsing, validation, ordinal sorting and the full membership digest.
+    $membership=New-RcBoundaryChunkData -Suite $Chunk.suite -Boundary $Chunk.boundary -IdentityKeys @($Chunk.identityKeys) -CaseKeys @($Chunk.caseKeys)
+    $membershipId=$membership.chunkId
+    $membershipDigest=$membership.fullDigest
     if ($membershipId -cne $Chunk.chunkId -or $membershipDigest -cne $Chunk.fullDigest) { throw 'chunk-membership-mismatch' }
     $unknown=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     foreach ($reason in $Snapshot.unresolved) { Assert-RcDigestText $reason 'unresolved'; [void]$unknown.Add($reason) }
@@ -101,9 +100,11 @@ function New-RcChunkInputManifest {
     $caseRows.Add(@('antiphon-rc-cases','1',[string]$Chunk.suite,[string]$Chunk.boundary))
     $sortedCases=@(Sort-RcBoundaryIdentities $caseIdentities.ToArray())
     if (@($Chunk.caseKeys | Where-Object { $_ -cne '' }).Count -gt 0) {
-        if ($identities.Count -ne $sortedCases.Count) { throw 'case-membership-mismatch' }
-        for ($i=0; $i -lt $identities.Count; $i++) {
-            if ((Compare-RcBoundaryIdentity $identities[$i] $sortedCases[$i]) -ne 0) { throw 'case-membership-mismatch' }
+        if ($membership.identityKeys.Count -ne $sortedCases.Count) { throw 'case-membership-mismatch' }
+        for ($i=0; $i -lt $sortedCases.Count; $i++) {
+            $identity=$sortedCases[$i]
+            if ([string]$membership.identityKeys[$i] -cne ($identity.class+'/'+$identity.method) -or
+                [string]$membership.caseKeys[$i] -cne [string]$identity.caseKey) { throw 'case-membership-mismatch' }
         }
     }
     $caseRecords=@(foreach ($identity in $sortedCases) {
