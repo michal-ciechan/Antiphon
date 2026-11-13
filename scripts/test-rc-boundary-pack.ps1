@@ -72,6 +72,7 @@ function Test-Repack {
     Note ($plan.Count -ge 4) 'oversized class did not split'
     Note (SameBag @(Selected $plan $nodes) @($nodes.Uid)) 'split filter case universe changed'
     Note (SameBag @($plan | ForEach-Object { $_.caseMembership | ForEach-Object { $_.uid } }) @($nodes.Uid)) 'case manifest incomplete'
+    Note (SameBag @($plan | ForEach-Object { $_.caseKeys }) @($nodes.Uid)) 'canonical case keys incomplete or duplicated'
     Note (SameBag @($plan | ForEach-Object { $_.identityKeys } | Select-Object -Unique) @('Antiphon.Tests.Fixture.Matrix/Run','Antiphon.Tests.Fixture.Matrix/RunExtra','Antiphon.Tests.Fixture.Matrix/Other','Antiphon.Tests.Fixture.Matrix/Last','Antiphon.Tests.Fixture.Z/Run')) 'method manifest incomplete'
     $reversed = @($nodes); [array]::Reverse($reversed)
     Note (SameBag @($plan.id) @((Pack $reversed $map).id)) 'discovery order changed IDs'
@@ -92,7 +93,8 @@ function Test-Repack {
         $ctorPlan = @(Pack $constructors $map @($ctorLeaf))
         Note (SameBag @(Selected $ctorPlan $constructors) @($constructors.Uid)) 'constructor filter lost cases'
         Note (SameBag @($ctorPlan.caseMembership.className) @($constructors.ClassName)) 'constructor identities collapsed'
-        Note (SameBag @($ctorPlan.identityKeys) @('Antiphon.Tests.Fixture.Matrix/Run')) 'constructor suffix entered method key'
+        Note (SameBag @($ctorPlan.identityKeys) @('Antiphon.Tests.Fixture.Matrix/Run','Antiphon.Tests.Fixture.Matrix/Run')) 'constructor canonical identity pairs changed'
+        Note (SameBag @($ctorPlan.caseKeys) @($constructors.Uid)) 'constructor canonical case keys collapsed'
     } catch { Note $false ('constructor exact leaf refused: ' + $_.Exception.Message) }
     Note (Refuses { Pack @((Node Upper Run), (Node upper Other)) @{} }) 'case-colliding classes accepted'
 }
