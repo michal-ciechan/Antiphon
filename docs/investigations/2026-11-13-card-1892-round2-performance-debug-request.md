@@ -63,3 +63,32 @@ Broker maxcpucount=6, repeatedly 4/4 occupied; CPU/memory samples are unknown.
 Immutable receipt and phase/per-test payloads remain under
 /work/worktrees/task-4e02b770/.antiphon/checkpoints/20261113-214537-0f17/.
 Append the green run's exact source, identity and timing when it completes.
+
+Round-3 green run: 20261113-221635-1d82, source
+3574c40f7ae4cb625926b2b0ac797eba1ebd7798. All seven serial rows passed:
+619 executed/passed, zero failures/skips, clean source, verified build provenance;
+exact-source validator exited 0. Wall 1810.377 s (30m10s), charged execution
+1510.277 s, admission-only union 300.100 s. Finalization cost 147.191 s;
+output cleanup accounts for the long finalization interval in executor.log.
+Build phase 345.8957147 s, MSBuild 239.30 s; keep their remainder unattributed.
+Build waited 90 s. Row waits CP-2/3/4/5/6/8/9 were 0/15/60/0/30/60/45 s.
+All builds/rows had granted slots; maxConcurrentRows=1 and maxConcurrentBuilds=1.
+This observation also crosses R1's actual 30-minute threshold. Caller commissioning
+remains owed under this existing request; no duplicate card or profiling repeat.
+
+| Row | Startup seconds | Tests wall seconds | Teardown seconds |
+|---|---:|---:|---:|
+| CP-2 | 39.9319887 | 58.5257948 | 19.0251297 |
+| CP-3 | 29.3362609 | 279.974268 | 0.8146483 |
+| CP-4 | 27.763924 | 17.5037583 | 27.5888809 |
+| CP-5 | 38.3025658 | 54.8353107 | 4.07252 |
+| CP-6 | 29.7237907 | 24.4873604 | 6.5686873 |
+| CP-8 | 30.9503721 | 166.8526765 | 27.5120265 |
+| CP-9 | 41.6012231 | 34.3589629 | 14.8940505 |
+
+Immutable receipt, TRX per-test durations and phase journals:
+/work/worktrees/task-4e02b770/.antiphon/checkpoints/20261113-221635-1d82/.
+Receipt SHA-256: 7d6d29f1de6aa2ed08da9802bd921d80c5c4c5d7355226380f9844078a9c770b.
+Individual database/container/migration/clone/IO/HTTP/process boundary phases not
+present in the journals remain unknown. Class duration sums are nested/parallel
+spans (for example AttentionServiceTests 2398 s), not row wall or a p95.
