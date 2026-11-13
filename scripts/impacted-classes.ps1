@@ -16,6 +16,8 @@
 # linuxOnly classes stay on the Linux filter. A missing linuxOnly array is empty.
 # JSON gains derivedClasses, keywordIds, rosterIds, skippedByCap and owed.
 # A missing index adds no derived class. Keyword and roster lists stay empty in this slice.
+# CARD-1820 S1R1. -ReleaseEvidence requires explicit full commit endpoints, a target
+# and -Json. Its separate envelope is incomplete/Full until release graphs exist.
 # No cache: every run reads the table, git, and the tests tree. Maximum staleness is zero.
 # A malformed table exits 1 and names the row. -Range cannot combine with -Path or -FileList.
 # -MergeSubset cannot combine with -Audit.
@@ -31,7 +33,11 @@ param(
     [string]$Table,
     [switch]$Json,
     [switch]$Audit,
-    [switch]$MergeSubset
+    [switch]$MergeSubset,
+    [switch]$ReleaseEvidence,
+    [string]$BaselineSha,
+    [string]$CandidateSha,
+    [string]$TargetPlatform
 )
 
 Set-StrictMode -Version 2.0
@@ -75,6 +81,48 @@ if ([string]::IsNullOrWhiteSpace($Table)) {
 }
 elseif (-not [IO.Path]::IsPathRooted($Table)) {
     $Table = Join-Path $Repo $Table
+}
+
+function Refuse-ReleaseImpact([string]$Problem) {
+    $message = 'release-impact refused: ' + $Problem
+    Write-Err $message
+    if ($Json) {
+        Exit-Json ([pscustomobject][ordered]@{
+            ok = $false
+            complete = $false
+            incompleteReasons = @('invalid-release-request')
+            fallback = 'Full'
+            error = $message
+        }) 2
+    }
+    exit 2
+}
+
+$releaseArguments = $PSBoundParameters.ContainsKey('BaselineSha') -or
+    $PSBoundParameters.ContainsKey('CandidateSha') -or $PSBoundParameters.ContainsKey('TargetPlatform')
+if (-not $ReleaseEvidence -and $releaseArguments) {
+    Refuse-ReleaseImpact '-BaselineSha, -CandidateSha and -TargetPlatform require -ReleaseEvidence'
+}
+if ($ReleaseEvidence) {
+    foreach ($conflict in @('Range', 'Path', 'FileList', 'MergeSubset', 'Audit', 'Table')) {
+        if ($PSBoundParameters.ContainsKey($conflict)) {
+            Refuse-ReleaseImpact ('-ReleaseEvidence cannot be combined with -' + $conflict)
+        }
+    }
+    if (-not $Json) { Refuse-ReleaseImpact '-ReleaseEvidence requires -Json' }
+    if ($PSVersionTable.PSVersion.Major -lt 7) { Refuse-ReleaseImpact '-ReleaseEvidence requires PowerShell 7' }
+    if ([string]::IsNullOrWhiteSpace($BaselineSha) -or [string]::IsNullOrWhiteSpace($CandidateSha) -or
+        [string]::IsNullOrWhiteSpace($TargetPlatform)) {
+        Refuse-ReleaseImpact '-BaselineSha, -CandidateSha and -TargetPlatform are required'
+    }
+    try {
+        . (Join-Path $PSScriptRoot 'lib/release-impact.ps1')
+        $envelope = New-ReleaseImpactEnvelope -RepositoryRoot $Repo -Baseline $BaselineSha -Candidate $CandidateSha `
+            -Platform $TargetPlatform -SourceRoot (Split-Path -Parent $PSScriptRoot)
+        [Console]::Out.WriteLine((ConvertTo-ReleaseImpactJson $envelope))
+        exit 0
+    }
+    catch { Refuse-ReleaseImpact $_.Exception.Message }
 }
 
 # Switch clash is usage, not a table error, and it is decided before the table is read.
