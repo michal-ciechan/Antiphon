@@ -21,7 +21,8 @@ DirtyOrMismatchedSourceRefuses; UntrackedEvaluatedInputRefusesAndMissingImportFa
 The red adapter calls the existing real evaluator and exports an explicitly unbound
 empty inventory. Its assertion failures precede the source-binding/export implementation.
 V-3: the original four project-closure tests remain required adjacent regressions.
-R-3: committed ordinary index equals its builder. Other upstream V-1/V-2/V-4..V-17,
+V-2: the four uncapped relation/identity tests remain adjacent regression scope.
+R-3: committed ordinary index equals its builder. Other upstream V-1/V-4..V-17,
 R-1/R-2/R-4/R-5 stay inherited/later scope and are not credited here.
 CARD-1866 A-1/A-3 remain S1R6 envelope witness/cleanup work; evaluator content binding
 addresses only evaluator inputs, not the P2 envelope authenticity contract.
@@ -41,10 +42,11 @@ deliberate execution is waived by the operator, not satisfied by ordinary green.
 | CP-103 | S1R3E | CP-106 | project-shape | `/*/*/LandGraphAuditProjectInstanceTests/*` | impacted land-graph-audit-project | one method, zero failed/skipped | 1 | 1 | true |
 | CP-104 | S1R3E | CP-106 | spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all cases, zero failed/skipped | 57 | 1 | true |
 | CP-105 | S1R3E | CP-106 | default-audit | `/*/*/LandGraphEvaluationTests/(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S1_EvaluatedSkippableItemRefuses*)` | default command remains unchanged | two methods, zero failed/skipped | 2 | 1 | true |
+| CP-107 | S1R3E | CP-106 | relation | `/*/*/ReleaseImpactRelationTests/*` | V-2 adjacent relation | four methods, zero failed/skipped | 4 | 1 | true |
 
 ## Performance budget
 
-13 minutes provisional selection plus one isolated cold build; 20-minute existing
+14 minutes provisional selection plus one isolated cold build; 20-minute existing
 row/build bound (`--row-timeout 20m`) is retained. Slot admission bound 45m, separately recorded. Shared
 staged driver build, isolated tiny fixture repositories per method; no server/DB.
 The tests log tool wall time and TRX durations; unavailable nested IO is remainder.
@@ -53,7 +55,19 @@ required after green; at most 3 normal + 2 loaded per unchanged selection.
 Declared preparation: gated native checkpoint-tool bootstrap and DerivedImpactIndex
 driver build before owner-script -NoBuild ordinary-index regeneration. Each driver
 gets a slot. These are outside checkpoint rows and reported explicitly.
+The native evaluator-only compile is an additional preparation run to catch API
+errors before paying for another cold Antiphon.Tests build; it executes no tests.
 Manual: full base..HEAD evidence-diff, fresh merge-tree, OS witness declaration/lint,
 full changed-glob impacted-table census and byte identity of ordinary selector code.
 No migrations or OS-selected production behavior changes; native evaluation/platform
 compatibility is still pending W1, never credited by Linux.
+
+The release evaluator is invoked as `dotnet <staged-Antiphon.LandGraphAudit.dll>
+release-inputs --repo <clean-checkout> --solution Antiphon.sln --source <full-HEAD-SHA>
+--framework net9.0 --configuration Debug --platform AnyCPU --rid ""`. It requires
+the exact checkout HEAD and hashes raw tracked bytes before and after evaluation.
+It emits JSON on stdout and phase timings on stderr, writes no project outputs,
+and records evaluation-only/no-restore context. SDK imports and MSBuild binary
+are hashed separately. Environment, filesystem probes, generated code, assembly
+metadata, reference-property composition and platform closure remain unproven;
+these receipts cannot remove conservative source edges or authorize skipping.
