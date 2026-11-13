@@ -311,9 +311,59 @@ namespace Antiphon.Build
     // project properties are too late to configure the driver's GC or MSBuild server.
     public sealed class BuildDriverEnvironment
     {
+        public string Preparation { get; private set; }
+
         public void Apply(ProcessStartInfo start)
         {
-            Apply(start.EnvironmentVariables, Environment.OSVersion.Platform == PlatformID.Win32NT);
+            Apply(start, 0);
+        }
+
+        public void Apply(ProcessStartInfo start, int maxCpuCount)
+        {
+            bool windows = Environment.OSVersion.Platform == PlatformID.Win32NT;
+            Apply(start.EnvironmentVariables, windows);
+            var environment = start.EnvironmentVariables;
+            if (!LinuxSharedCompilerPolicy.Enabled(windows, environment.ContainsKey("ANTIPHON_LINUX_COMPILER_POLICY")
+                ? environment["ANTIPHON_LINUX_COMPILER_POLICY"] : null)) return;
+            if (!string.Equals(Path.GetFileName(start.FileName), "dotnet", StringComparison.OrdinalIgnoreCase)) return;
+            IList<string> argv = null;
+            string[] original = null;
+            try
+            {
+                argv = LinuxCompilerToolset.Argv(start);
+                original = new List<string>(argv).ToArray();
+                if (!LinuxSharedCompilerPolicy.Compiles(start.FileName, original)) return;
+                string provenance = maxCpuCount > 0 ? "typed" : "argv";
+                foreach (string arg in original)
+                {
+                    if (arg == "--") break;
+                    string lower = arg.ToLowerInvariant();
+                    if (lower.StartsWith("-maxcpucount:") || lower.StartsWith("/maxcpucount:") || lower.StartsWith("-m:") || lower.StartsWith("/m:"))
+                    {
+                        int requested;
+                        if (!int.TryParse(arg.Substring(arg.IndexOf(':') + 1), out requested) || requested <= 0)
+                            throw new ArgumentException("invalid explicit CPU count");
+                        maxCpuCount = maxCpuCount > 0 ? Math.Min(maxCpuCount, requested) : requested;
+                    }
+                }
+                if (maxCpuCount <= 0 && environment.ContainsKey("ANTIPHON_BUILD_SLOT_MAXCPUCOUNT"))
+                {
+                    int.TryParse(environment["ANTIPHON_BUILD_SLOT_MAXCPUCOUNT"], out maxCpuCount);
+                    provenance = "wrapper";
+                }
+                if (maxCpuCount <= 0) throw new ArgumentException("no positive build CPU grant");
+                Preparation = LinuxCompilerToolset.Prepare(start, maxCpuCount, 120, "", true) + " grantSource=" + provenance;
+            }
+            catch (Exception error)
+            {
+                // Preparation is atomic to the caller, including unsupported explicit choices.
+                // Preserve the stock command and sharing behavior on every policy refusal.
+                if (argv != null && original != null) { argv.Clear(); foreach (string arg in original) argv.Add(arg); }
+                string reason = error.Message.Replace('\r', ' ').Replace('\n', ' ');
+                if (reason.Length > 240) reason = reason.Substring(0, 240);
+                Preparation = "LINUX COMPILER fallback=stock reason=" + reason;
+            }
+            Console.Error.WriteLine(Preparation);
         }
 
         public void Apply(StringDictionary environment, bool windows)
