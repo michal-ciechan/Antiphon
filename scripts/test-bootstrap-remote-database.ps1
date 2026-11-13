@@ -33,6 +33,9 @@ foreach ($case in @(
         if ($case[0] -in @('ready', 'wrong-db')) {
             Assert-Remote $peer.ReadOnlyQuery "$($case[0]) executes the constant identity query"
         }
+        if ($case[0] -eq 'auth') {
+            Assert-Remote $peer.PasswordSupplied 'auth challenges the effective password without a prompt'
+        }
         Assert-Remote ([string]::IsNullOrEmpty($peer.Failure)) "$($case[0]) fixture has no protocol or lifecycle error"
         Write-Host "F2-TIMING scenario=$($case[0]) databaseClientMs=$($result.ElapsedMs)"
     } finally { $peer.Dispose() }

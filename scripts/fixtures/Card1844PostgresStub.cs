@@ -17,6 +17,7 @@ public sealed class Card1844PostgresStub : IDisposable
     public bool ExpectedStartup { get; private set; }
     public bool ReadOnlyQuery { get; private set; }
     public bool SslRequested { get; private set; }
+    public bool PasswordSupplied { get; private set; }
     public string Failure { get; private set; }
 
     public Card1844PostgresStub(string scenario)
@@ -59,7 +60,9 @@ public sealed class Card1844PostgresStub : IDisposable
             b.WriteByte((byte)'S'); Text(b, "FATAL");
             b.WriteByte((byte)'C'); Text(b, code);
             // Deliberately toxic fixture error text: production must never print it.
-            b.WriteByte((byte)'M'); Text(b, "fixture-secret-do-not-log"); b.WriteByte(0);
+            b.WriteByte((byte)'M'); Text(b, code == "28P01"
+                ? "password authentication failed for user \"fixture-secret-do-not-log\""
+                : "database \"fixture-secret-do-not-log\" does not exist"); b.WriteByte(0);
         });
     }
     private void Serve(string scenario)
@@ -81,7 +84,14 @@ public sealed class Card1844PostgresStub : IDisposable
                     text.Contains("user\0fixture-user\0") && text.Contains("default_transaction_read_only=on");
                 if (scenario == "non-postgres") { Text(stream, "HTTP/1.1 200 OK\r\n\r\n"); return; }
                 if (scenario == "timeout") { stop.Token.WaitHandle.WaitOne(10000); return; }
-                if (scenario == "auth") { Error(stream, "28P01"); return; }
+                if (scenario == "auth")
+                {
+                    Message(stream, 'R', b => Int(b, 3)); // Password challenge on this test-only peer.
+                    int passwordType = stream.ReadByte();
+                    var password = Read(stream, Int(Read(stream, 4)) - 4);
+                    PasswordSupplied = passwordType == 'p' && Encoding.UTF8.GetString(password) == "fixture-secret-do-not-log\0";
+                    Error(stream, "28P01"); return;
+                }
                 if (scenario == "missing-db") { Error(stream, "3D000"); return; }
                 Message(stream, 'R', b => Int(b, 0)); // AuthenticationOk
                 Message(stream, 'S', b => { Text(b, "server_version"); Text(b, "16.0"); });

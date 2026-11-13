@@ -100,9 +100,9 @@ function Test-AntiphonRemoteDatabase {
             if ($stdout.Result.TrimEnd("`r", "`n") -ceq $database) {
                 $result.Succeeded = $true; $result.Reason = 'ready'
             } else { $result.Reason = 'identity-mismatch' }
-        } elseif ($stderr.Result -match '28P01|28000|authentication failed|no password supplied') {
+        } elseif ($stderr.Result -match '28P01|28000|authentication failed|no password supplied|no pg_hba.conf entry') {
             $result.Reason = 'authentication-failed'
-        } elseif ($stderr.Result -match '3D000') {
+        } elseif ($stderr.Result -match '3D000|database .* does not exist') {
             $result.Reason = 'identity-mismatch'
         } elseif ($stderr.Result -match 'timeout|timed out|57014') {
             $result.Reason = 'timeout'
