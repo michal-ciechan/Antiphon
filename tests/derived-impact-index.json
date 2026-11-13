@@ -23903,6 +23903,7 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcIncrementalLedgerTests",
+        "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcStoppedRunSeedTests",
         "ReleaseSelectionHopSeedTests",
