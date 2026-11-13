@@ -9,12 +9,24 @@ namespace Antiphon.Server.Infrastructure.Data;
 
 public sealed class SessionStateLoader(IServiceScopeFactory scopes) : ISessionStateLoader
 {
+    // Enumerate open tasks once per statement, rather than revisiting the task heap
+    // for every requested session. Membership stays current at the statement snapshot.
+    private const string OpenTaskPins = """
+        WITH open_tasks AS MATERIALIZED (
+            SELECT "AgentSessionId", "ParentSessionId" FROM "AgentTasks"
+            WHERE "Status" IN (0, 1, 2, 3)
+        ), task_pins AS MATERIALIZED (
+            SELECT "AgentSessionId" AS id FROM open_tasks WHERE "AgentSessionId" IS NOT NULL
+            UNION
+            SELECT "ParentSessionId" FROM open_tasks WHERE "ParentSessionId" IS NOT NULL
+        )
+        """;
+
     // Trusted enum literals, matching the persisted int representation. This is pinning,
     // never liveness: a phone-home outage must not evict an active conversation's evidence.
     private const string Pinned = """
         (s."Status" IN (1, 2, 3)
-         OR EXISTS (SELECT 1 FROM "AgentTasks" task WHERE task."Status" IN (0, 1, 2, 3)
-             AND (task."AgentSessionId" = s."Id" OR task."ParentSessionId" = s."Id"))
+         OR s."Id" IN (SELECT id FROM task_pins)
          OR EXISTS (SELECT 1 FROM "SessionQueuedMessages" q WHERE q."AgentSessionId" = s."Id"
              AND (q."Status" = 0 OR (q."Status" = 1 AND (q."DeliveryVerdict" IS NULL
                  OR (q."Origin" = 1 AND q."ChannelReplySettledAt" IS NULL)))))
@@ -25,6 +37,7 @@ public sealed class SessionStateLoader(IServiceScopeFactory scopes) : ISessionSt
         """;
 
     private const string Sql = $"""
+        {OpenTaskPins}
         SELECT requested."SessionId", s."Id" IS NOT NULL AS "Exists",
             COALESCE({Pinned}, false) AS "Pinned", s."StartedAt" AS "AcceptedGeneration",
             totals."Count", totals."NewestEffectiveTimestamp",
@@ -99,7 +112,7 @@ public sealed class SessionStateLoader(IServiceScopeFactory scopes) : ISessionSt
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return (await db.Database.SqlQueryRaw<Guid>($"SELECT s.\"Id\" AS \"Value\" FROM \"AgentSessions\" s WHERE {Pinned}")
+        return (await db.Database.SqlQueryRaw<Guid>($"{OpenTaskPins}\nSELECT s.\"Id\" AS \"Value\" FROM \"AgentSessions\" s WHERE {Pinned}")
             .TagWith("session-state.pins").ToListAsync(ct)).ToHashSet();
     }
 

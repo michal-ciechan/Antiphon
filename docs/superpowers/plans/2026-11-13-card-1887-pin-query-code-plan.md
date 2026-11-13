@@ -39,7 +39,7 @@ server restart activates the reviewed SQL later. Restart: server; do not restart
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3b/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
+| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3c/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
 | CP-10 | all | tests/Antiphon.Tests -> bin-c1887-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 10 | 2 |
 
 --- next stage ---
@@ -52,3 +52,12 @@ monolithic 3,118,500-row insert; not a protected-behavior red. Preserve that
 receipt and output. Insert batches now retain the same total cardinality and
 60s call limit. The scale class runs globally serial to isolate measurement
 from the adjacent tests in this row. A fresh output name retains the failed build.
+
+Red proof at 6201701c3736e28249bfb534553852d3e08c2319, run
+20261113-231908-dfd6: 31 passed, scale assertion failed on 64 task-index loops
+for seed-64 (512 loops for fleet pins). Both full old/current plans were saved.
+Scale setup took 299s for transcripts plus unmeasured wide-EF task setup; total
+scale test ~444s. Final setup copies one EF-populated task prototype with set SQL
+and uses ordered synthetic entry IDs to avoid random primary-key insert churn.
+It retains 27,695 tasks, 3,118,500 transcripts, all 512 sessions and every assertion;
+the exact total count is now additionally asserted. No timeout was widened.
