@@ -16,10 +16,13 @@ Committed-range impact selects spawn-limit-rosters and test-lane-category. CP-90
 
 The initial broad red attempt 20261113-065748-fa02 was stopped with supported stop during its first cold build (5m22s, no TRX/tests); its receipts remain canceled/unknown. All four semantic reds were then observed in gated script preflights against 5f6a16709bc4bf7054a440206c31c843ca139f84; all four passed the first green preflight at 7ffe2931f. Final outputs below are fresh. CP-90/93 share CP-5's one fresh isolated build, with the same After. Run CP-5,90,93 as one bounded group and CP-91,92 as a second group. This avoids repeating the prior S3a five-row 44m59s pattern documented by its fanout repair (timing Debug CARD-1864 remains caller-owned). Filters/count floors/assertions/deadlines remain intact.
 
+Index regeneration changed stale derived bytes in its own commit 0f30b7596c46c004c2d331d4c7bdb8262a0e33eb. The full-range selector then additionally selected ReleaseImpactEnvelopeTests. Attempt 20261113-071630-0525 was stopped during startup before any test executed so that CP-94 could be added before verification. CP-94 shares the same build; final main group is CP-5,90,93,94. CP-5 uses a new physical output to preserve both canceled attempts. No additional scope matches, caps or native filters are owed by the final impact selection.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b-g/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 4 named methods, 0 failed/skipped | 4 | 8 |
+| CP-5 | S3b | `tests/Antiphon.Tests -> bin-c1836-s3b-g2/` | linux-digest | `/*/*/RcChunkInputDigestTests/*` | V-5 | all 4 named methods, 0 failed/skipped | 4 | 8 |
 | CP-90 | S3b | `CP-5` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
 | CP-91 | S3b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3b-runner-g/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
 | CP-92 | S3b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3b-pty-g/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
 | CP-93 | S3b | `CP-5` | index-consistency | `/*/*/DerivedImpactIndexTests/*` | derived index consistency | all methods, 0 failed/skipped | 1 | 2 |
+| CP-94 | S3b | `CP-5` | impact-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | derived index impact | all methods, 0 failed/skipped | 1 | 2 |
