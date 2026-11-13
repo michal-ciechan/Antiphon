@@ -1,11 +1,14 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -79,7 +82,15 @@ public class SessionMessageQueueInterruptedAttemptTests
             var incidents = await attention.AgentIncidents.Where(i => i.SessionId == h.SessionId
                 && i.FailureReason == "input-delivery-unknown").ToListAsync();
             incidents.Count.ShouldBe(1, "one durable attention note per unresolved attempt, including rules rows");
-            incidents[0].Severity.ShouldBe(AlertSeverity.Warning);
+            var reader = new AttentionService(attention, h.Runner,
+                Options.Create(new SupervisionSettings()), Options.Create(h.Delegation), h.Clock,
+                NullLogger<AttentionService>.Instance);
+            var visible = await reader.GetAsync(CancellationToken.None, includeProgressProbe: false);
+            visible.Items.ShouldContain(i => i.SessionId == h.SessionId
+                && i.Kind == AttentionKind.RecentCriticalIncident
+                && (i.Evidence ?? "").Contains("orchestrator decision"),
+                "the deadline must surface in the orchestrator's real ATTENTION projection");
+            incidents[0].Severity.ShouldBe(AlertSeverity.Error);
             incidents[0].Message.ShouldContain("orchestrator decision");
             incidents[0].Message.ShouldNotContain(Body);
         }
