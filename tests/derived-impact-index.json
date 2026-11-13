@@ -17605,6 +17605,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.Server.Git/WindowsOwnedGitLaunch.cs",
+      "classes": [
+        "OwnedGitProcessContractTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner.Contracts/AbsenceEvidenceAuthentication.cs",
       "classes": [
         "DelegationDispatchRecoveryBoundaryTests",
