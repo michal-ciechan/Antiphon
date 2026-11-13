@@ -122,16 +122,45 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
     private static string CanonicalPayload(HostLoadSample sample)
     {
         var element = JsonSerializer.SerializeToElement(sample, PhoneHomeFraming.Json);
-        using var buffer = new MemoryStream(); using (var writer = new Utf8JsonWriter(buffer)) WriteCanonical(writer, element);
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+            WriteCanonical(writer, element, omitEmptyTopConsumers: true);
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
-    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element)
+
+    /// <summary>
+    /// CARD-1884. An absent or empty root <c>topConsumers</c> is left out of the hash so a sample stored
+    /// before the field existed replays as the same identity. Nested objects keep every field. A non-empty list stays.
+    /// </summary>
+    private static void WriteCanonical(Utf8JsonWriter writer, JsonElement element, bool omitEmptyTopConsumers)
     {
         if (element.ValueKind == JsonValueKind.Object)
-        { writer.WriteStartObject(); foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
-            { writer.WritePropertyName(property.Name); WriteCanonical(writer, property.Value); } writer.WriteEndObject(); }
+        {
+            writer.WriteStartObject();
+            foreach (var property in element.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+            {
+                if (omitEmptyTopConsumers && property.NameEquals("topConsumers"u8) && IsEmptyTopConsumers(property.Value))
+                    continue;
+                writer.WritePropertyName(property.Name);
+                WriteCanonical(writer, property.Value, omitEmptyTopConsumers: false);
+            }
+
+            writer.WriteEndObject();
+        }
         else if (element.ValueKind == JsonValueKind.Array)
-        { writer.WriteStartArray(); foreach (var item in element.EnumerateArray()) WriteCanonical(writer, item); writer.WriteEndArray(); }
-        else element.WriteTo(writer);
+        {
+            writer.WriteStartArray();
+            foreach (var item in element.EnumerateArray())
+                WriteCanonical(writer, item, omitEmptyTopConsumers: false);
+            writer.WriteEndArray();
+        }
+        else
+        {
+            element.WriteTo(writer);
+        }
     }
+
+    private static bool IsEmptyTopConsumers(JsonElement value) =>
+        value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+        || (value.ValueKind == JsonValueKind.Array && value.GetArrayLength() == 0);
 }
