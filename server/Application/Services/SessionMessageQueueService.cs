@@ -3551,7 +3551,7 @@ public sealed partial class SessionMessageQueueService
                     && i.FailureReason == reason && i.CreatedAt >= started, ct)) return;
             var owner = await SessionOwnerLookup.ResolveOwningAgentIdAsync(db, sessionId, ct);
             await scope.ServiceProvider.GetRequiredService<AgentSupervisorService>().RecordIncidentAsync(
-                owner, sessionId, AgentIncidentKind.DeliveryTransportFailed, AlertSeverity.Warning,
+                owner, sessionId, AgentIncidentKind.DeliveryTransportFailed, AlertSeverity.Error,
                 "Input delivery is still unknown after the transcript confirmation deadline; "
                 + "orchestrator decision required. The attempt is held for a complete UserPrompt "
                 + "or explicit recovery. No automatic Enter, retype, or process stop is authorized.",
