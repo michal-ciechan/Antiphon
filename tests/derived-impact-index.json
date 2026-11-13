@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 10,
+      "classes": 11,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 7,
+      "classes": 8,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 4,
+      "classes": 5,
       "reason": "allowlist"
     },
     {
@@ -23813,6 +23813,12 @@
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
+      "classes": [
+        "ReleaseImpactRelationTests"
       ]
     },
     {
