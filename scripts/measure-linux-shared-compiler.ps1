@@ -65,7 +65,7 @@ $clk = [double]([Antiphon.Build.LinuxCompilerToolset]::Probe((Get-Command getcon
 $records = [Collections.Generic.List[object]]::new()
 $previous = @{}; $known = @{}; $cumulativeTicks = 0L; $peakRss = 0L; $threadEscape = $false
 $clock = [Diagnostics.Stopwatch]::new()
-$initial = if ($pipe) { @(Get-C1885Compilers $pipe) } else { @() }
+$initial = @(if ($pipe) { Get-C1885Compilers $pipe })
 foreach ($compiler in $initial) { $previous["$($compiler.Pid):$($compiler.Start)"] = $compiler.Ticks }
 $loadStart = [IO.File]::ReadAllText('/proc/loadavg').Trim()
 $memoryStart = [IO.File]::ReadAllText('/proc/meminfo')

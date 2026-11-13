@@ -323,3 +323,15 @@ finally. No external executor, service, detached controller or global shutdown.
 This is a repaired lifetime protocol, not permission to credit the failed cold
 replacement or repeat until the throughput ratio passes. Collect exactly three
 measured pairs after the new priming pair, preserving all earlier costs.
+
+The controller proved survival, then exposed a singleton-array bug: the old
+`$initial = if (...) { @(...) }` assignment unwrapped one compiler hashtable;
+its `.Count` was seven fields, falsely failing the exactly-one warm assertion.
+Retain the refused `f51f3bf543a4a2a2f09300444b2be4d8d128382d` receipt and
+593.786-second controller collection. Wrap the entire conditional pipeline in
+`@(...)`, keeping the assertion unchanged. Run the repaired controller once with
+`-EvidenceRoot .antiphon/c1885-debug/final-performance`, the same separate leases
+and three measured pairs. Both earlier owned pipes were shut down with zero
+residue. This retry repairs a demonstrated counting defect, not a throughput
+threshold or a successful sample. Subsequent source-bound checkpoints use a fresh
+isolated output because the measurement scripts now have a new committed SHA.
