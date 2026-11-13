@@ -266,6 +266,25 @@ public class ClaudeDialogInputGuardTests
         adopted.Child.Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    public async Task C1875_CommandPreviewWarningDoesNotAuthorizeNo()
+    {
+        // Review b2cb1533: the heading and description have both scrolled away.
+        // These last command-preview rows contain the warning text, two columns
+        // to the right of the real question. There is no non-box separator.
+        var screen = string.Join("\n", Enumerable.Repeat("    │ printf 'command preview'", 24)) + "\n"
+            + "    │ Dangerous rm operation on possibly-empty variable path: $S/$m in `rm -rf\n"
+            + "    │ $S/$m`\n"
+            + "  Do you want to proceed?\n  ❯ 1. Yes\n    2. No\n  Esc to cancel · Tab to amend";
+        await using var f = new Fixture();
+        f.Session.RenderDialogScreenForTest(screen);
+        var request = await f.RequestAsync("2");
+        (await f.Runtime.SendConditionalInputAsync(f.Id,
+            request with { DialogIntent = ClaudeDialogInputIntent.UnsafeDeleteNo }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked, "command text is not a warning box");
+        f.Child.Inputs.ShouldBeEmpty();
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));

@@ -42,6 +42,12 @@ public class WatchdogServiceTests
             ("history", C566Menu + "\n❯ ", AgentKind.ClaudeCode, false),
             ("quoted", "Here is an example:\n```\n" + C566Menu + "\n```", AgentKind.ClaudeCode, false),
             ("provider", C566Menu, AgentKind.Raw, false),
+            ("heading-less command warning without description",
+                string.Join("\n", Enumerable.Repeat("  │ printf 'command preview'", 24)) + "\n"
+                + "  │ Dangerous rm operation on possibly-empty variable path: $R/$name in `rm -rf\n"
+                + "  │ $R/$name`\n"
+                + "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel · Tab to amend",
+                AgentKind.ClaudeCode, false),
         };
         foreach (var row in cases)
         {
