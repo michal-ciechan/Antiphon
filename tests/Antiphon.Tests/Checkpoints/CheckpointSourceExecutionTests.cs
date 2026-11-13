@@ -452,21 +452,27 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         var driver = Path.Combine(root, "validate.ps1");
         File.WriteAllText(input, JsonSerializer.Serialize(corpus));
         File.WriteAllText(driver, """
-            param($Corpus, $Result, $Validator, $Sha, $ExpectedRepeat)
+            param($Corpus, $Result, $Validator, $Sha, $ExpectedRepeat, $Progress)
             $ErrorActionPreference = 'Stop'
             $records = @(foreach ($case in (Get-Content -Raw -LiteralPath $Corpus | ConvertFrom-Json)) {
                 $global:LASTEXITCODE = 99
                 $text = (& $Validator -Evidence $case.path -ExpectedSourceSha $Sha -ExpectedRepeat $ExpectedRepeat *>&1 | Out-String)
                 [pscustomobject]@{ key = $case.key; exit = $LASTEXITCODE; output = $text }
+                [IO.File]::AppendAllText($Progress, '.')
             })
             [IO.File]::WriteAllText($Result, (ConvertTo-Json -InputObject $records -Depth 8 -EscapeHandling EscapeNonAscii))
             """);
+        var progress = Path.Combine(root, "progress");
         var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-File", driver, input, output,
-            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString() })
+            Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "validate-checkpoint-receipt.ps1"), Sha, expectedRepeat.ToString(), progress })
             start.ArgumentList.Add(token);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var result = await CheckpointFixtureProcess.RunAsync(start, timeout.Token);
+        // rc run 97150a0b g109: one fixed 30 s over the whole corpus (326 validator calls for the XML
+        // parity corpus) expired on a saturated Windows host while the child was still progressing.
+        // 30 s now covers pwsh start, validator load and the first case; each later case gets 10 s
+        // (tens of ms when idle). A stall fails naming the case; success logs the observed timings.
+        var keys = JsonSerializer.SerializeToElement(corpus).EnumerateArray().Select(item => item.GetProperty("key").GetString() ?? "").ToArray();
+        var result = await CheckpointFixtureProcess.RunStepsAsync(start, progress, keys, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
         result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
         using var document = JsonDocument.Parse(File.ReadAllText(output));
         return document.RootElement.EnumerateArray().Select(record => record.Clone()).ToArray();
@@ -508,7 +514,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
                 .Replace("passed=3", "passed=2", StringComparison.Ordinal) + " repeat=2 repetitions=2/2 hostInvocations=1";
             File.WriteAllText(corpus[i].path, ReportWriter.JsonText(report));
         }
-        // Keep the existing 30-second child deadline; one PowerShell host for the corpus.
+        // One PowerShell host for the corpus, under the per-case deadline of ValidateCorpusWithScriptAsync.
         var records = await ValidateCorpusWithScriptAsync(root, corpus, 2);
         records.Select(record => record.GetProperty("key").GetString()).ShouldBe(cases.Select(item => item.Key));
         var disagreements = new List<string>();
