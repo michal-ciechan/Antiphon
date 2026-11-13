@@ -18,6 +18,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
+// Keep independent cleanup families on separate fixture lifetimes and deadlines (Debug 6130909c).
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -25,9 +26,9 @@ namespace Antiphon.Tests.Application;
 public sealed class C0824RefOnlyCleanupTests
 {
     [Test]
-    public async Task All_desktop_consumers_skip_ref_only_without_deleting_refs()
+    [Timeout(30_000)]
+    public async Task Retirement_consumers_skip_ref_only_without_deleting_refs()
     {
-        await AssertPersistentReportLocationsAsync();
         await using var w = await DesktopLegacyWorld.CreateAsync();
         foreach (var consumer in new[] { "eligibility", "operator-release", "system-release", "retire-action" })
         {
@@ -66,7 +67,13 @@ public sealed class C0824RefOnlyCleanupTests
             (await db.WorkspaceUseReservations.CountAsync(r => r.TaskId == task.Id)).ShouldBe(0);
             await AssertIntactAsync(w.Host, bound, sha, consumer);
         }
+    }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task Legacy_consumers_skip_ref_only_without_deleting_refs()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
         // Candidate, stale precheck and post-inspection action are separate entry points.
         foreach (var consumer in new[] { "legacy-candidate", "legacy-precheck", "legacy-action" })
         {
@@ -96,7 +103,13 @@ public sealed class C0824RefOnlyCleanupTests
             (await w.ReleasesAsync(handle)).ShouldBeEmpty();
             await AssertIntactAsync(w.Host, bound, sha, consumer, forbidSourceCwd: consumer != "legacy-action");
         }
+    }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task Residue_and_health_preserve_ref_only_custody()
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
         // Read projections retain RefOnly branch custody instead of treating absence as a checkout removal.
         var residueHandle = await w.AddTaskAsync();
         var residueSha = (await w.ReadAsync(residueHandle.Path, "rev-parse", "HEAD")).Trim();
@@ -166,6 +179,12 @@ public sealed class C0824RefOnlyCleanupTests
             w.ClearTrace();
             await AssertIntactAsync(w.Host, residueBinding, residueSha, "residue-and-health");
         }
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task Landing_and_guarded_cleanup_preserve_ref_only_custody()
+    {
         await using (var land = new LandingSafetyHarness())
         {
             await land.InitializeAsync();
@@ -195,7 +214,12 @@ public sealed class C0824RefOnlyCleanupTests
             AssertNotRequired(direct, bound.Id, "guarded-cleanup");
             await AssertIntactAsync(land, bound, source, "guarded-cleanup");
         }
+    }
 
+    [Test]
+    [Timeout(30_000)]
+    public async Task Completed_card_consumers_skip_ref_only_without_deleting_refs()
+    {
         await using var card = await CompletedCardCleanupFixture.CreateAsync();
         foreach (var consumer in new[] { "card-discovery", "card-admission", "card-replay", "card-intent" })
         {
@@ -241,64 +265,65 @@ public sealed class C0824RefOnlyCleanupTests
         }
     }
 
-    private static async Task AssertPersistentReportLocationsAsync()
+    [Test]
+    [Timeout(30_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Persistent_reports_survive_ref_only_cleanup(bool temporarySource)
     {
         var checkout = new DirectoryInfo(AppContext.BaseDirectory);
         while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
         var checkoutRoot = checkout?.FullName ?? throw new InvalidOperationException("checkout missing");
-        foreach (var temporarySource in new[] { false, true })
+        var nonce = Guid.NewGuid().ToString("N");
+        var root = temporarySource ? Path.Combine(Path.GetTempPath(), "c1017", nonce)
+            : Path.Combine(checkoutRoot, ".antiphon", "test-output", "c1017", nonce);
+        // A fixture-owned sibling of the Code checkout, outside TEMP and both source repositories.
+        var reports = Path.Combine(Directory.GetParent(checkoutRoot)!.FullName, ".antiphon-test-evidence", "c0824-r5-" + nonce);
+        Directory.Exists(reports).ShouldBeFalse("fresh-persistent-report-root");
+        Directory.CreateDirectory(reports);
+        try
         {
-            var nonce = Guid.NewGuid().ToString("N");
-            var root = temporarySource ? Path.Combine(Path.GetTempPath(), "c1017", nonce)
-                : Path.Combine(checkoutRoot, ".antiphon", "test-output", "c1017", nonce);
-            // A fixture-owned sibling of the Code checkout, outside TEMP and both source repositories.
-            var reports = Path.Combine(Directory.GetParent(checkoutRoot)!.FullName, ".antiphon-test-evidence", "c0824-r5-" + nonce);
-            Directory.Exists(reports).ShouldBeFalse("fresh-persistent-report-root");
-            Directory.CreateDirectory(reports);
-            try
+            await using var card = await CompletedCardCleanupFixture.CreateAsync(sourceRoot: root, reportRoot: reports);
+            await using var db = card.Host.CreateContext();
+            var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == card.TaskId);
+            var store = card.Host.Services.GetRequiredService<IAgentReportStore>();
+            var options = card.Host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>();
+            // Force the configured destination arm, independently of the primary checkout's root.
+            row.RepoPath = null; row.WorkingDirectory = Path.GetTempPath();
+            var rejectedRoot = Path.Combine(Path.GetTempPath(), "c0824-r5-rejected-" + nonce);
+            options.Value.ReportStorageRoot = rejectedRoot;
+            (await store.StoreAsync(row, default)).Succeeded.ShouldBeFalse("temporary-report-root-refused");
+            Directory.Exists(rejectedRoot).ShouldBeFalse("temporary-report-root-not-created");
+            (await File.ReadAllTextAsync(card.Sentinel)).ShouldBe(card.OriginalBytes, "source-bytes-retained");
+            options.Value.ReportStorageRoot = reports;
+            row.WorkingDirectory = card.Tree; // A linked checkout is not a primary persistent root.
+            var receipt = await store.StoreAsync(row, default);
+            receipt.Succeeded.ShouldBeTrue("persistent-report-preserved:" + receipt.Reason);
+            (await store.IsUsableAsync(receipt.Path, row.Result!, default)).ShouldBeTrue("fresh-preservation-receipt");
+            var tracked = await db.AgentTasks.SingleAsync(t => t.Id == row.Id);
+            tracked.ResultFilePath = receipt.Path;
+            await db.SaveChangesAsync();
+            await card.DiscoverAsync();
+            var binding = await BindAsync(card.Host, card.TaskId, removeAuthoring: false, identity: card.Tree);
+            await SetCheckoutAsync(card.Host, card.TaskId);
+            var reached = false;
+            await using var scope = card.Host.Services.CreateAsyncScope();
+            var executor = scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>();
+            executor.DesktopBoundaryAsync = async (site, id, ct) =>
             {
-                await using var card = await CompletedCardCleanupFixture.CreateAsync(sourceRoot: root, reportRoot: reports);
-                await using var db = card.Host.CreateContext();
-                var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == card.TaskId);
-                var store = card.Host.Services.GetRequiredService<IAgentReportStore>();
-                var options = card.Host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Antiphon.Server.Application.Settings.DelegationSettings>>();
-                // Force the configured destination arm, independently of the primary checkout's root.
-                row.RepoPath = null; row.WorkingDirectory = Path.GetTempPath();
-                var rejectedRoot = Path.Combine(Path.GetTempPath(), "c0824-r5-rejected-" + nonce);
-                options.Value.ReportStorageRoot = rejectedRoot;
-                (await store.StoreAsync(row, default)).Succeeded.ShouldBeFalse("temporary-report-root-refused");
-                Directory.Exists(rejectedRoot).ShouldBeFalse("temporary-report-root-not-created");
-                (await File.ReadAllTextAsync(card.Sentinel)).ShouldBe(card.OriginalBytes, "source-bytes-retained");
-                options.Value.ReportStorageRoot = reports;
-                row.WorkingDirectory = card.Tree; // A linked checkout is not a primary persistent root.
-                var receipt = await store.StoreAsync(row, default);
-                receipt.Succeeded.ShouldBeTrue("persistent-report-preserved:" + receipt.Reason);
-                (await store.IsUsableAsync(receipt.Path, row.Result!, default)).ShouldBeTrue("fresh-preservation-receipt");
-                var tracked = await db.AgentTasks.SingleAsync(t => t.Id == row.Id);
-                tracked.ResultFilePath = receipt.Path;
-                await db.SaveChangesAsync();
-                await card.DiscoverAsync();
-                var binding = await BindAsync(card.Host, card.TaskId, removeAuthoring: false, identity: card.Tree);
-                await SetCheckoutAsync(card.Host, card.TaskId);
-                var reached = false;
-                await using var scope = card.Host.Services.CreateAsyncScope();
-                var executor = scope.ServiceProvider.GetRequiredService<CardWorktreeCleanupExecutor>();
-                executor.DesktopBoundaryAsync = async (site, id, ct) =>
-                {
-                    if (id != card.TaskId || site != "before:card-intent") return;
-                    reached = true;
-                    await RestoreRefOnlyAsync(card.Host, id, binding.Id);
-                };
-                AssertNotRequired(await executor.TryAsync(card.EndpointId, null, default), binding.Id, "persistent-root-card-intent");
-                reached.ShouldBeTrue("reached:R-5:card-intent:" + temporarySource);
-                (await File.ReadAllTextAsync(card.Sentinel)).ShouldBe(card.OriginalBytes);
-                (await store.IsUsableAsync(receipt.Path, row.Result!, default)).ShouldBeTrue("report-survives-desktop-refusal");
-            }
-            finally
-            {
-                // Only the fresh GUID root created above; no source or shared artifact root is removed.
-                if (Directory.Exists(reports)) Directory.Delete(reports, recursive: true);
-            }
+                if (id != card.TaskId || site != "before:card-intent") return;
+                reached = true;
+                await RestoreRefOnlyAsync(card.Host, id, binding.Id);
+            };
+            AssertNotRequired(await executor.TryAsync(card.EndpointId, null, default), binding.Id, "persistent-root-card-intent");
+            reached.ShouldBeTrue("reached:R-5:card-intent:" + temporarySource);
+            (await File.ReadAllTextAsync(card.Sentinel)).ShouldBe(card.OriginalBytes);
+            (await store.IsUsableAsync(receipt.Path, row.Result!, default)).ShouldBeTrue("report-survives-desktop-refusal");
+        }
+        finally
+        {
+            // Only the fresh GUID root created above; no source or shared artifact root is removed.
+            if (Directory.Exists(reports)) Directory.Delete(reports, recursive: true);
         }
     }
 
