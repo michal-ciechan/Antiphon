@@ -45,8 +45,6 @@ public sealed class RunnerWorktreeRetentionService
     private static readonly AgentTaskStatus[] Terminal = [AgentTaskStatus.Succeeded, AgentTaskStatus.Failed, AgentTaskStatus.Canceled];
     private static readonly AgentTaskStatus[] Open =
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
-    private static readonly AgentTaskSyncDebtState[] OpenDebt =
-        [AgentTaskSyncDebtState.Pending, AgentTaskSyncDebtState.Ready, AgentTaskSyncDebtState.Held];
     private static readonly SessionStatus[] LiveSession =
         [SessionStatus.Created, SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
 
@@ -767,7 +765,8 @@ public sealed class RunnerWorktreeRetentionService
         if (task.LandRequestedAt is not null || task.LandStartedAt is not null
             || await _db.AgentTaskLandRequests.AsNoTracking().AnyAsync(r => r.TaskId == task.Id && r.IsPending, ct))
             return "land_pending";
-        if (await _db.AgentTaskSyncDebts.AsNoTracking().AnyAsync(d => d.TaskId == task.Id && OpenDebt.Contains(d.State), ct))
+        if (await _db.AgentTaskSyncDebts.AsNoTracking().Where(SyncDebtRetentionPolicy.Unpaid)
+                .AnyAsync(d => d.TaskId == task.Id, ct))
             return "sync_debt";
         if (await _db.AgentTasks.AsNoTracking().AnyAsync(t => t.Id != task.Id && Open.Contains(t.Status)
                 && (t.RemoteWorktreePath == path || t.WorktreePath == path), ct))

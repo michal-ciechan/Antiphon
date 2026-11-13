@@ -53,8 +53,6 @@ public sealed class DesktopLegacyReleasePolicyService
     private static readonly AgentTaskStatus[] Terminal = [AgentTaskStatus.Succeeded, AgentTaskStatus.Failed, AgentTaskStatus.Canceled];
     private static readonly AgentTaskStatus[] Open =
         [AgentTaskStatus.Queued, AgentTaskStatus.Dispatched, AgentTaskStatus.Working, AgentTaskStatus.Blocked];
-    private static readonly AgentTaskSyncDebtState[] OpenDebt =
-        [AgentTaskSyncDebtState.Pending, AgentTaskSyncDebtState.Ready, AgentTaskSyncDebtState.Held];
     private static readonly SessionStatus[] LiveSession =
         [SessionStatus.Created, SessionStatus.Starting, SessionStatus.Running, SessionStatus.Stopping];
 
@@ -781,7 +779,8 @@ public sealed class DesktopLegacyReleasePolicyService
             var land = await db.AgentTaskLandRequests.AsNoTracking()
                 .Where(r => r.IsPending && (taskId == null || r.TaskId == taskId)).Select(r => r.TaskId).ToListAsync(ct);
             var debt = await db.AgentTaskSyncDebts.AsNoTracking()
-                .Where(d => OpenDebt.Contains(d.State) && (taskId == null || d.TaskId == taskId)).Select(d => d.TaskId).ToListAsync(ct);
+                .Where(SyncDebtRetentionPolicy.Unpaid)
+                .Where(d => taskId == null || d.TaskId == taskId).Select(d => d.TaskId).ToListAsync(ct);
             var open = await db.AgentTasks.AsNoTracking().Where(t => Open.Contains(t.Status))
                 .Select(t => new OpenTask(t.Id, t.WorktreePath, t.ParentTaskId, t.WorktreeBaseRef, t.WorktreeBaseRequestedRef,
                     t.RequestedWorktreeBaseTaskId)).ToListAsync(ct);
