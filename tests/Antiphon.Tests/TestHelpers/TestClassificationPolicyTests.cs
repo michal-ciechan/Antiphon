@@ -260,6 +260,21 @@ public sealed class TestClassificationPolicyTests
     }
 
     [Test]
+    public async Task C1864_ordinary_probe_is_shared_after_its_directory_is_removed()
+    {
+        var watch = Stopwatch.StartNew();
+        var first = await RunProbeAsync();
+        var second = await RunProbeAsync();
+        Console.WriteLine($"C1864 two ordinary probe requests seconds={watch.Elapsed.TotalSeconds:F3}");
+        Directory.Exists(first.Dir).ShouldBeFalse();
+        Directory.Exists(second.Dir).ShouldBeFalse();
+        second.ShouldBeSameAs(first, "the immutable discovery/run result should be built once per test session");
+        first.DefaultPassed.ShouldBe(8);
+        first.SlowCount.ShouldBe(2);
+        first.ManualAbsent.ShouldBeTrue();
+    }
+
+    [Test]
     public async Task C487_probe_temp_directory_is_removed_after_the_body()
     {
         string? seen = null;
