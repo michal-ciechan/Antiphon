@@ -19,6 +19,40 @@ namespace Antiphon.SessionRunner.Tests;
 public sealed class C1677RetentionDispatchTests
 {
     [Test]
+    public async Task Mutation_lock_reports_slow_owner_wait_and_hold(CancellationToken ct)
+    {
+        var clock = new FakeTimeProvider();
+        var logs = new List<string>();
+        var runtime = new RetainRuntime { CheckGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var dispatcher = Dispatcher(runtime, clock, logs);
+        var retain = dispatcher.DispatchAsync(RetainFrame(), ct);
+        await runtime.CheckStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        clock.Advance(TimeSpan.FromMilliseconds(300));
+        var kill = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.KillGeneration, JsonSerializer.SerializeToElement(new
+            { sessionId = Guid.NewGuid(), expectedAcceptedStartedAt = DateTime.UtcNow }, PhoneHomeFraming.Json)), ct);
+        try
+        {
+            kill.IsCompleted.ShouldBeFalse("workspace mutations still serialize");
+            clock.Advance(TimeSpan.FromMilliseconds(400));
+        }
+        finally
+        {
+            runtime.CheckGate.TrySetResult();
+            await retain.WaitAsync(TimeSpan.FromSeconds(2), ct);
+            await kill.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        }
+        var timing = logs.Where(l => l.Contains("Runner lock timing", StringComparison.Ordinal)).ToArray();
+        timing.Length.ShouldBe(2);
+        timing.ShouldContain(l => l.Contains("lock=workspace-mutation owner=WorkspaceRetain waitMs=0 holdMs=700"));
+        timing.ShouldContain(l => l.Contains("lock=workspace-mutation owner=KillGeneration waitMs=400 holdMs=0"));
+        timing.ShouldAllBe(l => !l.Contains("/scratch") && !l.Contains("input="));
+        await dispatcher.DispatchAsync(RetainFrame(), ct);
+        logs.Count(l => l.Contains("Runner lock timing", StringComparison.Ordinal)).ShouldBe(2,
+            "a fast owner produces no timing log");
+    }
+
+    [Test]
     public async Task Phase_b_runs_outside_the_mutation_lock(CancellationToken ct)
     {
         // V-14 (G-36). While phase B is held, an Input frame (a mutating op) completes.
@@ -205,14 +239,15 @@ public sealed class C1677RetentionDispatchTests
         new(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Input,
             JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid(), input = "x" }, PhoneHomeFraming.Json));
 
-    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime)
+    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime,
+        TimeProvider? time = null, List<string>? logs = null)
     {
         var scratch = Path.Combine(Path.GetTempPath(), "c1677-dispatch-" + Guid.NewGuid().ToString("N"));
         return new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
         {
             Enabled = true, AllowedCwd = scratch.Replace('\\', '/'), Capacity = 2,
             CapacityStatePath = Path.Combine(scratch, "capacity"),
-        });
+        }, time: time, logger: logs is null ? null : new ListLogger<PhoneHomeCommandDispatcher>(logs));
     }
 
     /// <summary>CARD-1677 D-2. Advertises retention over a real engine; a Launch is recorded and listed as Running.</summary>
