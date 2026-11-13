@@ -16,4 +16,6 @@ public sealed class RcBoundaryPackTests
     [Test, Timeout(60_000)] public Task TwoBoundariesAndPrefixCollisionsStaySeparate(CancellationToken token) => Run(nameof(TwoBoundariesAndPrefixCollisionsStaySeparate), token);
     [Test, Timeout(60_000)] public Task RepackPreservesCaseUniverse(CancellationToken token) => Run(nameof(RepackPreservesCaseUniverse), token);
     [Test, Timeout(60_000)] public Task DefaultFullPackKeepsIds(CancellationToken token) => Run(nameof(DefaultFullPackKeepsIds), token);
+    [Test, Timeout(60_000)] public Task CanonicalDigestIncludesCaseKeys(CancellationToken token) => Run(nameof(CanonicalDigestIncludesCaseKeys), token);
+    [Test, Timeout(60_000)] public Task ShortIdCollisionUsesS2Policy(CancellationToken token) => Run(nameof(ShortIdCollisionUsesS2Policy), token);
 }

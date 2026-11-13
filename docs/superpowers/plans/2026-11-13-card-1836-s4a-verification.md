@@ -1,6 +1,6 @@
 # CARD-1836 S4a: opt-in boundary packing
 
-Original Code task/landing owner: `6c1c4d05-c107-433b-837f-f882784093ac`.
+Historical S4a Code task/landing owner: `6c1c4d05-c107-433b-837f-f882784093ac`.
 Base: `272ee17c0500be3de39097acd5de321dc51840c5`.
 Selected S4a because S2's boundary API is on master, whereas S3a is not.
 The [activation plan](2026-11-12-card-1836-incremental-activation-plan.md)
@@ -12,8 +12,8 @@ mapping is unassigned/always dirty. Partition leaves before the existing time
 packer. Retain the full discovery universe for prefix safety across partitions.
 Attach full method membership, separate complete discovered case membership,
 full SHA-256 membership digest and membership-derived IDs. Reject duplicate
-discovery identities, overlapping leaves, malformed/empty membership and ID
-collisions. No caller opts in, no launch/coverage/publisher logic changes.
+discovery identities, overlapping leaves and malformed/empty membership. S2
+resolves short-ID collisions as unassigned/dirty chunks retaining full digests. No caller opts in, no launch/coverage/publisher logic changes.
 
 V-8 consists of `TwoBoundariesAndPrefixCollisionsStaySeparate`,
 `RepackPreservesCaseUniverse`, and `DefaultFullPackKeepsIds`. Each calls the real
@@ -30,10 +30,10 @@ No suffix-collision class matches are allowed; inspect fresh TRX per operand.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-s4afinal/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 3 new methods and every existing method, zero failed/skipped | 8 | 8 |
-| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s4aguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | policy, categories, spawn census, index/envelope | each class nonzero, zero failed/skipped | 79 | 6 |
-| CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s4apty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
-| CP-92 | S4a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s4arunner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
+| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-portfinal/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(RcBoundaryChunkIdTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 5 packer methods, 11 S2 methods and every adjacent method, zero failed/skipped | 21 | 8 |
+| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-portguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | policy, categories, spawn census, index/envelope | each class nonzero, zero failed/skipped | 79 | 6 |
+| CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-portpty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
+| CP-92 | S4a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-portrunner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
 
 Red witness run `20261113-043938-d9be` tested committed SHA
 `64b002a42a753875b5bff5d297680cce1982f30b`: CP-8 executed 8, passed 5,
@@ -90,3 +90,36 @@ S7d CP-17/18/19 and operational historical admission/Shadow remain pending.
 Other V-1..V-7/V-9..V-18 and R-1/R-3..R-7 belong to their slices, not passed here.
 PC-V8-boundary, PC-V8-prefix, PC-V8-case-membership, PC-V8-default-ID remain
 pending for Mutation (operator waived deliberate mutation execution in Code).
+
+## S4a port onto hardened S2 (task 063b81c6)
+
+Current Code/landing owner: `063b81c6-63d9-408a-853c-681772c288aa`.
+Task base: `2349a1938b8ff11829ca6becf3c4719383bf9e52`.
+The seven historical S4a commits are cherry-picked with provenance. The S2
+library is unchanged. Case identities (bare class/method plus discovered UID)
+are passed to S2's resolver, which alone owns framing, hashing and collision
+policy. Exposed identityKeys/caseKeys are paired per case; unique methods are
+a projection. The packer retains full discovered case class names separately.
+
+Port V-8 adds CanonicalDigestIncludesCaseKeys (pinned canonical ID and changed
+case sensitivity) and ShortIdCollisionUsesS2Policy (real CTests/M short collision
+fixture through the packer's shared finalizer). The latter checks metadata and
+case custody of already partitioned launches; it does not assert that a method
+filter can select an individual argument row. CP-8 also runs the 11 S2 harness
+cases. No ordinary V/R outside V-8 and R-2 is claimed by this slice.
+
+Two direct gated harness invocations before the fix establish semantic red for
+the new cases without another cold assembly build; these are explicitly unlisted
+diagnostics and do not replace final fresh TRX. A gated native-output bootstrap
+of the checkpoint tool and driver-first index regeneration are also required
+unlisted tooling work. Manual real-tree proof reuses the final CP-8 assembly,
+produces discovery once, verifies manifest and actual-filter case unions exactly
+once, boundary separation/prefix safety and byte equality of opt-out with base.
+No full test-assembly execution is authorized or needed for this census.
+
+Performance remains provisional under CARD-1836/CARD-1873; keep the existing
+45s child/60s test budgets and collect current timings, without green repeats.
+Native Windows startup/packing proof is caller-owned; restart none here.
+PC-V8-canonical-case-key and PC-V8-S2-collision join the four historical PC IDs
+as pending for method-scoped SourceLanding Mutation; Code executes no deliberate
+mutants under the operator waiver.

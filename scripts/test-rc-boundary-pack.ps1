@@ -72,7 +72,7 @@ function Test-Repack {
     Note ($plan.Count -ge 4) 'oversized class did not split'
     Note (SameBag @(Selected $plan $nodes) @($nodes.Uid)) 'split filter case universe changed'
     Note (SameBag @($plan | ForEach-Object { $_.caseMembership | ForEach-Object { $_.uid } }) @($nodes.Uid)) 'case manifest incomplete'
-    Note (SameBag @($plan | ForEach-Object { $_.identityKeys }) @('Antiphon.Tests.Fixture.Matrix/Run','Antiphon.Tests.Fixture.Matrix/RunExtra','Antiphon.Tests.Fixture.Matrix/Other','Antiphon.Tests.Fixture.Matrix/Last','Antiphon.Tests.Fixture.Z/Run')) 'method manifest incomplete or duplicated'
+    Note (SameBag @($plan | ForEach-Object { $_.identityKeys } | Select-Object -Unique) @('Antiphon.Tests.Fixture.Matrix/Run','Antiphon.Tests.Fixture.Matrix/RunExtra','Antiphon.Tests.Fixture.Matrix/Other','Antiphon.Tests.Fixture.Matrix/Last','Antiphon.Tests.Fixture.Z/Run')) 'method manifest incomplete'
     $reversed = @($nodes); [array]::Reverse($reversed)
     Note (SameBag @($plan.id) @((Pack $reversed $map).id)) 'discovery order changed IDs'
     $script:NightlyLaunchTargetSeconds = 900; $script:NightlyLaunchLoneClassBudgetSeconds = 2400
@@ -108,10 +108,49 @@ function Test-Default {
     $opt = @(Pack $nodes @{ 'Antiphon.Tests.Fixture.B'='core'; 'Antiphon.Tests.Fixture.C'='git' })
     Note ($opt.Count -eq 2 -and @($opt.id | Where-Object { $_ -cmatch '^b-' }).Count -eq 2) 'opt-in ignored'
 }
+function Test-CanonicalCases {
+    $nodes = @((Node Matrix Run 0), (Node Matrix Run 1))
+    $map = @{ 'Antiphon.Tests.Fixture.Matrix'='core' }
+    try {
+        $plan = @(Pack $nodes $map)
+        # Pinned length-delimited vector, including both expanded case UIDs.
+        Note ($plan.Count -eq 1 -and $plan[0].id -ceq 'b-core-c3d9377ff31dfd63') 'packer did not use canonical case membership'
+        Note (SameBag @($plan[0].caseKeys) @($nodes.Uid)) 'S2 did not receive case keys'
+        $changed = @((Node Matrix Run 0), (Node Matrix Run 2))
+        Note ($plan[0].id -cne (Pack $changed $map)[0].id) 'changed argument case reused the ID'
+        Note (SameBag @(Selected $plan $nodes) @($nodes.Uid)) 'canonical packing changed selection'
+    } catch { Note $false ('canonical pack refused: ' + $_.Exception.Message) }
+}
+function Test-Collision {
+    # Real S2 64-bit collision through the finalizer used by the packer.
+    # Already partitioned launch descriptors witness metadata and case custody;
+    # they do not claim that a method filter selects individual argument cases.
+    $keys = @('10788987499786589518','17490688019260441962')
+    $chunks = @(foreach ($key in $keys) {
+        [pscustomobject]@{ id='pending'; nodes=@([pscustomobject]@{ Uid=$key }); marker=$key }
+    })
+    $memberships = @(foreach ($key in $keys) {
+        @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='CTests/M'; caseKey=$key }) }
+    })
+    Note ((Get-RcBoundaryChunkId antiphon core @('CTests/M') -CaseKeys @($keys[0])) -ceq 'b-core-360a4ef28b10a96c') 'collision fixture moved'
+    try {
+        $plan = @(Complete-NightlyBoundaryLaunchGroups -Chunks $chunks -Memberships $memberships)
+        Note ($plan.Count -eq 2) 'collision dropped a launch'
+        foreach ($chunk in $plan) {
+            Note ($chunk.boundary -ceq 'unassigned' -and $chunk.alwaysDirty -eq $true -and $chunk.collision -eq $true) 'collision was not dirty/unassigned'
+            Note ($chunk.id -ceq ('b-unassigned-' + $chunk.membershipDigest) -and $chunk.membershipDigest.Length -eq 64) 'collision lost full digest ID'
+            Note ($chunk.caseKeys[0] -ceq $chunk.marker) 'resolution reordered case ownership'
+        }
+        Note ($plan[0].id -cne $plan[1].id) 'collision IDs collapsed'
+        Note (SameBag @($plan | ForEach-Object { $_.nodes.Uid }) $keys) 'collision omitted or duplicated cases'
+    } catch { Note $false ('collision threw instead of resolving: ' + $_.Exception.Message) }
+}
 switch ($Case) {
     TwoBoundariesAndPrefixCollisionsStaySeparate { Test-Separation }
     RepackPreservesCaseUniverse { Test-Repack }
     DefaultFullPackKeepsIds { Test-Default }
+    CanonicalDigestIncludesCaseKeys { Test-CanonicalCases }
+    ShortIdCollisionUsesS2Policy { Test-Collision }
     default { throw "unknown case $Case" }
 }
 Assert-C487 ($script:errors.Count -eq 0) ('RBP ' + $Case + '.contract') ($script:errors -join '; ')

@@ -396,6 +396,28 @@ function Split-NightlyOversizedClass {
     }
 }
 
+function Complete-NightlyBoundaryLaunchGroups {
+    # Keep resolution at the packer/S2 boundary so collision policy is shared.
+    param([object[]]$Chunks, [object[]]$Memberships)
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    for ($i = 0; $i -lt $Chunks.Count; $i++) {
+        $chunk = $Chunks[$i]; $membership = $Memberships[$i]
+        [string[]]$keys = @($membership.identities.identityKey | Select-Object -Unique)
+        $id = Get-RcBoundaryChunkId -Suite $membership.suite -Boundary $membership.boundary -IdentityKeys $keys
+        $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($membership.suite,$membership.boundary,@($keys)) -Depth 3 -Compress))
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+        if ($id -cne ('b-' + $membership.boundary + '-' + $digest.Substring(0,16))) { throw 'boundary-pack: ID/digest mismatch' }
+        if (-not $ids.Add($id)) { throw 'boundary-pack: duplicate ID or short-hash collision' }
+        $chunk.id = $id
+        foreach ($entry in @{
+            suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$digest; identityKeys=@($keys)
+            alwaysDirty=($membership.boundary -ceq 'unassigned')
+        }.GetEnumerator()) { Add-Member -InputObject $chunk -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force }
+    }
+    return $Chunks
+}
+
 function ConvertTo-NightlyBoundaryLaunchGroups {
     # Opt-in metadata only. The caller supplies one suite and its boundary map;
     # missing/conflicting mappings stay unassigned. This grants no carry credit.
@@ -448,7 +470,7 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
         $partitions[$boundary].Add($leaf)
     }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $ids = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $memberships = [Collections.Generic.List[object]]::new()
     [string[]]$ordered = @($partitions.Keys); [Array]::Sort($ordered, [StringComparer]::Ordinal)
     $result = [Collections.Generic.List[object]]::new()
     foreach ($boundary in $ordered) {
@@ -468,26 +490,17 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
                 $cases.Add((ConvertTo-Json -InputObject @($case.className,$case.method,$case.uid) -Compress), $case)
             }
             [string[]]$keys = @($methods); [Array]::Sort($keys, [StringComparer]::Ordinal)
-            $id = Get-RcBoundaryChunkId -Suite $SuiteId -Boundary $boundary -IdentityKeys $keys
-            # S2 v1 canonical encoding; retain the full digest as collision proof.
-            $bytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject @($SuiteId,$boundary,@($keys)) -Depth 3 -Compress))
-            $sha = [Security.Cryptography.SHA256]::Create()
-            try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
-            if ($id -cne ('b-' + $boundary + '-' + $digest.Substring(0,16))) { throw 'boundary-pack: ID/digest mismatch' }
-            if ($ids.ContainsKey($id)) { throw 'boundary-pack: duplicate ID or short-hash collision' }
-            $ids.Add($id, $digest)
+            $memberships.Add(@{ suite=$SuiteId; boundary=$boundary; identities=@(foreach ($node in $members) {
+                @{ identityKey=((Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)) + '/' + [string]$node.Method); caseKey=[string]$node.Uid }
+            }) })
             [string[]]$caseKeys = @($cases.Keys); [Array]::Sort($caseKeys, [StringComparer]::Ordinal)
-            $chunk.id = $id
-            foreach ($entry in @{
-                suite=$SuiteId; boundary=$boundary; membershipDigest=$digest; identityKeys=@($keys)
-                caseMembership=@(foreach ($key in $caseKeys) { $cases[$key] }); caseIdentityBasis='discovery-only'
-                alwaysDirty=($boundary -ceq 'unassigned')
-            }.GetEnumerator()) { Add-Member -InputObject $chunk -NotePropertyName $entry.Key -NotePropertyValue $entry.Value -Force }
+            Add-Member -InputObject $chunk -NotePropertyName caseMembership -NotePropertyValue @(foreach ($key in $caseKeys) { $cases[$key] }) -Force
+            Add-Member -InputObject $chunk -NotePropertyName caseIdentityBasis -NotePropertyValue 'discovery-only' -Force
             $result.Add($chunk)
         }
     }
     if (-not $seen.SetEquals($expected)) { throw 'boundary-pack: incomplete case partition' }
-    return $result.ToArray()
+    return @(Complete-NightlyBoundaryLaunchGroups -Chunks $result.ToArray() -Memberships $memberships.ToArray())
 }
 
 function ConvertTo-NightlyProfileLaunchGroups {
