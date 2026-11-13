@@ -47,9 +47,9 @@
   "cappedPaths": [
     {
       "path": ".claude/skills/antiphon-delegate/SKILL.md",
-      "classes": 181,
+      "classes": 182,
       "reason": "cap",
-      "owed": 156,
+      "owed": 157,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandActiveSourceClaimTests",
@@ -95,9 +95,9 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 219,
+      "classes": 220,
       "reason": "cap",
-      "owed": 194,
+      "owed": 195,
       "first": [
         "CommitOnSettleDocumentationTests",
         "DockerStackDocumentationTests",
@@ -116,9 +116,9 @@
     },
     {
       "path": "CLAUDE.md",
-      "classes": 192,
+      "classes": 193,
       "reason": "cap",
-      "owed": 167,
+      "owed": 168,
       "first": [
         "AgentTaskDispatchFailureTests",
         "AgentTaskInputSpillTests",
@@ -174,9 +174,9 @@
     },
     {
       "path": "docs/agent-card-lifecycle.md",
-      "classes": 176,
+      "classes": 177,
       "reason": "cap",
-      "owed": 151,
+      "owed": 152,
       "first": [
         "AgentTaskMidTurnRefineTests",
         "AgentTaskPoolTests",
@@ -190,9 +190,9 @@
     },
     {
       "path": "docs/ops-http.md",
-      "classes": 179,
+      "classes": 180,
       "reason": "cap",
-      "owed": 154,
+      "owed": 155,
       "first": [
         "AgentTaskLandAdmissionControlledTests",
         "AgentTaskLandAdmissionTests",
@@ -206,9 +206,9 @@
     },
     {
       "path": "docs/orchestration-loop.md",
-      "classes": 189,
+      "classes": 190,
       "reason": "cap",
-      "owed": 164,
+      "owed": 165,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
@@ -768,9 +768,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Alarms.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -784,9 +784,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.ChannelOutbound.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -800,9 +800,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Leaks.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -816,9 +816,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Seats.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -832,9 +832,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Supervision.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -848,9 +848,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.TaskInputs.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -864,9 +864,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.cs",
-      "classes": 45,
+      "classes": 46,
       "reason": "cap",
-      "owed": 20,
+      "owed": 21,
       "first": [
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
@@ -1327,9 +1327,9 @@
     },
     {
       "path": "server/Application/Settings/SupervisionSettings.cs",
-      "classes": 172,
+      "classes": 173,
       "reason": "cap",
-      "owed": 147,
+      "owed": 148,
       "first": [
         "CapacityRecoveryTaskTests",
         "ChannelBridgeTests",
@@ -2207,9 +2207,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 561,
+      "classes": 562,
       "reason": "cap",
-      "owed": 536,
+      "owed": 537,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
