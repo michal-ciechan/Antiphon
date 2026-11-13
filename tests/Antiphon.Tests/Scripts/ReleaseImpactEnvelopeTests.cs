@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -13,7 +15,7 @@ public sealed class ReleaseImpactEnvelopeTests
     [Test]
     public async Task MissingIndexIsIncomplete()
     {
-        var fixture = await Fixture.CreateAsync();
+        await using var fixture = await Fixture.CreateAsync();
         File.Exists(Path.Combine(fixture.Root, "tests/derived-impact-index.json")).ShouldBeFalse();
         var result = await fixture.ReleaseAsync();
         AssertIncomplete(result, fixture.Baseline, fixture.Candidate, await fixture.AlgorithmShaAsync());
@@ -26,7 +28,7 @@ public sealed class ReleaseImpactEnvelopeTests
     [Test]
     public async Task StaleInputIsIncomplete()
     {
-        var fixture = await Fixture.CreateAsync(withIndex: true);
+        await using var fixture = await Fixture.CreateAsync(withIndex: true);
         await File.WriteAllTextAsync(Path.Combine(fixture.Root, "input.txt"), "uncommitted input\n");
         (await fixture.GitAsync("status", "--porcelain")).ShouldContain("input.txt");
         var result = await fixture.ReleaseAsync();
@@ -39,7 +41,7 @@ public sealed class ReleaseImpactEnvelopeTests
     [Test]
     public async Task CandidateMismatchIsIncomplete()
     {
-        var fixture = await Fixture.CreateAsync(withIndex: true);
+        await using var fixture = await Fixture.CreateAsync(withIndex: true);
         var result = await fixture.ReleaseAsync(candidate: fixture.Baseline);
         AssertIncomplete(result, fixture.Baseline, fixture.Baseline, await fixture.AlgorithmShaAsync());
         result.GetProperty("candidateSha").GetString().ShouldNotBe(fixture.Candidate);
@@ -50,7 +52,7 @@ public sealed class ReleaseImpactEnvelopeTests
     [Test]
     public async Task OrdinaryModeRemainsAdvisory()
     {
-        var fixture = await Fixture.CreateAsync(withIndex: true);
+        await using var fixture = await Fixture.CreateAsync(withIndex: true);
         var ordinary = await fixture.SelectAsync("-Path", "input.txt", "-Json");
         ordinary.Exit.ShouldBe(0, ordinary.Text);
         using var json = JsonDocument.Parse(ordinary.Stdout);
@@ -103,6 +105,86 @@ public sealed class ReleaseImpactEnvelopeTests
         AssertIncomplete(windowsJson.RootElement, fixture.Baseline, fixture.Candidate, algorithmSha, "windows");
     }
 
+    // CARD-1866 A-1 / M7: exercise a private committed copy of the real algorithm.
+    // Text attributes can conceal changed raw bytes from status and hash-object.
+    [Test]
+    [Arguments("scripts/impacted-classes.ps1", false)]
+    [Arguments("scripts/lib/release-impact.ps1", false)]
+    [Arguments("scripts/impacted-classes.ps1", true)]
+    [Arguments("scripts/lib/release-impact.ps1", true)]
+    public async Task AlgorithmSourceDriftIsRefused(string path, bool normalized)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var clean = await fixture.SelectCopiedAlgorithmAsync();
+        clean.Exit.ShouldBe(0, clean.Text);
+        using (var json = JsonDocument.Parse(clean.Stdout))
+            AssertIncomplete(json.RootElement, fixture.Baseline, fixture.Candidate, fixture.Candidate);
+
+        var full = Path.Combine(fixture.Root, path);
+        var original = await File.ReadAllTextAsync(full);
+        await File.WriteAllTextAsync(full, normalized
+            ? original.Replace("\n", "\r\n", StringComparison.Ordinal)
+            : original + "\n# changed algorithm bytes\n");
+        if (normalized)
+            (await fixture.GitAsync("status", "--porcelain")).ShouldBeNullOrWhiteSpace(
+                "the fixture must hide CRLF drift through its committed text attributes");
+        else
+            (await fixture.GitAsync("status", "--porcelain")).ShouldContain(path);
+
+        var refused = await fixture.SelectCopiedAlgorithmAsync();
+        refused.Exit.ShouldBe(2, refused.Text);
+        AssertRefused(refused.Stdout);
+        using var result = JsonDocument.Parse(refused.Stdout);
+        result.RootElement.GetProperty("error").GetString().ShouldContain("algorithm source drift");
+        result.RootElement.TryGetProperty("algorithmDigest", out _).ShouldBeFalse(
+            "refusal must not publish a usable algorithm identity");
+    }
+
+    [Test]
+    public async Task AlgorithmDigestBindsCommittedBlobs()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        async Task<string> DigestAsync()
+        {
+            var inventory = new StringBuilder();
+            foreach (var path in new[] { "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1" })
+                inventory.Append(path).Append('\0').Append((await fixture.GitAsync("rev-parse", "HEAD:" + path)).Trim()).Append('\n');
+            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory.ToString())));
+        }
+        async Task<string> AssertIdentityAsync()
+        {
+            var result = await fixture.SelectCopiedAlgorithmAsync();
+            result.Exit.ShouldBe(0, result.Text);
+            using var json = JsonDocument.Parse(result.Stdout);
+            var value = json.RootElement;
+            // The algorithm can be newer than either analyzed endpoint.
+            AssertIncomplete(value, fixture.Baseline, fixture.Candidate, (await fixture.GitAsync("rev-parse", "HEAD")).Trim());
+            var digest = value.GetProperty("algorithmDigest").GetString()!;
+            digest.ShouldBe(await DigestAsync());
+            return digest;
+        }
+        var before = await AssertIdentityAsync();
+        await File.AppendAllTextAsync(Path.Combine(fixture.Root, "scripts/lib/release-impact.ps1"), "\n# new committed algorithm\n");
+        await fixture.GitAsync("add", ".");
+        await fixture.CommitAsync();
+        (await AssertIdentityAsync()).ShouldNotBe(before);
+    }
+
+    [Test]
+    public async Task FixtureCleansUpAfterFailure()
+    {
+        string? root = null;
+        await Should.ThrowAsync<InvalidOperationException>(async () =>
+        {
+            await using var fixture = await Fixture.CreateAsync();
+            root = fixture.Root;
+            Directory.Exists(root).ShouldBeTrue();
+            throw new InvalidOperationException("fixture body failed");
+        });
+        root.ShouldNotBeNull();
+        Directory.Exists(root).ShouldBeFalse("fixture teardown must run even when the body throws");
+    }
+
     private static void AssertRefused(string stdout)
     {
         using var document = JsonDocument.Parse(stdout);
@@ -132,7 +214,7 @@ public sealed class ReleaseImpactEnvelopeTests
 
     private sealed record Result(int Exit, string Stdout, string Text);
 
-    private sealed class Fixture(string root, string baseline, string candidate)
+    private sealed class Fixture(string root, string baseline, string candidate) : IAsyncDisposable
     {
         public string Root { get; } = root;
         public string Baseline { get; } = baseline;
@@ -140,27 +222,69 @@ public sealed class ReleaseImpactEnvelopeTests
 
         public static async Task<Fixture> CreateAsync(bool withIndex = false)
         {
-            // Keep isolated inputs in ignored evidence; never delete another run's fixture.
-            var root = Path.Combine(RepoRoot(), ".antiphon", "selector-evidence", "f1903e95", "fixtures", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path.Combine(root, "tests", "Antiphon.Tests"));
-            await File.WriteAllTextAsync(Path.Combine(root, "tests", "Antiphon.Tests", "EnvelopeProbeTests.cs"), "public sealed class EnvelopeProbeTests { }\n");
-            await File.WriteAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"),
-                "{\"schema\":1,\"cache\":\"none\",\"kinds\":[{\"id\":\"probe\",\"globs\":[\"input.txt\"],\"classes\":[\"EnvelopeProbeTests\"]}]}\n");
-            if (withIndex)
-                await File.WriteAllTextAsync(Path.Combine(root, "tests", "derived-impact-index.json"), "{\"schema\":1,\"edges\":[],\"cappedPaths\":[]}\n");
-            await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "baseline\n");
-            var fixture = new Fixture(root, "", "");
-            await fixture.GitAsync("init", "-q");
-            await fixture.GitAsync("add", ".");
-            await fixture.CommitAsync();
-            var baseline = (await fixture.GitAsync("rev-parse", "HEAD")).Trim();
-            await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "candidate\n");
-            await fixture.GitAsync("add", ".");
-            await fixture.CommitAsync();
-            return new Fixture(root, baseline, (await fixture.GitAsync("rev-parse", "HEAD")).Trim());
+            var root = Directory.CreateTempSubdirectory("antiphon-envelope-").FullName;
+            var owner = new Fixture(root, "", "");
+            try
+            {
+                foreach (var path in new[] { "scripts/impacted-classes.ps1", "scripts/lib/release-impact.ps1" })
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(root, path))!);
+                    await File.WriteAllTextAsync(Path.Combine(root, path),
+                        (await File.ReadAllTextAsync(Path.Combine(RepoRoot(), path))).Replace("\r\n", "\n", StringComparison.Ordinal));
+                }
+                await File.WriteAllTextAsync(Path.Combine(root, ".gitattributes"), "*.ps1 text eol=lf\n");
+                Directory.CreateDirectory(Path.Combine(root, "tests", "Antiphon.Tests"));
+                await File.WriteAllTextAsync(Path.Combine(root, "tests", "Antiphon.Tests", "EnvelopeProbeTests.cs"), "public sealed class EnvelopeProbeTests { }\n");
+                await File.WriteAllTextAsync(Path.Combine(root, "tests", "impacted-classes.json"),
+                    "{\"schema\":1,\"cache\":\"none\",\"kinds\":[{\"id\":\"probe\",\"globs\":[\"input.txt\"],\"classes\":[\"EnvelopeProbeTests\"]}]}\n");
+                if (withIndex)
+                    await File.WriteAllTextAsync(Path.Combine(root, "tests", "derived-impact-index.json"), "{\"schema\":1,\"edges\":[],\"cappedPaths\":[]}\n");
+                await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "baseline\n");
+                var fixture = new Fixture(root, "", "");
+                await fixture.GitAsync("init", "-q");
+                await fixture.GitAsync("config", "core.autocrlf", "false");
+                await fixture.GitAsync("add", ".");
+                await fixture.CommitAsync();
+                var baseline = (await fixture.GitAsync("rev-parse", "HEAD")).Trim();
+                await File.WriteAllTextAsync(Path.Combine(root, "input.txt"), "candidate\n");
+                await fixture.GitAsync("add", ".");
+                await fixture.CommitAsync();
+                return new Fixture(root, baseline, (await fixture.GitAsync("rev-parse", "HEAD")).Trim());
+            }
+            catch
+            {
+                await owner.DisposeAsync();
+                throw;
+            }
         }
 
-        private Task<string> CommitAsync() => GitAsync("-c", "user.name=Envelope fixture", "-c", "user.email=envelope@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
+        public ValueTask DisposeAsync()
+        {
+            var watch = Stopwatch.StartNew();
+            // Only this fixture's exclusively created directory is owned. Delete leaf
+            // entries individually; never follow links or recursively delete directories.
+            void Remove(DirectoryInfo directory)
+            {
+                if (directory.LinkTarget is not null) throw new IOException("fixture link refused");
+                foreach (var entry in directory.EnumerateFileSystemInfos())
+                {
+                    if (watch.Elapsed > TimeSpan.FromSeconds(30)) throw new TimeoutException("fixture teardown timed out");
+                    if (entry.LinkTarget is not null) throw new IOException("fixture link refused");
+                    if (entry is DirectoryInfo child) Remove(child);
+                    else
+                    {
+                        entry.Attributes &= ~FileAttributes.ReadOnly;
+                        entry.Delete();
+                    }
+                }
+                directory.Delete();
+            }
+            Remove(new DirectoryInfo(Root));
+            Console.WriteLine($"C1820 phase=cleanup elapsedMs={watch.ElapsedMilliseconds} fixture={Path.GetFileName(Root)}");
+            return ValueTask.CompletedTask;
+        }
+
+        public Task<string> CommitAsync() => GitAsync("-c", "user.name=Envelope fixture", "-c", "user.email=envelope@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
 
         public async Task<string> AlgorithmShaAsync() => (await GitAsync("-C", RepoRoot(), "rev-parse", "HEAD")).Trim();
 
@@ -186,6 +310,10 @@ public sealed class ReleaseImpactEnvelopeTests
             using var document = JsonDocument.Parse(result.Stdout);
             return document.RootElement.Clone();
         }
+
+        public Task<Result> SelectCopiedAlgorithmAsync() => RunAsync("pwsh",
+            new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "impacted-classes.ps1"), "-Repo", Root }
+                .Concat(ReleaseArguments()).ToArray(), 120);
 
         public Task<Result> SelectAsync(params string[] arguments) => RunAsync("pwsh",
             new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(RepoRoot(), "scripts", "impacted-classes.ps1"), "-Repo", Root }.Concat(arguments).ToArray(), 120);
