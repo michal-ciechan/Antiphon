@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "suiteProjects": "tests/**/*.csproj",
+  "roots": [
+    { "path": "**", "consumers": ["*"], "reason": "repository-scanners-conservative-all-inputs" }
+  ]
+}
