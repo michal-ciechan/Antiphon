@@ -38,23 +38,31 @@ public sealed class C1677RetentionDispatchTests
     }
 
     [Test]
-    public async Task Phase_a_waits_for_the_mutation_lock(CancellationToken ct)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Phase_a_does_not_block_input(bool conditional, CancellationToken ct)
     {
-        // V-14b (G-37). An Input holding the lock keeps phase A from starting.
-        var runtime = new RetainRuntime { Step = Moved() };
-        runtime.InputGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RetainRuntime { CheckGate = new(TaskCreationOptions.RunContinuationsAsynchronously) };
         var dispatcher = Dispatcher(runtime);
-        var input = dispatcher.DispatchAsync(InputFrame(), ct);
-        await runtime.InputStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
         var retain = dispatcher.DispatchAsync(RetainFrame(), ct);
-        await Task.Delay(500, ct);
-        runtime.CheckAndMoveStarts.ShouldBe(0, "phase A waits for the lock");
-
-        runtime.InputGate.SetResult();
-        (await input.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
-        var reply = await retain.WaitAsync(TimeSpan.FromSeconds(5), ct);
-        runtime.CheckAndMoveStarts.ShouldBe(1);
-        Read(reply).Verdict.ShouldBe(WorkspaceRetentionCodes.Removed);
+        await runtime.CheckStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        var frame = conditional
+            ? new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ConditionalInput,
+                JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid(), input = "x", expectedAcceptedStartedAt = DateTime.UtcNow, expectedLastSequence = 0 }, PhoneHomeFraming.Json))
+            : InputFrame();
+        var input = dispatcher.DispatchAsync(frame, ct);
+        try
+        {
+            var reply = await input.WaitAsync(TimeSpan.FromSeconds(1), ct);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            retain.IsCompleted.ShouldBeFalse("retention is still checking while input replies");
+        }
+        finally
+        {
+            runtime.CheckGate.TrySetResult();
+            await retain.WaitAsync(TimeSpan.FromSeconds(2), ct);
+            await input.WaitAsync(TimeSpan.FromSeconds(2), ct);
+        }
     }
 
     [Test]
@@ -254,6 +262,8 @@ public sealed class C1677RetentionDispatchTests
     /// <summary>F-2. Advertises retention; each phase and Input can be held at a gate.</summary>
     private sealed class RetainRuntime : IPhoneHomeRuntimeSurface
     {
+        public TaskCompletionSource? CheckGate { get; set; }
+        public TaskCompletionSource CheckStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public WorkspaceRetainStep Step { get; init; } = new(new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept));
         public TaskCompletionSource? CompleteGate { get; set; }
         public TaskCompletionSource? InputGate { get; set; }
@@ -264,10 +274,12 @@ public sealed class C1677RetentionDispatchTests
         public int CheckAndMoveStarts => Volatile.Read(ref _checkAndMoveStarts);
         public int CompleteCalls => Volatile.Read(ref _completeCalls);
 
-        public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct)
+        public async Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct)
         {
             Interlocked.Increment(ref _checkAndMoveStarts);
-            return Task.FromResult(Step);
+            CheckStarted.TrySetResult();
+            if (CheckGate is { } gate) await gate.Task.WaitAsync(ct);
+            return Step;
         }
 
         public async Task<PhoneHomeWorkspaceRetainResponse> RetainWorkspaceCompleteAsync(WorkspaceRetainStep step, CancellationToken ct)
