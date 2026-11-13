@@ -1,0 +1,131 @@
+#requires -Version 5.1
+# CARD-1836 S2: pure boundary metadata and identities. No launch/selection caller.
+# Keep the rule order and glob grammar aligned with LayeringGuardEngine.ParseMap.
+function Expand-RcBoundaryGlob {
+    param([string]$Pattern)
+    $depth = 0; $start = 0
+    for ($i = 0; $i -lt $Pattern.Length; $i++) {
+        if ($Pattern[$i] -eq '{') { $depth++ }
+        if ($Pattern[$i] -eq '}') { $depth-- }
+        if ($depth -lt 0 -or $depth -gt 1) { throw 'boundary-map: unbalanced glob' }
+        if ($Pattern[$i] -eq ',' -and $depth -eq 0) {
+            Expand-RcBoundaryGlob $Pattern.Substring($start, $i - $start).Trim()
+            $start = $i + 1
+        }
+    }
+    if ($depth -ne 0) { throw 'boundary-map: unbalanced glob' }
+    $last = $Pattern.Substring($start).Trim()
+    $open = $last.IndexOf('{')
+    if ($open -ge 0) {
+        $close = $last.IndexOf('}', $open)
+        foreach ($alternative in $last.Substring($open + 1, $close - $open - 1).Split(',')) {
+            Expand-RcBoundaryGlob ($last.Substring(0, $open) + $alternative + $last.Substring($close + 1))
+        }
+    } else {
+        if (-not $last -or $last.StartsWith('/') -or $last.Contains('\') -or $last.Split('/') -contains '..' -or $last -match '[^A-Za-z0-9_./*\-]') {
+            throw 'boundary-map: invalid glob'
+        }
+        $last
+    }
+}
+
+function Read-RcBoundaryMap {
+    param(
+        [string]$LayersPath = (Join-Path $PSScriptRoot '../../tests/Antiphon.Tests/Layering/layers.txt'),
+        [string]$PrefixesPath = (Join-Path $PSScriptRoot 'rc-boundary-prefixes.json')
+    )
+    $layers = @('host','core','persistence','git','runners','integrations','application')
+    $edges = @{}; $rules = New-Object 'System.Collections.Generic.List[object]'; $section = ''
+    foreach ($raw in [IO.File]::ReadAllLines($LayersPath)) {
+        $line = $raw.Split('#')[0].Trim()
+        if (-not $line) { continue }
+        if ($line -cin @('[edges]','[rules]')) { $section = $line; continue }
+        if ($section -ceq '[edges]') {
+            if ($line -notmatch '^([A-Za-z]+)\s*->\s*(.*)$') { throw 'boundary-map: malformed edge' }
+            $from = $Matches[1].ToLowerInvariant(); $targets = $Matches[2]
+            if ($from -cnotin $layers -or $edges.ContainsKey($from)) { throw 'boundary-map: unknown/duplicate edge' }
+            $destinations = @($targets.Split(',') | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+            foreach ($to in $destinations) { if ($to -cnotin $layers) { throw 'boundary-map: unknown destination' } }
+            $edges[$from] = $destinations
+        } elseif ($section -ceq '[rules]') {
+            if ($line -notmatch '^(.+?)\s+([A-Za-z]+)$') { throw 'boundary-map: malformed rule' }
+            $pattern = $Matches[1]; $boundary = $Matches[2].ToLowerInvariant()
+            if ($boundary -cnotin $layers) { throw 'boundary-map: unknown layer' }
+            $globs = @(foreach ($glob in @(Expand-RcBoundaryGlob $pattern)) {
+                $regex = '^' + [regex]::Escape($glob).Replace('\*\*', [string][char]1).Replace('\*','[^/]*').Replace([string][char]1,'.*') + '$'
+                New-Object regex $regex, ([Text.RegularExpressions.RegexOptions]::CultureInvariant)
+            })
+            $rules.Add(@{ boundary=$boundary; globs=$globs })
+        } else { throw 'boundary-map: unknown section' }
+    }
+    foreach ($layer in $layers) { if (-not $edges.ContainsKey($layer)) { throw ('boundary-map: missing edges ' + $layer) } }
+    if ($rules.Count -eq 0) { throw 'boundary-map: no rules' }
+    $table = [IO.File]::ReadAllText($PrefixesPath) | ConvertFrom-Json
+    if ($table.format -cne 'antiphon-rc-boundary-prefixes-v1') { throw 'boundary-map: invalid prefixes format' }
+    foreach ($entry in $table.prefixes) {
+        if ($entry.boundary -cnotin $layers -or $entry.prefix -cnotmatch '^Antiphon\.Tests(?:\.[A-Za-z_][A-Za-z0-9_]*)+$' -or $entry.prefix -ceq 'Antiphon.Tests.Infrastructure') {
+            throw 'boundary-map: invalid namespace prefix'
+        }
+    }
+    return @{ edges=$edges; rules=@($rules.ToArray()); prefixes=@($table.prefixes | Sort-Object { -$_.prefix.Length }) }
+}
+
+function Get-RcClassBoundary {
+    param([Parameter(Mandatory)]$Map, [string]$Suite, [string]$TestPath, [string]$Source)
+    # Lane overrides are intentionally ahead of production references and namespaces.
+    $path = $TestPath.Replace('\','/')
+    foreach ($lane in @(@('Scripts','scripts'),@('Checkpoints','checkpoints'),@('AgentTui','tui'))) {
+        if ($path.StartsWith(('tests/Antiphon.Tests/' + $lane[0] + '/'), [StringComparison]::Ordinal)) { return $lane[1] }
+    }
+    if ($path.StartsWith('tests/Antiphon.E2E/', [StringComparison]::Ordinal)) { return 'e2e' }
+    if ($path.StartsWith('client/', [StringComparison]::Ordinal)) { return 'client' }
+    if ($Suite -cin @('scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf')) { return $Suite }
+    if ($Suite -cne 'antiphon') { return 'unassigned' }
+    # Literal repo paths only: computed references remain unknown. Rule order wins,
+    # even if the source mentions a later rule's path first.
+    $paths = @([regex]::Matches($Source, '"(server/[^"\r\n]+)"') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($rule in $Map.rules) {
+        foreach ($literal in $paths) {
+            if ($literal.Split('/') -contains '..') { continue }
+            foreach ($glob in $rule.globs) { if ($glob.IsMatch($literal)) { return $rule.boundary } }
+        }
+    }
+    $ns = [regex]::Match($Source, '\bnamespace\s+([A-Za-z_][A-Za-z0-9_.]*)\s*[;{]')
+    if ($ns.Success) {
+        foreach ($entry in $Map.prefixes) {
+            if ($ns.Groups[1].Value -ceq $entry.prefix -or $ns.Groups[1].Value.StartsWith(($entry.prefix + '.'), [StringComparison]::Ordinal)) { return $entry.boundary }
+        }
+    }
+    return 'unassigned'
+}
+
+function Get-RcBoundaryChunkId {
+    param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys)
+    if ($Suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $Boundary -cnotin @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')) { throw 'boundary-chunk: invalid suite/boundary' }
+    if (-not $IdentityKeys -or $IdentityKeys.Count -eq 0) { throw 'boundary-chunk: empty membership' }
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($key in $IdentityKeys) {
+        if ([string]::IsNullOrWhiteSpace($key) -or $key -notmatch '^[^/\r\n]+/[^\r\n]+$' -or -not $seen.Add($key)) { throw 'boundary-chunk: invalid/duplicate identity' }
+    }
+    [string[]]$sorted = $IdentityKeys.Clone()
+    [Array]::Sort($sorted, [StringComparer]::Ordinal)
+    # v1 encoding: UTF-8 compact JSON [suite,boundary,[ordinal sorted keys]], no BOM/LF.
+    $json = ConvertTo-Json -InputObject @($Suite, $Boundary, @($sorted)) -Depth 3 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hex = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return ('b-' + $Boundary + '-' + $hex.Substring(0,16))
+}
+
+function New-RcBoundaryChunk {
+    param([object[]]$Identities)
+    if (-not $Identities -or $Identities.Count -eq 0) { throw 'boundary-chunk: empty membership' }
+    $suite = [string]$Identities[0].suite; $boundary = [string]$Identities[0].boundary
+    foreach ($identity in $Identities) {
+        if ($identity.suite -cne $suite -or $identity.boundary -cne $boundary) { throw 'boundary-chunk: mixed suite/boundary' }
+    }
+    [string[]]$keys = @($Identities | ForEach-Object { [string]$_.identityKey })
+    $id = Get-RcBoundaryChunkId $suite $boundary $keys
+    [Array]::Sort($keys, [StringComparer]::Ordinal)
+    return [ordered]@{ chunkId=$id; suite=$suite; boundary=$boundary; identityKeys=@($keys); alwaysDirty=($boundary -ceq 'unassigned') }
+}
