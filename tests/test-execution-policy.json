@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233",
+  "policyHash": "8b030829c1334697148e2e5f62131eabfb5f38f8d6c16e20c76c6597e1e22854",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1006,6 +1006,17 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the V-39 transport world runs the real runner retention engine, whose holder scan reads /proc; off Linux the scan is incomplete and retention keeps the tree (holder_scan_unknown). The case remains required on Linux.",
           "owner": "CARD-1677"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1895OutputDropServerTests",
+          "methods": [
+            "Lost_reply_retries_the_same_request_and_deletes_nothing_more",
+            "Partial_unlink_survives_the_real_transport"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the real runner holder scan reads /proc, a partial unlink uses Unix mode bits, and the lost-reply ledger is a Linux fsync. The case remains required on Linux.",
+          "owner": "CARD-1895"
         },
         {
           "suite": "session-runner",
