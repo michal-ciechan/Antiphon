@@ -181,7 +181,7 @@ if ($MergeSubset -and $Audit) {
 }
 
 function As-List($Value) {
-    $list = New-Object System.Collections.Generic.List[string]
+    $list = [System.Collections.Generic.List[string]]::new()
     if ($null -eq $Value) { return $list }
     foreach ($item in @($Value)) {
         if ($null -ne $item) {
@@ -194,7 +194,7 @@ function As-List($Value) {
 }
 
 function Fill-Sorted($Items, [System.Collections.Generic.List[string]]$Into) {
-    $set = New-Object 'System.Collections.Generic.SortedSet[string]' ([StringComparer]::Ordinal)
+    $set = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     if ($null -ne $Items) {
         foreach ($item in @($Items)) {
             if ($null -eq $item) { continue }
@@ -206,7 +206,7 @@ function Fill-Sorted($Items, [System.Collections.Generic.List[string]]$Into) {
 }
 
 function New-StringList {
-    $list = New-Object System.Collections.Generic.List[string]
+    $list = [System.Collections.Generic.List[string]]::new()
     return ,$list
 }
 
@@ -250,7 +250,7 @@ function Invoke-Git([string[]]$GitArgs) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     [void]$parts.Add('-c')
     [void]$parts.Add('core.quotepath=false')
     foreach ($arg in $GitArgs) {
@@ -272,7 +272,7 @@ function Invoke-Git([string[]]$GitArgs) {
 }
 
 function Split-Lines([string]$Text) {
-    $list = New-Object System.Collections.Generic.List[string]
+    $list = [System.Collections.Generic.List[string]]::new()
     if ([string]::IsNullOrEmpty($Text)) { return $list }
     foreach ($line in ($Text -split "`r?`n")) {
         if (-not [string]::IsNullOrWhiteSpace($line)) { [void]$list.Add($line.Trim()) }
@@ -341,7 +341,7 @@ function Get-Project([string]$Relative) {
 function New-ClassFilter($Names) {
     $sorted = New-StringList
     Fill-Sorted $Names $sorted
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $sorted) { [void]$parts.Add('(' + $name + '*)') }
     if ($parts.Count -eq 0) { return '' }
     return '/*/*/' + ($parts -join '|') + '/*'
@@ -350,7 +350,7 @@ function New-ClassFilter($Names) {
 function New-MethodFilter([string]$ClassName, $Methods) {
     $sorted = New-StringList
     Fill-Sorted $Methods $sorted
-    $parts = New-Object System.Collections.Generic.List[string]
+    $parts = [System.Collections.Generic.List[string]]::new()
     foreach ($name in $sorted) { [void]$parts.Add('(' + $name + '*)') }
     if ($parts.Count -eq 0) { return '' }
     return '/*/*/' + $ClassName + '/' + ($parts -join '|')
@@ -397,13 +397,13 @@ catch {
 
 # Structural refusal happens before the tests walk. PowerShell 5.1 unwraps a one-element
 # JSON array into the element, so a lone kind object is accepted as that one-element array.
-$allowedRoot = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$allowedRoot = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($name in @('schema', 'card', 'cache', 'maximumStaleness', 'kinds')) { [void]$allowedRoot.Add($name) }
-$allowedKind = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$allowedKind = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($name in @('id', 'globs', 'classes', 'methods', 'added', 'derive', 'windows')) { [void]$allowedKind.Add($name) }
-$allowedAdded = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$allowedAdded = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($name in @('glob', 'literals', 'removed')) { [void]$allowedAdded.Add($name) }
-$allowedDerive = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$allowedDerive = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 [void]$allowedDerive.Add('patterns')
 
 if (-not ($doc -is [System.Management.Automation.PSCustomObject])) {
@@ -435,9 +435,9 @@ else {
     Refuse-Table 'root' 'kinds must be an array'
 }
 
-$parsed = New-Object System.Collections.Generic.List[object]
-$derivePatterns = New-Object System.Collections.Generic.List[string]
-$allGlobs = New-Object System.Collections.Generic.List[string]
+$parsed = [System.Collections.Generic.List[object]]::new()
+$derivePatterns = [System.Collections.Generic.List[string]]::new()
+$allGlobs = [System.Collections.Generic.List[string]]::new()
 $kindIndex = 0
 foreach ($node in $kindNodes) {
     $where = 'kinds[' + $kindIndex + ']'
@@ -458,11 +458,11 @@ foreach ($node in $kindNodes) {
     }
     $where = $id
 
-    $globs = New-Object System.Collections.Generic.List[string]
+    $globs = [System.Collections.Generic.List[string]]::new()
     if ($null -ne $node.PSObject.Properties['globs']) { $globs = As-List $node.globs }
-    $classes = New-Object System.Collections.Generic.List[string]
+    $classes = [System.Collections.Generic.List[string]]::new()
     if ($null -ne $node.PSObject.Properties['classes']) { $classes = As-List $node.classes }
-    $methods = New-Object System.Collections.Generic.List[string]
+    $methods = [System.Collections.Generic.List[string]]::new()
     if ($null -ne $node.PSObject.Properties['methods']) { $methods = As-List $node.methods }
 
     $windowsLane = ''
@@ -475,7 +475,7 @@ foreach ($node in $kindNodes) {
     }
 
     $addedGlob = ''
-    $addedLiterals = New-Object System.Collections.Generic.List[string]
+    $addedLiterals = [System.Collections.Generic.List[string]]::new()
     $addedRemoved = $false
     $hasAdded = $false
     if ($null -ne $node.PSObject.Properties['added'] -and $null -ne $node.added) {
@@ -512,7 +512,7 @@ foreach ($node in $kindNodes) {
                 Refuse-Table $where ("unknown property '" + $prop.Name + "'")
             }
         }
-        $patterns = New-Object System.Collections.Generic.List[string]
+        $patterns = [System.Collections.Generic.List[string]]::new()
         if ($null -ne $node.derive.PSObject.Properties['patterns']) { $patterns = As-List $node.derive.patterns }
         foreach ($pattern in $patterns) {
             try {
@@ -551,7 +551,7 @@ foreach ($node in $kindNodes) {
 
     foreach ($glob in $globs) { [void]$allGlobs.Add($glob) }
     if (-not [string]::IsNullOrWhiteSpace($addedGlob)) { [void]$allGlobs.Add($addedGlob) }
-    $regexes = New-Object System.Collections.Generic.List[regex]
+    $regexes = [System.Collections.Generic.List[regex]]::new()
     foreach ($glob in $globs) { [void]$regexes.Add([regex]::new((Convert-GlobToRegex $glob), 'CultureInvariant')) }
     $addedRegex = $null
     if (-not [string]::IsNullOrWhiteSpace($addedGlob)) {
@@ -586,9 +586,9 @@ $censusClock = [Diagnostics.Stopwatch]::StartNew()
 # The compiled walker reads each current source file once. A file is a derive hit when ANY pattern matches, so the patterns are
 # joined into one alternation (each in its own non-capturing group): one pass per file instead of one per pattern,
 # same verdict. Both regexes are compiled; matching is unchanged.
-$deriveRegexes = New-Object System.Collections.Generic.List[regex]
+$deriveRegexes = [System.Collections.Generic.List[regex]]::new()
 if ($derivePatterns.Count -gt 0) {
-    $deriveAlternatives = New-Object System.Collections.Generic.List[string]
+    $deriveAlternatives = [System.Collections.Generic.List[string]]::new()
     foreach ($pattern in $derivePatterns) { [void]$deriveAlternatives.Add('(?:' + $pattern + ')') }
     [void]$deriveRegexes.Add([regex]::new(($deriveAlternatives -join '|'), 'CultureInvariant, Compiled'))
 }
@@ -600,6 +600,9 @@ $script:selectorTiming['censusCompileMs'] = $compileClock.Elapsed.TotalMilliseco
 $walkClock = [Diagnostics.Stopwatch]::StartNew()
 $scan = [Antiphon.Selector.SelectorCensus]::Scan($Repo, $classDecl, $deriveRegexes.ToArray())
 $script:selectorTiming['censusWalkMs'] = $walkClock.Elapsed.TotalMilliseconds
+$script:selectorTiming['censusReadMs'] = $scan.ReadMilliseconds
+$script:selectorTiming['censusDeclarationsMs'] = $scan.DeclarationMilliseconds
+$script:selectorTiming['censusDeriveMs'] = $scan.DeriveMilliseconds
 $filesByClass = $scan.FilesByClass
 $script:classesByFile = $scan.ClassesByFile
 $derivedSet = $scan.DerivedFiles
@@ -607,10 +610,10 @@ $script:derivedIndexState = $null
 $script:selectorTiming.censusMs = $censusClock.Elapsed.TotalMilliseconds
 
 # Named classes are refused for audit and select. Hashtables ignore case, so the census is ordinal.
-$census = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$census = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($className in @($filesByClass.Keys)) { [void]$census.Add([string]$className) }
 foreach ($kind in $parsed) {
-    $named = New-Object System.Collections.Generic.List[string]
+    $named = [System.Collections.Generic.List[string]]::new()
     foreach ($className in $kind.Classes) { [void]$named.Add($className) }
     foreach ($method in $kind.Methods) {
         $slash = $method.IndexOf('/')
@@ -653,17 +656,17 @@ function Get-GlobHits([string]$Glob) {
 }
 
 if ($Audit) {
-    $empty = New-Object System.Collections.Generic.List[string]
-    $globHits = New-Object System.Collections.Generic.List[object]
-    $seenGlobs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $empty = [System.Collections.Generic.List[string]]::new()
+    $globHits = [System.Collections.Generic.List[object]]::new()
+    $seenGlobs = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($glob in $allGlobs) {
         if (-not $seenGlobs.Add($glob)) { continue }
         $count = Get-GlobHits $glob
         [void]$globHits.Add([pscustomobject]@{ glob = $glob; count = $count })
         if ($count -lt 1) { [void]$empty.Add($glob) }
     }
-    $missing = New-Object System.Collections.Generic.List[string]
-    $seenClasses = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $missing = [System.Collections.Generic.List[string]]::new()
+    $seenClasses = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($kind in $parsed) {
         foreach ($className in $kind.Classes) {
             if (-not $seenClasses.Add($className)) { continue }
@@ -708,7 +711,7 @@ if ($Audit) {
     exit $code
 }
 
-$changed = New-Object System.Collections.Generic.List[string]
+$changed = [System.Collections.Generic.List[string]]::new()
 $useAdded = $false
 if (-not [string]::IsNullOrWhiteSpace($Range)) {
     $useAdded = $true
@@ -774,7 +777,7 @@ function Test-LiteralLine([string]$Line, $Kind) {
     return $false
 }
 
-$matched = New-Object System.Collections.Generic.List[object]
+$matched = [System.Collections.Generic.List[object]]::new()
 foreach ($kind in $parsed) {
     $pathHit = $false
     foreach ($path in $changed) {
@@ -806,7 +809,7 @@ function Add-MethodEntry([string]$Method, $MethodsByClass, $FileSet) {
     if ($slash -le 0 -or $slash -ge ($Method.Length - 1)) { return }
     $className = $Method.Substring(0, $slash)
     if (-not $MethodsByClass.ContainsKey($className)) {
-        $MethodsByClass[$className] = New-Object System.Collections.Generic.List[string]
+        $MethodsByClass[$className] = [System.Collections.Generic.List[string]]::new()
     }
     [void]$MethodsByClass[$className].Add($Method.Substring($slash + 1))
     Add-ClassFile $className $FileSet
@@ -865,12 +868,12 @@ function Get-ProjectSlug([string]$Project) {
 # With $FirstLand null (the non-merge output a Code or Review stage runs) each project keeps its whole
 # class selection in one row, so the printed treenodeFilter names every class (R2-D-1).
 function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) {
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = [System.Collections.Generic.List[object]]::new()
     $byProject = @{}
     foreach ($className in $Whole) {
         foreach ($project in (Get-ClassProjects $className)) {
             if (-not $byProject.ContainsKey($project)) {
-                $byProject[$project] = New-Object System.Collections.Generic.List[string]
+                $byProject[$project] = [System.Collections.Generic.List[string]]::new()
             }
             [void]$byProject[$project].Add($className)
         }
@@ -910,7 +913,7 @@ function New-FilterRows($Whole, $MethodsByClass, [string]$IdPrefix, $FirstLand) 
             }
         }
     }
-    $methodRows = New-Object System.Collections.Generic.List[object]
+    $methodRows = [System.Collections.Generic.List[object]]::new()
     $methodOrder = New-StringList
     Fill-Sorted @($MethodsByClass.Keys) $methodOrder
     foreach ($className in $methodOrder) {
@@ -953,7 +956,7 @@ function Get-TopFilter($Rows) {
 }
 
 function Convert-Rows($Rows, [bool]$WithId) {
-    $out = New-Object System.Collections.Generic.List[object]
+    $out = [System.Collections.Generic.List[object]]::new()
     foreach ($row in $Rows) {
         if ($WithId) {
             [void]$out.Add([pscustomobject][ordered]@{ id = $row.Id; project = $row.Project; treenodeFilter = $row.Filter })
@@ -972,10 +975,10 @@ function Refuse-Index([string]$Problem) {
         Exit-Json ([pscustomobject]@{
             ok = $false
             error = $message
-            derivedClasses = (New-Object System.Collections.Generic.List[string])
-            keywordIds = (New-Object System.Collections.Generic.List[string])
-            rosterIds = (New-Object System.Collections.Generic.List[string])
-            skippedByCap = (New-Object System.Collections.Generic.List[string])
+            derivedClasses = ([System.Collections.Generic.List[string]]::new())
+            keywordIds = ([System.Collections.Generic.List[string]]::new())
+            rosterIds = ([System.Collections.Generic.List[string]]::new())
+            skippedByCap = ([System.Collections.Generic.List[string]]::new())
         }) 1
     }
     exit 1
@@ -983,14 +986,17 @@ function Refuse-Index([string]$Problem) {
 
 function Get-DerivedIndex {
     if ($null -ne $script:derivedIndexState) { return $script:derivedIndexState }
-    $edges = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]' ([StringComparer]::Ordinal)
-    $capped = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
-    $allow = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $windowsOnly = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $linuxOnly = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $indexClock = [Diagnostics.Stopwatch]::StartNew()
+    # Direct constructors avoid per-edge PowerShell cmdlet/type resolution. Inputs remain fresh.
+    $edges = [System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[string]]]::new([StringComparer]::Ordinal)
+    $capped = [System.Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $allow = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $windowsOnly = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $linuxOnly = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $state = [pscustomobject]@{ Edges = $edges; Capped = $capped; Allow = $allow; WindowsOnly = $windowsOnly; LinuxOnly = $linuxOnly }
     $indexPath = Join-Path $Repo 'tests/derived-impact-index.json'
     if (-not (Test-Path -LiteralPath $indexPath)) {
+        $script:selectorTiming['indexHydrationMs'] = $indexClock.Elapsed.TotalMilliseconds
         $script:derivedIndexState = $state
         return $state
     }
@@ -1021,7 +1027,7 @@ function Get-DerivedIndex {
         $pathProp = $edge.PSObject.Properties['path']
         if ($null -ne $pathProp -and $null -ne $pathProp.Value) { $path = ([string]$pathProp.Value).Replace('\', '/') }
         if ([string]::IsNullOrWhiteSpace($path)) { continue }
-        $names = New-Object System.Collections.Generic.List[string]
+        $names = [System.Collections.Generic.List[string]]::new()
         $classProp = $edge.PSObject.Properties['classes']
         if ($null -ne $classProp -and $null -ne $classProp.Value) {
             foreach ($name in @($classProp.Value)) {
@@ -1045,7 +1051,7 @@ function Get-DerivedIndex {
         $owed = 0
         $owedProp = $row.PSObject.Properties['owed']
         if ($null -ne $owedProp -and $null -ne $owedProp.Value) { $owed = [int]$owedProp.Value }
-        $first = New-Object System.Collections.Generic.List[string]
+        $first = [System.Collections.Generic.List[string]]::new()
         $firstProp = $row.PSObject.Properties['first']
         if ($null -ne $firstProp -and $null -ne $firstProp.Value) {
             foreach ($name in @($firstProp.Value)) {
@@ -1080,6 +1086,7 @@ function Get-DerivedIndex {
             if (-not [string]::IsNullOrWhiteSpace($text)) { [void]$allow.Add($text) }
         }
     }
+    $script:selectorTiming['indexHydrationMs'] = $indexClock.Elapsed.TotalMilliseconds
     $script:derivedIndexState = $state
     return $state
 }
@@ -1106,11 +1113,11 @@ function Add-DerivedClass($Index, $ClassName, $Whole, $Windows) {
 }
 
 function Resolve-Derived($Paths) {
-    $whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $windows = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $methods = New-Object System.Collections.Generic.List[string]
-    $skippedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-    $owed = New-Object System.Collections.Generic.List[object]
+    $whole = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $windows = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $methods = [System.Collections.Generic.List[string]]::new()
+    $skippedSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $owed = [System.Collections.Generic.List[object]]::new()
     $index = Get-DerivedIndex
     $toolOnly = Test-LandGraphToolOnly $Paths
     foreach ($path in @($Paths)) {
@@ -1127,7 +1134,7 @@ function Resolve-Derived($Paths) {
         $allow = $index.Allow.Contains($norm) -or ($null -ne $cappedRow -and $cappedRow.Reason -eq 'allowlist')
         if ($allow) { [void]$skippedSet.Add($norm) }
         if ($null -ne $cappedRow -and -not $allow -and [int]$cappedRow.Owed -gt 0) {
-            $firstNames = New-Object System.Collections.Generic.List[string]
+            $firstNames = [System.Collections.Generic.List[string]]::new()
             foreach ($name in $cappedRow.First) {
                 if (-not [string]::IsNullOrWhiteSpace([string]$name)) { [void]$firstNames.Add([string]$name) }
             }
@@ -1147,8 +1154,8 @@ function Resolve-Derived($Paths) {
         }
     }
     foreach ($className in @($windows)) { [void]$whole.Remove([string]$className) }
-    $derived = New-Object System.Collections.Generic.List[string]
-    $names = New-Object System.Collections.Generic.List[string]
+    $derived = [System.Collections.Generic.List[string]]::new()
+    $names = [System.Collections.Generic.List[string]]::new()
     foreach ($className in $whole) { [void]$names.Add([string]$className) }
     foreach ($className in $windows) { [void]$names.Add([string]$className) }
     Fill-Sorted $names $derived
@@ -1160,13 +1167,13 @@ function Resolve-Derived($Paths) {
         }
     }
     if ($methods.Count -gt 0) {
-        $resorted = New-Object System.Collections.Generic.List[string]
+        $resorted = [System.Collections.Generic.List[string]]::new()
         Fill-Sorted $derived $resorted
         $derived = $resorted
     }
-    $skipped = New-Object System.Collections.Generic.List[string]
+    $skipped = [System.Collections.Generic.List[string]]::new()
     Fill-Sorted @($skippedSet) $skipped
-    $owedSorted = New-Object System.Collections.Generic.List[object]
+    $owedSorted = [System.Collections.Generic.List[object]]::new()
     foreach ($row in ($owed | Sort-Object Path)) { [void]$owedSorted.Add($row) }
     return [pscustomobject]@{
         Whole = $whole
@@ -1193,10 +1200,10 @@ function Apply-Derived($Selection, $Whole, $MethodsByClass, $WindowsWhole) {
 function Convert-Owed($Rows) {
     # @() on List[object] indexes through the PowerShell adapter and throws
     # "Argument types do not match". ToArray() enumerates as object[].
-    $out = New-Object System.Collections.Generic.List[object]
+    $out = [System.Collections.Generic.List[object]]::new()
     if ($null -eq $Rows) { return ,$out }
     foreach ($row in $Rows.ToArray()) {
-        $first = New-Object System.Collections.Generic.List[string]
+        $first = [System.Collections.Generic.List[string]]::new()
         if ($null -ne $row.First) {
             foreach ($name in $row.First) {
                 $text = [string]$name
@@ -1209,14 +1216,14 @@ function Convert-Owed($Rows) {
 }
 
 function New-EmptyNameList {
-    $list = New-Object System.Collections.Generic.List[string]
+    $list = [System.Collections.Generic.List[string]]::new()
     return ,$list
 }
 
 $derivedSelection = Resolve-Derived $changed
 
 # The Windows lane: required and only both land here. only is omitted from the Linux selection.
-$windowsWhole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$windowsWhole = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $windowsMethods = @{}
 $kindOut = New-StringList
 foreach ($kind in $matched) {
@@ -1248,7 +1255,7 @@ if ($MergeSubset) {
         'ReleaseGatePlatformTests/C1686_LinuxOnlyCensus',
         'ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy'
     )
-    $wholeSubset = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $wholeSubset = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $subsetMethods = @{}
     $fixedClassNames = New-StringList
     foreach ($fixedName in $fixedNames) { [void]$fixedClassNames.Add($fixedName) }
@@ -1309,9 +1316,9 @@ if ($MergeSubset) {
     exit 0
 }
 
-$whole = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$whole = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $methodsByClass = @{}
-$fileSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+$fileSet = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($kind in $matched) {
     if ($kind.Windows -eq 'only') { continue }
     Add-KindSelection $kind $whole $methodsByClass $fileSet
@@ -1353,7 +1360,7 @@ Write-Output ("kinds=" + ($k -join ','))
 Write-Output ("treenodeFilter=" + $top)
 foreach ($row in $windowsRows) { Write-Output ('windowsFilter=' + $row.Project + ' ' + $row.Filter) }
 foreach ($row in $derivedSelection.Owed.ToArray()) {
-    $first = New-Object System.Collections.Generic.List[string]
+    $first = [System.Collections.Generic.List[string]]::new()
     if ($null -ne $row.First) {
         foreach ($name in $row.First) {
             $text = [string]$name
