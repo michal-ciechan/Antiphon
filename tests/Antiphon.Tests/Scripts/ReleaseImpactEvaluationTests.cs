@@ -25,6 +25,14 @@ public sealed class ReleaseImpactEvaluationTests
         items.Single(i => i.GetProperty("kind").GetString() == "Content").GetProperty("link").GetString().ShouldBe("settings.json");
         app.GetProperty("references").EnumerateArray().Select(x => x.GetString()).ShouldBe(new[] { "Product/Product.csproj" });
         app.GetProperty("imports").EnumerateArray().Select(x => x.GetProperty("path").GetString()).ShouldContain("shared.props");
+        items.Single(i => i.GetProperty("kind").GetString() == "AdditionalFiles").GetProperty("path").GetString().ShouldBe("schema.json");
+        // Changing the requested framework must change actual evaluated reference membership.
+        var alternate = await Run(repo, framework: "net8.0");
+        alternate.ExitCode.ShouldBe(0, alternate.Text);
+        using var other = Receipt(alternate.StandardOutput);
+        other.RootElement.GetProperty("projects").EnumerateArray()
+            .Single(p => p.GetProperty("path").GetString() == "App/App.csproj")
+            .GetProperty("references").EnumerateArray().Select(x => x.GetString()).ShouldBe(new[] { "Other/Other.csproj" });
         repo.AssertUntouched();
     }
 
@@ -110,7 +118,8 @@ public sealed class ReleaseImpactEvaluationTests
         ["App/Removed.cs"] = "class Removed {}\n",
         ["Product/Product.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup></Project>",
         ["Other/Other.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>",
-        ["shared.props"] = "<Project />",
+        ["shared.props"] = "<Project><ItemGroup><AdditionalFiles Include=\"../schema.json\" /></ItemGroup></Project>",
+        ["schema.json"] = "{}\n",
         ["settings.json"] = "{}\n",
         ["unconsumed.txt"] = "original bytes\n",
     });
@@ -120,7 +129,7 @@ public sealed class ReleaseImpactEvaluationTests
         using var git = new LibGit2Sharp.Repository(repo.Root);
         return git.Head.Tip.Sha;
     }
-    private static Task<LandGraphEvaluationTests.ToolRun> Run(LandGraphEvaluationTests.AuditRepo repo, string? sha = null) =>
-        repo.RunToolAsync("release-inputs", "--source", sha ?? Sha(repo), "--framework", "net9.0", "--configuration", "Debug", "--platform", "AnyCPU", "--rid", "");
+    private static Task<LandGraphEvaluationTests.ToolRun> Run(LandGraphEvaluationTests.AuditRepo repo, string? sha = null, string framework = "net9.0") =>
+        repo.RunToolAsync("release-inputs", "--source", sha ?? Sha(repo), "--framework", framework, "--configuration", "Debug", "--platform", "AnyCPU", "--rid", "");
     private static JsonDocument Receipt(string stdout) => JsonDocument.Parse(stdout.Split('\n').Last(s => s.StartsWith('{')));
 }
