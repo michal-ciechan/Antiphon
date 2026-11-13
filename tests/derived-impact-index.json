@@ -1375,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 271,
+      "classes": 272,
       "reason": "cap",
-      "owed": 246,
+      "owed": 247,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1573,9 +1573,9 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
         "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
@@ -1621,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1637,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 509,
+      "classes": 510,
       "reason": "cap",
-      "owed": 484,
+      "owed": 485,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -14041,6 +14041,7 @@
       "path": "server/Domain/Entities/SessionRuntimeAction.cs",
       "classes": [
         "AgentTaskCatchUpSettlementTests",
+        "RuntimeActionClaimQueryTests",
         "SessionRuntimeActionDeferralTests",
         "SessionRuntimeActionRoutingTests",
         "SessionRuntimeActionTests",
@@ -15031,6 +15032,12 @@
         "PipelineResolutionTests",
         "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/SessionRuntimeActionClaimQuery.cs",
+      "classes": [
+        "RuntimeActionClaimQueryTests"
       ]
     },
     {
