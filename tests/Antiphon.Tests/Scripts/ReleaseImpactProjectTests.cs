@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using Microsoft.CodeAnalysis;
@@ -21,6 +22,12 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         graph.Edges.Single(e => e.Path == "src/Product/Queue.cs").Classes
             .All(c => c.Kinds.Contains("projectClosure")).ShouldBeTrue();
         Members(graph, "src/Unrelated/Other.cs").ShouldBeEmpty();
+        var transitive = new Dictionary<string, string>(fixture.Sources)
+        {
+            ["src/Bridge/Bridge.csproj"] = "<Project><ItemGroup><ProjectReference Include=\"../Product/Product.csproj\" /></ItemGroup></Project>",
+            ["tests/Consumer/Consumer.csproj"] = "<Project><ItemGroup><ProjectReference Include=\"../../src/Bridge/Bridge.csproj\" /></ItemGroup></Project>",
+        };
+        Members(Build(transitive), "src/Product/Queue.cs").ShouldBe(Expected);
         AssertIncomplete(graph);
     }
 
@@ -29,6 +36,7 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     {
         var sources = new Dictionary<string, string>(fixture.Sources)
         {
+            ["tests/Consumer/Consumer.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
             ["tests/Consumer/Reflection.cs"] = "namespace Example; internal partial class ReflectionTests { object Read() => System.Type.GetType(\"Product.Queue, Fixture.Product\"); }",
         };
         var graph = Build(sources);
@@ -70,7 +78,7 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         current.Remove("src/Product/Queue.cs");
         var graphs = new[] { Build(old), Build(current) };
         foreach (var path in new[] { "src/Product/Queue.cs", "src/Replacement/New.cs" })
-            graphs.SelectMany(g => Members(g, path)).Distinct().Order(StringComparer.Ordinal).ShouldBe(Expected, path);
+            graphs.SelectMany(g => Members(g, path)).Distinct().Order(StringComparer.Ordinal).ToArray().ShouldBe(Expected, path);
         graphs.All(g => g.IncompleteReasons.Contains("project-condition-unevaluated:tests/Consumer/Consumer.csproj")).ShouldBeTrue();
         // A cycle terminates without dropping any downstream class, and malformed XML stays unknown.
         current["src/Replacement/Replacement.csproj"] = "<Project><ItemGroup><ProjectReference Include=\"../../tests/Consumer/Consumer.csproj\" /></ItemGroup></Project>";
@@ -98,7 +106,7 @@ public sealed class ReleaseImpactProjectFixture
     public Dictionary<string, string> Sources { get; } = new(StringComparer.Ordinal)
     {
         ["Directory.Build.props"] = "<Project />",
-        ["src/Product/Product.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><Import Project=\"../../shared/inputs.props\" /><ItemGroup><Compile Include=\"../../shared/Generated.cs\" /><AdditionalFiles Include=\"../../shared/schema.json\" /><Analyzer Include=\"../../shared/Generator.dll\" /><Content Include=\"../../shared/config.json\" /></ItemGroup></Project>",
+        ["src/Product/Product.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>Fixture.Product</AssemblyName></PropertyGroup><Import Project=\"../../shared/inputs.props\" /><ItemGroup><Compile Include=\"../../shared/Generated.cs\" /><AdditionalFiles Include=\"../../shared/schema.json\" /><Analyzer Include=\"../../shared/Generator.dll\" /><Content Include=\"../../shared/config.json\" /></ItemGroup></Project>",
         ["src/Product/Queue.cs"] = "namespace Product; public class Queue : IQueue { }",
         ["src/Product/Types.cs"] = "namespace Product; public interface IQueue { } public enum Mode { One } public struct Options { } public delegate void Notify(); public class MarkerAttribute : System.Attribute { }",
         ["src/Product/Registration.cs"] = "namespace Product; public class Registration { public object Resolve() => new Queue(); }",
@@ -107,7 +115,7 @@ public sealed class ReleaseImpactProjectFixture
         ["shared/Generator.dll"] = "opaque fixture generator identity",
         ["shared/config.json"] = "{}",
         ["shared/inputs.props"] = "<Project><ItemGroup><None Include=\"config.json\" /></ItemGroup></Project>",
-        ["tests/Consumer/Consumer.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Product/Product.csproj\" /></ItemGroup></Project>",
+        ["tests/Consumer/Consumer.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>Fixture.Tests</AssemblyName></PropertyGroup><ItemGroup><ProjectReference Include=\"../../src/Product/Product.csproj\" /></ItemGroup></Project>",
         ["tests/Consumer/First.cs"] = "namespace Example; internal partial class FirstTests { object Run() => new Product.Registration().Resolve(); }",
         ["tests/Consumer/Second.cs"] = "using Alias = Product.IQueue; namespace Example { [Product.Marker] internal partial class SecondTests { Alias value; Product.Mode mode; Product.Options options; Product.Notify callback; } } namespace Shadow { public interface IQueue {} }",
         ["src/Unrelated/Unrelated.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
@@ -124,18 +132,22 @@ public sealed class ReleaseImpactProjectFixture
         var tests = Compile("Fixture.Tests", Sources.Where(p => p.Key.StartsWith("tests/Consumer/") && p.Key.EndsWith(".cs")),
             [core, MetadataReference.CreateFromImage(product)]);
         using var stream = new MemoryStream(tests);
+        var watch = Stopwatch.StartNew();
         using var pe = new PEReader(stream);
         var reader = pe.GetMetadataReader();
         TestAssemblyReferences = reader.AssemblyReferences.Select(h => reader.GetString(reader.GetAssemblyReference(h).Name)).ToArray();
+        Console.WriteLine($"C1820 phase=fixture-metadata elapsedMs={watch.ElapsedMilliseconds}");
     }
 
     private static byte[] Compile(string name, IEnumerable<KeyValuePair<string, string>> sources, MetadataReference[] references)
     {
+        var watch = Stopwatch.StartNew();
         var compilation = CSharpCompilation.Create(name, sources.Select(p => CSharpSyntaxTree.ParseText(p.Value, path: p.Key)), references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         using var bytes = new MemoryStream();
         var result = compilation.Emit(bytes);
         result.Success.ShouldBeTrue(string.Join("\n", result.Diagnostics));
+        Console.WriteLine($"C1820 phase=fixture-compile assembly={name} elapsedMs={watch.ElapsedMilliseconds}");
         return bytes.ToArray();
     }
 }
