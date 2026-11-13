@@ -1,3 +1,4 @@
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Settings;
@@ -74,6 +75,18 @@ public sealed class RunnerWorktreeRetentionSettings
     /// dry-run (the operator decision turned on the worktree retention only); it runs only inside an enabled tick.
     /// </summary>
     public RunnerTempSweepSettings TempSweep { get; set; } = new();
+
+    /// <summary>
+    /// CARD-1895. Separate from <see cref="Enabled"/> and <see cref="Execute"/>. Off sends nothing,
+    /// Preview sends DryRun, Execute sends Execute. Default Off.
+    /// </summary>
+    public RunnerOutputDropSettings OutputDrop { get; set; } = new();
+}
+
+/// <summary>CARD-1895. <c>RunnerWorktreeRetention:OutputDrop:Mode</c> is Off, Preview, or Execute.</summary>
+public sealed class RunnerOutputDropSettings
+{
+    public string Mode { get; set; } = RunnerOutputDropMode.Off;
 }
 
 /// <summary>CARD-1677 S2 (plan §3.5). Enabled=false sends nothing; Execute=false (the default) sends DryRun.</summary>
@@ -130,6 +143,8 @@ public sealed class RunnerWorktreeRetentionSettingsValidator : IValidateOptions<
             failures.Add("RunnerWorktreeRetention:TempSweep:MaxEntriesPerTick must be between 1 and 1000.");
         if (options.TempSweep.MaxBytesPerTick < 1)
             failures.Add("RunnerWorktreeRetention:TempSweep:MaxBytesPerTick must be positive.");
+        if (options.OutputDrop.Mode is not (RunnerOutputDropMode.Off or RunnerOutputDropMode.Preview or RunnerOutputDropMode.Execute))
+            failures.Add("RunnerWorktreeRetention:OutputDrop:Mode must be Off, Preview, or Execute.");
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 

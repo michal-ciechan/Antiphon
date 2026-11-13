@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Hangfire;
 using Microsoft.Extensions.Configuration;
@@ -43,6 +44,7 @@ public sealed class C1677RetentionSettingsTests
         defaults.TempSweep.Enabled.ShouldBeFalse();
         defaults.TempSweep.Execute.ShouldBeFalse();
         defaults.TempSweep.Families["claude-scratch"].ShouldBeFalse();
+        defaults.OutputDrop.Mode.ShouldBe(RunnerOutputDropMode.Off);
 
         var path = Path.Combine(C1514Support.RepoRoot(), "server", "appsettings.json");
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(path), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip });
@@ -66,6 +68,7 @@ public sealed class C1677RetentionSettingsTests
         temp.GetProperty("Enabled").GetBoolean().ShouldBeFalse();
         temp.GetProperty("Execute").GetBoolean().ShouldBeFalse();
         temp.GetProperty("Families").GetProperty("claude-scratch").GetBoolean().ShouldBeFalse();
+        section.GetProperty("OutputDrop").GetProperty("Mode").GetString().ShouldBe(RunnerOutputDropMode.Off);
 
         // Bound as the server binds it: exactly one runner, so an override can still empty or replace the list.
         var bound = new ConfigurationBuilder().AddJsonFile(path).Build()
@@ -76,6 +79,7 @@ public sealed class C1677RetentionSettingsTests
         bound.MaxRemovalsPerTick.ShouldBe(25);
         bound.MaxAbsentPerTick.ShouldBe(200);
         bound.PauseBetweenSeconds.ShouldBe(5);
+        bound.OutputDrop.Mode.ShouldBe(RunnerOutputDropMode.Off);
     }
 
     [Test]
@@ -95,6 +99,10 @@ public sealed class C1677RetentionSettingsTests
     [Arguments("MaxTickMinutes", "20", true)]
     [Arguments("KeptRecheckMinutes", "0", false)]
     [Arguments("KeptRecheckMinutes", "1", true)]
+    [Arguments("OutputDrop:Mode", "On", false)]
+    [Arguments("OutputDrop:Mode", "Off", true)]
+    [Arguments("OutputDrop:Mode", "Preview", true)]
+    [Arguments("OutputDrop:Mode", "Execute", true)]
     public async Task Validator_bounds(string field, string value, bool valid)
     {
         // V-36b (G-81, G-82, G-83).
@@ -106,6 +114,7 @@ public sealed class C1677RetentionSettingsTests
             case "MaxAbsentPerTick": settings.MaxAbsentPerTick = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             case "MaxTickMinutes": settings.MaxTickMinutes = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
             case "KeptRecheckMinutes": settings.KeptRecheckMinutes = int.Parse(value, System.Globalization.CultureInfo.InvariantCulture); break;
+            case "OutputDrop:Mode": settings.OutputDrop.Mode = value; break;
             default: settings.RetiringRoot = value; break;
         }
 

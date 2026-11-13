@@ -18,7 +18,12 @@ Eligibility is the retention classify with the age comparison skipped, then the 
 - V-8: `RetentionFeatures(true)` contains `workspaceOutputDropV1`; `RetentionFeatures(false)` does not. The dispatcher routes `WorkspaceDropOutputs` at the engine.
 - V-9: a one-hour terminal mirror is dropped (execute, lane `RunnerOutputDrop`, outcome Dropped, digest `4096`, path kept, mirror row still `settling`) while a day-old mirror is only retained and a Blocked task is neither.
 - V-10: a young control is dropped beside each of session-running, sync-debt Ready, mutation, and land-pending, and that subject is not dropped.
-- V-11: a runner without `workspaceOutputDropV1` is sent no drop frame. Execute off sends DryRun twice (`would_drop` does not back off) and writes no drop event.
+- V-11: a runner without `workspaceOutputDropV1` is sent no drop frame. Output-drop Mode Preview (retention Execute stays true) sends DryRun twice (`would_drop` does not back off) and writes no drop event. Mode Off sends no output-drop rows and no frames.
+- V-12: a proven `tests/Foo/bin` and `bin-*` beside a project file are deleted. `node_modules/pkg/bin`, `dist/tool/bin`, a bin with no project sibling, a bin symlink, and a tracked bin inside an ignored nested repository stay. `/` and `/proc` report different mount ids. A live bind-mounted bin was not executed.
+- V-13: a file that becomes tracked, or a new untracked file, between validation and delete removes nothing and reports `changed_during_drop`. When the change arrives after the first proven directory, that directory is deleted and the rest are refused with the same reason.
+- V-14: an unlink that fails after some files are gone reports `delete_failed`, the bytes and file counts actually removed, and the server records Partial plus `runner_outputs_dropped` when bytes are above zero. The real transport partial leaves the blocked file and records digest `6`.
+- V-15: the mutation lock is held through the delete. A session started during the delete stops the drop with `changed_during_drop` and deletes nothing.
+- V-16: a lost reply retries the same request id stored before the send. The runner replays the fsynced ledger and deletes nothing more. The real transport path is server command, runner, reply.
 - R-1: the guard union in CP-3.
 - R-2: `scripts/check-evidence-diff.ps1` over the task base..HEAD, OS-branch witness inventory, and `git merge-tree --write-tree origin/master HEAD`.
 

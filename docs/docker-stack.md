@@ -833,6 +833,12 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
 - **Dry run:** `Execute=false` sends DryRun only (the runner reports `would_remove`, nothing moves); switching
   it off mid-tick also stops that tick. `POST /api/agent-tasks/worktree-residue/runner-retention/server2/preview`
   is always one DryRun tick whatever `Execute` says.
+- **Output drop (CARD-1895):** `RunnerWorktreeRetention:OutputDrop:Mode` is `Off`, `Preview`, or `Execute`,
+  default `Off`, and it is independent of retention `Enabled` and `Execute`. `Off` sends no output-drop rows
+  and no frames. `Preview` sends DryRun and logs the paths and bytes. `Execute` deletes proven `bin`, `obj`,
+  and `bin-*` directories beside a project file of the outer repository, from a mirror that is still only
+  `settling` for whole-tree removal. The tree stays. The runner's own copy of the switch refuses when `Off`
+  and rewrites Execute to DryRun when `Preview`. Unknown text is `Off` on the runner and fails server validation.
 - **Census:** each tick (or preview) writes a residue run with `Scope=runner-retention:server2`; read it with
   `GET /api/agent-tasks/worktree-residue/runs/{runId}?page=n`, following every page. `RunnerMirror` rows
   carry the verdict (`would_remove`, `removed` or a kept reason); `RunnerInventory` rows report names that

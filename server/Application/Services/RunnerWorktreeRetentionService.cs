@@ -604,7 +604,7 @@ public sealed class RunnerWorktreeRetentionService
         if (inventory is not null)
             await RecordInventoryAsync(run, inventory, population, runnerId, ct);
         await SweepTempAsync(run, client, runnerId, preview: writeAll, tickStarted, ct);
-        await DropSettlingOutputsAsync(run, client, runnerId, settings, execute, forced, writeAll, tickStarted, now, population, ct);
+        await DropSettlingOutputsAsync(run, client, runnerId, settings, forced, writeAll, tickStarted, now, population, ct);
         run.FinishedAt = Now();
         await _db.SaveChangesAsync(ct);
         _logger.LogInformation(
@@ -752,12 +752,17 @@ public sealed class RunnerWorktreeRetentionService
     /// An old enough tree is left to whole-tree removal. The path is never cleared and <c>run.Removed</c> is unchanged.
     /// </summary>
     private async Task DropSettlingOutputsAsync(WorktreeResidueRun run, PhoneHomeRunnerClient client, string runnerId,
-        RunnerWorktreeRetentionSettings settings, bool execute, bool forced, bool writeAll, DateTime tickStarted, DateTime now,
+        RunnerWorktreeRetentionSettings settings, bool forced, bool writeAll, DateTime tickStarted, DateTime now,
         List<AgentTask> population, CancellationToken ct)
     {
         var descriptor = await _runners.DescribeAsync(runnerId, ct);
         if (descriptor?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceOutputDropV1, StringComparer.Ordinal) != true)
             return;
+        // CARD-1895. Output deletion has its own switch. Retention Execute does not turn it on.
+        var dropMode = RunnerOutputDropMode.Normalize(settings.OutputDrop.Mode);
+        if (dropMode == RunnerOutputDropMode.Off)
+            return;
+        var dropExecute = dropMode == RunnerOutputDropMode.Execute;
 
         var holdCursors = await LoadCursorsAsync(population.Select(t => OutputDropCursorKey(t.Id)).ToList(), ct);
         var settling = new List<AgentTask>();
@@ -800,7 +805,8 @@ public sealed class RunnerWorktreeRetentionService
             var candidate = queue[index];
             if (sent > 0 && settings.PauseBetweenSeconds > 0)
                 await Task.Delay(TimeSpan.FromSeconds(settings.PauseBetweenSeconds), _clock, ct);
-            stopped = StopReason(execute, forced, tickStarted);
+            // Retention Execute=false must not stop an output-drop Preview or Execute. Enabled and the tick budget still do.
+            stopped = StopReason(execute: false, forced, tickStarted);
             if (stopped is not null)
             {
                 Row(run, LaneOutputDrop, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
@@ -827,7 +833,7 @@ public sealed class RunnerWorktreeRetentionService
             if (await ClassifyAsync(fresh, runnerId, settings, ct) != "settling")
                 continue;
 
-            if (execute && !await TickLockStillHeldAsync())
+            if (dropExecute && !await TickLockStillHeldAsync())
             {
                 stopped = "tick_lock_lost";
                 Row(run, LaneOutputDrop, WorktreeResidueCandidateOutcome.Deferred, stopped, null, null, null, runnerId);
@@ -839,8 +845,10 @@ public sealed class RunnerWorktreeRetentionService
                 break;
             }
 
+            var requestId = RememberOutputDropRequest(sendCursors, fresh, Now());
+            await _db.SaveChangesAsync(ct);
             var request = new PhoneHomeWorkspaceOutputDropRequest(fresh.Id, fresh.RemoteWorktreePath!, fresh.WorktreeBranch!,
-                execute ? WorkspaceOutputDropModes.Execute : WorkspaceOutputDropModes.DryRun, Guid.NewGuid());
+                dropExecute ? WorkspaceOutputDropModes.Execute : WorkspaceOutputDropModes.DryRun, requestId);
             sent++;
             PhoneHomeWorkspaceOutputDropResponse? response = null;
             string? failure = null;
@@ -880,6 +888,7 @@ public sealed class RunnerWorktreeRetentionService
     {
         var now = Now();
         var verdict = response?.Verdict;
+        var bytes = response?.Bytes ?? 0;
         WorktreeResidueCandidateOutcome outcome;
         string reason;
         switch (verdict)
@@ -892,6 +901,14 @@ public sealed class RunnerWorktreeRetentionService
                 outcome = WorktreeResidueCandidateOutcome.Preview;
                 reason = WorkspaceOutputDropCodes.WouldDrop;
                 break;
+            case WorkspaceOutputDropCodes.DeleteFailed when bytes > 0:
+                outcome = WorktreeResidueCandidateOutcome.Partial;
+                reason = string.IsNullOrWhiteSpace(response?.Reason) ? WorkspaceOutputDropCodes.DeleteFailed : response!.Reason!;
+                break;
+            case WorkspaceOutputDropCodes.DeleteFailed:
+                outcome = WorktreeResidueCandidateOutcome.Deferred;
+                reason = string.IsNullOrWhiteSpace(response?.Reason) ? WorkspaceOutputDropCodes.DeleteFailed : response!.Reason!;
+                break;
             case WorkspaceOutputDropCodes.Kept when !string.IsNullOrWhiteSpace(response!.Reason):
                 outcome = WorktreeResidueCandidateOutcome.Held;
                 reason = response.Reason!;
@@ -902,32 +919,75 @@ public sealed class RunnerWorktreeRetentionService
                 break;
         }
 
-        var bytes = response?.Bytes ?? 0;
-        if (outcome == WorktreeResidueCandidateOutcome.Dropped && bytes > 0)
+        if (outcome == WorktreeResidueCandidateOutcome.Partial)
+            run.Partial++;
+        if (bytes > 0 && outcome is WorktreeResidueCandidateOutcome.Dropped or WorktreeResidueCandidateOutcome.Partial)
         {
             _db.AgentTaskEvents.Add(new AgentTaskEvent
             {
                 Id = Guid.NewGuid(), AgentTaskId = task.Id, Type = AgentTaskEventType.Warning, At = now,
                 Detail = $"{OutputDropEventPrefix}: runner '{runnerId}' dropped {bytes.ToString(System.Globalization.CultureInfo.InvariantCulture)} bytes "
-                    + $"in {response!.Directories?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} directories from {request.Path}.",
+                    + $"removed {response!.FilesRemoved?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} "
+                    + $"left {response.FilesLeft?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} "
+                    + $"in {response.Directories?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} directories from {request.Path}."
+                    + (string.IsNullOrWhiteSpace(response.Reason) ? "" : " " + response.Reason),
             });
         }
 
         RecordSend(sendCursors, task, outcome, reason, now, OutputDropSendCursorKey(task.Id));
+        if (response is not null && sendCursors.TryGetValue(OutputDropSendCursorKey(task.Id), out var pending)
+            && pending.EvidenceDigest is { } digest && digest.StartsWith("req:", StringComparison.Ordinal))
+            pending.EvidenceDigest = null;
         var row = Row(run, LaneOutputDrop, outcome, reason, task.Id, request.Path, task.WorktreeBranch, runnerId);
         row.DirectoryRemoved = false;
         row.RegistrationRemoved = false;
         row.RequestDigest = bytes.ToString(System.Globalization.CultureInfo.InvariantCulture);
         row.OperationId = request.RequestId;
+        var removedText = (response?.FilesRemoved ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var leftText = (response?.FilesLeft ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var identity = "output-drop:removed=" + removedText + ";left=" + leftText;
+        row.EndpointIdentity = identity.Length <= 64 ? identity : identity[..64];
         await _db.SaveChangesAsync(ct);
         if (failure is not null || outcome == WorktreeResidueCandidateOutcome.Deferred)
             _logger.LogWarning(
                 "Runner output drop {RunnerId} task {TaskId} path {Path} mode {Mode}: {Outcome} {Reason} bytes {Bytes} failure={Failure}",
                 runnerId, task.Id, request.Path, request.Mode, outcome, reason, bytes, failure ?? "");
+        else if (outcome == WorktreeResidueCandidateOutcome.Preview)
+        {
+            var paths = response?.Entries is { Count: > 0 } entries
+                ? string.Join(", ", entries.Select(entry => entry.RelativePath))
+                : request.Path;
+            _logger.LogInformation(
+                "Runner output drop {RunnerId} preview task {TaskId} path {Path} would drop {Bytes} bytes: {Paths}",
+                runnerId, task.Id, request.Path, bytes, paths);
+        }
         else if (bytes > 0)
             _logger.LogInformation(
                 "Runner output drop {RunnerId} task {TaskId} path {Path} mode {Mode}: {Outcome} {Reason} bytes {Bytes}",
                 runnerId, task.Id, request.Path, request.Mode, outcome, reason, bytes);
+    }
+
+    /// <summary>
+    /// CARD-1895. The request id is stored before the send. A lost reply retries this id so the runner
+    /// returns its ledger instead of deleting whatever is left. <c>req:</c> plus a Guid fits the 64-character column.
+    /// </summary>
+    private Guid RememberOutputDropRequest(Dictionary<string, WorktreeResidueCandidateCursor> cursors, AgentTask task, DateTime now)
+    {
+        var key = OutputDropSendCursorKey(task.Id);
+        if (!cursors.TryGetValue(key, out var cursor))
+        {
+            cursor = new WorktreeResidueCandidateCursor { Id = Guid.NewGuid(), CandidateKey = key, LastEvaluatedAt = now };
+            _db.WorktreeResidueCandidateCursors.Add(cursor);
+            cursors[key] = cursor;
+        }
+
+        const string prefix = "req:";
+        if (cursor.EvidenceDigest is { } pending && pending.StartsWith(prefix, StringComparison.Ordinal)
+            && Guid.TryParse(pending[prefix.Length..], out var existing))
+            return existing;
+        var requestId = Guid.NewGuid();
+        cursor.EvidenceDigest = prefix + requestId.ToString("D");
+        return requestId;
     }
 
     /// <summary>
