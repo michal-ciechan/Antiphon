@@ -40,7 +40,7 @@ server restart activates the reviewed SQL later. Restart: server; do not restart
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3c/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
-| CP-10 | all | tests/Antiphon.Tests -> bin-c1887-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 10 | 2 |
+| CP-10 | all | tests/Antiphon.Tests -> bin-c1887-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | R-1 | all listed, 0 failed | 11 | 2 |
 
 --- next stage ---
 next: code
@@ -61,3 +61,12 @@ scale test ~444s. Final setup copies one EF-populated task prototype with set SQ
 and uses ordered synthetic entry IDs to avoid random primary-key insert churn.
 It retains 27,695 tasks, 3,118,500 transcripts, all 512 sessions and every assertion;
 the exact total count is now additionally asserted. No timeout was widened.
+
+Final diff census: the sole matching hand-authored impacted-classes.json glob
+row is test-lane-category, covered by CP-10. CP-10 additionally includes
+ReleaseImpactEnvelopeTests because the mandated derived-index regeneration changes
+its input. The reverse graph also lists broad runtime integration families and
+Windows-only GrokDelegateEndToEndTests; those are outside the commissioned closed
+S3 plus hand-glob scope, are not run/credited here, and remain visible in
+.antiphon/evidence/card-1887/impact-final.json for Review. No OS-selected
+production behavior changed; no S3-specific native Windows witness is required.
