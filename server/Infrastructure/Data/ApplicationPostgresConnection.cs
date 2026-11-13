@@ -1,18 +1,16 @@
-using System.Text.RegularExpressions;
 using Npgsql;
 
 namespace Antiphon.Server.Infrastructure.Data;
 
 // CARD-1886. Pure startup-option policy for application connections.
 // Hangfire and other raw administrative connections do not use this helper.
+// PostgreSQL keeps the last startup option, including -c, -c glued to the name,
+// and --name=value. Always append a final "-c jit=off" token. Existing option
+// bytes stay intact, including a trailing escaped space. A second call that
+// already ends on that exact separate token returns the input unchanged.
 public static class ApplicationPostgresConnection
 {
     public const string JitOffOption = "-c jit=off";
-
-    // Last -c jit= assignment wins. An earlier jit=on stays in the string.
-    private static readonly Regex JitAssignment = new(
-        @"(?:^|\s)-c\s+jit\s*=\s*(?<value>\S+)",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static string? ApplyPolicy(string? connectionString, bool disableJit)
     {
@@ -26,21 +24,30 @@ public static class ApplicationPostgresConnection
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         var builder = new NpgsqlConnectionStringBuilder(connectionString);
         var options = builder.Options ?? "";
-        if (!LastJitIsOff(options))
-        {
-            builder.Options = options.Length == 0
-                ? JitOffOption
-                : options.TrimEnd() + " " + JitOffOption;
-        }
+        if (EndsWithOwnSuppression(options))
+            return connectionString;
 
+        builder.Options = options.Length == 0
+            ? JitOffOption
+            : options + " " + JitOffOption;
         return builder.ConnectionString;
     }
 
-    private static bool LastJitIsOff(string options)
+    // A space is a token separator only when an even number of backslashes precedes it.
+    private static bool EndsWithOwnSuppression(string options)
     {
-        var last = "";
-        foreach (Match match in JitAssignment.Matches(options))
-            last = match.Groups["value"].Value;
-        return last.Equals("off", StringComparison.OrdinalIgnoreCase);
+        if (!options.EndsWith(JitOffOption, StringComparison.Ordinal))
+            return false;
+        if (options.Length == JitOffOption.Length)
+            return true;
+
+        var separator = options.Length - JitOffOption.Length - 1;
+        if (options[separator] != ' ')
+            return false;
+
+        var slashes = 0;
+        for (var i = separator - 1; i >= 0 && options[i] == '\\'; i--)
+            slashes++;
+        return slashes % 2 == 0;
     }
 }
