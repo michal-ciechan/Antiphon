@@ -16,6 +16,15 @@ if (-not (Test-Path -LiteralPath $lib)) {
     . $lib
     $map = Read-RcBoundaryMap
     switch ($Case) {
+        'ExplicitCaseKeyCount' {
+            Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M','BTests/M') -CaseKeys @('') }) 'single empty CaseKeys bypassed count'
+            Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @() }) 'empty CaseKeys bypassed count'
+            Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys $null }) 'null CaseKeys bypassed count'
+            $omitted = Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A')
+            Note ($omitted -ceq 'b-core-eca0b76b8b1ed195') 'omitted CaseKeys changed default'
+            Note ((Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A') -CaseKeys @('','')) -ceq $omitted) 'matching empty CaseKeys refused'
+            Note ((Get-RcBoundaryChunkId antiphon core @('ATests/A') -CaseKeys @('')) -cmatch '^b-core-[0-9a-f]{16}$') 'single empty CaseKey refused'
+        }
         'DuplicateMembershipsAndUnassignedCollisions' {
             $one = @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='' }) }
             $overlap = @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='ATests/M'; caseKey='' }, @{ identityKey='BTests/M' }) }
