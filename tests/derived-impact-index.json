@@ -2095,9 +2095,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
@@ -2111,18 +2111,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests",
         "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
         "ChangeAwareReleaseBudgetTests",
         "DirectoryLinkFixtureWindowsTests",
         "ScriptHarnessCancellationTests",
-        "C1514HostLoadScriptTests",
-        "ReleaseGateFollowupTests"
+        "C1514HostLoadScriptTests"
       ]
     },
     {
@@ -23980,12 +23980,12 @@
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
         "RcForcedFullTests",
+        "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
         "RcIncrementalLedgerTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcStoppedRunSeedTests",
-        "ReleaseSelectionHopSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
       ]
