@@ -48,3 +48,4 @@ $report=@{format='antiphon-rc-import-report-v1';expectedSha=$ExpectedSha;expecte
     reasonCounts=@{'historical-provenance-unproven'=$dirty;'full-anchor-unproven'=$dirty;'release-graph-incomplete'=$dirty}}
 [IO.File]::WriteAllText((Join-Path $EvidenceRoot 'admission-report.json'),(ConvertTo-Json -Depth 20 -InputObject $report))
 Write-Host ('RC IMPORT admitted=0 dirty='+$dirty+' unproven='+$dirty+' Full=true')
+exit 0

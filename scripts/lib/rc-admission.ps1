@@ -16,6 +16,13 @@ function Get-RcAdmissionAlgorithmCoverage {
         'scripts/lib/rc-boundary.ps1','scripts/lib/rc-historical-stream.cs',
         'tests/Antiphon.Tests/Scripts/ReleaseImpactProjectGraph.cs',
         'tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs',
+        'tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs',
+        'tools/Antiphon.LandGraphAudit/ReleaseInputEvaluation.cs',
+        'tools/Antiphon.LandGraphAudit/ReleaseInputCommand.cs',
+        'tools/Antiphon.LandGraphAudit/EvaluationExpressionPolicy.cs',
+        'tools/Antiphon.LandGraphAudit/BuildInputPolicy.cs',
+        'tools/Antiphon.LandGraphAudit/Program.cs',
+        'tools/Antiphon.LandGraphAudit/Antiphon.LandGraphAudit.csproj',
         'scripts/regenerate-derived-impact-index/Program.cs',
         'scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj')
     $covered=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -123,7 +130,9 @@ function Read-RcAdmissionJson {
     $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
     $json=[Text.Json.JsonDocument]::Parse($text)
     try { Assert-RcInputJsonKeys $json.RootElement } finally { $json.Dispose() }
-    return (ConvertFrom-Json -AsHashtable -DateKind String -InputObject $text)
+    $arguments=@{AsHashtable=$true;InputObject=$text}
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) { $arguments.DateKind='String' }
+    return (ConvertFrom-Json @arguments)
 }
 function Get-RcAdmissionObject {
     param($Inventory,[string]$EvidenceRoot,[string]$RelativePath)
@@ -153,6 +162,7 @@ function Read-RcAdmissionTrx {
     $reader=[Xml.XmlReader]::Create($Path,$settings)
     $results=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     $definitions=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $methods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $unit=''; $counters=$false; $terminal=$false
     try {
         while ($reader.Read()) {
@@ -160,7 +170,7 @@ function Read-RcAdmissionTrx {
             switch -CaseSensitive ($reader.LocalName) {
                 'UnitTest' { $unit=$reader.GetAttribute('id'); if (-not $map.ContainsKey($unit) -or -not $definitions.Add($unit)) { throw 'admission-trx-definition' } }
                 'TestMethod' {
-                    if (-not $map.ContainsKey($unit) -or $reader.GetAttribute('className') -cne $map[$unit].className -or $reader.GetAttribute('name') -cne $map[$unit].method) { throw 'admission-trx-method' }
+                    if (-not $map.ContainsKey($unit) -or -not $methods.Add($unit) -or $reader.GetAttribute('className') -cne $map[$unit].className -or $reader.GetAttribute('name') -cne $map[$unit].method) { throw 'admission-trx-method' }
                 }
                 'UnitTestResult' {
                     $id=$reader.GetAttribute('testId')
@@ -176,7 +186,7 @@ function Read-RcAdmissionTrx {
             }
         }
     } finally { $reader.Dispose() }
-    if (-not $terminal -or -not $counters -or $results.Count -ne $map.Count -or $definitions.Count -ne $map.Count) { throw 'admission-trx-incomplete' }
+    if (-not $terminal -or -not $counters -or $results.Count -ne $map.Count -or $definitions.Count -ne $map.Count -or $methods.Count -ne $map.Count) { throw 'admission-trx-incomplete' }
     return @($results.Values)
 }
 
@@ -186,16 +196,16 @@ function Read-RcAdmission {
         [Parameter(Mandatory)][string]$EvidenceRoot,[Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][string]$ExpectedSha,[Parameter(Mandatory)][string]$ExpectedRunId,
         [Parameter(Mandatory)][string]$CurrentSha,[Parameter(Mandatory)]$CurrentManifest,
-        [Parameter(Mandatory)]$Chunk,[DateTimeOffset]$UtcNow=[DateTimeOffset]::UtcNow)
+        [Parameter(Mandatory)]$Chunk,[Parameter(Mandatory)]$CurrentContext,[DateTimeOffset]$UtcNow=[DateTimeOffset]::UtcNow)
     $reasons=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
     $eligible=$false; $coverage=Get-RcAdmissionAlgorithmCoverage
     try {
         if ($Chunk.boundary -ceq 'unassigned' -or $Chunk.collision -eq $true -or $Chunk.alwaysDirty -eq $true) { throw 'collision-or-unassigned' }
         $envelope=Read-RcAdmissionJson $Path $ExpectedDigest
-        Assert-TestSelectionKeys $envelope @('format','sourceSha','treeId','runId','repository','platform','rcLine','inventorySha256','proofPath','fullAnchor','contract','history','releaseEvidence')
+        Assert-TestSelectionKeys $envelope @('format','sourceSha','treeId','runId','repository','platform','rcLine','inventorySha256','proofPath','fullAnchor','contract','history','releaseEvidence','anchorPath','historyPath')
         if ($envelope.format -cne 'antiphon-rc-admission-v1' -or $envelope.sourceSha -cne $ExpectedSha -or $envelope.runId -cne $ExpectedRunId -or
             -not $ExpectedRunId -or $envelope.repository -cne (Invoke-TestSelectionGit $RepositoryRoot @('config','--get','remote.origin.url')).Stdout.Trim() -or
-            $envelope.platform -cne 'windows' -or $envelope.rcLine -cnotmatch '^rc/\d{4}-\d{2}-\d{2}$') { throw 'admission-run-source-identity' }
+            $envelope.repository -cne $CurrentContext.repository -or $envelope.platform -cne $CurrentContext.platform -or $envelope.rcLine -cne $CurrentContext.rcLine -or $envelope.platform -cne 'windows' -or $envelope.rcLine -cnotmatch '^rc/\d{4}-\d{2}-\d{2}$') { throw 'admission-run-source-identity' }
         if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base',$ExpectedSha,$CurrentSha)).Stdout.Trim() -cne $ExpectedSha) { throw 'admission-lineage' }
         $inventory=Test-RcHistoricalEvidence $EvidenceRoot $envelope.inventorySha256
         if ($inventory.valid -isnot [bool] -or -not $inventory.valid) { throw 'inventory-unproven' }
@@ -208,7 +218,23 @@ function Read-RcAdmission {
         $algorithm=Get-RcAdmissionAlgorithmDigest $RepositoryRoot $ExpectedSha $release.coveredPaths
         $currentAlgorithm=Get-RcAdmissionAlgorithmDigest $RepositoryRoot $CurrentSha $release.coveredPaths
         if ($release.algorithmDigest -cne $algorithm) { throw 'algorithm-binding-mismatch' }
-        $forced=Get-RcForcedFullDecision $envelope.contract $envelope.contract $envelope.history $envelope.fullAnchor -UtcNow $UtcNow
+        $anchorObject=Get-RcAdmissionObject $inventory $EvidenceRoot $envelope.anchorPath
+        $anchorProof=Read-RcAdmissionJson $anchorObject.path $anchorObject.digest
+        Assert-TestSelectionKeys $anchorProof @('format','sourceSha','completedAtUtc','mode','carriedCount','outcome','requiredCount','executedCount','caseDigest')
+        if ($anchorProof.format -cne 'antiphon-rc-full-anchor-v1' -or $anchorObject.digest -cne $envelope.fullAnchor.closureDigest -or
+            $anchorProof.sourceSha -cne $envelope.fullAnchor.sourceSha -or $anchorProof.completedAtUtc -cne $envelope.fullAnchor.completedAtUtc -or
+            $anchorProof.mode -cne 'Full' -or $anchorProof.carriedCount -ne 0 -or $anchorProof.outcome -cne 'Passed' -or
+            $anchorProof.requiredCount -le 0 -or $anchorProof.requiredCount -ne $anchorProof.executedCount -or -not (Test-RcFullDigest $anchorProof.caseDigest)) { throw 'full-anchor-unproven' }
+        if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base',$anchorProof.sourceSha,$ExpectedSha)).Stdout.Trim() -cne $anchorProof.sourceSha) { throw 'full-anchor-lineage' }
+        $historyObject=Get-RcAdmissionObject $inventory $EvidenceRoot $envelope.historyPath
+        $historyProof=Read-RcAdmissionJson $historyObject.path $historyObject.digest
+        Assert-TestSelectionKeys $historyProof @('format','runId','anchorDigest','complete','failures')
+        if ($historyProof.format -cne 'antiphon-rc-history-v1' -or $historyProof.runId -cne $ExpectedRunId -or
+            $historyProof.anchorDigest -cne $anchorObject.digest -or $historyProof.complete -isnot [bool] -or -not $historyProof.complete -or
+            $historyProof.failures -isnot [array] -or $historyProof.failures.Count -ne 0) { throw 'failure-history-unproven' }
+        # Nonempty failure history conservatively requires execution; no contained
+        # fix is inferred from a later green result or a caller-supplied flag.
+        $forced=Get-RcForcedFullDecision $CurrentContext.contract $envelope.contract $envelope.history $envelope.fullAnchor -UtcNow $UtcNow
         foreach ($r in $forced.reasons) { [void]$reasons.Add($r) }
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $proofPath=$envelope.proofPath; $before=$null; $caseOutcomes=@(); $top=$null
@@ -216,7 +242,7 @@ function Read-RcAdmission {
             if ($depth -ge 64 -or -not $seen.Add($proofPath)) { throw 'admission-origin-cycle-or-depth' }
             $object=Get-RcAdmissionObject $inventory $EvidenceRoot $proofPath
             $proof=Read-RcAdmissionJson $object.path $object.digest
-            Assert-TestSelectionKeys $proof @('format','kind','originPath','sourceSha','treeId','runId','chunk','manifest','outcome','complete','exitCode','sourceClean','custody','assemblyDigest','buildOutputDigest','discoveryOutputDigest','launchOutputDigest','receipts','trxPath','caseMap')
+            Assert-TestSelectionKeys $proof @('format','kind','originPath','sourceSha','treeId','runId','chunk','manifest','outcome','complete','exitCode','sourceClean','custody','assemblyDigest','buildOutputDigest','discoveryOutputDigest','launchOutputDigest','receipts','trxPath','caseMap','outputPath','stageReceipts','anchorDigest')
             if ($proof.format -cne 'antiphon-rc-execution-proof-v1' -or $proof.outcome -cne 'Passed' -or $proof.complete -isnot [bool] -or -not $proof.complete -or $proof.exitCode -isnot [long] -and $proof.exitCode -isnot [int] -or $proof.exitCode -ne 0 -or
                 $proof.sourceClean -isnot [bool] -or -not $proof.sourceClean -or $proof.custody -cne 'exclusive-owned-checkout') { throw 'source-build-launch-unproven' }
             if ($depth -eq 0) {
@@ -229,6 +255,21 @@ function Read-RcAdmission {
             $old=Restore-RcAdmissionManifest $proof.manifest $proof.chunk $oldSnapshot
             $comparison=Compare-RcChunkInputManifest $old $current
             if ($comparison.dirty -or $proof.chunk.chunkId -cne $Chunk.chunkId -or $proof.chunk.fullDigest -cne $Chunk.fullDigest) { throw 'admission-origin-inputs' }
+            if ($proof.anchorDigest -cne $anchorObject.digest) { throw 'admission-origin-anchor' }
+            $output=Get-RcAdmissionObject $inventory $EvidenceRoot $proof.outputPath
+            if ($output.digest -cne $proof.assemblyDigest) { throw 'admission-output-bytes' }
+            $stages=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($stageRef in $proof.stageReceipts) {
+                Assert-TestSelectionKeys $stageRef @('stage','path')
+                if ($stageRef.stage -cnotin @('source','build','discovery','launch') -or -not $stages.Add($stageRef.stage)) { throw 'admission-stage-duplicate' }
+                $stageObject=Get-RcAdmissionObject $inventory $EvidenceRoot $stageRef.path
+                $stage=Read-RcAdmissionJson $stageObject.path $stageObject.digest
+                Assert-TestSelectionKeys $stage @('format','stage','sourceSha','treeId','runId','manifestDigest','outputDigest','sourceState','custody')
+                if ($stage.format -cne 'antiphon-rc-stage-proof-v1' -or $stage.stage -cne $stageRef.stage -or $stage.sourceSha -cne $proof.sourceSha -or
+                    $stage.treeId -cne $proof.treeId -or $stage.runId -cne $proof.runId -or $stage.manifestDigest -cne $old.digest -or
+                    $stage.outputDigest -cne $output.digest -or $stage.sourceState -cne 'clean' -or $stage.custody -cne 'exclusive-owned-checkout') { throw 'source-build-launch-unproven' }
+            }
+            if ($stages.Count -ne 4) { throw 'source-build-launch-unproven' }
             foreach ($digest in @('assemblyDigest','buildOutputDigest','discoveryOutputDigest','launchOutputDigest')) {
                 if (-not (Test-RcFullDigest $proof[$digest]) -or $proof[$digest] -cne $proof.assemblyDigest) { throw 'source-build-launch-unproven' }
             }
@@ -241,6 +282,10 @@ function Read-RcAdmission {
                 $bytes=Get-RcAdmissionObject $inventory $EvidenceRoot $ref.path
                 $provenance=Get-RcAdmissionObject $inventory $EvidenceRoot $ref.provenancePath
                 if ($bytes.digest -cne $r[0].digest -or $provenance.digest -cne $r[0].provenanceDigest) { throw 'admission-receipt-digest' }
+                $binding=Read-RcAdmissionJson $provenance.path $provenance.digest
+                Assert-TestSelectionKeys $binding @('format','sourceSha','runId','kind','digest')
+                if ($binding.format -cne 'antiphon-rc-actual-input-v1' -or $binding.sourceSha -cne $proof.sourceSha -or $binding.runId -cne $proof.runId -or
+                    $binding.kind -cne $ref.kind -or $binding.digest -cne $bytes.digest) { throw 'admission-receipt-provenance' }
             }
             if ($receipts.Count -ne 6 -or $old.unknown.Count) { throw 'admission-receipt-incomplete' }
             if ($null -eq $before) { $before=$old }
