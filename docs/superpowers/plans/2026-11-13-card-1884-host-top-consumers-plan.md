@@ -2,12 +2,14 @@
 
 `GET /host-stats` reports host CPU and a process list of the runner plus each live session. A shared compiler, `dotnet test`, MSBuild, the checkpoint tool, and the agent CLIs never appear. This plan adds a bounded top-consumer list on the existing host-load sample. Schema version stays 1. CARD-1885 (compiler cap) is out of scope. No landed Plan or TestDesign task exists for this card; this file is the checkpoint and OS-witness home the Code brief requires.
 
+Review round 2 moves the scan off the sampler tick. The scan has its own cadence (`TopConsumerScanIntervalMs`, default 5 seconds) and the tick only reads the cached ranking. A scan stops after about 10 ms of thread CPU and reports `topConsumersTruncated`. `topConsumersAgeSeconds` is null until a scan exists and `topConsumersStale` is true after twice the cadence. Those fields are omitted when default. An absent or empty `topConsumers` array is omitted from the canonical ingest hash, so a pre-upgrade sample keeps its identity. V-7 is no longer a 25 ms wall-clock bound on a live scan inside the tick.
+
 ## Decisions
 
 - D-1. Top consumers are a new optional field on `HostLoadSample`, `HostSample`, and `RunnerHostCurrentDto`. They are not extra rows in `processes`. `processes` stays `runner`, `session`, and `pty-host`.
 - D-2. Rank at most 8 processes by CPU-core delta over the sample window. A core count of 5.3 means 5.3 cores, not a percent of the host. The host CPU percent stays the `/proc/stat` total.
 - D-3. The key is pid plus start ticks. A recycled pid has no previous counter. The first sighting publishes nothing.
-- D-4. Scan at most every 5 seconds and at most 512 processes. Retained pids are kept, then the highest pids. A scan fault returns the previous ranking.
+- D-4. The scan runs off the sampler tick on `TopConsumerScanIntervalMs` (default 5 seconds) and reads at most 512 processes. The tick reads the cached ranking. Retained pids are kept, then the highest pids. A scan fault, or a scan inside the minimum interval, returns the previous ranking. A scan that spends the 10 ms thread-CPU budget stops and sets `topConsumersTruncated`. Eight public-wire rows add 743 bytes (923 empty, 1666 full). One hundred twenty such samples are 199920 bytes, under the 1 MiB history-chunk cap, so the 120-record cap binds first. The 8192-byte CapsPersist fixture cap is unchanged.
 - D-5. Linux reads `/proc/<pid>/stat` utime+stime and RSS. Command line is read only when `comm` is truncated or is `dotnet`, at most 1024 bytes, and only to recover a basename. Environment is never opened. Windows uses one toolhelp image-name snapshot and `GetProcessTimes` plus `K32GetProcessMemoryInfo` on a limited-information handle. No `GetProcesses` and no `NtQuerySystemInformation`.
 - D-6. Published names match `^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`. Roles are `compiler`, `build`, `test`, `agent-cli`, `antiphon-runner`, `pty-host`, `docker`, and `other`.
 - D-7. `IHostStatsProbe` stays `SystemHostStatsProbe`. The sampler attaches the table with `with { TopConsumers = top }`. A null table publishes an empty list. `ProcessSampling` false does not scan.
@@ -32,7 +34,7 @@ V-6 `Production_factory_selects_the_linux_proc_table` calls HostProcessTables.Cr
 
 V-6 `Factory_selects_the_platform_reader` selects the Linux reader, the Windows reader, and the empty reader. The Windows reader on this host returns no rows.
 
-V-7 `Live_proc_scan_stays_inside_the_tick_budget` warms up, then reads at most 512 live proc entries in under 25 ms.
+V-7 `Blocking_scan_does_not_stretch_the_tick` finishes `SampleOnceAsync` while a table read is blocked. `Live_proc_scan_reads_proc_off_the_tick` reads live `/proc` on the scan path, not inside the tick. `Scan_stops_when_the_cpu_budget_is_spent` stops a synthetic scan at the 10 ms budget. `Cached_scan_is_stale_after_twice_the_cadence` flags an old cache.
 
 V-7 `Short_interval_does_not_rescan_or_move_the_baseline` does not read again inside five seconds.
 
