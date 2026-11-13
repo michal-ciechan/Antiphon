@@ -14,7 +14,10 @@ Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof executed
 This separately committed red witness required one additional native-default build
 (384 seconds) and 23 seconds execution. The first checkpoint attempt
 20261113-110706-6655 was stopped during its first build before any tests, to close
-that edge; it receives no green credit. The fixed parent now requires origin and
+that edge; it receives no green credit. Attempt 20261113-112052-ef31 then
+refused CP-1 with pre-existing-output from the stopped build (0 tests), and was
+stopped before CP-2 tests. Both retained attempts are historical, not green
+evidence. Fresh final output names below avoid reusing their unsealed outputs. The fixed parent now requires origin and
 the ordinary full publication proof; known disposable seed parents cannot substitute.
 
 ## Verification design
@@ -36,8 +39,8 @@ The checkpoint runner owns each isolated build and slot; run serially in this wo
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | all | tests/Antiphon.Tests -> bin-debug49-retirement/ | retirement | `/*/*/(VolumeRetirementContentTests*)\|(VolumeRetirementApplyGateTests*)\|(VolumeRetirementReceiptTests*)\|(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)\|(RollingVolumeRecycleScriptTests*)\|(RollingVolumeRecycleCensusChurnTests*)\|(RetiredTempContainerScriptTests*)\|(RetiredTempContainerHostTests*)\|(RetireTempRunnerTimestampTests*)\|(C1008PlatformContractTests*)\|(C1008HostFixtureSetupInsertionTests*)\|(C0824BranchDeletionRecycleAuditTests*)/*` | safe fixture classification, all refusal boundaries, existing retirement/recycle contracts | all listed, 0 failed | 1 | 20 |
-| CP-2 | all | tests/Antiphon.Tests -> bin-debug49-guards/ | producer-guards | `/*/*/(ReleaseImpactEnvelopeTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(ShellFixtureLineEndingContractTests*)\|(RemoteScriptContractTests*)\|(DockerStackDocumentationTests*)/*` | temp fixture producer, required guard union, process ownership and script/document contracts | all listed, 0 failed | 1 | 8 |
+| CP-1 | all | tests/Antiphon.Tests -> bin-debug49-final-retirement/ | retirement | `/*/*/(VolumeRetirementContentTests*)\|(VolumeRetirementApplyGateTests*)\|(VolumeRetirementReceiptTests*)\|(VolumeRetirementHostProofTests*)\|(VolumeRetirementWrapperTests*)\|(RollingVolumeRecycleScriptTests*)\|(RollingVolumeRecycleCensusChurnTests*)\|(RetiredTempContainerScriptTests*)\|(RetiredTempContainerHostTests*)\|(RetireTempRunnerTimestampTests*)\|(C1008PlatformContractTests*)\|(C1008HostFixtureSetupInsertionTests*)\|(C0824BranchDeletionRecycleAuditTests*)/*` | safe fixture classification, all refusal boundaries, existing retirement/recycle contracts | all listed, 0 failed | 1 | 20 |
+| CP-2 | all | tests/Antiphon.Tests -> bin-debug49-final-guards/ | producer-guards | `/*/*/(ReleaseImpactEnvelopeTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(ShellFixtureLineEndingContractTests*)\|(RemoteScriptContractTests*)\|(DockerStackDocumentationTests*)/*` | temp fixture producer, required guard union, process ownership and script/document contracts | all listed, 0 failed | 1 | 8 |
 
 ## Performance budget
 
