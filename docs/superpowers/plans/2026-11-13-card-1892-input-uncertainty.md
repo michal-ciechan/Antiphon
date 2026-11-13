@@ -38,6 +38,10 @@ must fail. Mutation owns deliberate red/restore/green, missing-control discovery
 
 Cold server builds measured 336 s and 528 s (401 s and 613 s including driver audit). The valid red group took 23m58s wall: 969.957 s charged execution and 468.806 s admission-only union; the server build waited 285 s and runner test 450 s. Red rows inspected fresh TRX: CP-1 59/56/3, CP-4 3/0/3, CP-5 3/0/3, CP-6 5/2/3 (executed/passed/failed). The final rows share one server build and bound adjacent integration classes. Runner builds are smaller. Estimates remain provisional, not p95. Each integration host shares its database fixture and each new uncertainty test owns an isolated schema. All fake Input requests/held gates are joined in finally. No selection is expected over 30 minutes; if observed, preserve phase evidence and request caller Debug. Existing checkpoint 15-minute floor remains a documented tooling exception, not a measured per-case timeout.
 
+### Scope resolution
+
+The task-base range matched the `test-lane-category` glob row in tests/impacted-classes.json; its TestLaneCategoryGuardTests is in CP-3. The selector also prints a wider derived dependency closure (100 source-derived classes, with capped remainder recorded in .antiphon/c1892-impact.json). Per this Code brief/stage scope, ordinary Final executes closed rows, named affected/adjacent classes and matched-glob rows; that wider closure is not represented as passed and is not a whole-lane substitute. Unit remains nightly/rc. No shared invariant requires an unbounded assembly run here: changed behavior is Input lock admission and post-ready uncertain delivery, bounded by the named dispatcher, queue, launch and rules witnesses.
+
 ### Cost
 
 Ordinary floor 29 minutes plus authoring. Bounded named classes; no full assembly or Unit lane.
