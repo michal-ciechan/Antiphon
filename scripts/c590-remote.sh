@@ -7134,6 +7134,8 @@ selector_fixture() {
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 1
     [ "$gitdir" = "$top" ] && [ "$gitdir" = "$rep/.git" ] &&
         [ -d "$gitdir" ] && [ ! -L "$gitdir" ] || return 1
+    path_of git -C "$rep" rev-parse --show-toplevel 2>/dev/null || return 1
+    [ "$path_out" = "$rep" ] || return 1
     path_of git -C "${rep%/*}" rev-parse --show-toplevel 2>/dev/null || return 1
     parent="$path_out"
     [[ "$parent/" == "$root/"* ]] || return 1
