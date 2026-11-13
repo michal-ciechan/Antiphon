@@ -46,6 +46,32 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
         sources["tests/Consumer/Reflection.cs"] = "namespace Example; internal partial class ReflectionTests { object Read() => System.Reflection.Assembly.Load(\"Missing.Plugin\"); }";
         Build(sources).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        // One source per reflective load. Recognised Type.GetType / Assembly.Load stay above;
+        // every other string-taking reflection entry must be incomplete, never skipped.
+        foreach (var source in new[]
+        {
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm.GetType(\"Product.Queue\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read() => System.Activator.CreateInstance(\"Fixture.Product\", \"Product.Queue\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read() => new System.Runtime.Loader.AssemblyLoadContext(\"probe\").LoadFromAssemblyName(new System.Reflection.AssemblyName(\"Fixture.Product\")); }",
+            "namespace Example; internal partial class ReflectionTests { object Read() => new System.Runtime.Loader.AssemblyLoadContext(\"probe\").LoadFromAssemblyPath(\"plugin.dll\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read() => System.AppDomain.CurrentDomain.Load(\"Fixture.Product\"); }",
+            "using static System.Type;\nnamespace Example { internal partial class ReflectionTests { object Read() => GetType(\"Product.Queue, Fixture.Product\"); } }",
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm.LoadFrom(\"plugin.dll\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm.LoadFile(\"plugin.dll\"); }",
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm.GetTypes(); }",
+            "namespace Example; internal partial class ReflectionTests { object Read(System.Reflection.Assembly asm) => asm.GetExportedTypes(); }",
+        })
+        {
+            sources["tests/Consumer/Reflection.cs"] = source;
+            Build(sources).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs", source);
+        }
+        var named = new Dictionary<string, string>(fixture.Sources)
+        {
+            ["src/Product/Product.csproj"] = "<Project><PropertyGroup><AssemblyName>$(ConfiguredName)</AssemblyName></PropertyGroup></Project>",
+        };
+        var namedGraph = Build(named);
+        namedGraph.IncompleteReasons.ShouldContain("project-expression-unresolved:src/Product/Product.csproj:$(ConfiguredName)");
+        AssertIncomplete(namedGraph);
         AssertIncomplete(graph);
     }
 
