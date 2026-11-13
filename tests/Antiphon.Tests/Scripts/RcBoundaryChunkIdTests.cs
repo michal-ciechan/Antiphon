@@ -20,4 +20,5 @@ public sealed class RcBoundaryChunkIdTests
     [Test, Timeout(120_000)] public Task CaseKeyChangesIdentity(CancellationToken token) => Run(nameof(CaseKeyChangesIdentity), token);
     [Test, Timeout(120_000)] public Task CanonicalEncodingKeepsSpecialCharacters(CancellationToken token) => Run(nameof(CanonicalEncodingKeepsSpecialCharacters), token);
     [Test, Timeout(120_000)] public Task ShortIdCollisionIsUnassigned(CancellationToken token) => Run(nameof(ShortIdCollisionIsUnassigned), token);
+    [Test, Timeout(120_000)] public Task LoneSurrogatesFailClosed(CancellationToken token) => Run(nameof(LoneSurrogatesFailClosed), token);
 }
