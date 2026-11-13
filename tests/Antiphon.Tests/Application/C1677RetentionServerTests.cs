@@ -207,6 +207,57 @@ public sealed class C1677RetentionServerTests
     }
 
     [Test]
+    [Arguments(AgentTaskSyncDebtState.Ready, "same", true)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "different", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "confirmed-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "confirmed-empty", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "source-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-empty", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-whitespace", false)]
+    [Arguments(AgentTaskSyncDebtState.Pending, "same", false)]
+    [Arguments(AgentTaskSyncDebtState.Held, "same", false)]
+    [Arguments(AgentTaskSyncDebtState.Superseded, "different", true)]
+    [Arguments(AgentTaskSyncDebtState.Superseded, "both-null", true)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "additional-held", false)]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task C1894_Only_confirmed_Ready_debt_is_paid(AgentTaskSyncDebtState state, string shape, bool paid)
+    {
+        await using var w = await World.StartAsync();
+        var control = await w.EligibleAsync();
+        var subject = await w.EligibleAsync();
+        await using (var db = w.Rig.NewDb())
+        {
+            db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+            {
+                Id = Guid.NewGuid(), TaskId = subject, Attempt = 1, SettlementEventId = Guid.NewGuid(),
+                State = state,
+                SourceSha = shape is "source-null" or "both-null" ? null
+                    : shape == "both-empty" ? "" : shape == "both-whitespace" ? " " : new string('a', 40),
+                ConfirmedSha = shape is "confirmed-null" or "both-null" ? null
+                    : shape is "confirmed-empty" or "both-empty" ? ""
+                    : shape == "both-whitespace" ? " " : new string(shape == "different" ? 'b' : 'a', 40),
+                CreatedAt = w.Rig.Now, UpdatedAt = w.Rig.Now,
+            });
+            if (shape == "additional-held")
+                db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+                {
+                    Id = Guid.NewGuid(), TaskId = subject, Attempt = 2, SettlementEventId = Guid.NewGuid(),
+                    State = AgentTaskSyncDebtState.Held, CreatedAt = w.Rig.Now, UpdatedAt = w.Rig.Now,
+                });
+            await db.SaveChangesAsync();
+        }
+
+        await w.TickAsync();
+
+        w.Requests().Select(r => r.TaskId).ShouldBe(paid ? new[] { control, subject } : new[] { control }, ignoreOrder: true);
+        var row = (await w.RowsAsync(subject)).ShouldHaveSingleItem();
+        row.Outcome.ShouldBe((paid ? WorktreeResidueCandidateOutcome.Removed : WorktreeResidueCandidateOutcome.Held).ToString());
+        if (!paid) row.ReasonCode.ShouldBe("sync_debt");
+        (await w.Rig.ReadTaskAsync(subject)).RemoteWorktreePath.ShouldBe(paid ? null : World.PathOf(subject));
+    }
+
+    [Test]
     [Arguments("queued")]
     [Arguments("dispatched")]
     [Arguments("working")]
