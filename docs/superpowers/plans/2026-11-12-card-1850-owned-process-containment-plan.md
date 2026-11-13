@@ -514,6 +514,8 @@ whole-row costs under the budget above.
 | CP-S2-9 | S2-windows-policy | `tests/Antiphon.Tests -> bin-c1850-s2-windows-policy/` | windows-platform-impact | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Windows_linux_only_outcomes_are_exact` | R-5 | native Windows-only method; orchestrator owed, never a passed Linux skip | 1 | 2 | 2 | true |
 | CP-S3-R | S3a-red | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s3a-red/` | any-native-contract-red | `/*/*/OwnedGitProcessContractTests/Windows_arguments_preserve_empty_quotes_backslashes_and_unicode` | V-1,V-4 | Expected missing Windows transport assertion red before implementation | 8 | 1 | 2 | true |
 | CP-3 | S3a | `tests/Antiphon.Server.Git.Tests -> bin-c1850-s3a/` | any-native-contract | `/*/*/OwnedGitProcessContractTests/*` | V-1,V-4 | OwnedGitProcessContractTests; all listed, 0 failed | 8 | 1 | 2 | true |
+| CP-S3-1 | S3a | CP-3 | any-git-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-5 | both actual-impact Git classes, 0 failed | 2 | 1 | 2 | true |
+| CP-S3-2 | S3a-guards | `tests/Antiphon.Tests -> bin-c1850-s3a-guards/` | any-guards | `/*/*/(ServerGitProcessTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-4,R-5 | all 11 named classes and mandatory guard union, 0 failed | 11 | 10 | 15 | true |
 | CP-4 | S3b | `tests/Antiphon.Tests -> bin-c1850-s3b/` | windows-native | `/*/*/WindowsOwnedGitProcessTests/*` | V-3,V-4 | WindowsOwnedGitProcessTests; all listed, 0 failed | 6 | 10 | 10 | true |
 | CP-5 | S4a-red-linux | `tests/Antiphon.Tests -> bin-c1850-s4rl/` | linux-land-red | `/*/*/OwnedGitLandingCancellationTests/Cancel_kills_dead_parent_orphan` | V-2,V-5 | Expected survivor assertion failure; prerequisites passed | 1 | 5 | n/a | true |
 | CP-6 | S4a-linux | `tests/Antiphon.Tests -> bin-c1850-s4gl/` | linux-land-green | `/*/*/OwnedGitLandingCancellationTests/*` | V-2,V-5 | OwnedGitLandingCancellationTests; all listed, 0 failed | 4 | 6 | n/a | true |
@@ -632,3 +634,41 @@ with the cold build charged to CP-2 and an explicit ten-minute execution cap;
 the original S1 historical costs/cap remain recorded unchanged. Other phases
 are in ignored per-row phase JSONL; uninstrumented subphases/remainder are
 unknown. No native witness uses AppHost, containers or database migrations.
+
+S3a dispatch amendment (Code task 66a1f6d2): prerequisites S1 and S2 are on
+master at the assigned base c38918255330caec88c35fda713dbddad221d5a1. This
+slice prepares the Windows native transport; it creates no process and changes
+no production factory/property selection. WindowsOwnedGitLaunch owns the job,
+three pipe pairs, attribute list and redirected stream wrappers. The native
+boundary resolves the executable with SearchPathW, clears inheritance on parent
+pipe ends, and prepares JOB_LIST plus an exact three-handle HANDLE_LIST.
+It does not add kill-on-close or breakaway. Attributes retain their value
+buffers and safe-handle references until deletion. S3b must use this prepared
+owner across creation, then release child ends and attributes, and keep the job
+until root/membership cleanup finishes. No caller migration is authorized here.
+
+CP-S3-R is the committed pre-implementation encoding red. CP-3 covers exact
+wire values, removed/empty environment values, unsupported options, each
+preparation-boundary failure, resource closure, BOM-free text and binary I/O.
+Native allocation-internal failure injection, executable resolution, inherited
+handle exclusion through actual CreateProcessW, root wait, membership, nesting,
+console and lifetime behavior remain native S3b work (CP-4). Portable seams are
+supplementary transport evidence; they do not close Windows execution.
+V-1/V-4 portable S3a portions and R-4 source scanner/R-5 actual selection are
+in scope. V-2/V-3/V-5/V-6, R-1/R-2/R-3, remaining R-4/R-5 E groups and all
+Windows native portions remain deferred to their named slices, never passed.
+No mutation PC is discharged; operator waiver remains recorded above.
+
+CP-S3-1 adds the two impacted Git classes. CP-S3-2 batches the source scanner,
+mandatory nine guards and index guard, with a cold Antiphon.Tests build charged
+here. Its 10-minute Linux estimate and 20-minute cap are provisional cold-build
+allowances on CARD-1850, using S2's 380.654-second build plus 209.229-second
+guard execution as comparable history. The portable small-project allowance
+is two minutes (red history: build 20.189 s, execution 5.087 s). Native setup,
+AppHost, containers and migrations are not used. No new test starts a process
+or creates a filesystem fixture. No LinuxOwnedGitProcessTests file is touched;
+its inherited fixture hygiene repair remains outside this Windows transport
+slice. ReleaseImpactEnvelopeTests and the audit stay with Debug 49ae044d.
+Reconcile the actual selector after index regeneration and bind any additional
+classes as exact rows before execution. No unchanged repetitions are required
+after green. Native execution is owed by the orchestrator on Windows.
