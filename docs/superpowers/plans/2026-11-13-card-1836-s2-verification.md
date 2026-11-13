@@ -8,14 +8,26 @@ each naming the absent boundary library. Build succeeded, source clean/verified,
 slot granted, waited 0s. It cost 425.225s wall, including 384.001s build/preflight
 and 17.463s execution. No failure is represented as green.
 
-The four methods cover V-5, V-6, V-7 and V-8. Literal paths follow the ordered
-layer rules; lane overrides precede them; namespace fallbacks are conservative.
-The canonical ID encoding is compact UTF-8 JSON `[suite,boundary,[sorted keys]]`,
-ordinal and case sensitive, without BOM or trailing newline. Duplicates and empty
-membership refuse. Chunk construction rejects mixed suites/boundaries and marks
-unassigned dirty. This is a library API, with no launch caller or packing change.
+The seven methods cover V-5, V-6, V-7 and V-8 plus the S2 hardening witnesses
+for conflicting path evidence, case keys, reserved-character encoding, and a
+real 64-bit short-id collision. Literal paths follow the ordered layer rules;
+lane overrides precede them; namespace fallbacks are conservative. Two literals
+that resolve to different boundaries are unassigned. Membership is the triple
+(class, method, caseKey). The canonical ID encoding is length-delimited UTF-8
+with a big-endian uint32 length before each string: suite, boundary, identity
+count, then class, method, and caseKey. It does not use ConvertTo-Json. Each
+chunk records the full 64-hex SHA-256. chunkId is `b-{boundary}-{first 16 hex}`.
+Two chunks that share that prefix and not the full digest are rebuilt as
+unassigned, dirty, and collision. One shared full digest is not a collision.
+Duplicates and empty membership refuse. Chunk construction rejects mixed
+suites/boundaries and marks unassigned dirty. This is a library API, with no
+launch caller or packing change. Windows PowerShell 5.1 execution of the
+reserved-character witness remains owed to the orchestrator. The original red
+run above predates that witness: the library was absent, so neither the old
+JSON encoder nor this length-delimited encoder ran.
 
-The exact S2 CP-2 filter is retained below. Its green output name differs because
+The CP-2 filter below is the original four methods plus the three hardening
+witnesses. Its green output name differs because
 the failed run retains its owned output. CP-11 is the brief's guard union plus
 mechanical/platform/layering guards and the Antiphon impacted classes. CP-12 and
 CP-13 are the other impacted `spawn-limit-rosters` projects. Scope was resolved
@@ -49,17 +61,17 @@ lease held across the entire checkpoint loop.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | boundary | `/*/*/RcBoundaryChunkIdTests/(StableIdIgnoresOrder*)\|(MovedClassChangesId*)\|(UnassignedStaysAlone*)\|(TwoBoundariesNeverShare*)` | V-5 V-6 V-7 V-8 | all listed, 0 failed | 4 | 4 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | boundary | `/*/*/RcBoundaryChunkIdTests/(StableIdIgnoresOrder*)\|(MovedClassChangesId*)\|(UnassignedStaysAlone*)\|(TwoBoundariesNeverShare*)\|(CaseKeyChangesIdentity*)\|(CanonicalEncodingKeepsSpecialCharacters*)\|(ShortIdCollisionIsUnassigned*)` | V-5 V-6 V-7 V-8 | all listed, 0 failed | 7 | 4 |
 | CP-11 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | guard union and impacted classes | each class nonzero, 0 failed | 11 | 6 |
 | CP-12 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s2pty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 | CP-13 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s2runner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 
 ## Performance budget
 
-No AppHost, database, browser, provider or native pty fixture is needed. The new
-four cases launch isolated PowerShell harness processes with the existing 90s
-execution/10s cleanup budgets and 120s test timeout. The red test wall was 7.725s;
-no green p95 exists yet. Original estimates remain provisional under CARD-1836;
+No AppHost, database, browser, provider or native pty fixture is needed. The
+seven harness cases launch isolated PowerShell processes with the existing 90s
+execution/10s cleanup budgets and 120s test timeout. The original red test wall
+was 7.725s; no green p95 exists yet. Original estimates remain provisional under CARD-1836;
 guard estimates are provisional too. Record first green timings and phase fields
 in the ignored checkpoint reports; unknown nested phases stay unknown. No run is
 expected over 30 minutes. Builds remain isolated, sequential and slot gated.
