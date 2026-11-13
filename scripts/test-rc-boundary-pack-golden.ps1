@@ -194,12 +194,44 @@ function Get-RealTreeNodes {
     return @((ConvertFrom-NightlyDiscoveryDocument $document 'antiphon-tunit-discovery-v1').Nodes)
 }
 
+function Assert-SerializerEquivalentOrder {
+    . (Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden/serializer-order.ps1')
+    $oracle = @(Get-RcSerializerOracleFailures)
+    if ($oracle.Count -ne 0) { throw ('ConvertTo-Json oracle moved: ' + ($oracle -join ',')) }
+    $keys = @(Get-RcSerializerKeyFailures)
+    if ($keys.Count -ne 0) { throw ('sort key is not ConvertTo-Json: ' + ($keys -join ',')) }
+    $nodes = @(New-RcSerializerOrderNodes)
+    $map = Get-RcSerializerOrderMap
+    $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds
+    $plan = @(Get-FixturePack $nodes $map @((New-RcSerializerOrderLeaf $nodes)))
+    if ($plan.Count -ne 1) { throw ('serializer-order split into ' + $plan.Count + ' chunks') }
+    $built = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds - $before
+    if ($built -ne 1) { throw ('boundary index built ' + $built + ' times') }
+    $actual = @($plan[0].caseMembership | ForEach-Object { [string]$_.uid })
+    $expected = @(Get-RcSerializerUidOrder $nodes)
+    if (($actual -join ',') -cne ($expected -join ',')) {
+        throw ('membership order ' + ($actual -join ',') + ' != ' + ($expected -join ','))
+    }
+    $numeric = @(New-RcSerializerNumericUidNodes)
+    $beforeNumeric = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds
+    $numericPlan = @(Get-FixturePack $numeric $map @((New-RcSerializerOrderLeaf $numeric)))
+    $builtNumeric = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds - $beforeNumeric
+    if ($builtNumeric -ne 1) { throw ('numeric uid index built ' + $builtNumeric + ' times') }
+    $numericActual = @($numericPlan[0].caseMembership | ForEach-Object { [string]$_.uid })
+    if (($numericActual -join ',') -cne '10,2') { throw ('uid string order lost: ' + ($numericActual -join ',')) }
+    return (Get-PackJson $plan)
+}
+
 if ($Target -eq 'fixtures') {
     $plans = Get-FixtureGoldens
     foreach ($name in $plans.Keys) {
         if ($Capture) { Write-Golden $name $plans[$name] }
         else { Assert-GoldenText $name $plans[$name] }
     }
+    $serializerJson = Assert-SerializerEquivalentOrder
+    $serializerName = 'serializer-order.json'
+    if ($Capture) { Write-Golden $serializerName $serializerJson }
+    elseif (Test-Path -LiteralPath (Join-Path $golden $serializerName)) { Assert-GoldenText $serializerName $serializerJson }
     Write-Output ('fixtures ' + $(if ($Capture) { 'captured' } else { 'matched' }) + ' count=' + $plans.Count)
     return
 }
