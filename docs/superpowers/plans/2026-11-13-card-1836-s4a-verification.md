@@ -30,8 +30,8 @@ No suffix-collision class matches are allowed; inspect fresh TRX per operand.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-s4agreen/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 3 new methods and every existing method, zero failed/skipped | 8 | 8 |
-| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s4aguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)/*` | policy, categories, spawn census, index | each class nonzero, zero failed/skipped | 79 | 6 |
+| CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-s4afinal/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 3 new methods and every existing method, zero failed/skipped | 8 | 8 |
+| CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s4aguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | policy, categories, spawn census, index/envelope | each class nonzero, zero failed/skipped | 79 | 6 |
 | CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s4apty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
 | CP-92 | S4a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s4arunner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
 
@@ -63,6 +63,11 @@ wait 105s, held 45s, nested build 5.77s. The wrapper's generic non-dotnet cap
 warning is expected: this script explicitly forwards the granted CPU cap.
 No deliberate mutant or redundant green repetition was run. Final runs use the
 checkpoint tool with the exact committed HEAD as expected source, parallel 1.
+Post-regeneration full-range impact also selects ReleaseImpactEnvelopeTests from
+the changed index; CP-90 now includes it. Run `20261113-050513-983e` at
+`a18ffaf029eb9d5b32b1a1c8edc383d29a62d26f` was stopped through the supported
+tool command and joined before this amendment: no build/test executed, no TRX,
+exit 130/supported-stop, 37s observed wall. It earns no verification credit.
 
 ## Performance budget
 
