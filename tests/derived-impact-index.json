@@ -2207,9 +2207,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 563,
+      "classes": 564,
       "reason": "cap",
-      "owed": 538,
+      "owed": 539,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -18657,7 +18657,8 @@
     {
       "path": "src/Antiphon.SessionRunner/HostLoadCaptureService.cs",
       "classes": [
-        "C1514HostLoadSpoolTests"
+        "C1514HostLoadSpoolTests",
+        "HostTopConsumerUpgradeReplayTests"
       ]
     },
     {
@@ -18671,8 +18672,7 @@
       "classes": [
         "C1514HostLoadNativeTests",
         "C1514HostLoadSampleTests",
-        "HostTopConsumerTests",
-        "HostTopConsumerUpgradeReplayTests"
+        "HostTopConsumerTests"
       ]
     },
     {
