@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 81,
+      "classes": 82,
       "reason": "cap",
-      "owed": 56,
+      "owed": 57,
       "first": [
         "AgentTaskLandTargetRaceTests",
         "AgentTaskLandVerifierTests",
@@ -79,18 +79,18 @@
     },
     {
       "path": ".gitignore",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
+        "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "ReportBudgetWorkspacePortabilityTests",
         "WorkspaceParkPublicationTests",
         "BlockedParkWireTests",
-        "C1677RetentionEngineTests",
-        "CardFileBootstrapCheckTests"
+        "C1677RetentionEngineTests"
       ]
     },
     {
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 317,
+      "classes": 318,
       "reason": "allowlist"
     },
     {
@@ -132,19 +132,19 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 12,
+      "classes": 13,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 9,
+      "classes": 10,
       "reason": "allowlist"
     },
     {
       "path": "README.md",
-      "classes": 124,
+      "classes": 125,
       "reason": "cap",
-      "owed": 99,
+      "owed": 100,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 6,
+      "classes": 7,
       "reason": "allowlist"
     },
     {
@@ -2487,7 +2487,6 @@
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
         "CheckpointConfinementLedgerTests",
-        "CheckpointLargeStampTests",
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
@@ -2498,6 +2497,7 @@
         "LibGit2VsGitWorkingTreeVerdictTests",
         "ProjectSetupServiceTests",
         "QualificationCheckoutSourceTests",
+        "ReleaseImpactEvaluationTests",
         "WorktreeDefaultCallerTests"
       ]
     },
@@ -3384,7 +3384,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -3393,7 +3394,8 @@
         "DerivedImpactIndexTests",
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -3807,7 +3809,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -9345,7 +9348,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -9353,7 +9357,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -9361,7 +9366,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -20248,7 +20254,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -20302,7 +20309,8 @@
         "CheckpointColdBuildTests",
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -22564,7 +22572,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -22572,7 +22581,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -22682,84 +22692,96 @@
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationCanaryEntryTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationCanaryGuardTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationCanaryLinkTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationClockTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationEnvironmentTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationFailOpenTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationFilesystemTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationIgnoredItemTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationPinsTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationProbeTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationScriptTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Application/LandGraphEvaluationSolutionMembershipTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -22767,7 +22789,8 @@
       "classes": [
         "DerivedImpactIndexTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -22780,7 +22803,8 @@
       "path": "tests/Antiphon.Tests/Application/LandGraphSdkRemovalPolicyTests.cs",
       "classes": [
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
@@ -26165,7 +26189,8 @@
       "classes": [
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactEvaluationTests"
       ]
     },
     {
