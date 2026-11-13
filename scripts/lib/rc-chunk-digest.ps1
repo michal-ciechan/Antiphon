@@ -6,17 +6,20 @@ function Get-RcManifestDigest {
     param([object[]]$Rows)
     # Domain-specific rows use S2's one length-prefix and UTF-8 encoding rule.
     $buffer=[IO.MemoryStream]::new()
+    $hash=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
         Add-RcBoundaryU32 $buffer ([uint32]$Rows.Count)
+        $hash.AppendData($buffer.GetBuffer(),0,[int]$buffer.Length); $buffer.SetLength(0)
         foreach ($row in $Rows) {
             Add-RcBoundaryU32 $buffer ([uint32]$row.Count)
             foreach ($field in $row) {
                 if ($field -isnot [string]) { throw 'digest-field-must-be-string' }
                 Add-RcBoundaryString $buffer $field
             }
+            $hash.AppendData($buffer.GetBuffer(),0,[int]$buffer.Length); $buffer.SetLength(0)
         }
-        return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($buffer.ToArray())).ToLowerInvariant()
-    } finally { $buffer.Dispose() }
+        return [Convert]::ToHexString($hash.GetHashAndReset()).ToLowerInvariant()
+    } finally { $hash.Dispose(); $buffer.Dispose() }
 }
 
 function Assert-RcDigestText {

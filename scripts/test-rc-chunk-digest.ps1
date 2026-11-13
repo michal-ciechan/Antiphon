@@ -121,7 +121,7 @@ switch ($Case) {
             Refuses { Manifest $baseline @($cases[0],$cases[2]) } 'case-membership-mismatch'
             $renamed=@($cases | ForEach-Object { $copy=$_.Clone(); if ($copy.caseKey -ceq 'row:a') { $copy.caseKey='row:c' }; $copy })
             Refuses { Manifest $baseline $renamed } 'case-membership-mismatch'
-            $forged=$chunk.Clone(); $forged.fullDigest='f'*64
+            $forged=@{}; foreach ($key in $chunk.Keys) { $forged[$key]=$chunk[$key] }; $forged.fullDigest='f'*64
             Refuses { New-RcChunkInputManifest (Read-RcInputInventory $root $baseline) server $forged $cases $actual } 'chunk-membership-mismatch'
         } catch { Note $false ('case-keyed-manifest:'+ $_.Exception.Message) }
     }
