@@ -36,7 +36,7 @@ root with guaranteed finally removal preserves that production invariant.
 | R-1 | Six-class classification/registry/native-policy/impact guard union passes. |
 | R-2 | Mechanical contract, task platform guidance and layering guards pass. |
 | R-3 | Evidence diff over full base..HEAD and conflict-free merge-tree against fetched master. |
-| R-4 | Diff-based impacted-class selector has no unaccounted selected classes; derived index regenerated and committed separately if changed. |
+| R-4 | Diff-based impacted-class selector has no unaccounted selected classes; derived index regenerated and committed separately if changed. It additionally selects OutputDistillationApplyRaceTests and TestLaneCategoryGuardTests. |
 
 Manual acceptance: inspect Linux TRX identities and all named methods; inspect
 effective Windows branch without changing its assertions; retain caller-supplied
@@ -60,8 +60,8 @@ owns deliberate mutants, red/restore/green and discovery of missing controls.
 Debug 37cb8e72 measured full class 250.52s outer wall on Linux master,
 singleton 102.49s, fallback 137.44s, admission 124.20s; cold builds 251-411s.
 These are small, contended historical samples, not p95. Provisional budget:
-delivery 5m, singleton 2m, guard union 5m, additional guards 2m; cold build
-7m, total execution/build target 21m excluding admission. No test deadline
+delivery 5m, singleton 2m, guard union 5m, additional guards 2m, impact race 1m,
+category guard 1m; cold build 7m, total execution/build target 23m excluding admission. No test deadline
 changes. Importer's existing 15m row floor / 3x estimate is retained as a tooling
 exception under CARD-1404, not a newly measured p95 or widened test timeout.
 Stop and report any selection over 30m for Debug, retaining its timing.
@@ -83,10 +83,12 @@ resource cleanup and the explicitly named guards. No unbounded shared impact.
 | CP-2 | S1-S2 | CP-1 | isolated-batching | `/*/*/OutputDistillationDeliveryTests/Same_root_applied_notes_batch_into_one_intact_spill_file` | V-2 | 1 passed, zero failed/skipped | 1 | 2 |
 | CP-3 | S1-S2 | CP-1 | classification-impact-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)/*` | R-1,R-4 | all six classes, zero failed/skipped | 6 | 5 |
 | CP-4 | S1-S2 | CP-1 | final-contract-guards | `/*/*/(MechanicalPcContractTests)\|(TaskPlatformGuidanceTests)\|(C1729LayeringGuardTests)/*` | R-2 | all three classes, zero failed/skipped | 3 | 2 |
+| CP-5 | S1-S2 | CP-1 | impacted-apply-race | `/*/*/OutputDistillationApplyRaceTests/*` | R-4 | complete class, zero failed/skipped | 1 | 1 |
+| CP-6 | S1-S2 | CP-1 | impacted-category-guard | `/*/*/TestLaneCategoryGuardTests/*` | R-4 | complete class, zero failed/skipped | 1 | 1 |
 
 ### Cost
 
-Ordinary execution floor 14 estimated minutes plus cold build and authoring;
+Ordinary execution floor 16 estimated minutes plus cold build and authoring;
 single isolated output is reused across the closed rows. Driver build first;
 checkpoint tool bootstrap is an explicitly listed prerequisite, each under its
 own build slot. Index regeneration is a driver invocation under a slot, not an
