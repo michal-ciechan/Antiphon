@@ -21,5 +21,6 @@ public sealed class RcChunkInputDigestTests
     [Test, Timeout(60_000)] public Task CaseKeyedSingletonsMatchMembership(CancellationToken token) => Run(nameof(CaseKeyedSingletonsMatchMembership), token);
     [Test, Timeout(60_000)] public Task CaseOnlyMembershipChangesDigest(CancellationToken token) => Run(nameof(CaseOnlyMembershipChangesDigest), token);
     [Test, Timeout(60_000)] public Task CanonicalCaseOrderAndEncoding(CancellationToken token) => Run(nameof(CanonicalCaseOrderAndEncoding), token);
+    [Test, Timeout(60_000)] public Task LoneSurrogatesFailClosed(CancellationToken token) => Run(nameof(LoneSurrogatesFailClosed), token);
     [Test, Timeout(60_000)] public Task DependencyEdgesAffectDigest(CancellationToken token) => Run(nameof(DependencyEdgesAffectDigest), token);
 }
