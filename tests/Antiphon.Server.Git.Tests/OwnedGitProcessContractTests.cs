@@ -410,6 +410,27 @@ public sealed class OwnedGitProcessContractTests
         cleanup.ToString().ShouldNotContain(detail);
     }
 
+    [Test]
+    [Arguments("", "\"\"")]
+    [Arguments("plain", "\"plain\"")]
+    [Arguments("two words", "\"two words\"")]
+    [Arguments("λ雪", "\"λ雪\"")]
+    [Arguments("a\"b", "\"a\\\"b\"")]
+    [Arguments("tail\\", "\"tail\\\\\"")]
+    [Arguments("a\\\"b", "\"a\\\\\\\"b\"")]
+    [Arguments("a\tb", "\"a\tb\"")]
+    public void Windows_arguments_preserve_empty_quotes_backslashes_and_unicode(string value, string expected)
+    {
+        // Buildable against the pre-S3a assembly. Green also requires independent wire values.
+        var transport = typeof(OwnedGitProcess).Assembly.GetType(
+            "Antiphon.Server.Infrastructure.Git.WindowsOwnedGitLaunch");
+        transport.ShouldNotBeNull("S3a must encode argv before a native child can be created");
+        var encode = transport.GetMethod("QuoteArgument", System.Reflection.BindingFlags.Static
+            | System.Reflection.BindingFlags.NonPublic);
+        encode.ShouldNotBeNull();
+        encode.Invoke(null, [value]).ShouldBe(expected);
+    }
+
     private static ProcessStartInfo StartInfo() => new("git") { UseShellExecute = false };
 
     private sealed class ManualClock : TimeProvider
