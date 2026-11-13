@@ -102,10 +102,18 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         old["tests/Consumer/Consumer.csproj"] = "<Project><ItemGroup Condition=\"'$(TargetFramework)' == 'net9.0'\"><ProjectReference Include=\"../../src/Product/Product.csproj\" /></ItemGroup></Project>";
         current["tests/Consumer/Consumer.csproj"] = "<Project><ItemGroup Condition=\"'$(TargetFramework)' == 'net10.0'\"><ProjectReference Include=\"../../src/Replacement/Replacement.csproj\" /></ItemGroup></Project>";
         current.Remove("src/Product/Queue.cs");
-        var graphs = new[] { Build(old), Build(current) };
+        var oldGraph = Build(old);
+        var currentGraph = Build(current);
+        oldGraph.IncompleteReasons.ShouldContain("project-condition-unevaluated:tests/Consumer/Consumer.csproj");
+        currentGraph.IncompleteReasons.ShouldContain("project-condition-unevaluated:tests/Consumer/Consumer.csproj");
+        var union = ReleaseImpactProjectGraph.Union(oldGraph, currentGraph);
         foreach (var path in new[] { "src/Product/Queue.cs", "src/Replacement/New.cs" })
-            graphs.SelectMany(g => Members(g, path)).Distinct().Order(StringComparer.Ordinal).ToArray().ShouldBe(Expected, path);
-        graphs.All(g => g.IncompleteReasons.Contains("project-condition-unevaluated:tests/Consumer/Consumer.csproj")).ShouldBeTrue();
+        {
+            Members(union, path).ShouldBe(Expected, path);
+            union.Edges.Single(e => e.Path == path).Classes.All(c => c.Kinds.Contains("projectClosure")).ShouldBeTrue();
+        }
+        union.Complete.ShouldBeFalse();
+        union.Fallback.ShouldBe("Full");
         // A cycle terminates without dropping any downstream class, and malformed XML stays unknown.
         current["src/Replacement/Replacement.csproj"] = "<Project><ItemGroup><ProjectReference Include=\"../../tests/Consumer/Consumer.csproj\" /></ItemGroup></Project>";
         Members(Build(current), "src/Replacement/New.cs").ShouldBe(Expected);
@@ -113,7 +121,58 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         Build(current).IncompleteReasons.ShouldContain("project-parse-unresolved:src/Replacement/Replacement.csproj");
     }
 
+    [Test]
+    public void UpdateAndRemoveStayInTheClosure()
+    {
+        var sources = new Dictionary<string, string>(fixture.Sources)
+        {
+            ["outside/Kept.cs"] = "namespace Outside; public class Kept {}",
+            ["outside/Removed.cs"] = "namespace Outside; public class Removed {}",
+            ["outside/meta/Updated.cs"] = "namespace Outside; public class Updated {}",
+        };
+        sources["src/Product/Product.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>Fixture.Product</AssemblyName></PropertyGroup><ItemGroup><Compile Include=\"../../outside/*.cs\" /><Compile Remove=\"../../outside/Removed.cs\" /><Compile Update=\"../../outside/meta/Updated.cs\"><Link>Updated.cs</Link></Compile></ItemGroup></Project>";
+        var graph = Build(sources);
+        foreach (var path in new[] { "outside/Kept.cs", "outside/Removed.cs", "outside/meta/Updated.cs" })
+            Members(graph, path).ShouldBe(Expected, path);
+        AssertIncomplete(graph);
+    }
+
+    [Test]
+    public void GraphsUnionKeepsOneSidedEdges()
+    {
+        var left = GraphOf(["reason-only-old"],
+            [ClassOf("tests/A/A.csproj", "Example.OldTests", "tests/A/Old.cs")],
+            [
+                EdgeOf("src/Old/Old.cs", ConsumerOf("tests/A/A.csproj", "Example.OldTests", "type")),
+                EdgeOf("src/Shared/Shared.cs", ConsumerOf("tests/A/A.csproj", "Example.OldTests", "type")),
+            ]);
+        var right = GraphOf(["reason-only-new"],
+            [ClassOf("tests/A/A.csproj", "Example.NewTests", "tests/A/New.cs")],
+            [
+                EdgeOf("src/New/New.cs", ConsumerOf("tests/A/A.csproj", "Example.NewTests", "projectClosure")),
+                EdgeOf("src/Shared/Shared.cs", ConsumerOf("tests/A/A.csproj", "Example.OldTests", "projectClosure")),
+            ]);
+        var union = ReleaseImpactProjectGraph.Union(left, right);
+        union.Schema.ShouldBe("antiphon-release-relation-v1");
+        union.Complete.ShouldBeFalse();
+        union.Fallback.ShouldBe("Full");
+        union.IncompleteReasons.ShouldContain("reason-only-old");
+        union.IncompleteReasons.ShouldContain("reason-only-new");
+        Members(union, "src/Old/Old.cs").ShouldBe(["tests/A/A.csproj::Example.OldTests"]);
+        Members(union, "src/New/New.cs").ShouldBe(["tests/A/A.csproj::Example.NewTests"]);
+        Members(union, "src/Shared/Shared.cs").ShouldBe(["tests/A/A.csproj::Example.OldTests"]);
+        union.Edges.Single(e => e.Path == "src/Shared/Shared.cs").Classes.Single().Kinds.ShouldBe(["projectClosure", "type"]);
+        union.Universe.Select(c => c.FullName).Order(StringComparer.Ordinal).ShouldBe(["Example.NewTests", "Example.OldTests"]);
+        ReleaseImpactProjectGraph.Union(left with { Complete = true }, right).Complete.ShouldBeFalse();
+        ReleaseImpactProjectGraph.Union(left, right with { Fallback = "Partial" }).Fallback.ShouldBe("Full");
+    }
+
     private static string[] Expected => ["tests/Consumer/Consumer.csproj::Example.FirstTests", "tests/Consumer/Consumer.csproj::Example.SecondTests"];
+    private static ReleaseImpactGraph GraphOf(string[] reasons, ReleaseImpactClass[] universe, ReleaseImpactEdge[] edges) =>
+        new("antiphon-release-relation-v1", false, "Full", reasons, universe, edges);
+    private static ReleaseImpactClass ClassOf(string project, string name, string path) => new(project, name, [path], ["linux", "windows"]);
+    private static ReleaseImpactEdge EdgeOf(string path, params ReleaseImpactConsumer[] classes) => new(path, classes);
+    private static ReleaseImpactConsumer ConsumerOf(string project, string name, params string[] kinds) => new(project, name, kinds);
     private static string[] Members(ReleaseImpactGraph graph, string path) => graph.Edges.Where(e => e.Path == path)
         .SelectMany(e => e.Classes).Select(c => c.Project + "::" + c.FullName).Distinct().Order(StringComparer.Ordinal).ToArray();
     private static void AssertIncomplete(ReleaseImpactGraph graph)
