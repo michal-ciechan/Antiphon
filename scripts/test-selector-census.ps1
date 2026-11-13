@@ -20,7 +20,7 @@ function Reject-Stale([scriptblock]$Check, [string]$Label) {
     catch { if ($_.Exception.Message.StartsWith('ASSERT ')) { Write-Host ('BLINDNESS red=' + $Label); return }; throw }
     throw ('blindness control accepted stale ' + $Label)
 }
-function Select([string]$Root, [string]$Changed) {
+function Invoke-SelectorProbe([string]$Root, [string]$Changed) {
     $psi = [Diagnostics.ProcessStartInfo]::new('pwsh')
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -47,7 +47,7 @@ function Select([string]$Root, [string]$Changed) {
     finally { $proc.Dispose() }
 }
 function Good([string]$Changed) {
-    $ran = Select $fixture $Changed
+    $ran = Invoke-SelectorProbe $fixture $Changed
     Assert ($ran.Exit -eq 0) $ran.Error
     return $ran.Json
 }
@@ -95,10 +95,10 @@ Names $selected @('SharedTests')
 Assert (@($selected.windowsFilters).Count -eq 0) 'old Windows label must be gone'
 Reject-Stale { Names $beforeLinux @('SharedTests') } 'changed OS labels'
 Write-Host 'WITNESS changed OS labels passed'
-$beforeBroken = Select $fixture 'tests/Antiphon.Tests/Changed.cs'
+$beforeBroken = Invoke-SelectorProbe $fixture 'tests/Antiphon.Tests/Changed.cs'
 foreach ($broken in @('{"schema":2,"kinds":[]}', '{"schema":1,"kinds":[{"id":"bad-row","globs":["x"],"classes":["MissingTests"]}]}')) {
     Put 'tests/impacted-classes.json' $broken
-    $ran = Select $fixture 'tests/Antiphon.Tests/Changed.cs'
+    $ran = Invoke-SelectorProbe $fixture 'tests/Antiphon.Tests/Changed.cs'
     Assert ($ran.Exit -eq 1 -and -not $ran.Json.ok) 'malformed or stale named table must refuse'
     Assert ($ran.Error -match 'root|bad-row') 'refusal must identify its row'
 }
@@ -106,7 +106,7 @@ Put 'tests/impacted-classes.json' $table
 Reject-Stale { Assert ($beforeBroken.Exit -eq 1 -and -not $beforeBroken.Json.ok) 'table refusal' } 'malformed table'
 Write-Host 'WITNESS malformed tables passed'
 # One real-tree census is the performance red/green; do not repeat the replay suite here.
-$ran = Select $repo 'Antiphon.sln'
+$ran = Invoke-SelectorProbe $repo 'Antiphon.sln'
 Assert ($ran.Exit -eq 0) $ran.Error
 $timingLine = ($ran.Error -split "`n" | Where-Object { $_.StartsWith('SELECTOR_TIMING ') } | Select-Object -Last 1)
 $timing = $timingLine.Substring('SELECTOR_TIMING '.Length) | ConvertFrom-Json
