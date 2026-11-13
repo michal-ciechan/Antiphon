@@ -2,6 +2,7 @@
 # Manual S4a acceptance: discovery/packing only, never executes the full suite.
 param(
     [Parameter(Mandatory)][string]$AssemblyPath,
+    [Parameter(Mandatory)][string]$DiscoveryLogPath,
     [Parameter(Mandatory)][string]$ResultsDirectory,
     [string]$BaseRef = '2349a1938b8ff11829ca6becf3c4719383bf9e52'
 )
@@ -14,11 +15,13 @@ if (Test-Path -LiteralPath $ResultsDirectory) { throw 'fresh results directory r
 foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','rc-boundary')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
-$discoveryWatch = [Diagnostics.Stopwatch]::StartNew()
-$document = Invoke-NightlyProduceDiscovery -ExePath (Get-Command dotnet).Source -ArgumentPrefix @($AssemblyPath) -AssemblyPath $AssemblyPath `
-    -OutputPath (Join-Path $ResultsDirectory 'discovery.json') -DiagnosticDirectory (Join-Path $ResultsDirectory 'diagnostic') `
-    -LogPath (Join-Path $ResultsDirectory 'discovery.log') -WorkingDirectory $repo
-$discoveryWatch.Stop()
+# The caller produces this fresh diagnostic with a gated, foreground
+# dotnet run --no-build --list-tests. No Windows-only native owner is needed.
+$parseWatch = [Diagnostics.Stopwatch]::StartNew()
+$parsed = ConvertFrom-NightlyDiagnosticLog -Path $DiscoveryLogPath -Kind discovery
+$document = ConvertTo-NightlyDiscoveryDocument -Nodes @($parsed.Nodes) -AssemblyHash (Get-NightlyAssemblyHash $AssemblyPath)
+Write-NightlyDiscoveryDocument -Path (Join-Path $ResultsDirectory 'discovery.json') -Document $document
+$parseWatch.Stop()
 $nodes = @((ConvertFrom-NightlyDiscoveryDocument $document 'antiphon-tunit-discovery-v1').Nodes)
 $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
 $byNamespace = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
@@ -117,7 +120,8 @@ $receipt = [ordered]@{
     assemblySha256=(Get-FileHash -LiteralPath $AssemblyPath -Algorithm SHA256).Hash.ToLowerInvariant()
     cases=$expected.Count; classes=$byClass.Count; chunks=$packed.Count; selectedExactlyOnce=$seen.Count
     optOutByteIdentical=$true; optOutBytes=$utf8.GetByteCount($offJson)
-    discoverySeconds=$discoveryWatch.Elapsed.TotalSeconds; basePackSeconds=$baseWatch.Elapsed.TotalSeconds
+    discoveryLogPath=[IO.Path]::GetFullPath($DiscoveryLogPath); discoverySeconds=$null
+    discoveryParseSeconds=$parseWatch.Elapsed.TotalSeconds; basePackSeconds=$baseWatch.Elapsed.TotalSeconds
     offPackSeconds=$offWatch.Elapsed.TotalSeconds; boundaryPackSeconds=$packWatch.Elapsed.TotalSeconds
     verificationSeconds=$verificationWatch.Elapsed.TotalSeconds
     boundaryCounts=@($packed | Group-Object boundary | ForEach-Object { @{ boundary=$_.Name; chunks=$_.Count } })

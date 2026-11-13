@@ -141,3 +141,12 @@ cases, paired with caseKeys. Constructor assertions require both pairs and both
 UIDs; the unique-method projection is checked separately. No assertion or timeout
 is relaxed. The compiled path indexes full discovery once per boundary pack;
 the PowerShell-only fallback retains its existing per-partition indexing cost.
+
+Run `20261113-075009-437d` at `fd3266f732f2764ff2f896d77b7cb6fc39328d98`
+was supported-stopped and joined before any build or test started, to correct the
+manual helper's use of the Windows-only native discovery owner on Linux. No TRX
+or verification credit; exit 130, wall 75.134s, execution 45.156s, admission-only
+29.979s. Manual discovery instead uses a direct gated foreground `dotnet run
+--no-build --list-tests --diagnostic` with the CP-8 output/properties; the helper
+accepts that diagnostic log and launches no process. This is census evidence,
+never TUnit execution credit. The corrected tip reruns the whole closed list.
