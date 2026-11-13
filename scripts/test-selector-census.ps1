@@ -122,6 +122,78 @@ Assert ($after.ClassesByFile['tests/Antiphon.Tests/Changed.cs'][0] -ceq 'Reentra
 Assert ($after.DerivedFiles.Contains('tests/Antiphon.Tests/Changed.cs')) 'same-process fresh derive pattern'
 Assert (-not $before.DerivedFiles.Contains('tests/Antiphon.Tests/Changed.cs')) 'earlier census must stay immutable'
 Write-Host 'WITNESS same-process census isolation passed'
+# Compare the optimized candidate-line scan with the exact shipped full-text regex.
+$line = @([IO.File]::ReadAllLines($selector) | Where-Object { $_.StartsWith('$classDecl = ') })[0]
+$pattern = [regex]::Match($line, "'([^']*)'").Groups[1].Value
+Assert (-not [string]::IsNullOrEmpty($pattern)) 'canonical declaration regex present'
+$canonical = [regex]::new($pattern, 'Compiled')
+$forms = @'
+public sealed class PublicTests {}
+internal partial class PartialTests {}
+partial class PartialTests {}
+file class FileTests {}
+private class PrivateTests {}
+protected abstract class ProtectedTests {}
+sealed static abstract partial class LexicalTests {}
+[SomeAttribute] public class SameLineAttributeTests {}
+private protected class TwoAccessModifiersTests {}
+record RecordTests {}
+class FirstOnLineTests {} class SecondOnLineTests {}
+// class CommentTests {}
+const string raw = """
+public class RawTextTests {}
+""";
+'@
+$forms += "`nclass`tTabTests {}`npublic class BoundaryTests" + [char]0x00e9 + " {}`n"
+$forms = $forms.Replace("`n", "`r`n")
+Put 'tests/Antiphon.Tests/Forms.cs' $forms
+$formsScan = [Antiphon.Selector.SelectorCensus]::Scan($fixture, $canonical, @())
+$expectedForms = [System.Collections.Generic.List[string]]::new()
+foreach ($match in $canonical.Matches($forms)) {
+    $name = $match.Groups[1].Value
+    if (-not $expectedForms.Contains($name)) { $expectedForms.Add($name) }
+}
+Assert (($formsScan.ClassesByFile['tests/Antiphon.Tests/Forms.cs'] -join ',') -ceq ($expectedForms -join ',')) 'CRLF and declaration forms match canonical regex'
+Reject-Stale { Assert (('BlindedTests') -ceq ($expectedForms -join ',')) 'canonical declaration blindness' } 'canonical declarations'
+$full = [Antiphon.Selector.SelectorCensus]::Scan($repo, $canonical, @())
+$expectedFiles = [System.Collections.Generic.Dictionary[string,System.Collections.Generic.SortedSet[string]]]::new([StringComparer]::OrdinalIgnoreCase)
+$stack = [System.Collections.Generic.Stack[string]]::new()
+$stack.Push((Join-Path $repo 'tests'))
+$fileCount = 0
+while ($stack.Count -gt 0) {
+    $dir = $stack.Pop()
+    foreach ($childDir in [IO.Directory]::EnumerateDirectories($dir)) {
+        $leaf = [IO.Path]::GetFileName($childDir)
+        if ($leaf -eq 'bin' -or $leaf -eq 'obj') { continue }
+        $stack.Push($childDir)
+    }
+    foreach ($file in [IO.Directory]::EnumerateFiles($dir, '*.cs')) {
+        $relative = [IO.Path]::GetRelativePath($repo, $file).Replace('\', '/')
+        $expectedNames = [System.Collections.Generic.List[string]]::new()
+        foreach ($match in $canonical.Matches([IO.File]::ReadAllText($file))) {
+            $name = $match.Groups[1].Value
+            if (-not $expectedNames.Contains($name)) { $expectedNames.Add($name) }
+            if (-not $expectedFiles.ContainsKey($name)) {
+                $expectedFiles[$name] = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+            }
+            [void]$expectedFiles[$name].Add($relative)
+        }
+        if ($expectedNames.Count -eq 0) {
+            Assert (-not $full.ClassesByFile.ContainsKey($relative)) ('no phantom declaration: ' + $relative)
+        }
+        else {
+            $fileCount++
+            Assert (($full.ClassesByFile[$relative] -join ',') -ceq ($expectedNames -join ',')) ('canonical file declarations: ' + $relative)
+        }
+    }
+}
+Assert ($full.ClassesByFile.Count -eq $fileCount) 'no extra census files'
+Assert ($full.FilesByClass.Count -eq $expectedFiles.Count) 'canonical class count'
+foreach ($name in $expectedFiles.Keys) {
+    Assert (($full.FilesByClass[$name] -join ',') -ceq ($expectedFiles[$name] -join ',')) ('canonical class ownership: ' + $name)
+}
+Write-Host ('WITNESS full census matches canonical regex passed files=' + $fileCount + ' classes=' + $expectedFiles.Count)
+
 # Startup is independently measured through the child's first statement; exit/drain is separate.
 $psi = [Diagnostics.ProcessStartInfo]::new('pwsh')
 $psi.RedirectStandardOutput = $true
@@ -142,4 +214,4 @@ try {
     Write-Host ('STARTUP_PROBE startupThroughFirstStatementMs=' + $startupMs + ' exitAndDrainMs=' + ($clock.Elapsed.TotalMilliseconds - $startupMs))
 }
 finally { $child.Dispose() }
-Write-Host 'SELECTOR CENSUS WITNESS passed=8 failed=0 blindnessRed=6'
+Write-Host 'SELECTOR CENSUS WITNESS passed=9 failed=0 blindnessRed=7'
