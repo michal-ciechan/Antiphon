@@ -25,7 +25,11 @@ through TUnit and fresh TRX. No self-comparison or constant guard suffices.
   arrays must match membership count; omitted keys retain their default.
 - V-1871-4 / AD-4: 800 deterministic shuffled and reversed identities sort
   ordinally (class, method, case), retain pinned ids and compute one digest per
-  constructed chunk; record both before/after timings with target <1 second.
+  constructed chunk. Sort-RcBoundaryIdentities uses one static ordinal Array.Sort
+  and invokes no per-pair PowerShell comparator. One untimed warm-up precedes the
+  timed samples. Each timed sample stays under 5 seconds. The 1 second bound was
+  B-1: it failed at 1.04 seconds under ordinary load, while the insertion sort
+  it guards against took 15-16 seconds.
 - R-1871-1: all original seven cases, parent V-5..V-8, unchanged.
 - R-1871-2: guards, policy/classification, layering and impacted-class union
   over the full task diff. Native process roster rows remain parent obligations.
@@ -46,7 +50,7 @@ separate slice, then rerun the red row. Resolve impacted classes again at HEAD.
 | CP-1 | AD1 | n/a | surrogates | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case LoneSurrogatesFailClosed` | V-1871-1 | one contract, exit 0 after repair | n/a | 1 |
 | CP-2 | AD2 | n/a | duplicate-collision | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case DuplicateMembershipsAndUnassignedCollisions` | V-1871-2 | one contract, exit 0 after repair | n/a | 1 |
 | CP-3 | AD3 | n/a | case-count | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case ExplicitCaseKeyCount` | V-1871-3 | one contract, exit 0 after repair | n/a | 1 |
-| CP-4 | AD4 | n/a | sort-cost | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case OrdinalSortAndSingleDigest` | V-1871-4 | one contract, both timings <1s, exit 0 after repair | n/a | 1 |
+| CP-4 | AD4 | n/a | sort-cost | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case OrdinalSortAndSingleDigest` | V-1871-4 | one contract, no per-pair comparator, both timings <5s, exit 0 after repair | n/a | 1 |
 | CP-5 | Final | `tests/Antiphon.Tests -> bin-c1871-boundary/` | boundary | `/*/*/RcBoundaryChunkIdTests/*` | V-1871-1..4 R-1871-1 parent V-5..V-8 | every method, 0 failed | 11 | 4 |
 | CP-6 | Final | CP-5 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-1871-2 | each class nonzero, 0 failed | 11 | 12 |
 | CP-7 | Final | `tests/Antiphon.Agents.Pty.Tests -> bin-c1871-pty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | R-1871-2 parent CP-12 | nonzero, 0 failed | 1 | 2 |
@@ -57,8 +61,10 @@ separate slice, then rerun the red row. Resolve impacted classes again at HEAD.
 One process per harness method; no DB, host, provider, browser or migration.
 The existing harness 90s execution/10s cleanup and 120s method budgets remain
 unchanged, provisional under CARD-1836. CP-4 times only library calls, excluding
-host startup; deterministic shuffled/reversed 800-member samples are separately
-reported. Retain per-method durations in TRX, build/execution/slot times and
+host startup; one untimed warm-up precedes the two timed samples, and the safety
+bound is 5 seconds. Harness budgets are unchanged. Deterministic shuffled and
+reversed 800-member samples are separately reported. Retain per-method durations
+in TRX, build/execution/slot times and
 membership in checkpoint receipts; uninstrumented nested spans are unknown.
 One cold Antiphon.Tests build is shared by CP-5/6. Parent measured guard cost
 was 662s, largely DerivedImpactIndexTests; 12 minutes is a one-sample estimate,
