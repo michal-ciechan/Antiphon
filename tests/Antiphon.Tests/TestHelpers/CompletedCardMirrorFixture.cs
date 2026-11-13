@@ -88,15 +88,15 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
 
     // hostClock drives the server phone-home directory (owner lease) for a store-replacement cut.
     public static async Task<CompletedCardMirrorFixture> CreateAsync(MirrorPreparation preparation, CancellationToken ct = default,
-        TimeProvider? hostClock = null)
+        TimeProvider? hostClock = null, bool trackPublicationChildren = true)
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate.");
         var f = new CompletedCardMirrorFixture();
-        try { await f.InitializeAsync(preparation, hostClock, ct); return f; }
+        try { await f.InitializeAsync(preparation, hostClock, ct, trackPublicationChildren); return f; }
         catch { await f.DisposeAsync(); throw; }
     }
 
-    private async Task InitializeAsync(MirrorPreparation preparation, TimeProvider? hostClock, CancellationToken ct)
+    private async Task InitializeAsync(MirrorPreparation preparation, TimeProvider? hostClock, CancellationToken ct, bool trackPublicationChildren)
     {
         Card = await CompletedCardCleanupFixture.CreateAsync(clock: new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow));
         var g = Card.Host.Fixture;
@@ -112,15 +112,19 @@ internal sealed class CompletedCardMirrorFixture : IAsyncDisposable
         var storePath = Path.Combine(state, "store"); var secretPath = Path.Combine(state, "secret"); _storePath = storePath;
         await File.WriteAllTextAsync(storePath, store.ToString("D"), ct);
         await File.WriteAllTextAsync(secretPath, Wire.Secret, ct);
-        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, start =>
+        // A counting wrapper disables RunnerWorkspaceService's normal in-process Git reads.
+        // Cleanup-only callers use the real starter; publication witnesses keep the observer.
+        Func<ProcessStartInfo, Process?> starter = Process.Start;
+        if (trackPublicationChildren) starter = start =>
         {
             if (ObservePublication && Binding is not null && start.WorkingDirectory == Binding.WorktreePath)
             {
                 PublicationChildren++;
                 Record("entered:" + PhoneHomeOperation.WorkspacePublish);
             }
-            return System.Diagnostics.Process.Start(start);
-        });
+            return Process.Start(start);
+        };
+        Workspace = new RunnerWorkspaceService(repo, allowed, g.Remote, starter);
         Workspace.BindRecipient(Wire.AllowedRunnerId, store);
         // The holder blocks inside MirrorAsync, under the runner dispatcher's MutationLock.
         Workspace.WorkspaceAdmissionForTest = async () =>

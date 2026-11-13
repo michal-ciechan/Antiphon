@@ -327,114 +327,121 @@ public sealed class C0824RefOnlyCleanupTests
         }
     }
 
+    public enum RemoteCleanupScenario { Retirement, Ready, Busy }
+
     [Test]
-    public async Task Remote_cleanup_still_uses_its_binding_and_generation()
+    [Arguments(RemoteCleanupScenario.Retirement)]
+    [Arguments(RemoteCleanupScenario.Ready)]
+    [Arguments(RemoteCleanupScenario.Busy)]
+    public async Task Remote_cleanup_still_uses_its_binding_and_generation(RemoteCleanupScenario scenario)
     {
-        await using var f = await CompletedCardMirrorFixture.CreateAsync(MirrorPreparation.Ready);
-        // Legacy removal prunes the whole registration root and correctly refuses competing journal custody.
-        f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-has-no-competing-journal-custody");
-        await RetirementRemoteActionAsync(f);
-        f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-does-not-borrow-completed-card-authority");
-        await f.PrepareNextMirrorAsync(MirrorPreparation.Ready);
-        foreach (var preparation in new[] { MirrorPreparation.Ready, MirrorPreparation.Busy })
+        // Each independent authority/preparation has its own fixture and 60-second deadline.
+        // A replay's fault cuts stay together to retain the same durable intent and receipt.
+        var preparation = scenario == RemoteCleanupScenario.Busy ? MirrorPreparation.Busy : MirrorPreparation.Ready;
+        await using var f = await CompletedCardMirrorFixture.CreateAsync(preparation, trackPublicationChildren: false);
+        if (scenario == RemoteCleanupScenario.Retirement)
         {
-            if (preparation == MirrorPreparation.Busy) await f.PrepareNextMirrorAsync(preparation);
-            var priorJournalEntries = f.Journal.Read()!.Count;
-            var binding = await BindAsync(f.Card.Host, f.Card.TaskId, removeAuthoring: true);
-            await f.DiscoverAsync();
-            var desktop = await f.Card.CleanupAsync();
-            AssertNotRequired(desktop, binding.Id, "remote-independent:" + preparation);
-            var initial = await f.EndpointAsync();
-            initial.State.ShouldBe(CardWorktreeCleanupEndpointState.Pending, "remote-independent-pending");
-            // A changed binding must refuse before inspection; recipient validation cannot mask the producer guard.
-            var foreignTask = Guid.NewGuid();
-            await using (var db = f.Card.Host.CreateContext())
-            {
-                db.AgentTasks.Add(new AgentTask { Id = foreignTask, RootTaskId = foreignTask, WorkingDirectory = f.Card.Host.Fixture.Repository });
-                await db.SaveChangesAsync();
-                await db.TaskWorktreeMirrorBindings.Where(b => b.Id == initial.MirrorBindingId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, foreignTask));
-            }
-            var inspected = f.InspectionRequests;
-            await f.HeldAsync("task_snapshot_changed", priorJournalEntries);
-            f.InspectionRequests.ShouldBe(inspected, "wrong-binding-refused-before-recipient");
-            await using (var db = f.Card.Host.CreateContext())
-                await db.TaskWorktreeMirrorBindings.Where(b => b.Id == initial.MirrorBindingId)
-                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, f.Card.TaskId));
-            foreach (var generation in new int[] { 1, 2 })
-            {
-                await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = "fixture-slot"; t.RemoteWorkspaceSlotGeneration = generation;
-                    t.RemoteWorkspaceSlotReleasedAt = null; });
-                await f.HeldAsync("slot_managed", priorJournalEntries);
-                f.InspectionRequests.ShouldBe(inspected, "slot-generation-held:" + generation);
-            }
-            await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = null; t.RemoteWorkspaceSlotGeneration = null; });
-
-            var hit = false;
-            f.BeforeIntent = _ => { hit = true; throw new IOException("before intent cut"); };
-            await Should.ThrowAsync<IOException>(() => f.TryAsync());
-            hit.ShouldBeTrue("remote-cut:before-intent");
-            (await f.EndpointAsync()).OperationId.ShouldBeNull();
-            f.BeforeIntent = null;
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-            f.AfterIntent = _ => { hit = true; throw new IOException("after intent cut"); };
-            hit = false;
-            await Should.ThrowAsync<IOException>(() => f.TryAsync());
-            hit.ShouldBeTrue("remote-cut:after-intent");
-            var intent = await f.EndpointAsync();
-            intent.OperationId.ShouldNotBeNull(); intent.ImmutableRequest.ShouldNotBeNull();
-            f.SentOperationIds.ShouldBeEmpty("intent-before-send");
-            f.AfterIntent = null;
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-
-            // Replay store check runs independently of the coordinator's first store read.
-            f.LiveStoreOverride = (call, real) => call == 2 ? Guid.NewGuid() : real;
-            var sent = f.SentOperationIds.Count;
-            await f.HeldAsync("runner_store_mismatch", priorJournalEntries);
-            f.SentOperationIds.Count.ShouldBe(sent, "wrong-store-replay-never-sent");
-            f.LiveStoreOverride = null;
-
-            hit = false;
-            f.BeforeRemoval = (_, _) => { hit = true; throw new Antiphon.Server.Application.Exceptions.ServiceUnavailableException(
-                "owned pre-send transport loss", Antiphon.SessionRunner.Contracts.PhoneHomeProblemTypes.Unavailable); };
-            (await f.TryAsync()).Complete.ShouldBeFalse();
-            hit.ShouldBeTrue("remote-cut:before-send");
-            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries);
-            f.BeforeRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-
-            f.AfterRemoval = _ => new Antiphon.Server.Application.Exceptions.ServiceUnavailableException(
-                "owned lost response", Antiphon.SessionRunner.Contracts.PhoneHomeProblemTypes.Unavailable);
-            Task? holder = preparation == MirrorPreparation.Busy ? await f.HoldMutationTurnAsync() : null;
-            var attempted = f.TryAsync();
-            if (holder is not null) await f.ReleaseWhenQueuedAsync(holder, attempted, Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
-            (await attempted).Complete.ShouldBeFalse();
-            Directory.Exists(f.Mirror).ShouldBeFalse("remote-recipient-actually-removed");
-            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "remote-recipient-journal");
-            f.AfterRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-            f.FailReceiptImport = true;
-            await Should.ThrowAsync<IOException>(() => f.TryAsync());
-            (await f.EndpointAsync()).ImportedReceipt.ShouldBeNull("remote-cut:receipt-import");
-            f.FailReceiptImport = false;
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-            f.AlterReceipt = response => response with { Receipt = response.Receipt! with { PreparationId = Guid.NewGuid() } };
-            (await f.TryAsync()).Reason.ShouldBe("receipt_mismatch");
-            (await f.EndpointAsync()).ImportedReceipt.ShouldBeNull("wrong-receipt-not-imported");
-            f.AlterReceipt = null;
-            await f.DisconnectAsync(); await f.ReconnectAsync();
-            await f.AssertRemovedAsync(await f.TryAsync(), priorJournalEntries + 1);
-            var saved = await f.EndpointAsync();
-            saved.OperationId.ShouldBe(intent.OperationId, "same-operation-replay");
-            saved.ImmutableRequest.ShouldBe(intent.ImmutableRequest, "same-command-bytes-replay");
-            f.SentOperationIds.Distinct().ShouldHaveSingleItem().ShouldBe(intent.OperationId!.Value);
-            f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "no-duplicate-destructive-action");
-            if (preparation == MirrorPreparation.Busy)
-                f.Order.ShouldContain("queued:" + Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
-            (await File.ReadAllTextAsync(binding.Sentinel)).ShouldBe(binding.SentinelBytes);
-            (await f.Card.Host.Fixture.RequiredAsync(f.Card.Host.Fixture.Remote, "rev-parse", binding.FullRef))
-                .Trim().ShouldBe(f.Binding.CreationBaselineSha);
+            // Legacy removal prunes the whole registration root and correctly refuses competing journal custody.
+            f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-has-no-competing-journal-custody");
+            await RetirementRemoteActionAsync(f);
+            f.Journal.Read()!.Count.ShouldBe(0, "legacy-removal-does-not-borrow-completed-card-authority");
+            return;
         }
+        var priorJournalEntries = f.Journal.Read()!.Count;
+        var binding = await BindAsync(f.Card.Host, f.Card.TaskId, removeAuthoring: true);
+        await f.DiscoverAsync();
+        var desktop = await f.Card.CleanupAsync();
+        AssertNotRequired(desktop, binding.Id, "remote-independent:" + preparation);
+        var initial = await f.EndpointAsync();
+        initial.State.ShouldBe(CardWorktreeCleanupEndpointState.Pending, "remote-independent-pending");
+        // A changed binding must refuse before inspection; recipient validation cannot mask the producer guard.
+        var foreignTask = Guid.NewGuid();
+        await using (var db = f.Card.Host.CreateContext())
+        {
+            db.AgentTasks.Add(new AgentTask { Id = foreignTask, RootTaskId = foreignTask, WorkingDirectory = f.Card.Host.Fixture.Repository });
+            await db.SaveChangesAsync();
+            await db.TaskWorktreeMirrorBindings.Where(b => b.Id == initial.MirrorBindingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, foreignTask));
+        }
+        var inspected = f.InspectionRequests;
+        await f.HeldAsync("task_snapshot_changed", priorJournalEntries);
+        f.InspectionRequests.ShouldBe(inspected, "wrong-binding-refused-before-recipient");
+        await using (var db = f.Card.Host.CreateContext())
+            await db.TaskWorktreeMirrorBindings.Where(b => b.Id == initial.MirrorBindingId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.TaskId, f.Card.TaskId));
+        foreach (var generation in new int[] { 1, 2 })
+        {
+            await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = "fixture-slot"; t.RemoteWorkspaceSlotGeneration = generation;
+                t.RemoteWorkspaceSlotReleasedAt = null; });
+            await f.HeldAsync("slot_managed", priorJournalEntries);
+            f.InspectionRequests.ShouldBe(inspected, "slot-generation-held:" + generation);
+        }
+        await f.Card.ChangeTaskAsync(t => { t.RemoteWorkspaceSlotId = null; t.RemoteWorkspaceSlotGeneration = null; });
+
+        var hit = false;
+        f.BeforeIntent = _ => { hit = true; throw new IOException("before intent cut"); };
+        await Should.ThrowAsync<IOException>(() => f.TryAsync());
+        hit.ShouldBeTrue("remote-cut:before-intent");
+        (await f.EndpointAsync()).OperationId.ShouldBeNull();
+        f.BeforeIntent = null;
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+        f.AfterIntent = _ => { hit = true; throw new IOException("after intent cut"); };
+        hit = false;
+        await Should.ThrowAsync<IOException>(() => f.TryAsync());
+        hit.ShouldBeTrue("remote-cut:after-intent");
+        var intent = await f.EndpointAsync();
+        intent.OperationId.ShouldNotBeNull(); intent.ImmutableRequest.ShouldNotBeNull();
+        f.SentOperationIds.ShouldBeEmpty("intent-before-send");
+        f.AfterIntent = null;
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+
+        // Replay store check runs independently of the coordinator's first store read.
+        f.LiveStoreOverride = (call, real) => call == 2 ? Guid.NewGuid() : real;
+        var sent = f.SentOperationIds.Count;
+        await f.HeldAsync("runner_store_mismatch", priorJournalEntries);
+        f.SentOperationIds.Count.ShouldBe(sent, "wrong-store-replay-never-sent");
+        f.LiveStoreOverride = null;
+
+        hit = false;
+        f.BeforeRemoval = (_, _) => { hit = true; throw new Antiphon.Server.Application.Exceptions.ServiceUnavailableException(
+            "owned pre-send transport loss", Antiphon.SessionRunner.Contracts.PhoneHomeProblemTypes.Unavailable); };
+        (await f.TryAsync()).Complete.ShouldBeFalse();
+        hit.ShouldBeTrue("remote-cut:before-send");
+        f.Journal.Read()!.Count.ShouldBe(priorJournalEntries);
+        f.BeforeRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+
+        f.AfterRemoval = _ => new Antiphon.Server.Application.Exceptions.ServiceUnavailableException(
+            "owned lost response", Antiphon.SessionRunner.Contracts.PhoneHomeProblemTypes.Unavailable);
+        Task? holder = preparation == MirrorPreparation.Busy ? await f.HoldMutationTurnAsync() : null;
+        var attempted = f.TryAsync();
+        if (holder is not null) await f.ReleaseWhenQueuedAsync(holder, attempted, Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
+        (await attempted).Complete.ShouldBeFalse();
+        Directory.Exists(f.Mirror).ShouldBeFalse("remote-recipient-actually-removed");
+        f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "remote-recipient-journal");
+        f.AfterRemoval = null; f.Clock.Advance(TimeSpan.FromMinutes(6));
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+        f.FailReceiptImport = true;
+        await Should.ThrowAsync<IOException>(() => f.TryAsync());
+        (await f.EndpointAsync()).ImportedReceipt.ShouldBeNull("remote-cut:receipt-import");
+        f.FailReceiptImport = false;
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+        f.AlterReceipt = response => response with { Receipt = response.Receipt! with { PreparationId = Guid.NewGuid() } };
+        (await f.TryAsync()).Reason.ShouldBe("receipt_mismatch");
+        (await f.EndpointAsync()).ImportedReceipt.ShouldBeNull("wrong-receipt-not-imported");
+        f.AlterReceipt = null;
+        await f.DisconnectAsync(); await f.ReconnectAsync();
+        await f.AssertRemovedAsync(await f.TryAsync(), priorJournalEntries + 1);
+        var saved = await f.EndpointAsync();
+        saved.OperationId.ShouldBe(intent.OperationId, "same-operation-replay");
+        saved.ImmutableRequest.ShouldBe(intent.ImmutableRequest, "same-command-bytes-replay");
+        f.SentOperationIds.Distinct().ShouldHaveSingleItem().ShouldBe(intent.OperationId!.Value);
+        f.Journal.Read()!.Count.ShouldBe(priorJournalEntries + 1, "no-duplicate-destructive-action");
+        if (preparation == MirrorPreparation.Busy)
+            f.Order.ShouldContain("queued:" + Antiphon.SessionRunner.Contracts.PhoneHomeOperation.CompletedCardWorkspaceRemove);
+        (await File.ReadAllTextAsync(binding.Sentinel)).ShouldBe(binding.SentinelBytes);
+        (await f.Card.Host.Fixture.RequiredAsync(f.Card.Host.Fixture.Remote, "rev-parse", binding.FullRef))
+            .Trim().ShouldBe(f.Binding.CreationBaselineSha);
     }
 
     private static async Task RetirementRemoteActionAsync(CompletedCardMirrorFixture f)
