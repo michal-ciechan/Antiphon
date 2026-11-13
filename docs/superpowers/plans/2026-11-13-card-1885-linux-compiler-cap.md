@@ -193,8 +193,8 @@ Closed ordinary Code list. Import this table with the checkpoint tool, one run p
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1885-a/` | policy-portable | `/*/*/LinuxSharedCompilerPolicyTests/*` | V-1 | all eight named methods, 0 failed/skipped | 8 | 5 | true |
-| CP-2 | all | CP-1 | wrappers-linux | `/*/*/(BuildSlotScriptTests*)\|(RunCheckpointScriptTests*)/*` | V-2, R-1, R-2 | every portable/Linux method; Windows-only skips explicitly owed | 1 | 4 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1885-a/` | policy-portable | `/*/*/LinuxSharedCompilerPolicyTests/*` | V-1 | all eight named methods, 0 failed/skipped | 8 | 9 | true |
+| CP-2 | all | CP-1 | wrappers-linux | `/*/*/(BuildSlotScriptTests*)\|(RunCheckpointScriptTests*)/*` | V-2, R-1, R-2 | every portable/Linux method; Windows-only skips explicitly owed | 1 | 15 | true |
 | CP-3 | all | CP-1 | receipts-portable | `/*/*/(CheckpointColdBuildTests*)\|(CheckpointReceiptSafetyTests*)\|(CheckpointTerminalReceiptTests*)\|(HostCleanupCheckpointReceiptTests*)\|(LandVerificationBuildSlotTests*)/*` | R-2 | all listed classes, 0 failed; named platform-only skips recorded | 1 | 6 | true |
 | CP-4 | all | CP-1 | guards-portable | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)\|(DerivedImpactIndexTests*)/*` | R-3 | all listed classes, 0 failed; recount parameterized results at import | 1 | 3 | true |
 | CP-5 | all | n/a | environment-portable | `pwsh -NoProfile -File scripts/test-build-driver-environment.ps1` | R-1 | all existing child/direct cases, 0 failed | n/a | 1 | true |
@@ -244,3 +244,60 @@ evaluate the 30-minute phase cost after priming, and stop expansion if it cannot
 fit. No concurrent worktrees or production-idle witness in this authorized reduced
 inventory. Shut down only these two private pipes after collection. Preserve the
 original solution/concurrent/Windows obligations as unqualified; default stays OFF.
+
+### Measured Debug refinement and reduced inventory
+
+At executable source `191bbf25c83f0d13e8f30258a79bcdde8a662fd0`, the shared
+build passed: MSBuild 303.530 s, checkpoint execution 393.929 s, admission 60 s,
+wall 468.789 s. CP-1: 8 passed, 8.702 s execution / 23.771 s wall. CP-2:
+44 passed, two native Windows skips, 772.874 s execution / 848.102 s wall.
+CP-3: 45 passed, 197.667 s execution / 332.848 s wall. These are N=1 row
+samples, not reliable p95 estimates. CP-1's estimate now includes its actual
+build and row wall (492.560 s, rounded to 9 minutes); CP-2 rounds its measured
+wall to 15 minutes. CP-3's existing six-minute estimate covers its observed
+5m33s wall. CP-4 stays provisional until executed.
+
+The earlier successful build at `93482b89885d4dbd1b1828d30875a3bdd4c055f7`
+took 313.585 s execution. Nearest-rank empirical p95 of these two heterogeneous
+successful samples is 393.929 s, **provisional**; 2x is 13.131 minutes. The
+16-minute correction additionally covers twice the prior censored 458.070 s
+execution sample (15.269 minutes). Preserve the CARD-1885/R5 exception; do not
+call this a calibrated p95. The override also applies to rows because the CLI
+couples their deadlines to the build deadline. No test's own timeout changed.
+
+The first run was stopped through the supported tool command after CP-3, at
+28m19s, while CP-4 still awaited admission. Its 97 passed cases and two native
+Windows skips remain recorded; its terminal exit 130 remains canceled. CP-4's
+no-build continuation was canceled at the five-minute admission bound before
+any test began. Retain both outcomes. Split subsequent correctness invocations
+into bounded selections and retain the verified build with `--keep-outputs`
+where a later `row --no-build` consumes it; never repeat successful rows merely
+to hide the canceled run. Full receipt/source qualification remains incomplete.
+
+The server-project performance pilot cost 173.775 s build body plus 150 s
+admission, peak compiler minute 8.086 cores, peak RSS 5,774,454,784 bytes,
+zero fallback. Eight such invocations plus restore would exceed 30 minutes.
+The pilot's private compiler was shut down by its exact pipe and an inventory
+confirmed zero residue. No candidate or measured sample belongs to that pilot.
+
+Replace the performance project with the existing standard
+`tests/Antiphon.TimeoutAudit.Tests/Antiphon.TimeoutAudit.Tests.csproj` and its
+real tool reference. It has two compilations and no nested build Exec. New
+private identities use `-ExperimentId debug-small-17799819`, the same external
+cache root, and evidence under `.antiphon/c1885-debug/small-performance`.
+The closed commands are P-R (Baseline/Restore/0), P-0A (Baseline/Prime/0),
+P-0B (Candidate/Prime/0), P-1A (Baseline/Measured/1), P-1B (Candidate/Measured/1),
+P-2B (Candidate/Measured/2), P-2A (Baseline/Measured/2), P-3A (Baseline/Measured/3),
+P-3B (Candidate/Measured/3), each through its own five-minute-wait build-slot
+wrapper. Every command passes the literal project, identity, cache and evidence
+arguments above. No hidden build loop. Restore is separate; cap the measured
+collection at 30 minutes and reevaluate after priming. Report the pilot and all
+admission/execution costs separately, not as successful paired samples.
+
+For builds shorter than a minute, sample the private compiler through 61 seconds
+from build start, including post-build idle. Receipts separate build-body wall
+and post-build observation seconds. The rolling full-minute measurement is
+real but does not prove a continuously active minute or the original concurrent
+stress/production-idle gates. Do not extrapolate it to full-solution acceptance
+or default enablement. Thresholds remain <=10% slowdown, <=6 minute cores,
+<=8 GiB RSS and zero fallback; report small-N and load/cache limitations.

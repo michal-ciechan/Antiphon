@@ -72,6 +72,7 @@ $memoryStart = [IO.File]::ReadAllText('/proc/meminfo')
 $driverAffinity = [Antiphon.Build.LinuxCompilerToolset]::StatusValue('/proc/self/status', 'Cpus_allowed_list')
 $shared = 0; $fallback = $null
 $process = $null; $exitCode = $null; $failure = $null; $bodySeconds = $null; $idleExitSeconds = $null
+$startedAtUtc = [DateTimeOffset]::UtcNow
 $outTask = $null; $errTask = $null
 try {
     $clock.Start()
@@ -99,8 +100,14 @@ try {
         $records.Add(@{ Seconds = $now; CumulativeTicks = $cumulativeTicks; RssBytes = $rss; Compilers = $current;
             DriverCpuSeconds = $process.TotalProcessorTime.TotalSeconds })
         if ($clock.Elapsed.TotalMinutes -gt 10) { throw 'one build exceeded the provisional ten-minute bound; do not expand collection' }
-    } while (-not $process.WaitForExit(1000))
-    $clock.Stop(); $bodySeconds = $clock.Elapsed.TotalSeconds
+        $ended = $process.WaitForExit(1000)
+        if ($ended -and $null -eq $bodySeconds) { $bodySeconds = $clock.Elapsed.TotalSeconds }
+        # A small standard project can finish before a complete CPU minute exists.
+        # Continue observation, including explicitly reported idle, without adding
+        # another build or charging the idle interval to build-body wall time.
+        if ($ended -and $pipe -and $clock.Elapsed.TotalSeconds -lt 61) { Start-Sleep -Milliseconds 1000 }
+    } while (-not $ended -or ($pipe -and $clock.Elapsed.TotalSeconds -lt 61))
+    $clock.Stop()
     $exitCode = $process.ExitCode
     if (-not $outTask.Wait(3000) -or -not $errTask.Wait(3000)) { throw 'measurement output drain deadline' }
     if ($exitCode -ne 0) { throw "standard Linux project command failed with exit $exitCode" }
@@ -147,7 +154,9 @@ try {
     $cleanEnd = $LASTEXITCODE -eq 0 -and $sourceEnd -ceq $sourceSha
     $receipt = @{ SourceSha = $sourceSha; SourceEndSha = $sourceEnd; SourceClean = $cleanEnd; Worktree = $Worktree; Project = $Project; ExperimentId = $ExperimentId;
         Mode = $Mode; Phase = $Phase; Sample = $Sample; Grant = $grant; Diagnostic = $diagnostic; Pipe = $pipe; Sdk = $sdk;
-        Command = @($start.ArgumentList); PrepareSeconds = $prepare.Elapsed.TotalSeconds; BuildBodySeconds = $bodySeconds; ExitCode = $exitCode;
+        Command = @($start.ArgumentList); StartedAtUtc = $startedAtUtc; Host = [Environment]::MachineName;
+        PrepareSeconds = $prepare.Elapsed.TotalSeconds; BuildBodySeconds = $bodySeconds; ExitCode = $exitCode;
+        CompilerObservationSeconds = $clock.Elapsed.TotalSeconds; PostBuildObservationSeconds = [Math]::Max(0, $clock.Elapsed.TotalSeconds - $bodySeconds);
         Failure = $failure; SharedResponses = $shared; Fallback = $fallback; LoadStart = $loadStart; LoadEnd = [IO.File]::ReadAllText('/proc/loadavg').Trim(); MemoryStart = $memoryStart;
         DriverAffinity = $driverAffinity; ChosenCpus = $cpus; ClockTicksPerSecond = $clk; WarmAtStart = $initial; OwnedIdentities = @($known.Keys);
         PeakAggregateRssBytes = $peakRss; MaximumFullMinuteCores = $maxMinute; ThreadEscape = $threadEscape; IdleExitSeconds = $idleExitSeconds;
