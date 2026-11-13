@@ -89,3 +89,20 @@ The aggregate desktop test becomes five independently timed consumer-family test
 Each extracted family has a 30-second deadline, narrowed from the prior 60-second aggregate wall. This is a provisional cold/load-aware budget; ten fresh-process whole-class samples below are the bounded calibration collection. The inherited remote and legacy-dirty deadlines stay 60 seconds (remote observed p95 about 26.5 seconds in the three original class runs). A single aggregate deadline of roughly 116 seconds would merely hide cumulative cost and was not adopted. No production behavior changes.
 
 Final builds use native output and UseAppHost=false. Since production source and project references are unchanged, BuildProjectReferences=false reuses the product assemblies from the diagnostic build and rebuilds the changed test project; matching properties are passed on no-build runs. This avoids source-revision metadata alone recompiling identical product code. Staged helper targets retain their normal outputs. No custom OutputPath is used.
+
+## Loaded CP-2 and guard evidence; budget calibration
+
+At clean committed source 9b4071ce0fa99f10f56cedcd998df7f26f113e31:
+
+- Native test-project build passed (0 errors), 244.89 seconds excluding slot wait, matching UseAppHost=false and BuildProjectReferences=false on runs. Unchanged product assemblies came from the preceding full diagnostic build.
+- The gated derived-index driver passed: derived-impact-index unchanged; windowsOnly=31, linuxOnly=1. No index commit was needed.
+- Exact CARD-1894 CP-2 nine-class filter: 373 passed, 0 failed/skipped; outer wall 317.892 seconds, TUnit run 308.968 seconds. The increase from 367 to 373 is exactly the six additional results created by splitting the aggregate.
+- Exact six-prefix guard union after the driver: 80 passed, 0 failed/skipped; outer wall 460.497 seconds, TUnit run 335.333 seconds.
+
+CP-2's loaded landing-family sample was 26.378 seconds and legacy-policy family was 17.169 seconds, both passing their initial 30-second walls. Those samples show the initial cold/warm three-sample budget was too tight for the loaded tail. The final family deadlines are 55 seconds for landing (2x26.378 rounded up to five seconds), 35 seconds for legacy policy (2x17.169 rounded up), and 30 seconds for the other extracted families. All remain below the original 60-second wall; the fix still partitions independent work instead of raising the monolithic timeout. The calibration is provisional pending the final fresh-process class samples, and no failed sample is hidden or retried.
+
+These 373/80 results bind the earlier, stricter-budget SHA above. The final calibration changes exactly two Timeout integer literals plus this report; final class repetitions verify those changed tests. Do not relabel the earlier CP-2/guard receipts as execution at the later SHA.
+
+The changed paths do not intersect the nightly policy or live-lane ProtectedInputs census. policyHash remains 7763a891c3bdde500976e5391b028f3667590ba1186e036abfbf7ce826857fcb and PinnedInputDigest remains 2b9353e8b21fd177508ada0e40db00cdb4d1833933f70af9adc160a8ac709324. No re-pin was necessary.
+
+At the pre-calibration repair, evidence-diff passed (2 commits, 0 violations) and merge-tree against fetched origin/master 6f5ce63cb209b856d757691c08426f6fad3dfab5 was clean (tree 4bf4c24bfb3575ffa0357b9eab530702cc689847). Final-tip checks are recorded below.
