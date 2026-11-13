@@ -26,3 +26,21 @@ proof remains owed by the caller under CP-17, not credited by Linux.
 | CP-91 | S5a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s5a-pty-guards/` | linux-pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 1 |
 | CP-92 | S5a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s5a-runner-guards/` | linux-runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 2 |
 | CP-93 | S5a | CP-3 | linux-derived-index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | derived index freshness | exact freshness method, 0 failed/skipped | 1 | 2 |
+
+## Measured batching correction
+
+Initial run `20261113-022753-b7b3`, source
+`7170a92387a3026bb42492ce05853e2892d5ce2b`, was stopped at 27m25s after
+CP-3 passed 3/3 and CP-93 failed its existing 60s rebuild bound at 61.596s.
+CP-90/91/92 were not executed and remain required. CP-3's build occupied 334s
+plus 150s admission; its row waited 210s and executed 112s. The guard compile
+alone took 8m04s; confinement/admission added further cost. These are loaded
+observations, not measured p95. No timeout/assertion is widened.
+
+Run the same closed table in three bounded tool invocations at the committed
+source: `--rows CP-3,CP-93`, `--rows CP-90`, and `--rows CP-91,CP-92`, with
+`--parallel 1 --expected-source-sha <HEAD>`. This retains every required row and
+isolated build, avoids a repeat of the combined run, and targets each batch below
+30 minutes. Keep all prior red/cancelled evidence. Direct harness runs are
+explicit diagnostic/red-first checks for the streaming target and must be reported
+separately; they do not discharge a checkpoint receipt.
