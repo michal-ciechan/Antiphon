@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
-using Antiphon.TestSupport;
+using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Checkpoints;
 
