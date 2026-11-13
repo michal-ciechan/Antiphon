@@ -17,6 +17,7 @@ public sealed class VolumeRetirementContentTests
 
     [Test]
     [Arguments("ignored", "Ready")]
+    [Arguments("linked", "Ready")]
     [Arguments("outside", "RecycleGitAuditUnknown")]
     [Arguments("remote", "RecycleGitAuditUnknown")]
     [Arguments("not-ignored", "RecycleGitAuditUnknown")]
@@ -28,6 +29,23 @@ public sealed class VolumeRetirementContentTests
         NativeLinuxGate.Require(NativeLinuxReason);
         using var fixture = new C1008HostFixture(main: false);
         var (_, outer) = await VolumeRetirementFixture.SeedPublishedOuter(fixture);
+        if (vector == "linked")
+        {
+            var linked = Path.Combine(VolumeRetirementFixture.WorkMount(fixture), "worktrees", "task-selector");
+            var link = await VolumeRetirementFixture.Bash("git -C " + VolumeRetirementFixture.Quote(outer) +
+                " worktree add -q --detach " + VolumeRetirementFixture.Quote(linked) + " HEAD");
+            link.Exit.ShouldBe(0, link.Output);
+            // The helper reads the volume at /work, like the real runner. Rewrite
+            // only this fixture's pointers before entering its private namespace.
+            var pointer = Path.Combine(linked, ".git");
+            var value = await File.ReadAllTextAsync(pointer);
+            var admin = value["gitdir: ".Length..].Trim();
+            var work = VolumeRetirementFixture.WorkMount(fixture);
+            await File.WriteAllTextAsync(pointer, value.Replace(work, "/work", StringComparison.Ordinal));
+            var backPointer = Path.Combine(admin, "gitdir");
+            await File.WriteAllTextAsync(backPointer, (await File.ReadAllTextAsync(backPointer)).Replace(work, "/work", StringComparison.Ordinal));
+            outer = linked;
+        }
         var nested = Path.Combine(outer, vector == "outside" ? "other-scratch" : ".antiphon/selector-evidence/x/fixtures/y");
         var setup = await VolumeRetirementFixture.Bash($$"""
             set -euo pipefail
