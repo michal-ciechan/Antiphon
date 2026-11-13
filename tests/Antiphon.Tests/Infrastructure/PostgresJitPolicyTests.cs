@@ -120,6 +120,16 @@ public sealed class PostgresJitPolicyTestsSetup
             .ShouldBeFalse();
     }
 
+    [Test]
+    public void measurement_script_records_statement_time_and_never_resets()
+    {
+        var text = DockerStackDocuments.Read("scripts/postgres-jit-window.ps1");
+        text.Contains("total_exec_time", StringComparison.Ordinal).ShouldBeTrue("statement time column missing");
+        text.Contains("jit_", StringComparison.Ordinal).ShouldBeTrue("jit columns missing");
+        text.Contains("pg_stat_statements_reset", StringComparison.Ordinal).ShouldBeFalse();
+        text.Contains("docker stats", StringComparison.Ordinal).ShouldBeTrue("container sample missing");
+    }
+
     private static NpgsqlConnectionStringBuilder Connection(string options) => new()
     {
         Host = "127.0.0.1",
