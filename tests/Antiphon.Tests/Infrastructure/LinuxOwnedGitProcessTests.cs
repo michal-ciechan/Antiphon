@@ -43,6 +43,36 @@ public sealed class LinuxOwnedGitProcessTests
     }
 
     [Test]
+    [Timeout(10_000)]
+    [NativeLinuxOnly("The existing production marker factory selects the shared Linux census.")]
+    public async Task Existing_marker_factory_observes_live_then_empty_membership(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsLinux()) { Skip.Test("Linux marker census"); return; }
+        using var safety = DescendantLeakScope.Create();
+        using var marker = OwnedChildMarker.Create(_ => { });
+        var start = new ProcessStartInfo("/bin/sleep") { UseShellExecute = false };
+        start.ArgumentList.Add("120");
+        safety.Apply(start);
+        marker.Apply(start);
+        using var child = Process.Start(start);
+        child.ShouldNotBeNull();
+        try
+        {
+            marker.Attach(child, _ => { });
+            marker.RootStartTime.ShouldNotBeNull();
+            marker.AnyAlive().ShouldBe(true);
+            child.Kill();
+            await child.WaitForExitAsync(ct);
+            marker.AnyAlive().ShouldBe(false);
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill();
+            await child.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Test]
     [Arguments(false, false)]
     [Arguments(true, false)]
     [Arguments(false, true)]

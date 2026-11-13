@@ -15314,7 +15314,8 @@
       "path": "server/Infrastructure/Git/OwnedChildMarker.cs",
       "classes": [
         "CardFileRepositoryTryKillTests",
-        "LandingGitTests"
+        "LandingGitTests",
+        "LinuxOwnedGitProcessTests"
       ]
     },
     {
@@ -24586,6 +24587,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/DescendantLeakScope.cs",
       "classes": [
         "DescendantLeakScopeTests",
+        "LinuxOwnedGitProcessTests",
         "RepositoryMutationLeaseTests"
       ]
     },

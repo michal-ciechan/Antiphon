@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  $114a1abb7129fa8c20142424b181f2d05fab30fa148ae6a300e4c2067f913d49a",
+  "policyHash": "7763a891c3bdde500976e5391b028f3667590ba1186e036abfbf7ce826857fcb",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1488,6 +1488,7 @@
           "class": "LinuxOwnedGitProcessTests",
           "methods": [
             "Disposal_closes_all_used_streams",
+            "Existing_marker_factory_observes_live_then_empty_membership",
             "Termination_kills_reparented_member_before_rescue",
             "A_child_born_during_signaling_is_joined_by_a_later_pass"
           ],
