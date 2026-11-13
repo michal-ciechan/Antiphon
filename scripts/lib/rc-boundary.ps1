@@ -127,7 +127,8 @@ function Add-RcBoundaryString {
         [Parameter(Mandatory)][System.IO.MemoryStream]$Buffer,
         [Parameter(Mandatory)][AllowEmptyString()][string]$Value
     )
-    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $encoder = New-Object Text.UTF8Encoding($false, $true)
+    $bytes = $encoder.GetBytes($Value)
     Add-RcBoundaryU32 -Buffer $Buffer -Value ([uint32]$bytes.Length)
     $Buffer.Write($bytes, 0, $bytes.Length)
 }
