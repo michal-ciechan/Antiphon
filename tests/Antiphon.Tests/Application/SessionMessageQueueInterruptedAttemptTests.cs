@@ -27,6 +27,82 @@ public class SessionMessageQueueInterruptedAttemptTests
     private static TimeSpan InterruptedAge =>
         TimeSpan.FromSeconds(3 + 3 + 30); // harness confirm + grace + unobservable tolerance
 
+    // CARD-1892 D-1: the durable shape left by an uncertain launch Input. Scrollback
+    // is not a composer reading. Each later flush must independently forbid another write.
+    [Test]
+    [Arguments(false, false, true)]
+    [Arguments(false, false, false)]
+    [Arguments(false, true, true)]
+    [Arguments(false, true, false)]
+    [Arguments(true, false, true)]
+    [Arguments(true, false, false)]
+    [Arguments(true, true, true)]
+    [Arguments(true, true, false)]
+    public async Task C1892_Composerless_unknown_attempt_waits_without_Enter_or_retyping(
+        bool rulesRow, bool aged, bool headVisible)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new() { ConnectionString = schema.ConnectionString });
+        var started = h.Now - (aged ? InterruptedAge + TimeSpan.FromSeconds(5) : TimeSpan.FromSeconds(1));
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: started);
+        await using (var setup = h.CreateObserverContext())
+        {
+            await setup.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                .SetProperty(s => s.GrokRulesState, rulesRow ? GrokRulesState.Pending : GrokRulesState.Ready));
+            if (rulesRow)
+                await setup.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
+                    .SetProperty(m => m.RulesRefreshKey, "c1892-rules-unknown"));
+            (await setup.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId)).ShouldBe(0);
+        }
+        h.Adapter.RenderedScreenOverride = (headVisible ? Body + "\n" : "") + "Waiting for response";
+        h.Adapter.OnSubmitted = _ => Task.CompletedTask;
+
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await AssertUnknownAsync();
+
+        // The same live TUI later scrolls the head away, beyond even the discovery window.
+        await using (var age = h.CreateObserverContext())
+            await age.SessionQueuedMessages.Where(m => m.Id == id).ExecuteUpdateAsync(u => u
+                .SetProperty(m => m.LastDeliveryStartedAt, h.Now - TimeSpan.FromMinutes(90)));
+        h.Adapter.RenderedScreenOverride = "Waiting for response";
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await AssertUnknownAsync();
+        await using (var attention = h.CreateObserverContext())
+        {
+            var incidents = await attention.AgentIncidents.Where(i => i.SessionId == h.SessionId
+                && i.FailureReason == "input-delivery-unknown").ToListAsync();
+            incidents.Count.ShouldBe(1, "one durable attention note per unresolved attempt, including rules rows");
+            incidents[0].Severity.ShouldBe(AlertSeverity.Warning);
+            incidents[0].Message.ShouldContain("orchestrator decision");
+            incidents[0].Message.ShouldNotContain(Body);
+        }
+
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, Body, timestamp: h.Now);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        await h.Queue.FlushIfIdleAsync(h.SessionId, CancellationToken.None);
+        await using var confirmed = h.CreateObserverContext();
+        var row = await confirmed.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+        row.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        row.DeliveryAttempts.ShouldBe(1);
+        h.Adapter.Inputs.ShouldBeEmpty();
+
+        async Task AssertUnknownAsync()
+        {
+            h.Adapter.Inputs.ShouldBeEmpty("later flush must send neither another body nor an Enter");
+            h.Adapter.SubmittedBodies.ShouldBeEmpty();
+            await using var db = h.CreateObserverContext();
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBeNull();
+            row.DeliveryAttempts.ShouldBe(1);
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId)).ShouldBe(0);
+            (await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId)).Status.ShouldBe(SessionStatus.Running);
+        }
+    }
+
     [Test]
     public async Task Delivered_outcome_stamps_the_verdict()
     {
