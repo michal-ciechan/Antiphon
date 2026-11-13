@@ -1,0 +1,1 @@
+{"cases":23170,"classes":1678,"chunks":184,"optOutBytes":727859,"boundarySeconds":[5.803807,5.8811786,5.3060096],"boundaryP50":5.803807,"boundaryP95":5.8811786,"offPackSeconds":3.5759612,"boundSeconds":12,"boundEnforced":false,"loadedSampleSeconds":14.4532766,"beforeBoundarySeconds":[12.8237895,24.1416328,25.168453],"beforeBoundaryP50":24.1416328,"beforeBoundaryP95":25.168453}
