@@ -123,6 +123,39 @@ function Test-CanonicalCases {
         Note (SameBag @(Selected $plan $nodes) @($nodes.Uid)) 'canonical packing changed selection'
     } catch { Note $false ('canonical pack refused: ' + $_.Exception.Message) }
 }
+function Test-SerializerOrder {
+    # pwsh 7 ConvertTo-Json ordinal order. U+0085 must sort as "\u0085", before "xa".
+    . (Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden/serializer-order.ps1')
+    $oracle = @(Get-RcSerializerOracleFailures)
+    Note ($oracle.Count -eq 0) ('ConvertTo-Json oracle moved: ' + ($oracle -join ','))
+    $keys = @(Get-RcSerializerKeyFailures)
+    Note ($keys.Count -eq 0) ('sort key is not ConvertTo-Json: ' + ($keys -join ','))
+    $nodes = @(New-RcSerializerOrderNodes)
+    $map = Get-RcSerializerOrderMap
+    $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds
+    try {
+        $plan = @(Pack $nodes $map @((New-RcSerializerOrderLeaf $nodes)))
+        Note (($plan.Count -eq 1) -and ($plan[0].boundary -ceq 'core')) 'serializer-order constructors did not stay one core chunk'
+        $built = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds - $before
+        Note ($built -eq 1) ('boundary index built ' + $built + ' times')
+        $actual = @($plan[0].caseMembership | ForEach-Object { [string]$_.uid })
+        $expected = @(Get-RcSerializerUidOrder $nodes)
+        Note (($actual -join ',') -ceq ($expected -join ',')) ('membership order ' + ($actual -join ',') + ' != ' + ($expected -join ','))
+        $nel = [array]::IndexOf($actual, '1')
+        $xa = [array]::IndexOf($actual, '2')
+        Note ($nel -ge 0 -and $xa -ge 0 -and $nel -lt $xa) ('U+0085 uid 1 sorted after xa uid 2 (' + $nel + ',' + $xa + ')')
+        Note (@($plan[0].identityKeys | Select-Object -Unique) -join '|' -ceq 'Antiphon.Tests.Fixture.Matrix/Run') 'constructor identity was not the bare class'
+    } catch { Note $false ('serializer-order pack refused: ' + $_.Exception.Message) }
+    $numeric = @(New-RcSerializerNumericUidNodes)
+    $beforeNumeric = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds
+    try {
+        $numericPlan = @(Pack $numeric $map @((New-RcSerializerOrderLeaf $numeric)))
+        $builtNumeric = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds - $beforeNumeric
+        Note ($builtNumeric -eq 1) ('numeric uid index built ' + $builtNumeric + ' times')
+        $numericActual = @($numericPlan[0].caseMembership | ForEach-Object { [string]$_.uid })
+        Note (($numericActual -join ',') -ceq '10,2') ('uid string order lost: ' + ($numericActual -join ','))
+    } catch { Note $false ('numeric uid pack refused: ' + $_.Exception.Message) }
+}
 function Test-Collision {
     # Real S2 64-bit collision through the finalizer used by the packer.
     # Already partitioned launch descriptors witness metadata and case custody;
@@ -153,6 +186,7 @@ switch ($Case) {
     DefaultFullPackKeepsIds { Test-Default }
     CanonicalDigestIncludesCaseKeys { Test-CanonicalCases }
     ShortIdCollisionUsesS2Policy { Test-Collision }
+    SerializerEquivalentConstructorOrder { Test-SerializerOrder }
     default { throw "unknown case $Case" }
 }
 Assert-C487 ($script:errors.Count -eq 0) ('RBP ' + $Case + '.contract') ($script:errors -join '; ')
