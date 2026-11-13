@@ -202,9 +202,9 @@ namespace Antiphon.Build
         {
             var args = new List<string>(Argv(start)).ToArray();
             LinuxSharedCompilerPolicy.Arguments(args, "/preflight", "preflight");
-            foreach (string key in LinuxSharedCompilerPolicy.ConflictingKeys)
-                if (start.EnvironmentVariables.ContainsKey(key) && !string.IsNullOrEmpty(start.EnvironmentVariables[key]))
-                    throw new ArgumentException("explicit compiler environment: " + key);
+            foreach (string conflictKey in LinuxSharedCompilerPolicy.ConflictingKeys)
+                if (start.EnvironmentVariables.ContainsKey(conflictKey) && !string.IsNullOrEmpty(start.EnvironmentVariables[conflictKey]))
+                    throw new ArgumentException("explicit compiler environment: " + conflictKey);
             if (idleSeconds < 1 || idleSeconds > 600) throw new ArgumentException("invalid compiler idle timeout");
             string cpus = LinuxSharedCompilerPolicy.SelectCpus(StatusValue("/proc/self/status", "Cpus_allowed_list"), grant);
             string uid = StatusValue("/proc/self/status", "Uid").Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0];
