@@ -43,9 +43,9 @@ separate slice, then rerun the red row. Resolve impacted classes again at HEAD.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | AD1 | n/a | surrogates | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case LoneSurrogatesFailClosed` | V-1871-1 | one contract, exit 0 after repair | n/a | 0.2 |
-| CP-2 | AD2 | n/a | duplicate-collision | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case DuplicateMembershipsAndUnassignedCollisions` | V-1871-2 | one contract, exit 0 after repair | n/a | 0.2 |
-| CP-3 | AD3 | n/a | case-count | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case ExplicitCaseKeyCount` | V-1871-3 | one contract, exit 0 after repair | n/a | 0.2 |
+| CP-1 | AD1 | n/a | surrogates | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case LoneSurrogatesFailClosed` | V-1871-1 | one contract, exit 0 after repair | n/a | 1 |
+| CP-2 | AD2 | n/a | duplicate-collision | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case DuplicateMembershipsAndUnassignedCollisions` | V-1871-2 | one contract, exit 0 after repair | n/a | 1 |
+| CP-3 | AD3 | n/a | case-count | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case ExplicitCaseKeyCount` | V-1871-3 | one contract, exit 0 after repair | n/a | 1 |
 | CP-4 | AD4 | n/a | sort-cost | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case OrdinalSortAndSingleDigest` | V-1871-4 | one contract, both timings <1s, exit 0 after repair | n/a | 1 |
 | CP-5 | Final | `tests/Antiphon.Tests -> bin-c1871-boundary/` | boundary | `/*/*/RcBoundaryChunkIdTests/*` | V-1871-1..4 R-1871-1 parent V-5..V-8 | every method, 0 failed | 11 | 4 |
 | CP-6 | Final | CP-5 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-1871-2 | each class nonzero, 0 failed | 11 | 12 |
