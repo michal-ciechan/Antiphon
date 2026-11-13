@@ -148,7 +148,9 @@ function Sort-RcBoundaryIdentities {
             ([string]$items[$i].method).Replace($nul, $escapedNul) + $separator +
             ([string]$items[$i].caseKey).Replace($nul, $escapedNul)
     }
-    [Array]::Sort($keys, $items, [StringComparer]::Ordinal)
+    # Select the non-generic overload explicitly; generic inference can convert
+    # the identity array and sort that copy instead of this array.
+    [Array]::Sort([Array]$keys, [Array]$items, [Collections.IComparer][StringComparer]::Ordinal)
     return $items
 }
 
