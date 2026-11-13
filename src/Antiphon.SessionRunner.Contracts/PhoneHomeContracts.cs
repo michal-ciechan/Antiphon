@@ -160,6 +160,12 @@ public enum PhoneHomeOperation
     WorkspaceBranchRefsDelete = 48,
     DecisionPathInspect = 49,
     HostLoadHistory = 50,
+
+    /// <summary>
+    /// CARD-1895. Delete allow-listed build output directories (exact names <c>bin</c>, <c>obj</c>, and <c>bin-*</c>)
+    /// from one finished, published, clean task mirror. The tree itself stays. An old runner has no such operation.
+    /// </summary>
+    WorkspaceDropOutputs = 51,
 }
 
 /// <summary>Exactly one prepare or verify payload; unknown versions fail closed.</summary>

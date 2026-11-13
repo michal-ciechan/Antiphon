@@ -34,7 +34,10 @@ public enum WorktreeResidueCandidateOutcome
     Queued = 3,
     Refused = 4,
     Partial = 5,
-    Removed = 6
+    Removed = 6,
+
+    /// <summary>CARD-1895. Build outputs were deleted. The task tree itself stayed.</summary>
+    Dropped = 7
 }
 
 public enum WorkspaceReservationKind

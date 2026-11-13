@@ -30,7 +30,7 @@ public sealed record WorkspaceRetainStep(
 /// deletion. Execute moves the tree into the retiring root (phase A, under the dispatcher's lock) and
 /// then runs <c>git worktree remove</c> without force (phase B, outside it); Git repeats its own clean check.
 /// </summary>
-public sealed class RunnerWorkspaceRetention
+public sealed partial class RunnerWorkspaceRetention
 {
     // \z, never $: in .NET $ also matches just before a final newline (review d0b57b9c A-3).
     private static readonly Regex LeafPattern = new(@"^task-[0-9a-f]{8}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);

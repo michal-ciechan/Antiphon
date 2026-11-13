@@ -29,9 +29,15 @@ namespace Antiphon.Tests.Application;
 [Timeout(45_000)]
 public sealed class C1677RetentionServerTests
 {
-    private static RunnerCapabilitiesDto RetentionRunner(bool capable = true) =>
-        new("InboxConhost", "inbox", "test", false,
-            Features: capable ? [RunnerCapabilityFeatures.WorkspaceRetentionV1] : [], VerificationCustodyBackend: null);
+    private static RunnerCapabilitiesDto RetentionRunner(bool capable = true, bool outputDrop = false)
+    {
+        List<string> features = [];
+        if (capable)
+            features.Add(RunnerCapabilityFeatures.WorkspaceRetentionV1);
+        if (outputDrop)
+            features.Add(RunnerCapabilityFeatures.WorkspaceOutputDropV1);
+        return new("InboxConhost", "inbox", "test", false, Features: features, VerificationCustodyBackend: null);
+    }
 
     internal sealed class World : IAsyncDisposable
     {
@@ -46,14 +52,24 @@ public sealed class C1677RetentionServerTests
         public bool InventoryComplete { get; set; } = true;
         public Func<PhoneHomeWorkspaceRetainRequest, PhoneHomeFrame, PhoneHomeFrame?> Retain { get; set; } = (_, frame) => Answer(frame, Removed());
 
-        public static async Task<World> StartAsync(bool capable = true, Action<IServiceCollection>? configure = null)
+        /// <summary>CARD-1895. A drop answer so a send cannot hang. Bytes are the scripted saving.</summary>
+        public Func<PhoneHomeWorkspaceOutputDropRequest, PhoneHomeFrame, PhoneHomeFrame?> Drop { get; set; } = (request, frame) =>
+        {
+            var dry = request.Mode == WorkspaceOutputDropModes.DryRun;
+            return Answer(frame, new PhoneHomeWorkspaceOutputDropResponse(
+                dry ? WorkspaceOutputDropCodes.WouldDrop : WorkspaceOutputDropCodes.Dropped,
+                dry ? WorkspaceOutputDropCodes.WouldDrop : WorkspaceOutputDropCodes.Dropped,
+                Bytes: 4096, Directories: 1));
+        };
+
+        public static async Task<World> StartAsync(bool capable = true, Action<IServiceCollection>? configure = null, bool outputDrop = false)
         {
             var settings = new RunnerWorktreeRetentionSettings
             {
                 Enabled = true, Execute = true, PauseBetweenSeconds = 0, MinTerminalHours = 12, MaxRemovalsPerTick = 25,
             };
             var monitor = new Monitor(settings);
-            var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable), configure: services =>
+            var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable, outputDrop), configure: services =>
             {
                 services.AddSingleton<IOptionsMonitor<RunnerWorktreeRetentionSettings>>(monitor);
                 services.AddSingleton<RunnerWorktreeRetentionTicks>();
@@ -74,6 +90,8 @@ public sealed class C1677RetentionServerTests
                 return Answer(frame, new PhoneHomeWorkspaceRetentionInventoryResponse(Inventory.ToList(), InventoryComplete));
             if (frame.Operation == PhoneHomeOperation.WorkspaceRetain)
                 return Retain(frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)!, frame);
+            if (frame.Operation == PhoneHomeOperation.WorkspaceDropOutputs)
+                return Drop(frame.Payload!.Value.Deserialize<PhoneHomeWorkspaceOutputDropRequest>(PhoneHomeFraming.Json)!, frame);
             return null;
         }
 
@@ -127,6 +145,12 @@ public sealed class C1677RetentionServerTests
             Rig.Peer.Incoming.ToArray()
                 .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceRetain)
                 .Select(f => f.Payload!.Value.Deserialize<PhoneHomeWorkspaceRetainRequest>(PhoneHomeFraming.Json)!)
+                .ToList();
+
+        public List<PhoneHomeWorkspaceOutputDropRequest> DropRequests() =>
+            Rig.Peer.Incoming.ToArray()
+                .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceDropOutputs)
+                .Select(f => f.Payload!.Value.Deserialize<PhoneHomeWorkspaceOutputDropRequest>(PhoneHomeFraming.Json)!)
                 .ToList();
 
         public static string PathOf(Guid id) => "/work/worktrees/task-" + id.ToString("N")[..8];

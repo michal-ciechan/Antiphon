@@ -36,6 +36,9 @@ public sealed class RunnerWorktreeRetentionService
     public const string LaneMirror = "RunnerMirror";
     public const string LaneInventory = "RunnerInventory";
     public const string LaneTemp = "RunnerTemp";
+
+    /// <summary>CARD-1895. Build-output drop on a tree whole-tree retention is still holding for age.</summary>
+    public const string LaneOutputDrop = "RunnerOutputDrop";
     public const string EventPrefix = "runner_mirror_retained";
 
     // \z, never $: in .NET $ also matches just before a final newline (review d0b57b9c A-3). A name holding a
