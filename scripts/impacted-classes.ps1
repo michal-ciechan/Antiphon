@@ -37,6 +37,15 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+# Opt-in diagnostics use stderr; stdout retains the selection contract.
+$script:selectorClock = [Diagnostics.Stopwatch]::StartNew()
+$script:selectorTiming = [ordered]@{ tableMs = 0.0; censusMs = 0.0; gitMs = 0.0; jsonInputMs = 0.0; jsonOutputMs = 0.0 }
+function Write-SelectorTiming {
+    if ($env:ANTIPHON_SELECTOR_TIMING -ne '1') { return }
+    $script:selectorTiming['scriptMs'] = $script:selectorClock.Elapsed.TotalMilliseconds
+    [Console]::Error.WriteLine('SELECTOR_TIMING ' + ($script:selectorTiming | ConvertTo-Json -Compress))
+}
+
 function Write-Err([string]$Message) {
     [Console]::Error.WriteLine($Message)
 }
@@ -60,9 +69,12 @@ function Refuse-Table([string]$Where, [string]$Problem) {
 
 function Exit-Json($Payload, [int]$Code) {
     if ($Json) {
+        $outputClock = [Diagnostics.Stopwatch]::StartNew()
         $json = $Payload | ConvertTo-Json -Depth 8
+        $script:selectorTiming.jsonOutputMs += $outputClock.Elapsed.TotalMilliseconds
         [Console]::Out.WriteLine($json)
     }
+    Write-SelectorTiming
     exit $Code
 }
 
@@ -202,10 +214,12 @@ function Invoke-Git([string[]]$GitArgs) {
         }
     }
     $psi.Arguments = ($parts -join ' ')
+    $gitClock = [Diagnostics.Stopwatch]::StartNew()
     $proc = [Diagnostics.Process]::Start($psi)
     $stdout = $proc.StandardOutput.ReadToEnd()
     $stderr = $proc.StandardError.ReadToEnd()
     $proc.WaitForExit()
+    $script:selectorTiming.gitMs += $gitClock.Elapsed.TotalMilliseconds
     return [pscustomobject]@{ Exit = $proc.ExitCode; Stdout = $stdout; Stderr = $stderr }
 }
 
@@ -310,9 +324,12 @@ if (-not (Test-Path -LiteralPath $Table)) {
     exit 1
 }
 
+$tableClock = [Diagnostics.Stopwatch]::StartNew()
 try {
     $raw = [IO.File]::ReadAllText($Table)
+    $jsonClock = [Diagnostics.Stopwatch]::StartNew()
     $doc = $raw | ConvertFrom-Json
+    $script:selectorTiming.jsonInputMs += $jsonClock.Elapsed.TotalMilliseconds
 }
 catch {
     Write-Err ("impacted-classes table is not valid JSON: " + $_.Exception.Message)
@@ -514,6 +531,8 @@ function Test-Any([System.Collections.Generic.List[regex]]$Regexes, [string]$Rel
 }
 
 $script:testProjectDirs = Get-TestProjectDirs
+$script:selectorTiming.tableMs = $tableClock.Elapsed.TotalMilliseconds
+$censusClock = [Diagnostics.Stopwatch]::StartNew()
 
 # One walk: class declarations and downgrade-pattern files. bin/obj are build output.
 # The walk reads ~2,600 files (~42 MB). A file is a derive hit when ANY pattern matches, so the patterns are
@@ -576,6 +595,8 @@ foreach ($className in @($classWord.Keys)) {
     Fill-Sorted $classWord[$className] $owned
     $filesByClass[$className] = $owned
 }
+
+$script:selectorTiming.censusMs = $censusClock.Elapsed.TotalMilliseconds
 
 # Named classes are refused for audit and select. Hashtables ignore case, so the census is ordinal.
 $census = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
@@ -966,7 +987,9 @@ function Get-DerivedIndex {
         return $state
     }
     try {
+        $jsonClock = [Diagnostics.Stopwatch]::StartNew()
         $doc = [IO.File]::ReadAllText($indexPath) | ConvertFrom-Json
+        $script:selectorTiming.jsonInputMs += $jsonClock.Elapsed.TotalMilliseconds
     }
     catch {
         Refuse-Index $_.Exception.Message
