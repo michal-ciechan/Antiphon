@@ -236,6 +236,23 @@ Before execution compare each suffix pattern against declarations in `tests/`; e
 
 Commit each slice and push. Invoke the checkpoint tool once per committed `After` group, selecting `--rows` when needed, with `--expected-source-sha <full-sha>`, `--serial`, provisional `--row-timeout 10m --total-timeout 20m --total-timeout-override-reason 'CARD-1886/1887/1888 provisional bounded commissioning; collect p95'` and bounded admission. For the 10m admission bound, import the plan to an ignored manifest and set only `build.slotWaitMinutes: 10`; run it as `run <manifest.yaml>` with the same row selections and source binding. Bootstrap the tool through `scripts/build-slot.ps1` if no built tool exists; report that bootstrap separately. Wait on exit 75 until terminal; never end a delegate turn with an owned run in flight. The checkpoint executor takes build slots itself. Direct builds, if a justified extra is needed, use the host gate and native default output; no `-o`/`OutputPath`. Keep source frozen during runs. A red checkpoint is not green because its failure appears inherited: reproduce the exact failing case at base, preserve both receipts, then report the real outcome.
 
+S2 Code amendment (f56921e1): execute CP-2 and CP-10 only for the commissioned S2 slice. CP-10 includes DerivedImpactIndexTests per the brief. CP-5/CP-8 estimates are rounded up to integer minutes because the importer refuses fractional estimates; those S4/S5 rows remain out of this slice. An initial committed CP-2 run retains the legacy query to prove the plan-budget test red before the SQL replacement. No migrations or OS-selected production behavior change. Initial red receipt 20261113-201257-24fb retains bin-c1886-s2/ by design; the corrected CP-2 run uses fresh bin-c1886-s2b/ with the same row/filter, preserving red artifacts. The actual diff's only matching impacted-classes policy row is `test-lane-category`, covered by CP-10. Derived reverse-edge candidates extend well beyond this query; the named CP-2 classes bound this slice's unchanged execution/retry/delivery behavior. No full assembly or Unit lane run is commissioned.
+
+Canonical unbound candidate: [CARD-1886 S2](../mutations/2026-11-13-card-1886-s2-unbound.md). CP-10 commissioning 20261113-204733-186f was explicitly stopped/joined during its build to add that handoff before final qualification; it executed no tests. The replacement row uses fresh bin-c1886-allc/. The completed S2 receipt remains bound to 872ab03dd11d38a09b5ef1a67fd4ee8b8cb76161; subsequent changes only add this Markdown handoff and adjust its checkpoint output path.
+
+CP-10 at 6d5d601dc374a09d0e448036ad6145388dc8d5b8 (20261113-205134-9ff4) executed 106 cases: 97 passed, 9 failed, all from the new Slow class missing its registry pair. The repair appends its FQN plus measured reason to tests/Antiphon.Tests/slow-tests-allowlist.txt, preserves Slow and every guard, and reruns the same CP-10 filter in fresh bin-c1886-allc/. This registry is outside the six protected nightly inputs; no policy/pin edit is required. C# production/tests and the S2 green receipt remain unchanged.
+
+S2 pending SourceLanding Mutation inventory (all pending; Code's legacy red is ordinary regression evidence):
+
+| PC | Exact test method on RuntimeActionClaimQueryTests | Compiling defect variants |
+|---|---|---|
+| PC-S2-1 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Remove carried keys from destinations; remove the earlier-null wildcard; remove the later-null wildcard. |
+| PC-S2-2 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Remove late keys; remove the queued-message session restriction; include non-channel rows in the blocker set. |
+| PC-S2-3 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Add a global due-time filter; reverse phase priority; reverse sequence priority; reverse trigger-kind priority. |
+| PC-S2-4 | Small_and_debt_heavy_plans_bound_cost_and_seek_queued_messages | Restore the legacy correlated selector (cost assertion); replace the keyed queued-message join with a compiling table-wide scan (scan assertion). |
+
+Unique `(session, sequence, kind)` storage prevents two `channel` rows at the same sequence. The ties fixture therefore uses channel/transcript/status/catchup ties, preserving the existing strict-earlier rule without manufacturing invalid rows. No numeric PC budget from the original plan is superseded; Mutation owns method-scoped execution, missing-control discovery and any newly discovered variant.
+
 ### Checkpoints
 
 Every row below is portable server/Postgres lane; ordinary scope is exactly these rows. Reuse cells refer only to an earlier build with the same `After`. Grouped run S5 includes CP-6–CP-9. CP-10 is the final integrated source guard run. EstimatedMinutes are provisional under the budget above.
@@ -243,15 +260,15 @@ Every row below is portable server/Postgres lane; ordinary scope is exactly thes
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1886-s1/ | jit-policy | `/*/*/(PostgresJitPolicyTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureIsolationTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)/*` | V-1 | all listed, 0 failed | 3 | 5 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1886-s2/ | action-claim | `/*/*/(RuntimeActionClaimQueryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2 | all listed, 0 failed | 6 | 6 |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1886-s2b/ | action-claim | `/*/*/(RuntimeActionClaimQueryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2 | all listed, 0 failed | 6 | 6 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1888-s4/ | ingest-identity | `/*/*/(TranscriptIdentityWindowTests*)\|(AgentSessionRuntimeTests*)\|(SessionStateCommitTests*)\|(SessionStateWarmupTests*)\|(TranscriptSinceClientTests*)/*` | V-4 | all listed, 0 failed | 5 | 5 |
-| CP-5 | S4 | CP-4 | transcript-index-regression | `/*/*/TranscriptHotPathQueryTests/*` | V-4 | all listed, 0 failed | 4 | 2.5 |
+| CP-5 | S4 | CP-4 | transcript-index-regression | `/*/*/TranscriptHotPathQueryTests/*` | V-4 | all listed, 0 failed | 4 | 3 |
 | CP-6 | S5 | tests/Antiphon.Tests -> bin-c1888-s5/ | transcript-read-budget | `/*/*/(TranscriptReadBudgetTests*)\|(TranscriptPromptSpanTests*)\|(TaskReportTurnSelectorTests*)/*` | V-5 | all listed, 0 failed | 3 | 4 |
 | CP-7 | S5 | CP-6 | refresh-and-reply | `/*/*/(PolicyRefreshServiceTests*)\|(ChannelReplyLateConfirmDispatchTests*)/*` | V-5 | all listed, 0 failed | 2 | 2 |
-| CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 0.5 |
+| CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 1 |
 | CP-9 | S5 | CP-6 | channel-ttl | `/*/*/ChannelReplyDurabilityTests/(Ttl_with_no_matching_prompt_is_stale_ttl*)\|(Ttl_with_a_matching_prompt_but_no_turn_end_is_turn_incomplete*)\|(Ttl_with_a_completed_answer_captures_before_recording_expired_preparation*)` | V-5 | all listed, 0 failed | 3 | 1 |
-| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-all/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
+| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-allc/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
 
 ## Nightly pins, publication and handoff
 
