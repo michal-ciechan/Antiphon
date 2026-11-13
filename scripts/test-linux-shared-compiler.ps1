@@ -35,7 +35,7 @@ function Invoke-CompilerChild($Start, [int]$Milliseconds = 30000) {
     }
 }
 
-if ($Case -eq 'Adapter') {
+function Test-C1885Adapter {
     # No compiler, SDK mutation, native affinity change, or live broker here.
     # Linux preparation is tested on the real ProcessStartInfo through its PS adapter.
     $start = New-CompilerStart 'dotnet' @('build', 'literal project.csproj', '-maxcpucount:3') $repo
@@ -75,6 +75,16 @@ if ($Case -eq 'Adapter') {
     Assert-Compiler (($argsNow[4..($argsNow.Count - 1)] -join "`n") -ceq ($tokens[1..($tokens.Count - 1)] -join "`n")) 'literal argv including application boundary is retained'
     $result = Invoke-CompilerChild $prepared
     Assert-Compiler ($result.Exit -eq 7) 'fake driver retains command exit status'
+    $wrapper = New-CompilerStart (Get-Command pwsh).Source (@('-NoProfile', '-File', (Join-Path $repo 'scripts/build-slot.ps1'), '-Label', 'c1885-offline-wrapper', '--', $fake) + $tokens) $scratch
+    $wrapper.Environment['XDG_CACHE_HOME'] = $scratch
+    $wrapper.Environment['C589_SLOT_SHIM'] = Join-Path $repo 'scripts/fixtures/c589-slot-shim.ps1'
+    $wrapper.Environment['C589_SLOT_SCRIPT'] = 'granted'
+    $wrapper.Environment['C589_SLOT_LOG'] = Join-Path $scratch 'slot.log'
+    [void]$wrapper.Environment.Remove('C589_COMMAND_SHIM')
+    $wrapped = Invoke-CompilerChild $wrapper
+    Assert-Compiler ($wrapped.Exit -eq 7) 'real wrapper preserves fake driver failure'
+    Assert-Compiler ($wrapped.Out.Contains('ARG:-p:RoslynTargetsPath=') -and $wrapped.Out.Contains('ARG:-p:RoslynTasksAssembly=') -and $wrapped.Out.Contains('ARG:-p:SharedCompilationId=')) 'real wrapper prepares complete literal argv'
+    Assert-Compiler ($wrapped.Out.Contains('BUILD SLOT released')) 'real wrapper releases its fixture lease after failure'
     $again = New-CompilerStart $fake $tokens $repo
     $again.Environment['XDG_CACHE_HOME'] = $scratch
     Set-AntiphonBuildDriverEnvironment -StartInfo $again
@@ -84,6 +94,7 @@ if ($Case -eq 'Adapter') {
         if ($null -eq $setting) { [void]$off.Environment.Remove('ANTIPHON_LINUX_COMPILER_POLICY') }
         else { $off.Environment['ANTIPHON_LINUX_COMPILER_POLICY'] = $setting }
         Assert-Compiler ($off.Environment.ContainsKey('ANTIPHON_LINUX_COMPILER_POLICY') -eq ($null -ne $setting)) 'optional policy input presence is explicit'
+        if ($null -ne $setting) { Assert-Compiler ($off.Environment['ANTIPHON_LINUX_COMPILER_POLICY'] -ceq $setting) 'optional policy input value is explicit' }
         Set-AntiphonBuildDriverEnvironment -StartInfo $off
         Assert-Compiler (($off.ArgumentList -join "`n") -ceq ($tokens -join "`n")) 'off policy preserves the stock command'
     }
@@ -100,10 +111,14 @@ if ($Case -eq 'Adapter') {
     $corrupt.Environment['XDG_CACHE_HOME'] = $scratch
     Set-AntiphonBuildDriverEnvironment -StartInfo $corrupt
     Assert-Compiler (($corrupt.ArgumentList -join "`n") -ceq ($tokens -join "`n")) 'corrupted cache fails open to unchanged stock argv'
+    $fallback = Invoke-CompilerChild $wrapper
+    Assert-Compiler ($fallback.Exit -eq 7 -and $fallback.Err.Contains('fallback=stock')) 'real wrapper reports preparation failure and preserves stock exit'
+    Assert-Compiler (-not $fallback.Out.Contains('ARG:-p:RoslynTargetsPath=') -and $fallback.Out.Contains('BUILD SLOT released')) 'real wrapper runs stock argv and releases after preparation failure'
     Write-Host "C1885 cases=Adapter assertions=$script:assertions failed=0 fakeCompiler=true"
     return
 }
 
+function Test-C1885Native {
 if (-not $IsLinux) { throw 'Native compiler witness requires Linux; not a passed skip' }
 $grant = 0
 Assert-Compiler ([int]::TryParse($env:ANTIPHON_BUILD_SLOT_MAXCPUCOUNT, [ref]$grant) -and $grant -gt 0) 'checkpoint command transports its typed grant'
@@ -120,6 +135,7 @@ $start = New-CompilerStart (Get-Command dotnet).Source $tokens $scratch
 $start.Environment['RoslynCommandLineLogFile'] = Join-Path $scratch 'roslyn.log'
 $driverAffinity = [Antiphon.Build.LinuxCompilerToolset]::StatusValue('/proc/self/status', 'Cpus_allowed_list')
 $policy = [Antiphon.Build.BuildDriverEnvironment]::new()
+Assert-Compiler ($start.Environment['ANTIPHON_LINUX_COMPILER_POLICY'] -ceq '1') 'native policy input is explicitly enabled'
 $policy.Apply($start)
 Assert-Compiler ($start.ArgumentList.Count -eq $tokens.Count + 3) 'production ProcessStartInfo factory selects the Linux compiler policy'
 # Same launcher generator, shorter fixture idle; no server starts for the production preparation.
@@ -151,6 +167,7 @@ try {
         }
     }
     Assert-Compiler ($process.ExitCode -eq 0) 'one native build succeeds'
+    $buildSeconds = $timer.Elapsed.TotalSeconds
     Assert-Compiler ($stdout.Wait(1000) -and $stderr.Wait(1000)) 'native output drains within deadline'
     [IO.File]::WriteAllText((Join-Path $runRoot 'build.log'), $stdout.Result + $stderr.Result)
     Assert-Compiler ($owned.Count -eq 1) 'both dependent projects share one PID and start identity'
@@ -167,7 +184,7 @@ try {
     Assert-Compiler (@(Get-C1885Compilers $pipe).Count -eq 0) 'compiler automatically exits within the fixture idle allowance'
     $samples | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot 'samples.json')
     @{ Sha = (& git -C $repo rev-parse HEAD); Grant = $grant; Scratch = $scratch; Diagnostic = $diagnostic;
-        BuildSeconds = $timer.Elapsed.TotalSeconds - $idle.Elapsed.TotalSeconds; IdleSeconds = $idle.Elapsed.TotalSeconds; Assertions = $script:assertions;
+        BuildSeconds = $buildSeconds; IdleSeconds = $idle.Elapsed.TotalSeconds; Assertions = $script:assertions;
         SetupSeconds = $null; Unknown = @('restore separate span', 'GC CPU', 'SDK/cache IO individual spans') } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $runRoot 'receipt.json')
     Write-Host "C1885 cases=Native assertions=$script:assertions failed=0 builds=1 evidence=$runRoot"
@@ -179,3 +196,5 @@ try {
     if (@(Get-C1885Compilers $pipe).Count -gt 0) { Stop-C1885PrivateCompiler (Get-Command dotnet).Source (Join-Path $sdk 'Roslyn/bincore/VBCSCompiler.dll') $pipe $scratch }
     if (@(Get-C1885Compilers $pipe).Count -gt 0) { throw 'task-owned compiler residue remains on the private pipe' }
 }
+}
+if ($Case -eq 'Adapter') { Test-C1885Adapter } else { Test-C1885Native }
