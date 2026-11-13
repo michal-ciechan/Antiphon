@@ -200,6 +200,8 @@ function Assert-SerializerEquivalentOrder {
     if ($oracle.Count -ne 0) { throw ('ConvertTo-Json oracle moved: ' + ($oracle -join ',')) }
     $keys = @(Get-RcSerializerKeyFailures)
     if ($keys.Count -ne 0) { throw ('sort key is not ConvertTo-Json: ' + ($keys -join ',')) }
+    $codes = @(Get-RcSerializerCodeUnitFailures)
+    if ($codes.Count -ne 0) { throw ('code unit sort key diverges: ' + ($codes -join ',')) }
     $nodes = @(New-RcSerializerOrderNodes)
     $map = Get-RcSerializerOrderMap
     $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds
@@ -219,7 +221,6 @@ function Assert-SerializerEquivalentOrder {
     if ($builtNumeric -ne 1) { throw ('numeric uid index built ' + $builtNumeric + ' times') }
     $numericActual = @($numericPlan[0].caseMembership | ForEach-Object { [string]$_.uid })
     if (($numericActual -join ',') -cne '10,2') { throw ('uid string order lost: ' + ($numericActual -join ',')) }
-    return (Get-PackJson $plan)
 }
 
 if ($Target -eq 'fixtures') {
@@ -228,10 +229,8 @@ if ($Target -eq 'fixtures') {
         if ($Capture) { Write-Golden $name $plans[$name] }
         else { Assert-GoldenText $name $plans[$name] }
     }
-    $serializerJson = Assert-SerializerEquivalentOrder
-    $serializerName = 'serializer-order.json'
-    if ($Capture) { Write-Golden $serializerName $serializerJson }
-    elseif (Test-Path -LiteralPath (Join-Path $golden $serializerName)) { Assert-GoldenText $serializerName $serializerJson }
+    # Lone surrogates stay in memory. .NET file encodings replace them with U+FFFD.
+    Assert-SerializerEquivalentOrder
     Write-Output ('fixtures ' + $(if ($Capture) { 'captured' } else { 'matched' }) + ' count=' + $plans.Count)
     return
 }

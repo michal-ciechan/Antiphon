@@ -1172,7 +1172,7 @@ namespace Antiphon.Nightly
             return MembershipResult(null, cases, identities);
         }
 
-        /// <summary>pwsh 7 ConvertTo-Json -Compress of a three-string array. Slash is not escaped; U+2028 and U+2029 are.</summary>
+        /// <summary>pwsh 7 ConvertTo-Json -Compress of a three-string array. C0, quote and backslash are escaped; so are U+0085, U+2028 and U+2029. U+007F, other C1 controls and slash stay literal.</summary>
         public static string CaseSortKey(string className, string method, string uid)
         {
             var sb = new StringBuilder((className == null ? 0 : className.Length) + (method == null ? 0 : method.Length) + (uid == null ? 0 : uid.Length) + 16);
@@ -1202,6 +1202,7 @@ namespace Antiphon.Nightly
                         case '\n': sb.Append("\\n"); break;
                         case '\r': sb.Append("\\r"); break;
                         case '\t': sb.Append("\\t"); break;
+                        case '\u0085': sb.Append("\\u0085"); break;
                         case '\u2028': sb.Append("\\u2028"); break;
                         case '\u2029': sb.Append("\\u2029"); break;
                         default:

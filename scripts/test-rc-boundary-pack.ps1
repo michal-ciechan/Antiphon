@@ -130,6 +130,8 @@ function Test-SerializerOrder {
     Note ($oracle.Count -eq 0) ('ConvertTo-Json oracle moved: ' + ($oracle -join ','))
     $keys = @(Get-RcSerializerKeyFailures)
     Note ($keys.Count -eq 0) ('sort key is not ConvertTo-Json: ' + ($keys -join ','))
+    $codes = @(Get-RcSerializerCodeUnitFailures)
+    Note ($codes.Count -eq 0) ('code unit sort key diverges: ' + ($codes -join ','))
     $nodes = @(New-RcSerializerOrderNodes)
     $map = Get-RcSerializerOrderMap
     $before = [Antiphon.Nightly.NightlyLaunchPlan]::BoundaryIndexBuilds

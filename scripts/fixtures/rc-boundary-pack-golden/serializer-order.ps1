@@ -150,6 +150,22 @@ function Get-RcSerializerOracleFailures {
     return @($failed)
 }
 
+function Get-RcSerializerCodeUnitFailures {
+    # The encoder decides each UTF-16 code unit alone, so every code unit matching
+    # ConvertTo-Json makes every string match. Stop after a handful of misses.
+    $failed = [Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -le 65535; $i++) {
+        $s = [string][char]$i
+        $expected = Get-RcSerializerJsonKey $s $s $s
+        $actual = [Antiphon.Nightly.NightlyLaunchPlan]::CaseSortKey($s, $s, $s)
+        if ($actual -cne $expected) {
+            $failed.Add(('{0:x4}' -f $i))
+            if ($failed.Count -ge 8) { break }
+        }
+    }
+    return @($failed)
+}
+
 function Get-RcSerializerKeyFailures {
     $failed = [Collections.Generic.List[string]]::new()
     foreach ($sample in @(Get-RcSerializerOrderSamples)) {
