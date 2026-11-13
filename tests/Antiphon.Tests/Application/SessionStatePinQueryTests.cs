@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [Category("Slow")]
-[NotInParallel("SessionStatePinQueries")]
+[NotInParallel]
 public class SessionStatePinQueryTests
 {
     [Test]
