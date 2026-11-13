@@ -167,6 +167,9 @@ public sealed class C1722GitTimeoutBudgetTests
 
     private static string[] PureMethods() =>
     [
+        // CARD-1892: fake retention gates and an injected clock; neither method starts Git.
+        nameof(C1677RetentionDispatchTests) + "." + nameof(C1677RetentionDispatchTests.Phase_a_does_not_block_input),
+        nameof(C1677RetentionDispatchTests) + "." + nameof(C1677RetentionDispatchTests.Mutation_lock_reports_slow_owner_wait_and_hold),
         nameof(C1677RetentionDispatchTests) + "." + nameof(C1677RetentionDispatchTests.Phase_b_runs_outside_the_mutation_lock),
         nameof(C1677RetentionDispatchTests) + "." + nameof(C1677RetentionDispatchTests.Phase_a_waits_for_the_mutation_lock),
         nameof(C1677RetentionDispatchTests) + "." + nameof(C1677RetentionDispatchTests.Phase_b_runs_only_after_a_move),

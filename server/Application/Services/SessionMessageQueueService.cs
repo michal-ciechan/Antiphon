@@ -2522,6 +2522,31 @@ public sealed partial class SessionMessageQueueService
             return TemporaryBlock();
         }
 
+        // A completed delivery call can leave a fresh uncertain attempt. Reconcile its
+        // receipt immediately, or submit only its still-visible body; the age window
+        // remains mandatory before a clear composer can authorize retyping.
+        var freshFloor = UtcNow() - InterruptedAttemptAge;
+        var fresh = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId
+            && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null
+            && m.LastDeliveryStartedAt > freshFloor).OrderBy(m => m.Sequence).ToListAsync(ct);
+        if (fresh.Count > 0)
+        {
+            var first = fresh[0];
+            fresh = fresh.Where(m => m.LastDeliveryStartedAt == first.LastDeliveryStartedAt
+                && m.Origin == first.Origin && m.ConversationKey == first.ConversationKey).ToList();
+            if (rulesClosed && fresh.Any(m => m.RulesRefreshKey is null))
+            {
+                var confirmed = await LateConfirmAttemptedMessagesAsync(db, sessionId, fresh, ct);
+                lateConfirmed?.Record(confirmed);
+                return confirmed.Handled > 0 ? FlushResult.LateConfirmed : FlushResult.Nothing;
+            }
+            var recovered = await RecoverDeliveryRunLockedAsync(db, sessionId, fresh, ct, ceilings,
+                lateConfirmed, retainOnClear: true);
+            if (recovered != FlushResult.Nothing) return recovered;
+            if (fresh.Any(m => m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null))
+                return FlushResult.Nothing;
+        }
+
         var interrupted = await LoadInterruptedSentRunAsync(db, sessionId, ct);
         if (rulesClosed && interrupted.Any(m => m.RulesRefreshKey is null))
         {
@@ -3486,7 +3511,8 @@ public sealed partial class SessionMessageQueueService
         IReadOnlyList<SessionQueuedMessage> run,
         CancellationToken ct,
         PtyDeliveryCeilings ceilings,
-        LateConfirmCollector? lateConfirmed = null)
+        LateConfirmCollector? lateConfirmed = null,
+        bool retainOnClear = false)
     {
         if (run.Count == 0 || !await CanWriteResumeInputAsync(db, sessionId, ct))
             return FlushResult.Nothing;
@@ -3542,7 +3568,13 @@ public sealed partial class SessionMessageQueueService
                 return FlushResult.Nothing;
             var reading = await ClassifyTypedComposerAsync(sessionId, sessionKind, [(remaining[0].Id, body)], ct);
             if (ComposerStillHoldsTypedBody(reading.Finding))
+            {
+                if (retainOnClear && (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } freshSnapshot
+                    || !ComposerDeliveryEvidence.HeadFragmentIsVisibleWhole(freshSnapshot.RenderedScreen,
+                        PtyInputEncoding.NormalizeBody(body.Trim()))))
+                    return FlushResult.Nothing;
                 return await EnterOnlyConfirmLockedAsync(db, sessionId, remaining, body, ct, ceilings);
+            }
             if (reading.Finding != TypedComposerFinding.Clear)
             {
                 _logger.LogInformation(
@@ -3552,6 +3584,9 @@ public sealed partial class SessionMessageQueueService
                 return FlushResult.Nothing;
             }
         }
+
+        if (retainOnClear && !generationChanged)
+            return FlushResult.Nothing;
 
         foreach (var message in remaining.Where(m => m.Status == QueuedMessageStatus.Sent))
         {
