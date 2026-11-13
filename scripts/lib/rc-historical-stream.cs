@@ -56,6 +56,9 @@ public static class HistoricalEvidence
     private static string Full(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static bool Inside(string path, string root) => path.Equals(root, StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    private static bool HandleInside(string path, string root) =>
+        path.StartsWith(root + Path.DirectorySeparatorChar,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static string Relative(string path)
     {
@@ -73,6 +76,7 @@ public static class HistoricalEvidence
     }
     private static void Enumerate(string root, string directory, List<string> paths)
     {
+        if (Path.GetRelativePath(root, directory).Split(Path.DirectorySeparatorChar).Length > 64) throw Refuse("evidence-depth");
         NoLinks(directory);
         foreach (var path in Directory.EnumerateFileSystemEntries(directory).OrderBy(x => x, StringComparer.Ordinal))
         {
@@ -89,7 +93,18 @@ public static class HistoricalEvidence
         else paths.AddRange(selected);
         if (paths.Count == 0 || paths.Count > FileCountLimit) throw Refuse("evidence-file-count");
         var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in paths) if (!unique.Add(Relative(path))) throw Refuse("evidence-path");
+        var components = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            if (!unique.Add(Relative(path))) throw Refuse("evidence-path");
+            var prefix = "";
+            foreach (var part in path.Split('/'))
+            {
+                prefix = prefix.Length == 0 ? part : prefix + "/" + part;
+                if (components.TryGetValue(prefix, out var spelling) && spelling != prefix) throw Refuse("evidence-path");
+                components[prefix] = prefix;
+            }
+        }
         return paths.OrderBy(p => p, StringComparer.Ordinal).ToArray();
     }
     public static Result Export(string sourceRoot, string evidenceRoot, string repositoryRoot, string checkoutRoot,
@@ -213,7 +228,8 @@ public static class HistoricalEvidence
         var before = Inspect(handle, root, path);
         if (before.Size > (ulong)FileLimit) throw Refuse("evidence-file-limit");
         using var stream = new FileStream(handle, FileAccess.Read, BufferSize, false);
-        afterOpen?.Invoke();
+        try { afterOpen?.Invoke(); }
+        catch (Exception ex) { throw new InvalidDataException("evidence-changing", ex); }
         using var output = destination == null ? null : new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[BufferSize]; long length = 0;
@@ -416,7 +432,7 @@ public static class HistoricalEvidence
             if ((s.Mode & 0xf000) != 0x8000 || s.Links != 1) throw Refuse("evidence-link");
             var buffer = new byte[32768];
             var length = ReadLink("/proc/self/fd/" + handle.DangerousGetHandle().ToInt32(), buffer, (nuint)buffer.Length);
-            if (length <= 0 || length >= buffer.Length || !Inside(Utf8.GetString(buffer, 0, (int)length), root)) throw Refuse("evidence-path");
+            if (length <= 0 || length >= buffer.Length || !HandleInside(Utf8.GetString(buffer, 0, (int)length), root)) throw Refuse("evidence-path");
             return new Stamp(((ulong)s.DeviceMajor << 32) | s.DeviceMinor, s.Inode, s.Size, s.MtimeSeconds * 1000000000 + s.MtimeNanos, s.CtimeSeconds * 1000000000 + s.CtimeNanos);
         }
         if (!GetFileInformationByHandle(handle, out var w) || !GetFileInformationByHandleEx(handle, 0, out var basic, (uint)Marshal.SizeOf<WindowsBasic>())) throw Refuse("evidence-stat");
@@ -427,7 +443,7 @@ public static class HistoricalEvidence
         var resolved = final.ToString();
         if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) resolved = @"\\" + resolved[8..];
         else if (resolved.StartsWith(@"\\?\", StringComparison.Ordinal)) resolved = resolved[4..];
-        if (!Inside(resolved, root)) throw Refuse("evidence-path");
+        if (!HandleInside(resolved, root)) throw Refuse("evidence-path");
         return new Stamp(w.Volume, ((ulong)w.IndexHigh << 32) | w.IndexLow, ((ulong)w.SizeHigh << 32) | w.SizeLow, basic.Write, basic.Change);
     }
     [StructLayout(LayoutKind.Explicit, Size = 256)]
