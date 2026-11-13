@@ -136,15 +136,19 @@ function Add-RcBoundaryString {
 function Sort-RcBoundaryIdentities {
     param([object[]]$Identities)
     [object[]]$items = @($Identities)
-    $comparer = [Collections.Generic.Comparer[object]]::Create([Comparison[object]] {
-        param($left, $right)
-        $order = [StringComparer]::Ordinal.Compare([string]$left.class, [string]$right.class)
-        if ($order -ne 0) { return $order }
-        $order = [StringComparer]::Ordinal.Compare([string]$left.method, [string]$right.method)
-        if ($order -ne 0) { return $order }
-        return [StringComparer]::Ordinal.Compare([string]$left.caseKey, [string]$right.caseKey)
-    })
-    [Array]::Sort($items, $comparer)
+    [string[]]$keys = New-Object string[] $items.Length
+    $nul = [string][char]0
+    $escapedNul = $nul + [char]1
+    $separator = $nul + $nul
+    for ($i = 0; $i -lt $items.Length; $i++) {
+        # Escape NUL as 0,1 and separate fields with 0,0. Thus a field's end
+        # sorts before any continuation, even an embedded NUL. Ordinal key
+        # order is exactly ordinal (class, method, caseKey) tuple order.
+        $keys[$i] = ([string]$items[$i].class).Replace($nul, $escapedNul) + $separator +
+            ([string]$items[$i].method).Replace($nul, $escapedNul) + $separator +
+            ([string]$items[$i].caseKey).Replace($nul, $escapedNul)
+    }
+    [Array]::Sort($keys, $items, [StringComparer]::Ordinal)
     return $items
 }
 
