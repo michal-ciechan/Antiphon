@@ -17,6 +17,7 @@ using Antiphon.Tests.Agents;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -2115,7 +2116,9 @@ public sealed partial class ChannelInboundRecoveryTests
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Starting));
         var native = $"trigger-{signal}-{Guid.NewGuid():N}";
         await Bridge(h).HandleInboundAsync(Message(chat, native, "recovered by worker trigger"), Ct);
-        var worker = Bridge(h);
+        var log = new C593WorkerLog();
+        var worker = Bridge(h, log);
+        var wake = h.Provider.GetRequiredService<ChannelInboundWakeSignal>();
         if (holdFirstPass is { } hold)
         {
             var first = gate.Arm();
@@ -2124,13 +2127,14 @@ public sealed partial class ChannelInboundRecoveryTests
                 TaskScheduler.Default);
         }
         await worker.StartAsync(Ct);
-        await WaitForAsync(() => Task.FromResult(worker.CompletedDrainIterations > 0));
+        await WaitForWorkerAsync(worker, wake, log, "first completed wake pass",
+            () => Task.FromResult(worker.CompletedDrainIterations > 0));
         await using (var db = Db(schema.ConnectionString))
             await db.AgentSessions.Where(s => s.Id == h.SessionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(s => s.Status, SessionStatus.Running));
         if (signal)
-            h.Provider.GetRequiredService<ChannelInboundWakeSignal>().Signal(h.AgentId);
-        await WaitForAsync(async () =>
+            wake.Signal(h.AgentId);
+        await WaitForWorkerAsync(worker, wake, log, "durable handoff to the Running recipient", async () =>
         {
             await using var db = Db(schema.ConnectionString);
             return await db.ChannelInbounds.AnyAsync(i => i.NativeMessageId == native && i.QueueMessageId != null)
@@ -2139,6 +2143,50 @@ public sealed partial class ChannelInboundRecoveryTests
                     && t.Text.Contains("recovered by worker trigger"));
         });
         await worker.StopAsync(Ct);
+    }
+
+    /// <summary>
+    /// Run 97150a0b g76: a hang detector for the wake worker, not a timing assertion. The wait ends
+    /// as soon as the worker's own progress satisfies the condition, so a pass slowed by host load
+    /// (the 8 s fixed wall deadline this replaces failed once in 19 Windows Full runs) still passes.
+    /// About 2x the slowest observed whole-test duration (17.5 s failed, 13.2 s max passing) so it
+    /// only fires on a worker that never completes; then it reports the pass count, the last pass and
+    /// every Warning the bridge logged, so a swallowed drain failure and a slow pass are told apart.
+    /// </summary>
+    private static readonly TimeSpan WorkerHangBackstop = TimeSpan.FromSeconds(30);
+
+    private static async Task WaitForWorkerAsync(ChannelBridgeService worker, ChannelInboundWakeSignal wake,
+        C593WorkerLog log, string what, Func<Task<bool>> done)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        while (System.Diagnostics.Stopwatch.GetElapsedTime(started) < WorkerHangBackstop)
+        {
+            if (await done()) return;
+            await Task.Delay(25);
+        }
+        if (await done()) return;
+        var last = wake.LastPass;
+        false.ShouldBeTrue($"wake worker hang: {what} not reached within {WorkerHangBackstop.TotalSeconds:F0} s; "
+            + $"completed passes {worker.CompletedDrainIterations}; last pass "
+            + (last is null ? "none" : $"{last.CompletedAt:O} seen {last.RowsSeen} queued {last.RowsQueued} busy {last.SessionsSkippedBusy} {last.Elapsed.TotalMilliseconds:F0} ms")
+            + $"; bridge log: {log.Describe()}");
+    }
+
+    /// <summary>Keeps the bridge's Information-and-above lines so a wait failure explains itself.</summary>
+    private sealed class C593WorkerLog : ILogger<ChannelBridgeService>
+    {
+        private readonly ConcurrentQueue<string> _lines = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel)) return;
+            _lines.Enqueue($"[{logLevel}] {formatter(state, exception)}"
+                + (exception is null ? "" : $" ({exception.GetType().Name}: {exception.Message})"));
+            while (_lines.Count > 40) _lines.TryDequeue(out _);
+        }
+        public string Describe() => _lines.IsEmpty ? "(no Information or Warning lines)" : string.Join(" | ", _lines);
     }
 
     [Test]
