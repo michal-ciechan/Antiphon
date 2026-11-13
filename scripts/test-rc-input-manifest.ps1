@@ -98,9 +98,13 @@ switch ($Case) {
             'tools/Helper/Helper.csproj','Directory.Packages.props','NuGet.config','global.json',
             'client/package-lock.json','Dockerfile','docs/contract.md')
         foreach ($path in $families) {
-            Put $path ('changed '+$path); $s=Select-Manifest (Commit)
+            $content=if ($path.EndsWith('.props',[StringComparison]::Ordinal)) { '<Project><PropertyGroup><FixtureValue>changed</FixtureValue></PropertyGroup></Project>' }
+                elseif ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) { '<Project Sdk="Microsoft.NET.Sdk" />' }
+                else { 'changed '+$path }
+            Put $path $content; $s=Select-Manifest (Commit)
             Note (Has $s 'server' $path) "family-inventory:$path"
             Note ($s.dirtySuites -ccontains 'server') "family-dirty:$path"
+            Note ($s.unresolved.Count -eq 0) "family-closure-is-known:$path"
         }
         Put 'tests/Server/Fixtures/added.json' '{}'; $s=Select-Manifest (Commit)
         Note (Has $s 'server' 'tests/Server/Fixtures/added.json') 'new-input-not-old-glob-only'
@@ -116,6 +120,7 @@ switch ($Case) {
     'PartialIndexNeverSubtracts' {
         Put 'src/Core/Queue.cs' 'index non-hit'; $a=Commit
         $plain=Select-Manifest $a
+        Note ($plain.unresolved.Count -eq 0 -and $plain.dirtySuites -cnotcontains 'other') 'known-conservative-baseline'
         foreach ($index in @($null,@{version=1;edges=@();capped=@('src/Core/Queue.cs')},@{version=0;edges=@()},@{version=1;edges=@(@{path='src/Core/Queue.cs';suites=@('other')})})) {
             $s=Select-Manifest $a $index
             Note ($s.dirtySuites -ccontains 'server' -and $s.dirtySuites -ccontains 'runner') 'partial-index-keeps-conservative-consumers'
