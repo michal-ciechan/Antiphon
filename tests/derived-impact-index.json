@@ -87,10 +87,10 @@
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "ReportBudgetWorkspacePortabilityTests",
+        "VolumeRetirementContentTests",
         "WorkspaceParkPublicationTests",
         "BlockedParkWireTests",
-        "C1677RetentionEngineTests",
-        "CardFileBootstrapCheckTests"
+        "C1677RetentionEngineTests"
       ]
     },
     {
