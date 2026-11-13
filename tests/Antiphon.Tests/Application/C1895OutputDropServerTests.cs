@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.TestSupport;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
@@ -105,7 +106,8 @@ public sealed class C1895OutputDropServerTests
     public async Task Execute_off_sends_dry_run_and_does_not_back_off()
     {
         await using var w = await C1677RetentionServerTests.World.StartAsync(outputDrop: true);
-        w.Settings.Execute = false;
+        w.Settings.Execute.ShouldBeTrue("retention Execute does not select the output-drop mode");
+        w.Settings.OutputDrop.Mode = RunnerOutputDropMode.Preview;
         var young = await w.EligibleAsync(TimeSpan.FromHours(1));
 
         await w.TickAsync();
@@ -122,6 +124,123 @@ public sealed class C1895OutputDropServerTests
         await using var db = w.Rig.NewDb();
         var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == young).ToListAsync();
         events.ShouldNotContain(e => e.Detail.Contains("runner_outputs_dropped", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task Output_drop_off_sends_no_rows_or_frames()
+    {
+        await using var w = await C1677RetentionServerTests.World.StartAsync(outputDrop: true);
+        w.Settings.OutputDrop.Mode = RunnerOutputDropMode.Off;
+        var old = await w.EligibleAsync(TimeSpan.FromHours(24));
+        var young = await w.EligibleAsync(TimeSpan.FromHours(1));
+
+        await w.TickAsync();
+
+        w.DropRequests().ShouldBeEmpty();
+        w.Requests().ShouldHaveSingleItem().TaskId.ShouldBe(old);
+        (await w.RowsAsync(young)).ShouldNotContain(r => r.Lane == RunnerWorktreeRetentionService.LaneOutputDrop);
+    }
+
+    [NativeLinuxOnly("CARD-1895 Linux-only by construction: the real runner holder scan reads /proc and the partial unlink uses Unix mode bits")]
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    public async Task Partial_unlink_survives_the_real_transport(CancellationToken ct)
+    {
+        await using var world = await C1677RetentionTransportWorld.StartAsync(outputDrop: true);
+        var (id, path) = await world.SeedMirroredTaskAsync("c1895001", TimeSpan.FromHours(1));
+        var obj = path + "/tests/Foo/obj";
+        var blocked = obj + "/zdir";
+        Directory.CreateDirectory(blocked);
+        Exclude(path, "*.csproj");
+        File.WriteAllText(path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(blocked + "/b.dll", "blocked");
+        C0824SlotTransportWorld.Git(path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+            .Trim().ShouldBeEmpty();
+        world.Engine.BeforeEachOutputDelete = _ =>
+            File.SetUnixFileMode(blocked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            await world.TickAsync(ct);
+
+            var row = (await world.Server.RowsAsync(id))
+                .Where(r => r.Lane == RunnerWorktreeRetentionService.LaneOutputDrop)
+                .ShouldHaveSingleItem();
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Partial));
+            row.RequestDigest.ShouldBe("6");
+            row.EndpointIdentity.ShouldBe("output-drop:removed=1;left=1");
+            row.DirectoryRemoved.ShouldBe(false);
+            File.Exists(obj + "/a.dll").ShouldBeFalse();
+            File.ReadAllText(blocked + "/b.dll").ShouldBe("blocked");
+            Directory.Exists(obj).ShouldBeTrue();
+            (await world.Server.Rig.ReadTaskAsync(id)).RemoteWorktreePath.ShouldBe(path);
+            await using var db = world.Server.Rig.NewDb();
+            var events = await db.AgentTaskEvents.AsNoTracking().Where(e => e.AgentTaskId == id).ToListAsync();
+            events.ShouldContain(e => e.Type == AgentTaskEventType.Warning
+                && e.Detail.StartsWith("runner_outputs_dropped", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                File.SetUnixFileMode(blocked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+            {
+            }
+        }
+    }
+
+    [NativeLinuxOnly("CARD-1895 Linux-only by construction: the real runner holder scan reads /proc and the ledger is a Linux fsync")]
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    public async Task Lost_reply_retries_the_same_request_and_deletes_nothing_more(CancellationToken ct)
+    {
+        await using var world = await C1677RetentionTransportWorld.StartAsync(outputDrop: true);
+        var (id, path) = await world.SeedMirroredTaskAsync("c1895002", TimeSpan.FromHours(1));
+        var obj = path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        Exclude(path, "*.csproj");
+        File.WriteAllText(path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/c.dll", "zz");
+        C0824SlotTransportWorld.Git(path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
+            .Trim().ShouldBeEmpty();
+        world.Engine.AfterLedgerPersisted = _ => throw new IOException("reply lost");
+        world.DropNextOutputReply = true;
+
+        await world.TickAsync(ct);
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        var first = (await world.Server.RowsAsync(id))
+            .Where(r => r.Lane == RunnerWorktreeRetentionService.LaneOutputDrop)
+            .ShouldHaveSingleItem();
+        first.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Deferred));
+        first.ReasonCode.ShouldBe("unknown");
+        first.OperationId.ShouldNotBeNull();
+
+        await world.TickAsync(ct);
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        var rows = (await world.Server.RowsAsync(id))
+            .Where(r => r.Lane == RunnerWorktreeRetentionService.LaneOutputDrop)
+            .ToList();
+        rows.Count.ShouldBe(2);
+        rows[1].OperationId.ShouldBe(first.OperationId);
+        rows[1].RequestDigest.ShouldBe("6");
+        rows[1].Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Partial));
+        world.Server.DropRequests().Select(r => r.RequestId).Distinct().ShouldHaveSingleItem()
+            .ShouldBe(first.OperationId!.Value);
+    }
+
+    private static void Exclude(string worktree, params string[] lines)
+    {
+        var raw = C0824SlotTransportWorld.Git(worktree, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude").Trim();
+        Directory.CreateDirectory(Path.GetDirectoryName(raw)!);
+        var existing = File.Exists(raw) ? File.ReadAllText(raw) : "";
+        if (existing.Length > 0 && !existing.EndsWith('\n'))
+            existing += "\n";
+        File.WriteAllText(raw, existing + string.Join('\n', lines) + "\n");
     }
 
     private static async Task<Guid> SeedSessionAsync(Rig rig, SessionStatus status)

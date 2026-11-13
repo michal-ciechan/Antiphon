@@ -67,6 +67,11 @@ public sealed class C1677RetentionServerTests
             var settings = new RunnerWorktreeRetentionSettings
             {
                 Enabled = true, Execute = true, PauseBetweenSeconds = 0, MinTerminalHours = 12, MaxRemovalsPerTick = 25,
+                // CARD-1895. Off unless this world is an output-drop world, so the seven scripted retention tests send no drop.
+                OutputDrop = new RunnerOutputDropSettings
+                {
+                    Mode = outputDrop ? RunnerOutputDropMode.Execute : RunnerOutputDropMode.Off,
+                },
             };
             var monitor = new Monitor(settings);
             var rig = await Rig.StartAsync(capabilities: RetentionRunner(capable, outputDrop), configure: services =>

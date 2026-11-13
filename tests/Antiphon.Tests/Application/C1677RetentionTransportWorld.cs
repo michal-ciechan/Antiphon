@@ -43,22 +43,25 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
     /// <summary>The runner acts on the next WorkspaceRetain but its reply is lost.</summary>
     public bool DropNextReply { get; set; }
 
+    /// <summary>The runner acts on the next WorkspaceDropOutputs but its reply is lost.</summary>
+    public bool DropNextOutputReply { get; set; }
+
     /// <summary>The runner crashes once right after phase A's move, before phase B.</summary>
     public bool CrashAfterMoveOnce { get; set; }
 
-    public static async Task<C1677RetentionTransportWorld> StartAsync()
+    public static async Task<C1677RetentionTransportWorld> StartAsync(bool outputDrop = false)
     {
         var world = new C1677RetentionTransportWorld(Path.Combine(Path.GetTempPath(), "c1677-transport-" + Guid.NewGuid().ToString("N")));
         world.BuildRepository();
-        world.Server = await C1677RetentionServerTests.World.StartAsync();
+        world.Server = await C1677RetentionServerTests.World.StartAsync(outputDrop: outputDrop);
         world.Server.Settings.WorktreeRoot = world.Worktrees;
         world.Server.Settings.RetiringRoot = world.Retiring;
-        world.StartRunner();
+        world.StartRunner(outputDrop);
         world.Server.Rig.Peer.Reply = world.Answer;
         return world;
     }
 
-    private void StartRunner()
+    private void StartRunner(bool outputDrop)
     {
         var emptyConfig = Root + "/empty.gitconfig";
         File.WriteAllText(emptyConfig, "");
@@ -72,7 +75,10 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
                 _argv.Add(psi.ArgumentList.SkipWhile(arg => arg.StartsWith('-')).ToArray());
             return Process.Start(psi);
         }, publishedBranch: "main");
-        Engine = new RunnerWorkspaceRetention(service, new ProcWorkspaceSlotProcessProbe(), retiringRoot: Retiring);
+        Engine = new RunnerWorkspaceRetention(service, new ProcWorkspaceSlotProcessProbe(), retiringRoot: Retiring)
+        {
+            OutputDropLedgerRoot = outputDrop ? Root + "/output-drop-ledger" : null,
+        };
         Engine.PhaseCut = phase =>
         {
             if (phase == "moved" && CrashAfterMoveOnce)
@@ -86,14 +92,17 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
             Enabled = true, RunnerId = Server.Rig.RunnerId, AllowedCwd = Work, RunnerRepository = Clone,
             RunnerCloneSource = OriginGit, AllowedCloneSources = [OriginGit], Capacity = 2,
             CapacityStatePath = Root + "/capacity",
+            OutputDropMode = outputDrop ? RunnerOutputDropMode.Execute : RunnerOutputDropMode.Off,
         };
-        Runner = new PhoneHomeCommandDispatcher(new RetentionRuntime(Engine), settings);
+        Runner = new PhoneHomeCommandDispatcher(new RetentionRuntime(Engine, outputDrop), settings);
     }
 
     private PhoneHomeFrame? Answer(PhoneHomeFrame frame)
     {
         if (frame.Kind != PhoneHomeFrameKind.Request
-            || frame.Operation is not (PhoneHomeOperation.WorkspaceRetain or PhoneHomeOperation.WorkspaceRetentionInventory))
+            || frame.Operation is not (PhoneHomeOperation.WorkspaceRetain
+                or PhoneHomeOperation.WorkspaceRetentionInventory
+                or PhoneHomeOperation.WorkspaceDropOutputs))
             return null;
         if (frame.Operation == PhoneHomeOperation.WorkspaceRetain)
             Hold?.GetAwaiter().GetResult();
@@ -105,13 +114,19 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
             return new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
                 ErrorCode: "transport_lost", ErrorDetail: "reply lost", StatusCode: 503);
         }
+        if (frame.Operation == PhoneHomeOperation.WorkspaceDropOutputs && DropNextOutputReply)
+        {
+            DropNextOutputReply = false;
+            return new PhoneHomeFrame(PhoneHomeFrameKind.Error, frame.Epoch, frame.RequestId, frame.Operation,
+                ErrorCode: "transport_lost", ErrorDetail: "reply lost", StatusCode: 503);
+        }
         return reply;
     }
 
     public Task TickAsync(CancellationToken ct) => Server.TickAsync(ct);
 
     /// <summary>A clean, pushed runner mirror and its finished server task (Execute is on).</summary>
-    public async Task<(Guid Id, string Path)> SeedMirroredTaskAsync(string id8 = "a1677001")
+    public async Task<(Guid Id, string Path)> SeedMirroredTaskAsync(string id8 = "a1677001", TimeSpan? completedAgo = null)
     {
         var branch = "feat/card-task-" + id8;
         var path = Worktrees + "/task-" + id8;
@@ -129,7 +144,7 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
             task.Id = id;
             task.RootTaskId = id;
             task.Status = AgentTaskStatus.Succeeded;
-            task.CompletedAt = Server.Rig.Now - TimeSpan.FromHours(24);
+            task.CompletedAt = Server.Rig.Now - (completedAgo ?? TimeSpan.FromHours(24));
             task.RemoteWorktreePath = path;
             task.WorktreeBranch = branch;
             task.Result = "done";
@@ -211,7 +226,7 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
     }
 
     /// <summary>A runtime surface whose only real members are the retention phases and inventory.</summary>
-    private sealed class RetentionRuntime(RunnerWorkspaceRetention engine) : IPhoneHomeRuntimeSurface
+    private sealed class RetentionRuntime(RunnerWorkspaceRetention engine, bool outputDrop) : IPhoneHomeRuntimeSurface
     {
         public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct) =>
             engine.CheckAndMoveAsync(request, ct);
@@ -219,9 +234,18 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
             engine.CompleteAsync(step, ct);
         public Task<PhoneHomeWorkspaceRetentionInventoryResponse> WorkspaceRetentionInventoryAsync(CancellationToken ct) =>
             engine.InventoryAsync(ct);
+        public Task<WorkspaceOutputDropStep> CheckWorkspaceOutputsAsync(PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct) =>
+            engine.CheckOutputsAsync(request, ct);
+        public Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
+            engine.ApplyOutputsAsync(step, ct);
         public int OwnedSessionCount => 0;
-        public RunnerCapabilitiesDto Capabilities() =>
-            new("InboxConhost", "inbox", "test", false, Features: [RunnerCapabilityFeatures.WorkspaceRetentionV1]);
+        public RunnerCapabilitiesDto Capabilities()
+        {
+            List<string> features = [RunnerCapabilityFeatures.WorkspaceRetentionV1];
+            if (outputDrop)
+                features.Add(RunnerCapabilityFeatures.WorkspaceOutputDropV1);
+            return new("InboxConhost", "inbox", "test", false, Features: features);
+        }
         public string Health() => "Healthy";
         public IReadOnlyList<RunnerSessionDto> List() => [];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();

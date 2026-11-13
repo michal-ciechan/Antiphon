@@ -156,6 +156,10 @@ Operator rule (2026-11-07, reaffirmed 2026-11-08): "Migrations should be additiv
 | `ScheduleChanged` | `['schedules']`, `['schedules', 'agent', agentId]`, `['schedules', 'card', cardId]`, `['attention']` | Schedule created, patched, deleted, or a fire completed |
 | `DispatchConcurrencyChanged` | `['dispatchConcurrency']`, `['agentTasks', 'pipeline']` | A committed PUT (event count in `DispatchConcurrencyWireTests.Revision_conflict_returns_current_revisions`); seed import (`DispatchConcurrencySettingsTests.Concurrent_initialization_writes_one_seed`: two concurrent initializers leave one `MockEventBus` event named `DispatchConcurrencyChanged`; not a recipient-delivery witness); client invalidation per `C506 V07 changed-event` (CARD-0506) |
 
+## Runner output drop (CARD-1895)
+
+`RunnerWorktreeRetention:OutputDrop:Mode` is `Off`, `Preview`, or `Execute`. The default is `Off` in code and in `server/appsettings.json` and `src/Antiphon.SessionRunner/appsettings.json`. Retention `Enabled` and `Execute` do not turn it on. `Off` sends no output-drop rows and no frames. `Preview` asks the runner for a dry run and logs the paths and bytes. `Execute` asks the runner to delete proven `bin`, `obj`, and `bin-*` directories that sit beside a project file of the outer repository, and only from a mirror that whole-tree retention still holds because it is younger than `MinTerminalHours`. The tree stays. The runner keeps its own copy of the switch: `Off` deletes nothing, and `Preview` rewrites an Execute request to DryRun. Unknown text is `Off` on the runner and is rejected by the server validator.
+
 ## The record
 
 Outstanding work belongs on the Antiphon board as a card (`scripts/card.ps1 new -Board <name> ...`),
