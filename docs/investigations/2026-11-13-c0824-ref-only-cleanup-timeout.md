@@ -44,3 +44,48 @@ No Windows/desktop checkout, run, session, or logs were accessed. For rc run 971
 ## Verification continuation
 
 The original class will run three times with temporary, uncommitted consumer-phase instrumentation; the repair will then run ten whole-class repetitions, the nine-class CARD-1894 CP-2 selection, and the requested six-prefix guard union after the derived-index driver. Final counts, timing and source provenance will be appended below.
+
+## Original-class phase qualification
+
+The three diagnostic class runs use report-only commit 262e0f04029feb1b58b1180cb650e256f4b0990d with uncommitted TestTrace phase markers over otherwise unchanged test code. This is diagnostic baseline evidence, not clean-source acceptance. The exact temporary source digest is retained in .antiphon/debug-6130909c/instrumented-source.sha256; no marker is retained in the repair. The gated diagnostic build passed, 0 errors, 532.84 seconds excluding queue wait.
+
+| Run | Desktop aggregate / remote / legacy-dirty seconds | Results | Load 1/5/15 before queue | Outer seconds |
+|---|---|---|---|---:|
+| 1 | 14.026 / 11.687 / 1.912 | 3 passed, 0 failed/skipped | 22.54/27.00/29.05 | 153.105 |
+| 2 | 29.260 / 20.818 / 4.152 | 3 passed, 0 failed/skipped | 11.86/21.87/26.89 | 90.399 |
+| 3 | 34.710 / 27.175 / 11.751 | 3 passed, 0 failed/skipped | 11.65/19.10/25.44 | 101.130 |
+
+All 9 class results passed. These shared-process samples are warmer and at lower sampled load than the failed isolated run. The aggregate method durations were 14.026, 29.260, and 34.710 seconds.
+
+Per-phase timings (three samples, provisional linear p95) and maximum descendant call counts below come from the temporary spans. A Git call can be answered in process; native counts are the fixture runner subset, not every product subprocess. Parent and child rows overlap and must not be summed. Fixture creation uses cached Git templates, not a full checkout of Antiphon.
+
+| Phase | p50 / p95 / max seconds | Fixture Git calls / native starts / SQL calls (max) |
+|---|---|---|
+| report False | 4.666 / 9.635 / 10.187 | 46 / 12 / 50 |
+| report True | 0.832 / 4.885 / 5.335 | 46 / 12 / 50 |
+| persistent reports | 5.241 / 14.497 / 15.526 | 92 / 24 / 100 |
+| world setup | 0.468 / 1.261 / 1.349 | 28 / 4 / 8 |
+| consumer eligibility | 0.685 / 3.243 / 3.527 | 39 / 13 / 18 |
+| consumer operator-release | 0.235 / 1.656 / 1.814 | 39 / 13 / 19 |
+| consumer system-release | 0.220 / 0.260 / 0.264 | 39 / 13 / 19 |
+| consumer retire-action | 0.270 / 0.329 / 0.335 | 39 / 13 / 22 |
+| consumer legacy-candidate | 0.733 / 0.802 / 0.810 | 12 / 9 / 22 |
+| consumer legacy-precheck | 0.369 / 0.386 / 0.388 | 10 / 7 / 27 |
+| consumer legacy-action | 0.224 / 0.276 / 0.281 | 17 / 8 / 28 |
+| residue and health | 1.452 / 2.340 / 2.439 | 14 / 12 / 37 |
+| landing and guarded cleanup | 4.478 / 14.685 / 15.819 | 137 / 21 / 230 |
+| consumer card-discovery | 0.243 / 2.527 / 2.781 | 4 / 3 / 21 |
+| consumer card-admission | 0.244 / 2.102 / 2.309 | 8 / 4 / 22 |
+| consumer card-replay | 0.194 / 0.351 / 0.368 | 8 / 4 / 23 |
+| consumer card-intent | 0.299 / 0.578 / 0.609 | 45 / 11 / 40 |
+| completed card | 1.541 / 8.185 / 8.923 | 70 / 24 / 117 |
+
+The desktop world explicitly sets PauseBetweenSeconds=0. FixtureGit disables hooks and ignores system/global Git configuration; product Git process exit/drain already has a bounded cancellation budget. The class runs reached all instrumented phases; no input-specific hang or single long subprocess was observed. This is cumulative work plus cold/warm and host-contention variability. fsync-specific attribution was not measured.
+
+## Implemented repair
+
+The aggregate desktop test becomes five independently timed consumer-family tests. The two report layouts become two cases of their own test. Together with the unchanged remote and legacy-dirty methods, the class expands from 3 to 9 results. All 121 Should assertion calls, every assertion line, and all consumer loop cases are preserved. The policy and residue families get fresh worlds, preventing earlier consumer tasks from expanding their scans. Shared Postgres/model/template setup remains assembly/process scoped. The class remains Integration + Slow with the assembly-local ProcessSpawnLimit at width 1.
+
+Each extracted family has a 30-second deadline, narrowed from the prior 60-second aggregate wall. This is a provisional cold/load-aware budget; ten fresh-process whole-class samples below are the bounded calibration collection. The inherited remote and legacy-dirty deadlines stay 60 seconds (remote observed p95 about 26.5 seconds in the three original class runs). A single aggregate deadline of roughly 116 seconds would merely hide cumulative cost and was not adopted. No production behavior changes.
+
+Final builds use native output and UseAppHost=false. Since production source and project references are unchanged, BuildProjectReferences=false reuses the product assemblies from the diagnostic build and rebuilds the changed test project; matching properties are passed on no-build runs. This avoids source-revision metadata alone recompiling identical product code. Staged helper targets retain their normal outputs. No custom OutputPath is used.
