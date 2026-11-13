@@ -315,8 +315,12 @@ internal sealed class WindowsThreadCycleClock(WindowsThreadCycleClock.CycleReade
     }
 
     /// <summary>
-    /// Thread cycles accrue only while the thread runs, so a descheduled spin lowers cycles per wall
-    /// millisecond. The highest of three short spins is the running rate; any error over-charges a tick.
+    /// The running rate is the highest cycles per wall millisecond of three 2 ms spins. Not every error is safe:
+    /// descheduling during a spin lowers the measured rate and so over-charges later ticks (the safe direction),
+    /// but the reads bracket the spin, so cycles spent outside the timed window raise the rate and under-charge,
+    /// by a fraction of a millisecond at the 25 ms budget; and a counter that scales with core frequency
+    /// under-charges by the frequency ratio when the core later runs slower than it did here. The invariant TSC
+    /// of recent x64 CPUs does not scale with frequency.
     /// </summary>
     private double Calibrate()
     {
