@@ -138,7 +138,7 @@ public class SessionStatePinQueryTests
                 'Id', gen_random_uuid(), 'ConcurrencyToken', gen_random_uuid(),
                 'Status', CASE WHEN n < 256 THEN n % 4 ELSE 4 END,
                 'AgentSessionId', CASE WHEN n % 3 = 0 THEN NULL ELSE (@ids)[n % 32 + 1] END,
-                'ParentSessionId', CASE WHEN n % 3 = 1 THEN NULL ELSE (@ids)[n % 32 + 1] END))) AS item
+                'ParentSessionId', CASE WHEN n % 3 = 1 THEN NULL ELSE (@ids)[n % 32 + 1] END)) AS item
             FROM prototype CROSS JOIN generate_series(0, 27694) n)
             INSERT INTO "AgentTasks" SELECT (item).* FROM tasks;
             DELETE FROM "AgentTasks" WHERE "Id" = @prototype;
