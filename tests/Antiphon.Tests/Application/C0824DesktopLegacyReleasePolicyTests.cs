@@ -46,6 +46,66 @@ public sealed class C0824DesktopLegacyReleasePolicyTests
     private const string SystemIdentity = TaskWorktreeRetirementService.SystemCallerIdentity;
     private static readonly AgentTaskService.Caller Operator = new(null, null, "");
 
+    [Test]
+    [Arguments(AgentTaskSyncDebtState.Ready, "same", true)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "different", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "confirmed-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "confirmed-empty", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "source-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-null", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-empty", false)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "both-whitespace", false)]
+    [Arguments(AgentTaskSyncDebtState.Pending, "same", false)]
+    [Arguments(AgentTaskSyncDebtState.Held, "same", false)]
+    [Arguments(AgentTaskSyncDebtState.Superseded, "different", true)]
+    [Arguments(AgentTaskSyncDebtState.Superseded, "both-null", true)]
+    [Arguments(AgentTaskSyncDebtState.Ready, "additional-held", false)]
+    public async Task C1894_Only_confirmed_Ready_debt_is_paid(AgentTaskSyncDebtState state, string shape, bool paid)
+    {
+        await using var w = await DesktopLegacyWorld.CreateAsync();
+        var control = await w.AddTaskAsync();
+        var subject = await w.AddTaskAsync();
+        var origin = await w.OriginRefsAsync();
+        var before = await w.SnapshotAsync(subject.Path);
+        await using (var db = w.Db())
+        {
+            db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+            {
+                Id = Guid.NewGuid(), TaskId = subject.Id, Attempt = 1, SettlementEventId = Guid.NewGuid(),
+                State = state,
+                SourceSha = shape is "source-null" or "both-null" ? null
+                    : shape == "both-empty" ? "" : shape == "both-whitespace" ? " " : new string('a', 40),
+                ConfirmedSha = shape is "confirmed-null" or "both-null" ? null
+                    : shape is "confirmed-empty" or "both-empty" ? ""
+                    : shape == "both-whitespace" ? " " : new string(shape == "different" ? 'b' : 'a', 40),
+                CreatedAt = w.Now, UpdatedAt = w.Now,
+            });
+            if (shape == "additional-held")
+                db.AgentTaskSyncDebts.Add(new AgentTaskSyncDebt
+                {
+                    Id = Guid.NewGuid(), TaskId = subject.Id, Attempt = 2, SettlementEventId = Guid.NewGuid(),
+                    State = AgentTaskSyncDebtState.Held, CreatedAt = w.Now, UpdatedAt = w.Now,
+                });
+            await db.SaveChangesAsync();
+        }
+        w.ClearTrace();
+
+        var tick = await w.TickAsync();
+
+        await w.AssertRetiredAsync(control, origin);
+        if (paid)
+            await w.AssertRetiredAsync(subject, origin);
+        else
+        {
+            var row = await w.RowAsync(tick.RunId, subject);
+            row.Outcome.ShouldBe(nameof(WorktreeResidueCandidateOutcome.Held));
+            row.ReasonCode.ShouldBe("sync_debt");
+            await w.AssertIntactAsync(subject, before);
+            w.AssertNoGit(subject);
+        }
+        tick.Retired.ShouldBe(paid ? 2 : 1);
+    }
+
     /// <summary>V-6 (+ M-4 next-stage case): one tick files one system release and removes the tree.</summary>
     [Test]
     [Arguments(AgentTaskStatus.Succeeded, "pushed")]
