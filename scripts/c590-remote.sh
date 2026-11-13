@@ -7145,6 +7145,9 @@ selector_fixture() {
     # Check each path separately: check-ignore with multiple arguments succeeds
     # when only one is ignored (a negated fixture path must stay protected).
     git -C "$parent" check-ignore -q -- "$rel/" || return 1
+    # Existing disposable seed exceptions are not publication proof. A parent
+    # without origin must not authorize discarding another independent repo.
+    git -C "$parent" config --get remote.origin.url >/dev/null 2>&1 || return 1
     git -C "$rep" config --get-regexp '^remote\.' >/dev/null 2>&1 || remote_status=$?
     [ "$remote_status" = 1 ] || return 1
     selector_parent="$parent"
