@@ -24,12 +24,33 @@ These additional rows explain all verification beyond the original CP-2.
 Direct harness probes, if needed for a failing script case, run under build-slot
 and are diagnostic; they do not replace CP-2 or its fresh TRX.
 
+Repair history: `20261113-000849-18b3` tested implementation SHA
+`3cb3c32ccc2facef7c113bddec494b8c7d9a2816`. CP-2 passed 4/4; CP-11
+ran 162 tests with 160 passed and 2 failed: `committed_index_matches_the_builder`
+(stale index) and `regenerate_script_reports_changed_then_unchanged` (native
+helper not yet built). CP-11 cost 662.462s execution; DerivedImpactIndexTests
+accounted for 564s and TestClassificationPolicyTests for 70s. These are measured
+single-run costs, not a p95. The run was explicitly stopped and joined at the
+queued CP-12/CP-13 builds; those rows did not execute. The canceled aggregate
+receipt is ineligible for final validation, even though CP-2's own source is
+verified. Run all four rows at the repaired committed tip for one complete green
+receipt. The red output is retained, hence the new final build directory.
+
+The prescribed regeneration script built the native helper under a granted slot
+(waited 45s, maxcpucount 6 forwarded by the script), then updated only
+`tests/derived-impact-index.json`; commit that generated index separately.
+Two diagnostic harness invocations passed `TwoBoundariesNeverShare` and
+`StableIdIgnoresOrder` (each slot granted, waited 15s). No timeout or assertion
+was changed. The final run uses the already-built checkpoint tool directly;
+each isolated build/test driver acquires its own slot, without an outer launcher
+lease held across the entire checkpoint loop.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2g/` | boundary | `/*/*/RcBoundaryChunkIdTests/(StableIdIgnoresOrder*)\|(MovedClassChangesId*)\|(UnassignedStaysAlone*)\|(TwoBoundariesNeverShare*)` | V-5 V-6 V-7 V-8 | all listed, 0 failed | 4 | 4 |
-| CP-11 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2g/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | guard union and impacted classes | each class nonzero, 0 failed | 11 | 6 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | boundary | `/*/*/RcBoundaryChunkIdTests/(StableIdIgnoresOrder*)\|(MovedClassChangesId*)\|(UnassignedStaysAlone*)\|(TwoBoundariesNeverShare*)` | V-5 V-6 V-7 V-8 | all listed, 0 failed | 4 | 4 |
+| CP-11 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | guard union and impacted classes | each class nonzero, 0 failed | 11 | 6 |
 | CP-12 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s2pty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 | CP-13 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s2runner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 
