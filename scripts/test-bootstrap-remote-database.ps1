@@ -12,7 +12,11 @@ function Assert-Remote([bool]$Condition, [string]$Name) {
     if ($Condition) { $script:passed++; Write-Host "PASS F2 $Name" }
     else { $script:failed++; Write-Host "FAIL F2 $Name" }
 }
-$client = Get-Command psql -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$clientName = 'psql'
+# Checkpoint command rows use a login shell, which may reset PATH. This fixture
+# override selects a real client executable; it is never read by production.
+if ($env:ANTIPHON_TEST_PSQL_PATH) { $clientName = $env:ANTIPHON_TEST_PSQL_PATH }
+$client = Get-Command $clientName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($null -eq $client) { throw 'F2 fixture requires the PostgreSQL psql client on PATH' }
 foreach ($case in @(
     @('ready', 'ready', $true), @('wrong-db', 'identity-mismatch', $false),
@@ -21,7 +25,7 @@ foreach ($case in @(
     $peer = [Card1844PostgresStub]::new($case[0])
     try {
         $connection = 'Host=127.0.0.1;Port={0};Database=expected-db;Username=fixture-user;Password=fixture-secret-do-not-log;SSL Mode=Prefer' -f $peer.Port
-        $result = Test-AntiphonRemoteDatabase -RepoRoot $SourceRoot -ConnectionString $connection
+        $result = Test-AntiphonRemoteDatabase -RepoRoot $SourceRoot -ConnectionString $connection -PsqlPath $client.Source
         Assert-Remote ($result.Succeeded -eq $case[2] -and $result.Reason -ceq $case[1]) "$($case[0]) has the required verdict and distinct reason (actual=$($result.Reason))"
         Assert-Remote ($result.ElapsedMs -lt 6500) "$($case[0]) stays within the five-second execution plus bounded cleanup budget"
         Assert-Remote (-not ($result | ConvertTo-Json -Compress).Contains('fixture-secret-do-not-log')) "$($case[0]) never returns client error text or credentials"
