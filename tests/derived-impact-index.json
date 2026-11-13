@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 150,
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -1796,8 +1796,8 @@
         "C0824DesktopLegacyReleaseSwitchTests",
         "C1514HostLoadSampleTests",
         "C1677TempSweepDispatchTests",
-        "Card1619RunnerExitTests",
-        "ClaudeDialogDeliveryTests"
+        "C1895OutputDropEngineTests",
+        "Card1619RunnerExitTests"
       ]
     },
     {
@@ -18178,6 +18178,7 @@
         "C1677RetentionInventoryTests",
         "C1677RetentionNativeProcessTests",
         "C1677RetentionServerTests",
+        "C1677RetentionSettingsTests",
         "C1677TempSweepDispatchTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepServerTests",
@@ -22045,6 +22046,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionServerTests",
+        "C1895OutputDropServerTests",
         "ImpactedClassesSelectorTests"
       ]
     },
@@ -22070,7 +22072,8 @@
     {
       "path": "tests/Antiphon.Tests/Application/C1677RetentionTransportWorld.cs",
       "classes": [
-        "C1677RetentionServerTests"
+        "C1677RetentionServerTests",
+        "C1895OutputDropServerTests"
       ]
     },
     {
