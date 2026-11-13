@@ -286,6 +286,174 @@ public sealed class C1895OutputDropEngineTests
 
     [Test]
     [Timeout(60_000)]
+    public async Task Proven_output_is_deleted_and_foreign_directories_stay(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "bin-*/", "node_modules/", "dist/", "vendor/", "*.csproj", "Directory.Build.*", "tests/Linked/bin");
+        var legitimate = m.Path + "/tests/Foo/bin";
+        Directory.CreateDirectory(legitimate);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(legitimate + "/hello.txt", "hello");
+        var named = m.Path + "/tests/Bar/bin-tool";
+        Directory.CreateDirectory(named);
+        File.WriteAllText(m.Path + "/tests/Bar/Directory.Build.props", "<Project />");
+        File.WriteAllText(named + "/x.txt", "xyz");
+        var packageBin = m.Path + "/node_modules/pkg/bin";
+        Directory.CreateDirectory(packageBin);
+        File.WriteAllText(packageBin + "/cli.js", "package-source");
+        var distBin = m.Path + "/dist/tool/bin";
+        Directory.CreateDirectory(distBin);
+        File.WriteAllText(distBin + "/script.js", "dist-source");
+        var orphan = m.Path + "/tests/orphan/bin";
+        Directory.CreateDirectory(orphan);
+        File.WriteAllText(orphan + "/keep.txt", "no-project");
+        var outside = s.Root + "/linked-bin";
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(outside + "/secret.txt", "symlink-target");
+        Directory.CreateDirectory(m.Path + "/tests/Linked");
+        File.WriteAllText(m.Path + "/tests/Linked/Linked.csproj", "<Project />");
+        File.CreateSymbolicLink(m.Path + "/tests/Linked/bin", outside);
+        var nestedBin = m.Path + "/vendor/pkg/bin";
+        Directory.CreateDirectory(nestedBin);
+        File.WriteAllText(m.Path + "/vendor/pkg/Pkg.csproj", "<Project />");
+        File.WriteAllText(nestedBin + "/tracked.txt", "nested-tracked");
+        Git(m.Path + "/vendor", "init", "-q", "--initial-branch=main");
+        Git(m.Path + "/vendor", "config", "user.email", "c1895@localhost");
+        Git(m.Path + "/vendor", "config", "user.name", "c1895");
+        Git(m.Path + "/vendor", "add", "-A");
+        Git(m.Path + "/vendor", "commit", "-q", "-m", "nested");
+        RequireClean(m.Path);
+
+        var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+        Directory.Exists(legitimate).ShouldBeFalse("a bin beside a sibling csproj is output");
+        Directory.Exists(named).ShouldBeFalse("a bin-* beside Directory.Build.props is output");
+        File.ReadAllText(packageBin + "/cli.js").ShouldBe("package-source");
+        File.ReadAllText(distBin + "/script.js").ShouldBe("dist-source");
+        File.ReadAllText(orphan + "/keep.txt").ShouldBe("no-project");
+        File.ReadAllText(outside + "/secret.txt").ShouldBe("symlink-target");
+        new FileInfo(m.Path + "/tests/Linked/bin").LinkTarget.ShouldNotBeNull();
+        File.ReadAllText(nestedBin + "/tracked.txt").ShouldBe("nested-tracked");
+        Git(m.Path + "/vendor", "ls-files", "--error-unmatch", "--", "pkg/bin/tracked.txt").Trim().ShouldBe("pkg/bin/tracked.txt");
+        response.Bytes.ShouldBe(8, "hello + xyz");
+        response.Directories.ShouldBe(2);
+        s.Registered(m.Path).ShouldBeTrue();
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Tracked_file_added_after_inspection_is_not_deleted(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/world.txt", "world!");
+        RequireClean(m.Path);
+        var scans = 0;
+        s.Holders.Next = _ =>
+        {
+            if (++scans >= 2 && !File.Exists(obj + "/now-tracked.txt"))
+            {
+                File.WriteAllText(obj + "/now-tracked.txt", "late");
+                Git(m.Path, "add", "-f", "tests/Foo/obj/now-tracked.txt");
+            }
+            return new HolderScan(true, []);
+        };
+
+        var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+        File.Exists(obj + "/now-tracked.txt").ShouldBeTrue("a file tracked after inspection must survive");
+        File.ReadAllText(obj + "/now-tracked.txt").ShouldBe("late");
+        Git(m.Path, "ls-files", "--error-unmatch", "--", "tests/Foo/obj/now-tracked.txt").Trim()
+            .ShouldBe("tests/Foo/obj/now-tracked.txt");
+        Directory.Exists(obj).ShouldBeTrue("the directory gained tracked content before delete");
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("changed_during_drop", response.Detail);
+        (response.Bytes ?? 0).ShouldBe(0);
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Untracked_file_added_after_inspection_stops_the_drop(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var bin = m.Path + "/tests/Foo/bin";
+        Directory.CreateDirectory(bin);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(bin + "/hello.txt", "hello");
+        RequireClean(m.Path);
+        var scans = 0;
+        s.Holders.Next = _ =>
+        {
+            if (++scans >= 2 && !File.Exists(m.Path + "/notes.txt"))
+                File.WriteAllText(m.Path + "/notes.txt", "late-untracked");
+            return new HolderScan(true, []);
+        };
+
+        var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+        File.ReadAllText(m.Path + "/notes.txt").ShouldBe("late-untracked");
+        Directory.Exists(bin).ShouldBeTrue();
+        File.ReadAllText(bin + "/hello.txt").ShouldBe("hello");
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe("changed_during_drop", response.Detail);
+        (response.Bytes ?? 0).ShouldBe(0);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Partial_unlink_reports_the_bytes_actually_removed(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        var blocked = obj + "/zdir";
+        Directory.CreateDirectory(blocked);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(blocked + "/b.dll", "blocked");
+        RequireClean(m.Path);
+        var scans = 0;
+        s.Holders.Next = _ =>
+        {
+            if (++scans >= 2)
+                File.SetUnixFileMode(blocked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+            return new HolderScan(true, []);
+        };
+
+        try
+        {
+            var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+            response.Verdict.ShouldBe(WorkspaceOutputDropCodes.DeleteFailed, response.Detail);
+            response.Bytes.ShouldBe(6, "a.dll was unlinked before zdir refused");
+            File.Exists(obj + "/a.dll").ShouldBeFalse();
+            File.ReadAllText(blocked + "/b.dll").ShouldBe("blocked");
+            Directory.Exists(obj).ShouldBeTrue();
+        }
+        finally
+        {
+            try
+            {
+                File.SetUnixFileMode(blocked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
+            {
+            }
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
     public async Task Dispatcher_routes_execute_to_the_engine(CancellationToken ct)
     {
         using var s = Create();
