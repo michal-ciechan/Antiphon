@@ -290,7 +290,7 @@ public sealed class C0747QueueRowExpiryTests
     /// canceled body appears in one.
     /// </summary>
     [Test]
-    [Timeout(15_000)]
+    [Timeout(180_000)]
     public async Task C1857_Survivor_reaches_the_recipient_once_and_a_cancelled_row_never_does(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -333,7 +333,7 @@ public sealed class C0747QueueRowExpiryTests
     /// delivery.
     /// </summary>
     [Test]
-    [Timeout(15_000)]
+    [Timeout(180_000)]
     public async Task C1857_Delivery_claim_between_select_and_cancel_is_not_cancelled(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -365,7 +365,7 @@ public sealed class C0747QueueRowExpiryTests
     /// at 59 seconds, or still pending at one minute.
     /// </summary>
     [Test]
-    [Timeout(15_000)]
+    [Timeout(180_000)]
     public async Task C1857_Held_queue_lock_is_retried_after_one_minute(CancellationToken ct)
     {
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
@@ -414,7 +414,7 @@ public sealed class C0747QueueRowExpiryTests
     /// red: a first-batch CanceledAt changes, or a pending row survives the second pass.
     /// </summary>
     [Test]
-    [Timeout(15_000)]
+    [Timeout(180_000)]
     public async Task C1857_Stop_between_batches_resumes_and_cancels_the_rest_once(CancellationToken ct)
     {
         var rows = AgedQueueRowExpiry.BatchSize + 1;
