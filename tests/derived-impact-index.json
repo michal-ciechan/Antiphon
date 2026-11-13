@@ -23910,6 +23910,7 @@
         "NightlyScriptsTests",
         "QualificationEtaTests",
         "RcBoundaryChunkIdTests",
+        "RcBoundaryPackTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
