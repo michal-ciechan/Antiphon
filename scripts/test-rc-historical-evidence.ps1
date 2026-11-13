@@ -71,6 +71,7 @@ try {
             Note (@($rows | Where-Object { $_.kind -ceq 'TestMethod' -and $_.attributes.className -ceq 'Fixture.Tests' }).Count -eq 1) 'TRX method row'
             Note (@($rows | Where-Object { $_.field -ceq 'runWallSeconds' -and $_.value -eq 1.25 }).Count -eq 1) 'timing scalar row'
             Note (Test-RcHistoricalEvidence -EvidenceRoot $result.evidenceRoot).valid 'fresh bundle did not reverify'
+            Note ($watch.Elapsed.TotalSeconds -le 60) ('streaming extraction exceeded the 60s target: ' + $watch.Elapsed.TotalSeconds)
             Write-Output ('RH metrics bytes=' + $entry.length + ' peakDelta=' + $peak + ' maxBufferedBytes=' + $result.maxBufferedBytes + ' elapsed=' + $watch.Elapsed.TotalSeconds)
         }
         'TamperAndChangingReadRefuse' {
