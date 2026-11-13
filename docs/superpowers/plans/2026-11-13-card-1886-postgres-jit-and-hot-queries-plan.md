@@ -238,7 +238,18 @@ Commit each slice and push. Invoke the checkpoint tool once per committed `After
 
 ### Checkpoints
 
-S2 Code amendment (f56921e1): execute CP-2 and CP-10 only for the commissioned S2 slice. CP-10 includes DerivedImpactIndexTests per the brief. CP-5/CP-8 estimates are rounded up to integer minutes because the importer refuses fractional estimates; those S4/S5 rows remain out of this slice. An initial committed CP-2 run retains the legacy query to prove the plan-budget test red before the SQL replacement. No migrations or OS-selected production behavior change.
+S2 Code amendment (f56921e1): execute CP-2 and CP-10 only for the commissioned S2 slice. CP-10 includes DerivedImpactIndexTests per the brief. CP-5/CP-8 estimates are rounded up to integer minutes because the importer refuses fractional estimates; those S4/S5 rows remain out of this slice. An initial committed CP-2 run retains the legacy query to prove the plan-budget test red before the SQL replacement. No migrations or OS-selected production behavior change. The actual diff's only matching impacted-classes policy row is `test-lane-category`, covered by CP-10. Derived reverse-edge candidates extend well beyond this query; the named CP-2 classes bound this slice's unchanged execution/retry/delivery behavior. No full assembly or Unit lane run is commissioned.
+
+S2 pending SourceLanding Mutation inventory (all pending; Code's legacy red is ordinary regression evidence):
+
+| PC | Exact test method on RuntimeActionClaimQueryTests | Compiling defect variants |
+|---|---|---|
+| PC-S2-1 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Remove carried keys from destinations; remove the earlier-null wildcard; remove the later-null wildcard. |
+| PC-S2-2 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Remove late keys; remove the queued-message session restriction; include non-channel rows in the blocker set. |
+| PC-S2-3 | Selection_and_drain_match_legacy_and_independent_destination_oracle | Add a global due-time filter; reverse phase priority; reverse sequence priority; reverse trigger-kind priority. |
+| PC-S2-4 | Small_and_debt_heavy_plans_bound_cost_and_seek_queued_messages | Restore the legacy correlated selector (cost assertion); replace the keyed queued-message join with a compiling table-wide scan (scan assertion). |
+
+Unique `(session, sequence, kind)` storage prevents two `channel` rows at the same sequence. The ties fixture therefore uses channel/transcript/status/catchup ties, preserving the existing strict-earlier rule without manufacturing invalid rows. No numeric PC budget from the original plan is superseded; Mutation owns method-scoped execution, missing-control discovery and any newly discovered variant.
 
 Every row below is portable server/Postgres lane; ordinary scope is exactly these rows. Reuse cells refer only to an earlier build with the same `After`. Grouped run S5 includes CP-6–CP-9. CP-10 is the final integrated source guard run. EstimatedMinutes are provisional under the budget above.
 

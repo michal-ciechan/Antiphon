@@ -1,4 +1,3 @@
-using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -24,6 +23,9 @@ public class RuntimeActionClaimQueryTests
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var now = new DateTime(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc);
+        await db.Database.OpenConnectionAsync();
+        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
+        var evidence = EvidenceDirectory();
         // One owned clone, no production services/processes; each case has separate session identity.
         foreach (var scenario in new[] { "empty", "transcript", "channel", "mixed", "future-transcript",
                      "different", "carried", "wildcard-earlier", "wildcard-later", "late-carried",
@@ -78,6 +80,10 @@ public class RuntimeActionClaimQueryTests
             db.SessionRuntimeActions.Add(Action(foreign.Id, now, 0, "channel", null, due: false));
             await db.SaveChangesAsync();
             db.ChangeTracker.Clear();
+            // Explain every semantic fixture as well as the separate large-table matrix.
+            var oldPlan = await ExplainAsync(connection, Legacy(db, session.Id, now), generic: false, jit: false);
+            var newPlan = await ExplainAsync(connection, SessionRuntimeActionClaimQuery.Query(db, session.Id, now), generic: false, jit: false);
+            await File.WriteAllTextAsync(Path.Combine(evidence, scenario + ".json"), JsonSerializer.Serialize(new { oldPlan, newPlan }));
             var expectedOrder = new List<Guid>();
             var actualOrder = new List<Guid>();
             while (true)
@@ -128,9 +134,7 @@ public class RuntimeActionClaimQueryTests
             seed.Parameters.AddWithValue("now", now);
             await seed.ExecuteNonQueryAsync();
         }
-        var evidence = Path.Combine(Path.GetTempPath(), "antiphon-c1886-plans-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(evidence);
-        Console.WriteLine("C1886 plans=" + evidence);
+        var evidence = EvidenceDirectory();
         // Keep every plan even if the baseline production query violates the new budget.
         var observations = new List<(string Shape, bool Generic, bool Jit, JsonElement Old, JsonElement New)>();
         foreach (var shape in new[] { "transcript", "debt-heavy" })
@@ -172,6 +176,15 @@ public class RuntimeActionClaimQueryTests
     }
 
     private static decimal Cost(JsonElement plan) => plan.GetProperty("Plan").GetProperty("Total Cost").GetDecimal();
+
+    private static string EvidenceDirectory()
+    {
+        var root = Environment.GetEnvironmentVariable("ANTIPHON_TEST_PHASE_ROOT") ?? Path.GetTempPath();
+        var path = Path.Combine(root, "c1886-plans-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        Console.WriteLine("C1886 plans=" + path);
+        return path;
+    }
 
     private static IEnumerable<JsonElement> Nodes(JsonElement node)
     {
