@@ -114,7 +114,7 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         await using var f = await RefOnlyDispatchFixture.CreateAsync();
         var task = await f.LaunchAsync(await f.SeedAsync());
         await using var world = await RunnerSettlementWorld.AttachProducedAsync(f, task);
-        await world.SettleAsync("Need a choice. [antiphon-report:" + task.Id + " blocked]", closingVerdict: false);
+        await world.SettleAsync("Which option should I use?\n" + DelegationReportFormatter.ReportToken(task.Id, "blocked"), closingVerdict: false);
         world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, world.Task.FailureReason);
         f.Gate.CurrentValue.Enabled = false; f.Gate.CurrentValue.RunnerIds = []; f.Gate.CurrentValue.Roles = "none";
         await f.Rig.RestartAsync(); await world.RestartServicesAsync();
@@ -124,11 +124,14 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         world.Task.Status.ShouldBe(AgentTaskStatus.Working);
         world.Task.TaskRefWorkspaceBindingId.ShouldBe(task.TaskRefWorkspaceBindingId);
         world.Task.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        var launchCount = f.Rig.Sink.Specs.Count;
         await using (var scope = f.Rig.Provider.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().RelaunchWedgedAsync(task.Id, task.AgentSessionId!.Value, default);
+        f.Rig.Sink.Specs.Count.ShouldBe(launchCount + 1, "boot-wedge actually queues a new remote launch");
         var resumed = await f.Rig.ReadTaskAsync(task.Id);
         resumed.AgentSessionId.ShouldNotBe(task.AgentSessionId);
         resumed.BootWedgeRelaunchCount.ShouldBe(1);
+        f.Rig.Sink.Specs.Last().Cwd.ShouldBe(task.RemoteWorktreePath, "boot-wedge launch executes on the recorded runner cwd");
         resumed.TaskRefWorkspaceBindingId.ShouldBe(task.TaskRefWorkspaceBindingId);
         await using (var db = f.Rig.NewDb())
         {
