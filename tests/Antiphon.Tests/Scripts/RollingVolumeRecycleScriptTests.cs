@@ -721,14 +721,23 @@ public sealed class RollingVolumeRecycleScriptTests
             raw.Output.ShouldContain(validator + "/" + vector + " checked");
     }
 
-    [Test]
-    [Arguments("present")]
-    [Arguments("absent")]
-    [Arguments("missing-shell")]
-    [Arguments("failing-shell")]
-    [Timeout(400_000)]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1008_Legacy_rolling_and_jq_rosters_remain(string mode, CancellationToken cancellationToken)
+    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1008_Legacy_rolling_and_jq_rosters_remain_present(CancellationToken cancellationToken) =>
+        LegacyRollingAndJqRoster("present", cancellationToken);
+
+    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1008_Legacy_rolling_and_jq_rosters_remain_absent(CancellationToken cancellationToken) =>
+        LegacyRollingAndJqRoster("absent", cancellationToken);
+
+    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1008_Legacy_rolling_and_jq_rosters_remain_missing_shell(CancellationToken cancellationToken) =>
+        LegacyRollingAndJqRoster("missing-shell", cancellationToken);
+
+    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
+    public Task C1008_Legacy_rolling_and_jq_rosters_remain_failing_shell(CancellationToken cancellationToken) =>
+        LegacyRollingAndJqRoster("failing-shell", cancellationToken);
+
+    private async Task LegacyRollingAndJqRoster(string mode, CancellationToken cancellationToken)
     {
         // Each mode runs the complete 62/66-invocation roster. Keep its assertions and
         // serial process limiter, with a deadline per mode rather than for all 252 children.
@@ -3400,7 +3409,7 @@ internal sealed class C1008HostFixture : IDisposable
     }
 
     internal async Task<(int Exit, string Output)> Run(string hostCase = "deploy-parent", string extra = "", bool dryRun = false,
-        Func<string, string>? sourceTransform = null)
+        Func<string, string>? sourceTransform = null, Func<string, Task<string?>>? control = null)
     {
         using var runPhase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
         // GNU timeout execs by name rather than calling the shell function below.
@@ -3468,7 +3477,8 @@ internal sealed class C1008HostFixture : IDisposable
         source = InsertSetupAtEntry(source, injection);
         var script = Path.Combine(Root, "remote.sh");
         File.WriteAllText(script, source);
-        var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        var psi = new ProcessStartInfo("bash") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            RedirectStandardInput = control is not null };
         psi.Environment["PATH"] = dockerBin + ":" + Environment.GetEnvironmentVariable("PATH");
         psi.ArgumentList.Add(script);
         psi.Environment["C590_CASE"] = hostCase;
@@ -3478,11 +3488,27 @@ internal sealed class C1008HostFixture : IDisposable
         psi.Environment["C604_SERVER_ORIGIN"] = "http://127.0.0.1:1";
         using var processPhase = TestTiming.BeginProcess("bash", psi.ArgumentList.Count, "cli");
         using var proc = Process.Start(psi)!;
-        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
         // CARD-1130. A deploy-parent Run measures 22-30s and exceeds 30s at load 19-23
         // (method wall 47s idle, 53s at that load). 120s still cancels a hang inside the row timeout.
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-        try { await proc.WaitForExitAsync(deadline.Token); }
+        async Task<string> Pump()
+        {
+            if (control is null) return await proc.StandardOutput.ReadToEndAsync(deadline.Token);
+            var output = new System.Text.StringBuilder();
+            while (await proc.StandardOutput.ReadLineAsync(deadline.Token) is { } line)
+            {
+                output.AppendLine(line);
+                var response = await control(line);
+                if (response is not null)
+                {
+                    await proc.StandardInput.WriteLineAsync(response.AsMemory(), deadline.Token);
+                    await proc.StandardInput.FlushAsync(deadline.Token);
+                }
+            }
+            return output.ToString();
+        }
+        var stdout = Pump(); var stderr = proc.StandardError.ReadToEndAsync(deadline.Token);
+        try { await Task.WhenAll(proc.WaitForExitAsync(deadline.Token), stdout); }
         catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
         return (proc.ExitCode, await stdout + await stderr);
     }

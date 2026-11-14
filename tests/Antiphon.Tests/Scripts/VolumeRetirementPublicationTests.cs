@@ -560,6 +560,94 @@ public sealed class VolumeRetirementPublicationTests
         Refused(audit, "RecycleGitAuditUnknown");
     }
 
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Unchanged_objects_renew_at_each_ready_gate()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        Ready(await f.Preview(proof, extraGates: 2));
+        f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(3, "each real gate repeats the host writer for the same object set");
+        f.ControlRequests.ShouldBe(3, "each gate completes a distinct live control exchange");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Offline_scan_requires_live_completion()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U);
+        await f.Protect(f.U, "refs/recovery/original");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        var scan = await f.Audit(proof, complete: false);
+        scan.Exit.ShouldBe(6, scan.Output);
+        scan.Output.ShouldContain("RecycleGitAuditUnknown");
+        (await f.Audit(proof)).Exit.ShouldBe(0, "a current origin completes the same scan through the real writer");
+        await f.Git(f.Bare, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.U));
+        var refused = await f.Audit(proof);
+        refused.Exit.ShouldBe(2, refused.Output);
+        refused.Output.ShouldContain("RecycleGitAuditUnknown");
+    }
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1901() => RenewalCorpus(1901);
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1902() => RenewalCorpus(1902);
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1903() => RenewalCorpus(1903);
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1904() => RenewalCorpus(1904);
+
+    private static async Task RenewalCorpus(int seed)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create();
+        var random = new Random(seed);
+        var objects = new List<string>(); var parents = new List<int[]>();
+        for (var i = 0; i < 40; i++)
+        {
+            var first = i == 0 ? -1 : random.Next(-1, i);
+            var second = i > 2 && i % 5 == 0 ? random.Next(i) : -1;
+            if (first == second) second = -1;
+            parents.Add(second < 0 ? [first] : [first, second]);
+            objects.Add(await f.Commit("seed " + seed + " object " + i, first < 0 ? f.A : objects[first],
+                "object " + i, second < 0 ? null : objects[second]));
+        }
+        var roots = new[] { 4, 17, 31 };
+        var published = new HashSet<int>();
+        void Visit(int i) { if (i < 0 || !published.Add(i)) return; foreach (var parent in parents[i]) Visit(parent); }
+        foreach (var i in roots) { Visit(i); await f.Publish(objects[i], "refs/heads/corpus/" + i); }
+        published.Count.ShouldBeGreaterThan(0); published.Count.ShouldBeLessThan(objects.Count);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var accepted = new[] { f.A }.Concat(roots.Select(i => objects[i])).ToArray();
+        for (var shape = 0; shape < 70; shape++)
+        {
+            var index = shape % objects.Count; var tip = objects[index];
+            var family = shape % 6;
+            var reference = family switch
+            {
+                0 => VolumeRetirementPublicationFixture.Canonical(tip),
+                1 => "refs/salvage/corpus", 2 => "refs/remotes/backup/corpus", _ => "refs/recovery/corpus"
+            };
+            if (family == 3) await File.WriteAllTextAsync(Path.Combine(f.Repo, ".git/ORIG_HEAD"), tip + "\n");
+            else if (family == 4) await f.SetReflog("logs/HEAD", tip, f.A);
+            else await f.Protect(tip, reference, packed: shape % 2 == 0);
+            await f.Oracle("seed=" + seed + " shape=" + shape + " family=" + family,
+                [tip], accepted, published.Contains(index), proof, compareBase: false);
+            if (family == 3) await File.WriteAllTextAsync(Path.Combine(f.Repo, ".git/ORIG_HEAD"), f.A + "\n");
+            else if (family == 4) await f.SetReflog("logs/HEAD", f.A, f.A);
+            else await f.Git(f.Repo, "update-ref", "-d", reference);
+        }
+    }
+
     private static void Refused((int Exit, string Output) run, string diagnosis)
     {
         run.Exit.ShouldBe(2, run.Output);

@@ -194,7 +194,7 @@ function Assert-C1609BundleAdvertisement {
 function Write-C1609HostOriginProof {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
         [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
-        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='')
+        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='',[switch]$FreshGraph)
     $budget=[Diagnostics.Stopwatch]::StartNew()
     $scratch=Join-Path ([IO.Path]::GetTempPath()) ('c1609-host-'+[guid]::NewGuid().ToString('N'))
     try {
@@ -205,7 +205,7 @@ function Write-C1609HostOriginProof {
                 Invoke-C1609HostOriginProofAttempt -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId `
                     -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce `
                     -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $remaining `
-                    -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile -Scratch $scratch
+                    -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile -Scratch $scratch -FreshGraph:$FreshGraph
                 return
             } catch {
                 $reason=[string]$script:C1609HostProofReason
@@ -224,7 +224,7 @@ function Write-C1609HostOriginProof {
 function Invoke-C1609HostOriginProofAttempt {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofDirectory,
         [long]$CreatedUnix,[string]$LogPath,[string]$PhaseNonce,[string]$InventoryDigest,[string[]]$ApprovedOrigins,
-        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='',[string]$Scratch)
+        [int]$NetworkBudgetMs=600000,[object[]]$RequiredObjects=@(),[string]$PreviousProofFile='',[string]$Scratch,[switch]$FreshGraph)
     $bundle=''; $bundleCreated=$false
     try {
         if($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $PhaseNonce -cnotmatch '^[0-9a-f]{32}$' -or
@@ -279,7 +279,13 @@ function Invoke-C1609HostOriginProofAttempt {
             if($old[3] -cne ('repo '+$RepoRelative) -or $old[5] -cnotmatch '^nonce [0-9a-f]{32}$' -or
                 $old[6] -cnotmatch '^inventory [0-9a-f]{64}$' -or $old[8] -cne ('advertisement '+(Get-C1008Sha256 (($oldAdvertisement -join [char]10)+[char]10))) -or
                 $old[9] -cne ('count '+$oldAdvertisement.Count)){throw 'previous-proof'}
-            $reuse=$fresh -and ($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
+            # A new graph cannot silently replace the publication authority used
+            # by the audit. Even if another ref still reaches an object, a withdrawn
+            # or changed previously advertised ref invalidates this invocation.
+            $live=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach($line in $before){[void]$live.Add($line)}
+            foreach($line in $oldAdvertisement){if(-not $live.Contains($line)){throw 'withdrawn-ref'}}
+            $reuse=-not $FreshGraph -and $fresh -and ($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
         }
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         # CARD-1693: Git reads and writes a bundle only inside the short scratch directory. The desktop
@@ -350,4 +356,35 @@ function Copy-C1609HostOriginProof {
     $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($lines -join [char]10)+[char]10)
     $file=[IO.File]::Open((Join-Path $Directory $name),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
     try{$file.Write($bytes);$file.Flush($true)}finally{$file.Dispose()}
+}
+
+# Final control-stream read after the renewed graph has been staged. The helper
+# stays offline; only this credential-capable host contacts the approved origin.
+function Assert-C1609LiveOriginProof {
+    param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofFile,
+        [string[]]$ApprovedOrigins,[int]$NetworkBudgetMs=5000)
+    try {
+        $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($origin in $ApprovedOrigins){[void]$allowed.Add($origin)}
+        if(-not $allowed.Contains($OriginUrl) -or
+            (ConvertTo-C1008ScrubbedOrigin -OriginUrl $OriginUrl) -cne $OriginUrl -or
+            $NetworkBudgetMs -le 0 -or $NetworkBudgetMs -gt 5000){throw 'origin'}
+        $old=[IO.File]::ReadAllLines($ProofFile)
+        if($old.Length -lt 12 -or $old[0] -cne 'c1008-host-proof 2' -or
+            $old[1] -cne ('operation '+$OperationId) -or
+            $old[2] -cne ('origin '+(Get-C1008Sha256 $OriginUrl)) -or
+            $old[3] -cne ('repo '+$RepoRelative) -or
+            $old[5] -cnotmatch '^nonce [0-9a-f]{32}$' -or $old[6] -cnotmatch '^inventory [0-9a-f]{64}$' -or
+            $old[7] -cnotmatch '^bundle [0-9a-f]{64}$' -or
+            ([IO.FileInfo]::new($ProofFile).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+            (Get-FileHash -LiteralPath ($ProofFile+'.bundle') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $old[7].Substring(7)){throw 'proof'}
+        $expected=@(Read-C1609Advertisement (($old[11..($old.Length-1)] -join [char]10)+[char]10))
+        if($old[8] -cne ('advertisement '+(Get-C1008Sha256 (($expected -join [char]10)+[char]10))) -or
+            $old[9] -cne ('count '+$expected.Count)){throw 'proof'}
+        $advertisement=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -WorkingDirectory ([IO.Path]::GetDirectoryName($ProofFile)) `
+            -GitArgs @('ls-remote',$OriginUrl,'refs/heads/*','refs/tags/*','refs/antiphon/salvage/*') -TimeoutMs $NetworkBudgetMs))
+        $live=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($line in $advertisement){[void]$live.Add($line)}
+        foreach($line in $expected){if(-not $live.Contains($line)){throw 'withdrawn-ref'}}
+    } catch {throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)}
 }

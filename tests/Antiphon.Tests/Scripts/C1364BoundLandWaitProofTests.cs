@@ -144,12 +144,34 @@ public sealed class C1364BoundLandWaitProofTests
         // R-1 must be first: the existing late-land input reaches the real post-audit proof.
         await RecycleVector("V-6/main/late-land", main: true, proof: 3, lateLand: true);
         await RecycleVector("V-6/temp", main: false, proof: 3);
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1364_Host_recycle_post_removal_reports_waited_resume()
+    {
+        C1008HostFixture.RequireNativeLinux();
         await RecycleVector("V-6/main/resume", main: true, proof: 3, resumePhase: "containersRemoved");
         await RecycleVector("V-6/temp/resume", main: false, proof: 3, resumePhase: "removing");
-        foreach (var main in new[] { true, false })
-        for (var index = 0; index < (main ? 3 : 4); index++)
-            await RecycleVector($"V-7/{(main ? "main" : "temp")}/volume-{index + 1}",
-                main, proof: 4 + index);
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1364_Host_recycle_post_removal_reports_waited_main_volumes()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        for (var index = 0; index < 3; index++)
+            await RecycleVector($"V-7/main/volume-{index + 1}", main: true, proof: 4 + index);
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1364_Host_recycle_post_removal_reports_waited_temp_volumes()
+    {
+        C1008HostFixture.RequireNativeLinux();
+        for (var index = 0; index < 4; index++)
+            await RecycleVector($"V-7/temp/volume-{index + 1}", main: false, proof: 4 + index);
+
     }
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]

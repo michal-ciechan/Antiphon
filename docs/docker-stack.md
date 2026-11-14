@@ -479,6 +479,17 @@ advertisement/bundle equality validation refuses `RecycleGitAuditUnknown`, even
 when every advertised head is already present locally. Temp/v2 has no present-head
 fallback. Main/v1 retains its existing head-only behavior.
 
+A v2 offline scan with a supplied bundle is provisional (exit 6/Unknown). The
+enclosing coordinator must complete it with live origin renewal in that same
+invocation before Ready or any volume removal. It rechecks repository/origin
+bindings and the approved-origin registry, fetches a fresh graph and requires
+every previously advertised ref to remain at its exact OID. A final live
+advertisement after staging closes the transfer/census interval. The final
+control request, custody writes and effect have a five-second monotonic bound.
+An origin move after the final observation cannot be detected atomically across
+hosts; each later effect repeats the full gate. A sealed proof alone, unchanged
+object digest, or the 900-second receipt lifetime grants no exemption.
+
 Local salvage refs, both reflog sides, detached linked HEADs, stale origin tracking,
 other remotes and pseudorefs remain positive roots. Exact accepted origin ancestry
 must contain their history. Patch IDs, equal trees and task completion grant no

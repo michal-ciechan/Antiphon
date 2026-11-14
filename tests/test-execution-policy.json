@@ -1295,7 +1295,10 @@
           "methods": [
             "C1364_Host_recycle_admission_reports_waited",
             "C1364_Host_recycle_post_removal_reports_waited",
-            "C1364_Host_cleanup_reports_waited"
+            "C1364_Host_cleanup_reports_waited",
+            "C1364_Host_recycle_post_removal_reports_waited_resume",
+            "C1364_Host_recycle_post_removal_reports_waited_main_volumes",
+            "C1364_Host_recycle_post_removal_reports_waited_temp_volumes"
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: native Linux recycle wait proof. The case remains required on Linux.",
@@ -1679,10 +1682,31 @@
             "Tags_preserve_object_and_ancestry_requirements",
             "V2_invalid_bundle_cannot_use_present_head_fallback",
             "Selector_fixture_own_gitdir_file_stays_in_full_audit",
-            "Selector_fixture_own_gitdir_symlink_stays_in_full_audit"
+            "Selector_fixture_own_gitdir_symlink_stays_in_full_audit",
+            "Salvage_deleted_after_sealing_refuses_ready",
+            "Head_rolled_back_after_sealing_refuses_ready",
+            "Salvage_replaced_after_sealing_refuses_ready",
+            "Origin_unreachable_at_final_check_refuses_ready",
+            "Origin_rebound_at_final_check_refuses_ready",
+            "Unchanged_objects_renew_at_each_ready_gate",
+            "Offline_scan_requires_live_completion",
+            "Origin_graph_corpus_seed_1901",
+            "Origin_graph_corpus_seed_1902",
+            "Origin_graph_corpus_seed_1903",
+            "Origin_graph_corpus_seed_1904"
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: full retirement audit requires Bash and POSIX mounts; H1-H3 host writers remain required on both platforms.",
+          "owner": "CARD-1901"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementWrapperTests",
+          "methods": [
+            "Retire_temp_real_wrapper_renews_each_effect"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the real wrapper renewal witness requires native Linux Bash and POSIX mounts.",
           "owner": "CARD-1901"
         }
       ]

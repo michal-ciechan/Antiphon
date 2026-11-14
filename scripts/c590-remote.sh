@@ -8480,6 +8480,13 @@ while IFS= read -r -d '' link; do
 done < "$scratch/links"
 c1609_finish_blocks
 printf 'repositories=%s partial=%s\n' "$repos" "$partial_repos"
+# The offline helper cannot observe origin withdrawal. Its successful scan is
+# provisional, never an exit-0 retirement authorization. Only the enclosing
+# coordinator can finish it through the live publication gate before Ready/effect.
+if [ "${C1609_CONTENT_V2:-}" = 1 ] && [ "${C1008_AUDIT_MODE:-}" != inventory ] && [ -n "${C1008_HOST_PROOF:-}" ]; then
+    printf 'audit check=publication-pending status=6 repo=.\nRecycleGitAuditUnknown\n'
+    exit 6
+fi
 # C1008_AUDIT_END
 C1008_AUDIT_BODY
 case "$c1008_audit_body" in
@@ -8849,6 +8856,15 @@ c1008_preview_finish() {
     fi
     if [ -f "${c1008_preview_output_file:-}" ]; then
         output="$(cat "$c1008_preview_output_file")"
+    fi
+    # Scan-only completion is admitted solely as input to the enclosing live
+    # gate. A direct scanner caller keeps exit 6 / Unknown, even for a valid bundle.
+    if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ] && [ "$run_code" = 6 ]; then
+        case "$output" in
+            *$'\naudit check=publication-pending status=6 repo=.\nRecycleGitAuditUnknown')
+                output="${output%$'\naudit check=publication-pending status=6 repo=.\nRecycleGitAuditUnknown'}"
+                run_code=0 ;;
+        esac
     fi
     if [ "$run_code" != 0 ]; then
         case "$output" in
@@ -9409,6 +9425,7 @@ c1008_recycle() {
             c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
             c1609_publication_gate ready || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
+            c1609_effect_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             printf 'C1609_RETIREMENT state=Ready operation=%s\n' "$C1008_OPERATION"
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
                 printf 'audit check=origin-present status=0\n'
@@ -9598,6 +9615,9 @@ c1008_recycle() {
                 c1609_publication_gate "$name" || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
                 c1609_recheck_target "$name" || c1008_refuse RecycleResumeMismatch
                 c1609_target_intent "$name" || c1008_refuse RecycleReceiptUnavailable
+            fi
+            if [ "$C1008_PROJECT" = "$TEMP_PROJECT" ]; then
+                c1609_effect_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             fi
             docker volume rm -- "$name" >/dev/null 2>&1 || c1008_refuse RecycleVolumeInUse
             [ "$(c1008_volume "$name")" = null ] || c1008_refuse RecycleRemoveFailed

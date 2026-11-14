@@ -437,9 +437,31 @@ c1609_prepare_exchange() {
     fi
 }
 
+# Re-observe repo->origin bindings and the host approval registry inside this
+# invocation, after the content scan and before renewing publication authority.
+c1609_recheck_origin_bindings() {
+    local directory="${C1609_EXCHANGE_DIRECTORY:?}" nonce out requests trusted
+    nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    out="$directory/live-inventory-$nonce.out"
+    requests="$directory/live-origins-$nonce.txt"
+    trusted="$directory/live-trusted-$nonce.json"
+    C1008_HOST_PROOF= c1008_audit_readonly inventory > "$out" || return 1
+    LC_ALL=C awk '/^C1008_PRIVATE_ORIGIN / {print}' "$out" | LC_ALL=C sort -u > "$requests" || return 1
+    cmp -s "$directory/private-origins.txt" "$requests" || return 1
+    if [ -s "$requests" ]; then
+        c1609_export_trusted_origins "$requests" "$trusted" || return 1
+        cmp -s "$directory/trusted-origins.json" "$trusted" || return 1
+    fi
+}
+
 c1609_publication_gate() {
     local purpose="${1:-apply}" source directory objects before nonce marker reply returned_proof returned_objects returned_purpose extra attempt
-    if [ "${C1609_EXCHANGE:-0}" != 1 ]; then c1609_publication_fresh; return; fi
+    if [ "${C1609_EXCHANGE:-0}" != 1 ]; then
+        # A sealed proof is an offline observation, never a live-origin grant.
+        # Empty/no-Git inventories need no origin; supplied proofs need the host.
+        [ -z "${C1008_HOST_PROOF:-}" ] || return 1
+        c1609_publication_fresh; return
+    fi
     directory="${C1609_EXCHANGE_DIRECTORY:?}"
     source="$CASE_DIR/apply-audit.out"
     [ "${C1008_DRY_RUN:-0}" != 1 ] || source="$CASE_DIR/preview-audit.out"
@@ -459,8 +481,10 @@ c1609_publication_gate() {
     fi
     before="$(c1609_proof_set_digest)" || return 1
     [ "$before" = "$C1609_BOUND_PROOF_DIGEST" ] || return 1
+    c1609_recheck_origin_bindings || return 1
     for attempt in 1 2; do
-        if [ -n "${C1008_HOST_PROOF:-}" ] && { [ "$objects" != "$C1609_BOUND_OBJECT_DIGEST" ] || ! c1609_publication_fresh; }; then
+        if [ -n "${C1008_HOST_PROOF:-}" ]; then
+            # Renew for EVERY gate, including unchanged object sets inside 900s.
             c1609_request_host_proof renew "$objects" || return 1
         fi
         # A network proof may take minutes. Refresh all live facts after that
@@ -470,6 +494,8 @@ c1609_publication_gate() {
         [ "$attempt" != 2 ] || return 1
     done
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    c1609_recheck_origin_bindings || return 1
+    C1609_CONTROL_STARTED="$(c1609_monotonic_ms)" || return 1
     printf 'C1609_CONTROL_REQUEST %s %s %s %s\n' "$nonce" "$purpose" "$C1609_BOUND_PROOF_DIGEST" "$objects"
     IFS=' ' read -r -t 10 marker reply returned_purpose returned_proof returned_objects extra || return 1
     [ "$marker" = C1609_CONTROL_RESPONSE ] && [ "$reply" = "$nonce" ] && [ "$returned_purpose" = "$purpose" ] &&
@@ -477,7 +503,19 @@ c1609_publication_gate() {
     jq -cnS --arg phase "$C1609_PHASE_NONCE" --arg nonce "$nonce" --arg purpose "$purpose" --arg proof "$returned_proof" --arg objects "$objects" \
       '{schema:1,phaseNonce:$phase,exchangeNonce:$nonce,purpose:$purpose,proofDigest:$proof,objectsDigest:$objects}' |
       c1609_persist "$(c1609_retirement_root)/control-$nonce.json" || return 1
-    c1609_publication_fresh
+    c1609_publication_fresh && c1609_effect_publication_fresh
+}
+
+# Final host advertisement/response, local custody and the effect share a five
+# second window. A later remote ref move is intrinsically unobservable; the next
+# effect always repeats the live writer and this check instead of reusing Ready.
+c1609_effect_publication_fresh() {
+    [ -n "${C1008_HOST_PROOF:-}" ] || return 0
+    local now elapsed
+    [[ "${C1609_CONTROL_STARTED:-}" =~ ^[0-9]+$ ]] || return 1
+    now="$(c1609_monotonic_ms)" || return 1
+    elapsed=$((now-C1609_CONTROL_STARTED))
+    [ "$elapsed" -ge 0 ] && [ "$elapsed" -le 5000 ]
 }
 
 c1609_recheck_target() {

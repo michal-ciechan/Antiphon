@@ -188,10 +188,10 @@ function Write-C1008HostOriginProof {
         [ValidateSet(1,2)][int]$ProofVersion = 1,
         [string]$PhaseNonce = '', [string]$InventoryDigest = '', [string[]]$ApprovedOrigins = @(),
         [int]$NetworkBudgetMs = 600000,
-        [object[]]$RequiredObjects = @(), [string]$PreviousProofFile = ''
+        [object[]]$RequiredObjects = @(), [string]$PreviousProofFile = '', [switch]$FreshGraph
     )
     if ($ProofVersion -eq 2) {
-        Write-C1609HostOriginProof -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $NetworkBudgetMs -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile
+        Write-C1609HostOriginProof -OriginUrl $OriginUrl -RepoRelative $RepoRelative -OperationId $OperationId -ProofDirectory $ProofDirectory -CreatedUnix $CreatedUnix -LogPath $LogPath -PhaseNonce $PhaseNonce -InventoryDigest $InventoryDigest -ApprovedOrigins $ApprovedOrigins -NetworkBudgetMs $NetworkBudgetMs -RequiredObjects $RequiredObjects -PreviousProofFile $PreviousProofFile -FreshGraph:$FreshGraph
         return
     }
     if ($OperationId -cnotmatch '^c1008[0-9a-f]{32}$' -or $CreatedUnix -lt 0) {
