@@ -213,6 +213,13 @@ public class DispatchBaseWarningDeliveryE2ETests
         if (cut == "dispatch-claim") await f.MoveDispatchObservationsAsync();
         if (cut is "attempt" or "verdict") await f.WaitForInterruptedDispatchEligibilityAsync();
         await f.UseChildAsync("none");
+        if (cut == "attempt")
+        {
+            // CARD-1892: the Grok caller has no composer reader, so the crashed pre-typing attempt
+            // is an unknown delivery held for an orchestrator decision, never retyped.
+            await f.AssertUnknownPreTypingAttemptHeldAsync(f.TaskId, "[dispatch-base ");
+            return;
+        }
         if (busy) await f.ReleaseBusyAsync();
         // Review F2: receipt confirmation alone does not exercise queue recovery. Only after the
         // interrupted row is eligible must transcript evidence settle that same row, uncharged.

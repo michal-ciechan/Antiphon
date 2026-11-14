@@ -300,6 +300,24 @@ public sealed partial class LandDeliveryFixture
             && m.SourceLandNotificationId != null)).ShouldBe(1);
     }
 
+    /// <summary>The Review settled once with one notification and one linked queue row, unconfirmed.</summary>
+    public async Task AssertReviewSettledOnceHeldAsync()
+    {
+        await using var db = CreateContext();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == ReviewTaskId)).Status
+            .ShouldBe(AgentTaskStatus.Succeeded);
+        (await db.StageOutcomes.CountAsync(o => o.StageTaskId == ReviewTaskId && o.Outcome == StageOutcomeKind.Clean))
+            .ShouldBe(1);
+        (await db.StageOutcomes.CountAsync(o => o.StageTaskId == ReviewTaskId)).ShouldBe(1);
+        var note = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n =>
+            n.TaskId == ReviewTaskId && n.Kind == LandNotificationKind.TaskCompletion);
+        note.ConfirmedAt.ShouldBeNull();
+        var queued = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.SourceLandNotificationId == note.Id);
+        note.QueueMessageId.ShouldBe(queued.Id);
+        (await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == ReviewTaskId
+            && m.SourceLandNotificationId != null)).ShouldBe(1);
+    }
+
     public async Task SeedFalseReviewCandidateAsync(string arm)
     {
         await UntilAsync(() => Task.FromResult(File.Exists(Path.Combine(Root, "queue-before-typing.barrier.json"))),
