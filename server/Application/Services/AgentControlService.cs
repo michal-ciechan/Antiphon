@@ -683,7 +683,12 @@ public sealed class AgentControlService : ICompactionContinuationResume
             {
                 pending = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == sourceId
                     && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
-                if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)))
+                // A lost Input reply leaves a charged attempt Sent without a verdict.
+                // Keep it on the source conversation until recovery resolves it.
+                if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m))
+                    || await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sourceId
+                        && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null
+                        && m.DeliveryAttempts > 0, ct))
                     throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
                 if (supervisedFresh is not null && pending.Any(m => !_restartEscalation.CanTransfer(m)))
                     throw new ConflictException($"Resolve producer-bound pending input in /sessions/{sourceId}/queue before automatic recovery.", "standing_resume_delivery_pending");
