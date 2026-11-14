@@ -498,6 +498,15 @@ with that native exercise and exhausted a four-minute row. The split will record
 actual outcomes instead of increasing that timeout. These preserve historical
 reds/deadlines, do not loosen assertions, and add no proof repetitions after green.
 
+For this single committed Round-2 Final group, the ignored imported manifest may
+reuse one new isolated Antiphon.Tests build across S3/S4/S5/R2Final rows; their
+historical After values remain in this table for attribution. Keep separate
+project builds for the mirrored limiter rows. Run the new renewal rows first,
+then H/V, the named still-unrun/adjacent selections and guards. Historical S1
+assertion reds, redundant S2/S5 repair duplicates and base-attribution rows are
+retained as history rather than repeated after green. CP-4.H1/H2/H3 and CP-4.V1-V9
+are the current H/V selections. Every other final row retains its exact filter.
+
 All test rows are serial and at most nine minutes; H rows and new short gate
 rows use two minutes, V rows and corpus rows seven minutes, the retained CP-98
 portable row four minutes, and its native row seven minutes. These new-slice
