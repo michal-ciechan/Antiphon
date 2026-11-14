@@ -1203,18 +1203,18 @@
     },
     {
       "path": "server/Application/Services/SessionRuntimeActionCoordinator.cs",
-      "classes": 33,
+      "classes": 34,
       "reason": "cap",
-      "owed": 8,
+      "owed": 9,
       "first": [
+        "ChannelOutboundRetentionTests",
         "ChannelPromptCorrelationTests",
         "CodexCliObservationGapTests",
         "CompactionRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesCompactionRecoveryTests",
         "PostLandMutationDeliveryTests",
-        "SessionFinishedDuplicateTests",
-        "StandingResumeReceiptReadinessTests"
+        "SessionFinishedDuplicateTests"
       ]
     },
     {
@@ -1621,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1637,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -10783,11 +10783,11 @@
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
         "ChannelOutboundRecoveryTests",
-        "ChannelOutboundRetentionTests",
         "ChannelReplyDurabilityTests",
         "ChannelReplyLateConfirmDispatchTests",
         "GrokDelegateEndToEndTests",
         "ReviewLoopTests",
+        "RuntimeActionClaimQueryTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "SessionRuntimeActionDeferralTests",
         "SessionRuntimeActionRecoveryTests",
@@ -14042,6 +14042,7 @@
       "path": "server/Domain/Entities/SessionRuntimeAction.cs",
       "classes": [
         "AgentTaskCatchUpSettlementTests",
+        "RuntimeActionClaimQueryTests",
         "SessionRuntimeActionDeferralTests",
         "SessionRuntimeActionRoutingTests",
         "SessionRuntimeActionTests",
@@ -15034,6 +15035,13 @@
         "PipelineResolutionTests",
         "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/SessionRuntimeActionClaimQuery.cs",
+      "classes": [
+        "C1729LayeringGuardTests",
+        "RuntimeActionClaimQueryTests"
       ]
     },
     {
