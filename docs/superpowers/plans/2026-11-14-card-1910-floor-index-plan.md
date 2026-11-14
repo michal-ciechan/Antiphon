@@ -125,6 +125,24 @@ CP-6 includes one cold build, CP-7 has six native publication cases, CP-8 the
 26 sibling cases, CP-9 the remaining eleven channel cases. One measured attempt
 per shard, under the unchanged nine-minute cap, supplies the collection sample.
 
+## Final replay and completed Code evidence
+
+S4 run 20261114-015417-51a6 at 88250fb99c186f088b8ff1cb5248a4821560f49d
+passed CP-6/7/8/9: 1 + 6 + 26 + 11 = 44 results, zero failures/skips.
+It passed strict checkpoint source validation. All ordinary Code selections total
+188 passing TUnit results, with the earlier 144 at f85e785c94fbc1f054c757406995c846b7bb979d.
+Production, tests and the derived index are byte-identical between those tips.
+No base attribution is asserted for the timed-out batch's two failed journal
+outcomes: both methods passed the bounded rerun without a production/test edit.
+
+For a fresh Final replay at one reviewed tip, all active TUnit rows below use one
+shared isolated build. Historical Code S2/S4 builds and actual tested SHAs remain
+in their original receipts. This changes only replay build grouping and estimates;
+filters, expanded cases, count floors and the nine-minute cap are unchanged.
+CP-6/7/8/9 measured row execution was 138.722/170.144/63.558/415.073 seconds;
+S4 wall was 1513.106 seconds, including 101.138 seconds of output cleanup.
+Samples remain provisional, not p95. Do not repeat already-green Code selections.
+
 ### Checkpoints
 
 At S1 SHA 1de6dcbc1c879abd91712d70ee1d381faac2f578, run
@@ -147,10 +165,10 @@ use the fresh bin-c1910-s1/ output. CP-0/1 need no further repetition.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-0 | S1 | n/a | impact-driver-build | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | R-4 | exit 0, standalone driver only | n/a | 1 |
 | CP-1 | S1 | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1910-driver-witness` | R-4 | DRIVER WITNESS passed=3 failed=0 | n/a | 1 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1910-s2/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
-| CP-4 | S2 | CP-2 | guards-and-derived | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed/skipped | 79 | 5 |
-| CP-5 | S2 | CP-2 | prompt-working-contract | `/*/*/(TranscriptPromptSpanTests*)\|(TranscriptWorkingStateQueryTests*)\|(TaskReportHousekeepingTests*)/*` | R-3 | all listed, 0 failed/skipped | 32 | 3 |
-| CP-6 | S4 | `tests/Antiphon.Tests -> bin-c1910-s4/` | running-converter-rerun | `/*/*/ChannelOutboundRecoveryTests/Running_converter_reconciles_after_dispatcher_death` | R-1 | exact method, 0 failed/skipped | 1 | 6 |
-| CP-7 | S4 | CP-6 | publication-boundaries-rerun | `/*/*/ChannelOutboundRecoveryTests/Recovery_preserves_settled_worker_and_publication_boundaries` | R-1 | all six argument cases, 0 failed/skipped | 6 | 6 |
-| CP-8 | S4 | CP-6 | sibling-boundaries-rerun | `/*/*/SiblingToolReportBoundaryTests/*` | R-1 | all 26 methods, 0 failed/skipped | 26 | 2 |
-| CP-9 | S4 | CP-6 | channel-remainder-rerun | `/*/*/ChannelOutboundRecoveryTests/(Resume_held_after_conversion_returns_to_ready*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)\|(Process_death_preserves_ownership_at_each_boundary*)\|(Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not*)\|(Expired_publishing_lease_is_uncertain_until_explicit_retry*)` | R-1 | all 11 argument-expanded cases, 0 failed/skipped | 11 | 5 |
+| CP-2 | all | `tests/Antiphon.Tests -> bin-c1910-s2/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
+| CP-4 | all | CP-2 | guards-and-derived | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed/skipped | 79 | 5 |
+| CP-5 | all | CP-2 | prompt-working-contract | `/*/*/(TranscriptPromptSpanTests*)\|(TranscriptWorkingStateQueryTests*)\|(TaskReportHousekeepingTests*)/*` | R-3 | all listed, 0 failed/skipped | 32 | 3 |
+| CP-6 | all | CP-2 | running-converter-rerun | `/*/*/ChannelOutboundRecoveryTests/Running_converter_reconciles_after_dispatcher_death` | R-1 | exact method, 0 failed/skipped | 1 | 3 |
+| CP-7 | all | CP-2 | publication-boundaries-rerun | `/*/*/ChannelOutboundRecoveryTests/Recovery_preserves_settled_worker_and_publication_boundaries` | R-1 | all six argument cases, 0 failed/skipped | 6 | 3 |
+| CP-8 | all | CP-2 | sibling-boundaries-rerun | `/*/*/SiblingToolReportBoundaryTests/*` | R-1 | all 26 methods, 0 failed/skipped | 26 | 2 |
+| CP-9 | all | CP-2 | channel-remainder-rerun | `/*/*/ChannelOutboundRecoveryTests/(Resume_held_after_conversion_returns_to_ready*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)\|(Process_death_preserves_ownership_at_each_boundary*)\|(Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not*)\|(Expired_publishing_lease_is_uncertain_until_explicit_retry*)` | R-1 | all 11 argument-expanded cases, 0 failed/skipped | 11 | 7 |
