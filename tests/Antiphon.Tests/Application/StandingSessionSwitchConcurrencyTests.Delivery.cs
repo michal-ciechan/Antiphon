@@ -19,6 +19,91 @@ namespace Antiphon.Tests.Application;
 public partial class StandingSessionSwitchConcurrencyTests
 {
     [Test]
+    [Arguments(DeliveryVerdict.Delivered)]
+    [Arguments(DeliveryVerdict.LateConfirmed)]
+    public async Task Confirmed_source_attempt_does_not_block_switch(DeliveryVerdict verdict)
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter);
+        await f.SeedAsync();
+        var row = SentAttempt(f.B.Id);
+        row.DeliveryVerdict = verdict;
+        row.DeliveryVerdictAt = DateTime.UtcNow;
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        await f.StartAsync(new(ResumeSessionId: f.A.Id));
+        await f.IdleAsync();
+        adapter.StartedSessionId.ShouldBe(f.A.Id);
+        await using var verify = f.Db();
+        var retained = (await verify.SessionQueuedMessages.FindAsync(row.Id))!;
+        retained.AgentSessionId.ShouldBe(f.B.Id);
+        retained.DeliveryVerdict.ShouldBe(verdict);
+        retained.DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Unconfirmed_attempt_on_selected_history_does_not_block_switch()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter);
+        await f.SeedAsync();
+        var row = SentAttempt(f.A.Id);
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        // The selected history is a different session from the current source B.
+        await f.StartAsync(new(ResumeSessionId: f.A.Id));
+        await f.IdleAsync();
+        adapter.StartedSessionId.ShouldBe(f.A.Id);
+        await using var verify = f.Db();
+        var retained = (await verify.SessionQueuedMessages.FindAsync(row.Id))!;
+        retained.AgentSessionId.ShouldBe(f.A.Id);
+        retained.Status.ShouldBe(QueuedMessageStatus.Sent);
+        retained.DeliveryVerdict.ShouldBeNull();
+        retained.DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Unconfirmed_attempt_allows_resuming_its_own_conversation()
+    {
+        var adapter = new FakeAgentProtocolAdapter();
+        await using var f = new StandingRecoveryFixture(adapter);
+        await f.SeedAsync();
+        var row = SentAttempt(f.B.Id);
+        await using (var db = f.Db())
+        {
+            db.SessionQueuedMessages.Add(row);
+            await db.SaveChangesAsync();
+        }
+
+        // A stopped source can resume itself to reconcile its retained attempt.
+        await f.StartAsync(new(ResumeSessionId: f.B.Id));
+        await f.IdleAsync();
+        adapter.StartedSessionId.ShouldBe(f.B.Id);
+        await using var verify = f.Db();
+        var retained = (await verify.SessionQueuedMessages.FindAsync(row.Id))!;
+        retained.AgentSessionId.ShouldBe(f.B.Id);
+        retained.Status.ShouldBe(QueuedMessageStatus.Sent);
+        retained.DeliveryVerdict.ShouldBeNull();
+        retained.DeliveryAttempts.ShouldBe(1);
+    }
+
+    private static SessionQueuedMessage SentAttempt(Guid sessionId) => new()
+    {
+        Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = 1,
+        Body = "An attempt retained after its Input reply was lost", CreatedAt = DateTime.UtcNow,
+        Status = QueuedMessageStatus.Sent, SentAt = DateTime.UtcNow,
+        DeliveryAttempts = 1, LastDeliveryStartedAt = DateTime.UtcNow, LastDeliveryBaselineSequence = 0,
+    };
+
+    [Test]
     [Arguments(false)] [Arguments(true)]
     public async Task Reservation_and_real_queue_flush_serialize_in_both_orders(bool deliveryWins)
     {
