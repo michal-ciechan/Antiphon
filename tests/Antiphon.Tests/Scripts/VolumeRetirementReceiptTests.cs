@@ -493,6 +493,14 @@ public sealed class VolumeRetirementReceiptTests
         lifecycle["complete"]!.GetValue<bool>().ShouldBeTrue();
         lifecycle["children"]!.AsArray().All(child => child!["joined"]!.GetValue<bool>()).ShouldBeTrue();
 
+
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Manual_attestation_public_entry_preserves_all_guards()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
         using var publicManual = new C1008HostFixture(main: false);
         await VolumeRetirementFixture.ReadyPreview(publicManual);
         var entry = await RunEntryCases(publicManual.Root, "c1609-manual-cases.mjs", 450);

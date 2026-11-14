@@ -114,7 +114,7 @@ internal sealed class VolumeRetirementPublicationFixture
     internal sealed record Proof(int Exit, string Output, string Directory, string File);
 
     internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, int version = 2,
-        string previous = "", string extraShim = "", bool baselineWriter = false)
+        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false)
     {
         var directory = Path.Combine(Root, "proof-" + ++sequence);
         Directory.CreateDirectory(directory);
@@ -133,33 +133,97 @@ internal sealed class VolumeRetirementPublicationFixture
             "[string]$InputText='', [string]$OutputFile=''); " + extraShim +
             "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
             "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
-            "try { Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(RepoRelative) +
+            "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(RepoRelative) +
+                " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile " + Ps(previous) +
+                " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000" :
+            "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(RepoRelative) +
             " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofVersion " + version +
-            " -PhaseNonce " + Ps(Nonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +
+            " -PhaseNonce " + Ps(phaseNonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +
             "-ProofDirectory " + Ps(directory) + " -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath " + Ps(Path.Combine(Root, "host-proof.log")) +
             " -RequiredObjects @(" + string.Join(',', (required ?? []).Select(r => "[pscustomobject]@{objectId=" + Ps(r.Oid) + ";type=" + Ps(r.Type) + "}")) + ") " +
-            "-PreviousProofFile " + Ps(previous) + "; exit 0 } catch { Write-Output $_.Exception.Message; exit 2 }";
+            "-PreviousProofFile " + Ps(previous) + (freshGraph ? " -FreshGraph" : "")) + "; exit 0 } catch { Write-Output $_.Exception.Message; exit 2 }";
         var result = await Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], seconds: 60);
         var file = Path.Combine(directory, Sha(RepoRelative + "\n" + (version == 1 ? Bare : Origin)));
         if (result.Exit != 0) File.Exists(file).ShouldBeFalse("a refused writer cannot emit an authorizing header");
         return new Proof(result.Exit, result.Output, directory, file);
     }
 
+    // Real control-stream consumer for the fixture-owned origin. Only the network
+    // address is mapped; writer, live check, shell gate, custody and responses are real.
+    private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control)
+    {
+        Directory.CreateDirectory(control);
+        Proof? previous = null;
+        (string Oid, string Type)[] required = [];
+        string? phase = null;
+        return async line =>
+        {
+            if (line.StartsWith("C1609_PROOF_REQUEST ", StringComparison.Ordinal))
+            {
+                var fields = line.Split(' '); fields.Length.ShouldBe(6);
+                phase ??= fields[2]; fields[2].ShouldBe(phase);
+                var kind = fields[3];
+                if (kind == "renew")
+                {
+                    RenewalRequests++;
+                    var objects = Path.Combine(Root, "server/retirement", VolumeRetirementFixture.Operation,
+                        "inventory-" + phase, "published-objects.txt");
+                    required = (await File.ReadAllLinesAsync(objects)).Where(s => s.Length > 0)
+                        .Select(s => s.Split(' ')).Select(f => (f[2][7..], f[3][5..])).Distinct().ToArray();
+                }
+                var proof = kind == "initial" ? initial : await WriteProof(required,
+                    previous: previous!.File, phaseNonce: Guid.NewGuid().ToString("N"), freshGraph: true);
+                if (proof.Exit != 0) return "C1609_REFUSED";
+                var header = await File.ReadAllLinesAsync(proof.File);
+                var started = header[4][8..]; var nonce = header[5][6..]; var inventory = header[6][10..];
+                var name = "c1008-proof-" + VolumeRetirementFixture.Operation + "-" + started + "-" + nonce;
+                var destination = Path.Combine(control, name); Directory.CreateDirectory(destination);
+                var staged = Path.Combine(destination, Path.GetFileName(proof.File));
+                File.Copy(proof.File, staged); File.Copy(proof.File + ".bundle", staged + ".bundle");
+                previous = proof with { Directory = destination, File = staged };
+                var digest = Sha(string.Concat(Directory.GetFiles(destination).OrderBy(Path.GetFileName, StringComparer.Ordinal)
+                    .Select(p => Path.GetFileName(p) + " " + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(p))).ToLowerInvariant() + "\n")));
+                await File.AppendAllTextAsync(Path.Combine(Root, "coordinator.log"), line + "\n");
+                return "C1609_PROOF_RESPONSE " + fields[1] + " " + name + " " + started + " " + nonce + " " +
+                    inventory + " " + digest + " " + fields[4] + " " + fields[5];
+            }
+            if (line.StartsWith("C1609_CONTROL_REQUEST ", StringComparison.Ordinal))
+            {
+                ControlRequests++;
+                var checkedLive = await WriteProof(previous: previous!.File, finalCheck: true);
+                if (checkedLive.Exit != 0) return "C1609_REFUSED";
+                await File.AppendAllTextAsync(Path.Combine(Root, "coordinator.log"), line + "\n");
+                return line.Replace("C1609_CONTROL_REQUEST ", "C1609_CONTROL_RESPONSE ", StringComparison.Ordinal);
+            }
+            return null;
+        };
+    }
+
+    internal int RenewalRequests { get; private set; }
+    internal int ControlRequests { get; private set; }
+
     internal string Bindings(Proof proof) => "\nexport C1008_HOST_PROOF=" + Q(proof.Directory) +
         "\nexport C1008_OPERATION_STARTED=1700000000\nexport C1609_PROOF_NONCE=" + Nonce +
         "\nexport C1609_PROOF_INVENTORY=" + Inventory + "\n";
 
-    internal async Task<(int Exit, string Output)> Preview(Proof proof, string extra = "")
+    internal async Task<(int Exit, string Output)> Preview(Proof proof, string extra = "", int extraGates = 0)
     {
         Host.ShouldNotBeNull();
-        var result = await Host.Run("retire-temp-runner", Bindings(proof) + "\n" + extra, dryRun: true);
+        var controlRoot = Path.Combine(Root, "control-" + ++sequence);
+        var callback = await Coordinator(proof, controlRoot);
+        var binding = "export C1609_EXCHANGE=1 C1609_EXCHANGE_PROOF_ROOT=" + Q(controlRoot) + "\n";
+        Func<string, string>? transform = extraGates == 0 ? null : source => source.Replace(
+            "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable",
+            string.Concat(Enumerable.Repeat("            c1609_publication_gate ready || c1008_refuse RecycleGitAuditUnknown\n", extraGates)) +
+            "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable", StringComparison.Ordinal);
+        var result = await Host.Run("retire-temp-runner", binding + extra, dryRun: true, sourceTransform: transform, control: callback);
         Host.Removed.ShouldBeEmpty("preview never removes volumes");
         var text = result.Output + await VolumeRetirementFixture.AuditText(Host);
         await File.WriteAllTextAsync(Path.Combine(Root, "preview-" + ++sequence + ".out"), text);
         return (result.Exit, text);
     }
 
-    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false)
+    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
         var source = baseline ? await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c590-remote.sh") :
@@ -184,6 +248,21 @@ internal sealed class VolumeRetirementPublicationFixture
         await File.WriteAllTextAsync(file, "export C1609_CONTENT_V2=1 C1008_OPERATION=" + VolumeRetirementFixture.Operation + "\n" + Bindings(proof) + body);
         var run = await Run("bash", [file], seconds: 60);
         await File.WriteAllTextAsync(file + ".out", run.Output);
+        if (complete && run.Exit == 6)
+        {
+            // The real offline scanner intentionally cannot issue a retirement
+            // verdict. Complete this diagnostic oracle with the real host writer
+            // and final live check, as the enclosing production gate does.
+            var required = run.Output.Split('\n').Where(s => s.StartsWith("C1609_PROVED_OBJECT ", StringComparison.Ordinal))
+                .Select(s => s.Split(' ')).Select(f => (f[2][7..], f[3][5..])).Distinct().ToArray();
+            if (await Git(Repo, "remote", "get-url", "origin") != Origin)
+                return (2, run.Output + "RecycleGitAuditUnknown\n");
+            var renewed = await WriteProof(required, previous: proof.File, freshGraph: true);
+            if (renewed.Exit != 0) return (2, run.Output + renewed.Output);
+            var final = await WriteProof(previous: renewed.File, finalCheck: true);
+            if (final.Exit != 0) return (2, run.Output + final.Output);
+            return (0, run.Output.Replace("audit check=publication-pending status=6 repo=.\nRecycleGitAuditUnknown\n", "", StringComparison.Ordinal));
+        }
         return run;
     }
 

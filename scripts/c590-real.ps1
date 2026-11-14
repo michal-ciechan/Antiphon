@@ -417,6 +417,24 @@ function Invoke-C1609RetirementCoordinator {
                         } elseif($line -cmatch '^C1609_CONTROL_REQUEST ([0-9a-f]{32}) (ready|apply|audit|antiphon-runner-temp_(runner-state|dind-data|runner-tmp|work)) (none|[0-9a-f]{64}) ([0-9a-f]{64})$'){
                             $exchange=$Matches[1];$purpose=$Matches[2];$proof=$Matches[4];$objects=$Matches[5]
                             if(-not $nonces.Add($exchange) -or $proof -cne $previousDigest -or $objects -cne $objectDigest){throw 'control-binding'}
+                            # Staging a large graph can outlive its last network read.
+                            # Complete this very control request with fresh live refs,
+                            # bound to the same approved inventory and proof set.
+                            $controlWatch=[Diagnostics.Stopwatch]::StartNew()
+                            try {
+                                if($previousDirectory){
+                                    $inventoryDirectory=Join-Path ([IO.Path]::GetDirectoryName($previousDirectory)) ('inventory-'+$phaseBinding)
+                                    $allow=Get-Content -Raw -LiteralPath (Join-Path $inventoryDirectory 'trusted-origins.json')|ConvertFrom-Json
+                                    if($allow.schema -ne 1 -or $allow.projectId -cne $ProjectId -or $allow.origins -isnot [array]){throw 'control-origin'}
+                                    $rows=@(Read-C1008PrivateOriginLines -Text ([IO.File]::ReadAllText((Join-Path $inventoryDirectory 'private-origins.txt'))))
+                                    foreach($row in $rows){
+                                        $remaining=[Math]::Min(5000-[int]$controlWatch.ElapsedMilliseconds,600000-[int]$networkMs-[int]$controlWatch.ElapsedMilliseconds)
+                                        Assert-C1609LiveOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $Operation `
+                                            -ProofFile (Join-Path $previousDirectory $row.ProofName) -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining
+                                    }
+                                }
+                                if($controlWatch.ElapsedMilliseconds -gt 5000){throw 'control-deadline'}
+                            } finally {$networkMs += $controlWatch.ElapsedMilliseconds}
                             $response='C1609_CONTROL_RESPONSE '+$exchange+' '+$purpose+' '+$proof+' '+$objects
                         } elseif($line.StartsWith('C1609_PROOF_REQUEST') -or $line.StartsWith('C1609_CONTROL_REQUEST')){throw 'protocol'}
                         if($response){
@@ -564,7 +582,7 @@ function Get-C1008RetireProofExports {
                 if($Coordinated){$remaining=[Math]::Min($remaining,$NetworkBudgetMs-[int]$networkWatch.ElapsedMilliseconds)}
                 $required=@(foreach($pair in $requiredByOrigin[$row.OriginHash].GetEnumerator()){[pscustomobject]@{objectId=$pair.Key;type=$pair.Value}})
                 $previousFile=if($PreviousProofDirectory){Join-Path $PreviousProofDirectory $row.ProofName}else{''}
-                Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath -ProofVersion 2 -PhaseNonce $phaseNonce -InventoryDigest $requestDigest -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining -RequiredObjects $required -PreviousProofFile $previousFile
+                Write-C1008HostOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $RecycleOperation -ProofDirectory $localDir -CreatedUnix $started -LogPath $logPath -ProofVersion 2 -PhaseNonce $phaseNonce -InventoryDigest $requestDigest -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining -RequiredObjects $required -PreviousProofFile $previousFile -FreshGraph:$RequireObjectCoverage
                 $graphs[$row.OriginHash] = $row.ProofName
             }
         }

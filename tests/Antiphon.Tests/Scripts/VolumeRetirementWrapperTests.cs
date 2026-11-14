@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Antiphon.Tests.Application;
+using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -95,21 +96,26 @@ public sealed class VolumeRetirementWrapperTests
             row["name"]?.GetValue<string>() == "temp-retirement-clearable").ShouldBeFalse(
             "c1609-w1: reuse does not clear or census the retirement");
 
-        if (OperatingSystem.IsLinux())
+    }
+
+    [Test]
+    [NativeLinuxOnly("CARD-1901: the real wrapper renewal witness requires native Linux Bash and POSIX mounts.")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Retire_temp_real_wrapper_renews_each_effect()
+    {
+        NativeLinuxGate.Require("CARD-1901: the real wrapper renewal witness requires native Linux Bash and POSIX mounts.");
+        using var native = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(native);
+        var psi = new ProcessStartInfo("node")
         {
-            using var native = new C1008HostFixture(main: false);
-            await VolumeRetirementFixture.ReadyPreview(native);
-            var psi = new ProcessStartInfo("node")
-            {
-                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = DelegateScriptRunner.RepoRoot
-            };
-            psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-wrapper-v2-cases.mjs"));
-            psi.ArgumentList.Add(native.Root);
-            var real = await Wait(psi, TimeSpan.FromSeconds(360));
-            real.Exit.ShouldBe(0, "W1 real wrapper, private A->B proof, long-scan renewal and locked inventory: " + real.Output);
-            real.Output.ShouldContain("C1609_WRAPPER passed");
-        }
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            WorkingDirectory = DelegateScriptRunner.RepoRoot
+        };
+        psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1609-wrapper-v2-cases.mjs"));
+        psi.ArgumentList.Add(native.Root);
+        var real = await Wait(psi, TimeSpan.FromSeconds(360));
+        real.Exit.ShouldBe(0, "W1 real wrapper, private A->B proof, long-scan renewal and locked inventory: " + real.Output);
+        real.Output.ShouldContain("C1609_WRAPPER passed");
     }
 
     [Test]
