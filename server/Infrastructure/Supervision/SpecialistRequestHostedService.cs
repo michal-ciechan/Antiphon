@@ -30,8 +30,9 @@ public sealed class SpecialistRequestHostedService(IServiceScopeFactory scopes, 
                             || request.Status == SpecialistRequestStatus.Canceled
                             || !await db.Agents.AnyAsync(a => a.Id == request.AgentId, stoppingToken))
                         {
+                            var publishedAt = time.GetUtcNow().UtcDateTime;
                             await db.SpecialistRequests.Where(r => r.Id == request.Id && r.CallerPublishedAt == null)
-                                .ExecuteUpdateAsync(s => s.SetProperty(r => r.CallerPublishedAt, time.GetUtcNow().UtcDateTime), stoppingToken);
+                                .ExecuteUpdateAsync(s => s.SetProperty(r => r.CallerPublishedAt, publishedAt), stoppingToken);
                             continue;
                         }
                         // RunCheck reloads the immutable snapshot and reuses the terminal request.

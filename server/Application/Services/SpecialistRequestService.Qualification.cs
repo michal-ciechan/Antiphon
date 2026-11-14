@@ -91,6 +91,7 @@ public sealed partial class SpecialistRequestService
         if (expected.Status != StandingSpecialistCandidateStatus.Qualified) return;
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         await LockOwnerAsync(expected.AgentId, ct);
+        var updatedAt = time.GetUtcNow().UtcDateTime;
         var changed = await db.StandingSpecialistCandidateStates.Where(c => c.Id == expected.Id
             && c.Status == StandingSpecialistCandidateStatus.Qualified && c.Fingerprint == expected.Fingerprint
             && c.SessionId == expected.SessionId && c.SessionStartedAt == expected.SessionStartedAt
@@ -98,7 +99,7 @@ public sealed partial class SpecialistRequestService
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, StandingSpecialistCandidateStatus.Unqualified)
                 .SetProperty(c => c.QualifiedAt, (DateTime?)null)
                 .SetProperty(c => c.Reason, "Current execution capability or fingerprint cannot be verified; qualification is invalid.")
-                .SetProperty(c => c.UpdatedAt, time.GetUtcNow().UtcDateTime), ct);
+                .SetProperty(c => c.UpdatedAt, updatedAt), ct);
         await transaction.CommitAsync(ct);
         if (changed > 0) await PublishChangedAsync(expected.AgentId, ct);
     }

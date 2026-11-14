@@ -471,14 +471,16 @@ public sealed class ChannelReplyDispatcher
                         && paths.Count == 0 && (ChannelContracts.IsNoReply(text)
                             || tasks.Count == 0 && !AdmitsMachineTurnText([source]));
                     if (ineligible)
+                    {
+                        var closedAt = _timeProvider.GetUtcNow().UtcDateTime;
                         await db.SessionQueuedMessages.Where(m => m.Id == source.Id
                             && m.ChannelOutboundDeliveryId == null && m.ChannelReplySettledAt == null
                             && m.ChannelReplyDiscoveryClosedAt == null
                             && (next != null || db.AgentSessions.Any(s => s.Id == m.AgentSessionId
                                 && s.StartedAt == terminalGeneration
                                 && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
-                            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt,
-                                _timeProvider.GetUtcNow().UtcDateTime), ct);
+                            .ExecuteUpdateAsync(s => s.SetProperty(m => m.ChannelReplyDiscoveryClosedAt, closedAt), ct);
+                    }
                 }
             }
             if (await db.SessionQueuedMessages.AsNoTracking().AnyAsync(m => m.Id == source.Id
@@ -1491,12 +1493,15 @@ public sealed class ChannelReplyDispatcher
             var terminalGeneration = terminalProof?.StoredSequences.Contains(root.Prompt.Value) == true
                 ? terminalProof.Generation : (DateTime?)null;
             if (next is not null || terminalGeneration is not null)
+            {
+                var closedAt = _timeProvider.GetUtcNow().UtcDateTime;
                 await db.SessionQueuedMessages.Where(m => members.Contains(m.Id)
                     && m.DirectReplyThroughSequence == through && m.DirectReplyPendingThroughSequence == null
                     && (next != null || db.AgentSessions.Any(s => s.Id == sessionId
                         && s.StartedAt == terminalGeneration
                         && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
-                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyTailClosedAt, _timeProvider.GetUtcNow().UtcDateTime), ct);
+                    .ExecuteUpdateAsync(s => s.SetProperty(m => m.DirectReplyTailClosedAt, closedAt), ct);
+            }
         }
     }
 

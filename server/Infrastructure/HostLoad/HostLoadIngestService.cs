@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -39,8 +38,7 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({"host-load:" + runnerId}))", token);
         var cursor = await db.HostLoadIngestCursors.SingleOrDefaultAsync(c => c.RunnerId == runnerId, token);
         if (cursor is not null && cursor.RunnerStoreId != batch.Page.Source.RunnerStoreId) throw Conflict();
-        var predicate = IdentityPredicate(unique.Keys);
-        var existing = await db.HostLoadSampleIdentities.Where(predicate).ToListAsync(token);
+        var existing = await MatchingIdentities(db.HostLoadSampleIdentities, unique.Keys).ToListAsync(token);
         var byKey = existing.ToDictionary(i => (i.RunnerStoreId, i.BootId, i.Sequence));
         var inserted = 0; var duplicates = 0;
         foreach (var (key, value) in unique)
@@ -103,18 +101,32 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
         if (page.Gaps.Any(g => g.RunnerStoreId != page.Source.RunnerStoreId || g.FromSequence <= 0 || g.ToSequence < g.FromSequence))
             throw new ValidationException("history", "Invalid loss range.");
     }
-    private static Expression<Func<HostLoadSampleIdentity, bool>> IdentityPredicate(IEnumerable<(Guid Store, Guid Boot, long Seq)> keys)
+    /// <summary>
+    /// One SQL shape for every key set. <c>unnest</c> parameters absorb length and values;
+    /// <c>EXISTS</c> returns each stored identity once.
+    /// </summary>
+    internal static IQueryable<HostLoadSampleIdentity> MatchingIdentities(
+        DbSet<HostLoadSampleIdentity> identities,
+        IEnumerable<(Guid Store, Guid Boot, long Seq)> keys)
     {
-        var parameter = Expression.Parameter(typeof(HostLoadSampleIdentity), "identity");
-        Expression expression = Expression.Constant(false);
-        foreach (var key in keys)
+        var rows = keys.ToArray();
+        var stores = new Guid[rows.Length];
+        var boots = new Guid[rows.Length];
+        var seqs = new long[rows.Length];
+        for (var i = 0; i < rows.Length; i++)
         {
-            var part = Expression.AndAlso(Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.RunnerStoreId)), Expression.Constant(key.Store)),
-                Expression.AndAlso(Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.BootId)), Expression.Constant(key.Boot)),
-                    Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.Sequence)), Expression.Constant(key.Seq))));
-            expression = Expression.OrElse(expression, part);
+            stores[i] = rows[i].Store;
+            boots[i] = rows[i].Boot;
+            seqs[i] = rows[i].Seq;
         }
-        return Expression.Lambda<Func<HostLoadSampleIdentity, bool>>(expression, parameter);
+
+        return identities.FromSqlInterpolated($"""
+            SELECT i."RunnerStoreId", i."BootId", i."Sequence", i."PayloadHash", i."IngestedAt"
+            FROM "HostLoadSampleIdentities" AS i
+            WHERE EXISTS (
+              SELECT 1 FROM unnest({stores}, {boots}, {seqs}) AS k(store, boot, seq)
+              WHERE i."RunnerStoreId" = k.store AND i."BootId" = k.boot AND i."Sequence" = k.seq)
+            """);
     }
     private static ConflictException Conflict() => new("Host load identity has conflicting content.", "host_load_identity_conflict");
     private static string CanonicalPayload(HostLoadSample sample)
