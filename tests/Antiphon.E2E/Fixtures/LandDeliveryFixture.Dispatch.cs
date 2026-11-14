@@ -412,10 +412,11 @@ public sealed partial class LandDeliveryFixture
             await db.AgentTasks.Where(t => t.Id == sibling.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
     }
 
-    public async Task WaitForInterruptedDispatchEligibilityAsync()
+    public async Task WaitForInterruptedDispatchEligibilityAsync(Guid? sourceTaskId = null)
     {
+        var source = sourceTaskId ?? TaskId;
         await using var db = CreateContext();
-        var attempted = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId
+        var attempted = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == source
             && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null).ToListAsync();
         attempted.ShouldNotBeEmpty();
         var eligibleAt = attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge;
@@ -430,6 +431,60 @@ public sealed partial class LandDeliveryFixture
         await File.WriteAllTextAsync(Path.Combine(Root, "interrupted-attempt-eligibility.json"), JsonSerializer.Serialize(new
         { attempts = attempted.Select(m => new { m.Id, m.LastDeliveryStartedAt }), guardSeconds = InterruptedAttemptAge.TotalSeconds,
             eligibleAt, waitStarted, observedAt = DateTime.UtcNow }));
+    }
+
+    /// <summary>
+    /// CARD-1892: a host crash between the attempt claim (Sent, attempt charged, null verdict) and
+    /// the first typed byte is indistinguishable from a crash after typing. The owned caller is a
+    /// Grok session, which has no composer reader, so the restarted host holds that attempt for a
+    /// complete UserPrompt or an orchestrator decision: no Enter, no retype, no attempt charge.
+    /// Once the attempt is older than InterruptedAttemptAge the stranded-queue watchdog records a
+    /// durable input-delivery-unknown warning. Call after <see cref="WaitForInterruptedDispatchEligibilityAsync"/>
+    /// and the restart. <paramref name="promptMarker"/> identifies the held body in a prompt.
+    /// </summary>
+    public async Task AssertUnknownPreTypingAttemptHeldAsync(Guid sourceTaskId, string promptMarker)
+    {
+        List<SessionQueuedMessage> attempted;
+        await using (var db = CreateContext())
+            attempted = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == sourceTaskId
+                && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent
+                && m.DeliveryVerdict == null && m.DeliveryAttempts > 0).ToListAsync();
+        attempted.ShouldNotBeEmpty("the pre-typing crash must leave a charged Sent/null-verdict attempt");
+        var started = attempted.Min(m => m.LastDeliveryStartedAt!.Value);
+        // The row is already eligible; the restarted host's watchdog (60 s default period) records
+        // the decision on its next pass: two periods plus host warm-up, the same window as
+        // WaitForLateConfirmedInterruptedRowsAsync.
+        AgentIncident? incident = null;
+        await UntilAsync(async () =>
+        {
+            await using var db = CreateContext();
+            incident = await db.AgentIncidents.AsNoTracking().FirstOrDefaultAsync(i => i.SessionId == CallerId
+                && i.FailureReason == "input-delivery-unknown" && i.CreatedAt >= started);
+            return incident is not null;
+        }, "input-delivery-unknown decision for the held pre-typing attempt", 150);
+        incident!.Kind.ShouldBe(AgentIncidentKind.DeliveryTransportFailed);
+
+        await using var final = CreateContext();
+        foreach (var before in attempted)
+        {
+            var row = await final.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == before.Id);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent, "an unknown composer-less attempt is held, not reverted");
+            row.DeliveryVerdict.ShouldBeNull();
+            row.DeliveryAttempts.ShouldBe(before.DeliveryAttempts, "recovery must not retype the unknown attempt");
+            row.LastDeliveryStartedAt.ShouldBe(before.LastDeliveryStartedAt);
+            (await final.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == row.SourceLandNotificationId))
+                .ConfirmedAt.ShouldBeNull();
+        }
+        (await final.TranscriptEntries.CountAsync(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt
+            && p.Text != null && p.Text.Contains(promptMarker))).ShouldBe(0, "no automatic retype may reach the caller");
+        var native = Path.Combine(Root, "native");
+        if (Directory.Exists(native))
+            Directory.GetFiles(native, "updates.jsonl", SearchOption.AllDirectories).SelectMany(File.ReadAllLines)
+                .Count(line => line.Contains("user_message_chunk", StringComparison.Ordinal)
+                    && line.Contains(promptMarker, StringComparison.Ordinal)).ShouldBe(0);
+        await File.WriteAllTextAsync(Path.Combine(Root, "unknown-attempt-held.json"), JsonSerializer.Serialize(new
+        { rows = attempted.Select(m => new { m.Id, m.DeliveryAttempts, m.LastDeliveryStartedAt }), incident = incident.Id,
+            incidentAt = incident.CreatedAt, observedAt = DateTime.UtcNow }));
     }
 
     public async Task WaitForLateConfirmedInterruptedRowsAsync(IReadOnlyDictionary<Guid, int> attemptsByRow)

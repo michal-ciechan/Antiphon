@@ -446,6 +446,17 @@ public class AgentTaskLandDeliveryE2ETests
             await f.KillChildAsync();
             if (cut is "settlement-before-save" or "settlement-before-commit")
                 await f.AssertReviewSettlementRolledBackAsync();
+            if (cut == "before-typing")
+            {
+                // CARD-1892: the Grok caller has no composer reader, so a crash after the attempt
+                // claim is an unknown delivery the restarted host holds for an orchestrator
+                // decision; it is never retyped, so no receipt is owed.
+                await f.WaitForInterruptedDispatchEligibilityAsync(f.ReviewTaskId);
+                await f.UseChildAsync("none");
+                await f.AssertUnknownPreTypingAttemptHeldAsync(f.ReviewTaskId, "review-evidence=");
+                await f.AssertReviewSettledOnceHeldAsync();
+                return;
+            }
             await f.UseChildAsync("none");
         }
         var receipt = await f.WaitForReviewReceiptAsync();
