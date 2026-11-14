@@ -168,6 +168,8 @@ public sealed class GrokRulesCompactionRecoveryTests
             await h.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
             await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
             (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == priorId)).DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            h.Adapter.SubmittedBodies.ShouldBeEmpty("confirming the unknown attempt is receipt-only");
+            await h.Queue.FlushSessionAsync(h.SessionId, CancellationToken.None);
         }
         h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldStartWith(GrokRulesRefreshService.Header(refresh.Id));
         (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == ordinary)).Status.ShouldBe(QueuedMessageStatus.Pending);
