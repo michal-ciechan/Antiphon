@@ -33,6 +33,8 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
         var variants = installed == probe
             ? new[] { "dropped", "index-probe", "database-gate" }
             : new[] { "dropped", "index-probe", "database-gate", "installed" };
+        const string bulkInsert = "INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") SELECT gen_random_uuid(),@id,n,'AssistantText',timestamptz '2026-01-02' FROM generate_series(@first,@last) n";
+        long trial = 0;
         for (var round = 0; round < 3; round++)
         foreach (var state in new[] { "absent", "invalid" })
         foreach (var variant in variants.Skip(round).Concat(variants.Take(round)))
@@ -56,34 +58,40 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
                     """);
             }
             var id = ids[^1]; // The fixture's empty session; the other 511 retain 3,118,500 rows.
+            // Aborted trials must not repeatedly probe the same unique-index keys.
+            // Keep one session/index locality, but give every trial a disjoint range.
+            var sequenceBase = ++trial * 10_000;
             if (state == "invalid")
                 await ExecuteAsync("INSERT INTO \"SessionTranscriptSummaries\" (\"AgentSessionId\",\"SchemaVersion\",\"Valid\",\"Count\",\"LastSequence\",\"HasActivity\",\"HasNullTimestampActivity\") VALUES (@id,1,false,0,0,false,false)", id);
             await using var singleton = new NpgsqlCommand("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES (gen_random_uuid(),@id,@seq,'AssistantText',timestamptz '2026-01-02')", connection, tx) { CommandTimeout = 60 };
             singleton.Parameters.AddWithValue("id", id);
             singleton.Parameters.AddWithValue("seq", 0L);
             await singleton.PrepareAsync();
-            // Warm the function/query plans, without turning the absent case into invalid.
-            for (long n = 1; n <= 10; n++) { singleton.Parameters["seq"].Value = n; await singleton.ExecuteNonQueryAsync(); }
+            // Warm both measured shapes, including the bulk command and its index path.
+            for (long n = 1; n <= 10; n++) { singleton.Parameters["seq"].Value = sequenceBase + n; await singleton.ExecuteNonQueryAsync(); }
+            await ExecuteAsync(bulkInsert, id, sequenceBase + 11, sequenceBase + 1010);
             if (state == "absent") await ExecuteAsync("DELETE FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id", id);
             await using var stateQuery = new NpgsqlCommand("SELECT COALESCE((SELECT tgenabled::text FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'),'absent')", connection, tx) { CommandTimeout = 60 };
             var triggerState = (string)(await stateQuery.ExecuteScalarAsync())!;
             var load = File.Exists("/proc/loadavg") ? await File.ReadAllTextAsync("/proc/loadavg") : "unknown";
             var timer = Stopwatch.StartNew();
-            for (long n = 11; n <= 110; n++) { singleton.Parameters["seq"].Value = n; await singleton.ExecuteNonQueryAsync(); }
+            for (long n = 1011; n <= 1110; n++) { singleton.Parameters["seq"].Value = sequenceBase + n; await singleton.ExecuteNonQueryAsync(); }
             var singletonMs = timer.Elapsed.TotalMilliseconds;
             timer.Restart();
-            await ExecuteAsync("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") SELECT gen_random_uuid(),@id,n,'AssistantText',timestamptz '2026-01-02' FROM generate_series(111,1110) n", id);
+            await ExecuteAsync(bulkInsert, id, sequenceBase + 1111, sequenceBase + 2110);
             var multirowMs = timer.Elapsed.TotalMilliseconds;
-            (await CountAsync()).ShouldBe(1110, "the measurement must execute all 100 singleton statements and the 1000-row statement");
-            var result = new { round, state, variant, triggerState, singletonStatements = 100, multirowStatements = 1, multirowRows = 1000, singletonMs, multirowMs, load = load.Trim() };
+            (await CountAsync()).ShouldBe(2110, "10 singleton and 1000-row warm-up, then all 100 measured singletons and the measured 1000-row statement");
+            var result = new { round, state, variant, triggerState, sequenceBase, warmupSingletons = 10, warmupMultirowRows = 1000, singletonStatements = 100, multirowStatements = 1, multirowRows = 1000, singletonMs, multirowMs, load = load.Trim() };
             results.Add(result);
             Console.WriteLine("C1915 COST " + JsonSerializer.Serialize(result));
             await tx.RollbackAsync();
 
-            async Task ExecuteAsync(string sql, Guid? session = null)
+            async Task ExecuteAsync(string sql, Guid? session = null, long? firstSequence = null, long? lastSequence = null)
             {
                 await using var command = new NpgsqlCommand(sql, connection, tx) { CommandTimeout = 60 };
                 if (session is { } value) command.Parameters.AddWithValue("id", value);
+                if (firstSequence is { } first) command.Parameters.AddWithValue("first", first);
+                if (lastSequence is { } last) command.Parameters.AddWithValue("last", last);
                 await command.ExecuteNonQueryAsync();
             }
             async Task<long> CountAsync()

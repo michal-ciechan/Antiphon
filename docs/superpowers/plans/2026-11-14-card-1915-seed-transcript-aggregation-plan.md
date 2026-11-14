@@ -122,6 +122,21 @@ executed 2, passed 1, failed 1: the old disabled trigger still existed (actual 1
 expected 0). The fix retains active four-guard equality and adds both enabling and
 disabling concurrency schedules, each with both transaction orders.
 
+Activation-only run 20261114-165001-e949 at
+`351085301b45d13bada84a86dfb785397f2003d4` passed 239 tests (including all
+four concurrency schedules and zero-write/no-row-lock witnesses), but its first
+timing protocol remained inconclusive: absent-summary singleton medians were
+55.4047/50.7134ms (+9.25%); 1000-row medians were 122.0859/102.1851ms (+19.48%).
+Invalid-summary medians were 53.7009/56.6131ms (-5.14%) and
+106.2446/118.2917ms (-10.18%). These values do not establish performance acceptance.
+The benchmark reused identical session/sequence keys after rollback and warmed
+only singletons. Correct that measurement protocol with disjoint sequence ranges
+per trial and one 1000-row warm-up per option, retaining the same 100 measured
+singletons, one measured 1000-row statement, three samples, rotating order and
+unchanged acceptance threshold. All 2,110 warm-up/measured rows must really exist
+in each trial before rollback. This is a benchmark-only repair; production code
+remains byte-identical to 351085301b. Do not repeat already-green behavior rows.
+
 The SQL-only singleton `SessionTranscriptSummaryMaintenance` controls the append
 trigger. `UPDATE ... SET "Enabled"=true/false WHERE "Id"` executes a trigger that
 fences TranscriptEntries writers, then summary writers, invalidates all summaries,
