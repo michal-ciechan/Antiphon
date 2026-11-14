@@ -8417,6 +8417,11 @@ done
 # Inventory lists authentication failures and exits before publication, dirty
 # drain, and link checks. Any other ls-remote failure already refused above.
 if [ "${C1008_AUDIT_MODE:-}" = inventory ]; then
+    # Discovery above does not supply the final binding. Time every URL read
+    # below, after discovery, so setup cannot age the live-origin effect window.
+    if [ "${C1609_CONTENT_V2:-}" = 1 ]; then
+        c1609_emit_binding_clock || fail 2 ' reason=binding-clock'
+    fi
     for top in "${commons[@]}"; do
         audit_repo="${common_repo[$top]}"
         audit_check=ls-remote
