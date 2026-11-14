@@ -25956,7 +25956,8 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/SessionStateScaleFixture.cs",
       "classes": [
-        "SessionStatePinQueryTests"
+        "SessionStatePinQueryTests",
+        "SessionTranscriptSummaryAppendCostTests"
       ]
     },
     {
@@ -25986,7 +25987,9 @@
       "path": "tests/Antiphon.Tests/TestHelpers/SessionTranscriptSummaryMigrationFixture.cs",
       "classes": [
         "AgentTaskLandHeldNotificationTests",
-        "C0824RefOnlyIdentityTests"
+        "C0824RefOnlyIdentityTests",
+        "SessionTranscriptSummaryAppendTests",
+        "SessionTranscriptSummaryMigrationTests"
       ]
     },
     {
