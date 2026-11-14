@@ -55,7 +55,7 @@ public class SessionStatePinQueryTests(SessionStateScaleFixture scale)
     [Test]
     public async Task Pin_membership_preserves_all_reasons()
     {
-        var capture = new PinCapture();
+        var capture = new SessionStateSeedCapture();
         await using var f = await SessionStateTestFixture.CreateAsync(fault: capture);
         await using var db = f.Db();
         await db.AgentSessions.ExecuteDeleteAsync();
