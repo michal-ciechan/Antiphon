@@ -482,7 +482,7 @@ Only this investigation is a deliverable change. No product/test timeout, produc
 
 C3 PrimaryEpochsDoNotDoubleCount timed out at 10.7995692 s. Its diagnostic says Task Status RanToCompletion, and the captured continuation stack includes world disposal, IsolatedTestSchema.DisposeAsync, DropClonedDatabaseAsync and the database drop command. This is a timeout-handler snapshot during completion/teardown, not a blocked-body stack. It adds evidence that the whole 10 s budget includes teardown; its query-versus-fixture attribution remains unresolved.
 
-## Prepared missing diagnostic
+## Prepared missing diagnostic (original report; executed in continuation below)
 
 The following SQL was prepared but **never executed**. It targets the actual migrated table in a fresh container from test schema image 00dff8e528e322e6270bde83f8049466. Use the same volume-copy entrypoint as TestDbBakedImages.RunFromVolume, max_connections=500, no host ports and a fresh task-owned container. Do not use a live database. Record start/end load and SQL plans, then remove only that owned container. This is the sole missing requested execution.
 
@@ -528,3 +528,194 @@ EXPLAIN (ANALYZE,BUFFERS,SETTINGS) EXECUTE identities(:'stores'::uuid[],:'boots'
 EXPLAIN (ANALYZE,BUFFERS,SETTINGS) EXECUTE identities(:'stores'::uuid[],:'boots'::uuid[],:'seqs'::bigint[]);
 
 ```
+
+## Reopened task: EXPLAIN completed, 2026-11-14 05:06 UTC
+
+The caller accepted the original attribution and commissioned a test-side repair, with a new 60-minute hard stop. The historical original-report statements about missing EXPLAIN and no test changes describe that earlier outcome; this continuation supersedes them.
+
+The wrapper accepts any double for SlotWaitMinutes and defines no finite maximum. This execution used the documented 45-minute admission budget, bounded by the caller deadline. A real lease was granted after 301 seconds; held 42 seconds; authoritative driver exit 0. No unleased command ran. The task-owned, portless container used the shared test-fixture image antiphon-test-pg:00dff8e528e322e6270bde83f8049466, PostgreSQL 16.15, the migrated identity table and its real primary key. It copied the baked fixture volume in the usual fixture manner, created one million identities across runner/store epochs (239 MB including indexes), ANALYZEd them, and executed the exact prepared EXISTS/unnest statement. The owned container and anonymous volume were removed after psql exited. No live database was touched.
+
+SQL/cleanup wall: 41.357298 s, 05:05:48.7028510–05:06:30.0844484 UTC. Start load: 35.32 32.42 27.85; end load: 29.10 30.92 27.52. Admission is separate from this wall duration.
+
+| Case | Plan | Returned | Execution ms | Execution shared hit/read/written | Planning shared hit/read |
+|---|---|---:|---:|---|---|
+| 100 identities, missing 101 | Hash semi join, tiny sequential scan | 0 | 0.205 | 2/0/0 | 125/1 |
+| 1M, one match | Nested loop + composite PK index | 1 | 0.249 | 3/1/1 | 9/0 |
+| 1M, one miss | Nested loop + composite PK index | 0 | 0.131 | 3/0/0 | not reported |
+| 1M, 100 matches | Nested loop + memoized PK probes | 100 | 1.106 | 399/1/1 | not reported |
+| 1M, 120 keys mixed | Nested loop + memoized PK probes | 60 | 1.288 | 416/4/4 | not reported |
+| 1M, 120 keys generic | Nested loop + composite PK index | 60 | 0.971 | 420/0/0 | not reported |
+| 1M, repeated generic | Nested loop + composite PK index | 60 | 0.655 | 420/0/0 | not reported |
+
+These are top-node execution buffer totals; nested node counts are inclusive and must not be added again. This sample supplies no evidence of a long plan on the identity lookup. It does not measure production network latency, lock contention or the blocked INSERT. The query still makes one identity SELECT, not a second round trip. Full EXPLAIN output follows (trailing display padding trimmed) (psql timings include statement/client overhead).
+
+``text
+Timing is on.
+SET
+Time: 15.755 ms
+                                         version
+------------------------------------------------------------------------------------------
+ PostgreSQL 16.15 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+(1 row)
+
+Time: 2.184 ms
+DO
+Time: 13.876 ms
+INSERT 0 100
+Time: 24.333 ms
+ANALYZE
+Time: 4.255 ms
+PREPARE
+Time: 1.104 ms
+Time: 0.225 ms
+FIXTURE_100_MISSING_101
+                                                            QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------
+ Hash Semi Join  (cost=0.04..3.84 rows=1 width=113) (actual time=0.119..0.120 rows=0 loops=1)
+   Hash Cond: ((i."RunnerStoreId" = k.store) AND (i."BootId" = k.boot) AND (i."Sequence" = k.seq))
+   Buffers: shared hit=2
+   ->  Seq Scan on "HostLoadSampleIdentities" i  (cost=0.00..3.00 rows=100 width=113) (actual time=0.008..0.023 rows=100 loops=1)
+         Buffers: shared hit=2
+   ->  Hash  (cost=0.02..0.02 rows=1 width=40) (actual time=0.042..0.043 rows=1 loops=1)
+         Buckets: 1024  Batches: 1  Memory Usage: 9kB
+         ->  Function Scan on k  (cost=0.01..0.02 rows=1 width=40) (actual time=0.032..0.032 rows=1 loops=1)
+ Planning:
+   Buffers: shared hit=125 read=1
+ Planning Time: 1.256 ms
+ Execution Time: 0.205 ms
+(12 rows)
+
+Time: 1.699 ms
+INSERT 0 999900
+Time: 25696.319 ms (00:25.696)
+ANALYZE
+Time: 319.538 ms
+  count  | pg_size_pretty
+---------+----------------
+ 1000000 | 239 MB
+(1 row)
+
+Time: 77.844 ms
+MILLION_1_MATCH
+                                                                             QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=0.45..8.48 rows=1 width=113) (actual time=0.113..0.115 rows=1 loops=1)
+   Buffers: shared hit=3 read=1 written=1
+   ->  HashAggregate  (cost=0.03..0.04 rows=1 width=40) (actual time=0.039..0.040 rows=1 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 24kB
+         ->  Function Scan on k  (cost=0.01..0.02 rows=1 width=40) (actual time=0.029..0.030 rows=1 loops=1)
+   ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.068..0.069 rows=1 loops=1)
+         Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+         Buffers: shared hit=3 read=1 written=1
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.728 ms
+ Execution Time: 0.249 ms
+(13 rows)
+
+Time: 1.393 ms
+Time: 0.254 ms
+MILLION_1_MISS
+                                                                             QUERY PLAN
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=0.45..8.48 rows=1 width=113) (actual time=0.053..0.054 rows=0 loops=1)
+   Buffers: shared hit=3
+   ->  HashAggregate  (cost=0.03..0.04 rows=1 width=40) (actual time=0.025..0.026 rows=1 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 24kB
+         ->  Function Scan on k  (cost=0.01..0.02 rows=1 width=40) (actual time=0.021..0.021 rows=1 loops=1)
+   ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.026..0.026 rows=0 loops=1)
+         Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+         Buffers: shared hit=3
+ Planning Time: 0.239 ms
+ Execution Time: 0.131 ms
+(11 rows)
+
+Time: 0.574 ms
+Time: 1.086 ms
+MILLION_100_MATCHES
+                                                                                 QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=2.19..850.00 rows=819 width=113) (actual time=0.202..0.983 rows=100 loops=1)
+   Buffers: shared hit=399 read=1 written=1
+   ->  HashAggregate  (cost=1.76..2.76 rows=100 width=40) (actual time=0.138..0.177 rows=100 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 24kB
+         ->  Function Scan on k  (cost=0.01..1.01 rows=100 width=40) (actual time=0.063..0.085 rows=100 loops=1)
+   ->  Memoize  (cost=0.43..8.46 rows=1 width=113) (actual time=0.007..0.007 rows=1 loops=100)
+         Cache Key: k.store, k.boot, k.seq
+         Cache Mode: logical
+         Hits: 0  Misses: 100  Evictions: 0  Overflows: 0  Memory Usage: 25kB
+         Buffers: shared hit=399 read=1 written=1
+         ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.005..0.005 rows=1 loops=100)
+               Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+               Buffers: shared hit=399 read=1 written=1
+ Planning Time: 0.584 ms
+ Execution Time: 1.106 ms
+(16 rows)
+
+Time: 2.058 ms
+Time: 0.694 ms
+MILLION_120_MIXED
+                                                                                 QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=2.54..1020.00 rows=982 width=113) (actual time=0.324..1.144 rows=60 loops=1)
+   Buffers: shared hit=416 read=4 written=4
+   ->  HashAggregate  (cost=2.11..3.31 rows=120 width=40) (actual time=0.159..0.211 rows=120 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 48kB
+         ->  Function Scan on k  (cost=0.01..1.21 rows=120 width=40) (actual time=0.071..0.098 rows=120 loops=1)
+   ->  Memoize  (cost=0.43..8.46 rows=1 width=113) (actual time=0.007..0.007 rows=0 loops=120)
+         Cache Key: k.store, k.boot, k.seq
+         Cache Mode: logical
+         Hits: 0  Misses: 120  Evictions: 0  Overflows: 0  Memory Usage: 22kB
+         Buffers: shared hit=416 read=4 written=4
+         ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.005..0.005 rows=0 loops=120)
+               Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+               Buffers: shared hit=416 read=4 written=4
+ Planning Time: 0.650 ms
+ Execution Time: 1.288 ms
+(16 rows)
+
+Time: 2.345 ms
+SET
+Time: 0.128 ms
+MILLION_120_GENERIC
+                                                                              QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=0.61..84.77 rows=82 width=113) (actual time=0.259..0.868 rows=60 loops=1)
+   Buffers: shared hit=420
+   ->  HashAggregate  (cost=0.18..0.28 rows=10 width=40) (actual time=0.192..0.238 rows=120 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 56kB
+         ->  Function Scan on k  (cost=0.01..0.11 rows=10 width=40) (actual time=0.085..0.112 rows=120 loops=1)
+   ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.004..0.004 rows=0 loops=120)
+         Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+         Buffers: shared hit=420
+ Settings: plan_cache_mode = 'force_generic_plan'
+ Planning Time: 0.653 ms
+ Execution Time: 0.971 ms
+(12 rows)
+
+Time: 2.017 ms
+MILLION_120_REPEATED
+                                                                              QUERY PLAN
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop  (cost=0.61..84.77 rows=82 width=113) (actual time=0.203..0.577 rows=60 loops=1)
+   Buffers: shared hit=420
+   ->  HashAggregate  (cost=0.18..0.28 rows=10 width=40) (actual time=0.165..0.189 rows=120 loops=1)
+         Group Key: k.store, k.boot, k.seq
+         Batches: 1  Memory Usage: 56kB
+         ->  Function Scan on k  (cost=0.01..0.11 rows=10 width=40) (actual time=0.080..0.100 rows=120 loops=1)
+   ->  Index Scan using "PK_HostLoadSampleIdentities" on "HostLoadSampleIdentities" i  (cost=0.42..8.45 rows=1 width=113) (actual time=0.003..0.003 rows=0 loops=120)
+         Index Cond: (("RunnerStoreId" = k.store) AND ("BootId" = k.boot) AND ("Sequence" = k.seq))
+         Buffers: shared hit=420
+ Settings: plan_cache_mode = 'force_generic_plan'
+ Planning Time: 0.238 ms
+ Execution Time: 0.655 ms
+(12 rows)
+
+Time: 1.231 ms
+
+````
