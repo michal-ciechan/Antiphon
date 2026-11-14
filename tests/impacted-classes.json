@@ -467,6 +467,17 @@
         "LiveLaneRunnerTests",
         "NightlyCoreTests"
       ]
+    },
+    {
+      "id": "input-delivery-uncertainty",
+      "globs": [
+        "server/Application/Exceptions/InputDeliveryUncertainException.cs"
+      ],
+      "classes": [
+        "AgentTaskMidTurnRefineTests",
+        "LandRefusalDeliveryWitnessTests",
+        "SessionMessageQueuePhoneHomeDropTests"
+      ]
     }
   ]
 }
