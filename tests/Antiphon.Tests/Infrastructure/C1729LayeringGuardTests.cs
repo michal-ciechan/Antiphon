@@ -101,6 +101,19 @@ public sealed class C1729LayeringGuardTests
     }
 
     [Test]
+    public void Runtime_action_claim_query_has_no_application_dependency_even_in_warn_mode()
+    {
+        const string query = "server/Infrastructure/Data/SessionRuntimeActionClaimQuery.cs";
+        var result = _repository.Analysis;
+        _repository.Paths.ShouldContain(query, "the real claim query must be in the analyzed census");
+        result.Unlisted.Concat(result.Listed)
+            .Where(v => v.FromFile == query && v.ToFile.StartsWith("server/Application/", StringComparison.Ordinal))
+            .ShouldBeEmpty("claim query parameters must come from its caller, including in warn mode");
+        result.Ambiguous.Where(a => a.FromFile == query && a.IsViolation)
+            .ShouldBeEmpty("ambiguous application references must not bypass the claim query guard");
+    }
+
+    [Test]
     public void Synthetic_core_file_referencing_an_application_type_fails_in_strict_mode()
     {
         var result = Analyze(SyntheticMap, "strict: true\n# slice test\ncore/Value.cs -> Svc @ app/Svc.cs",
