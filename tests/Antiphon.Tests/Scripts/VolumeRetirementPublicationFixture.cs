@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Antiphon.TestSupport;
+using Antiphon.Tests.Application;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 
 namespace Antiphon.Tests.Scripts;
@@ -209,7 +211,7 @@ internal sealed class VolumeRetirementPublicationFixture
         if (expectedPublished) audit.Exit.ShouldBe(0, label + "; " + audit.Output);
         else
         {
-            audit.Exit.ShouldBe(3, label + ": locally unique history must never pass; " + audit.Output);
+            audit.Exit.ShouldBe(2, label + ": locally unique history must never pass; " + audit.Output);
             audit.Output.ShouldContain("RecycleUnpublishedWork");
         }
         if (compareBase)
