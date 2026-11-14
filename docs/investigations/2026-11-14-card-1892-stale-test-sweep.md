@@ -2315,6 +2315,6 @@ Coverage stopped before the closing validation phase; the final planned agent-fa
 The additional authorized time box is complete. Execution that remains absent is stated explicitly; the report does not claim exhaustive green coverage or authorize a land. No source repair was applied. Newly classified failures need the cards above; earlier repair owners retain their scope.
 
 --- next stage ---
-next: debug
-handoff: Repair any newly classified stale-contract tests listed in this window, coordinate the earlier CARD-1923/CARD-1924/CARD-1926/CARD-1936 repairs with their active owners, and diagnose the separately filed REAL-DEFECT families. Exact absent coverage remains in the stop ledger.
+next: done
+handoff: No additional stale-contract repair was identified in this bounded window. Keep C1029/Grok late-confirm/C0824 mutation-lock/PhoneHome in-flight repairs with their existing owners; CARD-1940 records the fixture TEMP-root precondition. The exact265 unrun classes and three partial classes remain explicit coverage debt, not green evidence.
 artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
