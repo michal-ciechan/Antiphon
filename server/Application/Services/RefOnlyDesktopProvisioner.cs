@@ -16,6 +16,11 @@ public sealed class RefOnlyDesktopProvisioner(AppDbContext db, TaskWorkspaceCont
     DelegationWorktreeService worktrees, ILandingGit git, ITaskProgressGit progress,
     IRepositoryMutationLease leases, IOptions<GitSettings> settings)
 {
+    internal Func<string, CancellationToken, Task>? PreparationBoundaryAsync { get; set; }
+
+    public Task<RemotePushResult> PublishAsync(AgentTask task, CancellationToken ct) =>
+        Task.FromResult(new RemotePushResult(false, null, "ref_only_initial_preparation_unimplemented"));
+
     public Task<TaskWorkspaceContext> PlanAsync(AgentTask task, RepositoryLease lease, CancellationToken ct) =>
         PlanAsync(task, lease, null, null, null, null, ct);
 
