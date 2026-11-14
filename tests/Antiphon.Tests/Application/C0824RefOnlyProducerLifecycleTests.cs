@@ -64,8 +64,8 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         ahead.Status.ShouldBe(AgentTaskStatus.Failed);
         ahead.FailureReason.ShouldContain("repair_source_owner_remote_ahead");
         (await f.Git.RevParseAsync("refs/heads/" + owner.WorktreeBranch)).ShouldBe(source);
-        var divergent = await f.Git.PublishForeignBranchAsync("feat/diverged-" + ownerId.ToString("N"), "diverged.txt");
-        await f.Git.RunAsync(f.Git.Runner, "push", "--force", "origin", divergent + ":refs/heads/" + owner.WorktreeBranch);
+        var divergent = await f.PublishForeignBranchAsync("feat/diverged-" + ownerId.ToString("N"), "diverged.txt");
+        await f.Git.RunAsync(f.Git.Desktop, "push", "--force", "origin", divergent + ":refs/heads/" + owner.WorktreeBranch);
         var divergedId = await f.SeedAsync(t => t.RepairSourceTaskId = ownerId);
         await f.Rig.TickAsync();
         var diverged = await f.Rig.ReadTaskAsync(divergedId);

@@ -81,7 +81,7 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         await using var f = await RefOnlyDispatchFixture.CreateAsync();
         var task = await f.LaunchAsync(await f.SeedAsync());
         var source = await f.CommitAsync(task, new Dictionary<string, byte[]> { ["work.txt"] = Encoding.UTF8.GetBytes("settled S\n") });
-        var foreign = await f.Git.PublishForeignBranchAsync("feat/race-" + task.Id.ToString("N"), "foreign.txt");
+        var foreign = await f.PublishForeignBranchAsync("feat/race-" + task.Id.ToString("N"), "foreign.txt");
         await f.Git.RunAsync(f.Git.Desktop, "fetch", "origin", foreign);
         var reached = false;
         f.Git.Git.BeforeCommandAsync = async (repo, args, _) =>
