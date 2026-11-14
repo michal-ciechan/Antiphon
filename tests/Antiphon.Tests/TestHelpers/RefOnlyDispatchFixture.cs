@@ -20,19 +20,24 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
     public MutableMonitor<RefOnlyDesktopSettings> Gate { get; private init; } = null!;
     public string Root => Path.Combine(Git.Root, "managed");
 
-    public static async Task<RefOnlyDispatchFixture> CreateAsync(bool enabled = true)
+    public static async Task<RefOnlyDispatchFixture> CreateAsync(bool enabled = true, bool slots = false)
     {
         var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(pushBranch: false);
         var monitor = new MutableMonitor<RefOnlyDesktopSettings>(new() { Enabled = enabled, Roles = "Plan" });
         try
         {
-            var rig = await RemoteWorkspacePreparerTests.Rig.StartAsync(configure: services =>
+            var rig = await RemoteWorkspacePreparerTests.Rig.StartAsync(
+                tweak: s => s.WorkspaceSlotsEnabled = slots,
+                capabilities: slots ? new("InboxConhost", "inbox", "test", false,
+                    Features: [RunnerCapabilityFeatures.WorkspaceSlotV1], VerificationCustodyBackend: null) : null,
+                configure: services =>
             {
                 services.AddSingleton<IRepositoryMutationLease>(git.Leases);
                 services.AddSingleton<ILandingGit>(git.Git);
                 services.AddSingleton<ITaskProgressGit>(git.Git);
                 services.AddSingleton(Options.Create(new GitSettings { WorktreeBasePath = Path.Combine(git.Root, "managed") }));
                 services.AddSingleton<IOptionsMonitor<RefOnlyDesktopSettings>>(monitor);
+                services.AddSingleton<RemoteSpillCourier>();
             });
             monitor.CurrentValue.RunnerIds = [rig.RunnerId];
             rig.Peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
