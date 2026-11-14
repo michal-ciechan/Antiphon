@@ -416,6 +416,10 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-28/malformed | Admit a malformed observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-29 | Publish Ready during preparation before successful final control. | `/*/*/VolumeRetirementPublicationTests/Salvage_withdrawn_after_staging_refuses_control` | pending |
 | PC-30 | Cache origin URL before emitting the binding clock. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_precedes_fresh_origin_url_observation` | pending |
+| PC-31/revoked | Reuse approval in memory mode after the real registry revokes it. | `/*/*/VolumeRetirementContentTests/Exchange_exports_only_this_projects_registered_origins` | pending |
+| PC-31/durable | Persist a duplicate artifact in memory validation mode. | `/*/*/VolumeRetirementContentTests/Exchange_exports_only_this_projects_registered_origins` | pending |
+| PC-32 | Omit Ready payload file fsync. | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | pending |
+| PC-33 | Omit directory fsync after Ready publication. | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | pending |
 
 ### Checkpoint execution and lanes
 
@@ -844,6 +848,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-125 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | R2-15 | exactly 1 passed; real delayed binding observation refuses Unknown | 1 | 2 | true |
 | CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 9 real clock-record variants discriminated | 1 | 2 | true |
 | CP-127 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_precedes_fresh_origin_url_observation` | R2-17 | exactly 1 passed; actual URL changes at clock and is read afterward | 1 | 2 | true |
+| CP-128 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | R2-18 | exactly 1 passed; file-sync refusal, directory-sync refusal and real durable positive | 1 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -942,3 +947,19 @@ repository entry offset917. Its earlier a4d build had CS0122 and zero tests,
 not a qualifying red. The production change moves only the clock call; the
 producer, record validator, five-second limit, complete scans and durable Ready
 publication are otherwise unchanged. All42 PC variants throughPC30 remain pending.
+
+At4a8109dbfd5d29627a87e97adada8df73beec11a, CP127 was green1/1,15.7329s,
+waited0s. V7 initial Ready and invalid-proof vectors passed, but restoration
+refused at7040ms before replacing its old receipt (mtime20:59:39; final control
+21:02:40). The old receipt was not a newly published replacement. Keep the fresh
+registry read and all schema/project/request predicates, but return its validated
+canonical project result in memory for comparison instead of fsyncing a duplicate
+intermediate. Initial trusted snapshot and control/Ready receipts remain durable.
+CP68 now also checks independent expected memory output, no write/fsync, invalid
+mode refusal and fresh real-registry revocation. R2-18/CP128 exercises actual Ready
+payload-file fsync refusal, directory-fsync refusal and a durable positive.
+Batch the three identical canonical Ready files: validate existing custody, flush
+all new payloads, publish authority receipt last and flush the directory before
+acknowledgment. No schemas, approval predicates, assertions or deadlines change.
+CP128 has a new provisional3min cap for three owned fixture variants; existing
+row caps are unchanged. All46 PC variants throughPC33 remain pending Mutation.

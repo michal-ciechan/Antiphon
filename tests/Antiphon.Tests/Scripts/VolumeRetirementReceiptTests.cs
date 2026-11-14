@@ -860,6 +860,79 @@ public sealed class VolumeRetirementReceiptTests
         }
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Ready_publication_requires_file_and_directory_durability()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        foreach (var vector in new[] { "file", "directory", "positive" })
+        {
+            using var fixture = new C1008HostFixture(main: false);
+            var trace = Path.Combine(fixture.Root, "ready-sync.trace");
+            var module = Path.Combine(fixture.Root, "ready-durability-module.sh");
+            var hooks = $$"""
+                eval "$(declare -f c1609_write_ready_receipt | sed '1s/c1609_write_ready_receipt/c1901_original_ready_writer/')"
+                C1901_READY_ACTIVE=0
+                C1901_PAYLOAD_SYNCED=0
+                c1609_write_ready_receipt() {
+                    local status=0
+                    C1901_READY_ACTIVE=1
+                    c1901_original_ready_writer "$@" || status=$?
+                    C1901_READY_ACTIVE=0
+                    return "$status"
+                }
+                sync() {
+                    local arg payload=0
+                    if [ "$C1901_READY_ACTIVE" = 1 ]; then
+                        for arg in "$@"; do
+                            if [ -f "$arg" ] && jq -e '.schema==2 and .state=="Ready"' "$arg" >/dev/null 2>&1; then
+                                printf 'payload\n' >> {{VolumeRetirementFixture.Quote(trace)}}
+                                payload=1
+                                if [ {{VolumeRetirementFixture.Quote(vector)}} = file ]; then
+                                    printf 'fault-file\n' >> {{VolumeRetirementFixture.Quote(trace)}}
+                                    return 1
+                                fi
+                            fi
+                            if [ -d "$arg" ] && [ "$C1901_PAYLOAD_SYNCED" = 1 ]; then
+                                printf 'directory-after-payload\n' >> {{VolumeRetirementFixture.Quote(trace)}}
+                                if [ {{VolumeRetirementFixture.Quote(vector)}} = directory ]; then
+                                    printf 'fault-directory\n' >> {{VolumeRetirementFixture.Quote(trace)}}
+                                    return 1
+                                fi
+                            fi
+                        done
+                    fi
+                    command sync "$@" || return $?
+                    [ "$payload" != 1 ] || C1901_PAYLOAD_SYNCED=1
+                }
+                """;
+            await File.WriteAllTextAsync(module,
+                await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")) + "\n" + hooks + "\n");
+            var run = await fixture.Run("retire-temp-runner", "export C1609_RETIREMENT_FILE=" +
+                VolumeRetirementFixture.Quote(module), dryRun: true);
+            var events = await File.ReadAllLinesAsync(trace);
+            fixture.Removed.ShouldBeEmpty("durability checks operate only on a fixture Preview");
+            var receipt = ReceiptPath(fixture);
+            if (vector != "positive")
+            {
+                events.ShouldContain("fault-" + vector, "the intended Ready publication fsync was reached");
+                run.Exit.ShouldBe(2, run.Output);
+                run.Output.ShouldContain("RecycleReceiptUnavailable");
+                run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+                if (vector == "file") File.Exists(receipt).ShouldBeFalse("file contents must be durable before publishing the authority receipt");
+                continue;
+            }
+            run.Exit.ShouldBe(0, run.Output);
+            run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+            events.Count(x => x == "payload").ShouldBe(3, "all three Ready payloads are fsynced");
+            events.ShouldContain("directory-after-payload");
+            var bytes = await File.ReadAllBytesAsync(receipt);
+            var nonce = JsonNode.Parse(await File.ReadAllTextAsync(receipt))!["phaseNonce"]!.GetValue<string>();
+            (await File.ReadAllBytesAsync(Path.Combine(Path.GetDirectoryName(receipt)!, "preview-" + nonce + ".json"))).ShouldBe(bytes);
+            (await File.ReadAllBytesAsync(Path.Combine(Path.GetDirectoryName(receipt)!, "preview.json"))).ShouldBe(bytes);
+        }
+    }
+
     private static async Task WaitForBarrier(string path, Task<(int Exit, string Output)> run)
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();

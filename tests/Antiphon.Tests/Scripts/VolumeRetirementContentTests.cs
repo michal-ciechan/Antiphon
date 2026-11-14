@@ -1618,6 +1618,31 @@ public sealed class VolumeRetirementContentTests
             var expected = "{\"origins\":[\"" + ExchangeOrigin + "\",\"" + second + "\"],\"projectId\":\"" + ExchangeProject + "\",\"schema\":1}\n";
             Encoding.UTF8.GetString(exported).ShouldBe(expected);
             exported.SequenceEqual(Encoding.UTF8.GetBytes(expected)).ShouldBeTrue("trusted-origins.json bytes");
+            var memory = await VolumeRetirementFixture.Bash($"""
+                set -euo pipefail
+                SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(root, "server"))}}
+                C1008_PROJECT_ID={{VolumeRetirementFixture.Quote(ExchangeProject)}}
+                . {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh"))}}
+                requests={{VolumeRetirementFixture.Quote(ExchangeOperationRoot(root) + "/inventory-" + ExchangeNonce + "/private-origins.txt")}}
+                unused={{VolumeRetirementFixture.Quote(Path.Combine(root, "memory-must-not-be-written.json"))}}
+                body="$(sync() { return 99; }; c1609_export_trusted_origins "$requests" "$unused" memory)"
+                printf 'MEMORY_JSON %s\n' "$body"
+                [ ! -e "$unused" ] && [ ! -L "$unused" ]
+                if c1609_export_trusted_origins "$requests" "$unused" invalid; then exit 74; fi
+                umask 077
+                jq -cS --arg p "$C1008_PROJECT_ID" '.projects[$p].origins=[]' "$SERVER2_ROOT/retirement-origins.json" > "$SERVER2_ROOT/revoked.json"
+                mv -T -- "$SERVER2_ROOT/revoked.json" "$SERVER2_ROOT/retirement-origins.json"
+                if c1609_export_trusted_origins "$requests" "$unused" memory; then exit 73; fi
+                [ "$C1609_ORIGINS_REASON" = unapproved-origin ]
+                [ ! -e "$unused" ] && [ ! -L "$unused" ]
+                printf 'MEMORY_REVOKED\n'
+                """);
+            memory.Exit.ShouldBe(0, memory.Output);
+            memory.Output.ShouldContain("MEMORY_JSON " + expected.TrimEnd('\n'),
+                customMessage: "fresh memory validation returns independently expected project-scoped canonical JSON without fsync");
+            memory.Output.ShouldContain("MEMORY_REVOKED", customMessage: "revoking the real registry must invalidate the next memory check");
+            File.Exists(Path.Combine(root, "memory-must-not-be-written.json")).ShouldBeFalse();
+
         }
         finally
         {
