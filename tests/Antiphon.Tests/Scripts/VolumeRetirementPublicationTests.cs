@@ -765,7 +765,7 @@ public sealed class VolumeRetirementPublicationTests
         f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1);
         f.ControlRequests.ShouldBe(1, "the fresh advertisement succeeds; the effect-window bound must refuse the stale binding observation");
         (await File.ReadAllTextAsync(Path.Combine(f.Root, "coordinator.log"))).ShouldContain("C1609_CONTROL_REQUEST ",
-            "the final real advertisement and bound response succeeded before the window verdict");
+            customMessage: "the final real advertisement and bound response succeeded before the window verdict");
         Refused(refused, "RecycleGitAuditUnknown");
     }
 
