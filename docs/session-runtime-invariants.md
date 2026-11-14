@@ -1925,3 +1925,25 @@ An invalid `GIT_CONFIG_COUNT` still fails the existing helper with
 `git_config_count_invalid`. That throw happens only after an in-process read has
 had its chance, and the caller receives `PhoneHomeAdmissionException` with that
 code and status 409. The helper's reject set is unchanged.
+
+### Ref-only initial preparation and recovery (CARD-0824 F1-F4)
+
+New remote Worktree tasks enter ref-only preparation only when Enabled, runner and role
+all admit them. The shipped defaults remain disabled, with no runners and no roles.
+Recorded Checkout coordinates remain Checkout; recorded RefOnly tasks resume their binding
+even after admission closes. The identity string grants no filesystem authority.
+
+The claim freezes the full base SHA, provenance, repository/common directory, owned ref and
+binding before committing queued preparation. Only the owned preparer subsequently creates
+the local ref with expected absence and publishes to the exact pinned origin with an absence
+lease. Planned, RefCreated and Published transitions compare the binding revision. Recovery
+requires the same creation/publication intent; a foreign equal tip is insufficient.
+Publication replay never rewinds a progressed runner branch. A selected failure holds
+without creating a checkout or a directory. Schema-2 baselines bind the published ref.
+
+Execution and brief spill use the recorded runner cwd/store; missing remote custody refuses
+launch or boot-wedge relaunch. Repair resolves a published owner binding and the exact owned
+ref under the repository lease, retaining existing remote currency checks. It does not inspect
+the identity as a checkout. Reviewed-source reset/adoption remains unsupported for RefOnly;
+use an isolated repair and ordinary exact-SHA land. Settlement ancestry, endpoint checks,
+expected-old CAS, debt and release guards retain their existing authority.
