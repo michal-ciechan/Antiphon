@@ -1256,3 +1256,8 @@ Task publication history before this final report: 9fcc87bcb5c6b0af6e6ee3e51e30d
 next: debug
 handoff: Repair STALE-CONTRACT CARD-1922/CARD-1923/CARD-1924/CARD-1926; diagnose the separately filed REAL-DEFECT fixture/native/bootstrap families; continue every unexecuted or partial census selection in a new time box.
 artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
+
+
+## Caller refinement: additional suspects
+
+Refinement received after the original bounded sweep: verify the standing-session reservation race, both delivery-ceiling families, and the PhoneHome in-flight mention. C1029 was already confirmed STALE-CONTRACT in K2. The additional rows retain the same b559bfba2 source and native build provenance; results will be appended separately. No source repairs are authorized. This limited follow-up does not erase the 382 unrun classes from the original sweep.
