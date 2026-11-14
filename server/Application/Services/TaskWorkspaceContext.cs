@@ -144,7 +144,9 @@ public sealed class TaskWorkspaceContextResolver(AppDbContext db)
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE", ct);
         var persisted = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
         if (persisted.DesktopWorkspaceKind != DesktopWorkspaceKind.Checkout || persisted.TaskRefWorkspaceBindingId is not null
-            || persisted.WorktreePath is not null)
+            || persisted.WorktreePath is not null || persisted.Attempt != task.Attempt
+            || persisted.RunnerId != task.RunnerId || persisted.Status != task.Status
+            || persisted.ConcurrencyToken != task.ConcurrencyToken)
             throw Refuse("ref_only_binding_state_changed");
         if (await db.TaskRefWorkspaceBindings.AnyAsync(b => b.TaskId == task.Id, ct))
             throw Refuse("ref_only_binding_state_changed");

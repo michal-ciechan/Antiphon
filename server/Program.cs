@@ -355,6 +355,7 @@ try
     builder.Services.AddSingleton<WorkspaceSlotRoleGate>();
     builder.Services.AddSingleton<RefOnlyDesktopGate>();
     builder.Services.AddScoped<TaskWorkspaceContextResolver>();
+    builder.Services.AddScoped<RefOnlyDesktopProvisioner>();
     builder.Services.AddScoped<RemoteWorkspaceService>();
     // CARD-0657 D-1: the pre-attribution sync the completion evaluator prepares through.
     builder.Services.AddScoped<IRemoteSettlementSync>(sp => sp.GetRequiredService<RemoteWorkspaceService>());
