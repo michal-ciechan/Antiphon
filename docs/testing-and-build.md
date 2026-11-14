@@ -2019,3 +2019,18 @@ TRX stays authoritative. Sidecars are private and are not release-gate inputs. T
 The plan lives on master at [docs/superpowers/plans/2026-10-23-card-1514-test-timing-instrumentation-plan.md](superpowers/plans/2026-10-23-card-1514-test-timing-instrumentation-plan.md). Windows CP-8 (real Windows, Windows PowerShell 5.1, and the paired overhead preflight) is owed and is not claimed from Linux. S3 (remaining process, filesystem, and shared-fixture choke points, V-14/V-15) is deferred.
 
 Linux supervisor-death custody is a known gap. The setsid, watchdog, and stdin-pipe portable launcher was removed. `Invoke-NightlyOwnedProcess` again calls `Start-NightlyNativeOwner`, the Windows Job Object owner. On Linux that owner throws `Nightly native custody requires Windows.` A killed Linux supervisor does not take the chunk or its descendants with it. The 24-hour qualification that uses this recorder runs on Windows, where Job Object custody is the boundary.
+
+### Ref-only producer witnesses (CARD-0824 F1-F4)
+
+The producer acceptance classes are C0824RefOnlyProvisionTests, C0824RefOnlyPreparationTests
+and C0824RefOnlyProducerLifecycleTests. They dispatch new tasks through the production gate
+and preparer against scratch Git and the shared isolated test database. The legacy gate-off
+and retained-Checkout cases, expected-absence local/remote races, committed claim boundary,
+restart with closed admission, exact settlement CAS, late land and moving-origin artifact
+reads are behavioral witnesses. They must never use a production runner or repository.
+
+C0824RefOnlyNativeTests contains three actual Windows witnesses. Run CP-8 from the
+2026-11-14 CARD-0824 all-roles plan on Windows with the exact committed source SHA.
+Linux skips do not discharge these methods. Record Windows source, counts and timings
+before producer activation. The portable checkpoints and all method-scoped positive
+controls remain separate obligations; SourceLanding Mutation owns deliberate defects.

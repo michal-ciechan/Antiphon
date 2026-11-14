@@ -25,7 +25,7 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
     }
     public string Root => Path.Combine(Git.Root, "managed");
 
-    public static async Task<RefOnlyDispatchFixture> CreateAsync(bool enabled = true, bool slots = false)
+    public static async Task<RefOnlyDispatchFixture> CreateAsync(bool enabled = true, bool slots = false, int capacity = 1)
     {
         var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(pushBranch: false);
         var monitor = new MutableMonitor<RefOnlyDesktopSettings>(new() { Enabled = enabled, Roles = "Plan" });
@@ -33,7 +33,7 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
         try
         {
             var rig = await RemoteWorkspacePreparerTests.Rig.StartAsync(
-                tweak: s => s.WorkspaceSlotsEnabled = slots,
+                tweak: s => s.WorkspaceSlotsEnabled = slots, capacity: capacity,
                 capabilities: slots ? new("InboxConhost", "inbox", "test", false,
                     Features: [RunnerCapabilityFeatures.WorkspaceSlotV1], VerificationCustodyBackend: null) : null,
                 configure: services =>
@@ -84,6 +84,30 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
         var task = await Rig.ReadTaskAsync(id);
         task.Status.ShouldBe(AgentTaskStatus.Dispatched, task.FailureReason);
         return task;
+    }
+
+    /// <summary>Author in a separate clone, never a desktop identity or source checkout.</summary>
+    public async Task<string> CommitAsync(AgentTask task, IReadOnlyDictionary<string, byte[]> files)
+    {
+        var author = Path.Combine(Git.Root, "produced-author-" + task.Id.ToString("N"));
+        if (!Directory.Exists(author))
+        {
+            await Git.RunAsync(Git.Root, "clone", "-b", task.WorktreeBranch!, Git.Origin, author);
+            await Git.RunAsync(author, "config", "user.name", "Ref-only author");
+            await Git.RunAsync(author, "config", "user.email", "ref-only@example.invalid");
+            await Git.RunAsync(author, "config", "core.autocrlf", "false");
+        }
+        foreach (var file in files)
+        {
+            var path = Path.Combine(author, file.Key);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllBytesAsync(path, file.Value);
+            var blob = await Git.RunAsync(author, "hash-object", "--no-filters", "-w", "--", file.Key);
+            await Git.RunAsync(author, "update-index", "--add", "--cacheinfo", "100644", blob, file.Key);
+        }
+        await Git.RunAsync(author, "commit", "-m", "producer lifecycle source");
+        await Git.RunAsync(author, "push", "origin", "HEAD:refs/heads/" + task.WorktreeBranch);
+        return await Git.RunAsync(author, "rev-parse", "HEAD");
     }
 
     public async ValueTask DisposeAsync()
