@@ -831,10 +831,11 @@ public class SessionRuntimeActionRecoveryTests
                 .ExecuteUpdateAsync(u => u.SetProperty(a => a.DueAt, DateTime.UtcNow.AddHours(1)));
 
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
-        // Attempts make the note a machine delivery, so the late source cannot claim the note's turn.
+        // The delivered note's attempts make it a machine delivery, so the late source cannot claim the note's turn.
         await h.SeedPendingMessageAsync(notePrompt, status: QueuedMessageStatus.Sent,
             origin: QueuedMessageOrigin.Check,
             deliveryAttempts: 1,
+            deliveryVerdict: DeliveryVerdict.Delivered,
             baselineSequence: floor,
             lastDeliveryStartedAt: h.Now,
             legacyNullGeneration: true);
