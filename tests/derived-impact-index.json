@@ -24238,6 +24238,16 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs",
+      "classes": [
+        "C1514HostLoadApiTests",
+        "C1514HostLoadHistoryTests",
+        "C1514HostLoadScenarioTests",
+        "C1514HostLoadScriptTests",
+        "C1514TaskLoadWindowTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/C1514HostLoadSqlProbe.cs",
       "classes": [
         "C1514HostLoadHistoryTests"
