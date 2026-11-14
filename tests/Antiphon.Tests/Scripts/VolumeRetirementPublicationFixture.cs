@@ -150,7 +150,7 @@ internal sealed class VolumeRetirementPublicationFixture
 
     // Real control-stream consumer for the fixture-owned origin. Only the network
     // address is mapped; writer, live check, shell gate, custody and responses are real.
-    private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control)
+    private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control, Func<Task>? beforeControl)
     {
         Directory.CreateDirectory(control);
         Proof? previous = null;
@@ -190,6 +190,7 @@ internal sealed class VolumeRetirementPublicationFixture
             if (line.StartsWith("C1609_CONTROL_REQUEST ", StringComparison.Ordinal))
             {
                 ControlRequests++;
+                if (beforeControl is not null) await beforeControl();
                 var checkedLive = await WriteProof(previous: previous!.File, finalCheck: true);
                 if (checkedLive.Exit != 0) return "C1609_REFUSED";
                 await File.AppendAllTextAsync(Path.Combine(Root, "coordinator.log"), line + "\n");
@@ -206,11 +207,11 @@ internal sealed class VolumeRetirementPublicationFixture
         "\nexport C1008_OPERATION_STARTED=1700000000\nexport C1609_PROOF_NONCE=" + Nonce +
         "\nexport C1609_PROOF_INVENTORY=" + Inventory + "\n";
 
-    internal async Task<(int Exit, string Output)> Preview(Proof proof, string extra = "", int extraGates = 0)
+    internal async Task<(int Exit, string Output)> Preview(Proof proof, string extra = "", int extraGates = 0, Func<Task>? beforeControl = null)
     {
         Host.ShouldNotBeNull();
         var controlRoot = Path.Combine(Root, "control-" + ++sequence);
-        var callback = await Coordinator(proof, controlRoot);
+        var callback = await Coordinator(proof, controlRoot, beforeControl);
         var binding = "export C1609_EXCHANGE=1 C1609_EXCHANGE_PROOF_ROOT=" + Q(controlRoot) + "\n";
         Func<string, string>? transform = extraGates == 0 ? null : source => source.Replace(
             "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable",
