@@ -2412,12 +2412,14 @@ public sealed partial class SessionMessageQueueService
         {
             message.Status = QueuedMessageStatus.Canceled;
             message.CanceledAt = UtcNow();
+            var completedAt = UtcNow();
+            var token = Guid.NewGuid();
             await db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
                 .Where(t => t.Id == message.ExecutionTaskId && t.Status == AgentTaskStatus.Dispatched)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                    .SetProperty(t => t.CompletedAt, UtcNow())
+                    .SetProperty(t => t.CompletedAt, completedAt)
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
-                    .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+                    .SetProperty(t => t.ConcurrencyToken, token), ct);
         }
         if (expired.Count > 0) await db.SaveChangesAsync(ct);
         return expired.Count > 0;

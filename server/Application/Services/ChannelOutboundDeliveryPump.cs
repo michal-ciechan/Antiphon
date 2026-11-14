@@ -273,8 +273,9 @@ public sealed class ChannelOutboundDeliveryPump
         if (ProbeBarrierAsync is { } staged) await staged("captured-staged", delivery.Id, ct);
         // The lease can expire while reading or staging. A stale owner leaves the
         // complete directory for the next owner; it cannot transition this row.
+        var now = UtcNow();
         if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d => d.Id == delivery.Id
-            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > UtcNow(), ct))
+            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > now, ct))
             throw new DbUpdateConcurrencyException("The captured materialization lease expired.");
         var reply = await _files.ReadReplyAsync(materialized.Snapshot.ReplyPath, materialized.Snapshot.ReplySha256, ct);
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
@@ -285,8 +286,9 @@ public sealed class ChannelOutboundDeliveryPump
         // never substitutes today's prompt/profile for the captured policy.
         if (!await RevalidateAsync(delivery, beforePublish: false, ct))
         { await transaction.CommitAsync(ct); return; }
+        now = UtcNow();
         if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d => d.Id == delivery.Id
-            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > UtcNow(), ct))
+            && d.Version == delivery.Version && d.LeaseOwner == _owner && d.LeaseUntil > now, ct))
             throw new DbUpdateConcurrencyException("The captured materialization lease expired during admission.");
         delivery.InputPath = materialized.Snapshot.ReplyPath;
         delivery.InputSha256 = materialized.Snapshot.ReplySha256;
@@ -379,10 +381,13 @@ public sealed class ChannelOutboundDeliveryPump
         if (delivery.DeadlineAt <= UtcNow())
         {
             if (delivery.ConversionTaskId is Guid taskId)
+            {
+                var completedAt = UtcNow();
                 await _db.AgentTasks.Where(t => t.Id == taskId && t.Status == AgentTaskStatus.Queued)
                     .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                        .SetProperty(t => t.CompletedAt, UtcNow())
+                        .SetProperty(t => t.CompletedAt, completedAt)
                         .SetProperty(t => t.FailureReason, "Outbound conversion deadline elapsed."), ct);
+            }
             Fallback(delivery, "Conversion deadline elapsed; late output will be ignored.");
             await _db.SaveChangesAsync(ct);
             return;
@@ -564,9 +569,10 @@ public sealed class ChannelOutboundDeliveryPump
             if (ProbeBarrierAsync is { } entryBarrier)
                 await entryBarrier("before-producer-call", delivery.Id, ct);
             if (!await RevalidateAsync(delivery, beforePublish: true, ct)) return;
+            var now = UtcNow();
             if (!await _db.ChannelOutboundDeliveries.AsNoTracking().AnyAsync(d =>
                 d.Id == delivery.Id && d.Version == delivery.Version && d.LeaseOwner == _owner
-                && d.LeaseUntil > UtcNow() && d.State == ChannelOutboundDeliveryState.Publishing, ct)) return;
+                && d.LeaseUntil > now && d.State == ChannelOutboundDeliveryState.Publishing, ct)) return;
 
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(_outboundSettings.SendTimeoutSeconds), _clock);
             using var send = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);

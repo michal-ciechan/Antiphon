@@ -185,12 +185,16 @@ public sealed class SpecialistTaskRunner
         }
     }
 
-    public async Task<bool> CancelQueuedAsync(Guid runId, string reason, CancellationToken ct) =>
-        await _db.AgentTasks.Where(t => t.Id == runId && t.Status == AgentTaskStatus.Queued)
+    public async Task<bool> CancelQueuedAsync(Guid runId, string reason, CancellationToken ct)
+    {
+        var completedAt = _timeProvider.GetUtcNow().UtcDateTime;
+        var token = Guid.NewGuid();
+        return await _db.AgentTasks.Where(t => t.Id == runId && t.Status == AgentTaskStatus.Queued)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                .SetProperty(t => t.CompletedAt, _timeProvider.GetUtcNow().UtcDateTime)
+                .SetProperty(t => t.CompletedAt, completedAt)
                 .SetProperty(t => t.FailureReason, reason)
-                .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct) > 0;
+                .SetProperty(t => t.ConcurrencyToken, token), ct) > 0;
+    }
 
     public static string UnavailableDedupKey(AgentIncidentKind kind, Guid agentId) =>
         $"delegation:{kind}:{agentId}";

@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Data;
@@ -28,8 +29,11 @@ public class EfCompiledQueryCacheTests
     public async Task Identity_lookup_compiles_once_for_distinct_key_sets()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        // EF 9 prints a FromSql root as its type name; the SQL text is not in Expression.ToString.
+        // The constant-predicate form still names identity.RunnerStoreId, so a regression counts too.
         var probe = new CompileProbe(static text =>
-            text.Contains("identity.RunnerStoreId", StringComparison.Ordinal)
+            text.Contains("FromSqlQueryRootExpression", StringComparison.Ordinal)
+            || text.Contains("identity.RunnerStoreId", StringComparison.Ordinal)
             || text.Contains("unnest(", StringComparison.Ordinal)
             || text.Contains("HostLoadSampleIdentities", StringComparison.Ordinal));
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString, probe);
@@ -54,6 +58,41 @@ public class EfCompiledQueryCacheTests
         inserted.ShouldBe(3);
         probe.Total.ShouldBeGreaterThan(0);
         probe.Count.ShouldBe(1, probe.Describe());
+    }
+
+    [Test]
+    public async Task Identity_lookup_matches_the_constant_predicate()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var hostA = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        var hostB = Guid.Parse("11111111-2222-4333-8444-555555555555");
+        var boot = Guid.Parse("AABBCCDD-EEFF-4011-8233-445566778899");
+        var bootAgain = Guid.Parse("  aabbccdd-eeff-4011-8233-445566778899  ");
+        bootAgain.ShouldBe(boot);
+        var otherBoot = Guid.Parse("99999999-8888-4777-8666-555555555555");
+        db.HostLoadSampleIdentities.AddRange(
+            Identity(hostA, boot, 1),
+            Identity(hostA, boot, 2),
+            Identity(hostB, boot, 1),
+            Identity(hostA, otherBoot, 5),
+            Identity(Guid.Empty, Guid.Empty, 0));
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        await ExpectSame(db, []);
+        await ExpectSame(db, [(hostA, boot, 1)]);
+        await ExpectSame(db, [(hostA, boot, 9)]);
+        await ExpectSame(db,
+        [
+            (hostA, boot, 1),
+            (hostB, boot, 1),
+            (hostA, otherBoot, 5),
+            (Guid.Parse("abcdefab-cdef-4abc-8def-0123456789ab"), Guid.Parse("abcdefab-cdef-4abc-8def-0123456789ab"), 4),
+        ]);
+        await ExpectSame(db, [(hostA, boot, 2), (hostA, boot, 2)]);
+        await ExpectSame(db, [(hostA, bootAgain, 1)]);
+        await ExpectSame(db, [(Guid.Empty, Guid.Empty, 0), (hostA, boot, 2), (hostB, boot, 1)]);
     }
 
     [Test]
@@ -93,6 +132,43 @@ public class EfCompiledQueryCacheTests
 
         probe.Total.ShouldBeGreaterThan(0);
         probe.Count.ShouldBe(1, probe.Describe());
+    }
+
+    private static async Task ExpectSame(AppDbContext db, (Guid Store, Guid Boot, long Seq)[] keys)
+    {
+        var old = await db.HostLoadSampleIdentities.AsNoTracking().Where(ConstantPredicate(keys))
+            .Select(i => new { i.RunnerStoreId, i.BootId, i.Sequence }).ToListAsync();
+        var found = await HostLoadIngestService.MatchingIdentities(db.HostLoadSampleIdentities, keys).AsNoTracking()
+            .Select(i => new { i.RunnerStoreId, i.BootId, i.Sequence }).ToListAsync();
+        found.Select(i => (i.RunnerStoreId, i.BootId, i.Sequence)).OrderBy(i => i.RunnerStoreId).ThenBy(i => i.BootId).ThenBy(i => i.Sequence)
+            .ShouldBe(old.Select(i => (i.RunnerStoreId, i.BootId, i.Sequence)).OrderBy(i => i.RunnerStoreId).ThenBy(i => i.BootId).ThenBy(i => i.Sequence).ToList());
+    }
+
+    private static HostLoadSampleIdentity Identity(Guid store, Guid boot, long sequence) => new()
+    {
+        RunnerStoreId = store,
+        BootId = boot,
+        Sequence = sequence,
+        PayloadHash = new string('a', 64),
+        IngestedAt = DateTimeOffset.UnixEpoch,
+    };
+
+    private static Expression<Func<HostLoadSampleIdentity, bool>> ConstantPredicate(
+        IEnumerable<(Guid Store, Guid Boot, long Seq)> keys)
+    {
+        var parameter = Expression.Parameter(typeof(HostLoadSampleIdentity), "identity");
+        Expression expression = Expression.Constant(false);
+        foreach (var key in keys)
+        {
+            var part = Expression.AndAlso(
+                Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.RunnerStoreId)), Expression.Constant(key.Store)),
+                Expression.AndAlso(
+                    Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.BootId)), Expression.Constant(key.Boot)),
+                    Expression.Equal(Expression.Property(parameter, nameof(HostLoadSampleIdentity.Sequence)), Expression.Constant(key.Seq))));
+            expression = Expression.OrElse(expression, part);
+        }
+
+        return Expression.Lambda<Func<HostLoadSampleIdentity, bool>>(expression, parameter);
     }
 
     private static HostLoadSample Sample(Guid store, Guid boot, long sequence) => new()

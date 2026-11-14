@@ -532,12 +532,15 @@ public sealed partial class AgentTaskDispatcher
                 ct);
 
         // Deadline is durable: recovery does not depend on the optional caller surviving.
+        // The clock and token are locals so EF parameters them instead of inlining a new literal.
+        var expiredAt = UtcNow();
+        var expiryToken = Guid.NewGuid();
         await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
-            .Where(t => t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= UtcNow())
+            .Where(t => t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= expiredAt)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                .SetProperty(t => t.CompletedAt, UtcNow())
+                .SetProperty(t => t.CompletedAt, expiredAt)
                 .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
-                .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+                .SetProperty(t => t.ConcurrencyToken, expiryToken), ct);
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
@@ -5280,11 +5283,12 @@ public sealed partial class AgentTaskDispatcher
     {
         if (_scopeFactory is null)
             return 0;
+        var now = UtcNow();
         var ids = await _db.AgentTaskLandNotifications.AsNoTracking()
             .Where(n => n.Kind == LandNotificationKind.DeliveryFailure
                 && n.State != LandNotificationState.Confirmed
                 && n.State != LandNotificationState.NotRequired
-                && n.NextAttemptAt <= UtcNow())
+                && n.NextAttemptAt <= now)
             .OrderBy(n => n.NextAttemptAt).ThenBy(n => n.Id)
             .Select(n => n.Id).Take(128).ToListAsync(ct);
         foreach (var id in ids)
@@ -6375,12 +6379,14 @@ public sealed partial class AgentTaskDispatcher
             await AbandonClaimAsync(ct);
             // Rollback released the claim. A competing dispatcher may now own it, so the
             // recovery cancellation must be conditional again rather than saving a stale row.
+            var expiredAt = UtcNow();
+            var expiryToken = Guid.NewGuid();
             var canceled = await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
-                .Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= UtcNow())
+                .Where(t => t.Id == claimed.Id && t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= expiredAt)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
-                    .SetProperty(t => t.CompletedAt, UtcNow())
+                    .SetProperty(t => t.CompletedAt, expiredAt)
                     .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
-                    .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
+                    .SetProperty(t => t.ConcurrencyToken, expiryToken), ct);
             // CARD-0664 D-2: the admission committed on its own scope and survived the rollback. Release
             // only when this cancel won; a competing dispatcher that owns the task keeps its rows.
             if (canceled > 0)
