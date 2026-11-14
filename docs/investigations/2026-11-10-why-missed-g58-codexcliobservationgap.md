@@ -95,3 +95,15 @@ row is a selector-policy change for the owner of that file:
 in CARD-1892 Code. The cost is one class of about 6.5 minutes on Windows (7 tests; the per-kind
 receipt test takes most of it). The other C1029 tests that lose an Input reply would also be
 covered. A grep shows that only this method uses `loseInputReply: true` today.
+
+## Verification (Windows desktop, build-slot gated)
+
+| Run | Commit | Filter | Result |
+|---|---|---|---|
+| Red | `b559bfba2` | `/*/*/CodexCliObservationGapTests/C1029_Unobservable_timestamp_floor_is_original` | 1/1 failed at :359, Pending vs Sent (same as rc) |
+| Green | `b39a67f2c` | CodexCliObservationGapTests*, TestLaneCategoryGuardTests*, ProcessSpawnLimitTests*, TestClassificationPolicyTests*, TestClassificationGuardTests*, SlowTestRegistryMergeTests*, SlowTestTripwireTests*, NativeLinuxPolicyWitnessTests*, DerivedImpactIndexTests*, C1729LayeringGuardTests* | 155 executed, 154 passed, 1 failed: `DerivedImpactIndexTests.regenerate_script_reports_changed_then_unchanged`, because the driver DLL was not built (environment) |
+| Rerun | `b39a67f2c` | `/*/*/DerivedImpactIndexTests/*`, after building `scripts/regenerate-derived-impact-index` | 27/27 passed |
+
+CodexCliObservationGapTests passed 7/7 in the green run, both kinds and all four variants
+included. No Linux run was made. The cause is a deterministic contract mismatch, and the seam (a
+lost `ConditionalInput` reply in the scripted peer) is already OS-neutral.
