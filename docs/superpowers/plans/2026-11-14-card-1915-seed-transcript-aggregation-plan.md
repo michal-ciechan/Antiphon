@@ -48,9 +48,12 @@ assertion or test timeout is widened.
 Final guard amendment: the initial CP-33 diagnostic at 01638025 reached its unchanged
 4-minute cap after exposing missing Slow registry entries and a missing native
 derived-index driver in the clean verification tree. Register both measured Slow
-classes and build the required driver first. CP-3-guards-a/b/c partition that same
+classes and build the required driver first. CP-3-guards-a/b/c1/c2 partition that same
 12-class union for this S1–S3 Final, each with the unchanged 4-minute cap. No
 assertion or execution cap is loosened. Original CP-33 outcome remains incomplete.
+The initial c union at 36cf6062 also reached 240s with journal33 passed and
+OrdinaryModeRemainsAdvisory still in flight; no final TRX, no pass credit. Split
+that union into c1/c2 at the same 240s cap; a/b remain green and need no repeat.
 
 S3 fixture correction after observed red: EF's 100-entity append can emit singleton
 INSERT statements in primary-key order, causing genuine out-of-order SQL and
@@ -477,7 +480,8 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-3-guards-a | S3 | CP-3 | final-guards-policy | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 slice guards | all listed, 0 failed | 4 | 2 |
 | CP-3-guards-b | S3 | CP-3 | final-guards-contract | `/*/*/(SlowTestRegistryMergeTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 slice guards | all listed, 0 failed | 5 | 2 |
-| CP-3-guards-c | S3 | CP-3 | final-guards-impact | `/*/*/(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 slice guards | all listed, 0 failed | 3 | 2 |
+| CP-3-guards-c1 | S3 | CP-3 | final-guards-derived | `/*/*/(DerivedImpactIndexTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 slice guards | all listed, 0 failed | 2 | 2 |
+| CP-3-guards-c2 | S3 | CP-3 | final-guards-envelope | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-2 slice guards | all listed, 0 failed | 1 | 2 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1915-s4/ | summary-invalidation | `/*/*/(SessionTranscriptSummaryInvalidationTests*)\|(SessionStateWarmupTests*)\|(DataRetentionServiceTests*)/*` | V-4 | all listed, 0 failed | 3 | 4 |
 | CP-5 | S5 | tests/Antiphon.Tests -> bin-c1915-s5/ | summary-backfill | `/*/*/SessionTranscriptSummaryBackfillTests/*` | V-5 | all listed, 0 failed | 2 | 2 |
 | CP-6 | S6 | tests/Antiphon.Tests -> bin-c1915-s6/ | summary-seed | `/*/*/(SessionTranscriptSummarySeedTests*)\|(SessionStateProjectionTests*)\|(SessionStateCacheReadTests*)\|(SessionStateWarmupTests*)\|(TranscriptWorkingStateQueryTests*)\|(TranscriptHotPathQueryTests*)/*` | V-1,V-6 | all listed, 0 failed | 6 | 4 |
