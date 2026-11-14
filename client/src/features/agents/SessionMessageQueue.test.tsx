@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { renderWithProviders, screen, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SessionMessageQueue } from './SessionMessageQueue'
+import userEvent from '@testing-library/user-event'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 
@@ -61,6 +62,21 @@ function serve(messages: unknown[], extras: Record<string, unknown> = {}) {
 }
 
 describe('SessionMessageQueue', () => {
+  it('shows unconfirmed Sent input with an explicit operator abandon dialog and no resend control', async () => {
+    serve([message({ status: 'Sent', deliveryUnconfirmed: true, deliveryAttempts: 1,
+      lastDeliveryStartedAt: '2026-11-14T10:00:00Z' })])
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+    expect(await screen.findByText('Sent, delivery unconfirmed')).toBeInTheDocument()
+    expect(screen.getByText(/attempts 1/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Send now')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Remove')).not.toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Abandon message' }))
+    expect(await screen.findByText(/may have been delivered/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Reason')).toBeInTheDocument()
+    expect(screen.getByLabelText('Operator token')).toHaveAttribute('type', 'password')
+    expect(screen.getByRole('button', { name: 'Confirm abandonment' })).toBeDisabled()
+  })
   it('marks a parked message, because Pending alone does not say it is going nowhere', async () => {
     // CARD-0055 shipped parking and nothing rendered it: a message that spent its delivery attempts
     // stays Pending, sits in this list looking exactly like one about to go out, and every automatic

@@ -67,3 +67,4 @@ Unknown fixture/external phases stay unknown. No repetitions required after gree
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | red | tests/Antiphon.Tests -> bin-ac7f-red/ | abandon-red | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4 | assertion failures before fix | 13 | 8 |
+| CP-20 | ui-red | n/a | abandon-ui-red | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue` | R-4 | new Sent presentation assertion fails before UI fix | n/a | 2 |
