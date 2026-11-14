@@ -83,12 +83,12 @@
       "reason": "cap",
       "owed": 126,
       "first": [
+        "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "ReportBudgetWorkspacePortabilityTests",
-        "VolumeRetirementContentTests",
         "WorkspaceParkPublicationTests",
         "BlockedParkWireTests"
       ]
@@ -2486,7 +2486,6 @@
         "CardFilePrivacySyncAcceptanceTests",
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
-        "CheckpointConfinementLedgerTests",
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
@@ -2498,6 +2497,7 @@
         "ProjectSetupServiceTests",
         "QualificationCheckoutSourceTests",
         "ReleaseImpactEvaluationTests",
+        "VolumeRetirementContentTests",
         "WorktreeDefaultCallerTests"
       ]
     },
@@ -3421,6 +3421,7 @@
     {
       "path": "scripts/c1008-content-audit.sh",
       "classes": [
+        "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests"
       ]
     },
@@ -24124,6 +24125,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/VolumeRetirementPublicationFixture.cs",
       "classes": [
+        "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests"
       ]
     },
