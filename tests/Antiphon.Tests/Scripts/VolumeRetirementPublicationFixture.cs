@@ -118,15 +118,15 @@ internal sealed class VolumeRetirementPublicationFixture
     internal sealed record Proof(int Exit, string Output, string Directory, string File);
 
     internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, int version = 2,
-        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false)
+        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false, string? writerRevision = null)
     {
         var directory = Path.Combine(Root, "proof-" + ++sequence);
         Directory.CreateDirectory(directory);
         var baselineSource = "";
-        if (baselineWriter)
+        if (baselineWriter || writerRevision is not null)
         {
             var baselineFile = Path.Combine(Root, "base-c1609-host-proof.ps1");
-            await File.WriteAllTextAsync(baselineFile, await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c1609-host-proof.ps1"));
+            await File.WriteAllTextAsync(baselineFile, await Git(DelegateScriptRunner.RepoRoot, "show", (writerRevision ?? TaskBase) + ":scripts/c1609-host-proof.ps1"));
             baselineSource = ". " + Ps(baselineFile) + "; ";
         }
         var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
@@ -228,12 +228,13 @@ internal sealed class VolumeRetirementPublicationFixture
         return (result.Exit, text);
     }
 
-    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true)
+    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true, string? sourceRevision = null)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
-        var source = baseline ? await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c590-remote.sh") :
+        var revision = sourceRevision ?? (baseline ? TaskBase : null);
+        var source = revision is not null ? await Git(DelegateScriptRunner.RepoRoot, "show", revision + ":scripts/c590-remote.sh") :
             await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
-        var content = baseline ? await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c1008-content-audit.sh") :
+        var content = revision is not null ? await Git(DelegateScriptRunner.RepoRoot, "show", revision + ":scripts/c1008-content-audit.sh") :
             await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-content-audit.sh"));
         const string start = "<<'C1008_AUDIT_BODY' || :\n";
         var offset = source.IndexOf(start, StringComparison.Ordinal) + start.Length;
