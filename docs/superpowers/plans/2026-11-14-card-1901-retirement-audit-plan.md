@@ -454,7 +454,7 @@ receipts keep the original SHA and outcomes. CP-105 was corrected to change the
 URL after the scan; its first green only covered the existing initial binding.
 The corrected witness was red before the repair. R2-1..R2-5 map to those rows;
 R2-6 is repeated same-object gate execution, R2-7 is provisional offline scan
-completion, and R2-8..R2-11 are four independent seeded 70-shape Git corpora. R2-12..R2-14 withdraw publication only after the full writer and staging succeeded, to discriminate the final control check.
+completion, and R2-8..R2-11 are four independent seeded 70-shape Git corpora, each split into two 35-shape methods. R2-12..R2-14 withdraw publication only after the full writer and staging succeeded, to discriminate the final control check.
 
 The v2 scan remains offline and read-only. With a supplied proof its successful
 exit is 6/Unknown, a provisional content observation. The production parent
@@ -752,6 +752,10 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-114 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_unreachable_after_staging_refuses_control` | R2-14 | all named methods; 0 failed/skipped | 1 | 2 | true |
 | CP-115 | R2Final | CP-101 | linux-r2-final | `/*/*/C1008HostFixtureSetupInsertionTests/*` | R-fixture-entry | all named methods; 0 failed/skipped | 1 | 2 | true |
 | CP-116 | R2Final | CP-101 | linux-r2-final | `/*/*/C1008PlatformContractTests/*` | R-fixture-platform | all named methods; 0 failed/skipped | 1 | 2 | true |
+| CP-117 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1901_second_half` | R2-corpus-1901-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
+| CP-118 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1902_second_half` | R2-corpus-1902-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
+| CP-119 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1903_second_half` | R2-corpus-1903-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
+| CP-120 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1904_second_half` | R2-corpus-1904-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the

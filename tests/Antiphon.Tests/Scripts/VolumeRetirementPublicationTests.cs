@@ -606,7 +606,19 @@ public sealed class VolumeRetirementPublicationTests
     [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1904() => RenewalCorpus(1904);
 
-    private static async Task RenewalCorpus(int seed)
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1901_second_half() => RenewalCorpus(1901, 35);
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1902_second_half() => RenewalCorpus(1902, 35);
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1903_second_half() => RenewalCorpus(1903, 35);
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public Task Origin_graph_corpus_seed_1904_second_half() => RenewalCorpus(1904, 35);
+
+    private static async Task RenewalCorpus(int seed, int firstShape = 0)
     {
         NativeLinuxGate.Require(NativeLinuxReason);
         var f = await VolumeRetirementPublicationFixture.Create();
@@ -628,7 +640,7 @@ public sealed class VolumeRetirementPublicationTests
         published.Count.ShouldBeGreaterThan(0); published.Count.ShouldBeLessThan(objects.Count);
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
         var accepted = new[] { f.A }.Concat(roots.Select(i => objects[i])).ToArray();
-        for (var shape = 0; shape < 70; shape++)
+        for (var shape = firstShape; shape < firstShape + 35; shape++)
         {
             var index = shape % objects.Count; var tip = objects[index];
             var family = shape % 6;

@@ -18,6 +18,7 @@ internal sealed class VolumeRetirementPublicationFixture
     internal const string RepoRelative = "repos/outer";
     internal const string Nonce = "19010000000000000000000000000001";
     internal const string TaskBase = "ca8737e78170c9a441e216408da5fab636c34ca0";
+    private string Relative { get; }
     internal string Root { get; }
     internal string Work { get; }
     internal string Repo { get; }
@@ -30,9 +31,9 @@ internal sealed class VolumeRetirementPublicationFixture
     internal C1008HostFixture? Host { get; private set; }
     private int sequence;
 
-    private VolumeRetirementPublicationFixture(string root, string work)
+    private VolumeRetirementPublicationFixture(string root, string work, string relative = RepoRelative)
     {
-        Root = root; Work = work; Repo = Path.Combine(work, RepoRelative);
+        Root = root; Work = work; Relative = relative; Repo = Path.Combine(work, relative);
         Bare = Path.Combine(root, "origin.git"); Backup = Path.Combine(root, "backup.git");
     }
 
@@ -73,12 +74,15 @@ internal sealed class VolumeRetirementPublicationFixture
         return f;
     }
 
+    internal static VolumeRetirementPublicationFixture Attach(C1008HostFixture host, string relative, string bare) =>
+        new(host.Root, VolumeRetirementFixture.WorkMount(host), relative) { Host = host, Bare = bare };
+
     internal static string Canonical(string oid) => "refs/antiphon/salvage/" + Scope + "/" + oid;
     internal static string Sha(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
     internal static string Ps(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
     internal static string Q(string value) => VolumeRetirementFixture.Quote(value);
-    internal string Inventory => Sha("C1008_PRIVATE_ORIGIN repo=" + RepoRelative + " origin=" + Origin +
-        " originHash=" + Sha(Origin) + " proofName=" + Sha(RepoRelative + "\n" + Origin) + "\n");
+    internal string Inventory => Sha("C1008_PRIVATE_ORIGIN repo=" + Relative + " origin=" + Origin +
+        " originHash=" + Sha(Origin) + " proofName=" + Sha(Relative + "\n" + Origin) + "\n");
 
     internal async Task<string> Git(string directory, params string[] args)
     {
@@ -133,7 +137,7 @@ internal sealed class VolumeRetirementPublicationFixture
             "[string]$InputText='', [string]$OutputFile=''); " + extraShim +
             "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
             "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
-            "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(RepoRelative) +
+            "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
                 " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile " + Ps(previous) +
                 " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000" :
             "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(RepoRelative) +
@@ -143,7 +147,7 @@ internal sealed class VolumeRetirementPublicationFixture
             " -RequiredObjects @(" + string.Join(',', (required ?? []).Select(r => "[pscustomobject]@{objectId=" + Ps(r.Oid) + ";type=" + Ps(r.Type) + "}")) + ") " +
             "-PreviousProofFile " + Ps(previous) + (freshGraph ? " -FreshGraph" : "")) + "; exit 0 } catch { Write-Output $_.Exception.Message; exit 2 }";
         var result = await Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], seconds: 60);
-        var file = Path.Combine(directory, Sha(RepoRelative + "\n" + (version == 1 ? Bare : Origin)));
+        var file = Path.Combine(directory, Sha(Relative + "\n" + (version == 1 ? Bare : Origin)));
         if (result.Exit != 0) File.Exists(file).ShouldBeFalse("a refused writer cannot emit an authorizing header");
         return new Proof(result.Exit, result.Output, directory, file);
     }
