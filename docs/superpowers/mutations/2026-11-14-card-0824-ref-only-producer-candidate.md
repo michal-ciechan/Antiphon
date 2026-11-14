@@ -36,3 +36,42 @@ weaken an assertion. Keep inherited failures and every variant's receipt separat
 PC-10 through PC-21 and all their plan variants remain pending for the uncommissioned
 M/I tracks. This F1-F4 Code task neither implements nor executes those controls.
 Use the accepted all-roles plan's exact method roster when those tracks are commissioned.
+
+## Uncommissioned M/I controls: all pending
+
+These are the remaining accepted-plan IDs and separate variants. Their future
+classes are not implemented by this F1-F4 commission. No execution or pass is
+claimed, and the F-track source must not be used as their bound Mutation pack.
+
+| PC / variant | Deliberate defect | Exact future method filter | Status |
+|---|---|---|---|
+| PC-10a | Adopt an auxiliary name collision | `/*/*/C0824MergeSlotBindingTests/Existing_auxiliary_ref_is_never_adopted` | Pending, uncommissioned |
+| PC-10b | Drop generation identity | `/*/*/C0824MergeSlotBindingTests/Restart_retains_role_task_preparation_and_generation` | Pending, uncommissioned |
+| PC-11a | Ignore Merge capability | `/*/*/C0824MergeSlotAdmissionTests/Merge_requires_capability_and_persisted_decision` | Pending, uncommissioned |
+| PC-11b | Admit Mutation | `/*/*/C0824MergeSlotAdmissionTests/Mutation_and_source_landing_never_enter_merge_mode` | Pending, uncommissioned |
+| PC-11c | Admit SourceLanding | `/*/*/C0824MergeSlotAdmissionTests/Mutation_and_source_landing_never_enter_merge_mode` | Pending, uncommissioned |
+| PC-12 | Omit canonical salvage from proof roots | `/*/*/C0824MergeSlotPublicationTests/Equivalent_recut_with_exact_origin_salvage_releases` | Pending, uncommissioned |
+| PC-13 | Treat patch equivalence as publication | `/*/*/C0824MergeSlotPublicationTests/Equivalent_patch_without_original_publication_is_kept` | Pending, uncommissioned |
+| PC-14a | Trust local salvage | `/*/*/C0824MergeSlotPublicationTests/Local_or_stale_salvage_never_proves_origin` | Pending, uncommissioned |
+| PC-14b | Trust tracking after origin deletion | `/*/*/C0824MergeSlotPublicationTests/Local_or_stale_salvage_never_proves_origin` | Pending, uncommissioned |
+| PC-15a | Omit namespace validation | `/*/*/C0824MergeSlotPublicationTests/Malformed_salvage_and_endpoint_or_advertisement_drift_refuse` | Pending, uncommissioned |
+| PC-15b | Omit OID validation | `/*/*/C0824MergeSlotPublicationTests/Malformed_salvage_and_endpoint_or_advertisement_drift_refuse` | Pending, uncommissioned |
+| PC-15c | Omit object-type validation | `/*/*/C0824MergeSlotPublicationTests/Malformed_salvage_and_endpoint_or_advertisement_drift_refuse` | Pending, uncommissioned |
+| PC-15d | Omit endpoint binding | `/*/*/C0824MergeSlotPublicationTests/Malformed_salvage_and_endpoint_or_advertisement_drift_refuse` | Pending, uncommissioned |
+| PC-15e | Omit second advertisement | `/*/*/C0824MergeSlotPublicationTests/Malformed_salvage_and_endpoint_or_advertisement_drift_refuse` | Pending, uncommissioned |
+| PC-16a | Omit oldest old reflog OID | `/*/*/C0824MergeSlotPublicationTests/Oldest_reflog_and_auxiliary_history_require_publication` | Pending, uncommissioned |
+| PC-16b | Omit auxiliary tip | `/*/*/C0824MergeSlotPublicationTests/Oldest_reflog_and_auxiliary_history_require_publication` | Pending, uncommissioned |
+| PC-16c | Omit auxiliary reflog | `/*/*/C0824MergeSlotPublicationTests/Oldest_reflog_and_auxiliary_history_require_publication` | Pending, uncommissioned |
+| PC-17a | Retain owned auxiliary ref | `/*/*/C0824MergeSlotReleaseTests/Release_deletes_only_owned_refs_and_preserves_build_output` | Pending, uncommissioned |
+| PC-17b | Cold-clean native output during warm release | `/*/*/C0824MergeSlotReleaseTests/Release_deletes_only_owned_refs_and_preserves_build_output` | Pending, uncommissioned |
+| PC-18a | Delete without expected-old | `/*/*/C0824MergeSlotReleaseTests/Ref_move_before_delete_fails_compare_and_swap` | Pending, uncommissioned |
+| PC-18b | Ignore failed deletion and mark Free | `/*/*/C0824MergeSlotReleaseTests/Crash_during_release_revalidates_before_free` | Pending, uncommissioned |
+| PC-19a | Delete foreign ref | `/*/*/C0824MergeSlotReleaseTests/Foreign_or_attached_auxiliary_branch_is_preserved` | Pending, uncommissioned |
+| PC-19b | Delete attached ref | `/*/*/C0824MergeSlotReleaseTests/Foreign_or_attached_auxiliary_branch_is_preserved` | Pending, uncommissioned |
+| PC-19c | Skip dirty guard | `/*/*/C0824MergeSlotReleaseTests/Unpublished_dirty_or_live_child_keeps_custody` | Pending, uncommissioned |
+| PC-19d | Skip publication guard | `/*/*/C0824MergeSlotReleaseTests/Unpublished_dirty_or_live_child_keeps_custody` | Pending, uncommissioned |
+| PC-19e | Skip child guard | `/*/*/C0824MergeSlotReleaseTests/Unpublished_dirty_or_live_child_keeps_custody` | Pending, uncommissioned |
+| PC-20a | Mutate ledger during inventory | `/*/*/C0824WorkspaceSlotInventoryTests/Inventory_preserves_ledger_bytes` | Pending, uncommissioned |
+| PC-20b | Collapse unreadable to empty | `/*/*/C0824WorkspaceSlotInventoryTests/Unreadable_ledger_is_unknown_not_empty` | Pending, uncommissioned |
+| PC-21a | Clear danger on failed poll | `/*/*/C0824SlotAttentionTests/Failed_poll_marks_evidence_stale` | Pending, uncommissioned |
+| PC-21b | Suppress quarantine warning | `/*/*/C0824SlotAttentionTests/Quarantine_warning_tracks_exact_directory` | Pending, uncommissioned |
