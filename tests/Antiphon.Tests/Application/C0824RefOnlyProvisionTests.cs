@@ -20,7 +20,7 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Intent_precedes_git_and_never_creates_identity()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         // A fresh ordinary task has neither a recorded workspace nor a branch.
         // The fixture's other task/ref is a decoy that the producer must preserve.
         var id = Guid.NewGuid();
@@ -56,7 +56,7 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Bases_and_short_name_collisions_preserve_ownership()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         await using var lease = await f.Git.Leases.TryAcquireAsync(f.Git.Desktop, default);
         lease.ShouldNotBeNull();
         var producer = Producer(f);
@@ -91,7 +91,7 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Existing_mode_survives_gate_and_attempt_change()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         var initial = await f.Contexts.ResolveAsync(f.Task, default);
         f.Task.Attempt++; await f.Db.SaveChangesAsync();
         var disabled = new RefOnlyDesktopSettings();
@@ -106,22 +106,42 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Selected_failure_never_falls_back_to_checkout()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
-        var task = NewTask(f); f.Db.AgentTasks.Add(task); await f.Db.SaveChangesAsync();
-        var inventory = await f.InventoryAsync();
-        var registry = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
-        await using var lease = await f.Git.Leases.TryAcquireAsync(f.Git.Desktop, default);
-        var producer = Producer(f);
-        var selected = await producer.PlanAsync(task, lease!, default);
-        await f.Db.TaskRefWorkspaceBindings.Where(b => b.Id == selected.BindingId)
-            .ExecuteUpdateAsync(u => u.SetProperty(b => b.SelectedBaseSha, new string('f', 40)));
-        (await Should.ThrowAsync<ConflictException>(() => producer.PlanAsync(task, lease!, default)))
-            .Code.ShouldBe("ref_only_binding_base_mismatch");
-        (await f.InventoryAsync()).ShouldBe(inventory);
-        (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(registry);
-        Path.Exists(selected.IdentityPath).ShouldBeFalse();
-        (await f.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
-            .DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        {
+            await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
+            var task = NewTask(f); f.Db.AgentTasks.Add(task); await f.Db.SaveChangesAsync();
+            var inventory = await f.InventoryAsync();
+            var registry = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
+            await using var lease = await f.Git.Leases.TryAcquireAsync(f.Git.Desktop, default);
+            var producer = Producer(f);
+            var selected = await producer.PlanAsync(task, lease!, default);
+            await f.Db.TaskRefWorkspaceBindings.Where(b => b.Id == selected.BindingId)
+                .ExecuteUpdateAsync(u => u.SetProperty(b => b.SelectedBaseSha, new string('f', 40)));
+            (await Should.ThrowAsync<ConflictException>(() => producer.PlanAsync(task, lease!, default)))
+                .Code.ShouldBe("ref_only_binding_base_mismatch");
+            (await f.InventoryAsync()).ShouldBe(inventory);
+            (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(registry);
+            Path.Exists(selected.IdentityPath).ShouldBeFalse();
+            (await f.Db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id))
+                .DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        }
+
+        await using var dispatched = await RefOnlyDispatchFixture.CreateAsync();
+        var id = await dispatched.SeedAsync();
+        var prepared = await dispatched.PrepareAsync(id);
+        var before = await dispatched.Git.RunAsync(dispatched.Git.Desktop, "worktree", "list", "--porcelain");
+        await using (var db = dispatched.Rig.NewDb())
+            await db.TaskRefWorkspaceBindings.Where(b => b.Id == prepared.TaskRefWorkspaceBindingId)
+                .ExecuteUpdateAsync(u => u.SetProperty(b => b.SelectedBaseSha, new string('f', 40)));
+        await dispatched.Rig.TickAsync();
+        var refused = await dispatched.Rig.ReadTaskAsync(id);
+        refused.Status.ShouldBe(AgentTaskStatus.Failed);
+        refused.FailureReason.ShouldContain("ref_only_binding_base_mismatch");
+        refused.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        refused.TaskRefWorkspaceBindingId.ShouldBe(prepared.TaskRefWorkspaceBindingId);
+        dispatched.Rig.Sink.Specs.ShouldBeEmpty("a selected binding failure never launches a local fallback");
+        Path.Exists(refused.WorktreePath).ShouldBeFalse();
+        Path.Exists(dispatched.Root).ShouldBeFalse();
+        (await dispatched.Git.RunAsync(dispatched.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(before);
     }
 
     internal static AgentTask NewTask(RefOnlySyncFixture f)

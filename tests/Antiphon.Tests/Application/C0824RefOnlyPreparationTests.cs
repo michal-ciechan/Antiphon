@@ -21,7 +21,7 @@ public sealed class C0824RefOnlyPreparationTests
     [Test]
     public async Task Initial_ref_creation_requires_expected_absence()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         var task = await PlannedAsync(f);
         var producer = C0824RefOnlyProvisionTests.Producer(f);
         var registry = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
@@ -61,7 +61,7 @@ public sealed class C0824RefOnlyPreparationTests
     [Test]
     public async Task Initial_remote_collision_is_not_overwritten()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         var task = await PlannedAsync(f);
         var foreign = await f.Git.PublishForeignBranchAsync(task.WorktreeBranch!, "foreign.txt");
         foreign.ShouldNotBe(f.Git.Baseline, "foreign branch has independent work");
@@ -106,7 +106,7 @@ public sealed class C0824RefOnlyPreparationTests
     [Test]
     public async Task Crash_boundaries_resume_only_owned_intent()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         foreach (var cut in new[] { "before-local-ref", "after-local-ref", "ref-created", "before-push", "after-push", "published" })
         {
             var task = await PlannedAsync(f);
@@ -139,7 +139,7 @@ public sealed class C0824RefOnlyPreparationTests
     [Test]
     public async Task Publication_uses_frozen_ref_and_never_rewinds()
     {
-        await using var f = await RefOnlySyncFixture.CreateAsync();
+        await using var f = await RefOnlySyncFixture.CreateAsync(producerSeed: true);
         var task = await PlannedAsync(f);
         await f.Git.RunAsync(f.Git.Desktop, "commit", "--allow-empty", "-m", "move canonical HEAD");
         (await f.Git.RevParseAsync("HEAD")).ShouldNotBe(f.Git.Baseline);
