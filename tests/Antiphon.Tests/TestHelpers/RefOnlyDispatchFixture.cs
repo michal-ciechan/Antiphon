@@ -110,6 +110,15 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
         return await Git.RunAsync(author, "rev-parse", "HEAD");
     }
 
+    public async Task<string> PublishForeignBranchAsync(string branch, string label)
+    {
+        var sha = await Git.RunAsync(Git.Desktop, "commit-tree", Git.Baseline + "^{tree}",
+            "-p", Git.Baseline, "-m", "foreign fixture " + label);
+        await Git.RunAsync(Git.Desktop, "update-ref", "refs/heads/" + branch, sha, new string('0', sha.Length));
+        await Git.RunAsync(Git.Desktop, "push", "origin", sha + ":refs/heads/" + branch);
+        return sha;
+    }
+
     public async ValueTask DisposeAsync()
     {
         await Rig.DisposeAsync();
