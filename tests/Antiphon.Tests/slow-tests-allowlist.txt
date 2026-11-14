@@ -473,3 +473,9 @@ Antiphon.Tests.TestHelpers.StagedHelperBuildTests
 Antiphon.Tests.Application.SessionStatePinQueryTests
 # CARD-1886: isolated PostgreSQL destination/drain differential and 12,000-row prepared EXPLAIN matrix; methods measured 25.2s and 33.7s on loaded Linux.
 Antiphon.Tests.Application.RuntimeActionClaimQueryTests
+
+# CARD-1915: owned PostgreSQL transaction, commit-fault, randomized fold and concurrent-writer witnesses; measured setup exceeds five seconds.
+Antiphon.Tests.Application.SessionTranscriptSummaryAppendTests
+
+# CARD-1915: fresh predecessor database, bounded DDL-lock rollback/retry and safe Down witness; measured setup exceeds five seconds.
+Antiphon.Tests.Application.SessionTranscriptSummaryMigrationTests
