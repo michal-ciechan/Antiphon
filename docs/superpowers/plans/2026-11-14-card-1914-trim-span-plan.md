@@ -20,8 +20,9 @@ Impacted-class addition: editing `tests/Antiphon.Tests/**/*.cs` selects
 `TestLaneCategoryGuardTests`, included in CP-10. No other high-radius kind
 matches `SessionRunnerContracts.cs`.
 
-CP-2 is red at the test-only commit (the five new allocation methods) and green
-after the production edit. Count that rerun. Do not repeat a green row.
+CP-2 is red at the test-only commit (the five new allocation methods; output
+bin-c1914-proof/ retained) and green after the production edit on a fresh
+bin-c1914-s2/ output. Count that rerun. Do not repeat a green row.
 
 ## Verification design
 
@@ -45,7 +46,7 @@ their lease. CP-2 runs red on the test-only commit, then green after the fix.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-0 | all | n/a | impact-driver-build | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | R-3 | exit 0, standalone driver only | n/a | 2 | true |
 | CP-1 | all | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1914-driver-witness` | R-3 | DRIVER WITNESS passed=3 failed=0 | n/a | 2 | true |
-| CP-2 | all | `tests/Antiphon.Tests -> bin-c1914-proof/` | trim-span-proof | `/*/*/LocalCommandRecordTests/*` | V-1, V-2 | all listed, 0 failed/skipped after the fix | 11 | 10 | true |
+| CP-2 | all | `tests/Antiphon.Tests -> bin-c1914-s2/` | trim-span-proof | `/*/*/LocalCommandRecordTests/*` | V-1, V-2 | all listed, 0 failed/skipped after the fix | 11 | 10 | true |
 | CP-3 | all | CP-2 | direct-classifiers | `/*/*/(TranscriptLocalCommandEchoTests*)\|(SubagentNotificationTests*)/*` | R-1 | all listed, 0 failed/skipped | 8 | 2 | true |
 | CP-4 | all | CP-2 | compaction-notification | `/*/*/(CompactionContinuationPolicyTests*)\|(TranscriptNormalizerTests*)/*` | R-1 | all listed, 0 failed/skipped | 52 | 2 | true |
 | CP-5 | all | CP-2 | prompt-working-contract | `/*/*/(TranscriptPromptSpanTests*)\|(TranscriptWorkingStateQueryTests*)\|(TaskReportHousekeepingTests*)/*` | R-1 | all listed, 0 failed/skipped | 32 | 3 | true |
