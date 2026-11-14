@@ -30,6 +30,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
     private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
     private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
+    private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
     private IsolatedTestSchema? _historical;
 
     [Before(Class)]
@@ -61,7 +62,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
         var chain = db.Database.GetMigrations().ToArray();
-        chain.TakeLast(7).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort }, "linear-after-master-with-original-ids");
+        chain.TakeLast(8).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary }, "linear-after-master-with-original-ids");
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
 
