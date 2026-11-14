@@ -154,7 +154,8 @@ internal sealed class VolumeRetirementPublicationFixture
 
     // Real control-stream consumer for the fixture-owned origin. Only the network
     // address is mapped; writer, live check, shell gate, custody and responses are real.
-    private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control, Func<Task>? beforeControl)
+    private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control, Func<Task>? beforeControl,
+        Func<string, Task<bool>> checkLive)
     {
         Directory.CreateDirectory(control);
         Proof? previous = null;
@@ -195,8 +196,7 @@ internal sealed class VolumeRetirementPublicationFixture
             {
                 ControlRequests++;
                 if (beforeControl is not null) await beforeControl();
-                var checkedLive = await WriteProof(previous: previous!.File, finalCheck: true);
-                if (checkedLive.Exit != 0) return "C1609_REFUSED";
+                if (!await checkLive(previous!.File)) return "C1609_REFUSED";
                 await File.AppendAllTextAsync(Path.Combine(Root, "coordinator.log"), line + "\n");
                 return line.Replace("C1609_CONTROL_REQUEST ", "C1609_CONTROL_RESPONSE ", StringComparison.Ordinal);
             }
@@ -215,7 +215,11 @@ internal sealed class VolumeRetirementPublicationFixture
     {
         Host.ShouldNotBeNull();
         var controlRoot = Path.Combine(Root, "control-" + ++sequence);
-        var callback = await Coordinator(proof, controlRoot, beforeControl);
+        // Production c590-real.ps1 already runs in a warm PowerShell controller.
+        // Keep module startup outside the five-second effect window here too;
+        // each request still invokes the real helper and reads the origin again.
+        await using var liveHost = await StartLiveControlHost();
+        var callback = await Coordinator(proof, controlRoot, beforeControl, liveHost.Check);
         var binding = "export C1609_EXCHANGE=1 C1609_EXCHANGE_PROOF_ROOT=" + Q(controlRoot) + "\n";
         Func<string, string>? transform = extraGates == 0 ? null : source => source.Replace(
             "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable",
@@ -226,6 +230,78 @@ internal sealed class VolumeRetirementPublicationFixture
         var text = result.Output + await VolumeRetirementFixture.AuditText(Host);
         await File.WriteAllTextAsync(Path.Combine(Root, "preview-" + ++sequence + ".out"), text);
         return (result.Exit, text);
+    }
+
+    private async Task<LiveControlHost> StartLiveControlHost()
+    {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "start");
+        var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
+            "$original=${function:Invoke-C1609HostGit}; function Invoke-C1609HostGit { " +
+            "param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory=''," +
+            "[string]$InputText='', [string]$OutputFile=''); " +
+            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
+            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
+            "[Console]::Out.WriteLine('C1901_CONTROL_READY'); " +
+            "while($null -ne ($line=[Console]::ReadLine())) { try { $request=$line|ConvertFrom-Json; " +
+            "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
+            " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile $request.file -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000; " +
+            "[Console]::Out.WriteLine('C1901_CONTROL_OK') } catch { [Console]::Out.WriteLine('C1901_CONTROL_REFUSED') } }; exit 0";
+        var file = Path.Combine(Root, "live-control-" + ++sequence + ".ps1");
+        await File.WriteAllTextAsync(file, script);
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, WorkingDirectory = Root,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", file }) start.ArgumentList.Add(arg);
+        start.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
+        start.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        var host = new LiveControlHost(Process.Start(start)!, Root);
+        try { await host.Ready(); return host; }
+        catch { await host.Stop(force: true); throw; }
+    }
+
+    private sealed class LiveControlHost(Process process, string root) : IAsyncDisposable
+    {
+        private readonly Task<string> stderr = process.StandardError.ReadToEndAsync();
+        private int requests;
+
+        internal async Task Ready()
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            (await process.StandardOutput.ReadLineAsync(deadline.Token)).ShouldBe("C1901_CONTROL_READY");
+        }
+
+        internal async Task<bool> Check(string file)
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "run");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var clock = Stopwatch.StartNew();
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { file }).AsMemory(), deadline.Token);
+            await process.StandardInput.FlushAsync(deadline.Token);
+            var response = await process.StandardOutput.ReadLineAsync(deadline.Token);
+            response.ShouldBeOneOf("C1901_CONTROL_OK", "C1901_CONTROL_REFUSED");
+            var success = response == "C1901_CONTROL_OK";
+            await File.AppendAllTextAsync(Path.Combine(root, "live-controls.jsonl"),
+                JsonSerializer.Serialize(new { request = ++requests, milliseconds = clock.Elapsed.TotalMilliseconds, success }) + "\n");
+            return success;
+        }
+
+        internal async Task Stop(bool force)
+        {
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "stop");
+            try
+            {
+                if (force && !process.HasExited) process.Kill(entireProcessTree: true);
+                else if (!process.HasExited) process.StandardInput.Close();
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+                try { await process.WaitForExitAsync(deadline.Token); }
+                catch { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } throw; }
+                await File.AppendAllTextAsync(Path.Combine(root, "live-control-stderr.log"), await stderr);
+                process.ExitCode.ShouldBe(0, "the owned controller must exit cleanly after stdin closes");
+            }
+            finally { process.Dispose(); }
+        }
+
+        public async ValueTask DisposeAsync() => await Stop(force: false);
     }
 
     internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true, string? sourceRevision = null)
