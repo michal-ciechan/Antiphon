@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 150,
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
@@ -3419,6 +3419,12 @@
       ]
     },
     {
+      "path": "scripts/c1008-content-audit.sh",
+      "classes": [
+        "VolumeRetirementPublicationTests"
+      ]
+    },
+    {
       "path": "scripts/c1008-host-proof.ps1",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -3436,6 +3442,7 @@
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3479,6 +3486,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3498,6 +3506,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3521,6 +3530,7 @@
         "SeedSmokeTargetingPackContractTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -24098,8 +24108,15 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/VolumeRetirementPublicationFixture.cs",
+      "classes": [
+        "VolumeRetirementPublicationTests"
       ]
     },
     {
@@ -25368,6 +25385,7 @@
         "RollingVolumeRecycleDockerTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementDockerTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
