@@ -511,9 +511,24 @@ c1609_scan_hooks() {
     done < <(find "$base" -xdev -path '*/.git/hooks/*' -type f -print0 2>/dev/null || true)
 }
 
+c1609_emit_binding_clock() {
+    local boot namespace uptime ignored started
+    read -r boot < /proc/sys/kernel/random/boot_id || return 1
+    namespace="$(readlink /proc/self/ns/time)" || return 1
+    read -r uptime ignored < /proc/uptime || return 1
+    [[ "$uptime" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
+    started="$(awk -v seconds="$uptime" 'BEGIN { printf "%.0f\n", seconds * 1000 }')" || return 1
+    printf 'C1609_BINDING_CLOCK boot=%s namespace=%s started=%s\n' "$boot" "$namespace" "$started"
+}
+
 c1609_list_offenders() {
     local flag
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 0
+    # Container setup precedes observation. Bind the actual observation phase
+    # to the caller's kernel clock before any repository/content discovery.
+    if [ "${C1008_AUDIT_MODE:-}" = inventory ]; then
+        c1609_emit_binding_clock || fail 2 ' reason=binding-clock'
+    fi
     c1609_findings_complete=true
     c1609_unvisited_json=''
     c1609_block_reason=''

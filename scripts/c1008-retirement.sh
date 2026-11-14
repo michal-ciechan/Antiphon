@@ -439,8 +439,24 @@ c1609_prepare_exchange() {
 
 # Re-observe repo->origin bindings and the host approval registry inside this
 # invocation, after the content scan and before renewing publication authority.
+c1609_accept_binding_clock() {
+    local file="$1" began="$2" line boot namespace started now host_boot host_namespace
+    local record_re='^C1609_BINDING_CLOCK boot=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) namespace=(time:\[[0-9]+\]) started=(0|[1-9][0-9]{0,15})$'
+    [[ "$began" =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
+    line="$(LC_ALL=C awk '/^C1609_BINDING_CLOCK/ {line=$0; n++} END {if(n!=1) exit 2; print line}' "$file")" || return 1
+    [[ "$line" =~ $record_re ]] || return 1
+    boot="${BASH_REMATCH[1]}"; namespace="${BASH_REMATCH[2]}"; started="${BASH_REMATCH[3]}"
+    read -r host_boot < /proc/sys/kernel/random/boot_id || return 1
+    host_namespace="$(readlink /proc/self/ns/time)" || return 1
+    [ "$boot" = "$host_boot" ] && [ "$namespace" = "$host_namespace" ] || return 1
+    now="$(c1609_monotonic_ms)" || return 1
+    [ "$started" -ge "$began" ] && [ "$started" -le "$now" ] || return 1
+    C1609_CONTROL_STARTED="$started"
+}
+
 c1609_recheck_origin_bindings() {
-    local directory="${C1609_EXCHANGE_DIRECTORY:?}" nonce out requests trusted
+    local directory="${C1609_EXCHANGE_DIRECTORY:?}" nonce out requests trusted began
+    began="$(c1609_monotonic_ms)" || return 1
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     out="$directory/live-inventory-$nonce.out"
     requests="$directory/live-origins-$nonce.txt"
@@ -451,6 +467,9 @@ c1609_recheck_origin_bindings() {
     if [ -s "$requests" ]; then
         c1609_export_trusted_origins "$requests" "$trusted" || return 1
         cmp -s "$directory/trusted-origins.json" "$trusted" || return 1
+    fi
+    if [ "${1:-}" = effect ] && [ -n "${C1008_HOST_PROOF:-}" ]; then
+        c1609_accept_binding_clock "$out" "$began" || return 1
     fi
 }
 
@@ -495,7 +514,7 @@ c1609_publication_gate() {
     done
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     C1609_CONTROL_STARTED="$(c1609_monotonic_ms)" || return 1
-    c1609_recheck_origin_bindings || return 1
+    c1609_recheck_origin_bindings effect || return 1
     printf 'C1609_CONTROL_REQUEST %s %s %s %s\n' "$nonce" "$purpose" "$C1609_BOUND_PROOF_DIGEST" "$objects"
     IFS=' ' read -r -t 10 marker reply returned_purpose returned_proof returned_objects extra || return 1
     [ "$marker" = C1609_CONTROL_RESPONSE ] && [ "$reply" = "$nonce" ] && [ "$returned_purpose" = "$purpose" ] &&

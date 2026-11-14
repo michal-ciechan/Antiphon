@@ -406,6 +406,13 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-25/unreachable-after-staging | Accept final network failure after successful graph renewal. | `/*/*/VolumeRetirementPublicationTests/Origin_unreachable_after_staging_refuses_control` | pending |
 | PC-26 | Reuse the sealed bundle instead of fetching the fresh graph at a gate. | `/*/*/VolumeRetirementWrapperTests/Retire_temp_real_wrapper_renews_each_effect` | pending |
 | PC-27 | Start the effect-window clock after the final binding refresh, allowing an old URL observation. | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | pending |
+| PC-28/missing | Admit a missing observation clock as current. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/duplicate | Accept one record when multiple observation clocks are supplied. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/boot | Omit kernel boot identity matching. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/namespace | Omit time-namespace identity matching. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/past | Admit an observation from before this inventory invocation. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/future | Admit a future observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/malformed | Admit a malformed observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 
 ### Checkpoint execution and lanes
 
@@ -480,8 +487,8 @@ coordinator cannot produce Ready. Every gate re-observes origin bindings and
 approvals, invokes the real v2 writer with FreshGraph (fresh scratch fetch, bound
 manifest and exact required-object coverage), and rejects any prior advertised
 ref that disappeared or changed OID. A final host control read repeats the live
-advertisement after staging; the five-second monotonic bound includes the entire
-final origin-binding scan, that request, custody recording and the Ready/effect boundary. Each destructive volume
+advertisement after staging; the five-second monotonic bound includes the complete
+final helper observation phase, that request, custody recording and the Ready/effect boundary. Each destructive volume
 effect repeats the full gate. A ref or URL moved after the final observation
 cannot be detected atomically across hosts; this residual interval is at most
 five seconds, and no later effect reuses it. No schema or v1 authority changes.
@@ -505,6 +512,16 @@ owned live-check host warm, matching the production controller; every request
 still calls the real helper and reads origin, and the process is joined before
 preview returns. With that fixture CP-125 was assertion-red at committed source
 cead11e754c1586a83a1ec614bdc21e7ea6f7723: actual Ready/exit 0, expected Unknown/2.
+The first repaired run kept CP-125 green but exposed CP-106's normal path taking
+about 12 seconds in inventory invocation preparation; the actual read-only
+helper ran for about 0.6 seconds. The helper now emits its monotonic start before
+any repository/content discovery. The host admits exactly one canonical record
+only from the same kernel boot and time namespace, within this call's start/end
+bracket. This excludes setup that observes no repository state while preserving
+the unchanged five-second bound over all actual observations. R2-16 / CP-126
+drives the real producer and consumer with valid, absent, duplicate, foreign-boot,
+foreign-namespace, past, future and malformed records. Internal inventory
+diagnostics gain this clock line; proof headers and receipt schemas do not change.
 
 CP-24 preserves all 11 V-6/V-7 vectors across four methods. CP-36 (40 methods),
 CP-39 (225 methods) and CP-40 (23 methods) are split by their complete declared
@@ -818,6 +835,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-123 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-125 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | R2-15 | exactly 1 passed; real delayed binding observation refuses Unknown | 1 | 2 | true |
+| CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 8 real clock-record variants discriminated | 1 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -869,7 +887,7 @@ the existing apply gate, re-proving objects before each effect. It must not reus
 the 2026-11-13 token or expire reflogs to obtain Ready. Run the documented
 post-retirement cache/volume checks only after a successful apply. Do not claim
 this Plan or local tests have qualified deletion of real volumes. Commission
-the separate post-land verification companion with all 27 PCs and their variants and the exact
+the separate post-land verification companion with all 28 PCs and their variants and the exact
 landing operation/source before closing that verification obligation.
 
 --- next stage ---
