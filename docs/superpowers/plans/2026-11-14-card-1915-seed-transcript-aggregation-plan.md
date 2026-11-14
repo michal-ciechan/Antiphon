@@ -45,6 +45,16 @@ using the CP-3 build. Its test cap is 4 minutes; S3 build admission/execution is
 bounded separately at 10 minutes. CP-3 retains its 4-minute test cap. No
 assertion or test timeout is widened.
 
+S3 fixture correction after observed red: EF's 100-entity append can emit singleton
+INSERT statements in primary-key order, causing genuine out-of-order SQL and
+conservative D-5 invalidation. The test now independently audits committed
+statement min/max/count in its owned database, predicts validity from that order,
+and still requires all 100 durable rows, exact cold seed count and duplicate no-op.
+A separate ef-single variant requires valid exact summary folding through EF.
+The shuffled end/timestamp witness uses one actual multi-row statement; shuffled
+EF AddRange is not equivalent. No production behavior or expected equality was relaxed.
+S7 must price this observed ordinary-batch invalidation/backfill cost.
+
 ## Ground truth
 
 | Card/brief assumption | Code and observed behavior at the source SHA | Consequence |
@@ -456,7 +466,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1915-s1b/ | baseline-fixture | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)/*` | V-1 foundation | all listed, 0 failed | 2 | 7 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2b/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
-| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
+| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3b/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
 | CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1915-s4/ | summary-invalidation | `/*/*/(SessionTranscriptSummaryInvalidationTests*)\|(SessionStateWarmupTests*)\|(DataRetentionServiceTests*)/*` | V-4 | all listed, 0 failed | 3 | 4 |
 | CP-5 | S5 | tests/Antiphon.Tests -> bin-c1915-s5/ | summary-backfill | `/*/*/SessionTranscriptSummaryBackfillTests/*` | V-5 | all listed, 0 failed | 2 | 2 |
