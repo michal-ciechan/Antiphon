@@ -257,7 +257,9 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                 RemotePushResult push;
                 try
                 {
-                    push = await remote.PushBranchAsync(task, ct);
+                    push = task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                        ? await scope.ServiceProvider.GetRequiredService<RefOnlyDesktopProvisioner>().PublishAsync(task, ct)
+                        : await remote.PushBranchAsync(task, ct);
                 }
                 finally
                 {

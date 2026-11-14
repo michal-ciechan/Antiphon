@@ -216,11 +216,15 @@ public static class DelegationReportFormatter
             && !string.IsNullOrWhiteSpace(task.RemoteWorktreePath)
             && !string.IsNullOrWhiteSpace(task.WorktreeBranch))
         {
-            sb.AppendLine($"Assigned checkout: runner mirror {task.RemoteWorktreePath}; desktop checkout {task.WorktreePath}.");
+            sb.AppendLine(task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                ? $"Assigned checkout: runner mirror {task.RemoteWorktreePath}; desktop source is ref-only on {task.WorktreeBranch}."
+                : $"Assigned checkout: runner mirror {task.RemoteWorktreePath}; desktop checkout {task.WorktreePath}.");
             sb.AppendLine($"Assigned branch: {task.WorktreeBranch}.");
             sb.AppendLine("--- runner branch contract ---");
-            sb.AppendLine($"You work in the runner mirror {task.RemoteWorktreePath} on branch {task.WorktreeBranch}; "
-                + $"the desktop checkout {task.WorktreePath} is not reachable from here.");
+            sb.AppendLine(task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+                ? $"You work in the runner mirror {task.RemoteWorktreePath} on branch {task.WorktreeBranch}; no desktop checkout exists."
+                : $"You work in the runner mirror {task.RemoteWorktreePath} on branch {task.WorktreeBranch}; "
+                    + $"the desktop checkout {task.WorktreePath} is not reachable from here.");
             sb.AppendLine($"Commit on this branch only and push after every slice with "
                 + $"`git push origin HEAD:refs/heads/{task.WorktreeBranch}`.");
             // Self-contained: a recovered session may predate git-common (CARD-1213 review dd8ce0cf F1).
