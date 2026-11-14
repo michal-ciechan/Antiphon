@@ -394,6 +394,18 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-18 | Same shape-guard defect, symlink vector, independently recorded. | V9 `Selector_fixture_own_gitdir_symlink_stays_in_full_audit` |
 | PC-19 | Expand the v2 writer's fetch/accepted comparison namespace to legacy `refs/salvage/*`; a legacy-only original must still be refused by the host proof test. | H2 `Host_salvage_namespace_and_types_are_closed` |
 
+| PC-20 | Skip renewal when the object digest is unchanged. | `/*/*/VolumeRetirementPublicationTests/Unchanged_objects_renew_at_each_ready_gate` | pending |
+| PC-21/deleted | Allow a previously advertised canonical ref to disappear. | `/*/*/VolumeRetirementPublicationTests/Salvage_deleted_after_sealing_refuses_ready` | pending |
+| PC-21/rolled-back | Allow a previously advertised branch OID to change. | `/*/*/VolumeRetirementPublicationTests/Head_rolled_back_after_sealing_refuses_ready` | pending |
+| PC-21/replaced | Allow the same canonical name to advertise another OID. | `/*/*/VolumeRetirementPublicationTests/Salvage_replaced_after_sealing_refuses_ready` | pending |
+| PC-22 | Accept a failed final live-origin read. | `/*/*/VolumeRetirementPublicationTests/Origin_unreachable_at_final_check_refuses_ready` | pending |
+| PC-23 | Omit the fresh origin binding/approval check. | `/*/*/VolumeRetirementPublicationTests/Origin_rebound_at_final_check_refuses_ready` | pending |
+| PC-24 | Make the offline scanner an exit-0 authority without live completion. | `/*/*/VolumeRetirementPublicationTests/Offline_scan_requires_live_completion` | pending |
+| PC-25/deleted-after-staging | Skip the final live advertisement after staging. | `/*/*/VolumeRetirementPublicationTests/Salvage_withdrawn_after_staging_refuses_control` | pending |
+| PC-25/rolled-back-after-staging | Skip the final live advertisement after staging. | `/*/*/VolumeRetirementPublicationTests/Head_rolled_back_after_staging_refuses_control` | pending |
+| PC-25/unreachable-after-staging | Accept final network failure after successful graph renewal. | `/*/*/VolumeRetirementPublicationTests/Origin_unreachable_after_staging_refuses_control` | pending |
+| PC-26 | Reuse the sealed bundle instead of fetching the fresh graph at a gate. | `/*/*/VolumeRetirementWrapperTests/Retire_temp_real_wrapper_renews_each_effect` | pending |
+
 ### Checkpoint execution and lanes
 
 Placement was read through `GET /api/runner-defaults` and
@@ -807,7 +819,7 @@ the existing apply gate, re-proving objects before each effect. It must not reus
 the 2026-11-13 token or expire reflogs to obtain Ready. Run the documented
 post-retirement cache/volume checks only after a successful apply. Do not claim
 this Plan or local tests have qualified deletion of real volumes. Commission
-the separate post-land verification companion with all 19 PCs and the exact
+the separate post-land verification companion with all 26 PCs and their variants and the exact
 landing operation/source before closing that verification obligation.
 
 --- next stage ---

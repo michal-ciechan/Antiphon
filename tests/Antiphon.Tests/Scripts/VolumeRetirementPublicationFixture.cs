@@ -140,7 +140,7 @@ internal sealed class VolumeRetirementPublicationFixture
             "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
                 " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile " + Ps(previous) +
                 " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000" :
-            "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(RepoRelative) +
+            "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(Relative) +
             " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofVersion " + version +
             " -PhaseNonce " + Ps(phaseNonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +
             "-ProofDirectory " + Ps(directory) + " -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath " + Ps(Path.Combine(Root, "host-proof.log")) +
