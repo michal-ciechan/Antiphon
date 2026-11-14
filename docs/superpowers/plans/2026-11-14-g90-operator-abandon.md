@@ -77,7 +77,9 @@ receipts remain at their actual SHAs and are not rerun or relabelled here.
 The first CP-10 overselected SessionQueueReceiptPlumbingTests: all 16 cases are
 unchanged Windows ConPTY transport witnesses, not API/listing tests. Their Linux
 skips are retained as pending native baseline evidence, never passed. The corrected
-portable CP-10 runs the 37 service/listing/spill cases without that unrelated class.
+portable CP-10 runs the 31 service/listing/spill cases without that unrelated class.
+The earlier 37 count included six portable plumbing-fixture teardown cases; the
+corrected two-class filter has 26 service cases and five spill-recovery cases.
 C1210's Windows-only child audit also stays pending native placement; its portable
 roster failure is verified at the task base and reported separately, as commissioned.
 The new CP-21 builds client/dist before contract E2E. CP-5's existing diagnostic
@@ -88,7 +90,7 @@ and adds Sent uncertainty, exact ids, the actual queue route and operator action
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-last/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 17 | 8 |
+| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-counted/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 17 | 8 |
 | CP-2 | green | CP-1 | standing-switch | `/*/*/StandingSessionSwitchConcurrencyTests/*` | V-2 | all listed, 0 failed | 31 | 2 |
 | CP-3 | green | CP-1 | standing-history | `/*/*/(StandingSessionSelectionTests*)\|(StandingSessionOwnershipTests*)\|(StandingSessionQueueSwitchTests*)\|(StandingSessionRecoveryHttpTests*)/*` | R-1,V-2 | all listed, 0 failed | 54 | 3 |
 | CP-4 | green | CP-1 | control-resume | `/*/*/(AgentControlServiceIntegrationTests*)\|(StandingResumeReceiptReadinessTests*)/*` | R-1 | all listed, 0 failed | 34 | 2 |
@@ -97,7 +99,7 @@ and adds Sent uncertainty, exact ids, the actual queue route and operator action
 | CP-7 | green | CP-1 | rules-recovery | `/*/*/(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)/*` | R-1,R-3 | all listed, 0 failed | 16 | 2 |
 | CP-8 | green | CP-1 | delivery-witnesses | `/*/*/(LandRefusalDeliveryWitnessTests*)\|(AgentTaskMidTurnRefineTests*)/*` | R-1,R-3 | all listed, 0 failed | 63 | 3 |
 | CP-9 | green | CP-1 | phone-home-observation | `/*/*/(SessionMessageQueuePhoneHomeDropTests*)\|(CodexCliObservationGapTests*)/*` | R-1,R-3 | all listed, 0 failed | 12 | 8 |
-| CP-10 | green | CP-1 | queue-listing | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueDeliveredSpillRecoveryTests*)/*` | R-1 | all listed, 0 failed | 37 | 3 |
+| CP-10 | green | CP-1 | queue-listing | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueDeliveredSpillRecoveryTests*)/*` | R-1 | all listed, 0 failed | 31 | 3 |
 | CP-11 | green | CP-1 | late-confirmation | `/*/*/(SessionMessageQueueInterruptedAttemptTests*)\|(SessionMessageQueueCodexPointerTests*)/*` | V-4,R-1 | all listed, 0 failed | 2 | 3 |
 | CP-12 | green | CP-1 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)\|(StandingBootAttentionTests*)\|(StandingContinuityAttentionTests*)/*` | V-5,R-1 | all listed, 0 failed | 4 | 3 |
 | CP-13 | green | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all listed, 0 failed | 5 | 2 |
