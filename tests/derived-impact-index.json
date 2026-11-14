@@ -1915,14 +1915,14 @@
       "reason": "cap",
       "owed": 19,
       "first": [
-        "RunnerMultilinePromptDeliveryTests",
         "RunnerReadJsonTests",
         "TranscriptSinceReadTests",
         "UnixPtyArgvAdmissionTests",
         "RunnerWorkspaceServiceTests",
         "CompletedCardWorkspaceRemovalTests",
         "LegacyWorkspaceRemovalGateTests",
-        "C0824WorkspaceSlotOverflowTests"
+        "C0824WorkspaceSlotOverflowTests",
+        "C0824WorkspaceSlotRehomeTests"
       ]
     },
     {
@@ -18840,7 +18840,6 @@
       "path": "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs",
       "classes": [
         "AgentTaskInputFallbackTests",
-        "C0824WorkspaceSlotCustodyTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
         "C1818GcOwnerRobustnessTests",
@@ -18862,6 +18861,7 @@
         "RunnerAbsenceEvidencePhoneHomeTests",
         "RunnerCapacityCountTests",
         "RunnerCodexCliEvidenceTests",
+        "RunnerMultilinePromptDeliveryTests",
         "RunnerWorkspaceBindingTests",
         "StandingRunnerCwdTests"
       ]
