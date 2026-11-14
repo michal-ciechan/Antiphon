@@ -11,6 +11,8 @@ internal static class C1514HostLoadCrashCases
 {
     public static async Task RunAsync(C1514HostLoadFixture fixture, string cut, CancellationToken ct)
     {
+        using var scenarioStop = CancellationTokenSource.CreateLinkedTokenSource(ct, C1514HostLoadScenario.Current?.Token ?? CancellationToken.None);
+        ct = scenarioStop.Token;
         var probe = Path.Combine(AppContext.BaseDirectory, "host-load-probe", "Antiphon.HostLoad.Probe.dll"); File.Exists(probe).ShouldBeTrue("The probe is staged by the checkpoint build, never built inside a test.");
         {
             using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "host-load crash " + cut);
@@ -40,9 +42,9 @@ internal static class C1514HostLoadCrashCases
                 File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
             var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1"); using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var owned = ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514-crash", "Probe", script,
+            var owned = world.Own(ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514-crash", "Probe", script,
                 new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, ExecutablePath: executable,
-                    AdditionalArguments: ["-ProbePath", probe, "-ProbeConfig", config]), cancel.Token);
+                    AdditionalArguments: ["-ProbePath", probe, "-ProbeConfig", config]), cancel.Token));
             try
             {
                 // Cold EF/model startup is fixture setup under the unchanged 60s
@@ -50,12 +52,14 @@ internal static class C1514HostLoadCrashCases
                 using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "host-load probe initialization"))
                     while (!File.Exists(initialized) && !owned.IsCompleted) await Task.Delay(5, ct);
                 File.Exists(initialized).ShouldBeTrue(cut + ": probe failed during initialization");
+                world.Progress("crash child initialized");
                 using (var setup = JsonDocument.Parse(File.ReadAllText(initialized)))
                     setup.RootElement.GetProperty("nonce").GetString().ShouldBe(nonce);
-                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || owned.IsCompleted);
+                await C1514HostLoadWorld.EventuallyAsync(() => File.Exists(ready) || owned.IsCompleted, cancellationToken: ct);
                 File.Exists(ready).ShouldBeTrue(cut + ": " + (owned.IsCompletedSuccessfully ? owned.Result.Stderr : "probe did not reach the selected boundary"));
                 using var receipt = JsonDocument.Parse(File.ReadAllText(ready)); receipt.RootElement.GetProperty("nonce").GetString().ShouldBe(nonce);
                 receipt.RootElement.GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
+                world.Progress("crash boundary receipt read");
             }
             finally
             {

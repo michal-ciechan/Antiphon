@@ -19,6 +19,7 @@ using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Application;
 [Category("Integration"), NotInParallel("C1514HostLoadServer")]
+[TUnit.Core.Executors.TestExecutor<C1514HostLoadProgressExecutor>]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
 {
@@ -57,10 +58,10 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
         {
             var points = Enumerable.Range(offset, Math.Min(120, 2002 - offset)).Select(i => sample with { Source = sample.Source with { Sequence = i }, SampledAt = from.AddSeconds((i - 2) * 5) }).ToArray();
             await using var db = world.Db(false); var after = (await db.HostLoadIngestCursors.SingleAsync()).Cursor;
-            world.Pump.TryEnqueue(new("grok-linux", after, new(1, sample.Source, points, [], null, false, true))).ShouldBeTrue(); await world.Pump.ProcessOneAsync(CancellationToken.None);
+            world.Pump.TryEnqueue(new("grok-linux", after, new(1, sample.Source, points, [], null, false, true))).ShouldBeTrue(); await world.ProcessOneAsync(world.Token);
         }
     }
-    [Test, Timeout(10_000)]
+    [Test, C1514ProgressBudget(10_000)]
     public async Task RoutesReturnDurableProvenanceAndPages()
     {
         var world = _preparedWorld!;
@@ -80,7 +81,7 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
         (await world.Http.GetAsync(query + "&resolution=hour&cursor=" + Uri.EscapeDataString(cursor))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await world.Http.GetAsync("/api/hosts/unknown-owned-host/load")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
-    [Test, Timeout(10_000)]
+    [Test, C1514ProgressBudget(10_000)]
     public async Task CurrentAndTaskReadsRespectExistingScope()
     {
         var world = _preparedWorld!; await world.ProduceAsync(C1514HostLoadWorld.T0);
@@ -100,34 +101,34 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
         using var load = await world.GetAsync("/api/hosts/grok-linux/load"); load.RootElement.GetProperty("current").GetProperty("source").GetProperty("sequence").GetInt64().ShouldBe(101);
         load.RootElement.GetProperty("counters").GetProperty("tasksInFlight").ValueKind.ShouldBe(JsonValueKind.Null);
     }
-    [Test, Timeout(10_000)]
+    [Test, C1514ProgressBudget(10_000)]
     public async Task OldPeersRemainLiveOnly()
     {
         foreach (var phoneHome in new[] { false, true })
         {
             await using var world = await fixture.WorldAsync(phoneHome); await world.ProduceAsync(C1514HostLoadWorld.T0); world.OldPeer = true;
-            (await world.Source.GetHostStatsAsync(CancellationToken.None))!.Current!.CpuPercent.ShouldBe(40d);
-            await Should.ThrowAsync<HostStatsUnsupportedException>(() => world.Source.GetHostLoadHistoryAsync(null, 120, CancellationToken.None));
+            (await world.Source.GetHostStatsAsync(world.Token))!.Current!.CpuPercent.ShouldBe(40d);
+            await Should.ThrowAsync<HostStatsUnsupportedException>(() => world.Source.GetHostLoadHistoryAsync(null, 120, world.Token));
             await using var db = world.Db(false); (await db.HostLoadIngestCursors.CountAsync()).ShouldBe(0);
             using var api = await world.GetAsync("/api/hosts/grok-linux/load/history"); api.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse(); api.RootElement.GetProperty("items").GetArrayLength().ShouldBe(0);
         }
         await using (var legacy = await fixture.WorldAsync(phoneHome: true, advertiseHistory: false))
         {
             await legacy.ProduceAsync(C1514HostLoadWorld.T0);
-            await Should.ThrowAsync<HostStatsUnsupportedException>(() => legacy.Source.GetHostLoadHistoryAsync(null, 120, CancellationToken.None));
+            await Should.ThrowAsync<HostStatsUnsupportedException>(() => legacy.Source.GetHostLoadHistoryAsync(null, 120, legacy.Token));
             legacy.HistoryRequests.ShouldBe(0, "Never send a new operation name to an old peer that cannot parse it.");
-            (await legacy.Source.GetHostStatsAsync(CancellationToken.None))!.Current!.CpuPercent.ShouldBe(40d);
+            (await legacy.Source.GetHostStatsAsync(legacy.Token))!.Current!.CpuPercent.ShouldBe(40d);
         }
         await using var broken = await fixture.WorldAsync(); broken.RunnerReply = async c => { c.Response.ContentType = "application/json"; await c.Response.WriteAsync("{truncated", c.RequestAborted); };
-        await Should.ThrowAsync<JsonException>(() => broken.Source.GetHostLoadHistoryAsync(null, 120, CancellationToken.None));
+        await Should.ThrowAsync<JsonException>(() => broken.Source.GetHostLoadHistoryAsync(null, 120, broken.Token));
         using var canceled = new CancellationTokenSource(); canceled.Cancel(); await Should.ThrowAsync<OperationCanceledException>(() => broken.Source.GetHostLoadHistoryAsync(null, 120, canceled.Token));
     }
-    [Test, Timeout(10_000)]
+    [Test, C1514ProgressBudget(10_000)]
     public async Task ShadowProjectionCannotChangeAdmission()
     {
         await using var world = await fixture.WorldAsync(); await using var db = world.Db(false);
         var options = Options.Create(new DelegationSettings { MaxConcurrentTasks = 8 });
-        var budgets = new HostBudgetService(db, world.Directory, options, world.Clock); await budgets.UpsertAsync("grok-linux", 1, "owned telemetry witness", CancellationToken.None);
+        var budgets = new HostBudgetService(db, world.Directory, options, world.Clock); await budgets.UpsertAsync("grok-linux", 1, "owned telemetry witness", world.Token);
         using var process = Process.GetCurrentProcess();
         var broker = new BuildSlotBroker(Options.Create(new BuildSlotSettings { MaxConcurrent = 1, MinAvailableMemoryMb = 0 }), new SystemProcessLivenessProbe(), new Memory(), world.Clock, NullLogger<BuildSlotBroker>.Instance);
         broker.TryAcquire(new(process.Id, process.StartTime.ToUniversalTime(), "owned shadow test"), out _).ShouldBeTrue();
@@ -140,10 +141,10 @@ public class C1514HostLoadApiTests(C1514HostLoadFixture fixture)
             await world.ProduceAsync(C1514HostLoadWorld.T0.AddSeconds(cpu == 5 ? 0 : cpu == 95 ? 5 : 10), cpu); await world.TransferAsync();
             using var read = await world.GetAsync("/api/hosts/grok-linux/load"); read.RootElement.GetProperty("policy").GetProperty("shadow").GetBoolean().ShouldBeTrue();
             var after = world.Directory.Status("grok-linux"); after.Available.ShouldBe(baseline.Available); after.DispatchEligible.ShouldBe(baseline.DispatchEligible); after.Draining.ShouldBe(baseline.Draining);
-            broker.List().Budget.ShouldBe(1); broker.List().Occupied.ShouldBe(1); (await budgets.EffectiveAsync("grok-linux", CancellationToken.None)).Effective.ShouldBe(1);
+            broker.List().Budget.ShouldBe(1); broker.List().Occupied.ShouldBe(1); (await budgets.EffectiveAsync("grok-linux", world.Token)).Effective.ShouldBe(1);
             var pipeline = new AgentTaskPipelineStatusService(db, options, new AreaMapLoader(options, NullLogger<AreaMapLoader>.Instance), world.Clock,
                 budgets: budgets, directory: world.Directory, hostLoad: world.ApiServices.GetRequiredService<HostLoadShadowCache>());
-            var result = await pipeline.GetAsync(CancellationToken.None); var host = result.Hosts.Single(h => h.HostId == "grok-linux"); host.EffectiveLimit.ShouldBe(1);
+            var result = await pipeline.GetAsync(world.Token); var host = result.Hosts.Single(h => h.HostId == "grok-linux"); host.EffectiveLimit.ShouldBe(1);
             var expected = cpu == 5 ? "eligible" : cpu == 95 ? "hold" : "unknown";
             host.Load.ShouldNotBeNull().Decision.Command.ShouldBe(expected);
             var runner = result.Runners.Single(r => r.RunnerId == "grok-linux");

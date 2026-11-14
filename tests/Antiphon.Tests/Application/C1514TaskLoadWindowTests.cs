@@ -17,7 +17,8 @@ namespace Antiphon.Tests.Application;
 // which is longer than that cap, so a slow poll died in the TUnit timeout handler.
 // 2x the slower completion is 52s. 60s matches the SeedPrefix methods on C1514HostLoadHistoryTests.
 // The 26.2s completion was observed under a 45s ceiling; assertions are unchanged.
-[Category("Integration"), Timeout(60_000), NotInParallel("C1514HostLoadServer")]
+[Category("Integration"), C1514ProgressBudget(60_000), NotInParallel("C1514HostLoadServer")]
+[TUnit.Core.Executors.TestExecutor<C1514HostLoadProgressExecutor>]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514TaskLoadWindowTests(C1514HostLoadFixture fixture)
 {
@@ -35,14 +36,14 @@ public class C1514TaskLoadWindowTests(C1514HostLoadFixture fixture)
         var settingsB = new Antiphon.SessionRunner.HostStatsSettings { RunnerId = "host-b-runner", HistoryPath = Path.Combine(world.Root, "host-b"), PhysicalHostKey = "host-b", SourceEpoch = epochB, BindingRevision = 1 };
         var spoolB = new HostLoadSpool(settingsB.HistoryPath, settingsB, world.Clock);
         var second = first with { Source = spoolB.NextSource(), PhysicalHostKey = "host-b", SourceEpoch = epochB, SampledAt = C1514HostLoadWorld.T0.AddSeconds(11), CpuPercent = 80, BusyCoreEquivalent = 19.2 };
-        spoolB.Append(second); world.Pump.TryEnqueue(new("host-b-runner", null, spoolB.ReadHistory(null, 120))).ShouldBeTrue(); await world.Pump.ProcessOneAsync(CancellationToken.None);
+        spoolB.Append(second); world.Pump.TryEnqueue(new("host-b-runner", null, spoolB.ReadHistory(null, 120))).ShouldBeTrue(); await world.ProcessOneAsync(world.Token);
         await world.StartTaskAsync(C1514HostLoadWorld.T0.AddSeconds(10), "host-b-runner", 2, task.Id); await world.DeriveAsync();
-        await world.Capture.StopAsync(CancellationToken.None);
+        await world.Capture.StopAsync(world.Token);
         var bootC = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
         var spoolC = new HostLoadSpool(world.Runner.HistoryPath!, world.Runner, world.Clock, bootC);
         await using var db = world.Db(false); var cursor = (await db.HostLoadIngestCursors.SingleAsync(c => c.RunnerId == "grok-linux")).Cursor;
         spoolC.ReadHistory(cursor, 120); var third = first with { Source = spoolC.NextSource(), SampledAt = C1514HostLoadWorld.T0.AddSeconds(21), CpuPercent = 60, BusyCoreEquivalent = 14.4 };
-        spoolC.Append(third); world.Pump.TryEnqueue(new("grok-linux", cursor, spoolC.ReadHistory(cursor, 120))).ShouldBeTrue(); await world.Pump.ProcessOneAsync(CancellationToken.None);
+        spoolC.Append(third); world.Pump.TryEnqueue(new("grok-linux", cursor, spoolC.ReadHistory(cursor, 120))).ShouldBeTrue(); await world.ProcessOneAsync(world.Token);
         await world.StartTaskAsync(C1514HostLoadWorld.T0.AddSeconds(20), "grok-linux", 2, task.Id); await world.DeriveAsync();
         var rows = await db.AgentTaskLoadWindows.AsNoTracking().Where(w => w.TaskId == task.Id).OrderBy(w => w.StartedAt).ToListAsync();
         rows.Count.ShouldBe(3); rows.Select(w => w.Attempt).ShouldBe([1, 2, 2]); rows.Select(w => w.PhysicalHostKey).ShouldBe(["owned-host", "host-b", "owned-host"]);
