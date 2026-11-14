@@ -66,19 +66,36 @@ internal sealed class HostTopConsumerTracker
         return retain;
     }
 
-    /// <summary>Ranks a read the caller already finished. A discarded late read never calls this.</summary>
+    /// <summary>Ranks a read the caller already finished. A discarded late read never commits.</summary>
     public IReadOnlyList<HostTopConsumerSample> Observe(IReadOnlyList<HostProcessObservation> rows, bool truncated, TimeProvider time)
+        => Observe(rows, truncated, time, publish => { publish(); return true; });
+
+    /// <summary>
+    /// Ranks outside the caller's lock. <paramref name="commit"/> publishes under that lock and
+    /// returns false when the epoch is already stale, leaving the previous baseline in place.
+    /// </summary>
+    internal IReadOnlyList<HostTopConsumerSample> Observe(
+        IReadOnlyList<HostProcessObservation> rows, bool truncated, TimeProvider time, Func<Action, bool> commit)
     {
         var now = time.GetTimestamp();
         var elapsed = _lastScan == long.MinValue ? TimeSpan.Zero : time.GetElapsedTime(_lastScan, now);
-        _lastScan = now;
-        var ranked = Rank(rows, elapsed);
-        Volatile.Write(ref _published, new Published { Rows = ranked, ScannedAt = now, Truncated = truncated });
-        return ranked;
+        var pending = Prepare(rows, elapsed);
+        var published = false;
+        commit(() =>
+        {
+            _cpu.Clear();
+            foreach (var pair in pending.Cpu)
+                _cpu[pair.Key] = pair.Value;
+            _lastScan = now;
+            Volatile.Write(ref _published, new Published { Rows = pending.Ranked, ScannedAt = now, Truncated = truncated });
+            published = true;
+        });
+        return published ? pending.Ranked : Volatile.Read(ref _published).Rows;
     }
 
-    private IReadOnlyList<HostTopConsumerSample> Rank(IReadOnlyList<HostProcessObservation> rows, TimeSpan elapsed)
+    private PendingRank Prepare(IReadOnlyList<HostProcessObservation> rows, TimeSpan elapsed)
     {
+        var cpu = new Dictionary<(int Pid, long StartTicks), long>(_cpu);
         var seen = new HashSet<(int Pid, long StartTicks)>();
         var ranked = new List<HostTopConsumerSample>();
         foreach (var row in rows)
@@ -86,7 +103,7 @@ internal sealed class HostTopConsumerTracker
             var key = (row.Pid, row.StartTicks);
             if (!seen.Add(key)) continue;
             double? cores = null;
-            if (elapsed.TotalSeconds > 0 && row.TicksPerSecond > 0 && _cpu.TryGetValue(key, out var previous))
+            if (elapsed.TotalSeconds > 0 && row.TicksPerSecond > 0 && cpu.TryGetValue(key, out var previous))
             {
                 var delta = row.CpuTicks - previous;
                 if (delta >= 0)
@@ -96,15 +113,15 @@ internal sealed class HostTopConsumerTracker
                 }
             }
 
-            _cpu[key] = row.CpuTicks;
+            cpu[key] = row.CpuTicks;
             if (cores is null) continue;
             if (!HostConsumerRules.IsName(row.Name) || !HostConsumerRules.IsRole(row.Role)) continue;
             ranked.Add(new HostTopConsumerSample(row.Pid, row.StartTicks, row.Name, row.Role, cores, row.RssBytes));
         }
 
-        foreach (var key in _cpu.Keys.ToArray())
+        foreach (var key in cpu.Keys.ToArray())
         {
-            if (!seen.Contains(key)) _cpu.Remove(key);
+            if (!seen.Contains(key)) cpu.Remove(key);
         }
 
         ranked.Sort(static (left, right) =>
@@ -114,6 +131,8 @@ internal sealed class HostTopConsumerTracker
         });
         if (ranked.Count > HostTopConsumerLimits.TopCount)
             ranked.RemoveRange(HostTopConsumerLimits.TopCount, ranked.Count - HostTopConsumerLimits.TopCount);
-        return ranked;
+        return new PendingRank(ranked, cpu);
     }
+
+    private sealed record PendingRank(List<HostTopConsumerSample> Ranked, Dictionary<(int Pid, long StartTicks), long> Cpu);
 }

@@ -229,18 +229,25 @@ internal static class LinuxProcessStat
 }
 
 /// <summary>
-/// CPU time for the whole scan, including enumeration. A clock that is missing, stuck, or
-/// moving backwards fails closed on a short wall budget and a hard read cap.
+/// CPU time for the whole scan, including enumeration. A clock that is missing, stuck at the
+/// origin, flat across counted reads, or moving backwards fails closed. The fallback is a hard
+/// read cap and a wall budget on <see cref="Stopwatch.GetTimestamp"/>, which cannot stall with
+/// the injected clock. A healthy clock that spends the CPU budget stops without that failure.
 /// </summary>
 internal sealed class ScanBudget
 {
     public const int UnreadableClockProcessCap = 32;
+    public const int StallReadings = 8;
     private readonly TimeSpan _cpuBudget;
     private readonly Func<double?> _clock;
     private readonly long _wallStart;
     private readonly double? _origin;
+    private double? _previous;
+    private double? _atLastCountedRead;
     private bool _clockFailed;
-    private int _equalSamples;
+    private bool _budgetSpent;
+    private int _equalOriginSamples;
+    private int _stallReads;
     private int _reads;
 
     public ScanBudget(TimeSpan cpuBudget, Func<double?> clock)
@@ -251,6 +258,8 @@ internal sealed class ScanBudget
         if (cpuBudget > TimeSpan.Zero)
         {
             _origin = clock();
+            _previous = _origin;
+            _atLastCountedRead = _origin;
             _clockFailed = _origin is null;
         }
     }
@@ -261,34 +270,66 @@ internal sealed class ScanBudget
     {
         if (_cpuBudget <= TimeSpan.Zero)
             return false;
+        if (_budgetSpent)
+            return true;
         if (!_clockFailed)
-        {
-            var now = _clock();
-            if (now is not double cpu || _origin is not double start || cpu < start)
-            {
-                _clockFailed = true;
-            }
-            else if (cpu == start)
-            {
-                var stalled = ++_equalSamples >= 8
-                    || Stopwatch.GetElapsedTime(_wallStart) >= _cpuBudget * 4;
-                if (!stalled)
-                    return false;
-                _clockFailed = true;
-            }
-            else if (cpu - start >= _cpuBudget.TotalMilliseconds)
-            {
-                return true;
-            }
-        }
-
+            Note(_clock());
+        if (_budgetSpent)
+            return true;
         if (!_clockFailed)
             return false;
-        return Stopwatch.GetElapsedTime(_wallStart) >= _cpuBudget * 4
-            || _reads >= UnreadableClockProcessCap;
+        return WallFallbackDue() || _reads >= UnreadableClockProcessCap;
     }
 
-    public void CountRead() => _reads++;
+    public void CountRead()
+    {
+        _reads++;
+        if (_clockFailed || _budgetSpent || _cpuBudget <= TimeSpan.Zero)
+            return;
+        // Stall is measured on counted reads only, from the last Exhausted reading.
+        // Resampling here would spend an advancing clock twice per process.
+        if (_previous is not double cpu || _atLastCountedRead is not double counted || cpu < counted)
+        {
+            _clockFailed = true;
+            return;
+        }
+
+        if (cpu == counted)
+        {
+            if (++_stallReads >= StallReadings)
+                _clockFailed = true;
+            return;
+        }
+
+        _stallReads = 0;
+        _atLastCountedRead = cpu;
+    }
+
+    private void Note(double? now)
+    {
+        if (now is not double cpu || _previous is not double previous || cpu < previous)
+        {
+            _clockFailed = true;
+            return;
+        }
+
+        if (cpu > previous)
+        {
+            _previous = cpu;
+            if (_origin is double origin && cpu - origin >= _cpuBudget.TotalMilliseconds)
+                _budgetSpent = true;
+            return;
+        }
+
+        // Flat, but only a stick at the origin is a clock failure during enumeration.
+        // A later plateau is owned by CountRead so a coarse clock does not trip while listing directories.
+        if (_origin is double stuck && cpu == stuck
+            && (++_equalOriginSamples >= StallReadings || WallFallbackDue()))
+            _clockFailed = true;
+    }
+
+    /// <summary>Stopwatch cannot stall together with the injected CPU clock.</summary>
+    private bool WallFallbackDue() => Stopwatch.GetElapsedTime(_wallStart) >= _cpuBudget * 4;
 }
 
 internal sealed class LinuxHostProcessTable : IHostProcessTable
