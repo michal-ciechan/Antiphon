@@ -52,12 +52,11 @@ public sealed class OutboundConversionTaskRunner
         // Lock and validate the claimed row in the same transaction as task creation.
         // An expired owner that resumes after another pump's claim must not create
         // a task from the stale in-memory delivery.
-        var now = DateTime.UtcNow;
         var fenced = await _db.ChannelOutboundDeliveries
             .Where(d => d.Id == delivery.Id && d.Version == delivery.Version
                 && d.LeaseOwner == delivery.LeaseOwner
                 && d.State == ChannelOutboundDeliveryState.Pending
-                && d.LeaseUntil > now)
+                && d.LeaseUntil > DateTime.UtcNow)
             .ExecuteUpdateAsync(s => s.SetProperty(d => d.Version, d => d.Version + 1), ct);
         if (fenced != 1)
             throw new DbUpdateConcurrencyException("The outbound conversion lease changed before task creation.");
