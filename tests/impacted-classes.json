@@ -478,6 +478,17 @@
         "LandRefusalDeliveryWitnessTests",
         "SessionMessageQueuePhoneHomeDropTests"
       ]
+    },
+    {
+      "id": "linux-shared-compiler-policy",
+      "globs": [
+        "scripts/lib/BuildDriverEnvironment.cs",
+        "tests/Antiphon.Tests/Infrastructure/LinuxSharedCompilerPolicyTests.cs"
+      ],
+      "classes": [
+        "LinuxSharedCompilerPolicyTests"
+      ],
+      "windows": "required"
     }
   ]
 }

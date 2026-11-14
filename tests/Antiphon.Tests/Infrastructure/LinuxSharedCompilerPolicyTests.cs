@@ -18,8 +18,12 @@ public sealed class LinuxSharedCompilerPolicyTests
                      new[] { "msbuild", "-getItem:ProjectReference" }, new[] { "msbuild", "-getProperty:MSBuildSDKsPath" } })
             LinuxSharedCompilerPolicy.Compiles("dotnet", args).ShouldBeFalse();
         LinuxSharedCompilerPolicy.Compiles("agent", ["build"]).ShouldBeFalse();
+        // The policy combines the toolset path with the host's separator. It only ever runs on
+        // Linux, but this pure roster also runs in the Windows qualification lane (rc run 34d41b7e
+        // group 121), where Path.Combine joins with '\'. Expect the host join, not a literal '/'.
         LinuxSharedCompilerPolicy.Arguments(["run", "--", "a b", "$(literal)"], "/cache/tools", "private")
-            .ShouldBe(["run", "-p:RoslynTargetsPath=/cache/tools", "-p:RoslynTasksAssembly=/cache/tools/Microsoft.Build.Tasks.CodeAnalysis.dll",
+            .ShouldBe(["run", "-p:RoslynTargetsPath=/cache/tools",
+                "-p:RoslynTasksAssembly=" + Path.Combine("/cache/tools", "Microsoft.Build.Tasks.CodeAnalysis.dll"),
                 "-p:SharedCompilationId=private", "--", "a b", "$(literal)"]);
     }
 
