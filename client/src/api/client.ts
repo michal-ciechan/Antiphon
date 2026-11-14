@@ -132,10 +132,10 @@ export async function apiGet<T>(path: string): Promise<T> {
   return handleResponse<T>(response)
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
   const response = await apiFetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   })
   return handleResponse<T>(response)

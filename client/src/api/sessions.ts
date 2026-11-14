@@ -68,6 +68,9 @@ export interface QueuedMessageDto {
   sequence: number
   body: string
   status: string
+  /** Sent with a charged attempt and no delivery verdict. Only an operator may abandon it. */
+  deliveryUnconfirmed?: boolean
+  lastDeliveryStartedAt?: string | null
   createdAt: string
   /** How many times this has been typed into the terminal (CARD-0055). */
   deliveryAttempts: number
@@ -184,6 +187,19 @@ export async function enqueueSessionMessage(sessionId: string, body: string, mod
 
 export async function cancelQueuedMessage(sessionId: string, messageId: string) {
   return apiDelete<SessionQueueDto>(`/sessions/${sessionId}/messages/${messageId}`)
+}
+
+export interface AbandonQueuedMessageResult {
+  sessionId: string
+  messageId: string
+  status: 'Canceled'
+  canceledAt: string
+  warning: string
+}
+
+export async function abandonQueuedMessage(sessionId: string, messageId: string, reason: string, operatorToken: string) {
+  return apiPost<AbandonQueuedMessageResult>(`/sessions/${sessionId}/messages/${messageId}/abandon`,
+    { reason }, { 'X-Antiphon-Operator-Token': operatorToken })
 }
 
 export async function sendQueuedMessageNow(sessionId: string, messageId: string) {

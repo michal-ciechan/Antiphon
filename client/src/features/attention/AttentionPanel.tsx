@@ -40,6 +40,7 @@ import { cancelQueuedMessage, sendQueuedMessageNow, stopSession } from '../../ap
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
 import { BlockedReplyRow } from './BlockedReplyRow'
 import { AttentionInspectionDrawer } from './AttentionInspectionDrawer'
+import { AbandonMessageDialog } from '../agents/AbandonMessageDialog'
 import {
   ATTENTION_GROUPS,
   ageSeconds,
@@ -312,12 +313,14 @@ const ACTION_LABEL: Record<AttentionAction, string> = {
   OpenCard: 'Open card',
   ClearHold: 'Clear hold',
   Continue: 'Continue with authority',
+  AbandonMessage: 'Abandon message',
 }
 
 /** Verbs that destroy work. Colour is the only warning a one-click button gets. */
 const DESTRUCTIVE: ReadonlySet<AttentionAction> = new Set<AttentionAction>([
   'Cancel',
   'CancelMessage',
+  'AbandonMessage',
   'KillSession',
 ])
 
@@ -341,6 +344,7 @@ function AttentionRowActions({
 }) {
   const [replying, setReplying] = useState(false)
   const [killAsked, setKillAsked] = useState(false)
+  const [abandonAsked, setAbandonAsked] = useState(false)
   const queryClient = useQueryClient()
 
   const settle = (success: string, failure: string) => ({
@@ -407,6 +411,9 @@ function AttentionRowActions({
       case 'CancelMessage':
         dropMessage.mutate(undefined, settle('Message dropped', 'Could not drop the message'))
         return
+      case 'AbandonMessage':
+        setAbandonAsked(true)
+        return
       case 'OpenDrawer':
       case 'OpenAgent':
       case 'OpenCard':
@@ -438,7 +445,7 @@ function AttentionRowActions({
       action === 'Continue'
     )
       return item.taskId !== null
-    if (action === 'SendNow' || action === 'CancelMessage')
+    if (action === 'SendNow' || action === 'CancelMessage' || action === 'AbandonMessage')
       return item.sessionId !== null && item.messageId !== null
     if (action === 'KillSession') return item.sessionId !== null
     if (action === 'ClearHold') return Boolean(item.modelKind && item.modelAlias)
@@ -470,6 +477,11 @@ function AttentionRowActions({
           evidence={item.evidence}
           onDone={() => setReplying(false)}
         />
+      )}
+      {abandonAsked && item.sessionId && item.messageId && (
+        <AbandonMessageDialog sessionId={item.sessionId} messageId={item.messageId} opened
+          onClose={() => setAbandonAsked(false)}
+          onDone={async () => { await queryClient.invalidateQueries({ queryKey: attentionKeys.all }) }} />
       )}
 
       <Modal

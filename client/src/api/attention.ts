@@ -240,6 +240,7 @@ export type AttentionAction =
   | 'ClearHold'
   /** CARD-0294 S1: POST /api/agent-tasks/{id}/continue. */
   | 'Continue'
+  | 'AbandonMessage'
 
 export interface AttentionItemDto {
   /** CARD-0826: immutable receipt linked from cleanup attention, when present. */

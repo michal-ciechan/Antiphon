@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActionIcon, Badge, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
+import { ActionIcon, Badge, Button, Group, Paper, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
 import { TbSend, TbTrash } from 'react-icons/tb'
@@ -11,6 +11,7 @@ import {
 } from '../../api/sessions'
 import { getApiErrorMessage } from '../../api/client'
 import { SmartComposer } from './SmartComposer'
+import { AbandonMessageDialog } from './AbandonMessageDialog'
 
 const HUB_URL = '/hubs/antiphon'
 
@@ -26,6 +27,7 @@ interface SessionMessageQueueProps {
 export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
   const [queue, setQueue] = useState<SessionQueueDto>({ sessionId, messages: [], working: false })
   const [busy, setBusy] = useState(false)
+  const [abandonId, setAbandonId] = useState<string | null>(null)
   const queueRef = useRef(queue)
   queueRef.current = queue
 
@@ -94,7 +96,9 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
   }
 
   const { messages, working, modalBlocked, modalBlockedReason } = queue
-  const statusBadge = modalBlocked
+  const statusBadge = messages.some((m) => m.deliveryUnconfirmed || m.status === 'Sent')
+    ? { color: 'orange', label: 'Unconfirmed input — operator decision' }
+    : modalBlocked
     ? { color: 'orange', label: modalBlockedReason || 'Remote Control menu blocks input' }
     : working
       ? { color: 'yellow', label: 'Working…' }
@@ -109,7 +113,7 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
           {statusBadge.label}
         </Badge>
         <Text size="xs" c="dimmed">
-          {messages.length} queued
+          {messages.length} messages
         </Text>
       </Group>
 
@@ -125,6 +129,12 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                     {i + 1}
                   </Badge>
                   <Stack gap={4} style={{ minWidth: 0 }}>
+                    {(m.deliveryUnconfirmed || m.status === 'Sent') && (
+                      <>
+                        <Badge size="xs" color="orange">Sent, delivery unconfirmed</Badge>
+                        <Text size="xs" c="dimmed">attempts {m.deliveryAttempts} · last attempt {m.lastDeliveryStartedAt ? new Date(m.lastDeliveryStartedAt).toLocaleString() : 'unknown'}</Text>
+                      </>
+                    )}
                     {/* CARD-0055 shipped parking with no way to see it: a message that has spent its
                         delivery attempts stays Pending and sits here looking exactly like one that
                         is about to go out, while every automatic path has already excluded it. The
@@ -162,8 +172,12 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                   </Stack>
                 </Group>
                 <Group gap={4} wrap="nowrap">
+                  {(m.deliveryUnconfirmed || m.status === 'Sent') ? (
+                    <Button size="compact-xs" color="red" variant="subtle" onClick={() => setAbandonId(m.id)}>Abandon message</Button>
+                  ) : <>
                   <Tooltip label="Send now">
                     <ActionIcon
+                      aria-label="Send now"
                       variant="subtle"
                       color="blue"
                       disabled={busy}
@@ -176,6 +190,7 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                   </Tooltip>
                   <Tooltip label="Remove">
                     <ActionIcon
+                      aria-label="Remove"
                       variant="subtle"
                       color="red"
                       disabled={busy}
@@ -186,12 +201,15 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
                       <TbTrash size={15} />
                     </ActionIcon>
                   </Tooltip>
+                  </>}
                 </Group>
               </Group>
             </Paper>
           ))}
         </Stack>
       )}
+      {abandonId && <AbandonMessageDialog sessionId={sessionId} messageId={abandonId} opened
+        onClose={() => setAbandonId(null)} onDone={async () => setQueue(await getSessionQueue(sessionId))} />}
     </Stack>
   )
 }
