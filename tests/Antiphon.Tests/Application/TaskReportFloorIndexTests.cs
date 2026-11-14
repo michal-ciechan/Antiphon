@@ -53,7 +53,7 @@ public sealed class TaskReportFloorIndexTests
             boundaries = boundaries.OrderByDescending(b => b.Sequence).ToList();
             var invoked = new HashSet<string>(StringComparer.Ordinal) { "/status" };
             var index = TaskReportTurnSelector.CreateRealPromptIndex(rows, kind, new HashSet<Guid>(), invoked);
-            for (var i = 0; i < boundaries.Count; i++)
+            for (var i = 0; i < Math.Max(1, boundaries.Count); i++)
                 TaskReportTurnSelector.PhantomTransparentFloor(boundaries, i, index, tools, task)
                     .ShouldBe(OriginalFloor(boundaries, i, rows, tools, task, kind, invoked));
 

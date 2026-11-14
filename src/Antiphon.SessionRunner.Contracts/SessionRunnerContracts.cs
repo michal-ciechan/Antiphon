@@ -641,7 +641,7 @@ public static class TranscriptKinds
     {
         if (kind != UserPrompt || text is null)
             return false;
-        var trimmed = text.TrimStart();
+        var trimmed = text.AsSpan().TrimStart();
         return trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal)
             || trimmed.StartsWith(LocalCommandStdoutPrefix, StringComparison.Ordinal);
     }
