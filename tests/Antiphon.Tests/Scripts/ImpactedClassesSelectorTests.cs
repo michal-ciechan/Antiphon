@@ -447,7 +447,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
         + "|(ServerImagePushCredentialTests*)|(ServerRepositoryMirrorScriptTests*)"
         + "|(SessionRuntimeActionRoutingTests*)|(SessionTerminationSourcePersistenceTests*)"
-        + "|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
+        + "|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)|(TestTimingOperationLabelTests*)"
         + "|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)|(WindowsUnitPlatformAdmissionTests*)"
         + "|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
         + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)"
