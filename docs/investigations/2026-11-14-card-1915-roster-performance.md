@@ -1,12 +1,12 @@
 # CARD-1915 migration roster performance
 
-**Incomplete: the brief's 90-minute time box prevents the remaining measurements; Code's performance prerequisite remains open.**
+**Bounded measurement and plan amendment complete; exact remaining execution is listed below. Required verification is not green while inherited failures or unmeasured selections remain.**
 
-Debug 71aaddba; measurement only. Completed 16/26 original rows and 1 repeat. 1500 executed / 1492 passed / 8 failed / 0 skipped in original rows. Status and remaining obligations are stated below.
+Debug 71aaddba; measurement only. Completed 22/26 original rows and 1 repeat. 1955 executed / 1947 passed / 8 failed / 0 skipped in original rows. Status and remaining obligations are stated below.
 
 Source: current master at task start, verified with `git ls-remote origin refs/heads/master`: **1e09a851acef35a3d08eec4a79be2214d51c64df**. Plan source `e5c926262a2d141b92379d3228bb5631730d4e13` on `origin/feat/card-task-ee0bb3d9`, `docs/superpowers/plans/2026-11-14-card-1915-seed-transcript-aggregation-plan.md`. The assigned branch already started at this master. A fresh detached scratch worktree at this SHA kept measurements separate from the report commits. No CARD-1915 implementation.
 
-Host: Debian 12 Linux x64, 24 logical CPUs, .NET SDK 10.0.404 / runtime 9.0.23 / TUnit 1.44.0. Cold means empty native project bin/obj in a fresh checkout; shared NuGet/compiler/OS and baked PostgreSQL schema caches remained available. Every build/test used `scripts/build-slot.ps1 -SlotWaitMinutes 10`; builds used `-p:UseAppHost=false -m:1`, runs the same property and `--no-build`. Each row ran alone and serially. The messaging cold build used an independent fresh worktree; CP-32 execution remains unmeasured.
+Host: Debian 12 Linux x64, 24 logical CPUs, .NET SDK 10.0.404 / runtime 9.0.23 / TUnit 1.44.0. Cold means empty native project bin/obj in a fresh checkout; shared NuGet/compiler/OS and baked PostgreSQL schema caches remained available. Every build/test used `scripts/build-slot.ps1 -SlotWaitMinutes 10`; builds used `-p:UseAppHost=false -m:1`, runs the same property and `--no-build`. Each row ran alone and serially. The messaging graph was independently cold-built; CP-32 remains unmeasured.
 
 Evidence root (ignored): `/work/worktrees/task-71aaddba/.antiphon/evidence/card-1915-roster/`. Per-row JSON/log/TRX, exact commands, 1/5/15-minute loads at invocation/admission/exit, phase JSONL, class census, DLL hashes and source/host identity are retained there. TRX supplies counts and assertion verdicts. Phase recording was enabled; instrumentation overhead was not separately measured.
 
@@ -29,30 +29,30 @@ P50 is the sample median (mean of two observations for n=2); max preserves every
 
 | Row | Run | Executed / passed / failed / skipped | Execution s | Slot wait s | Admission wall s | Load 1/5/15 start → end |
 |---|---|---|---:|---:|---:|---|
-| CP-8 | first | 60/60/0/0 | 138.4 | 0 | 0.8 | 14.61/19.84/22.22 → 19.30/20.51/22.19 |
-| CP-9 | first | 107/107/0/0 | 90.3 | 0 | 1.1 | 19.30/20.51/22.19 → 18.53/20.06/21.88 |
-| CP-10 | first | 125/125/0/0 | 161.9 | 0 | 1.3 | 18.53/20.06/21.88 → 18.21/18.96/21.12 |
-| CP-11 | first | 89/89/0/0 | 283.4 | 0 | 1.6 | 18.21/18.96/21.12 → 12.81/19.21/21.16 |
-| CP-12 | first | 70/67/3/0 | 79.9 | 0 | 1.2 | 12.81/19.21/21.16 → 10.76/16.96/20.19 |
-| CP-13 | first | 24/24/0/0 | 112.2 | 0 | 0.6 | 10.76/16.96/20.19 → 11.26/15.67/19.39 |
-| CP-14 | first | 57/57/0/0 | 129.7 | 0 | 1.1 | 10.60/15.46/19.30 → 9.21/13.69/18.19 |
-| CP-15 | first | 20/20/0/0 | 306.0 | 0 | 0.6 | 8.80/13.53/18.11 → 29.06/19.05/18.77 |
-| CP-16 | first | 14/14/0/0 | 145.2 | 0 | 1.4 | 29.06/19.05/18.77 → 41.16/27.10/21.75 |
-| CP-17 | first | 91/91/0/0 | 205.9 | 0 | 1.1 | 41.16/27.10/21.75 → 20.67/24.39/21.79 |
-| CP-18 | first | 29/29/0/0 | 676.9 | 0 | 1.0 | 19.82/24.15/21.73 → 21.00/21.64/21.54 |
-| CP-18 | repeat | 29/29/0/0 | 588.6 | 120 | 121.0 | 32.86/25.68/22.99 → 33.50/22.05/21.00 |
-| CP-19 | first | 544/540/4/0 | 417.6 | 0 | 1.6 | 33.50/22.05/21.00 → 18.96/24.61/23.29 |
-| CP-20 | first | 32/32/0/0 | 83.2 | 0 | 1.1 | 17.76/24.27/23.19 → 14.50/21.70/22.37 |
-| CP-21 | first | 35/35/0/0 | 110.8 | 45 | 46.3 | 13.41/20.33/21.87 → 13.62/18.05/20.85 |
-| CP-22 | first | 75/74/1/0 | 235.9 | 0 | 1.1 | 13.62/18.05/20.85 → 9.59/13.78/18.51 |
-| CP-23 | first | 128/128/0/0 | 376.6 | 15 | 15.9 | 9.08/13.47/18.33 → 10.33/12.05/16.16 |
-| CP-24 | interrupted; no terminal TRX | unknown | unknown | unknown | unknown | unknown |
-| CP-25 | not run | unknown | unknown | unknown | unknown | unknown |
-| CP-26 | not run | unknown | unknown | unknown | unknown | unknown |
-| CP-27 | not run | unknown | unknown | unknown | unknown | unknown |
-| CP-28 | not run | unknown | unknown | unknown | unknown | unknown |
-| CP-29 | not run | unknown | unknown | unknown | unknown | unknown |
-| CP-30 | not run | unknown | unknown | unknown | unknown | unknown |
+| CP-8 | first complete | 60/60/0/0 | 138.4 | 0 | 0.8 | 14.61/19.84/22.22 → 19.30/20.51/22.19 |
+| CP-9 | first complete | 107/107/0/0 | 90.3 | 0 | 1.1 | 19.30/20.51/22.19 → 18.53/20.06/21.88 |
+| CP-10 | first complete | 125/125/0/0 | 161.9 | 0 | 1.3 | 18.53/20.06/21.88 → 18.21/18.96/21.12 |
+| CP-11 | first complete | 89/89/0/0 | 283.4 | 0 | 1.6 | 18.21/18.96/21.12 → 12.81/19.21/21.16 |
+| CP-12 | first complete | 70/67/3/0 | 79.9 | 0 | 1.2 | 12.81/19.21/21.16 → 10.76/16.96/20.19 |
+| CP-13 | first complete | 24/24/0/0 | 112.2 | 0 | 0.6 | 10.76/16.96/20.19 → 11.26/15.67/19.39 |
+| CP-14 | first complete | 57/57/0/0 | 129.7 | 0 | 1.1 | 11.26/15.67/19.39 → 9.21/13.69/18.19 |
+| CP-15 | first complete | 20/20/0/0 | 306.0 | 0 | 0.6 | 9.21/13.69/18.19 → 29.06/19.05/18.77 |
+| CP-16 | first complete | 14/14/0/0 | 145.2 | 0 | 1.4 | 29.06/19.05/18.77 → 41.16/27.10/21.75 |
+| CP-17 | first complete | 91/91/0/0 | 205.9 | 0 | 1.1 | 41.16/27.10/21.75 → 20.67/24.39/21.79 |
+| CP-18 | first complete | 29/29/0/0 | 676.9 | 0 | 1.0 | 20.67/24.39/21.79 → 21.00/21.64/21.54 |
+| CP-18 | repeat | 29/29/0/0 | 588.6 | 120 | 121.0 | 21.00/21.64/21.54 → 33.50/22.05/21.00 |
+| CP-19 | first complete | 544/540/4/0 | 417.6 | 0 | 1.6 | 33.50/22.05/21.00 → 18.96/24.61/23.29 |
+| CP-20 | first complete | 32/32/0/0 | 83.2 | 0 | 1.1 | 18.96/24.61/23.29 → 14.50/21.70/22.37 |
+| CP-21 | first complete | 35/35/0/0 | 110.8 | 45 | 46.3 | 14.50/21.70/22.37 → 13.62/18.05/20.85 |
+| CP-22 | first complete | 75/74/1/0 | 235.9 | 0 | 1.1 | 13.62/18.05/20.85 → 9.59/13.78/18.51 |
+| CP-23 | first complete | 128/128/0/0 | 376.6 | 15 | 15.9 | 9.59/13.78/18.51 → 10.33/12.05/16.16 |
+| CP-24 | first complete | 63/63/0/0 | 495.1 | 150 | 152.4 | 36.75/31.23/23.74 → 33.25/27.72/25.24 |
+| CP-25 | first complete | 85/85/0/0 | 137.5 | 195 | 196.2 | 33.25/27.72/25.24 → 39.85/33.08/27.99 |
+| CP-26 | first complete | 25/25/0/0 | 91.4 | 120 | 121.0 | 39.85/33.08/27.99 → 33.38/29.07/27.21 |
+| CP-27 | first complete | 41/41/0/0 | 90.5 | 135 | 136.2 | 33.38/29.07/27.21 → 49.92/39.76/31.90 |
+| CP-28 | first complete | 127/127/0/0 | 280.3 | 60 | 61.5 | 49.92/39.76/31.90 → 27.73/27.85/28.90 |
+| CP-29 | first complete | 114/114/0/0 | 308.5 | 120 | 121.6 | 27.73/27.85/28.90 → 20.50/27.47/28.86 |
+| CP-30 | interrupted; no terminal TRX | unknown | unknown | 180 | 180.7 | 20.50/27.47/28.86 → 13.54/20.91/25.93 |
 | CP-31 | not run | unknown | unknown | unknown | unknown | unknown |
 | CP-32 | not run | unknown | unknown | unknown | unknown | unknown |
 | CP-33 | not run | unknown | unknown | unknown | unknown | unknown |
@@ -75,18 +75,18 @@ P50 is the sample median (mean of two observations for n=2); max preserves every
 | CP-21 | 1 | 110.8 | 110.8 | 240 s |
 | CP-22 | 1 | 235.9 | 235.9 | 480 s |
 | CP-23 | 1 | 376.6 | 376.6 | split; 780 s would exceed 10 min |
-| CP-24 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
-| CP-25 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
-| CP-26 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
-| CP-27 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
-| CP-28 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
-| CP-29 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
+| CP-24 | 1 | 495.1 | 495.1 | split; 1020 s would exceed 10 min |
+| CP-25 | 1 | 137.5 | 137.5 | 300 s |
+| CP-26 | 1 | 91.4 | 91.4 | 210 s |
+| CP-27 | 1 | 90.5 | 90.5 | 210 s |
+| CP-28 | 1 | 280.3 | 280.3 | 570 s |
+| CP-29 | 1 | 308.5 | 308.5 | split; 630 s would exceed 10 min |
 | CP-30 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
 | CP-31 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
 | CP-32 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
 | CP-33 | 0 | unknown | unknown | unmeasured; plan prerequisite incomplete |
 
-Completed-run serial interval: **4341.6 s** (includes repeat admissions and gaps). Original-row sequential-equivalent execution sum: **3553.9 s**; all completed rows including repeats: **4142.6 s**. Broker slot wait sum: **180 s**; full admission wall sum: **198.9 s**. Test-case-duration sum from TRX: **6671.4 s** for original rows; this alternative case-level sequential equivalent can exceed wall because cases run concurrently within a row. Builds are separate. This interval is the whole roster only if all 26 original rows completed.
+Completed-run serial interval: **7322.3 s** (includes repeat admissions and gaps). Original-row sequential-equivalent execution sum: **4957.2 s**; all completed rows including repeats: **5545.8 s**. Broker slot wait sum: **960 s**; full admission wall sum: **987.7 s**. Test-case-duration sum from TRX: **8919.7 s** for original rows; this alternative case-level sequential equivalent can exceed wall because cases run concurrently within a row. Builds are separate. This observed span crosses measurement windows; a single uninterrupted full-roster wall was not measured.
 
 ## Recorded phases
 
@@ -109,6 +109,12 @@ Known spans are the time union of recorded complete phase intervals, avoiding ne
 | CP-21 | 21.2 | 12.2 | 56.6 | 54.2 |
 | CP-22 | 22.4 | 3.7 | 33.9 | 202.0 |
 | CP-23 | 32.7 | 6.4 | 67.1 | 309.5 |
+| CP-24 | 34.6 | 11.5 | 186.3 | 308.8 |
+| CP-25 | 24.8 | 13.0 | 18.5 | 119.0 |
+| CP-26 | 24.4 | 7.0 | 46.9 | 44.6 |
+| CP-27 | 31.8 | 21.3 | 18.2 | 72.2 |
+| CP-28 | 40.3 | 6.2 | 92.2 | 188.1 |
+| CP-29 | 30.4 | 17.7 | 134.2 | 174.3 |
 | CP-8 | 80.0 | 34.2 | 70.8 | 67.6 |
 | CP-9 | 29.3 | 18.6 | 23.0 | 67.2 |
 
@@ -169,11 +175,11 @@ Markdown table escaping only: remove each backslash before a pipe when passing t
 | CP-32 | `/*/*/(InboxConversationMigrationTests*)/*` |
 | CP-33 | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)\|(TestTimingOperationLabelTests*)/*` |
 
-## Re-partition and handoff
+## Plan amendment: S8 roster replacements
 
-Retain the exact original filters above except **CP-15 → RP-15a–c**, **CP-18 → RP-18a–d**, **CP-19 → RP-19a–d**, and **CP-23 → RP-23a–b**. This yields 35 proposed rows across the complete roster. Every proposed replacement cap below is at most 600 seconds. **The replacements have not been run as standalone filters**: these are provisional commissioning proposals, not new execution receipts or measured p95. Code must amend the closed checkpoint table before use; missing original measurements below remain a prerequisite.
+This table amends the S8 checkpoint roster in plan **e5c926262a2d141b92379d3228bb5631730d4e13** on this task branch. The plan task branch was not changed. Retain the exact original filters above except **CP-15 → RP-15a–c**, **CP-18 → RP-18a–d**, **CP-19 → RP-19a–d**, and **CP-23 → RP-23a–b**. These four requested replacements yield 35 roster selections before the additional CP-24 amendment below. Every proposed replacement cap below is at most 600 seconds. **The replacements have not been run as standalone filters**: these are provisional commissioning proposals, not new execution receipts or measured p95. These replacements supersede the four original CP rows for Code commissioning; copy their IDs and exact filters into the executable checkpoint manifest. Every replacement inherits **After=S8, Build=CP-8, Covers=R-1,R-2, Expect=all listed, 0 failed**. Minimum selected-test counts from the unchanged-source TRX partition census: RP-15a/b/c=14/3/3; RP-18a/b/c/d=11/5/7/6; RP-19a/b/c/d=4/483/42/15; RP-23a/b=81/47. All 721 original test results belong to exactly one replacement, with no uncovered or overlapping case in this census; this is filter coverage validation, not a standalone execution receipt. Unchanged original rows retain their After/Build/Covers/Expect/Min values. Required execution remains open where recorded below.
 
-Bounds use the maximum observed class envelope (or summed method-case durations for method splits), plus the maximum observed process startup/tail gap for the original row. This deliberately retains CP-15's 163.7-second tail. Original-class overlaps and repeated startup mean summing the proposed bounds does not predict the original wall or a speedup. Rerun these exact new selections and collect five comparable complete samples, with loads/cache state and separate admission/execution, under CARD-1915/CARD-1404; then derive caps near 2× p95.
+Bounds use the maximum observed class envelope (or summed method-case durations for method splits), plus the maximum observed process startup/tail gap for the original row. This deliberately retains CP-15's 163.7-second tail. Original-class overlaps and repeated startup mean summing the proposed bounds does not predict the original wall or a speedup. Validate these exact replacement selections independently with load/cache state and separate admission/execution. The caps below retain the original class/method attribution sample; they are provisional estimates, not a measured p95 or proof of standalone runtime. Additional comparable samples are needed before claiming p95.
 
 | Proposed row | Replaces | Provisional execution estimate s | Provisional cap s | Exact filter |
 |---|---|---:|---:|---|
@@ -196,17 +202,42 @@ Retained measured rows use the rounded 2×max caps in the original-row table. Un
 CP-18 alone cost 676.870 / 588.635 seconds (both 29/29), so its original 8-minute cap is empirically too small; one run also exceeded 10 minutes. CP-15's long uninstrumented tail should be investigated under CARD-1514 before attempting fixture optimization: `TestDbFixtureLifecycle.DisposeCoreAsync` awaits pool stop, owned-container disposal, image-bake completion and orphan sweep, but these samples do not identify which wait caused the gap. No timeout, assertion, fixture or production setting was changed.
 
 
-## Completeness and remaining work
+### Additional measured cap amendment: CP-24
 
-The plan's nominal 26-row estimates total **102 min**, before builds, waits and reruns; the commissioned Debug window is **90 min**. Measurement stopped at 2026-11-14T04:43:01.657Z (hard-timebox), reserving final publication time. The entire roster wall and entire-roster sequential equivalent are **unknown**, because these original rows remain unmeasured: **CP-24, CP-25, CP-26, CP-27, CP-28, CP-29, CP-30, CP-31, CP-32, CP-33**. The completed-prefix interval and sums above are not relabelled as a full roster.
+CP-24's first complete run was 495.092 seconds (63/63 passed); rounded 2×max is 1020 seconds. Replace it with the following three S8 / Build=CP-8 / Covers=R-1,R-2 / Expect=all listed, 0 failed selections. The original RP-15/18/19/23 amendment remains unchanged. This makes **37 roster selections** in CP-8..CP-33 after all five replacements (the other plan rows remain unchanged).
 
-Budget repeats still needed: **CP-11, CP-15, CP-19, CP-23** (using the lower 4-minute estimates, conservatively; CP-33 uses 2 minutes). CP-18's mandatory execution-cap repeat completed and both historical outcomes/costs remain recorded. Do not infer success or p95 for an unmeasured or interrupted row. The exact original filters above make the continuation a closed list. Commission an additional measurement window for these gaps, then validate/repack remaining caps before Code. The original plan's D-1 scope decision also remains with the caller.
+| Proposed row | Replaces | Min selected tests | Provisional estimate s | Provisional cap s | Exact filter |
+|---|---|---:|---:|---:|---|
+| RP-24a | CP-24 | 15 | 202.4 | 420 | `/*/*/(PipelineDefinitionMigrationShapeTests*)\|(PipelineDefinitionMigrationTests*)\|(PoolClaudeEffortMigrationTests*)/*` |
+| RP-24b | CP-24 | 9 | 263.5 | 540 | `/*/*/PipelineSpeedIntegrationTests*/C1281_WiredDeliveryRecovery*` |
+| RP-24c | CP-24 | 39 | 199.3 | 420 | `/*/*/PipelineSpeedIntegrationTests*/(C1281_B*)\|(C1281_Admission*)\|(C1281_WiredRoundtrip*)\|(C1288*)\|(C1289*)\|(C1300*)\|(C1303*)` |
 
-Stop receipt: `stop-receipt.json`; last completed row **CP-23**; 0 recorded descendants remain live. CP-24 was interrupted without terminal TRX or measurement credit. Its approximate wall to the stop receipt was 415.9 s (including termination); exact completed execution duration and verdict counts are unknown. Its log/phase data remain retained, not silently deleted or assigned zero counts. Observed roster-driver wall through this interruption was 4757.5 s; this is spent time, not a complete-roster duration. On a hard stop, fixture-container cleanup is unqualified; no manual Docker or volume deletion was attempted.
+These filters partition the 63 recorded cases without overlap. Migration estimate sums class envelopes plus 46.067 seconds observed startup/tail; method splits sum selected case durations plus that same overhead. These are attribution-based bounds, not independently measured filters or p95. No standalone replacement execution is claimed.
 
-Scratch worktrees remain at `/work/worktrees/task-71aaddba-measure` and `/work/worktrees/task-71aaddba-messaging-measure`, with native outputs available for continuation. Both HEADs remain the measured source SHA; tracked source cleanliness: **true**. Previously recorded DLL hashes unchanged: **true**. No product/test source repair, restart, deployment, branch switch, reset or rebase occurred. Report commits are on the assigned `feat/card-task-71aaddba` only.
+### Additional measured cap amendment: CP-29
+
+CP-29's first run passed 114/114 in 308.465 seconds; rounded 2×max is 630 seconds. Replace it with these S8 / Build=CP-8 / Covers=R-1,R-2 / Expect=all listed, 0 failed rows. Together with the five replacements above, this gives **38 roster selections** in CP-8..CP-33. These are unexecuted standalone filters with provisional bounds from class envelopes plus 48.139 seconds startup/tail.
+
+| Proposed row | Replaces | Min selected tests | Provisional estimate s | Provisional cap s | Exact filter |
+|---|---|---:|---:|---:|---|
+| RP-29a | CP-29 | 57 | 211.3 | 450 | `/*/*/(StandingSpecialistRoutingMigrationTests*)\|(StaleWorkingTranscriptWatchdogTests*)/*` |
+| RP-29b | CP-29 | 57 | 145.3 | 300 | `/*/*/(StandingRestartEscalationTests*)\|(StandingSessionOwnershipTests*)/*` |
+
+The two filters partition all 114 recorded cases without overlap. CP-29's budget repeat remains outstanding in the caller's specified execution order; no p95 or standalone runtime validation is claimed.
+
+## Measurement windows, completeness and provenance
+
+The original plan estimated **102 min** for the 26 rows before builds, admission or repeats. The first 90-minute commission ended at **2026-11-14T04:43:01.657Z**: 16/26 original rows, 1500 executed / 1492 passed / 8 failed / 0 skipped, plus CP-18 repeat 29/29. Its completed-prefix serial interval was **4341.6 s**, original-row execution sum **3553.9 s**, all-completed execution sum **4142.6 s**, broker wait **180 s**, admission wall **198.9 s**. The interrupted CP-24 attempt spent approximately **415.9 s** including termination; observed roster-driver wall through that stop was **4757.5 s**. No terminal count/execution credit was assigned. Original logs, partial results and phase shards are preserved under `original-interrupted-CP-24/`; `stop-receipt.json` records no owned descendants remaining live. No Docker/volume cleanup was attempted; fixture cleanup of an interrupted attempt is unqualified.
+
+The extension clock was anchored at the first observed UTC time, **2026-11-14T04:46:35Z**, for 45 minutes, with hard measurement stop **2026-11-14T05:31:35Z**. Extension driver window: **2026-11-14T04:49:14.332Z → 2026-11-14T05:31:37.457Z** (2543.1 s, including termination/cleanup). Ordered selections were CP-24, CP-25..CP-33, then repeats CP-11/15/19/23. 6 completed extension selections: **455 executed / 455 passed / 0 failed / 0 skipped**. Terminal extension receipts: CP-24, CP-25, CP-26, CP-27, CP-28, CP-29.
+
+Exact original rows still unmeasured: **CP-30, CP-31, CP-32, CP-33**. Requested repeats still unmeasured: **CP-11, CP-15, CP-19, CP-23**. Additional budget repeats still unmeasured: **CP-24, CP-28, CP-29** (lower estimate threshold: 240 seconds, CP-33 120 seconds; the explicit caller priority list was preserved). The full-roster serial wall and sequential-equivalent execution are unknown. The updated completed-run interval in the table spans the pause and the historical interrupted attempt; it is not pure useful execution. First completed samples total **4957.2 s**; all terminal samples total **5545.8 s**; repeated cases are not deduplicated in the all-sample count. Actual per-driver wall sum is **6533.5 s**, excluding builds and interrupted attempts; add the historical interrupted attempt and any extension interruption separately.
+
+Extension interrupted **CP-30** at **2026-11-14T05:31:35.257Z**, wall **348.8 s**. No terminal TRX/complete-duration credit is assigned. The partial result directory and log remain. The hard-stop signal began at **2026-11-14T05:31:35.113Z**; `extension-stop.json` verified **0 recorded owned descendants live** at 05:31:37.115Z. CP-30 spent 180 s waiting for its slot and 168.085 s from admission through termination; the latter is a partial elapsed cost, not a completed selection runtime. Fixture cleanup is unqualified after interruption.
+
+Scratch worktrees remain at `/work/worktrees/task-71aaddba-measure` and `/work/worktrees/task-71aaddba-messaging-measure`, with native build outputs available for continuation. Both measurement trees remain pinned to **1e09a851acef35a3d08eec4a79be2214d51c64df**. Tracked source clean: **true**; original DLL hashes unchanged: **true**. No CARD-1915 implementation, product/test repair, assertion/timeout change, restart, deployment, branch switch, reset or rebase occurred. CARD-1916..1919 remain with the separate Debug; no edits or tracker mutations were made for them during this extension. The plan's D-1 scope decision remains with the caller.
 
 --- next stage ---
 next: code
-handoff: Performance prerequisite incomplete. Finish the exact missing original rows and budget repeats above, then amend the plan with RP-15a–c, RP-18a–d, RP-19a–d, RP-23a–b and validated retained-row caps before starting implementation. Inherited failures are CARD-1916, CARD-1917, CARD-1918 and CARD-1919.
+handoff: Apply the S8 amendment RP-15a–c, RP-18a–d, RP-19a–d, RP-23a–b, RP-24a–c and RP-29a–b. Validate the replacement filters and retained-row caps; complete the exact missing original rows/repeats listed above before claiming the performance prerequisite complete. Inherited failures CARD-1916..1919 are owned by the separate Debug. No implementation or land approval is given by this measurement report.
 artifact: /work/worktrees/task-71aaddba/docs/investigations/2026-11-14-card-1915-roster-performance.md
