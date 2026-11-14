@@ -1136,7 +1136,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 $"Launch resumed after a server restart: the session sat Starting for {startingSeconds}s; ready re-verified.",
                 ct);
         }
-        catch (Exception ex) when (session.Status == SessionStatus.Running && InputDeliveryUncertainException.Is(ex))
+        // Rules initialization identifies uncertain Input explicitly, and the queue
+        // retains its own ambiguous writes. Publication cancellation is not Input.
+        catch (InputDeliveryUncertainException) when (session.Status == SessionStatus.Running)
         {
             _logger.LogWarning("Input delivery unknown during recovered launch for session {SessionId}; retaining the process", sessionId);
             ct.ThrowIfCancellationRequested();
