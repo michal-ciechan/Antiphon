@@ -108,6 +108,8 @@ public sealed partial class AgentTaskDispatcher
     private readonly CheckCompactionContinuationService? _compaction;
     private readonly SweepInFlightState? _sweepInFlight;
     private readonly RemoteWorkspacePreparer? _remotePrep;
+    private readonly RefOnlyDesktopGate? _refOnlyGate;
+    private readonly RefOnlyDesktopProvisioner? _refOnlyProvisioner;
     // CARD-0672 D-2. Both optional: absent, a lease refusal registers no waiter and a land never
     // yields to this dispatcher, which is exactly the behaviour before the turnstile.
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
@@ -230,8 +232,12 @@ public sealed partial class AgentTaskDispatcher
         CardSiblingInspectionService? siblingInspection = null,
         CardSiblingInspectionQueue? siblingInspections = null,
         TaskProviderWaitReader? providerWait = null,
-        DesktopLaunchMemoryAdmission? desktopMemory = null)
+        DesktopLaunchMemoryAdmission? desktopMemory = null,
+        RefOnlyDesktopGate? refOnlyGate = null,
+        RefOnlyDesktopProvisioner? refOnlyProvisioner = null)
     {
+        _refOnlyGate = refOnlyGate;
+        _refOnlyProvisioner = refOnlyProvisioner;
         _desktopMemory = desktopMemory;
         _providerWait = providerWait;
         _dispatchConcurrency = dispatchConcurrency;
@@ -6080,6 +6086,8 @@ public sealed partial class AgentTaskDispatcher
         WorktreeBaseDecision? baseDecision = null;
         string? previewChangeWarning = null;
         IReadOnlyList<string>? baseSelectionWarnings = null;
+        if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            await new TaskWorkspaceContextResolver(_db).ResolveCurrentAsync(claimed, ct);
         if (claimed.Workspace == WorkspaceMode.Worktree && claimed.WorktreePath is null)
         {
             CardWorktreeBaseSelection? selected = null;
@@ -6121,8 +6129,18 @@ public sealed partial class AgentTaskDispatcher
                 ? new ResolvedBase(selected.SourceSha!, WorktreeBaseSource.CardCurrent, null)
                 : null;
             using (AntiphonTrace.Span("dispatch.worktree-create"))
-                baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct,
-                    repairStartSha, cardBase, selected?.SourceTaskId, selected?.SourceBranch);
+            {
+                if (_refOnlyGate?.Admits(claimed) == true)
+                {
+                    if (_refOnlyProvisioner is null) throw new ConflictException("ref_only_preparation_unavailable");
+                    await _refOnlyProvisioner.PlanAsync(claimed, repositoryLease!, repairStartSha,
+                        cardBase, selected?.SourceTaskId, selected?.SourceBranch, ct);
+                    baseDecision = new(new(claimed.WorktreeBaseRef!, claimed.WorktreeBaseSource, null), true);
+                }
+                else
+                    baseDecision = await _worktrees.CreateForTaskAsync(claimed, repositoryLease!, ct,
+                        repairStartSha, cardBase, selected?.SourceTaskId, selected?.SourceBranch);
+            }
             if (selected is not null)
             {
                 previewChangeWarning = DescribeBasePreviewChange(claimed.WorktreeBasePreviewJson, selected);
@@ -6133,7 +6151,8 @@ public sealed partial class AgentTaskDispatcher
             // The hard version of the orchestrator contract: a PreToolUse hook that refuses
             // Edit/Write with "delegate this instead". Only ever written into the task's OWN
             // worktree — a settings file in a shared directory changes every session there.
-            var armed = ShouldArmDenyHook(claimed, _settings)
+            var armed = claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout
+                && ShouldArmDenyHook(claimed, _settings)
                 && await _worktrees.ArmDenyHookAsync(claimed, ct);
 
             _db.AgentTaskEvents.Add(new AgentTaskEvent
@@ -6144,6 +6163,14 @@ public sealed partial class AgentTaskDispatcher
                 Detail = FormatWorktreeCreatedDetail(claimed, armed),
                 At = now,
             });
+        }
+
+        if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly && ShouldArmDenyHook(claimed, _settings))
+        {
+            _db.AgentTaskEvents.Add(new AgentTaskEvent { Id = Guid.NewGuid(), AgentTaskId = claimed.Id,
+                Type = AgentTaskEventType.Held, Detail = "ref_only_remote_hook_unsupported", At = now });
+            await CommitClaimWithoutLaunchAsync(claimed, ct);
+            return DispatchOneResult.NotClaimed;
         }
 
         if (claimed.SourceLandingOperationId is not null)
@@ -6590,7 +6617,9 @@ public sealed partial class AgentTaskDispatcher
                 ? $" from {baseRef} ({claimed.WorktreeBaseSource})"
                 : "";
         var hook = armed ? "; PreToolUse deny hook armed — direct edits are refused" : "";
-        return $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}{from}{merge}{hook}";
+        return claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
+            ? $"Ref-only branch planned on {claimed.WorktreeBranch}{from}{merge}; no desktop checkout"
+            : $"Worktree created at {claimed.WorktreePath} on {claimed.WorktreeBranch}{from}{merge}{hook}";
     }
 
     private static string? DescribeBasePreviewChange(string? previewJson, CardWorktreeBaseSelection actual)
@@ -6688,6 +6717,15 @@ public sealed partial class AgentTaskDispatcher
         string resolveSubject,
         CancellationToken ct)
     {
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            var context = await new TaskWorkspaceContextResolver(_db).ResolveCurrentAsync(task, ct);
+            if (!RefOnlyCommittedSource.BaselineMatches(task, context, TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson))
+                || string.IsNullOrWhiteSpace(remoteCwd) || remoteCwd != task.RemoteWorktreePath
+                || session.RunnerCwd != remoteCwd || session.RunnerId != task.RunnerId
+                || session.RunnerStoreId is null)
+                throw new ConflictException("ref_only_execution_binding_required");
+        }
         var spec = await BuildLaunchSpecAsync(task, agent, session, program, attachedBundleKeys, ct);
         spec = spec with { VerificationBinding = verificationBinding };
         // CARD-0115 S2 — this is the bottom-level path a pool delegate takes. The task's recorded
@@ -7092,6 +7130,8 @@ public sealed partial class AgentTaskDispatcher
     {
         var limits = (ceilings ?? settings.CeilingsFor(PtyBackend.InboxConhost, "no pty profile — assuming the default backend"))
             .ForAgentKind(agentKind);
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly && string.IsNullOrWhiteSpace(runnerCwd))
+            throw new ConflictException("ref_only_execution_binding_required");
         var brief = DelegationReportFormatter.BuildBrief(
             task, settings, limits.ReplyInlineMaxChars, refocus, parkedSourceSha, parkedFullRef,
             parkedTranscriptSessionId);
@@ -8089,6 +8129,13 @@ public sealed partial class AgentTaskDispatcher
 
     private async Task<BaselineCapture> CaptureProgressBaselineAsync(AgentTask task, DateTime capturedAt, CancellationToken ct)
     {
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            var context = await new TaskWorkspaceContextResolver(_db).ResolveCurrentAsync(task, ct);
+            return RefOnlyCommittedSource.BaselineMatches(task, context, TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson))
+                ? new(task.ProgressBaselineJson, null, null)
+                : new(null, null, "ref_only_baseline_identity_mismatch");
+        }
         if (_progressGit is null || task.RepoPath is null || task.WorktreePath is null || task.WorktreeBranch is null)
             return new(null, null, "repair_source_identity_unavailable");
 

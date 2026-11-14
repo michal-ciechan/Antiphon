@@ -170,24 +170,34 @@ public sealed class C0824RefOnlyProvisionTests
     {
         await using var f = await RefOnlyDispatchFixture.CreateAsync();
         var id = await f.SeedAsync();
-        var checkedCommit = false;
+        var observed = new TaskCompletionSource<(bool Unlocked, AgentTask? Task, TaskRefWorkspacePreparationState? State)>(TaskCreationOptions.RunContinuationsAsynchronously);
         f.Git.Git.BeforeCommandAsync = async (_, arguments, ct) =>
         {
-            if (arguments[0] != "push" || checkedCommit) return;
-            checkedCommit = true;
+            if (arguments[0] != "push" || observed.Task.IsCompleted) return;
             await using var observer = f.Rig.NewDb();
             await using var tx = await observer.Database.BeginTransactionAsync(ct);
-            var row = await observer.AgentTasks.FromSqlInterpolated(
-                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {id} FOR UPDATE NOWAIT").SingleAsync(ct);
-            row.Status.ShouldBe(AgentTaskStatus.Queued);
-            row.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
-            row.TaskRefWorkspaceBindingId.ShouldNotBeNull();
-            row.AgentSessionId.ShouldBeNull("publication precedes launch");
-            (await observer.TaskRefWorkspaceBindings.SingleAsync(b => b.Id == row.TaskRefWorkspaceBindingId, ct))
-                .PreparationState.ShouldBe(TaskRefWorkspacePreparationState.RefCreated);
+            try
+            {
+                var row = await observer.AgentTasks.FromSqlInterpolated(
+                    $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {id} FOR UPDATE NOWAIT").SingleAsync(ct);
+                var state = await observer.TaskRefWorkspaceBindings.Where(b => b.Id == row.TaskRefWorkspaceBindingId)
+                    .Select(b => (TaskRefWorkspacePreparationState?)b.PreparationState).SingleOrDefaultAsync(ct);
+                observed.TrySetResult((true, row, state));
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.LockNotAvailable)
+            { observed.TrySetResult((false, null, null)); }
         };
-        await f.PrepareAsync(id);
-        checkedCommit.ShouldBeTrue("actual push crossed a committed, unlocked queued intent");
+        await f.Rig.TickAsync();
+        var proof = await observed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        proof.Unlocked.ShouldBeTrue("actual push crossed a committed, unlocked queued intent");
+        proof.Task.ShouldNotBeNull().Status.ShouldBe(AgentTaskStatus.Queued);
+        proof.Task!.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+        proof.Task.TaskRefWorkspaceBindingId.ShouldNotBeNull();
+        proof.Task.AgentSessionId.ShouldBeNull("publication precedes launch");
+        proof.State.ShouldBe(TaskRefWorkspacePreparationState.RefCreated);
+        var request = await f.Rig.WaitForRequestsAsync(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror, 1);
+        await f.Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, "/runner/source/" + id.ToString("N")));
+        await f.Rig.Preparer.WhenIdleAsync();
     }
 
     internal static RefOnlyDesktopProvisioner Producer(RefOnlySyncFixture f)
