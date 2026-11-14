@@ -748,7 +748,7 @@ public sealed class VolumeRetirementPublicationTests
             C1901_BINDING_CHECKS=0
             c1609_recheck_origin_bindings() {
                 C1901_BINDING_CHECKS=$((C1901_BINDING_CHECKS+1))
-                c1901_original_origin_binding_check || return 1
+                c1901_original_origin_binding_check "$@" || return 1
                 if [ "$C1901_BINDING_CHECKS" = 2 ]; then
                     sleep 6
                     printf 'C1901_FINAL_BINDING_DELAYED\n'
@@ -767,6 +767,52 @@ public sealed class VolumeRetirementPublicationTests
         (await File.ReadAllTextAsync(Path.Combine(f.Root, "coordinator.log"))).ShouldContain("C1609_CONTROL_REQUEST ",
             customMessage: "the final real advertisement and bound response succeeded before the window verdict");
         Refused(refused, "RecycleGitAuditUnknown");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Binding_clock_record_requires_current_kernel_and_call()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var root = Directory.CreateTempSubdirectory("c1901-clock-").FullName;
+        var retirement = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh");
+        var content = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-content-audit.sh"));
+        const string header = "c1609_emit_binding_clock() {\n";
+        var start = content.IndexOf(header, StringComparison.Ordinal); start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = content.IndexOf("\n}\n", start, StringComparison.Ordinal); end.ShouldBeGreaterThan(start);
+        var producer = content[start..(end + 3)];
+        foreach (var variant in new[] { "valid", "missing", "duplicate", "boot", "namespace", "past", "future", "malformed" })
+        {
+            var script = $$"""
+                set -euo pipefail
+                . {{VolumeRetirementPublicationFixture.Q(retirement)}}
+                {{producer}}
+                file={{VolumeRetirementPublicationFixture.Q(Path.Combine(root, variant + ".txt"))}}
+                began="$(c1609_monotonic_ms)"
+                line="$(c1609_emit_binding_clock)"
+                case {{variant}} in
+                    boot)
+                        value="${line#*boot=}"; value="${value%% *}"
+                        first=0; [ "${value:0:1}" != 0 ] || first=1
+                        replacement="$first${value:1}"
+                        line="${line/boot=$value/boot=$replacement}" ;;
+                    namespace) line="$(printf '%s\n' "$line" | sed -E 's/namespace=time:\[[0-9]+\]/namespace=time:[0]/')" ;;
+                    past) line="${line% started=*} started=0" ;;
+                    future) line="${line% started=*} started=$((began+600000))" ;;
+                    malformed) line="${line% started=*} started=invalid" ;;
+                esac
+                printf '%s\n' "$line" > "$file"
+                case {{variant}} in
+                    missing) : > "$file" ;;
+                    duplicate) printf '%s\n' "$line" >> "$file" ;;
+                esac
+                if c1609_accept_binding_clock "$file" "$began"; then printf 'ACCEPT\n'; else printf 'REJECT\n'; fi
+                """;
+            var result = await C994ScriptProcess.Run("bash", "-c", script);
+            result.Exit.ShouldBe(0, variant + ": " + result.Output);
+            result.Output.Trim().ShouldBe(variant == "valid" ? "ACCEPT" : "REJECT", variant);
+        }
     }
 
     private static void Refused((int Exit, string Output) run, string diagnosis)

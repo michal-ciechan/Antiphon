@@ -1701,7 +1701,8 @@
             "Origin_graph_corpus_seed_1902_second_half",
             "Origin_graph_corpus_seed_1903_second_half",
             "Origin_graph_corpus_seed_1904_second_half",
-            "Final_origin_binding_refresh_is_inside_effect_window"
+            "Final_origin_binding_refresh_is_inside_effect_window",
+            "Binding_clock_record_requires_current_kernel_and_call"
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: full retirement audit requires Bash and POSIX mounts; H1-H3 host writers remain required on both platforms.",
