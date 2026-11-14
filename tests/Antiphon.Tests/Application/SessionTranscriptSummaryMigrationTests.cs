@@ -42,7 +42,7 @@ public sealed class SessionTranscriptSummaryMigrationTests
         string.CompareOrdinal(current, "20261110213738_Card1294ShadowCohort").ShouldBeGreaterThan(0);
         var assembly = db.GetService<IMigrationsAssembly>();
         var migration = assembly.CreateMigration(assembly.Migrations[current], db.Database.ProviderName!);
-        migration.UpOperations.ShouldAllBe(op => op is CreateTableOperation or CreateIndexOperation or SqlOperation);
+        migration.UpOperations.ShouldAllBe(op => op.GetType() == typeof(CreateTableOperation) || op.GetType() == typeof(CreateIndexOperation) || op.GetType() == typeof(SqlOperation));
         migration.UpOperations.OfType<CreateTableOperation>().Select(op => op.Name).ShouldBe(["SessionTranscriptSummaries"]);
         migration.UpOperations.OfType<CreateIndexOperation>().ShouldAllBe(op => op.Table == "SessionTranscriptSummaries");
         var sql = string.Join("\n", migration.UpOperations.OfType<SqlOperation>().Select(op => op.Sql));
