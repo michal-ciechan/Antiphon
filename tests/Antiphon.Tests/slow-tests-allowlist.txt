@@ -475,3 +475,6 @@ Antiphon.Tests.Application.SessionStatePinQueryTests
 Antiphon.Tests.Application.RuntimeActionClaimQueryTests
 # CARD-1886: three real Program boots against one isolated PostgreSQL clone; host startup exceeds the five-second tripwire.
 Antiphon.Tests.Infrastructure.PostgresJitPolicyTestsComposition
+
+# CARD-1901: real Git origins, bound host proofs and native offline retirement audit corpus.
+Antiphon.Tests.Scripts.VolumeRetirementPublicationTests

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233",
+  "policyHash": null,
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1394,7 +1394,9 @@
         {
           "suite": "session-runner",
           "class": "C1514HostLoadNativeTests",
-          "methods": ["Linux_ProductionFactoryPreservesHostSamples"],
+          "methods": [
+            "Linux_ProductionFactoryPreservesHostSamples"
+          ],
           "platform": "windows",
           "reason": "Linux-only by construction: CARD-1514 production /proc factory and spool proof. CP-7 remains required on Linux.",
           "owner": "CARD-1514"
@@ -1402,7 +1404,9 @@
         {
           "suite": "session-runner",
           "class": "C1514HostLoadNativeOverheadTests",
-          "methods": ["Linux_SamplerOverheadStaysWithinBudget"],
+          "methods": [
+            "Linux_SamplerOverheadStaysWithinBudget"
+          ],
           "platform": "windows",
           "reason": "Linux-only by construction: CARD-1514 full-runner overhead experiment. CP-7 remains required on Linux.",
           "owner": "CARD-1514"
@@ -1662,6 +1666,24 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the Unix PTY delivery envelope measures a real Linux PTY. The case remains required on Linux.",
           "owner": "CARD-1907"
+        },
+        {
+          "suite": "antiphon",
+          "class": "VolumeRetirementPublicationTests",
+          "methods": [
+            "Origin_salvage_graph_passes_the_full_offline_audit",
+            "Local_salvage_refs_are_protected_roots",
+            "Reflog_patch_equivalence_never_proves_publication",
+            "Other_remote_tracking_refs_do_not_prove_publication",
+            "Detached_linked_heads_and_logs_require_exact_publication",
+            "Tags_preserve_object_and_ancestry_requirements",
+            "V2_invalid_bundle_cannot_use_present_head_fallback",
+            "Selector_fixture_own_gitdir_file_stays_in_full_audit",
+            "Selector_fixture_own_gitdir_symlink_stays_in_full_audit"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: full retirement audit requires Bash and POSIX mounts; H1-H3 host writers remain required on both platforms.",
+          "owner": "CARD-1901"
         }
       ]
     }

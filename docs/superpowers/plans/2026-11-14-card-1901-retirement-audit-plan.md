@@ -447,19 +447,50 @@ timeout exit 4 is not-run/blocked, never permission to run without a lease.
 
 ### Checkpoints
 
+Code refinement (0a2ad036): CP-0 is declared preparation: gated native build
+of `scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj`.
+It ran at 9fd0cf5c78345b48ea1b7ddb96b536c60adff35f after the preparation commit.
+Use the budget report caps in ignored imported YAML: H=2 min, V=7 min,
+CP-6a/b/c=5/5/7 min, CP-10a/b/c/d=4/2/9/6 min, CP-5/12=3 min,
+CP-7/8/9/13=4/1/9/3 min; admission 10 min separately. Cold preparation
+is provisionally 8 min tests + 1 min driver. The tool build watchdog has a
+15 min floor, an explicit limitation, not an 8 min enforced watchdog.
+The 28 adjacent full-class census rows in the budget report require separate
+serial measurement under 10 min each; never credit an incomplete row.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1901-s1/ | linux-host-red | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 baseline | 1 intended publication-acceptance assertion failure; no build/setup failure | 1 | 6 | true |
 | CP-2 | S1 | CP-1 | linux-audit-red | `/*/*/VolumeRetirementPublicationTests/V2_invalid_bundle_cannot_use_present_head_fallback` | V7 baseline | 1 intended invalid-proof refusal assertion failure; no build/setup failure | 1 | 1 | true |
-| CP-3 | S2 | tests/Antiphon.Tests -> bin-c1901-s2/ | linux-host | `/*/*/VolumeRetirementPublicationTests/(Host_origin_salvage_proves_exact_required_objects*)\|(Host_salvage_namespace_and_types_are_closed*)\|(Host_salvage_snapshot_prunes_and_renews_exact_objects*)` | H1-H3 | exactly 3 passed; 0 failed/skipped | 3 | 7 | true |
-| CP-4 | S3 | tests/Antiphon.Tests -> bin-c1901-s3/ | linux-publication | `/*/*/VolumeRetirementPublicationTests/*` | H1-H3,V1-V9 | exactly 12 passed; 0 failed/skipped | 12 | 10 | true |
-| CP-5 | S3 | CP-4 | linux-host-regression | `/*/*/VolumeRetirementHostProofTests/*` | R-host | all 12 existing methods; 0 failed/skipped | 12 | 3 | true |
-| CP-6 | S3 | CP-4 | linux-content-regression | `/*/*/VolumeRetirementContentTests/(Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent*)\|(Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof*)\|(Every_ref_recovery_tip_and_tag_object_requires_publication*)\|(Gone_tracking_retains_original_commit_protection*)\|(Private_origin_advanced_head_uses_real_host_proof*)` | R-content,CARD-1898 | all 5 methods / 12 results; 0 failed/skipped | 12 | 4 | true |
+| CP-3.H1 | S2 | tests/Antiphon.Tests -> bin-c1901-s2/ | linux-host | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-3.H2 | S2 | CP-3.H1 | linux-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_namespace_and_types_are_closed` | H2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-3.H3 | S2 | CP-3.H1 | linux-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-4.H1 | S3 | tests/Antiphon.Tests -> bin-c1901-s3/ | linux-publication | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-4.H2 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Host_salvage_namespace_and_types_are_closed` | H2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-4.H3 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-4.V1 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Origin_salvage_graph_passes_the_full_offline_audit` | V1 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V2 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Local_salvage_refs_are_protected_roots` | V2 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V3 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Reflog_patch_equivalence_never_proves_publication` | V3 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V4 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Other_remote_tracking_refs_do_not_prove_publication` | V4 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V5 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Detached_linked_heads_and_logs_require_exact_publication` | V5 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V6 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Tags_preserve_object_and_ancestry_requirements` | V6 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V7 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/V2_invalid_bundle_cannot_use_present_head_fallback` | V7 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V8 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_file_stays_in_full_audit` | V8 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-4.V9 | S3 | CP-4.H1 | linux-publication | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_symlink_stays_in_full_audit` | V9 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
+| CP-5 | S3 | CP-4.H1 | linux-host-regression | `/*/*/VolumeRetirementHostProofTests/*` | R-host | all 12 existing methods; 0 failed/skipped | 12 | 3 | true |
+| CP-6a | S3 | CP-4.H1 | linux-content-regression | `/*/*/VolumeRetirementContentTests/(Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent*)\|(Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof*)` | R-content,CARD-1898 | exactly 9 passed; 0 failed/skipped | 9 | 2 | true |
+| CP-6b | S3 | CP-4.H1 | linux-content-regression | `/*/*/VolumeRetirementContentTests/(Every_ref_recovery_tip_and_tag_object_requires_publication*)\|(Gone_tracking_retains_original_commit_protection*)` | R-content,CARD-1898 | exactly 2 passed; 0 failed/skipped | 2 | 2 | true |
+| CP-6c | S3 | CP-4.H1 | linux-content-regression | `/*/*/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof` | R-content,CARD-1898 | exactly 1 passed; 0 failed/skipped | 1 | 3 | true |
 | CP-7 | S4 | tests/Antiphon.Tests -> bin-c1901-s4/ | linux-git-regression | `/*/*/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)\|(C1105_Git_audit_seed_content*)\|(C1105_Git_audit_index_content*)\|(C1105_Git_audit_object_completeness*)` | R-v1,R-completeness | all 4 methods / 30 results; 0 failed/skipped | 30 | 7 | true |
 | CP-8 | S4 | CP-7 | linux-remote-impact | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)` | R-1782 remote-scripts | all 5 named methods; 0 failed/skipped | 5 | 1 | true |
 | CP-9 | S4 | CP-7 | linux-v1-transport | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Host_proof_admits_only_an_authenticated_private_origin*)\|(C1008_Host_proof_file_omits_credentials*)\|(C1008_Transport_scripts_are_ascii*)\|(C1008_Documentation_and_transport_pins_match*)` | R-v1-transport | exactly 4 passed; 0 failed/skipped | 4 | 2 | true |
-| CP-10 | S4 | CP-7 | linux-final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-policy,R-timing,R-index,R-nightly-policy | every named class; 0 failed | 15 | 4 | true |
-| CP-11 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host | `/*/*/VolumeRetirementPublicationTests/(Host_origin_salvage_proves_exact_required_objects*)\|(Host_salvage_namespace_and_types_are_closed*)\|(Host_salvage_snapshot_prunes_and_renews_exact_objects*)` | H1-H3 native Windows producer | exactly 3 passed; 0 failed/skipped | 3 | 7 | true |
+| CP-10a | S4 | CP-7 | linux-final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | R-policy,R-timing,R-index,R-nightly-policy | every named class; 0 failed | 4 | 2 | true |
+| CP-10b | S4 | CP-7 | linux-final-guards | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | R-policy,R-timing,R-index,R-nightly-policy | every named class; 0 failed | 4 | 1 | true |
+| CP-10c | S4 | CP-7 | linux-final-guards | `/*/*/(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)\|(DerivedImpactIndexTests*)/*` | R-policy,R-timing,R-index,R-nightly-policy | every named class; 0 failed | 4 | 4 | true |
+| CP-10d | S4 | CP-7 | linux-final-guards | `/*/*/(ReleaseImpactEnvelopeTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-policy,R-timing,R-index,R-nightly-policy | every named class; 0 failed | 3 | 3 | true |
+| CP-11.H1 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-11.H2 | S4-Windows | CP-11.H1 | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_namespace_and_types_are_closed` | H2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
+| CP-11.H3 | S4-Windows | CP-11.H1 | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-12 | S4-Windows | CP-11 | windows-host-regression | `/*/*/VolumeRetirementHostProofTests/*` | R-host native Windows | all 12 existing methods; 0 failed/skipped | 12 | 3 | true |
 | CP-13 | S4 | CP-7 | linux-native-policy | `/*/*/ReleaseGatePlatformTests/(LinuxOnlyWindowsExclusionPolicy*)\|(C1686_LinuxOnlyCensus*)` | R-platform | exactly 2 passed; 0 failed/skipped | 2 | 1 | true |
 
