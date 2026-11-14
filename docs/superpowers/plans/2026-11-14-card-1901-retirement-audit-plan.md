@@ -505,7 +505,9 @@ project builds for the mirrored limiter rows. Run the new renewal rows first,
 then H/V, the named still-unrun/adjacent selections and guards. Historical S1
 assertion reds, redundant S2/S5 repair duplicates and base-attribution rows are
 retained as history rather than repeated after green. CP-4.H1/H2/H3 and CP-4.V1-V9
-are the current H/V selections. Every other final row retains its exact filter.
+are the current H/V selections. CP-81 is split into its five remaining exact methods; CP-98 and CP-98.native
+cover the other two class methods. CP-97 is the duplicate retained-volume repair
+and is credited by CP-81.retained. Every other final row retains its exact filter.
 
 All test rows are serial and at most nine minutes; H rows and new short gate
 rows use two minutes, V rows and corpus rows seven minutes, the retained CP-98
@@ -744,7 +746,11 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-78 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementReceiptTests/Every_delete_rechecks_full_live_guards` | M-adjacent VolumeRetirementReceiptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-79 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementReceiptTests/Journal_intents_and_partial_resume_are_exact` | M-adjacent VolumeRetirementReceiptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-80 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementReceiptTests/Lock_order_excludes_supported_writers` | M-adjacent VolumeRetirementReceiptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
-| CP-81 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementWrapperTests/*` | M-adjacent VolumeRetirementWrapperTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
+| CP-81 | S4 | CP-7 | linux-r2-final | `/*/*/VolumeRetirementWrapperTests/Manual_parameters_require_operator_attestation` | M-adjacent VolumeRetirementWrapperTests | exactly 1 intended method; 0 failed/skipped | 1 | 3 | true |
+| CP-81.bridge | S4 | CP-7 | linux-r2-final | `/*/*/VolumeRetirementWrapperTests/Bridge_validates_and_preserves_receipt_fields` | M-adjacent VolumeRetirementWrapperTests | exactly 1 intended method; 0 failed/skipped | 1 | 3 | true |
+| CP-81.stack | S4 | CP-7 | linux-r2-final | `/*/*/VolumeRetirementWrapperTests/Retire_temp_ignores_missing_stack_and_historical_compose` | M-adjacent VolumeRetirementWrapperTests | exactly 1 intended method; 0 failed/skipped | 1 | 3 | true |
+| CP-81.main | S4 | CP-7 | linux-r2-final | `/*/*/VolumeRetirementWrapperTests/Main_recycle_and_existing_deploy_contracts_are_preserved` | M-adjacent VolumeRetirementWrapperTests | exactly 1 intended method; 0 failed/skipped | 1 | 3 | true |
+| CP-81.retained | S4 | CP-7 | linux-r2-final | `/*/*/VolumeRetirementWrapperTests/Retained_volumes_block_deploy_and_completion` | M-adjacent VolumeRetirementWrapperTests | exactly 1 intended method; 0 failed/skipped | 1 | 3 | true |
 | CP-90 | S4 | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters Agents.Pty | all named class; 0 failed | 1 | 1 | true |
 | CP-91 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters SessionRunner | all named class; 0 failed | 1 | 1 | true |
 | CP-92 | S5 | tests/Antiphon.Tests -> bin-c1901-s5/ | linux-auth-repair | `/*/*/RollingVolumeRecycleScriptTests/C1008_Host_proof_admits_only_an_authenticated_private_origin` | R-v1-transport | exactly 1 passed; real immutable published bundle; 0 failed/skipped | 1 | 5 | true |
