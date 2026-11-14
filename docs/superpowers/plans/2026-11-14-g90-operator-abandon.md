@@ -21,7 +21,10 @@ offer OpenAgent and AbandonMessage, never SendNow for Sent rows.
 
 Late matching UserPrompt after abandonment is retained in the ordinary transcript
 and ignored by queue reconciliation. Canceled remains terminal with a null verdict.
-The shared queue semaphore serializes abandon with late confirmation and switch;
+The shared queue semaphore serializes abandon with ordinary late confirmation and switch;
+the session-row transaction lock also serializes Grok rules reconciliation. Canceled
+rules rows remain in the identity lookup but skip judging, so neither a late prompt
+nor the rules deadline resurrects them or creates a replacement launch request.
 the audit/status commit is transactional. Preserve generation/baseline/attempt data.
 
 ## Verification design
@@ -76,7 +79,7 @@ receipts remain at their actual SHAs and are not rerun or relabelled here.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-green/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 13 | 6 |
+| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-done/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 17 | 8 |
 | CP-2 | green | CP-1 | standing-switch | `/*/*/StandingSessionSwitchConcurrencyTests/*` | V-2 | all listed, 0 failed | 31 | 2 |
 | CP-3 | green | CP-1 | standing-history | `/*/*/(StandingSessionSelectionTests*)\|(StandingSessionOwnershipTests*)\|(StandingSessionQueueSwitchTests*)\|(StandingSessionRecoveryHttpTests*)/*` | R-1,V-2 | all listed, 0 failed | 54 | 3 |
 | CP-4 | green | CP-1 | control-resume | `/*/*/(AgentControlServiceIntegrationTests*)\|(StandingResumeReceiptReadinessTests*)/*` | R-1 | all listed, 0 failed | 34 | 2 |
@@ -90,6 +93,8 @@ receipts remain at their actual SHAs and are not rerun or relabelled here.
 | CP-12 | green | CP-1 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)\|(StandingBootAttentionTests*)\|(StandingContinuityAttentionTests*)/*` | V-5,R-1 | all listed, 0 failed | 4 | 3 |
 | CP-13 | green | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all listed, 0 failed | 5 | 2 |
 | CP-14 | green | CP-1 | contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2,R-3 | all listed, 0 failed | 7 | 3 |
-| CP-15 | green | tests/Antiphon.E2E -> bin-ac7f-contract/ | api-contract | `/*/*/ContractSnapshotTests/*` | R-3,R-4 | all listed, 0 failed | 1 | 6 |
+| CP-15 | green | tests/Antiphon.E2E -> bin-ac7f-done-contract/ | api-contract | `/*/*/ContractSnapshotTests/*` | R-3,R-4 | all listed, 0 failed | 1 | 6 |
 | CP-20 | green | n/a | abandon-ui | `pwsh -NoProfile -File scripts/test-client.ps1 -TypecheckProject client/tsconfig.app.json SessionMessageQueue AttentionPanel` | R-4 | typecheck/lint and both targeted files green | n/a | 2 |
-| CP-16 | rules-red | tests/Antiphon.Tests -> bin-ac7f-rules-red/ | rules-abandon-red | `/*/*/SessionQueueAbandonTests/Grok_rules_late_prompt_does_not_resurrect_abandoned_input` | V-4 | Canceled-versus-Sent assertion fails before rules fix | 1 | 8 |
+| CP-16 | green | CP-1 | rules-abandon | `/*/*/SessionQueueAbandonTests/Grok_rules_late_prompt_does_not_resurrect_abandoned_input` | V-4 | all listed, 0 failed | 1 | 1 |
+| CP-17 | green | CP-1 | rules-judging | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesReceiptTests*)/*` | V-4,R-1 | all listed, 0 failed | 3 | 3 |
+| CP-18 | green | CP-1 | rules-transactions | `/*/*/(GrokRulesTransactionTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesCompactionTests*)/*` | V-4,R-1 | all listed, 0 failed | 3 | 3 |

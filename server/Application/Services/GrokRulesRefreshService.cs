@@ -337,6 +337,9 @@ public sealed class GrokRulesRefreshService(
 
     private void Judge(SessionQueuedMessage row, List<TranscriptEntry> transcript, AgentSession session)
     {
+        // An explicit cancellation is terminal even if this attempt later appears in
+        // the transcript. Keep its key in rows so no replacement request is created.
+        if (row.Status == QueuedMessageStatus.Canceled) return;
         var receipt = ParseReceipt(row.RulesReceiptJson);
         if (receipt is null || receipt.Generation != session.GrokRulesGeneration) return;
         var now = clock.GetUtcNow().UtcDateTime;
