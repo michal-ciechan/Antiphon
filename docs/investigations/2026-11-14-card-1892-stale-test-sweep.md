@@ -1380,3 +1380,19 @@ artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892
 ## Second 150-minute coverage window — in progress
 
 Caller reopened the task at 2026-11-14 15:28:21 UTC with a hard stop at 17:58:21 UTC. Fresh detached scratch /tmp/task-15406ecc-coverage2 starts at fetched origin/master 8cec1e74e75819ef20756c228add987ce4ae4170; no source changes or merges are applied. The assigned report branch remains fast-forward-only. This window excludes already observed cases, prioritizes the named queue/input/launch/PhoneHome/standing paths, and will append its exact remaining ledger. Prior outcomes and costs remain historical.
+
+Build completed in 314.209 seconds including gate admission (296-second lease); load 20.36 19.91 20.98 -> 27.35 27.33 24.03. Native Antiphon.Tests binary version 1.0.0+8cec1e74e75819ef20756c228add987ce4ae4170, SHA-256 01b79c9298b8120f17d95aaff6c594783e85c5a1d8fb03ab4a3a3d708c7870d3. Scratch tracked source remains clean. No already-observed case is intentionally selected.
+
+### Earlier Linux fixture families: Windows rc relevance
+
+| Card | Can the failing path execute in Windows rc? |
+|---|---|
+| CARD-1927 ClaudeAuthProbe | Yes. Real CLI child auth/environment inheritance is portable; caller reports desktop CLI logged in. An inherited OAuth variable can defeat the temporary-config logged-out witness. This Linux task did not inspect desktop credentials or execute the Windows case. |
+| CARD-1928 Herdr peer loader | CrashedOwnerLeaseReclaimed starts the same owned PowerShell child on Windows, so its child-host loader failure can affect Windows. ChangedAndSymlinkSocketsAreNotReclaimed returns immediately on Windows and does not exercise the failed Linux path. Specific inner module-loader cause remains unproved. |
+| CARD-1929..1932 Linux cgroup custody | No. The whole class is NativeLinuxOnly and is excluded from Windows execution. |
+| CARD-1934 C519 broker bootstrap | Yes, when Docker-backed integration tests are admitted; Redpanda readiness and Testcontainers resource-reaper startup are prerequisites on Windows too. Linux startup failures do not prove a Windows failure. |
+| CARD-1935 C699 completion recovery | Yes. The database/event recovery test is portable, with no Windows exclusion. Its repeated missing stamps can affect Windows rc; product-versus-fixture attribution is unresolved. |
+
+Live Windows numeric chunks remain unmapped except supplied g54/g58. Source golden boundary IDs earlier in this report identify committed roster boundaries only. No live Windows log or desktop was accessed.
+
+Progress checkpoint C001-C003: 73 executed, 73 passed, zero failed, four skipped. AgentControlServiceIntegrationTests passed33/33; six PhoneHome transport/reconnect classes passed40/40; three explicit Grok acceptance classes supplied the four Windows/headed skips. Current-master results remain separate from historical baseline results. Generated receipts are under the ignored continuation2 evidence directory.
