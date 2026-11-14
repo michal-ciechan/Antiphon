@@ -133,7 +133,7 @@ namespace Antiphon.Server.Migrations
                 RETURN NULL;
             END;
             $body$;
-            
+
                         CREATE FUNCTION c1915_update() RETURNS trigger LANGUAGE plpgsql AS $body$
             DECLARE session_id uuid;
             BEGIN
@@ -151,7 +151,7 @@ namespace Antiphon.Server.Migrations
                 RETURN NULL;
             END;
             $body$;
-            
+
             CREATE FUNCTION c1915_delete() RETURNS trigger LANGUAGE plpgsql AS $body$
             DECLARE session_id uuid;
             BEGIN
@@ -163,14 +163,14 @@ namespace Antiphon.Server.Migrations
                 RETURN NULL;
             END;
             $body$;
-            
+
             CREATE FUNCTION c1915_truncate() RETURNS trigger LANGUAGE plpgsql AS $body$
             BEGIN
                 UPDATE "SessionTranscriptSummaries" SET "Valid" = false, "NextBackfillAttemptAt" = NULL;
                 RETURN NULL;
             END;
             $body$;
-            
+
             CREATE TRIGGER c1915_insert AFTER INSERT ON "TranscriptEntries"
                 REFERENCING NEW TABLE AS new_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_insert();
             CREATE TRIGGER c1915_update AFTER UPDATE ON "TranscriptEntries"
