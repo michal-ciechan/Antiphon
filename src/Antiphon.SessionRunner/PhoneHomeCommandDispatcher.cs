@@ -45,9 +45,15 @@ public interface IPhoneHomeRuntimeSurface
     Task<WorkspaceOutputDropStep> CheckWorkspaceOutputsAsync(PhoneHomeWorkspaceOutputDropRequest request, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
 
-    /// <summary>CARD-1895. The allow-listed delete. The dispatcher runs it under the same mutation lock as the check.</summary>
+    /// <summary>CARD-1895. The allow-listed delete. The dispatcher runs it under the same mutation lock as the check, releasing that lock between proof batches.</summary>
     Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation, "unsupported_operation", 501);
+
+    /// <summary>CARD-1895. The engine callback between proof batches. Null when this surface has no engine.</summary>
+    Func<CancellationToken, Task>? OutputDropBatchProbe => null;
+
+    /// <summary>CARD-1895. Install or clear the between-batch callback. The default surface ignores it.</summary>
+    void SetOutputDropBatchProbe(Func<CancellationToken, Task>? probe) { }
     /// <summary>CARD-1153: default unsupported, so an adapter without the evidence service never certifies.</summary>
     Task<RunnerAbsenceOutcome<RunnerAbsencePrepared>> PrepareAbsenceEvidenceAsync(RunnerAbsenceRequest request, CancellationToken ct) =>
         Task.FromResult(RunnerAbsenceOutcome<RunnerAbsencePrepared>.Refuse(PhoneHomeProblemTypes.UnsupportedOperation, 501, "absence evidence unsupported"));
@@ -1048,7 +1054,9 @@ public sealed class PhoneHomeCommandDispatcher
     }
 
     /// <summary>
-    /// CARD-1895. Recent-use, the retention checks, and the delete all run under the mutation lock.
+    /// CARD-1895. Recent-use, the retention checks, and each proof batch run under the mutation lock.
+    /// The lock is released between batches (default 8 files) so other mutation owners are not starved
+    /// for the whole delete. Input and ConditionalInput do not take this lock.
     /// The runner switch can refuse or force a dry run even when the request says Execute.
     /// </summary>
     private async Task<PhoneHomeFrame> DropOutputsAsync(PhoneHomeFrame request, CancellationToken ct)
@@ -1087,6 +1095,24 @@ public sealed class PhoneHomeCommandDispatcher
                     return again?.Reason;
                 },
             };
+            // Release between batches, including when the probe throws, then take the lock back
+            // before MutateAsync's finally releases it. Input never waits on this lock.
+            var probe = _runtime.OutputDropBatchProbe;
+            _runtime.SetOutputDropBatchProbe(async token =>
+            {
+                MutationLock.Release();
+                try
+                {
+                    if (probe is not null)
+                        await probe(token).ConfigureAwait(false);
+                    await MutationLock.WaitAsync(token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    await MutationLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+                    throw;
+                }
+            });
             try
             {
                 var response = await _runtime.ApplyWorkspaceOutputsAsync(step, ct);
@@ -1098,6 +1124,7 @@ public sealed class PhoneHomeCommandDispatcher
             }
             finally
             {
+                _runtime.SetOutputDropBatchProbe(probe);
                 if (step.Lease is { } lease)
                     await lease.DisposeAsync();
             }

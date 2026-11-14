@@ -638,14 +638,43 @@ internal static class RunnerWorkspaceNoFollowDelete
         }
     }
 
-    internal readonly record struct OutputDisposition(long BytesRemoved, int FilesRemoved, int FilesLeft, string? Error);
+    internal readonly record struct OutputDisposition(
+        long BytesRemoved, int FilesRemoved, int FilesLeft, string? Error,
+        int PreservedBoundaries = 0, IReadOnlyList<string>? PreservedPaths = null);
+
+    /// <summary>
+    /// Delete-time proof for one output directory. Nested git and foreign devices are detected
+    /// without this gate. <see cref="SkipFile"/> and <see cref="ForeignDevice"/> are the per-entry
+    /// and test seams. Windows output drop never reaches this walk: <see cref="TryHoldOutput"/>
+    /// fails closed off Linux x64, and the legacy Windows walk does not follow reparse points.
+    /// Nested git detection on NTFS is unexecuted here and owed.
+    /// </summary>
+    internal sealed class OutputUnlinkGate
+    {
+        internal const int PreservedPathLimit = 8;
+        internal int BatchSize = 8;
+        internal Func<string, bool>? SkipFile;
+        internal Func<string, bool>? ForeignDevice;
+        internal Action? BeginBatch;
+        internal Action? BetweenBatches;
+        internal int Preserved;
+        internal readonly List<string> PreservedPaths = new();
+
+        internal void Keep(string relative)
+        {
+            Preserved++;
+            if (relative.Length > 0 && PreservedPaths.Count < PreservedPathLimit)
+                PreservedPaths.Add(relative);
+        }
+    }
 
     /// <summary>
     /// Open <paramref name="directory"/> under <paramref name="workspaceRoot"/> without following links.
-    /// A Windows call fails closed: the Windows walk is not the identity path.
+    /// A Windows call fails closed: the Windows walk is not the identity path. Reparse points and
+    /// junctions are never followed. Nested git preservation on NTFS is unexecuted on Linux and owed.
     /// </summary>
     internal static bool TryHoldOutput(string workspaceRoot, string directory, CancellationToken ct,
-        out HeldOutput? held, out string? refusal)
+        out HeldOutput? held, out string? refusal, OutputUnlinkGate? gate = null)
     {
         held = null;
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
@@ -736,7 +765,7 @@ internal static class RunnerWorkspaceNoFollowDelete
             }
 
             var tally = new Tally();
-            WalkHeld(raw, delete: false, tally, ct, 0, null);
+            WalkHeld(raw, delete: false, tally, ct, 0, null, gate, "");
             if (tally.Error is not null)
             {
                 refusal = tally.Error;
@@ -771,7 +800,8 @@ internal static class RunnerWorkspaceNoFollowDelete
     }
 
     /// <summary>Unlink through the held descriptors. A failed unlink keeps the bytes already removed.</summary>
-    internal static OutputDisposition DeleteHeld(HeldOutput held, CancellationToken ct, Action<OutputDisposition>? progress = null)
+    internal static OutputDisposition DeleteHeld(HeldOutput held, CancellationToken ct,
+        Action<OutputDisposition>? progress = null, OutputUnlinkGate? gate = null)
     {
         var named = LinuxMetadata(held.ParentFd, held.Name);
         var opened = LinuxMetadata(held.DirectoryFd);
@@ -779,14 +809,15 @@ internal static class RunnerWorkspaceNoFollowDelete
             return new OutputDisposition(0, 0, held.MeasuredFiles, "changed_during_drop");
 
         var tally = new Tally();
-        WalkHeld(held.DirectoryFd, delete: true, tally, ct, 0, progress);
-        if (tally.Error is null && unlinkat(held.ParentFd, held.Name, 0x200) != 0)
+        WalkHeld(held.DirectoryFd, delete: true, tally, ct, 0, progress, gate, "");
+        if (tally.Error is null && (gate?.Preserved ?? 0) == 0 && unlinkat(held.ParentFd, held.Name, 0x200) != 0)
         {
             tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
             tally.Left++;
         }
 
-        return new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, tally.Error);
+        IReadOnlyList<string>? paths = gate is { Preserved: > 0 } ? gate.PreservedPaths : null;
+        return new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, tally.Error, gate?.Preserved ?? 0, paths);
     }
 
     /// <summary>Mount id from <c>/proc/self/mountinfo</c>, longest mount-point prefix. Null when it cannot be read.</summary>
@@ -829,7 +860,8 @@ internal static class RunnerWorkspaceNoFollowDelete
         return bestId;
     }
 
-    private static void WalkHeld(int fd, bool delete, Tally tally, CancellationToken ct, int depth, Action<OutputDisposition>? progress)
+    private static void WalkHeld(int fd, bool delete, Tally tally, CancellationToken ct, int depth,
+        Action<OutputDisposition>? progress, OutputUnlinkGate? gate, string prefix)
     {
         if (tally.Error is not null)
             return;
@@ -845,7 +877,19 @@ internal static class RunnerWorkspaceNoFollowDelete
             return;
         }
 
+        if (depth == 0 && tally.RootDevice.Length == 0)
+            tally.RootDevice = DeviceOf(LinuxMetadata(fd));
+
+        // This directory is itself a repository. Do not enter it and do not delete it.
+        if (DirectoryContainsGit(fd, ct))
+        {
+            tally.Boundaries++;
+            gate?.Keep(prefix.Length == 0 ? "." : prefix);
+            return;
+        }
+
         var children = ListChildren("/proc/self/fd/" + fd.ToString(CultureInfo.InvariantCulture), ct);
+        var batchCount = 0;
         for (var index = 0; index < children.Count; index++)
         {
             if (ct.IsCancellationRequested)
@@ -856,8 +900,10 @@ internal static class RunnerWorkspaceNoFollowDelete
             }
 
             var name = Path.GetFileName(children[index]);
+            var relative = prefix.Length == 0 ? name : prefix + "/" + name;
             if (LinuxIsLink(fd, name))
             {
+                // A symlink child is unlinked as a link and never followed. Reparse points stay unopened.
                 if (delete && unlinkat(fd, name, 0) != 0)
                 {
                     tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
@@ -869,15 +915,35 @@ internal static class RunnerWorkspaceNoFollowDelete
             }
 
             var listed = LinuxMetadata(fd, name);
+            if (IsForeignDevice(listed, tally, gate, relative))
+            {
+                tally.Boundaries++;
+                gate?.Keep(relative);
+                continue;
+            }
+
             if (listed.Directory)
             {
                 using var child = OpenLinuxEntry(fd, name);
-                WalkHeld((int)child.DangerousGetHandle(), delete, tally, ct, depth + 1, progress);
+                var childFd = (int)child.DangerousGetHandle();
+                var opened = LinuxMetadata(childFd);
+                if (opened.Identity != listed.Identity || !opened.Directory)
+                {
+                    gate?.Keep(relative);
+                    continue;
+                }
+
+                var boundariesBefore = tally.Boundaries;
+                var preservedBefore = gate?.Preserved ?? 0;
+                WalkHeld(childFd, delete, tally, ct, depth + 1, progress, gate, relative);
                 if (tally.Error is not null)
                 {
                     tally.Left += CountRegular(fd, children, index + 1, ct, depth);
                     return;
                 }
+
+                if (tally.Boundaries > boundariesBefore || (gate?.Preserved ?? 0) > preservedBefore)
+                    continue;
                 if (delete && unlinkat(fd, name, 0x200) != 0)
                 {
                     tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
@@ -894,6 +960,25 @@ internal static class RunnerWorkspaceNoFollowDelete
                     continue;
                 }
 
+                if (batchCount == 0)
+                    gate?.BeginBatch?.Invoke();
+                if (gate?.SkipFile?.Invoke(relative) == true)
+                {
+                    gate.Keep(relative);
+                    tally.Left++;
+                    NoteBatch(gate, ref batchCount, index, children.Count);
+                    continue;
+                }
+
+                var now = LinuxMetadata(fd, name);
+                if (now.Identity != listed.Identity || !now.Regular)
+                {
+                    gate?.Keep(relative);
+                    tally.Left++;
+                    NoteBatch(gate, ref batchCount, index, children.Count);
+                    continue;
+                }
+
                 if (unlinkat(fd, name, 0) != 0)
                 {
                     tally.Error = "unlink " + Marshal.GetLastPInvokeError().ToString(CultureInfo.InvariantCulture);
@@ -903,15 +988,55 @@ internal static class RunnerWorkspaceNoFollowDelete
 
                 tally.Bytes += listed.Size;
                 tally.Removed++;
-                progress?.Invoke(new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, null));
+                progress?.Invoke(new OutputDisposition(tally.Bytes, tally.Removed, tally.Left, null, gate?.Preserved ?? 0,
+                    gate is { Preserved: > 0 } ? gate.PreservedPaths : null));
+                NoteBatch(gate, ref batchCount, index, children.Count);
             }
             else
             {
-                tally.Error = "unproven_content";
+                // FIFO, socket, or device: ownership cannot be proved. Leave it and keep walking.
+                gate?.Keep(relative);
                 tally.Left++;
-                return;
             }
         }
+    }
+
+    private static void NoteBatch(OutputUnlinkGate? gate, ref int batchCount, int index, int count)
+    {
+        if (gate?.BetweenBatches is null || gate.BatchSize < 1)
+            return;
+        batchCount++;
+        if (batchCount < gate.BatchSize || index + 1 >= count)
+            return;
+        batchCount = 0;
+        gate.BetweenBatches();
+    }
+
+    private static bool IsForeignDevice(Metadata listed, Tally tally, OutputUnlinkGate? gate, string relative)
+    {
+        if (gate?.ForeignDevice?.Invoke(relative) == true)
+            return true;
+        // st_dev differs across filesystems. A bind mount of the same filesystem keeps st_dev and is not caught here.
+        return tally.RootDevice.Length > 0
+            && !string.Equals(DeviceOf(listed), tally.RootDevice, StringComparison.Ordinal);
+    }
+
+    /// <summary>A <c>.git</c> file or directory marks this directory as a nested repository.</summary>
+    private static bool DirectoryContainsGit(int fd, CancellationToken ct)
+    {
+        foreach (var child in ListChildren("/proc/self/fd/" + fd.ToString(CultureInfo.InvariantCulture), ct))
+        {
+            if (Path.GetFileName(child) == ".git")
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string DeviceOf(Metadata metadata)
+    {
+        var colon = metadata.Identity.IndexOf(':');
+        return colon < 0 ? metadata.Identity : metadata.Identity[..colon];
     }
 
     private static int CountRegular(int fd, IReadOnlyList<string> children, int from, CancellationToken ct, int depth)
@@ -985,5 +1110,7 @@ internal static class RunnerWorkspaceNoFollowDelete
         internal int Removed;
         internal int Left;
         internal string? Error;
+        internal string RootDevice = "";
+        internal int Boundaries;
     }
 }

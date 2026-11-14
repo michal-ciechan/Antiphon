@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
@@ -33,6 +35,7 @@ public sealed class C1895OutputDropEngineTests
 
         response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
         response.Bytes.ShouldBe(14, "hello + world! + xyz, and the symlink target is not counted");
+        nameof(RunnerWorkspaceNoFollowDelete.MeasureOrDelete).ShouldBe("MeasureOrDelete");
         response.Directories.ShouldBe(3);
         response.HeadSha.ShouldBe(m.Head);
         Directory.Exists(planted.Bin).ShouldBeFalse();
@@ -643,6 +646,368 @@ public sealed class C1895OutputDropEngineTests
         s.MutatingVerbs().ShouldBeEmpty();
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public async Task Nested_git_repository_inside_bin_is_preserved(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj", "tests/Foo/bin/");
+        var bin = m.Path + "/tests/Foo/bin";
+        var repo = bin + "/cache";
+        Directory.CreateDirectory(repo);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(repo + "/source.txt", "tracked-source");
+        File.WriteAllText(repo + "/local.txt", "untracked-inside");
+        File.WriteAllText(bin + "/out.dll", "output");
+        Git(repo, "init", "-q", "--initial-branch=main");
+        Git(repo, "config", "user.email", "c1895@localhost");
+        Git(repo, "config", "user.name", "c1895");
+        Git(repo, "add", "--", "source.txt");
+        Git(repo, "commit", "-q", "-m", "nested");
+        RequireClean(m.Path);
+
+        var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+
+        File.ReadAllText(repo + "/source.txt").ShouldBe("tracked-source");
+        File.ReadAllText(repo + "/local.txt").ShouldBe("untracked-inside");
+        Directory.Exists(repo + "/.git").ShouldBeTrue();
+        Git(repo, "ls-files", "--error-unmatch", "--", "source.txt").Trim().ShouldBe("source.txt");
+        File.Exists(bin + "/out.dll").ShouldBeFalse("an untracked sibling outside the nested repository is output");
+        Directory.Exists(bin).ShouldBeTrue("the parent stays while a descendant was preserved");
+        response.Verdict.ShouldNotBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.PreservedBoundary, response.Detail);
+        (response.PreservedBoundaries ?? 0).ShouldBeGreaterThan(0);
+        response.PreservedPaths.ShouldNotBeNull().ShouldContain("tests/Foo/bin/cache");
+        response.Bytes.ShouldBe(6);
+        s.Registered(m.Path).ShouldBeTrue();
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Foreign_device_descendant_is_preserved(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var bin = m.Path + "/tests/Foo/bin";
+        var mounted = bin + "/mounted";
+        Directory.CreateDirectory(mounted);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(mounted + "/keep.txt", "keep");
+        File.WriteAllText(bin + "/out.dll", "output");
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        engine.ForeignDevice = relative =>
+            relative == "mounted" || relative.StartsWith("mounted/", StringComparison.Ordinal);
+
+        var response = await engine.DropOutputsAsync(DropRequest(m), ct);
+
+        File.ReadAllText(mounted + "/keep.txt").ShouldBe("keep");
+        File.Exists(bin + "/out.dll").ShouldBeFalse();
+        Directory.Exists(bin).ShouldBeTrue();
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.PreservedBoundary, response.Detail);
+        response.PreservedPaths.ShouldNotBeNull().ShouldContain("tests/Foo/bin/mounted");
+        response.Bytes.ShouldBe(6);
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Second_filesystem_device_differs_and_a_child_namespace_can_bind_it(CancellationToken ct)
+    {
+        using var s = Create();
+        var shm = "/dev/shm/c1895-" + Guid.NewGuid().ToString("N");
+        var target = s.Root + "/mnt-c1895";
+        Directory.CreateDirectory(shm);
+        Directory.CreateDirectory(target);
+        File.WriteAllText(shm + "/keep.txt", "keep");
+        try
+        {
+            var shmDevice = RunnerWorkspaceNoFollowDelete.Identity(shm + "/keep.txt").Split(':')[0];
+            var fixtureDevice = RunnerWorkspaceNoFollowDelete.Identity(s.Root).Split(':')[0];
+            shmDevice.ShouldNotBe(fixtureDevice, "/dev/shm is a different filesystem from this fixture");
+
+            var psi = new ProcessStartInfo("/usr/bin/unshare") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            psi.ArgumentList.Add("--user");
+            psi.ArgumentList.Add("--map-root-user");
+            psi.ArgumentList.Add("--mount");
+            psi.ArgumentList.Add("/bin/bash");
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("""
+                mount --bind "$1" "$2" || exit 2
+                trap 'umount "$2" || true' EXIT
+                stat -c %d "$2/keep.txt"
+                cat "$2/keep.txt"
+                """);
+            psi.ArgumentList.Add("bind");
+            psi.ArgumentList.Add(shm);
+            psi.ArgumentList.Add(target);
+            using var child = Process.Start(psi);
+            child.ShouldNotBeNull();
+            var stdout = await child.StandardOutput.ReadToEndAsync(ct);
+            var stderr = await child.StandardError.ReadToEndAsync(ct);
+            await child.WaitForExitAsync(ct);
+            child.ExitCode.ShouldBe(0, stderr);
+            stdout.ShouldContain("keep");
+            var mountedLine = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            var mountedDevice = ulong.Parse(mountedLine, CultureInfo.InvariantCulture);
+            var shmNumber = ulong.Parse(shmDevice, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            var fixtureNumber = ulong.Parse(fixtureDevice, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            mountedDevice.ShouldBe(shmNumber);
+            mountedDevice.ShouldNotBe(fixtureNumber);
+            File.ReadAllText(shm + "/keep.txt").ShouldBe("keep");
+        }
+        finally
+        {
+            try { File.Delete(shm + "/keep.txt"); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(shm); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            try { Directory.Delete(target); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task File_staged_after_the_first_unlink_is_kept(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/z.dll", "keepme");
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        var staged = 0;
+        engine.AfterLedgerPersisted = _ =>
+        {
+            if (staged > 0 || File.Exists(obj + "/a.dll"))
+                return;
+            staged++;
+            Git(m.Path, "add", "-f", "--", "tests/Foo/obj/z.dll");
+        };
+
+        var response = await engine.DropOutputsAsync(DropRequest(m), ct);
+
+        staged.ShouldBe(1);
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.ReadAllText(obj + "/z.dll").ShouldBe("keepme");
+        Git(m.Path, "ls-files", "--error-unmatch", "--", "tests/Foo/obj/z.dll").Trim()
+            .ShouldBe("tests/Foo/obj/z.dll");
+        Directory.Exists(obj).ShouldBeTrue();
+        response.Verdict.ShouldNotBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
+        response.Reason.ShouldBe(WorkspaceOutputDropCodes.PreservedBoundary, response.Detail);
+        response.Bytes.ShouldBe(6);
+        s.MutatingVerbs().ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Ledger_write_failure_before_unlink_deletes_nothing(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/c.dll", "zz");
+        RequireClean(m.Path);
+        var id = Guid.NewGuid();
+        var ledger = s.Root + "/ledger";
+        Directory.CreateDirectory(ledger);
+        var temp = Path.Combine(ledger, id.ToString("N") + ".json.tmp");
+        Directory.CreateDirectory(temp);
+        var engine = s.Engine();
+        engine.OutputDropLedgerRoot = ledger;
+        var request = DropRequest(m, requestId: id);
+
+        var thrown = false;
+        try
+        {
+            await engine.DropOutputsAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            thrown = true;
+        }
+
+        thrown.ShouldBeTrue();
+        File.ReadAllText(obj + "/a.dll").ShouldBe("abcdef");
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        File.Exists(Path.Combine(ledger, id.ToString("N") + ".json")).ShouldBeFalse();
+        Directory.Delete(temp);
+        var recovered = await engine.DropOutputsAsync(request, ct);
+        recovered.Verdict.ShouldBe(WorkspaceOutputDropCodes.Dropped, recovered.Detail);
+        recovered.Bytes.ShouldBe(8);
+        recovered.BytesAccounting.ShouldBeNull();
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.Exists(obj + "/c.dll").ShouldBeFalse();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Ledger_write_failure_during_delete_reports_a_lower_bound(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/c.dll", "zz");
+        RequireClean(m.Path);
+        var id = Guid.NewGuid();
+        var ledger = s.Root + "/ledger";
+        var engine = s.Engine();
+        engine.OutputDropLedgerRoot = ledger;
+        var checkpoints = 0;
+        engine.BeforeLedgerWrite = (phase, temp) =>
+        {
+            if (phase != "checkpoint" || ++checkpoints != 1)
+                return;
+            Directory.CreateDirectory(temp);
+        };
+        var request = DropRequest(m, requestId: id);
+
+        var thrown = false;
+        try
+        {
+            await engine.DropOutputsAsync(request, ct);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            thrown = true;
+        }
+
+        thrown.ShouldBeTrue();
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.ReadAllText(obj + "/c.dll").ShouldBe("zz");
+        var torn = OutputDropLedger.ReadRecord(ledger, id);
+        torn.ShouldNotBeNull();
+        torn!.Phase.ShouldBe("window");
+        torn.Replay.ShouldBeFalse();
+        torn.Consistent.ShouldBeFalse();
+        torn.BytesFreed.ShouldBe(0);
+        if (Directory.Exists(Path.Combine(ledger, id.ToString("N") + ".json.tmp")))
+            Directory.Delete(Path.Combine(ledger, id.ToString("N") + ".json.tmp"));
+
+        var recovered = await engine.DropOutputsAsync(request, ct);
+        recovered.Bytes.ShouldBe(2, "only the bytes unlinked on the retry are known");
+        recovered.Bytes.ShouldNotBe(8);
+        recovered.BytesAccounting.ShouldBe(WorkspaceOutputDropCodes.PartialUnknown);
+        recovered.Verdict.ShouldBe(WorkspaceOutputDropCodes.DeleteFailed, recovered.Detail);
+        recovered.Reason.ShouldBe(WorkspaceOutputDropCodes.PartialUnknown, recovered.Detail);
+        File.Exists(obj + "/c.dll").ShouldBeFalse();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Dispatcher_releases_the_mutation_lock_between_proof_batches(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        File.WriteAllText(obj + "/a.dll", "abcdef");
+        File.WriteAllText(obj + "/b.dll", "zz");
+        RequireClean(m.Path);
+        var engine = s.Engine();
+        engine.OutputProofBatchSize = 1;
+        var dispatcher = Dispatcher(s, engine, RunnerOutputDropMode.Execute);
+        var released = 0;
+        engine.BetweenOutputBatches = _ =>
+        {
+            dispatcher.MutationLockIsHeld().ShouldBeFalse();
+            released++;
+            return Task.CompletedTask;
+        };
+
+        var response = Read(await dispatcher.DispatchAsync(Frame(m), ct));
+
+        released.ShouldBe(1);
+        response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Dropped, response.Detail);
+        response.Bytes.ShouldBe(8);
+        File.Exists(obj + "/a.dll").ShouldBeFalse();
+        File.Exists(obj + "/b.dll").ShouldBeFalse();
+        dispatcher.MutationLockIsHeld().ShouldBeFalse();
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task File_open_by_another_process_is_kept(CancellationToken ct)
+    {
+        using var s = Create();
+        var m = s.Mirror();
+        Exclude(m.Path, "*.csproj");
+        var obj = m.Path + "/tests/Foo/obj";
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(m.Path + "/tests/Foo/Foo.csproj", "<Project />");
+        var openFile = obj + "/a.dll";
+        File.WriteAllText(openFile, "abcdef");
+        File.WriteAllText(obj + "/z.dll", "other");
+        RequireClean(m.Path);
+        Process? held = null;
+        try
+        {
+            var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("exec 3<\"$1\"; sleep 30");
+            psi.ArgumentList.Add("hold");
+            psi.ArgumentList.Add(openFile);
+            held = Process.Start(psi);
+            held.ShouldNotBeNull();
+            var seen = false;
+            for (var attempt = 0; attempt < 50 && !seen; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var fdDir = "/proc/" + held!.Id.ToString(CultureInfo.InvariantCulture) + "/fd";
+                if (Directory.Exists(fdDir))
+                {
+                    foreach (var fd in Directory.EnumerateFileSystemEntries(fdDir))
+                    {
+                        if (new FileInfo(fd).LinkTarget == openFile)
+                        {
+                            seen = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!seen)
+                    await Task.Delay(20, ct);
+            }
+
+            seen.ShouldBeTrue("the child holds a.dll open");
+            var response = await s.Engine().DropOutputsAsync(DropRequest(m), ct);
+            File.ReadAllText(openFile).ShouldBe("abcdef");
+            File.Exists(obj + "/z.dll").ShouldBeFalse();
+            Directory.Exists(obj).ShouldBeTrue();
+            response.Verdict.ShouldBe(WorkspaceOutputDropCodes.Kept, response.Detail);
+            response.Reason.ShouldBe(WorkspaceOutputDropCodes.PreservedBoundary, response.Detail);
+            response.Bytes.ShouldBe(5);
+        }
+        finally
+        {
+            if (held is { HasExited: false })
+            {
+                held.Kill(entireProcessTree: true);
+                held.WaitForExit(5_000);
+            }
+
+            held?.Dispose();
+        }
+    }
+
     private static PhoneHomeCommandDispatcher Dispatcher(C1677RetentionScratch s, RunnerWorkspaceRetention engine, string mode)
     {
         var settings = new PhoneHomeSettings
@@ -744,6 +1109,11 @@ public sealed class C1895OutputDropEngineTests
 
         public Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
             engine.ApplyOutputsAsync(step, ct);
+
+        public Func<CancellationToken, Task>? OutputDropBatchProbe => engine.BetweenOutputBatches;
+
+        public void SetOutputDropBatchProbe(Func<CancellationToken, Task>? probe) =>
+            engine.BetweenOutputBatches = probe;
 
         public RunnerCapabilitiesDto Capabilities() =>
             new("InboxConhost", "inbox", "test", false,

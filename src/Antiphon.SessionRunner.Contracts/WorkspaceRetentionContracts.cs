@@ -195,6 +195,12 @@ public static class WorkspaceOutputDropCodes
     public const string DeleteFailed = "delete_failed";
     public const string ChangedDuringDrop = "changed_during_drop";
     public const string OutputDropOff = "output_drop_off";
+
+    /// <summary>A nested git repository, foreign device, or unproven entry was left in place.</summary>
+    public const string PreservedBoundary = "preserved_boundary";
+
+    /// <summary><see cref="PhoneHomeWorkspaceOutputDropResponse.Bytes"/> is a lower bound, not an exact total.</summary>
+    public const string PartialUnknown = "partial/unknown";
 }
 
 /// <summary>
@@ -219,4 +225,7 @@ public sealed record PhoneHomeWorkspaceOutputDropResponse(
     IReadOnlyList<WorkspaceOutputDropEntry>? Entries = null,
     string? Detail = null,
     int? FilesRemoved = null,
-    int? FilesLeft = null);
+    int? FilesLeft = null,
+    int? PreservedBoundaries = null,
+    IReadOnlyList<string>? PreservedPaths = null,
+    string? BytesAccounting = null);

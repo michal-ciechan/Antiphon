@@ -66,6 +66,14 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     public Task<PhoneHomeWorkspaceOutputDropResponse> ApplyWorkspaceOutputsAsync(WorkspaceOutputDropStep step, CancellationToken ct) =>
         Retention().ApplyOutputsAsync(step, ct);
 
+    public Func<CancellationToken, Task>? OutputDropBatchProbe => _retention?.BetweenOutputBatches;
+
+    public void SetOutputDropBatchProbe(Func<CancellationToken, Task>? probe)
+    {
+        if (_retention is not null)
+            _retention.BetweenOutputBatches = probe;
+    }
+
     public Task<WorkspaceRetainStep> RetainWorkspaceCheckAndMoveAsync(PhoneHomeWorkspaceRetainRequest request, CancellationToken ct) =>
         Retention().CheckAndMoveAsync(request, ct);
 
