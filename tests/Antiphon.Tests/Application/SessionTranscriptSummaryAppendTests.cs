@@ -69,6 +69,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         await using var hold = new NpgsqlCommand("SELECT 1 FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id FOR UPDATE", blocker, transaction) { CommandTimeout = 10 };
         hold.Parameters.AddWithValue("id", f.SessionId);
         await hold.ExecuteScalarAsync();
+        await db.Database.OpenConnectionAsync();
         await db.Database.ExecuteSqlRawAsync("SET lock_timeout='1s'");
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},1,'AssistantText',{Epoch})");
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(1);
