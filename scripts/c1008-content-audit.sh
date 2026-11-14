@@ -4,7 +4,7 @@
 
 # V2 binds the complete repository/origin request roster and fetched graph.
 c1609_apply_host_proof() {
-    local rel url name file bundle line actual wanted created completed started now n=0 ref
+    local rel url name file bundle line actual wanted created completed started now n=0 ref oid
     local ref_re=$'^[0-9a-f]{40}\trefs/(heads|tags)/[^[:space:]]+$'
     local -a headers=()
     local -A seen=()
@@ -44,8 +44,9 @@ c1609_apply_host_proof() {
     : > "$scratch/origin"; n=0
     while IFS= read -r line || [ -n "$line" ]; do
         n=$((n+1)); [ "$n" -gt 11 ] || continue
-        [[ "$line" =~ $ref_re ]] || fail 128 ' reason=proof-parse'
-        ref="${line#*$'\t'}"; [ -z "${seen[$ref]+x}" ] || fail 128 ' reason=proof-parse'; seen[$ref]=1
+        ref="${line#*$'\t'}"; oid="${line%%$'\t'*}"
+        [[ "$line" =~ $ref_re ]] || c1609_is_origin_salvage_ref "$oid" "$ref" || fail 128 ' reason=proof-parse'
+        [ -z "${seen[$ref]+x}" ] || fail 128 ' reason=proof-parse'; seen[$ref]=1
         case "${line,,}" in *ghp_*|*gho_*|*ghu_*|*ghs_*|*ghr_*|*github_pat_*|*token*|*password*|*secret*) fail 128 ' reason=proof-parse' ;; esac
         printf '%s\n' "$line" >> "$scratch/origin" || fail 128 ' reason=proof-parse'
     done < "$file"
