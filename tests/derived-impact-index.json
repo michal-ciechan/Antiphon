@@ -769,9 +769,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Alarms.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -785,9 +785,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.ChannelOutbound.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -801,9 +801,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Leaks.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -817,9 +817,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Seats.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -833,9 +833,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.Supervision.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -849,9 +849,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.TaskInputs.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -865,9 +865,9 @@
     },
     {
       "path": "server/Application/Services/AttentionService.cs",
-      "classes": 46,
+      "classes": 47,
       "reason": "cap",
-      "owed": 21,
+      "owed": 22,
       "first": [
         "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
@@ -1075,6 +1075,22 @@
       ]
     },
     {
+      "path": "server/Application/Services/SessionMessageQueueService.Abandon.cs",
+      "classes": 150,
+      "reason": "cap",
+      "owed": 125,
+      "first": [
+        "ChannelOutboundRecoveryTests",
+        "MatrixChildReceiptTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "SessionMessageQueueServiceTests",
+        "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
+        "AgentSessionServiceIntegrationTests",
+        "AgentTaskCheckInterpreterTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/SessionMessageQueueService.CheckPublication.cs",
       "classes": 149,
       "reason": "cap",
@@ -1085,9 +1101,9 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskCheckInterpreterTests"
       ]
     },
     {
@@ -1101,9 +1117,9 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskCheckInterpreterTests"
       ]
     },
     {
@@ -1117,9 +1133,9 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskCheckInterpreterTests"
       ]
     },
     {
@@ -1132,10 +1148,10 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests",
-        "AgentTaskSettlementRaceTests"
+        "AgentTaskDispatchBaseGuardTests"
       ]
     },
     {
@@ -1149,9 +1165,9 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskCheckInterpreterTests"
       ]
     },
     {
@@ -1166,8 +1182,8 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
+        "StandingSessionSwitchConcurrencyTests",
+        "AgentSessionServiceIntegrationTests"
       ]
     },
     {
@@ -1181,9 +1197,9 @@
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskCheckInterpreterTests"
       ]
     },
     {
@@ -2000,9 +2016,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Agents/FakeAgentProtocolAdapter.cs",
-      "classes": 96,
+      "classes": 97,
       "reason": "cap",
-      "owed": 71,
+      "owed": 72,
       "first": [
         "AgentSessionBackendTests",
         "CheckNoteDeliveryHandoffTests",
@@ -10504,6 +10520,36 @@
       "classes": [
         "RcBridgeProbePlatformTests",
         "SessionHealthTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/SessionMessageQueueService.Abandon.cs",
+      "classes": [
+        "AgentSessionCancelledTurnTests",
+        "AgentTaskCheckSweepTests",
+        "AgentTaskDeadSessionReconciliationTests",
+        "AgentTaskDeliveryWatchdogTests",
+        "AgentTaskLandNotificationRecoveryTests",
+        "AgentTaskLandPersistenceFailureTests",
+        "AgentTaskMidTurnRefineTests",
+        "AgentTaskReplyIntegrationTests",
+        "AgentTaskReuseEnqueueTests",
+        "ChannelBridgeTests",
+        "CodexStartupDeliveryTests",
+        "DelegationDispatchRecoveryBoundaryTests",
+        "HerdrPaneDisposalApplicationTests",
+        "OutputDistillationApplyRaceTests",
+        "ParkedMessageSweepServiceTests",
+        "PhoneHomeOutageMentionTests",
+        "ReceiptFailureDeliveryTests",
+        "RunnerClaudeFinalLaunchArgvTests",
+        "SessionMessageQueueGrokPtyIntegrationTests",
+        "SessionMessageQueuePtyIntegrationTests",
+        "SessionQueueReceiptPlumbingTests",
+        "SessionTerminationSourcePersistenceTests",
+        "StaleWorkingTranscriptWatchdogTests",
+        "TaskSupervisionReceiptTests",
+        "TranscriptWorkingStateQueryTests"
       ]
     },
     {
