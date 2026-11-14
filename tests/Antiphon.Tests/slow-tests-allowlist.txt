@@ -475,3 +475,9 @@ Antiphon.Tests.Application.SessionStatePinQueryTests
 Antiphon.Tests.Application.RuntimeActionClaimQueryTests
 # CARD-1886: three real Program boots against one isolated PostgreSQL clone; host startup exceeds the five-second tripwire.
 Antiphon.Tests.Infrastructure.PostgresJitPolicyTestsComposition
+
+# CARD-1915: owned PostgreSQL transaction, commit-fault, randomized fold and concurrent-writer witnesses; measured setup exceeds five seconds.
+Antiphon.Tests.Application.SessionTranscriptSummaryAppendTests
+
+# CARD-1915: fresh predecessor database, bounded DDL-lock rollback/retry and safe Down witness; measured setup exceeds five seconds.
+Antiphon.Tests.Application.SessionTranscriptSummaryMigrationTests
