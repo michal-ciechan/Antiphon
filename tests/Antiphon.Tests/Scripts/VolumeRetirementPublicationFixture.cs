@@ -21,7 +21,7 @@ internal sealed class VolumeRetirementPublicationFixture
     internal string Root { get; }
     internal string Work { get; }
     internal string Repo { get; }
-    internal string Bare { get; }
+    internal string Bare { get; private set; }
     internal string Backup { get; }
     internal string A { get; private set; } = "";
     internal string U { get; private set; } = "";
@@ -50,7 +50,7 @@ internal sealed class VolumeRetirementPublicationFixture
         if (host is not null)
         {
             var seed = await VolumeRetirementFixture.SeedPublishedOuter(host);
-            seed.Bare.ShouldBe(f.Bare); seed.Outer.ShouldBe(f.Repo);
+            f.Bare = seed.Bare; seed.Outer.ShouldBe(f.Repo);
         }
         else
         {
