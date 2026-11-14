@@ -791,6 +791,13 @@ public sealed class VolumeRetirementPublicationTests
                 file={{VolumeRetirementPublicationFixture.Q(Path.Combine(root, variant + ".txt"))}}
                 began="$(c1609_monotonic_ms)"
                 line="$(c1609_emit_binding_clock)"
+                if [ -e /proc/self/ns/time ] || [ -L /proc/self/ns/time ]; then
+                    expected_namespace="$(readlink /proc/self/ns/time)"
+                else
+                    [ ! -e /proc/self/ns/time_for_children ] && [ ! -L /proc/self/ns/time_for_children ]
+                    expected_namespace=global
+                fi
+                [[ "$line" == *" namespace=$expected_namespace "* ]]
                 case {{variant}} in
                     boot)
                         value="${line#*boot=}"; value="${value%% *}"

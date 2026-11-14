@@ -447,6 +447,7 @@ c1609_accept_binding_clock() {
     [[ "$line" =~ $record_re ]] || return 1
     boot="${BASH_REMATCH[1]}"; namespace="${BASH_REMATCH[2]}"; started="${BASH_REMATCH[3]}"
     read -r host_boot < /proc/sys/kernel/random/boot_id || return 1
+    [ -d /proc/self/ns ] && [ -r /proc/self/ns ] && [ -x /proc/self/ns ] || return 1
     if [ -e /proc/self/ns/time ] || [ -L /proc/self/ns/time ]; then
         host_namespace="$(readlink /proc/self/ns/time)" || return 1
     elif [ ! -e /proc/self/ns/time_for_children ] && [ ! -L /proc/self/ns/time_for_children ]; then
