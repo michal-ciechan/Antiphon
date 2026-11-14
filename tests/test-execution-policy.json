@@ -1722,7 +1722,10 @@
             "Origin_graph_corpus_seed_1901",
             "Origin_graph_corpus_seed_1902",
             "Origin_graph_corpus_seed_1903",
-            "Origin_graph_corpus_seed_1904"
+            "Origin_graph_corpus_seed_1904",
+            "Salvage_withdrawn_after_staging_refuses_control",
+            "Head_rolled_back_after_staging_refuses_control",
+            "Origin_unreachable_after_staging_refuses_control"
           ],
           "platform": "windows",
           "reason": "Linux-only by construction: full retirement audit requires Bash and POSIX mounts; H1-H3 host writers remain required on both platforms.",

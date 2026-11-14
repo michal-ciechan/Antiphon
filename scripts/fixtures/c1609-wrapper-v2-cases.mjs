@@ -129,6 +129,7 @@ assert.equal(transport.filter(x=>x.caseName==='retire-temp-inventory').length,0,
 assert(fs.readFileSync(root+'/wrapper-inventory-locks','utf8').trim().split('\n').every(x=>x.endsWith(' held')),'every inventory retains FD8');
 const hostCalls=fs.readFileSync(root+'/wrapper-host-git-trace','utf8');
 assert(hostCalls.split('\n').filter(x=>x.includes(' ls-remote ')).length>=4,'initial proof and fresh renewed graph both use the real origin');
+assert(hostCalls.split('\n').filter(x=>x.includes(' fetch ')).length>=2,'the gate fetches a fresh graph even when the advertised refs are unchanged');
 assert(!fs.existsSync(root+'/helper-git-trace'),'helper stays offline');
 assert.notEqual(cp.spawnSync(gitExe,['-C',target,'cat-file','-e',b+'^{commit}'],{env:gitEnv}).status,0,'proof does not populate target');
 

@@ -648,6 +648,48 @@ public sealed class VolumeRetirementPublicationTests
         }
     }
 
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Salvage_withdrawn_after_staging_refuses_control()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var refused = await f.Preview(proof, beforeControl: async () => { await f.Git(f.Bare, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.U)); });
+        Refused(refused, "RecycleGitAuditUnknown");
+        f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
+        f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+    }
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Head_rolled_back_after_staging_refuses_control()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, "refs/heads/published-original");
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var refused = await f.Preview(proof, beforeControl: async () => { await f.Git(f.Bare, "update-ref", "refs/heads/published-original", f.A); });
+        Refused(refused, "RecycleGitAuditUnknown");
+        f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
+        f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+    }
+
+    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Origin_unreachable_after_staging_refuses_control()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var refused = await f.Preview(proof, beforeControl: async () => { Directory.Move(f.Bare, f.Bare + "-unreachable"); await Task.CompletedTask; });
+        Refused(refused, "RecycleGitAuditUnknown");
+        f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
+        f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+    }
+
     private static void Refused((int Exit, string Output) run, string diagnosis)
     {
         run.Exit.ShouldBe(2, run.Output);
