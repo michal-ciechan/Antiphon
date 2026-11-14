@@ -1391,9 +1391,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 420,
+      "classes": 421,
       "reason": "cap",
-      "owed": 395,
+      "owed": 396,
       "first": [
         "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
