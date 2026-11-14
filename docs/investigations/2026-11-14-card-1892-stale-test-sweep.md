@@ -1,5 +1,7 @@
 # CARD-1892 stale test sweep — 2026-11-14
 
+Latest continuation: 2526 executed / 2524 passed / 2 failed / 4 skipped at current master8cec1e74. 1 capped row(s); 22 additional stdout pass observations. Final remaining coverage: 265 classes with no result and 3 partial; see the second-window ledger at the end.
+
 The original bounded phase found four stale-contract families (two supplied, two additional) and separate fixture/native/infrastructure failures. **The caller refinement below adds one stale PhoneHome family, a standing-switch admission defect candidate, and two platform-fixture failures.** **The sweep is incomplete:** 504 Linux project/class candidates were inventoried; 382 have no result, 1 has only partial method coverage, and 4 selected classes have only skips. The commissioned 150-minute limit and failed broker prerequisite leave further execution owed. This report does not establish that the failure list is exhaustive and does not authorize landing.
 
 After the caller-refinement rows at the end of this report: five stale-contract families; 17 distinct failing cases overall; 506 required classes, 380 unobserved and three partial. The full sweep remains incomplete.
@@ -1371,44 +1373,948 @@ Why missed: fixed CARD-1892 checkpoint lists did not select these witnesses. The
 
 No source fixes were made and no live host, Windows run, desktop, Docker volume or restart was touched. The additional suspects are now measured; completing the exhaustive remaining sweep still needs a new time box.
 
---- next stage ---
-next: debug
-handoff: Repair STALE-CONTRACT CARD-1922/CARD-1923/CARD-1924/CARD-1926/CARD-1936; diagnose REAL-DEFECT candidate CARD-1937 (Sent switch admission) and CARD-1938 (Linux ceiling fixture portability), plus the earlier separately filed fixture/native/bootstrap families; continue 380 unobserved and three partial classes in a new time box.
-artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
 
 
-## Second 150-minute coverage window — in progress
+## Second 150-minute coverage window — final results
 
-Caller reopened the task at 2026-11-14 15:28:21 UTC with a hard stop at 17:58:21 UTC. Fresh detached scratch /tmp/task-15406ecc-coverage2 starts at fetched origin/master 8cec1e74e75819ef20756c228add987ce4ae4170; no source changes or merges are applied. The assigned report branch remains fast-forward-only. This window excludes already observed cases, prioritizes the named queue/input/launch/PhoneHome/standing paths, and will append its exact remaining ledger. Prior outcomes and costs remain historical.
+Caller reopened the task at **2026-11-14 15:28:21 UTC**, with a hard stop at **17:58:21 UTC**. This window used a fresh detached scratch checkout at **8cec1e74e75819ef20756c228add987ce4ae4170**, fetched from origin/master at the window start (later than a4975c8e79). No source commits needed carrying forward, so the scratch required neither a merge nor a source cherry-pick. The report branch stayed fast-forward-only. No product or test source was edited. Earlier outcomes and costs above remain historical; no already-observed method was intentionally rerun. Static prior-method overlap audit: zero.
 
-Build completed in 314.209 seconds including gate admission (296-second lease); load 20.36 19.91 20.98 -> 27.35 27.33 24.03. Native Antiphon.Tests binary version 1.0.0+8cec1e74e75819ef20756c228add987ce4ae4170, SHA-256 01b79c9298b8120f17d95aaff6c594783e85c5a1d8fb03ab4a3a3d708c7870d3. Scratch tracked source remains clean. No already-observed case is intentionally selected.
+**This window: 2526 executed, 2524 passed, 2 failed, 4 skipped**, across 54 completed gate attempts. Combined observations across both windows and the refinement: 5025 executed, 4999 passed, 26 failed, 173 skipped. TRX totals exclude 22 explicit pass observations preserved from capped C015 stdout. Combined totals include repeated diagnostic observations; they do not mean unique-case coverage or a green suite.
+
+**Final coverage:** 506 required project/classes (the original504 plus two caller-added ceiling classes), 238 with a full selection represented, 3 partial, **265 with no result**. Full selection includes red and skipped observations and is not a clean qualification. The exact remaining ledger below supersedes the earlier phase's pending lists. The caller's continuation named382 unobserved classes; the preceding targeted refinement had reduced that to380 and added two partial classes before this window started.
+
+Build: exit0, 314.209s including admission; load start `20.36 19.91 20.98 8/4158 16870`, end `27.35 27.33 24.03 4/4250 12281`. Native binary `/tmp/task-15406ecc-coverage2/tests/Antiphon.Tests/bin/Debug/net9.0/Antiphon.Tests.dll`, source version `1.0.0+8cec1e74e75819ef20756c228add987ce4ae4170`, SHA-256 `01b79c9298b8120f17d95aaff6c594783e85c5a1d8fb03ab4a3a3d708c7870d3`. Every run used its native default output and UseAppHost=false under scripts/build-slot.ps1. Scratch tracked-source cleanliness and final branch checks are reported at settlement. This is Debug measurement, not a validated Review/checkpoint receipt or reviewedSourceClean assertion.
+
+Late controlled setup correction: the original /tmp scratch made ReportWorkspace persist under TEMP, which AgentReportStore correctly refuses. A cross-filesystem worktree move was refused; a fresh detached checkout of the identical8cec1e74 commit was created at /work/worktrees/task-15406ecc-coverage2. The failed Set-Location setup attempt ran no build or test. Its successful native rebuild exited0 in 231.724s; load `27.90 24.58 21.96 8/4157 21420` -> `30.26 26.19 23.18 17/4058 23204`. Binary `/work/worktrees/task-15406ecc-coverage2/tests/Antiphon.Tests/bin/Debug/net9.0/Antiphon.Tests.dll`, version `1.0.0+8cec1e74e75819ef20756c228add987ce4ae4170`, SHA-256 `97eed8f69990ff99d8251b5d244c348c53f5357e87b21796129a81bd7528c98e`. Only the exact C544 controlled validation and required once-alone specialist timeout retry ran there; no code, assertion or timeout changed. The original outcomes remain recorded.
+
+### Current-window findings and ownership
+
+| Exact failing test | Classification | Evidence/action | Windows applicability |
+|---|---|---|---|
+| `Antiphon.Tests.Application.VerificationRoundDeliveryTests.C544_ReportRegeneratedFromSnapshot` | REAL-DEFECT (fixture TEMP-root precondition; corrected measurement setup) | CARD-1940; ReportWorkspace derives its claimed persistent Git root from the checkout; the sweep placed that checkout under /tmp. AgentReportStore correctly refuses TEMP roots, so missing-report regeneration never produced frozen rendering. Identical8cec1e74 source rebuilt outside TEMP passed exact validation R008. The initial setup choice caused this observation; no standard-checkout master regression or CARD-1892 Pending/resend expectation is demonstrated. CARD-1904 IO-budget debt is separate. No source fix or production refusal weakening occurred.; row(s) C132 | Portable test, but normal persistent C:\Antiphon rc checkout does not meet the TEMP precondition. A TEMP checkout on Windows can fail. Source boundary b-application-bf589370b5bd3368; live numeric unmapped. |
+| `Antiphon.Tests.Application.WorktreeDefaultCallerTests.SpecialistFactoriesStayOnSeat` | LOAD | no new defect card (once-alone retry passed); C134 timed out in SpecialistTaskRunnerDeadlineTests.UntilAsync waiting five seconds for the specialist task row. Exact method R009 passed alone with the same source and unchanged five-second bound; its explicit TEMP seat directory is independent of checkout placement. No Pending/Sent or resend assertion is involved. No production or test repair applied.; row(s) C134 | Portable test; the same five-second polling bound can fail under Windows host contention. Live numeric chunk unmapped. |
+
+
+**Antiphon.Tests.Application.VerificationRoundDeliveryTests.C544_ReportRegeneratedFromSnapshot** — C132 a1
+
+```text
+ShouldAssertException: TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson)
+    should not be null but was
+
+Additional Info:
+    regenerated: frozen rendering
+at Antiphon.Tests.Application.VerificationRoundDeliveryTests.AssertReceivedOnceAsync(C544DeliveryRig rig, Guid taskId, String row, String[] headerBits, String expectKind, Nullable`1 expectSpill) in /tmp/task-15406ecc-coverage2/tests/Antiphon.Tests/Application/VerificationRoundDeliveryTests.cs:line 1115
+```
+
+ReportWorkspace derives its claimed persistent Git root from the checkout; the sweep placed that checkout under /tmp. AgentReportStore correctly refuses TEMP roots, so missing-report regeneration never produced frozen rendering. Identical8cec1e74 source rebuilt outside TEMP passed exact validation R008. The initial setup choice caused this observation; no standard-checkout master regression or CARD-1892 Pending/resend expectation is demonstrated. CARD-1904 IO-budget debt is separate. No source fix or production refusal weakening occurred.
+
+
+**Antiphon.Tests.Application.WorktreeDefaultCallerTests.SpecialistFactoriesStayOnSeat** — C134 a1
+
+```text
+TaskCanceledException: A task was canceled.
+at Antiphon.Tests.Application.SpecialistTaskRunnerDeadlineTests.UntilAsync(Func`1 condition) in /tmp/task-15406ecc-coverage2/tests/Antiphon.Tests/Application/SpecialistTaskRunnerDeadlineTests.cs:line 180
+```
+
+C134 timed out in SpecialistTaskRunnerDeadlineTests.UntilAsync waiting five seconds for the specialist task row. Exact method R009 passed alone with the same source and unchanged five-second bound; its explicit TEMP seat directory is independent of checkout placement. No Pending/Sent or resend assertion is involved. No production or test repair applied.
+
+### Per-row counts, durations, load and exact selection
+
+| Row | Project | Exit | Executed/passed/failed/skipped | Wall s | Slot wait/held s | /proc/loadavg start | /proc/loadavg end | Exact filter or UID |
+|---|---|---|---|---|---|---|---|
+| C001 a1 | Antiphon.Tests | 8 | 0/0/0/4 | 259.985 | 210/49 | 22.08 25.88 23.67 6/4355 3643 | 24.28 24.94 23.82 8/4226 20760 | `/*/Antiphon.Tests.Application/(GrokRulesCompactionAcceptanceTests*)\|(GrokRulesDispatchAcceptanceTests*)\|(GrokRulesLiveMappedDispatchTests*)/*` |
+| C002 a1 | Antiphon.Tests | 0 | 33/33/0/0 | 106.407 | 45/60 | 21.49 24.31 23.63 5/4332 21779 | 16.80 22.54 23.11 8/4158 9713 | `/*/Antiphon.Tests.Application/AgentControlServiceIntegrationTests/*` |
+| C003 a1 | Antiphon.Tests | 0 | 40/40/0/0 | 230.915 | 120/110 | 16.05 22.09 22.95 4/4260 11902 | 13.43 16.96 20.57 4/4081 11361 | `/*/Antiphon.Tests.Application/(PhoneHomeBackpressureTests*)\|(PhoneHomeCompletedCardTransportTests*)\|(PhoneHomeDeferredKillTests*)\|(PhoneHomeImmediateSendTests*)\|(PhoneHomeLaunchTransportTests*)\|(PhoneHomeMirrorJoinTests*)/*` |
+| C004 a1 | Antiphon.Tests | 0 | 31/31/0/0 | 84.123 | 60/22 | 13.43 16.96 20.57 4/4081 11361 | 33.02 21.38 21.75 12/4129 15940 | `/*/Antiphon.Tests.Agents/(PhoneHomeConnectionTests*)\|(PhoneHomeEpochAgreementTests*)/*` |
+| C005 a1 | Antiphon.Tests | 0 | 7/7/0/0 | 185.757 | 90/93 | 33.02 21.38 21.75 17/4130 15941 | 28.82 25.19 23.19 61/4267 21531 | `/*/Antiphon.Tests.Application/PhoneHomeOutageMentionTests/(C696Red_Mention_before_first_List_is_persisted*)\|(C696Red_Mention_in_reconnect_gap_survives_restart*)\|(Busy_local_and_remote_mentions_wait_for_idle*)\|(Occurrence_replay_is_idempotent_but_identical_new_mentions_are_distinct*)\|(Split_line_and_completed_newline_accept_one_occurrence*)\|(Accepted_mention_keeps_original_target_after_source_ends*)\|(Queued_activity_failure_does_not_duplicate_or_block_recovery*)` |
+| C006 a1 | Antiphon.Tests | 0 | 84/84/0/0 | 165.754 | 60/103 | 28.82 25.19 23.19 61/4267 21531 | 15.72 21.41 22.12 7/4054 14849 | `/*/Antiphon.Tests.Application/(PhoneHomePendingInventoryTests*)\|(PhoneHomeQueuedTurnTests*)\|(PhoneHomeRollingRunnerTests*)\|(PhoneHomeSessionRoutingTests*)\|(PhoneHomeSpillTransportTests*)\|(PhoneHomeStandingLaunchTests*)/*` |
+| C007 a1 | Antiphon.Tests | 0 | 34/34/0/0 | 176.283 | 90/84 | 15.72 21.41 22.12 3/4055 14853 | 26.39 20.54 21.44 19/4097 27904 | `/*/Antiphon.Tests.Application/(PhoneHomeStrandedQueueTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` |
+| C008 a1 | Antiphon.Tests | 0 | 107/107/0/0 | 275.465 | 105/167 | 26.39 20.54 21.44 11/4097 27904 | 16.40 19.63 21.02 9/3972 23657 | `/*/Antiphon.Tests.Application/(StandingBootAttentionTests*)\|(StandingBootDocumentationTests*)\|(StandingBootQueueWitnessTests*)\|(StandingBootStatementBudgetTests*)\|(StandingContinuityAttentionTests*)\|(StandingRestartEscalationTests*)/*` |
+| C009 a1 | Antiphon.Tests | 0 | 66/66/0/0 | 142.633 | 60/80 | 16.40 19.63 21.02 16/3978 23657 | 12.81 17.01 19.85 11/4084 11032 | `/*/Antiphon.Tests.Application/(StandingResumeReceiptReadinessTests*)\|(StandingSessionQueueSwitchTests*)\|(StandingSessionSelectionTests*)\|(StandingSpecialistSeatTests*)/*` |
+| C010 a1 | Antiphon.Tests | 0 | 22/22/0/0 | 162.113 | 105/55 | 12.81 17.01 19.85 10/4085 11033 | 21.90 19.91 20.57 4/4128 17554 | `/*/Antiphon.Tests.Application/StandingSessionSwitchConcurrencyTests/(Delayed_fresh_enqueue_cannot_launch_over_a_later_resumed_generation*)\|(Obsolete_queued_launch_cannot_overwrite_a_newer_outcome*)\|(Stop_at_launch_boundaries_prevents_obsolete_work_and_allows_later_owned_generation*)\|(Failure_after_reservation_writes_rolls_back_owner_pointer_hold_queue_and_decision*)\|(Concurrent_starts_and_supervisor_reserve_one_generation*)\|(Reservation_rechecks_changes_committed_after_runner_preflight*)\|(Stop_supersedes_launch_before_spawn_and_before_typing*)` |
+| C011 a1 | Antiphon.Tests | 0 | 22/22/0/0 | 82.207 | 0/80 | 21.90 19.91 20.57 5/4128 17554 | 13.07 17.41 19.62 7/3796 11177 | `/*/Antiphon.Tests.Application/(AttentionApiTests*)\|(AttentionFeedNoiseTests*)/*` |
+| C012 a1 | Antiphon.Tests | 0 | 100/100/0/0 | 74.879 | 0/74 | 13.07 17.41 19.62 6/3796 11177 | 9.61 15.28 18.69 4/3895 23628 | `/*/Antiphon.Tests.Application/AttentionServiceTests/(a_task_holding_a_commit_recovery_obligation_older_than_two_minutes_is_an_error_row_with_the_recipe*)\|(a_commit_recovery_obligation_becomes_visible_only_after_two_full_minutes*)\|(a_resolved_commit_recovery_obligation_is_not_listed*)\|(a_failed_task_with_an_open_commit_recovery_obligation_is_not_listed*)\|(a_dead_session_holding_a_commit_recovery_obligation_is_listed_as_the_hold_not_the_death*)\|(commit_recovery_rows_cost_one_events_query_for_the_whole_open_set*)\|(a_historical_standing_incarnation_without_a_current_pointer_is_unowned*)\|(overlapping_session_leaks_have_one_full_feed_row_until_resolved*)\|(census_inspection_includes_every_candidate_beyond_the_feed_preview*)\|(a_running_pool_delegate_with_a_failed_task_older_than_twice_the_grace_is_unreleased*)\|(a_pool_delegate_inside_twice_the_grace_is_not_listed*)\|(a_stopping_session_older_than_five_minutes_is_stop_stuck*)\|(a_pending_remote_kill_remains_visible_without_claiming_an_unknown_session_is_live*)\|(a_live_session_no_agent_names_is_unowned*)\|(a_live_session_an_agent_names_is_not_unowned*)\|(remote_leak_rows_require_confirmed_liveness*)\|(the_last_census_result_is_one_row_per_class_with_candidates*)\|(Outbound_delivery_states_have_truthful_attention*)\|(A_needs_decision_card_is_a_critical_row_whose_evidence_is_the_move_reason*)\|(A_card_reopened_straight_into_needs_decision_is_listed_with_the_reopen_reason*)\|(A_card_reopened_then_moved_within_needs_decision_shows_the_newest_reason_once*)\|(An_unrated_non_operator_Backlog_import_is_a_warning_review_row*)\|(A_human_rating_clears_the_imported_issue_review_row*)\|(An_operator_author_is_not_an_imported_issue_review_row*)\|(a_blocked_task_is_listed_as_needing_an_answer_and_offers_reply*)\|(a_specialist_role_blocked_task_is_not_a_blocked_question*)\|(a_merge_conflict_dates_from_its_conflicted_event_not_from_dispatch*)\|(a_long_report_that_ends_in_a_question_puts_the_question_on_the_row*)\|(a_blocked_question_with_standing_authority_offers_continue_first*)\|(a_cost_ceiling_block_does_not_offer_reply*)\|(a_message_that_spent_its_delivery_attempts_is_listed_for_a_human*)\|(a_parked_message_on_a_channel_bound_agent_reads_critical*)\|(a_pending_message_that_has_attempts_left_is_not_parked*)\|(an_open_task_whose_session_is_dead_is_listed*)\|(a_dispatched_task_whose_session_has_written_nothing_is_listed*)\|(a_deferred_pending_brief_on_a_working_session_is_listed*)\|(a_pending_brief_on_an_idle_session_is_not_brief_undelivered*)\|(a_sent_brief_on_a_working_session_is_not_brief_undelivered*)\|(a_pending_brief_inside_the_delivery_window_is_not_brief_undelivered*)\|(a_succeeded_task_delegation_note_past_grace_is_caller_note_undelivered*)\|(a_check_note_recovers_the_task_from_conversation_key*)\|(a_caller_note_inside_the_delivery_window_is_not_listed*)\|(a_caller_note_at_exact_grace_is_not_listed*)\|(a_sent_caller_note_is_not_listed*)\|(a_canceled_caller_note_is_not_listed*)\|(an_unparseable_check_key_is_not_listed*)\|(a_delegation_note_on_the_delegate_session_is_not_a_caller_note*)\|(a_caller_note_row_disappears_once_sent_or_canceled*)\|(a_cardless_details_start_past_grace_with_no_prompt_is_a_warning*)\|(a_cardless_details_start_is_absent_at_the_two_minute_grace_and_present_just_after*)\|(blank_or_whitespace_details_does_not_raise_cardless_details_no_prompt*)\|(a_non_current_owner_does_not_raise_cardless_details_no_prompt*)\|(a_non_running_session_does_not_raise_cardless_details_no_prompt*)\|(a_card_owned_session_does_not_raise_cardless_details_no_prompt*)\|(a_resumed_session_does_not_raise_cardless_details_no_prompt*)\|(a_herdr_attached_session_does_not_raise_cardless_details_no_prompt*)\|(any_transcript_entry_suppresses_cardless_details_no_prompt*)\|(a_pending_ui_queue_row_suppresses_cardless_details_no_prompt*)\|(a_sent_ui_queue_row_suppresses_cardless_details_no_prompt*)\|(cardless_details_no_prompt_disappears_after_a_transcript_arrives*)\|(a_dispatched_task_still_inside_the_start_grace_is_not_listed*)\|(a_report_that_could_not_be_correlated_lists_its_task_once*)\|(a_dispatched_task_with_a_marked_report_in_the_transcript_is_report_unsettled*)\|(report_unsettled_clears_once_the_task_is_no_longer_open*)\|(a_dead_session_with_a_marked_report_stays_dead_session_not_report_unsettled*)\|(never_started_is_not_report_unsettled*)\|(an_uncorrelated_incident_without_this_tasks_token_is_not_report_unsettled*)\|(An_active_hold_is_an_error_row_and_clears_when_ClearedAt_is_set*)\|(A_manual_hold_row_carries_kind_alias_and_clears_after_DELETE*)\|(A_fallback_hold_row_does_not_call_the_retry_a_provider_reset*)\|(A_legacy_null_auto_detected_hold_keeps_the_no_reset_stated_headline*)\|(a_nudged_idle_task_with_no_token_is_unmarked_waiting*)\|(unmarked_waiting_clears_to_blocked_question_once_the_task_blocks*)` |
+| C013 a1 | Antiphon.Tests | 0 | 68/68/0/0 | 52.251 | 0/51 | 9.61 15.28 18.69 6/3896 23629 | 9.30 14.26 18.16 17/3820 25434 | `/*/Antiphon.Tests.Application/AttentionServiceTests/(a_mid_turn_nudged_task_is_not_unmarked_waiting*)\|(a_dead_session_wins_over_unmarked_waiting*)\|(a_task_far_past_its_estimate_and_idle_at_the_prompt_is_listed*)\|(a_task_far_past_its_estimate_but_still_mid_turn_is_never_listed*)\|(a_working_stalled_task_is_listed_as_progress_stalled*)\|(ProgressStalled_beats_Overdue_and_loses_to_PastExpectedIdle_when_idle*)\|(a_pending_refinement_is_named_on_the_stall_headline*)\|(An_open_boot_reply_incident_on_a_live_session_is_liveness_probe_failed*)\|(C1160_Legacy_boot_row_states_silence_and_no_delivery_verdict*)\|(A_boot_prompt_that_was_answered_after_the_incident_is_no_longer_listed*)\|(A_boot_reply_incident_on_a_dead_session_is_not_listed*)\|(An_open_kind_43_incident_on_a_live_session_is_queued_input_stuck*)\|(A_closed_enqueue_episode_is_not_queued_input_stuck*)\|(A_kind_43_incident_on_a_dead_session_is_not_queued_input_stuck*)\|(a_running_idle_agent_with_a_nine_hour_old_transcript_and_no_task_is_outlived*)\|(a_running_agent_mid_turn_is_not_outlived*)\|(a_running_agent_with_a_one_hour_old_transcript_is_not_outlived*)\|(a_running_idle_agent_with_a_queued_task_is_not_outlived*)\|(a_running_agent_with_zero_transcript_rows_is_not_outlived*)\|(a_stopped_worktree_agent_untouched_for_three_days_is_a_leftover*)\|(a_sole_agent_on_a_same_named_empty_board_idle_three_days_is_a_leftover*)\|(a_sole_agent_on_a_named_board_that_holds_a_card_is_not_outlived*)\|(a_second_agent_sharing_the_empty_board_is_not_outlived*)\|(a_sole_agent_on_an_unrelated_named_empty_board_is_not_outlived*)\|(a_leftover_shape_touched_one_day_ago_is_not_outlived*)\|(an_always_on_live_idle_agent_is_not_outlived*)\|(a_channel_bound_live_idle_agent_is_not_outlived*)\|(a_pool_delegate_live_idle_agent_is_not_outlived*)\|(a_project_root_worker_on_a_live_card_board_is_not_outlived*)\|(a_task_dispatched_under_stall_minutes_does_not_run_the_workspace_probe*)\|(a_task_past_stall_minutes_runs_the_workspace_probe*)\|(the_summary_never_runs_the_workspace_probe*)\|(summary_counts_match_a_full_sweep_for_the_same_rows*)\|(summary_open_drops_recent_failures_and_counts_every_other_row*)\|(a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it*)\|(a_task_only_part_way_through_its_ceiling_is_not_listed_as_overdue*)\|(a_breached_deadline_says_the_sweep_is_about_to_fail_it*)\|(an_idle_task_keeps_the_more_explanatory_past_expected_row*)\|(a_task_whose_check_budget_ran_out_is_listed_as_unwatched*)\|(the_check_interpreters_reading_beats_the_digest_tail_when_one_was_stored*)\|(a_task_that_is_still_being_checked_is_not_listed*)\|(recent_incident_links_the_task_in_its_session_at_incident_time*)\|(recent_error_incidents_collapse_to_one_row_per_agent_and_kind*)\|(a_task_that_failed_today_is_carried_as_context*)\|(a_failure_older_than_the_recency_window_is_not_carried*)\|(a_never_dispatched_failure_still_armed_is_FailureUnacknowledged*)\|(an_orchestrator_investigation_incident_is_a_warning_process_row*)\|(an_orchestrator_workspace_incident_is_a_warning_process_row*)\|(once_disarmed_it_is_a_RecentFailure*)\|(a_misfire_is_a_warning_row_until_the_next_good_fire*)\|(a_session_the_database_wrote_off_but_the_runner_still_runs_is_listed*)\|(a_runner_session_with_no_database_row_is_listed_as_unclaimed*)\|(a_disagreement_says_the_dead_session_rows_above_it_are_wrong*)\|(a_session_both_sides_agree_is_running_is_not_a_disagreement*)\|(a_runner_session_that_has_exited_is_not_a_disagreement*)\|(a_runner_that_cannot_answer_omits_the_disagreement_rather_than_reporting_none*)\|(a_runner_that_cannot_answer_degrades_instead_of_throwing*)\|(a_runner_that_answers_is_recorded_as_consulted*)\|(rows_are_ranked_by_severity_and_then_oldest_first*)\|(A_card_in_progress_past_the_threshold_with_nobody_on_it_is_a_warning_row*)\|(A_stale_card_that_never_had_a_task_says_so*)\|(A_card_with_an_open_bound_task_is_not_stale*)\|(A_card_with_a_live_session_is_not_stale*)\|(A_card_owned_by_a_card_session_is_not_stale*)\|(A_card_under_the_threshold_is_not_stale*)\|(A_stale_card_with_no_history_dates_itself_from_started_at*)\|(A_card_in_review_is_never_stale*)` |
+| C014 a1 | Antiphon.Tests | 0 | 84/84/0/0 | 108.815 | 0/107 | 9.30 14.26 18.16 10/3813 25435 | 11.87 13.63 17.49 3/3838 14439 | `/*/Antiphon.Tests.Application/(ChannelOutboundTrailingRecoveryTests*)\|(ChannelOutboundCaptureTests*)\|(ChannelOutboundDeadlineTests*)\|(ChannelOutboundDeliveryTests*)\|(ChannelOutboundFailureRecordingTests*)\|(ChannelOutboundMaterializationTests*)/*` |
+| C015 a1 | Antiphon.Tests | 137 TIMEBOX/CAP | NO TRX — no counts claimed | 591.704 | n/a/n/a | 11.87 13.63 17.49 4/3839 14440 | 31.84 19.26 18.54 8/4137 9772 | `/*/Antiphon.Tests.Application/(ChannelOutboundMetadataRepairTests*)\|(ChannelOutboundRecoveryTests*)/*` |
+| C016 a1 | Antiphon.Tests | 0 | 45/45/0/0 | 64.832 | 0/62 | 31.84 19.26 18.54 24/4137 9772 | 24.33 19.53 18.69 14/3997 31393 | `/*/Antiphon.Tests.Application/AgentTaskLandApprovalRecoveryTests/(C488_StandingJournalBlocksSourceAdvance*)\|(C488_UncertainSourceChildRetained*)\|(C488_ObservedCommitGatesAdvance*)\|(C488_ResolvedCommitGatesOperation*)\|(C488_OperationCommitGatesPreparation*)\|(C488_SourceFailureStopsTarget*)\|(C488_CleanLRetriesSavedAdvance*)\|(C488_CleanEAcknowledgesIntent*)\|(C488_UnrecordedFastForwardRefuses*)\|(C488_ThirdShaRecoveryRefuses*)\|(C488_RecoveryDestinationImmutable*)\|(C488_OriginalApprovalNeverAdoptsHead*)\|(C488_PreparationInputIsWitnessedP*)\|(C488_OriginalPinMatchesApproval*)\|(C488_PreparedPinMatchesPayload*)\|(C488_AutomaticReplacementRefuses*)\|(C488_TargetIntentPreventsReplacement*)\|(C488_ReplacementFailureKeepsPredecessor*)\|(C488_ConflictSupersessionAtomic*)\|(C488_VerifiedResumeKeepsOriginalApproval*)\|(C488_ChangedSourceNeedsNewApproval*)\|(C488_DerivationRetryIsExplicit*)\|(C488_DerivationOriginalMatches*)\|(C488_DerivationRequiresWitnessedRebase*)\|(C488_DerivationRequiresExactCurrentP*)\|(C488_DerivationAncestryUsesOriginal*)\|(C488_DerivationLineagePersists*)\|(C488_DerivationNeverSourceFastForwards*)\|(C488_DerivationAlwaysReverifies*)\|(C488_LegacyAutomaticMutationRefuses*)\|(C488_LegacyQueuedApprovalRequired*)\|(C488_LegacyUnpublishedRecoveryRefusesMovedRemote*)\|(C494_ServiceLegacyGuardStopsBeforeResolution*)\|(C494_ProtocolSnapshotGuardIsIndependent*)\|(C494_ServiceResumeRequiresCompleteSnapshot*)\|(C494_CompleteSnapshotResumesSameOperation*)\|(C488_VerifiedRetryRequiresSourceResolution*)\|(C488_LegacyPublishedCleanupWorks*)\|(C488_LegacyLateBindingOriginalExact*)\|(C488_LegacyLateBindingIdentityValid*)\|(C488_LegacyLateBindingIsOneTime*)\|(C488_LegacyLateBindingNeverFastForwardsP*)` |
+| C015r01 a1 | Antiphon.Tests | 0 | 1/1/0/0 | 143.077 | 0/139 | 38.81 24.74 20.57 102/4327 12733 | 31.43 26.83 21.91 4/4058 11202 | `--filter-uid Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).5.1.0` |
+| C015r02 a1 | Antiphon.Tests | 0 | 1/1/0/0 | 44.747 | 0/44 | 31.43 26.83 21.91 4/4066 11223 | 38.33 29.10 22.90 4/4087 13111 | `--filter-uid Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Expired_publishing_lease_is_uncertain_until_explicit_retry.1.1.0` |
+| C017 a1 | Antiphon.Tests | 0 | 49/49/0/0 | 78.256 | 0/77 | 26.86 27.26 22.49 4/4050 14326 | 26.37 26.71 22.64 4/4017 17433 | `/*/Antiphon.Tests.Application/AgentTaskLandApprovalRecoveryTests/(C488_ResumeRequestOperationLinkMatches*)\|(C488_OriginalRequestProvenanceRetained*)\|(C488_PublishedPayloadSurvivesSourceMovement*)\|(C488_RecoveryPushUsesSavedPayload*)\|(C494_PushIntentWithoutContainmentRechecksRemoteSource*)\|(C494_PushIntentWithoutContainmentRechecksLocalSource*)\|(C494_UnreadablePushIntentTargetStaysUnconfirmed*)\|(C494_ContainedPushIntentChecksIdentityBeforeObservation*)\|(C494_FreshVerifiedDoesNotUseHistoricalPublicationShortcut*)\|(C488_InterruptedRebaseEvidenceRetained*)\|(C488_PublicationNeedsTargetContainment*)\|(C488_CleanupNeedsVerifiedReceipt*)\|(C494_GuardsAreScopedToTheirOwnOperation*)\|(C494_Schema3CheckpointCutsPreserveApproval*)\|(C494_LegacyPreparedRefusesThenFreshApprovalRepairs*)\|(C488_CleanupRetainsMovedSource*)\|(C488_CleanupRetainsUnknownContent*)\|(C488_NotificationFailureCannotUndoPublication*)\|(C488_SourceCheckpointCrashMatrix*)\|(C488_SourceAdvanceWorkerDeathMatrix*)\|(C488_SourceAdvanceResumeMatrix*)\|(C488_ReplacementAndSupersessionMatrix*)\|(C488_RebasedInputLineageMatrix*)\|(C488_VerifiedResumeMatrix*)\|(C488_LegacyRecoveryMatrix*)\|(C488_PublicationReconciliationMatrix*)` |
+| C018 a1 | Antiphon.Tests | 0 | 154/154/0/0 | 92.151 | 0/91 | 26.37 26.71 22.64 5/4017 17436 | 11.83 21.69 21.25 5/3856 18816 | `/*/Antiphon.Tests.Application/(AbsentLaunchPolicyTests*)\|(AgentSystemPromptLaunchTests*)\|(DelegateBundleLaunchTests*)\|(DesktopLaunchMemoryAdmissionTests*)\|(PinnedCodexProfileDispatchLaunchTests*)\|(PinnedProfileLaunchSpecTests*)/*` |
+| C019 a1 | Antiphon.Tests | 0 | 195/195/0/0 | 175.134 | 0/173 | 11.83 21.69 21.25 8/3855 18847 | 10.88 16.66 19.35 10/3796 1979 | `/*/Antiphon.Tests.Application/(AgentTaskDeliveryWatchdogTests*)\|(ExpectationWatchdogScenarioTests*)\|(QueuedInputWatchdogTests*)\|(StaleWorkingTranscriptWatchdogTests*)\|(StandingBootWatchdogTests*)\|(WatchdogServiceTests*)/*` |
+| C020 a1 | Antiphon.Tests | 0 | 120/120/0/0 | 103.989 | 0/102 | 10.88 16.66 19.35 4/3796 1983 | 11.14 15.03 18.48 4/3830 5194 | `/*/Antiphon.Tests.Application/(AgentTaskInputFallbackTests*)\|(ChannelInputWithheldIncidentTests*)\|(SpecialistInputTransportTests*)\|(TaskInputAttentionCostTests*)\|(TaskInputReadFailureTests*)\|(TaskInputWeakArmBoundaryTests*)/*` |
+| C021 a1 | Antiphon.Tests | 0 | 49/49/0/0 | 195.435 | 0/194 | 11.14 15.03 18.48 4/3831 5195 | 8.62 11.83 16.53 7/3860 19401 | `/*/Antiphon.Tests.Application/AgentTaskLandNotificationRecoveryTests/*` |
+| C022 a1 | Antiphon.Tests | 0 | 9/9/0/0 | 38.144 | 0/37 | 8.62 11.83 16.53 7/3860 19401 | 8.00 11.29 16.18 7/3934 1077 | `/*/Antiphon.Tests.Application/AgentTaskRefineTests/*` |
+| C023 a1 | Antiphon.Tests | 0 | 11/11/0/0 | 11.289 | 0/9 | 8.00 11.29 16.18 10/3935 1078 | 7.51 11.02 16.01 3/3830 15378 | `/*/Antiphon.Tests.Checkpoints/CheckpointLaunchCleanupTests/*` |
+| C024 a1 | Antiphon.Tests | 0 | 18/18/0/0 | 62.48 | 0/61 | 7.51 11.02 16.01 3/3831 15384 | 11.85 11.90 16.01 5/3865 2241 | `/*/Antiphon.Tests.Application/(ClaudeCredentialProbeDispatcherTests*)\|(ClaudeDialogDeliveryTests*)\|(ClaudeEffortByRoleDispatchTests*)/*` |
+| C025 a1 | Antiphon.Tests | 0 | 4/4/0/0 | 110.623 | 0/109 | 11.85 11.90 16.01 5/3865 2241 | 6.56 9.91 14.83 6/3868 10346 | `/*/Antiphon.Tests.Application/CodexCliObservationTests/(C959_Ladder_and_exact_models_share_floor*)\|(C959_Launcher_descriptors_are_observations*)\|(C959_Compatible_launch_keeps_model_and_runner*)\|(C959_Retry_and_cancellation_recheck*)` |
+| C026 a1 | Antiphon.Tests | 0 | 4/4/0/0 | 317.202 | 0/315 | 6.56 9.91 14.83 7/3867 10348 | 11.19 9.92 13.28 5/3707 3366 | `/*/Antiphon.Tests.Application/CodexCliObservationTests/(C959_Probe_failure_never_refuses*)\|(C959_Stale_sample_never_refuses*)\|(C959_Unknown_version_never_refuses*)\|(C959_Old_version_with_floor_never_refuses*)` |
+| C027 a1 | Antiphon.Tests | 0 | 85/85/0/0 | 141.663 | 0/140 | 11.19 9.92 13.28 6/3707 3366 | 9.48 10.00 12.86 6/3771 28500 | `/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)\|(CodexStartupDeliveryTests*)/*` |
+| C028 a1 | Antiphon.Tests | 0 | 7/7/0/0 | 35.483 | 0/35 | 9.48 10.00 12.86 8/3773 28503 | 8.25 9.65 12.64 5/3711 10236 | `/*/Antiphon.Tests.Infrastructure/ExpectationWatchdogJobTests/*` |
+| C029 a1 | Antiphon.Tests | 0 | 49/49/0/0 | 57.285 | 0/56 | 8.25 9.65 12.64 5/3711 10236 | 9.04 9.53 12.42 7/3791 21568 | `/*/Antiphon.Tests.Application/(GrokCredentialProbeDispatcherTests*)\|(GrokDelegateDispatchTests*)\|(GrokNativeSessionResumeTests*)\|(GrokStartupReadyOrderingTests*)/*` |
+| C030 a1 | Antiphon.Tests | 0 | 33/33/0/0 | 53.451 | 0/52 | 9.04 9.53 12.42 6/3791 21569 | 15.21 11.19 12.82 6/4009 12234 | `/*/Antiphon.Tests.ApiKeys/LaunchEnvLayersIntegrationTests/*` |
+| C031 a1 | Antiphon.Tests | 0 | 8/8/0/0 | 132.063 | 75/56 | 15.21 11.19 12.82 5/4010 12235 | 32.93 21.01 16.28 17/4170 17587 | `/*/Antiphon.Tests.Application/(RunnerClaudeFinalLaunchArgvTests*)\|(TaskLaunchTokenBoundaryTests*)\|(UnixDelegateLaunchArgvTests*)/*` |
+| C084 a1 | Antiphon.Tests | 0 | 46/46/0/0 | 97.605 | 30/63 | 43.78 25.32 17.91 12/4370 18670 | 38.80 29.35 20.12 19/4195 22484 | `/*/Antiphon.Tests.Application/DelegationDispatchRecoveryBoundaryTests/(C1161_Dead_session_grace_is_monotonic*)\|(C1161_Owner_names_the_monotonic_grace*)\|(C1150_Pre_input_refusal_keeps_the_resume_failure_path*)\|(C1150_Pre_input_refusal_keeps_the_resume_failure_path_for_a_local_command*)\|(C1150_Pre_input_refusal_keeps_the_resume_failure_path_for_a_transport_refusal*)` |
+| C064 a1 | Antiphon.Tests | 0 | 96/96/0/0 | 187.704 | 0/185 | 38.80 29.35 20.12 10/4194 22485 | 28.07 30.71 22.60 35/3868 8712 | `/*/Antiphon.Tests.Application/(CapacityAdmissionLifecycleTests*)\|(CapacityObsoleteQueueTests*)\|(CapacityRecoveryAttentionTests*)\|(CapacityRecoveryTaskTests*)/*` |
+| C054 a1 | Antiphon.Tests | 0 | 217/217/0/0 | 186.753 | 0/184 | 28.07 30.71 22.60 6/3874 8721 | 7.94 19.96 19.87 18/3879 12321 | `/*/Antiphon.Tests.Application/AgentTaskReplyIntegrationTests/(C527_equals_separator_delivers_exact_parent_receipt*)\|(C527_successful_empty_history_preserves_recovery_until_parent_receipt*)\|(C527_retry_prerequisite_failure_preserves_commit_until_complete_parent_receipt*)\|(C527_post_commit_inspection_failure_defers_settlement_until_complete_receipt*)\|(C527_policy_flip_after_commit_save_failure_recovers_exact_parent_receipt*)\|(C527_lost_history_and_repository_preserve_durable_recovery_until_parent_receipt*)\|(C527_recovery_obligation_save_failure_prevents_git_mutation*)\|(C527_literal_footprint_reaches_complete_parent_receipt_without_matching_neighbor*)\|(C527_branch_movement_after_failed_save_recovers_original_parent_receipt*)\|(C527_all_selected_reverted_delivers_no_op_without_Commit_child*)\|(C527_child_audit_distinguishes_ignore_exceptions_in_complete_parent_receipt*)\|(C527_repeated_report_selects_this_settlements_notification*)\|(C527_unavailable_child_audit_is_reported_to_parent*)\|(C527_completion_outbox_recovers_complete_receipt*)\|(C527_partial_or_incidental_task_commit_does_not_hide_dirty_work*)\|(C527_recovered_settlement_reports_new_dirty_work_without_committing_it*)\|(C527_spawned_child_audit_compares_independent_upstream_baselines*)\|(C527_obligation_free_history_search_failure_settles_once_with_an_uncommitted_note*)\|(C527_obligation_free_history_search_failure_on_a_clean_tree_still_reports_landed*)\|(C527_obligation_free_repository_inspection_failure_settles_once*)\|(C527_obligation_free_search_and_status_failure_refuses_the_commit_once*)\|(C527_resolved_no_commit_obligation_survives_a_failed_search_on_the_rehand*)\|(C527_a_worktree_settle_with_a_pending_gated_receipt_still_reports_merged*)\|(C527_selected_revert_delivers_exact_parent_receipt*)\|(C527_tier1_commits_the_transcript_footprint_and_delivers_committed_to_the_parent*)\|(C527_residual_dirty_path_outside_the_footprint_is_left_and_named*)\|(C527_report_named_path_is_footprint_when_the_transcript_is_empty*)\|(C527_notebook_path_edits_count_as_footprint*)\|(C527_unattributable_dirty_tree_spawns_a_commit_child_routed_by_the_card_pin*)\|(C527_commit_child_falls_back_to_role_policy_with_a_warning_when_no_pin_service*)\|(C527_NoCommit_task_leaves_the_tree_with_the_no_commit_header*)\|(C527_project_off_inherited_skips_with_todays_warning*)\|(C527_task_Always_beats_project_off*)\|(C527_Agent_policy_skips_tier1_and_spawns_the_child*)\|(C527_global_off_with_project_null_skips*)\|(C527_deleted_gitignore_refuses_spawns_the_child_and_warns*)\|(C527_held_lease_is_RepositoryBusy_and_spawns_the_child*)\|(C527_hook_failure_is_CommitFailed_and_the_child_brief_carries_stderr*)\|(C527_commit_child_audit_flags_an_ignored_path_committed_outside_the_gate*)\|(C527_commit_child_audit_flags_a_commit_without_the_gate_trailer*)\|(C527_commit_child_audit_flags_upstream_movement*)\|(C527_task_cap_leaves_the_header_and_warning*)\|(C527_gate_refusal_with_no_child_possible_renders_commit_refused*)\|(C527_tracked_then_ignored_path_refuses_the_whole_footprint*)\|(C527_foreign_staged_path_survives_tier1_untouched*)\|(C527_busy_parent_receives_the_committed_note_on_its_turn_end*)\|(C527_settle_save_failure_after_the_commit_recovers_without_a_second_commit*)\|(C527_ineligible_tasks_never_run_the_hook*)\|(C527_edits_before_dispatch_are_not_in_the_footprint*)\|(C527_more_than_twenty_dirty_paths_are_all_attributed_from_the_transcript*)\|(C544_shared_commit_on_settle_mints_one_task_completion*)\|(C547_commit_child_audit_accepts_a_gated_commit_under_each_separator*)\|(C547_commit_child_audit_flags_a_body_prose_mention_without_a_trailer_block*)\|(C547_commit_child_audit_read_failure_is_unavailable_not_outside_the_gate*)\|(C547_overdue_sweep_past_the_hold_abandons_the_obligation_and_the_parent_hears_it*)\|(C547_overdue_sweep_holds_a_settled_gated_commit_until_the_rehand_records_it*)\|(C547_CommitFailed_after_a_verified_empty_search_resolves_and_a_later_settle_proceeds*)\|(C547_CommitFailed_with_a_failed_history_search_leaves_the_obligation_pending*)\|(C547_an_unresolved_obligation_from_another_digest_does_not_hold_this_settlement*)\|(C547_an_abandoned_obligation_is_invisible_to_a_later_same_digest_settlement*)\|(C714_Grok_batched_replay_uses_report_response*)\|(C714_Claude_ack_after_report_uses_report_response*)\|(C714_Claude_notification_final_report_still_settles*)\|(C714_Codex_final_answer_uses_turn_id*)\|(C714_Parent_receives_selected_report_once*)\|(C714_Grok_repeated_housekeeping_is_skipped*)\|(C714_Grok_rules_then_only_completion_cannot_settle*)\|(C714_Genuine_unmarked_turn_is_barrier*)\|(C714_Grok_unmarked_prompt_before_reminder_is_barrier*)\|(C714_Grok_unmarked_queued_prompt_before_reminder_is_barrier*)\|(C714_Claude_unmarked_prompt_before_notification_is_barrier*)\|(C714_Claude_auto_compaction_continuation_settles*)\|(C714_Codex_unmarked_user_turn_is_barrier*)\|(C714_Current_report_is_chosen_after_old_task_history*)\|(C714_Predispatch_current_marker_is_rejected*)\|(C714_Old_task_marker_is_never_current*)\|(C714_Reply_watermark_prevents_stale_report*)\|(C714_Grok_selected_report_waits_for_own_text*)\|(C714_Late_report_text_after_reminder_keeps_own_api_id*)\|(C714_Selected_error_or_cancel_does_not_fall_back*)\|(C1499_a_release_the_runner_answers_exited_then_not_found_is_a_normal_release*)\|(C1499_a_release_that_is_not_confirmed_still_records_the_Error*)\|(C1706_a_reply_merge_conflict_in_eighty_long_names_writes_a_bounded_conflicted_detail*)\|(C1706_a_reply_merge_conflict_at_the_task_cap_writes_a_bounded_cap_header*)\|(C1710_a_read_only_report_naming_a_directory_of_long_unicode_names_writes_a_bounded_valid_warning*)\|(C788_NoChangeFutureDispatchCleansUp*)\|(Internal_conversion_settles_with_usage_but_without_sources_or_follow_up*)\|(Deferred_is_durable_and_releases_runtime*)\|(a_failed_api_error_task_names_session_liveness*)\|(releasing_a_shared_task_whose_session_is_mid_turn_pools_it_and_warns*)\|(a_transient_stub_with_a_later_prompt_does_not_fail_the_task*)\|(a_transient_stub_with_a_later_queued_prompt_does_not_fail_the_task*)\|(a_needs_human_stub_with_a_later_prompt_does_not_fail_the_task*)\|(the_skip_arm_records_the_death_once_on_the_timeline*)\|(a_housekeeping_record_after_the_stub_is_not_a_resume*)\|(the_resumed_turns_marked_report_settles_the_task*)\|(a_second_stub_on_the_resumed_turn_defers_on_its_own_row*)\|(an_unmarked_resumed_turn_is_still_uncorrelated*)\|(Phone_parent_preserves_worker_table_and_stage_handoff*)\|(Phone_note_waits_for_a_busy_parent_and_lands_on_its_turn_end*)\|(Phone_note_survives_a_failed_delivery_and_is_redelivered_exactly_once*)\|(Grok_rules_refresh_with_task_marker_neither_settles_nor_nudges*)\|(a_marked_turn_settles_the_task_and_stores_the_report_verbatim*)\|(an_unmarked_turn_leaves_the_task_running*)\|(another_tasks_marker_does_not_settle_this_task*)\|(a_cancelled_turn_end_does_not_settle_the_task_and_says_so*)\|(a_prior_internal_continue_does_not_make_a_cancelled_turn_a_report*)\|(the_interrupted_warning_is_written_once_per_boundary*)\|(the_next_end_turn_after_a_cancel_settles_normally*)\|(an_end_turn_without_the_closing_line_is_nudged_once_not_settled*)\|(a_prior_internal_continue_does_not_turn_unmarked_narration_into_completion*)\|(a_narrow_policy_does_not_infer_design_approval_from_report_prose*)\|(the_first_unmarked_end_notifies_the_parent_as_well_as_nudging_the_child*)\|(the_waiting_note_names_authority_only_when_it_is_set*)\|(block_unmarked_waiting_then_answer_resumes_the_same_session*)\|(unmarked_waiting_answer_then_unmarked_turns_settle_with_the_new_report*)\|(the_nudged_delegates_marked_reply_settles_with_marked_evidence*)\|(a_second_unmarked_end_turn_settles_as_unmarked_after_nudge*)\|(a_specialist_role_task_is_never_nudged*)\|(a_specialist_role_looks_stuck_blocked_token_settles_succeeded_exempt*)\|(a_specialist_role_trailing_question_settles_succeeded_exempt*)\|(a_specialist_role_failed_token_still_fails_the_task*)` |
+| C104 a1 | Antiphon.Tests | 0 | 17/17/0/0 | 81.624 | 0/80 | 7.94 19.96 19.87 6/3891 12323 | 34.78 24.97 21.59 2/4022 15921 | `/*/Antiphon.Tests.Application/(PendingNoteWithholdTests*)\|(PendingSettlementDeliveryTests*)/*` |
+| C067 a1 | Antiphon.Tests | 0 | 95/95/0/0 | 233.681 | 0/232 | 34.78 24.97 21.59 2/4023 15922 | 9.93 17.46 19.32 6/3805 4092 | `/*/Antiphon.Tests.Application/(ChannelBridgeTests*)\|(ChannelInboundRecoveryTests*)\|(ChannelIngressIncidentTests*)/*` |
+| C090 a1 | Antiphon.Tests | 0 | 68/68/0/0 | 303.159 | 0/301 | 9.93 17.46 19.32 7/3805 4092 | 7.26 15.49 18.37 2/3570 26581 | `/*/Antiphon.Tests.Application/(DispatchBaseNotificationTests*)\|(DispatchHeldAttentionTests*)/*` |
+| C115 a1 | Antiphon.Tests | 0 | 21/21/0/0 | 56.774 | 0/55 | 7.26 15.49 18.37 3/3571 26582 | 5.97 13.68 17.58 2/3482 27690 | `/*/Antiphon.Tests.Application/ReceiptFailureDeliveryTests/*` |
+| C121 a1 | Antiphon.Tests | 0 | 69/69/0/0 | 78.687 | 0/77 | 5.97 13.68 17.58 4/3482 27690 | 5.89 11.89 16.63 7/3612 3061 | `/*/Antiphon.Tests.Application/(RoutingExhaustedPlacementTests*)\|(RoutingPinCandidateDispatchTests*)\|(RoutingPinDispatcherTests*)/*` |
+| C034 a1 | Antiphon.Tests | 0 | 170/170/0/0 | 140.476 | 0/139 | 5.89 11.89 16.63 3/3612 3062 | 7.50 9.64 15.08 13/3920 1312 | `/*/Antiphon.Tests.Application/(AgentTaskCheckInterpreterTests*)\|(AgentTaskCheckScheduleTests*)\|(AgentTaskCheckSweepTests*)\|(AgentTaskCommitEndpointTests*)\|(AgentTaskDeadSessionReconciliationTests*)\|(AgentTaskDispatchFailureTests*)/*` |
+| C068 a1 | Antiphon.Tests | 0 | 47/47/0/0 | 282.33 | 0/279 | 7.50 9.64 15.08 11/3919 1313 | 26.09 23.40 19.95 6/3807 2140 | `/*/Antiphon.Tests.Application/(CheckCompactionAttentionTests*)\|(CheckCompactionReceiptTests*)\|(CheckNoteDeliveryHandoffTests*)/*` |
+| C075 a1 | Antiphon.Tests | 0 | 15/15/0/0 | 63.375 | 0/62 | 26.09 23.40 19.95 9/3808 2141 | 19.60 21.87 19.65 10/3993 27009 | `/*/Antiphon.Tests.Application/(DelegationBriefRecoveryTests*)\|(DelegationScopeHoldTests*)/*` |
+| C114 a1 | Antiphon.Tests | 0 | 4/4/0/0 | 66.868 | 0/66 | 19.60 21.87 19.65 15/3994 27017 | 20.90 21.94 19.83 9/4031 11024 | `/*/Antiphon.Tests.Application/ReadyGateFailureNoticeDeliveryTests/*` |
+| C120 a1 | Antiphon.Tests | 0 | 8/8/0/0 | 94.893 | 30/62 | 20.90 21.94 19.83 19/4032 11025 | 15.91 20.04 19.36 34/4032 20757 | `/*/Antiphon.Tests.Application/RolePolicyToolBundleDispatchTests/*` |
+| C132 a1 | Antiphon.Tests | 2 | 21/20/1/0 | 249.182 | 0/246 | 15.91 20.04 19.36 35/4034 20759 | 14.41 19.04 19.23 5/3881 12242 | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/*` |
+| C069 a1 | Antiphon.Tests | 0 | 5/5/0/0 | 51.026 | 0/49 | 14.41 19.04 19.23 3/3883 12244 | 10.37 17.17 18.58 2/3629 13850 | `/*/Antiphon.Tests.Application/ClosingReportNudgeLifecycleTests/*` |
+| C099 a1 | Antiphon.Tests | 0 | 4/4/0/0 | 62.612 | 0/61 | 10.37 17.17 18.58 2/3629 13850 | 15.41 16.85 18.34 24/3953 6536 | `/*/Antiphon.Tests.Application/MatrixChildReceiptTests/*` |
+| C105 a1 | Antiphon.Tests | 0 | 12/12/0/0 | 84.886 | 0/82 | 15.41 16.85 18.34 13/3953 6536 | 28.99 21.55 19.92 7/4284 11303 | `/*/Antiphon.Tests.Application/PermissionWaitTests/*` |
+| C134 a1 | Antiphon.Tests | 2 | 62/61/1/0 | 132.886 | 15/116 | 28.99 21.55 19.92 8/4285 11304 | 33.37 25.51 21.56 18/4203 17368 | `/*/Antiphon.Tests.Application/(WorktreeDefaultCallerTests*)\|(WorktreeRetirementRaceTests*)/*` |
+| C074 a1 | Antiphon.Tests | 0 | 7/7/0/0 | 173.313 | 30/141 | 33.37 25.51 21.56 19/4204 17369 | 24.96 24.28 21.71 11/4143 28994 | `/*/Antiphon.Tests.Application/DelegateBranchDeliveryTests/*` |
+| R008 a1 | Antiphon.Tests | 0 | 1/1/0/0 | 101.707 | 45/54 | 22.46 24.50 22.81 30/4150 26187 | 18.64 23.64 22.75 10/3962 26423 | `/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C544_ReportRegeneratedFromSnapshot` |
+| R009 a1 | Antiphon.Tests | 0 | 1/1/0/0 | 89.008 | 15/73 | 18.64 23.64 22.75 14/3961 26438 | 23.30 23.06 22.57 21/4085 17305 | `/*/Antiphon.Tests.Application/WorktreeDefaultCallerTests/SpecialistFactoriesStayOnSeat` |
+
+### C015 execution cap and preserved partial observations
+
+The combined channel row exceeded its selection estimate and was stopped at the unchanged590-second execution cap (exit137;591.704s wall). No finalized TRX exists and no failing assertion was emitted. Detailed stdout records22 completed passes, with canonical ANTIPHON_TEST_PHASE_ID identifiers. Both selected source files have no diff from the committed discovery-fixture source808de327f593874469a8e84597ccb154f4994272 to measured8cec1e74, so its24-case roster identifies exactly two unfinished cases. Only those two were selected afterward, individually: conversion-dispatched and Expired_publishing_lease_is_uncertain_until_explicit_retry. This is a row-cost/cap event, not proof of host LOAD or a product assertion failure. The interrupted case received its once-alone attempt; the never-started case received its first attempt.
+
+| Completed pass from capped stdout | Canonical UID |
+|---|---|
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Acceptance_and_all_settlements_commit_together` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Acceptance_and_all_settlements_commit_together.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Projection_repair_never_reenters_producer` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Projection_repair_never_reenters_producer.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Projection_repair_cannot_regress_preview` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Projection_repair_cannot_regress_preview.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Bundle_stamp_uses_frozen_complete_actual_payload` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Bundle_stamp_uses_frozen_complete_actual_payload.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Projection_repairs_every_implied_task` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Projection_repairs_every_implied_task.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.C519_Fair_bounded_send_and_repair_budgets_are_independent` | `Antiphon.Tests.Application.ChannelOutboundMetadataRepairTests.1.1.C519_Fair_bounded_send_and_repair_budgets_are_independent.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Resume_held_after_conversion_returns_to_ready` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Resume_held_after_conversion_returns_to_ready.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Broker_ack_before_process_death_remains_uncertain_without_replay` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Broker_ack_before_process_death_remains_uncertain_without_replay.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Process_death_preserves_ownership_at_each_boundary(input-temporary-partial)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Process_death_preserves_ownership_at_each_boundary(admission-committed)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).3.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Process_death_preserves_ownership_at_each_boundary(input-temporary-complete)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).2.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(before-conversion-observation, Published, 1)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Running_converter_reconciles_after_dispatcher_death` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Running_converter_reconciles_after_dispatcher_death.1.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Process_death_preserves_ownership_at_each_boundary(conversion-task-committed)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).4.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(ready-committed, Published, 1)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).2.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(publishing-committed, PublishUncertain, 0)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).3.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(producer-accepted, PublishUncertain, 1)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).4.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(published-committed, Published, 1)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).5.1.0` |
+| `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.Recovery_preserves_settled_worker_and_publication_boundaries(publication-commit-failed, PublishUncertain, 1)` | `Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Recovery_preserves_settled_worker_and_publication_boundaries(System.String, Antiphon.Server.Domain.Enums.ChannelOutboundDeliveryState, System.Int32).6.1.0` |
+
+These22 stdout passes are kept separate from finalized TRX counters. They are sufficient to avoid repeating observed cases in this Debug sweep, but they are not validated checkpoint/Review receipts. The class coverage ledger uses their exact method/argument identities and retains the evidence limitation. Raw stdout path: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015/C015-a1.stdout.log; SHA-256 2ad838ded261b2634728f870af1018ca3292f4bafad1d55f72882ef4a93b538c.
+
+### Exact rerun commands and TRX provenance
+
+**C001 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C001-a1 -SlotWaitMinutes 5 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(GrokRulesCompactionAcceptanceTests*)|(GrokRulesDispatchAcceptanceTests*)|(GrokRulesLiveMappedDispatchTests*)/*' --report-trx --report-trx-filename C001-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C001 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C001/C001-a1.trx; SHA-256 cddc957a6e4f9769293be5e2686501ce502d3f7ba35db90830cf53f45732640f.
+
+**C002 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C002-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentControlServiceIntegrationTests/*' --report-trx --report-trx-filename C002-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C002 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C002/C002-a1.trx; SHA-256 85c0f98f28d5f6264f47387b1d2a71cb02ceddefcf900962df2381889334f475.
+
+**C003 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C003-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(PhoneHomeBackpressureTests*)|(PhoneHomeCompletedCardTransportTests*)|(PhoneHomeDeferredKillTests*)|(PhoneHomeImmediateSendTests*)|(PhoneHomeLaunchTransportTests*)|(PhoneHomeMirrorJoinTests*)/*' --report-trx --report-trx-filename C003-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C003 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C003/C003-a1.trx; SHA-256 d7f1fef1eb398970fa013acb5c740c624c0e8d3c86d3b7544e88ac1757b52d4d.
+
+**C004 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C004-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Agents/(PhoneHomeConnectionTests*)|(PhoneHomeEpochAgreementTests*)/*' --report-trx --report-trx-filename C004-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C004 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C004/C004-a1.trx; SHA-256 fc6c1f686c3c5771c47c9f6cb982647b6fa310312dee0b23b826094886147ac1.
+
+**C005 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C005-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/PhoneHomeOutageMentionTests/(C696Red_Mention_before_first_List_is_persisted*)|(C696Red_Mention_in_reconnect_gap_survives_restart*)|(Busy_local_and_remote_mentions_wait_for_idle*)|(Occurrence_replay_is_idempotent_but_identical_new_mentions_are_distinct*)|(Split_line_and_completed_newline_accept_one_occurrence*)|(Accepted_mention_keeps_original_target_after_source_ends*)|(Queued_activity_failure_does_not_duplicate_or_block_recovery*)' --report-trx --report-trx-filename C005-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C005 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C005/C005-a1.trx; SHA-256 d294a0b9d77c46eb62a845234120f51db16bbdb95e05d6df2810c4c430655d4e.
+
+**C006 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C006-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(PhoneHomePendingInventoryTests*)|(PhoneHomeQueuedTurnTests*)|(PhoneHomeRollingRunnerTests*)|(PhoneHomeSessionRoutingTests*)|(PhoneHomeSpillTransportTests*)|(PhoneHomeStandingLaunchTests*)/*' --report-trx --report-trx-filename C006-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C006 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C006/C006-a1.trx; SHA-256 e9c9e8ce82acd58467e33621f13b66cc0ca9d63931715557b8d7a511de36f6df.
+
+**C007 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C007-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(PhoneHomeStrandedQueueTests*)|(PhoneHomeTaskDispatchProjectionTests*)/*' --report-trx --report-trx-filename C007-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C007 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C007/C007-a1.trx; SHA-256 c8bb05c1e29e5a4c9c51ca477c95a2e8eb13a0ec185f61c76d40ed5a95319476.
+
+**C008 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C008-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(StandingBootAttentionTests*)|(StandingBootDocumentationTests*)|(StandingBootQueueWitnessTests*)|(StandingBootStatementBudgetTests*)|(StandingContinuityAttentionTests*)|(StandingRestartEscalationTests*)/*' --report-trx --report-trx-filename C008-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C008 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C008/C008-a1.trx; SHA-256 0899ab12e2e258aaf0a0c1a1a2c254721009b05a6d36b1dc1c5e2fedbe58f74f.
+
+**C009 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C009-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(StandingResumeReceiptReadinessTests*)|(StandingSessionQueueSwitchTests*)|(StandingSessionSelectionTests*)|(StandingSpecialistSeatTests*)/*' --report-trx --report-trx-filename C009-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C009 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C009/C009-a1.trx; SHA-256 054c0c98541270f99f2f5185a66c0ff074104f1f854e50017db9209720adb51e.
+
+**C010 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C010-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/StandingSessionSwitchConcurrencyTests/(Delayed_fresh_enqueue_cannot_launch_over_a_later_resumed_generation*)|(Obsolete_queued_launch_cannot_overwrite_a_newer_outcome*)|(Stop_at_launch_boundaries_prevents_obsolete_work_and_allows_later_owned_generation*)|(Failure_after_reservation_writes_rolls_back_owner_pointer_hold_queue_and_decision*)|(Concurrent_starts_and_supervisor_reserve_one_generation*)|(Reservation_rechecks_changes_committed_after_runner_preflight*)|(Stop_supersedes_launch_before_spawn_and_before_typing*)' --report-trx --report-trx-filename C010-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C010 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C010/C010-a1.trx; SHA-256 eab386356af255e71cd9ac5ac7359d244acf9243a5f7b2d6c33e7c5ea0910826.
+
+**C011 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C011-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(AttentionApiTests*)|(AttentionFeedNoiseTests*)/*' --report-trx --report-trx-filename C011-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C011 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C011/C011-a1.trx; SHA-256 842952a4b53478bda320f0a35640d0becab6a4ef1e4b1cfedd38baf203473086.
+
+**C012 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C012-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AttentionServiceTests/(a_task_holding_a_commit_recovery_obligation_older_than_two_minutes_is_an_error_row_with_the_recipe*)|(a_commit_recovery_obligation_becomes_visible_only_after_two_full_minutes*)|(a_resolved_commit_recovery_obligation_is_not_listed*)|(a_failed_task_with_an_open_commit_recovery_obligation_is_not_listed*)|(a_dead_session_holding_a_commit_recovery_obligation_is_listed_as_the_hold_not_the_death*)|(commit_recovery_rows_cost_one_events_query_for_the_whole_open_set*)|(a_historical_standing_incarnation_without_a_current_pointer_is_unowned*)|(overlapping_session_leaks_have_one_full_feed_row_until_resolved*)|(census_inspection_includes_every_candidate_beyond_the_feed_preview*)|(a_running_pool_delegate_with_a_failed_task_older_than_twice_the_grace_is_unreleased*)|(a_pool_delegate_inside_twice_the_grace_is_not_listed*)|(a_stopping_session_older_than_five_minutes_is_stop_stuck*)|(a_pending_remote_kill_remains_visible_without_claiming_an_unknown_session_is_live*)|(a_live_session_no_agent_names_is_unowned*)|(a_live_session_an_agent_names_is_not_unowned*)|(remote_leak_rows_require_confirmed_liveness*)|(the_last_census_result_is_one_row_per_class_with_candidates*)|(Outbound_delivery_states_have_truthful_attention*)|(A_needs_decision_card_is_a_critical_row_whose_evidence_is_the_move_reason*)|(A_card_reopened_straight_into_needs_decision_is_listed_with_the_reopen_reason*)|(A_card_reopened_then_moved_within_needs_decision_shows_the_newest_reason_once*)|(An_unrated_non_operator_Backlog_import_is_a_warning_review_row*)|(A_human_rating_clears_the_imported_issue_review_row*)|(An_operator_author_is_not_an_imported_issue_review_row*)|(a_blocked_task_is_listed_as_needing_an_answer_and_offers_reply*)|(a_specialist_role_blocked_task_is_not_a_blocked_question*)|(a_merge_conflict_dates_from_its_conflicted_event_not_from_dispatch*)|(a_long_report_that_ends_in_a_question_puts_the_question_on_the_row*)|(a_blocked_question_with_standing_authority_offers_continue_first*)|(a_cost_ceiling_block_does_not_offer_reply*)|(a_message_that_spent_its_delivery_attempts_is_listed_for_a_human*)|(a_parked_message_on_a_channel_bound_agent_reads_critical*)|(a_pending_message_that_has_attempts_left_is_not_parked*)|(an_open_task_whose_session_is_dead_is_listed*)|(a_dispatched_task_whose_session_has_written_nothing_is_listed*)|(a_deferred_pending_brief_on_a_working_session_is_listed*)|(a_pending_brief_on_an_idle_session_is_not_brief_undelivered*)|(a_sent_brief_on_a_working_session_is_not_brief_undelivered*)|(a_pending_brief_inside_the_delivery_window_is_not_brief_undelivered*)|(a_succeeded_task_delegation_note_past_grace_is_caller_note_undelivered*)|(a_check_note_recovers_the_task_from_conversation_key*)|(a_caller_note_inside_the_delivery_window_is_not_listed*)|(a_caller_note_at_exact_grace_is_not_listed*)|(a_sent_caller_note_is_not_listed*)|(a_canceled_caller_note_is_not_listed*)|(an_unparseable_check_key_is_not_listed*)|(a_delegation_note_on_the_delegate_session_is_not_a_caller_note*)|(a_caller_note_row_disappears_once_sent_or_canceled*)|(a_cardless_details_start_past_grace_with_no_prompt_is_a_warning*)|(a_cardless_details_start_is_absent_at_the_two_minute_grace_and_present_just_after*)|(blank_or_whitespace_details_does_not_raise_cardless_details_no_prompt*)|(a_non_current_owner_does_not_raise_cardless_details_no_prompt*)|(a_non_running_session_does_not_raise_cardless_details_no_prompt*)|(a_card_owned_session_does_not_raise_cardless_details_no_prompt*)|(a_resumed_session_does_not_raise_cardless_details_no_prompt*)|(a_herdr_attached_session_does_not_raise_cardless_details_no_prompt*)|(any_transcript_entry_suppresses_cardless_details_no_prompt*)|(a_pending_ui_queue_row_suppresses_cardless_details_no_prompt*)|(a_sent_ui_queue_row_suppresses_cardless_details_no_prompt*)|(cardless_details_no_prompt_disappears_after_a_transcript_arrives*)|(a_dispatched_task_still_inside_the_start_grace_is_not_listed*)|(a_report_that_could_not_be_correlated_lists_its_task_once*)|(a_dispatched_task_with_a_marked_report_in_the_transcript_is_report_unsettled*)|(report_unsettled_clears_once_the_task_is_no_longer_open*)|(a_dead_session_with_a_marked_report_stays_dead_session_not_report_unsettled*)|(never_started_is_not_report_unsettled*)|(an_uncorrelated_incident_without_this_tasks_token_is_not_report_unsettled*)|(An_active_hold_is_an_error_row_and_clears_when_ClearedAt_is_set*)|(A_manual_hold_row_carries_kind_alias_and_clears_after_DELETE*)|(A_fallback_hold_row_does_not_call_the_retry_a_provider_reset*)|(A_legacy_null_auto_detected_hold_keeps_the_no_reset_stated_headline*)|(a_nudged_idle_task_with_no_token_is_unmarked_waiting*)|(unmarked_waiting_clears_to_blocked_question_once_the_task_blocks*)' --report-trx --report-trx-filename C012-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C012 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C012/C012-a1.trx; SHA-256 310c4e9a9d348177b09972d0fc5d825b79f201073f9780c0eacfcfb9f2213b8b.
+
+**C013 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C013-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AttentionServiceTests/(a_mid_turn_nudged_task_is_not_unmarked_waiting*)|(a_dead_session_wins_over_unmarked_waiting*)|(a_task_far_past_its_estimate_and_idle_at_the_prompt_is_listed*)|(a_task_far_past_its_estimate_but_still_mid_turn_is_never_listed*)|(a_working_stalled_task_is_listed_as_progress_stalled*)|(ProgressStalled_beats_Overdue_and_loses_to_PastExpectedIdle_when_idle*)|(a_pending_refinement_is_named_on_the_stall_headline*)|(An_open_boot_reply_incident_on_a_live_session_is_liveness_probe_failed*)|(C1160_Legacy_boot_row_states_silence_and_no_delivery_verdict*)|(A_boot_prompt_that_was_answered_after_the_incident_is_no_longer_listed*)|(A_boot_reply_incident_on_a_dead_session_is_not_listed*)|(An_open_kind_43_incident_on_a_live_session_is_queued_input_stuck*)|(A_closed_enqueue_episode_is_not_queued_input_stuck*)|(A_kind_43_incident_on_a_dead_session_is_not_queued_input_stuck*)|(a_running_idle_agent_with_a_nine_hour_old_transcript_and_no_task_is_outlived*)|(a_running_agent_mid_turn_is_not_outlived*)|(a_running_agent_with_a_one_hour_old_transcript_is_not_outlived*)|(a_running_idle_agent_with_a_queued_task_is_not_outlived*)|(a_running_agent_with_zero_transcript_rows_is_not_outlived*)|(a_stopped_worktree_agent_untouched_for_three_days_is_a_leftover*)|(a_sole_agent_on_a_same_named_empty_board_idle_three_days_is_a_leftover*)|(a_sole_agent_on_a_named_board_that_holds_a_card_is_not_outlived*)|(a_second_agent_sharing_the_empty_board_is_not_outlived*)|(a_sole_agent_on_an_unrelated_named_empty_board_is_not_outlived*)|(a_leftover_shape_touched_one_day_ago_is_not_outlived*)|(an_always_on_live_idle_agent_is_not_outlived*)|(a_channel_bound_live_idle_agent_is_not_outlived*)|(a_pool_delegate_live_idle_agent_is_not_outlived*)|(a_project_root_worker_on_a_live_card_board_is_not_outlived*)|(a_task_dispatched_under_stall_minutes_does_not_run_the_workspace_probe*)|(a_task_past_stall_minutes_runs_the_workspace_probe*)|(the_summary_never_runs_the_workspace_probe*)|(summary_counts_match_a_full_sweep_for_the_same_rows*)|(summary_open_drops_recent_failures_and_counts_every_other_row*)|(a_mid_turn_task_closing_on_its_ceiling_is_listed_before_the_sweep_fails_it*)|(a_task_only_part_way_through_its_ceiling_is_not_listed_as_overdue*)|(a_breached_deadline_says_the_sweep_is_about_to_fail_it*)|(an_idle_task_keeps_the_more_explanatory_past_expected_row*)|(a_task_whose_check_budget_ran_out_is_listed_as_unwatched*)|(the_check_interpreters_reading_beats_the_digest_tail_when_one_was_stored*)|(a_task_that_is_still_being_checked_is_not_listed*)|(recent_incident_links_the_task_in_its_session_at_incident_time*)|(recent_error_incidents_collapse_to_one_row_per_agent_and_kind*)|(a_task_that_failed_today_is_carried_as_context*)|(a_failure_older_than_the_recency_window_is_not_carried*)|(a_never_dispatched_failure_still_armed_is_FailureUnacknowledged*)|(an_orchestrator_investigation_incident_is_a_warning_process_row*)|(an_orchestrator_workspace_incident_is_a_warning_process_row*)|(once_disarmed_it_is_a_RecentFailure*)|(a_misfire_is_a_warning_row_until_the_next_good_fire*)|(a_session_the_database_wrote_off_but_the_runner_still_runs_is_listed*)|(a_runner_session_with_no_database_row_is_listed_as_unclaimed*)|(a_disagreement_says_the_dead_session_rows_above_it_are_wrong*)|(a_session_both_sides_agree_is_running_is_not_a_disagreement*)|(a_runner_session_that_has_exited_is_not_a_disagreement*)|(a_runner_that_cannot_answer_omits_the_disagreement_rather_than_reporting_none*)|(a_runner_that_cannot_answer_degrades_instead_of_throwing*)|(a_runner_that_answers_is_recorded_as_consulted*)|(rows_are_ranked_by_severity_and_then_oldest_first*)|(A_card_in_progress_past_the_threshold_with_nobody_on_it_is_a_warning_row*)|(A_stale_card_that_never_had_a_task_says_so*)|(A_card_with_an_open_bound_task_is_not_stale*)|(A_card_with_a_live_session_is_not_stale*)|(A_card_owned_by_a_card_session_is_not_stale*)|(A_card_under_the_threshold_is_not_stale*)|(A_stale_card_with_no_history_dates_itself_from_started_at*)|(A_card_in_review_is_never_stale*)' --report-trx --report-trx-filename C013-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C013 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C013/C013-a1.trx; SHA-256 71f06139a068e11bade29ed7d7ff568b310b1863609d3f656469b77505c5f8a5.
+
+**C014 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C014-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(ChannelOutboundTrailingRecoveryTests*)|(ChannelOutboundCaptureTests*)|(ChannelOutboundDeadlineTests*)|(ChannelOutboundDeliveryTests*)|(ChannelOutboundFailureRecordingTests*)|(ChannelOutboundMaterializationTests*)/*' --report-trx --report-trx-filename C014-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C014 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C014/C014-a1.trx; SHA-256 015855a66d5b9f4d42d494c8ef39649f14a513d2127eb815d03483bb2ccbff3a.
+
+**C015 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C015-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(ChannelOutboundMetadataRepairTests*)|(ChannelOutboundRecoveryTests*)/*' --report-trx --report-trx-filename C015-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015/C015-a1.trx; SHA-256 not produced.
+
+**C016 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C016-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskLandApprovalRecoveryTests/(C488_StandingJournalBlocksSourceAdvance*)|(C488_UncertainSourceChildRetained*)|(C488_ObservedCommitGatesAdvance*)|(C488_ResolvedCommitGatesOperation*)|(C488_OperationCommitGatesPreparation*)|(C488_SourceFailureStopsTarget*)|(C488_CleanLRetriesSavedAdvance*)|(C488_CleanEAcknowledgesIntent*)|(C488_UnrecordedFastForwardRefuses*)|(C488_ThirdShaRecoveryRefuses*)|(C488_RecoveryDestinationImmutable*)|(C488_OriginalApprovalNeverAdoptsHead*)|(C488_PreparationInputIsWitnessedP*)|(C488_OriginalPinMatchesApproval*)|(C488_PreparedPinMatchesPayload*)|(C488_AutomaticReplacementRefuses*)|(C488_TargetIntentPreventsReplacement*)|(C488_ReplacementFailureKeepsPredecessor*)|(C488_ConflictSupersessionAtomic*)|(C488_VerifiedResumeKeepsOriginalApproval*)|(C488_ChangedSourceNeedsNewApproval*)|(C488_DerivationRetryIsExplicit*)|(C488_DerivationOriginalMatches*)|(C488_DerivationRequiresWitnessedRebase*)|(C488_DerivationRequiresExactCurrentP*)|(C488_DerivationAncestryUsesOriginal*)|(C488_DerivationLineagePersists*)|(C488_DerivationNeverSourceFastForwards*)|(C488_DerivationAlwaysReverifies*)|(C488_LegacyAutomaticMutationRefuses*)|(C488_LegacyQueuedApprovalRequired*)|(C488_LegacyUnpublishedRecoveryRefusesMovedRemote*)|(C494_ServiceLegacyGuardStopsBeforeResolution*)|(C494_ProtocolSnapshotGuardIsIndependent*)|(C494_ServiceResumeRequiresCompleteSnapshot*)|(C494_CompleteSnapshotResumesSameOperation*)|(C488_VerifiedRetryRequiresSourceResolution*)|(C488_LegacyPublishedCleanupWorks*)|(C488_LegacyLateBindingOriginalExact*)|(C488_LegacyLateBindingIdentityValid*)|(C488_LegacyLateBindingIsOneTime*)|(C488_LegacyLateBindingNeverFastForwardsP*)' --report-trx --report-trx-filename C016-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C016 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C016/C016-a1.trx; SHA-256 c6fb5bf082d623334dbe7195c38f9fa13665dfcfd61e280e5190b5152a60cbb6.
+
+**C015r01 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C015r01-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --filter-uid 'Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Process_death_preserves_ownership_at_each_boundary(System.String).5.1.0' --report-trx --report-trx-filename C015r01-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015r01 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015r01/C015r01-a1.trx; SHA-256 f6be05a2d4345c0d4df26073df026498d99e5556dc76c22a5c1f2d98d73e2ecc.
+
+**C015r02 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C015r02-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --filter-uid Antiphon.Tests.Application.ChannelOutboundRecoveryTests.1.1.Expired_publishing_lease_is_uncertain_until_explicit_retry.1.1.0 --report-trx --report-trx-filename C015r02-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015r02 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C015r02/C015r02-a1.trx; SHA-256 ae444c05b19b77f1d10d04b86f6d1007eda288fa4a32f771895d08d9cc800cda.
+
+**C017 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C017-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskLandApprovalRecoveryTests/(C488_ResumeRequestOperationLinkMatches*)|(C488_OriginalRequestProvenanceRetained*)|(C488_PublishedPayloadSurvivesSourceMovement*)|(C488_RecoveryPushUsesSavedPayload*)|(C494_PushIntentWithoutContainmentRechecksRemoteSource*)|(C494_PushIntentWithoutContainmentRechecksLocalSource*)|(C494_UnreadablePushIntentTargetStaysUnconfirmed*)|(C494_ContainedPushIntentChecksIdentityBeforeObservation*)|(C494_FreshVerifiedDoesNotUseHistoricalPublicationShortcut*)|(C488_InterruptedRebaseEvidenceRetained*)|(C488_PublicationNeedsTargetContainment*)|(C488_CleanupNeedsVerifiedReceipt*)|(C494_GuardsAreScopedToTheirOwnOperation*)|(C494_Schema3CheckpointCutsPreserveApproval*)|(C494_LegacyPreparedRefusesThenFreshApprovalRepairs*)|(C488_CleanupRetainsMovedSource*)|(C488_CleanupRetainsUnknownContent*)|(C488_NotificationFailureCannotUndoPublication*)|(C488_SourceCheckpointCrashMatrix*)|(C488_SourceAdvanceWorkerDeathMatrix*)|(C488_SourceAdvanceResumeMatrix*)|(C488_ReplacementAndSupersessionMatrix*)|(C488_RebasedInputLineageMatrix*)|(C488_VerifiedResumeMatrix*)|(C488_LegacyRecoveryMatrix*)|(C488_PublicationReconciliationMatrix*)' --report-trx --report-trx-filename C017-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C017 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C017/C017-a1.trx; SHA-256 50baf65eee86c7f0c9d12761193f786e6bbfae096758c3313f4abd02ab6c7f69.
+
+**C018 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C018-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(AbsentLaunchPolicyTests*)|(AgentSystemPromptLaunchTests*)|(DelegateBundleLaunchTests*)|(DesktopLaunchMemoryAdmissionTests*)|(PinnedCodexProfileDispatchLaunchTests*)|(PinnedProfileLaunchSpecTests*)/*' --report-trx --report-trx-filename C018-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C018 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C018/C018-a1.trx; SHA-256 a6b48de3cd1cb28ba00b86c954ff3d360f244ffef93f9cf7e60f99649e709a17.
+
+**C019 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C019-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(AgentTaskDeliveryWatchdogTests*)|(ExpectationWatchdogScenarioTests*)|(QueuedInputWatchdogTests*)|(StaleWorkingTranscriptWatchdogTests*)|(StandingBootWatchdogTests*)|(WatchdogServiceTests*)/*' --report-trx --report-trx-filename C019-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C019 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C019/C019-a1.trx; SHA-256 aa907ff0ca0b0903ba30ca383d5d0bf0ee0665458cb7fd6fd341947a639d09c5.
+
+**C020 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C020-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(AgentTaskInputFallbackTests*)|(ChannelInputWithheldIncidentTests*)|(SpecialistInputTransportTests*)|(TaskInputAttentionCostTests*)|(TaskInputReadFailureTests*)|(TaskInputWeakArmBoundaryTests*)/*' --report-trx --report-trx-filename C020-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C020 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C020/C020-a1.trx; SHA-256 de8e082b2541a0d0efc433fccc696d718d058cb21343b3f9a8ef969de3a8907f.
+
+**C021 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C021-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskLandNotificationRecoveryTests/*' --report-trx --report-trx-filename C021-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C021 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C021/C021-a1.trx; SHA-256 4ef1d58a0ad9a8ee19404e5b80a5bd52149e0b1c77cd21f7c7d9d2c755f750db.
+
+**C022 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C022-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskRefineTests/*' --report-trx --report-trx-filename C022-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C022 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C022/C022-a1.trx; SHA-256 c673dc991a3c52601fc567e68bbbd11f65071f81725a6b7022aafb6b424165fb.
+
+**C023 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C023-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Checkpoints/CheckpointLaunchCleanupTests/*' --report-trx --report-trx-filename C023-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C023 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C023/C023-a1.trx; SHA-256 01bf99aa22bab792446954f4d05070d9b51879d5dd2bf08b3eadc57ee2794ee4.
+
+**C024 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C024-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(ClaudeCredentialProbeDispatcherTests*)|(ClaudeDialogDeliveryTests*)|(ClaudeEffortByRoleDispatchTests*)/*' --report-trx --report-trx-filename C024-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C024 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C024/C024-a1.trx; SHA-256 ae62b4c1247f5f53ed735f364467010f2b0c300ffe3660ab27ce636241de268f.
+
+**C025 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C025-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/CodexCliObservationTests/(C959_Ladder_and_exact_models_share_floor*)|(C959_Launcher_descriptors_are_observations*)|(C959_Compatible_launch_keeps_model_and_runner*)|(C959_Retry_and_cancellation_recheck*)' --report-trx --report-trx-filename C025-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C025 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C025/C025-a1.trx; SHA-256 70e8af7f3efd48653f3606ce4673a58ca14fba82b6df0c78e847df39b5e9d8c3.
+
+**C026 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C026-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/CodexCliObservationTests/(C959_Probe_failure_never_refuses*)|(C959_Stale_sample_never_refuses*)|(C959_Unknown_version_never_refuses*)|(C959_Old_version_with_floor_never_refuses*)' --report-trx --report-trx-filename C026-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C026 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C026/C026-a1.trx; SHA-256 05ca76bfb0f205c6d750ddc57d3ed383473f7f3d7af4c44d7740ba7cb4e36c09.
+
+**C027 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C027-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(CodexDelegateDispatchTests*)|(CodexStartupDeliveryTests*)/*' --report-trx --report-trx-filename C027-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C027 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C027/C027-a1.trx; SHA-256 61a8e5091663439e315f7fcd42c840fd6a00b99cd5581670dc1e517b6edeaa04.
+
+**C028 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C028-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Infrastructure/ExpectationWatchdogJobTests/*' --report-trx --report-trx-filename C028-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C028 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C028/C028-a1.trx; SHA-256 6c6bb96ceec4bdbd2e87bd9ad96ff54683af4c9aed3a3b4ff66f1bdaa8ab2785.
+
+**C029 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C029-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(GrokCredentialProbeDispatcherTests*)|(GrokDelegateDispatchTests*)|(GrokNativeSessionResumeTests*)|(GrokStartupReadyOrderingTests*)/*' --report-trx --report-trx-filename C029-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C029 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C029/C029-a1.trx; SHA-256 5d4ccd4052a559462dbb718988aa6fe0405d250da379aaece057a9e381ea94eb.
+
+**C030 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C030-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.ApiKeys/LaunchEnvLayersIntegrationTests/*' --report-trx --report-trx-filename C030-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C030 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C030/C030-a1.trx; SHA-256 8e23a2369dc672145799a1c354b82612bba714f004ab354bac4445ca4e96830b.
+
+**C031 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C031-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(RunnerClaudeFinalLaunchArgvTests*)|(TaskLaunchTokenBoundaryTests*)|(UnixDelegateLaunchArgvTests*)/*' --report-trx --report-trx-filename C031-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C031 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C031/C031-a1.trx; SHA-256 e396d0a9214f37826ce16c8f52619a181af3b70fbdc3fbb6d7d21876038da7d8.
+
+**C084 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C084-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/DelegationDispatchRecoveryBoundaryTests/(C1161_Dead_session_grace_is_monotonic*)|(C1161_Owner_names_the_monotonic_grace*)|(C1150_Pre_input_refusal_keeps_the_resume_failure_path*)|(C1150_Pre_input_refusal_keeps_the_resume_failure_path_for_a_local_command*)|(C1150_Pre_input_refusal_keeps_the_resume_failure_path_for_a_transport_refusal*)' --report-trx --report-trx-filename C084-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C084 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C084/C084-a1.trx; SHA-256 0f17f36c592c91812e8b02d4bc32c903a7b229a9f134342997208369f5a17431.
+
+**C064 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C064-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(CapacityAdmissionLifecycleTests*)|(CapacityObsoleteQueueTests*)|(CapacityRecoveryAttentionTests*)|(CapacityRecoveryTaskTests*)/*' --report-trx --report-trx-filename C064-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C064 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C064/C064-a1.trx; SHA-256 b302118bd3a7e018e4e239ffa733b8708ac3a5076e74c21fd24112d4b390fc05.
+
+**C054 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C054-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/AgentTaskReplyIntegrationTests/(C527_equals_separator_delivers_exact_parent_receipt*)|(C527_successful_empty_history_preserves_recovery_until_parent_receipt*)|(C527_retry_prerequisite_failure_preserves_commit_until_complete_parent_receipt*)|(C527_post_commit_inspection_failure_defers_settlement_until_complete_receipt*)|(C527_policy_flip_after_commit_save_failure_recovers_exact_parent_receipt*)|(C527_lost_history_and_repository_preserve_durable_recovery_until_parent_receipt*)|(C527_recovery_obligation_save_failure_prevents_git_mutation*)|(C527_literal_footprint_reaches_complete_parent_receipt_without_matching_neighbor*)|(C527_branch_movement_after_failed_save_recovers_original_parent_receipt*)|(C527_all_selected_reverted_delivers_no_op_without_Commit_child*)|(C527_child_audit_distinguishes_ignore_exceptions_in_complete_parent_receipt*)|(C527_repeated_report_selects_this_settlements_notification*)|(C527_unavailable_child_audit_is_reported_to_parent*)|(C527_completion_outbox_recovers_complete_receipt*)|(C527_partial_or_incidental_task_commit_does_not_hide_dirty_work*)|(C527_recovered_settlement_reports_new_dirty_work_without_committing_it*)|(C527_spawned_child_audit_compares_independent_upstream_baselines*)|(C527_obligation_free_history_search_failure_settles_once_with_an_uncommitted_note*)|(C527_obligation_free_history_search_failure_on_a_clean_tree_still_reports_landed*)|(C527_obligation_free_repository_inspection_failure_settles_once*)|(C527_obligation_free_search_and_status_failure_refuses_the_commit_once*)|(C527_resolved_no_commit_obligation_survives_a_failed_search_on_the_rehand*)|(C527_a_worktree_settle_with_a_pending_gated_receipt_still_reports_merged*)|(C527_selected_revert_delivers_exact_parent_receipt*)|(C527_tier1_commits_the_transcript_footprint_and_delivers_committed_to_the_parent*)|(C527_residual_dirty_path_outside_the_footprint_is_left_and_named*)|(C527_report_named_path_is_footprint_when_the_transcript_is_empty*)|(C527_notebook_path_edits_count_as_footprint*)|(C527_unattributable_dirty_tree_spawns_a_commit_child_routed_by_the_card_pin*)|(C527_commit_child_falls_back_to_role_policy_with_a_warning_when_no_pin_service*)|(C527_NoCommit_task_leaves_the_tree_with_the_no_commit_header*)|(C527_project_off_inherited_skips_with_todays_warning*)|(C527_task_Always_beats_project_off*)|(C527_Agent_policy_skips_tier1_and_spawns_the_child*)|(C527_global_off_with_project_null_skips*)|(C527_deleted_gitignore_refuses_spawns_the_child_and_warns*)|(C527_held_lease_is_RepositoryBusy_and_spawns_the_child*)|(C527_hook_failure_is_CommitFailed_and_the_child_brief_carries_stderr*)|(C527_commit_child_audit_flags_an_ignored_path_committed_outside_the_gate*)|(C527_commit_child_audit_flags_a_commit_without_the_gate_trailer*)|(C527_commit_child_audit_flags_upstream_movement*)|(C527_task_cap_leaves_the_header_and_warning*)|(C527_gate_refusal_with_no_child_possible_renders_commit_refused*)|(C527_tracked_then_ignored_path_refuses_the_whole_footprint*)|(C527_foreign_staged_path_survives_tier1_untouched*)|(C527_busy_parent_receives_the_committed_note_on_its_turn_end*)|(C527_settle_save_failure_after_the_commit_recovers_without_a_second_commit*)|(C527_ineligible_tasks_never_run_the_hook*)|(C527_edits_before_dispatch_are_not_in_the_footprint*)|(C527_more_than_twenty_dirty_paths_are_all_attributed_from_the_transcript*)|(C544_shared_commit_on_settle_mints_one_task_completion*)|(C547_commit_child_audit_accepts_a_gated_commit_under_each_separator*)|(C547_commit_child_audit_flags_a_body_prose_mention_without_a_trailer_block*)|(C547_commit_child_audit_read_failure_is_unavailable_not_outside_the_gate*)|(C547_overdue_sweep_past_the_hold_abandons_the_obligation_and_the_parent_hears_it*)|(C547_overdue_sweep_holds_a_settled_gated_commit_until_the_rehand_records_it*)|(C547_CommitFailed_after_a_verified_empty_search_resolves_and_a_later_settle_proceeds*)|(C547_CommitFailed_with_a_failed_history_search_leaves_the_obligation_pending*)|(C547_an_unresolved_obligation_from_another_digest_does_not_hold_this_settlement*)|(C547_an_abandoned_obligation_is_invisible_to_a_later_same_digest_settlement*)|(C714_Grok_batched_replay_uses_report_response*)|(C714_Claude_ack_after_report_uses_report_response*)|(C714_Claude_notification_final_report_still_settles*)|(C714_Codex_final_answer_uses_turn_id*)|(C714_Parent_receives_selected_report_once*)|(C714_Grok_repeated_housekeeping_is_skipped*)|(C714_Grok_rules_then_only_completion_cannot_settle*)|(C714_Genuine_unmarked_turn_is_barrier*)|(C714_Grok_unmarked_prompt_before_reminder_is_barrier*)|(C714_Grok_unmarked_queued_prompt_before_reminder_is_barrier*)|(C714_Claude_unmarked_prompt_before_notification_is_barrier*)|(C714_Claude_auto_compaction_continuation_settles*)|(C714_Codex_unmarked_user_turn_is_barrier*)|(C714_Current_report_is_chosen_after_old_task_history*)|(C714_Predispatch_current_marker_is_rejected*)|(C714_Old_task_marker_is_never_current*)|(C714_Reply_watermark_prevents_stale_report*)|(C714_Grok_selected_report_waits_for_own_text*)|(C714_Late_report_text_after_reminder_keeps_own_api_id*)|(C714_Selected_error_or_cancel_does_not_fall_back*)|(C1499_a_release_the_runner_answers_exited_then_not_found_is_a_normal_release*)|(C1499_a_release_that_is_not_confirmed_still_records_the_Error*)|(C1706_a_reply_merge_conflict_in_eighty_long_names_writes_a_bounded_conflicted_detail*)|(C1706_a_reply_merge_conflict_at_the_task_cap_writes_a_bounded_cap_header*)|(C1710_a_read_only_report_naming_a_directory_of_long_unicode_names_writes_a_bounded_valid_warning*)|(C788_NoChangeFutureDispatchCleansUp*)|(Internal_conversion_settles_with_usage_but_without_sources_or_follow_up*)|(Deferred_is_durable_and_releases_runtime*)|(a_failed_api_error_task_names_session_liveness*)|(releasing_a_shared_task_whose_session_is_mid_turn_pools_it_and_warns*)|(a_transient_stub_with_a_later_prompt_does_not_fail_the_task*)|(a_transient_stub_with_a_later_queued_prompt_does_not_fail_the_task*)|(a_needs_human_stub_with_a_later_prompt_does_not_fail_the_task*)|(the_skip_arm_records_the_death_once_on_the_timeline*)|(a_housekeeping_record_after_the_stub_is_not_a_resume*)|(the_resumed_turns_marked_report_settles_the_task*)|(a_second_stub_on_the_resumed_turn_defers_on_its_own_row*)|(an_unmarked_resumed_turn_is_still_uncorrelated*)|(Phone_parent_preserves_worker_table_and_stage_handoff*)|(Phone_note_waits_for_a_busy_parent_and_lands_on_its_turn_end*)|(Phone_note_survives_a_failed_delivery_and_is_redelivered_exactly_once*)|(Grok_rules_refresh_with_task_marker_neither_settles_nor_nudges*)|(a_marked_turn_settles_the_task_and_stores_the_report_verbatim*)|(an_unmarked_turn_leaves_the_task_running*)|(another_tasks_marker_does_not_settle_this_task*)|(a_cancelled_turn_end_does_not_settle_the_task_and_says_so*)|(a_prior_internal_continue_does_not_make_a_cancelled_turn_a_report*)|(the_interrupted_warning_is_written_once_per_boundary*)|(the_next_end_turn_after_a_cancel_settles_normally*)|(an_end_turn_without_the_closing_line_is_nudged_once_not_settled*)|(a_prior_internal_continue_does_not_turn_unmarked_narration_into_completion*)|(a_narrow_policy_does_not_infer_design_approval_from_report_prose*)|(the_first_unmarked_end_notifies_the_parent_as_well_as_nudging_the_child*)|(the_waiting_note_names_authority_only_when_it_is_set*)|(block_unmarked_waiting_then_answer_resumes_the_same_session*)|(unmarked_waiting_answer_then_unmarked_turns_settle_with_the_new_report*)|(the_nudged_delegates_marked_reply_settles_with_marked_evidence*)|(a_second_unmarked_end_turn_settles_as_unmarked_after_nudge*)|(a_specialist_role_task_is_never_nudged*)|(a_specialist_role_looks_stuck_blocked_token_settles_succeeded_exempt*)|(a_specialist_role_trailing_question_settles_succeeded_exempt*)|(a_specialist_role_failed_token_still_fails_the_task*)' --report-trx --report-trx-filename C054-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C054 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C054/C054-a1.trx; SHA-256 8c9dc829c0246fb241cf80e0909326009673874c79f688a0c0f6adb03e4760ab.
+
+**C104 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C104-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(PendingNoteWithholdTests*)|(PendingSettlementDeliveryTests*)/*' --report-trx --report-trx-filename C104-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C104 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C104/C104-a1.trx; SHA-256 bc942a8640ccd47690399e1313152778872ed8ab92bd1d55d3707146790bc8bb.
+
+**C067 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C067-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(ChannelBridgeTests*)|(ChannelInboundRecoveryTests*)|(ChannelIngressIncidentTests*)/*' --report-trx --report-trx-filename C067-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C067 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C067/C067-a1.trx; SHA-256 e9fb39d6331c1a1ae86406f6099d41ae19a34e26bd4c49e57b3ac25d728757e4.
+
+**C090 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C090-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(DispatchBaseNotificationTests*)|(DispatchHeldAttentionTests*)/*' --report-trx --report-trx-filename C090-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C090 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C090/C090-a1.trx; SHA-256 e3832380800fa3b6d42ae83a8537ccdfa4406fa66ac20aa266728f8e21a46944.
+
+**C115 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C115-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/ReceiptFailureDeliveryTests/*' --report-trx --report-trx-filename C115-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C115 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C115/C115-a1.trx; SHA-256 3e6665cb73ff39bddd8733c9235e52fad106225a885f873f9e7d250fe4271be3.
+
+**C121 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C121-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(RoutingExhaustedPlacementTests*)|(RoutingPinCandidateDispatchTests*)|(RoutingPinDispatcherTests*)/*' --report-trx --report-trx-filename C121-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C121 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C121/C121-a1.trx; SHA-256 636d97d497375a820afdc3ec4f10c84eb03a3b2dd235b2d48a386e69ebb0c8d2.
+
+**C034 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C034-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(AgentTaskCheckInterpreterTests*)|(AgentTaskCheckScheduleTests*)|(AgentTaskCheckSweepTests*)|(AgentTaskCommitEndpointTests*)|(AgentTaskDeadSessionReconciliationTests*)|(AgentTaskDispatchFailureTests*)/*' --report-trx --report-trx-filename C034-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C034 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C034/C034-a1.trx; SHA-256 7fb698c322fe83f61ac07a6f481b31096190ecb3bca27f62bff89a3d9cbeb1d7.
+
+**C068 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C068-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(CheckCompactionAttentionTests*)|(CheckCompactionReceiptTests*)|(CheckNoteDeliveryHandoffTests*)/*' --report-trx --report-trx-filename C068-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C068 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C068/C068-a1.trx; SHA-256 2204944209a06090da05890e2860547c6e2815a97c4d22013b2e4c3a538a80b0.
+
+**C075 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C075-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(DelegationBriefRecoveryTests*)|(DelegationScopeHoldTests*)/*' --report-trx --report-trx-filename C075-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C075 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C075/C075-a1.trx; SHA-256 e81715c8e6a573f245750bf94e4f23c692ddd9f7b0831cf3a86637e178dc1590.
+
+**C114 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C114-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/ReadyGateFailureNoticeDeliveryTests/*' --report-trx --report-trx-filename C114-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C114 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C114/C114-a1.trx; SHA-256 e9b129b370c04387fb460574be8cc1df398da21ebdf80e3b86a839ac4c78f60f.
+
+**C120 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C120-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/RolePolicyToolBundleDispatchTests/*' --report-trx --report-trx-filename C120-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C120 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C120/C120-a1.trx; SHA-256 05a9a844a7b56c288294c77702f1cda322c6a6fd151fd7a74200d22fc530b241.
+
+**C132 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C132-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/*' --report-trx --report-trx-filename C132-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C132 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C132/C132-a1.trx; SHA-256 c720a4d6a747db54e4b97d948a68b08fbe5c36af44faa1a60db125fd29d2cca3.
+
+**C069 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C069-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/ClosingReportNudgeLifecycleTests/*' --report-trx --report-trx-filename C069-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C069 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C069/C069-a1.trx; SHA-256 da962eb8da1031261da2151e59f02e2c7a6068859c240d93257039ecf16a0796.
+
+**C099 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C099-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/MatrixChildReceiptTests/*' --report-trx --report-trx-filename C099-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C099 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C099/C099-a1.trx; SHA-256 8022948d9f26a1cd672edad72734ff68b90ba65540977f49fd33ddde6734cd69.
+
+**C105 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C105-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/PermissionWaitTests/*' --report-trx --report-trx-filename C105-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C105 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C105/C105-a1.trx; SHA-256 557ac3a66d2232874c0202e11bb7da33a6c8cee0728ffd5440a0fdbe9820a867.
+
+**C134 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C134-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/(WorktreeDefaultCallerTests*)|(WorktreeRetirementRaceTests*)/*' --report-trx --report-trx-filename C134-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C134 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C134/C134-a1.trx; SHA-256 e88df5eade5c7d5bf3b78418a50aeb3cd95075a8a345acdfcc29fc8acb97d4f7.
+
+**C074 a1**
+
+```sh
+cd /tmp/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-C074-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/DelegateBranchDeliveryTests/*' --report-trx --report-trx-filename C074-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C074 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/C074/C074-a1.trx; SHA-256 913185c74fa478c9eb7e2e26f416d0da16331f99d39716a80a7bfad3e794e0f8.
+
+**R008 a1**
+
+```sh
+cd /work/worktrees/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-R008-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/VerificationRoundDeliveryTests/C544_ReportRegeneratedFromSnapshot' --report-trx --report-trx-filename R008-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/R008 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/R008/R008-a1.trx; SHA-256 a5c7232a947555f6d1842552d292407d920b07964508ffb24a02674ac0f88c50.
+
+**R009 a1**
+
+```sh
+cd /work/worktrees/task-15406ecc-coverage2
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-cont2-R009-a1 -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/WorktreeDefaultCallerTests/SpecialistFactoriesStayOnSeat' --report-trx --report-trx-filename R009-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/R009 --output Detailed
+```
+
+TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/R009/R009-a1.trx; SHA-256 6625b13dac7b5b604d57749c7b993de63bf15553b93997332b0b4d03ca4ca2b0.
+
+The two large parameter matrices (active source claims and real dispatch admission) were split into individual UID cases using unchanged committed discovery-fixture identities; a zero selection is never credited. A method with only some parameter variants observed remains partial. Slot waiting is outside the sub-ten-minute execution cap and is included in wall time. The owned measurement helper examines all wrapper threads for the test child so PowerShell worker-thread spawning cannot evade that cap. No framework timeout, assertion or retry was widened. Generated receipts/logs/phase files and drivers remain ignored under /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/.
 
 ### Earlier Linux fixture families: Windows rc relevance
 
-| Card | Can the failing path execute in Windows rc? |
+| Card | Windows rc relevance |
 |---|---|
-| CARD-1927 ClaudeAuthProbe | Yes. Real CLI child auth/environment inheritance is portable; caller reports desktop CLI logged in. An inherited OAuth variable can defeat the temporary-config logged-out witness. This Linux task did not inspect desktop credentials or execute the Windows case. |
-| CARD-1928 Herdr peer loader | CrashedOwnerLeaseReclaimed starts the same owned PowerShell child on Windows, so its child-host loader failure can affect Windows. ChangedAndSymlinkSocketsAreNotReclaimed returns immediately on Windows and does not exercise the failed Linux path. Specific inner module-loader cause remains unproved. |
-| CARD-1929..1932 Linux cgroup custody | No. The whole class is NativeLinuxOnly and is excluded from Windows execution. |
-| CARD-1934 C519 broker bootstrap | Yes, when Docker-backed integration tests are admitted; Redpanda readiness and Testcontainers resource-reaper startup are prerequisites on Windows too. Linux startup failures do not prove a Windows failure. |
-| CARD-1935 C699 completion recovery | Yes. The database/event recovery test is portable, with no Windows exclusion. Its repeated missing stamps can affect Windows rc; product-versus-fixture attribution is unresolved. |
+| CARD-1927 | Real CLI child auth/environment inheritance is portable; caller reports desktop CLI logged in. An inherited OAuth variable can defeat the temporary-config logged-out witness. No desktop credential or Windows execution was inspected here. |
+| CARD-1928 | CrashedOwnerLeaseReclaimed starts the same owned PowerShell child on Windows; child-host loader failures can affect it. ChangedAndSymlinkSocketsAreNotReclaimed returns immediately on Windows, excluding that failed Linux path. Specific inner loader cause remains unproved. |
+| CARD-1929..1932 | NativeLinuxOnly class; excluded from Windows. |
+| CARD-1934 | C519 broker/resource-reaper startup prerequisites can fail on Windows when Docker integration tests are admitted; the Linux failure does not prove a Windows red. |
+| CARD-1935 | C699 completion recovery is portable; repeated missing stamps can affect Windows. Product versus fixture attribution remains unresolved. |
 
-Live Windows numeric chunks remain unmapped except supplied g54/g58. Source golden boundary IDs earlier in this report identify committed roster boundaries only. No live Windows log or desktop was accessed.
+Caller reports C1196 is repaired on master, C1029 is in Merge227, and CARD-1924/CARD-1926 plus the g90 trio are assigned to Debug9c1feeba. Those are coordination statements, not newly executed green receipts. Their already-observed cases were excluded here. No live Windows run, desktop, host restart, deployment or Docker volume was touched. Live numeric chunk mapping remains unknown beyond the caller-supplied mappings; source golden boundary IDs are not substituted for live run indices.
 
-Progress checkpoint C001-C003: 73 executed, 73 passed, zero failed, four skipped. AgentControlServiceIntegrationTests passed33/33; six PhoneHome transport/reconnect classes passed40/40; three explicit Grok acceptance classes supplied the four Windows/headed skips. Current-master results remain separate from historical baseline results. Generated receipts are under the ignored continuation2 evidence directory.
+### Exact classes still without any result at the stop
 
-Progress checkpoint C001-C007: 229 executed, all229 passed, zero failed, four skipped. All newly selected PhoneHome transport, connection/epoch, pending-inventory, rolling, spill, stranded-queue and task-projection rows passed. The seven previously unobserved PhoneHomeOutageMentionTests methods passed; its earlier in-flight-Enter failure remains historical and excluded here. Static selection audit found zero overlaps with previously observed methods. Standing families are next.
+| Project | Exact class | Rerun class filter |
+|---|---|---|
+| Antiphon.E2E | `Antiphon.E2E.OutputDistillationApplyCanaryTests` | `/*/Antiphon.E2E/OutputDistillationApplyCanaryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AbandonedLandingReconcilerTests` | `/*/Antiphon.Tests.Application/AbandonedLandingReconcilerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentAttachHerdrTests` | `/*/Antiphon.Tests.Application/AgentAttachHerdrTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentChannelServiceIntegrationTests` | `/*/Antiphon.Tests.Application/AgentChannelServiceIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentReportStoreTests` | `/*/Antiphon.Tests.Application/AgentReportStoreTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentStartRecoveryTests` | `/*/Antiphon.Tests.Application/AgentStartRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentSupervisionTests` | `/*/Antiphon.Tests.Application/AgentSupervisionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskAnswerTests` | `/*/Antiphon.Tests.Application/AgentTaskAnswerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskDispatchBaseGuardTests` | `/*/Antiphon.Tests.Application/AgentTaskDispatchBaseGuardTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskDispatcherWiringTests` | `/*/Antiphon.Tests.Application/AgentTaskDispatcherWiringTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskInternalDecisionLifecycleTests` | `/*/Antiphon.Tests.Application/AgentTaskInternalDecisionLifecycleTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandActiveSourceClaimTests` | `/*/Antiphon.Tests.Application/AgentTaskLandActiveSourceClaimTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandAdmissionControlledTests` | `/*/Antiphon.Tests.Application/AgentTaskLandAdmissionControlledTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandAdmissionTests` | `/*/Antiphon.Tests.Application/AgentTaskLandAdmissionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandEnqueueTests` | `/*/Antiphon.Tests.Application/AgentTaskLandEnqueueTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandFailureDiagnosticTests` | `/*/Antiphon.Tests.Application/AgentTaskLandFailureDiagnosticTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandHoldVisibilityTests` | `/*/Antiphon.Tests.Application/AgentTaskLandHoldVisibilityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandMonitoringTests` | `/*/Antiphon.Tests.Application/AgentTaskLandMonitoringTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandNotificationParkFollowUpTests` | `/*/Antiphon.Tests.Application/AgentTaskLandNotificationParkFollowUpTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandNotificationRescanTests` | `/*/Antiphon.Tests.Application/AgentTaskLandNotificationRescanTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandPersistenceFailureTests` | `/*/Antiphon.Tests.Application/AgentTaskLandPersistenceFailureTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandPublicationTests` | `/*/Antiphon.Tests.Application/AgentTaskLandPublicationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandQueuedReceiptTests` | `/*/Antiphon.Tests.Application/AgentTaskLandQueuedReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandReceiptTests` | `/*/Antiphon.Tests.Application/AgentTaskLandReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandReceiptWatermarkSafetyTests` | `/*/Antiphon.Tests.Application/AgentTaskLandReceiptWatermarkSafetyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskOverdueDeadlineTests` | `/*/Antiphon.Tests.Application/AgentTaskOverdueDeadlineTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskPoolTests` | `/*/Antiphon.Tests.Application/AgentTaskPoolTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskReplyOverlayTests` | `/*/Antiphon.Tests.Application/AgentTaskReplyOverlayTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskReuseEnqueueTests` | `/*/Antiphon.Tests.Application/AgentTaskReuseEnqueueTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskServiceIntegrationTests` | `/*/Antiphon.Tests.Application/AgentTaskServiceIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskSettlementRaceTests` | `/*/Antiphon.Tests.Application/AgentTaskSettlementRaceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskStallEscalationTests` | `/*/Antiphon.Tests.Application/AgentTaskStallEscalationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskStandingAgentDispatchTests` | `/*/Antiphon.Tests.Application/AgentTaskStandingAgentDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskWorktreeLockOutcomeTests` | `/*/Antiphon.Tests.Application/AgentTaskWorktreeLockOutcomeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.AgentTui.AgentTuiSecretProtectorTests` | `/*/Antiphon.Tests.AgentTui/AgentTuiSecretProtectorTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.AnchoredPathDeleteWitnessTests` | `/*/Antiphon.Tests.Checkpoints/AnchoredPathDeleteWitnessTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AwayDigestNotifierTests` | `/*/Antiphon.Tests.Application/AwayDigestNotifierTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AwayDigestProjectionTests` | `/*/Antiphon.Tests.Application/AwayDigestProjectionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedReplyReportRetentionTests` | `/*/Antiphon.Tests.Application/BlockedReplyReportRetentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedSeatEscalationNotifierTests` | `/*/Antiphon.Tests.Application/BlockedSeatEscalationNotifierTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskNotifierTests` | `/*/Antiphon.Tests.Application/BlockedTaskNotifierTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskParkDeliveryTests` | `/*/Antiphon.Tests.Application/BlockedTaskParkDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskParkProjectionTests` | `/*/Antiphon.Tests.Application/BlockedTaskParkProjectionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskParkReclaimTests` | `/*/Antiphon.Tests.Application/BlockedTaskParkReclaimTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskParkReleaseTests` | `/*/Antiphon.Tests.Application/BlockedTaskParkReleaseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BlockedTaskSyncRecoveryTests` | `/*/Antiphon.Tests.Application/BlockedTaskSyncRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BoardServiceIntegrationTests` | `/*/Antiphon.Tests.Application/BoardServiceIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BootLivenessProbeScopeTests` | `/*/Antiphon.Tests.Application/BootLivenessProbeScopeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BootStallAttentionTests` | `/*/Antiphon.Tests.Application/BootStallAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BootStallDetectionTests` | `/*/Antiphon.Tests.Application/BootStallDetectionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BootStallDocumentationTests` | `/*/Antiphon.Tests.Application/BootStallDocumentationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.BootWedgeRelaunchParityTests` | `/*/Antiphon.Tests.Application/BootWedgeRelaunchParityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0747LandReceiptReplayTests` | `/*/Antiphon.Tests.Application/C0747LandReceiptReplayTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0747QueueRowExpiryTests` | `/*/Antiphon.Tests.Application/C0747QueueRowExpiryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824DesktopLegacyReleaseSwitchTests` | `/*/Antiphon.Tests.Application/C0824DesktopLegacyReleaseSwitchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlyCleanupTests` | `/*/Antiphon.Tests.Application/C0824RefOnlyCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlyDebtTests` | `/*/Antiphon.Tests.Application/C0824RefOnlyDebtTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlyLandingTests` | `/*/Antiphon.Tests.Application/C0824RefOnlyLandingTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlyReadTests` | `/*/Antiphon.Tests.Application/C0824RefOnlyReadTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlyReceiptTests` | `/*/Antiphon.Tests.Application/C0824RefOnlyReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824RefOnlySyncTests` | `/*/Antiphon.Tests.Application/C0824RefOnlySyncTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824WorkspaceSlotServerTests` | `/*/Antiphon.Tests.Application/C0824WorkspaceSlotServerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.C1307CliCancellationTests` | `/*/Antiphon.Tests.Checkpoints/C1307CliCancellationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.C1307ToolRemovalTests` | `/*/Antiphon.Tests.Infrastructure/C1307ToolRemovalTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C1514HostLoadHistoryTests` | `/*/Antiphon.Tests.Application/C1514HostLoadHistoryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C1677DiskAlarmTests` | `/*/Antiphon.Tests.Application/C1677DiskAlarmTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CapacityRecoverySupervisionTests` | `/*/Antiphon.Tests.Application/CapacityRecoverySupervisionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.Card1619ExitConsumerTests` | `/*/Antiphon.Tests.Application/Card1619ExitConsumerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardClosedAttentionTests` | `/*/Antiphon.Tests.Application/CardClosedAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardCorrectionIntegrationTests` | `/*/Antiphon.Tests.Application/CardCorrectionIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardFilePrivacyBoundaryAcceptanceTests` | `/*/Antiphon.Tests.Application/CardFilePrivacyBoundaryAcceptanceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardFilePrivacyConcurrencyTests` | `/*/Antiphon.Tests.Application/CardFilePrivacyConcurrencyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardFilePrivacyRecoveryTests` | `/*/Antiphon.Tests.Application/CardFilePrivacyRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardPrivateNotesBoundaryTests` | `/*/Antiphon.Tests.Application/CardPrivateNotesBoundaryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardReviewServiceIntegrationTests` | `/*/Antiphon.Tests.Application/CardReviewServiceIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardSpawnModelArgumentTests` | `/*/Antiphon.Tests.Application/CardSpawnModelArgumentTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardVerificationPolicyTests` | `/*/Antiphon.Tests.Application/CardVerificationPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardWorkTransitionServiceTests` | `/*/Antiphon.Tests.Application/CardWorkTransitionServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests` | `/*/Antiphon.Tests.Application/CardWorktreeMirrorCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ChannelBatchingTests` | `/*/Antiphon.Tests.Application/ChannelBatchingTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CheckCompactionAutomaticRestartTests` | `/*/Antiphon.Tests.Application/CheckCompactionAutomaticRestartTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CheckCompactionCrashTests` | `/*/Antiphon.Tests.Application/CheckCompactionCrashTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointExecutorLogTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointExecutorLogTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceExecutionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointSourceStateTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointSourceStateTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointStatePublicationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointTaskOwnershipTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointTaskOwnershipTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointTempScopeTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointTempScopeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointTerminalReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointToolCopyCleanupTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointToolCopyCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.CompletionNoteDurableSweepTests` | `/*/Antiphon.Tests.Application/CompletionNoteDurableSweepTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ComplexityAttentionTests` | `/*/Antiphon.Tests.Application/ComplexityAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ComplexityDispatcherTests` | `/*/Antiphon.Tests.Application/ComplexityDispatcherTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ContextCompactionSweepTests` | `/*/Antiphon.Tests.Application/ContextCompactionSweepTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DataRetentionServiceTests` | `/*/Antiphon.Tests.Application/DataRetentionServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DecisionCardNotifierTests` | `/*/Antiphon.Tests.Application/DecisionCardNotifierTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DefaultRunnerPinTests` | `/*/Antiphon.Tests.Application/DefaultRunnerPinTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DefaultRunnerRerouteTests` | `/*/Antiphon.Tests.Application/DefaultRunnerRerouteTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DelegateCheckProbeTests` | `/*/Antiphon.Tests.Application/DelegateCheckProbeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Scripts.DerivedImpactIndexTests` | `/*/Antiphon.Tests.Scripts/DerivedImpactIndexTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DiagnosticsBundleServiceTests` | `/*/Antiphon.Tests.Application/DiagnosticsBundleServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DialogDeliveryAdmissionTests` | `/*/Antiphon.Tests.Application/DialogDeliveryAdmissionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests` | `/*/Antiphon.Tests.TestHelpers/DirectoryLinkFixtureWindowsTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DispatchBaseInspectionDiagnosticsTests` | `/*/Antiphon.Tests.Application/DispatchBaseInspectionDiagnosticsTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DispatchConcurrencyDispatchTests` | `/*/Antiphon.Tests.Application/DispatchConcurrencyDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DispatcherSiblingInspectionSchedulingTests` | `/*/Antiphon.Tests.Application/DispatcherSiblingInspectionSchedulingTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DispatcherSweepLifetimeTests` | `/*/Antiphon.Tests.Application/DispatcherSweepLifetimeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DispatchHoldVisibilityTests` | `/*/Antiphon.Tests.Application/DispatchHoldVisibilityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.DockerDeliveryDatabaseTests` | `/*/Antiphon.Tests.Infrastructure/DockerDeliveryDatabaseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.DurableRunnerSpillReceiptTests` | `/*/Antiphon.Tests.Application/DurableRunnerSpillReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ExpectationDirectDeliveryTests` | `/*/Antiphon.Tests.Application/ExpectationDirectDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ExpectationEscalationTests` | `/*/Antiphon.Tests.Application/ExpectationEscalationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ExpectationNoteDebtTests` | `/*/Antiphon.Tests.Application/ExpectationNoteDebtTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ExpectationObservationAdapterTests` | `/*/Antiphon.Tests.Application/ExpectationObservationAdapterTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ExpectationResponseTests` | `/*/Antiphon.Tests.Application/ExpectationResponseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.FileUseCaptureTests` | `/*/Antiphon.Tests.Infrastructure/FileUseCaptureTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.GhostSeatReleaseTests` | `/*/Antiphon.Tests.Application/GhostSeatReleaseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrAlwaysOnChannelParityTests` | `/*/Antiphon.Tests.Application/HerdrAlwaysOnChannelParityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrPaneDisposalApplicationTests` | `/*/Antiphon.Tests.Application/HerdrPaneDisposalApplicationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrStatusDisagreementTests` | `/*/Antiphon.Tests.Application/HerdrStatusDisagreementTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrSupervisionAttentionTests` | `/*/Antiphon.Tests.Application/HerdrSupervisionAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.HostCleanupCheckpointAuthorityTests` | `/*/Antiphon.Tests.Infrastructure/HostCleanupCheckpointAuthorityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.HostCleanupCheckpointCompatibilityTests` | `/*/Antiphon.Tests.Infrastructure/HostCleanupCheckpointCompatibilityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.HostCleanupCheckpointCustodyTests` | `/*/Antiphon.Tests.Infrastructure/HostCleanupCheckpointCustodyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HostCleanupWorktreeInventoryTests` | `/*/Antiphon.Tests.Application/HostCleanupWorktreeInventoryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.InterimVerificationPolicyTests` | `/*/Antiphon.Tests.Application/InterimVerificationPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Api.KeepSixReminderTests` | `/*/Antiphon.Tests.Api/KeepSixReminderTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.LandEvidenceWarningDeliveryTests` | `/*/Antiphon.Tests.Application/LandEvidenceWarningDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.LandingGitTests` | `/*/Antiphon.Tests.Infrastructure/LandingGitTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.LandingRemovalPolicyControlTests` | `/*/Antiphon.Tests.Infrastructure/LandingRemovalPolicyControlTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.LandReceiptScanCacheTests` | `/*/Antiphon.Tests.Application/LandReceiptScanCacheTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.LandRequestWriteDiagnosticTests` | `/*/Antiphon.Tests.Application/LandRequestWriteDiagnosticTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.LinuxOwnedGitProcessTests` | `/*/Antiphon.Tests.Infrastructure/LinuxOwnedGitProcessTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.LiveFixtureTextTests` | `/*/Antiphon.Tests.TestHelpers/LiveFixtureTextTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.LogRetentionTests` | `/*/Antiphon.Tests.Infrastructure/LogRetentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.MatrixDefaultComplexityCreateTests` | `/*/Antiphon.Tests.Application/MatrixDefaultComplexityCreateTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.MidTurnInterruptDocumentationTests` | `/*/Antiphon.Tests.Application/MidTurnInterruptDocumentationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.MidTurnInterruptPolicyTests` | `/*/Antiphon.Tests.Application/MidTurnInterruptPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ModelAvailabilityDispatcherTests` | `/*/Antiphon.Tests.Application/ModelAvailabilityDispatcherTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OrchestratorInstructionsRefreshTests` | `/*/Antiphon.Tests.Application/OrchestratorInstructionsRefreshTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OrchestratorServiceIntegrationTests` | `/*/Antiphon.Tests.Application/OrchestratorServiceIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OrchestratorStateProjectionTests` | `/*/Antiphon.Tests.Application/OrchestratorStateProjectionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OrchestratorTrackerCadenceTests` | `/*/Antiphon.Tests.Application/OrchestratorTrackerCadenceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationApplyRaceTests` | `/*/Antiphon.Tests.Application/OutputDistillationApplyRaceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationCleanupTests` | `/*/Antiphon.Tests.Application/OutputDistillationCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationDeliveryTests` | `/*/Antiphon.Tests.Application/OutputDistillationDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationDispatchTests` | `/*/Antiphon.Tests.Application/OutputDistillationDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationProducerTests` | `/*/Antiphon.Tests.Application/OutputDistillationProducerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ParkedMessageSweepServiceTests` | `/*/Antiphon.Tests.Application/ParkedMessageSweepServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PinnedAgentKindTests` | `/*/Antiphon.Tests.Application/PinnedAgentKindTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PipelineSpeedIntegrationTests` | `/*/Antiphon.Tests.Application/PipelineSpeedIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PolicyRefreshServiceTests` | `/*/Antiphon.Tests.Application/PolicyRefreshServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PoolClaudeEffortTests` | `/*/Antiphon.Tests.Application/PoolClaudeEffortTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PoolProviderProjectionStampTests` | `/*/Antiphon.Tests.Application/PoolProviderProjectionStampTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PostLandMutationWorkflowTests` | `/*/Antiphon.Tests.Application/PostLandMutationWorkflowTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PostLandMutationWorktreeTests` | `/*/Antiphon.Tests.Application/PostLandMutationWorktreeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.PreDispatchFailureDeliveryTests` | `/*/Antiphon.Tests.Application/PreDispatchFailureDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.ProcessSpawnLimitTests` | `/*/Antiphon.Tests/ProcessSpawnLimitTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ProviderQuotaRefusalAcceptanceTests` | `/*/Antiphon.Tests.Application/ProviderQuotaRefusalAcceptanceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.QuotaEvidenceWireTests` | `/*/Antiphon.Tests.Application/QuotaEvidenceWireTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.RcBridgeProbePlatformTests` | `/*/Antiphon.Tests.Infrastructure/RcBridgeProbePlatformTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Scripts.RcQualificationWatcherScriptTests` | `/*/Antiphon.Tests.Scripts/RcQualificationWatcherScriptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ReceiptScanDestinationIntegrationTests` | `/*/Antiphon.Tests.Application/ReceiptScanDestinationIntegrationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ReceiptScanDestinationTests` | `/*/Antiphon.Tests.Application/ReceiptScanDestinationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RefocusBriefIdentityTests` | `/*/Antiphon.Tests.Application/RefocusBriefIdentityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Scripts.ReleaseImpactEnvelopeTests` | `/*/Antiphon.Tests.Scripts/ReleaseImpactEnvelopeTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.RepositoryMutationLeaseOwnerTests` | `/*/Antiphon.Tests.Infrastructure/RepositoryMutationLeaseOwnerTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.RepositoryMutationLeaseTests` | `/*/Antiphon.Tests.Infrastructure/RepositoryMutationLeaseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RestartFailureClassificationTests` | `/*/Antiphon.Tests.Application/RestartFailureClassificationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ReviewLoopTests` | `/*/Antiphon.Tests.Application/ReviewLoopTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerAlarmAttentionTests` | `/*/Antiphon.Tests.Application/RunnerAlarmAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerAlarmDeliveryTests` | `/*/Antiphon.Tests.Application/RunnerAlarmDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerAlarmNotifierTests` | `/*/Antiphon.Tests.Application/RunnerAlarmNotifierTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerBranchContractDocumentationTests` | `/*/Antiphon.Tests.Application/RunnerBranchContractDocumentationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerClaudeAdapterEffortPromptTests` | `/*/Antiphon.Tests.Agents/RunnerClaudeAdapterEffortPromptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerClaudeAdapterTrustPromptTests` | `/*/Antiphon.Tests.Agents/RunnerClaudeAdapterTrustPromptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerClaudeAdapterVerifiedPromptTests` | `/*/Antiphon.Tests.Agents/RunnerClaudeAdapterVerifiedPromptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerCodexCliEvidenceTests` | `/*/Antiphon.Tests.Application/RunnerCodexCliEvidenceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerGrokAdapterReadyTests` | `/*/Antiphon.Tests.Agents/RunnerGrokAdapterReadyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerGrokCredentialProbeDispatcherTests` | `/*/Antiphon.Tests.Application/RunnerGrokCredentialProbeDispatcherTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerReadSourcePinTests` | `/*/Antiphon.Tests.Application/RunnerReadSourcePinTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerSeatOrphanSweepTests` | `/*/Antiphon.Tests.Application/RunnerSeatOrphanSweepTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerSettlementSyncTests` | `/*/Antiphon.Tests.Application/RunnerSettlementSyncTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerSlotEndpointTests` | `/*/Antiphon.Tests.Application/RunnerSlotEndpointTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerStartupStaleObservationTests` | `/*/Antiphon.Tests.Agents/RunnerStartupStaleObservationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerSyncLeaseFairnessTests` | `/*/Antiphon.Tests.Application/RunnerSyncLeaseFairnessTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.RunnerTerminalSessionGenerationTests` | `/*/Antiphon.Tests.Agents/RunnerTerminalSessionGenerationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RuntimeActionClaimQueryTests` | `/*/Antiphon.Tests.Application/RuntimeActionClaimQueryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ScheduleCardActionTests` | `/*/Antiphon.Tests.Application/ScheduleCardActionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ScheduleSweepTests` | `/*/Antiphon.Tests.Application/ScheduleSweepTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ScopeDriftTests` | `/*/Antiphon.Tests.Application/ScopeDriftTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Scripts.ScriptHarnessProcessContractTests` | `/*/Antiphon.Tests.Scripts/ScriptHarnessProcessContractTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SeatOccupancyAttentionTests` | `/*/Antiphon.Tests.Application/SeatOccupancyAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionGenerationDeliveryOverlapTests` | `/*/Antiphon.Tests.Application/SessionGenerationDeliveryOverlapTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionHealthTests` | `/*/Antiphon.Tests.Application/SessionHealthTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionReconciliationServiceTests` | `/*/Antiphon.Tests.Application/SessionReconciliationServiceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRunnerAbsenceEvidenceDocumentationTests` | `/*/Antiphon.Tests.Application/SessionRunnerAbsenceEvidenceDocumentationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRunnerEventPumpTests` | `/*/Antiphon.Tests.Application/SessionRunnerEventPumpTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.SessionRunnerGenerationWireTests` | `/*/Antiphon.Tests.Agents/SessionRunnerGenerationWireTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRunnerHeldEventExitMatrixTests` | `/*/Antiphon.Tests.Application/SessionRunnerHeldEventExitMatrixTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRuntimeActionDeferralTests` | `/*/Antiphon.Tests.Application/SessionRuntimeActionDeferralTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRuntimeActionRecoveryTests` | `/*/Antiphon.Tests.Application/SessionRuntimeActionRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRuntimeActionRoutingTests` | `/*/Antiphon.Tests.Application/SessionRuntimeActionRoutingTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRuntimeActionTemporaryBlockTests` | `/*/Antiphon.Tests.Application/SessionRuntimeActionTemporaryBlockTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionRuntimeActionTests` | `/*/Antiphon.Tests.Application/SessionRuntimeActionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionStateCacheReadTests` | `/*/Antiphon.Tests.Application/SessionStateCacheReadTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionStateCommitTests` | `/*/Antiphon.Tests.Application/SessionStateCommitTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionStatePinQueryTests` | `/*/Antiphon.Tests.Application/SessionStatePinQueryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionStateWarmupTests` | `/*/Antiphon.Tests.Application/SessionStateWarmupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SessionTerminationSourcePersistenceTests` | `/*/Antiphon.Tests.Application/SessionTerminationSourcePersistenceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SettlementSyncRecoveryTests` | `/*/Antiphon.Tests.Application/SettlementSyncRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistAttemptEvidenceTests` | `/*/Antiphon.Tests.Application/SpecialistAttemptEvidenceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistExecutionIdentityTests` | `/*/Antiphon.Tests.Application/SpecialistExecutionIdentityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistHealthAttentionTests` | `/*/Antiphon.Tests.Application/SpecialistHealthAttentionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistPublicationTests` | `/*/Antiphon.Tests.Application/SpecialistPublicationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistQualificationTests` | `/*/Antiphon.Tests.Application/SpecialistQualificationTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SpecialistStartIntentTests` | `/*/Antiphon.Tests.Application/SpecialistStartIntentTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.SpecialistToolPolicyTests` | `/*/Antiphon.Tests.Agents/SpecialistToolPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.StartRefGitDirectoryCleanupTests` | `/*/Antiphon.Tests.Infrastructure/StartRefGitDirectoryCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.SubscriptionQuotaGateDispatchTests` | `/*/Antiphon.Tests.Application/SubscriptionQuotaGateDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskCeilingControlTests` | `/*/Antiphon.Tests.Application/TaskCeilingControlTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskPlatformDispatchTests` | `/*/Antiphon.Tests.Application/TaskPlatformDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskProgressPolicyTests` | `/*/Antiphon.Tests.Application/TaskProgressPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskProgressStallSweepTests` | `/*/Antiphon.Tests.Application/TaskProgressStallSweepTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskSupervisionReceiptTests` | `/*/Antiphon.Tests.Application/TaskSupervisionReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskSupervisionVisibilityTests` | `/*/Antiphon.Tests.Application/TaskSupervisionVisibilityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TerminalRunnerSeatReleaseTests` | `/*/Antiphon.Tests.Application/TerminalRunnerSeatReleaseTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TerminalTaskResidueTests` | `/*/Antiphon.Tests.Application/TerminalTaskResidueTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests` | `/*/Antiphon.Tests.TestHelpers/TestLaneCategoryGuardTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TranscriptBindingIncidentTests` | `/*/Antiphon.Tests.Application/TranscriptBindingIncidentTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TranscriptPromptSpanTests` | `/*/Antiphon.Tests.Application/TranscriptPromptSpanTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TranscriptWorkingStateQueryTests` | `/*/Antiphon.Tests.Application/TranscriptWorkingStateQueryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TurnEndGapRestartDeliveryTests` | `/*/Antiphon.Tests.Application/TurnEndGapRestartDeliveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.UnsafeDeleteRecoveryTests` | `/*/Antiphon.Tests.Checkpoints/UnsafeDeleteRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.VerificationRoundSettlementTests` | `/*/Antiphon.Tests.Application/VerificationRoundSettlementTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Scripts.VolumeRetirementHostProofTests` | `/*/Antiphon.Tests.Scripts/VolumeRetirementHostProofTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.WindowsDeliveryFixtureWitnessTests` | `/*/Antiphon.Tests.TestHelpers/WindowsDeliveryFixtureWitnessTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.WorkingTranscriptRecoveryTests` | `/*/Antiphon.Tests.Application/WorkingTranscriptRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.WorktreeBaseSelectionTests` | `/*/Antiphon.Tests.Application/WorktreeBaseSelectionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.WorktreeCleanupJournalTests` | `/*/Antiphon.Tests.Application/WorktreeCleanupJournalTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.WorktreeLandingCleanupRetryTests` | `/*/Antiphon.Tests.Application/WorktreeLandingCleanupRetryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.WorktreeLockDiagnosticsTests` | `/*/Antiphon.Tests.Infrastructure/WorktreeLockDiagnosticsTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests` | `/*/Antiphon.Tests.Infrastructure/WorktreeNoFollowDeleteTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.OwnedPtyFixtureCleanupTests` | `/*/Antiphon.Tests.Agents/OwnedPtyFixtureCleanupTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.TestOwnedPtyHostIdentityTests` | `/*/Antiphon.Tests.Agents/TestOwnedPtyHostIdentityTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Agents.TestOwnedPtyHostPolicyTests` | `/*/Antiphon.Tests.Agents/TestOwnedPtyHostPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandContractEndpointTests` | `/*/Antiphon.Tests.Application/AgentTaskLandContractEndpointTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandHalfResetTests` | `/*/Antiphon.Tests.Application/AgentTaskLandHalfResetTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandNotificationPersistenceTests` | `/*/Antiphon.Tests.Application/AgentTaskLandNotificationPersistenceTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskLandRequestTests` | `/*/Antiphon.Tests.Application/AgentTaskLandRequestTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.C0824PublishedBranchDeletionTests` | `/*/Antiphon.Tests.Application/C0824PublishedBranchDeletionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrLabelFollowFlowTests` | `/*/Antiphon.Tests.Application/HerdrLabelFollowFlowTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.HerdrLabelFollowTests` | `/*/Antiphon.Tests.Application/HerdrLabelFollowTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.LandFailureDiagnosticTests` | `/*/Antiphon.Tests.Application/LandFailureDiagnosticTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.OutputDistillationAdmissionTests` | `/*/Antiphon.Tests.Application/OutputDistillationAdmissionTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ReviewEvidenceRecoveryTests` | `/*/Antiphon.Tests.Application/ReviewEvidenceRecoveryTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.ReviewEvidenceResettlementTests` | `/*/Antiphon.Tests.Application/ReviewEvidenceResettlementTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.RunnerTaskSettlementTests` | `/*/Antiphon.Tests.Application/RunnerTaskSettlementTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.TaskCompletionProgressPolicyTests` | `/*/Antiphon.Tests.Application/TaskCompletionProgressPolicyTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Application.VerificationRoundDispatchTests` | `/*/Antiphon.Tests.Application/VerificationRoundDispatchTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointEofStallTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointEofStallTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Checkpoints.CheckpointTimingHarnessTests` | `/*/Antiphon.Tests.Checkpoints/CheckpointTimingHarnessTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.Infrastructure.HostCleanupCheckpointReceiptTests` | `/*/Antiphon.Tests.Infrastructure/HostCleanupCheckpointReceiptTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.DirectoryLinkFixtureTests` | `/*/Antiphon.Tests.TestHelpers/DirectoryLinkFixtureTests/*` |
+| Antiphon.Tests | `Antiphon.Tests.TestHelpers.ReportBudgetWorkspacePortabilityTests` | `/*/Antiphon.Tests.TestHelpers/ReportBudgetWorkspacePortabilityTests/*` |
 
-Progress checkpoint C001-C013: 614 executed, all614 passed, zero failed, four skipped. Standing boot/restart/selection/readiness and all previously unobserved concurrency methods passed; the earlier reservation-race method was excluded. Attention API/noise22 and AttentionService168 cases passed. Completed-case identity audit found zero repeats across this window. Coverage now:158 full selections, one partial (C519),347 classes with no result. Full selections include historical red/skipped cases and do not establish a green suite.
+### Partial classes: exact remaining methods or argument rows
 
-C015 selection-cost exception: the combined channel metadata/recovery row exceeded its estimate and was stopped at the unchanged590-second execution cap (591.704s wall, exit137), before TRX finalization. Its source-bound Detailed stdout preserves22 explicit passes with canonical phase UIDs. Both test files are unchanged from committed discovery source808de327f593874469a8e84597ccb154f4994272 to measured8cec1e74, so its24-case roster identifies exactly two unfinished cases. Only those were selected afterward: conversion-dispatched passed alone (C015r01,143.077s wall), and Expired_publishing_lease_is_uncertain_until_explicit_retry passed (C015r02,44.747s). No prior pass was repeated. This is a row-cost/cap event, not an assertion failure or proof of host LOAD. The22 stdout passes remain separate from finalized TRX counters and are not validated Review receipts. Land-approval recovery groups C016/C017 passed45+49 cases.
+| Project | Exact class | Observed rows | Still-unselected methods |
+|---|---|---|---|
+| Antiphon.Tests | `Antiphon.Tests.Application.AgentTaskReplyIntegrationTests` | C054 | a_non_check_blocked_token_still_blocks_marked, continue_replays_standing_authority_on_a_question_block, continue_refuses_a_task_that_is_not_blocked, continue_refuses_a_merge_conflict, continue_refuses_when_there_is_no_authority, unmarked_waiting_parent_note_carries_the_structured_blocked_lines, a_marked_blocked_parent_note_uses_reason_marked_blocked, a_failed_verdict_fails_the_task_with_the_first_line_as_reason, the_completion_header_carries_report_marked, a_brief_that_lost_its_head_in_the_pty_still_settles_the_task, a_report_that_cannot_be_correlated_raises_an_incident, the_uncorrelated_incident_is_raised_once_not_once_per_turn, two_tasks_on_one_session_each_get_their_own_uncorrelated_incident, a_turn_with_no_assistant_text_yet_leaves_the_task_running, a_turn_end_whose_own_response_has_not_written_its_text_does_not_settle, the_final_messages_arrival_settles_the_task_with_the_report, a_turn_end_with_no_api_call_id_settles_as_it_always_did, a_response_that_never_writes_text_settles_after_the_grace_window, a_Codex_final_answer_with_the_turn_identity_settles_cleanly_without_a_warning, a_Codex_turn_with_no_final_answer_still_warns_after_the_grace_window, a_Codex_final_answer_that_arrives_after_its_turn_end_settles_cleanly, a_turn_with_no_text_at_all_at_grace_fails_the_task, the_final_message_missing_incident_is_raised_once_per_session, the_live_split_response_tail_settles_once_with_the_report, the_report_is_the_turn_ending_responses_own_text, a_response_split_over_several_text_blocks_is_joined_in_order, a_delegate_that_asks_a_question_comes_back_blocked_not_finished, a_report_under_the_ceiling_is_not_spilled_to_a_file, a_settled_report_stores_the_first_resolving_markdown_deliverable, a_custom_role_worktree_task_that_names_four_docs_writes_a_source_bundle, a_document_task_completion_note_ends_with_the_deliverable_attach_block, completed_sources_reach_the_parent_as_exact_inline_or_zip_attachments, completion_receipt_respects_legacy_renderer_keys_and_source_kill_switch, actual_completion_routes_source_bytes_directly_or_through_conversion, actual_task_done_turn_dispatches_implied_sources_by_channel_policy, a_report_with_no_resolving_markdown_path_leaves_no_deliverable_pointer, marking_a_task_read_is_idempotent_and_preserves_the_first_stamp, an_oversized_report_is_backstopped_to_a_file_by_the_server, a_spill_file_the_delegate_wrote_itself_is_used_as_is, the_completion_note_is_delivered_into_the_parents_session, a_five_kilobyte_report_spills_and_the_caller_gets_a_marked_excerpt, a_task_with_no_parent_session_settles_without_delivering_anywhere, token_spend_is_rolled_up_onto_the_task, a_stage_task_settlement_writes_a_delegate_row_with_copied_cost, a_stage_task_without_a_finding_line_is_unreported, a_task_without_stage_writes_no_outcome_row, the_three_input_counters_are_kept_apart_and_priced_apart, a_grok_turn_whose_last_segment_is_empty_defers_then_warns, grok_per_segment_ids_on_text_rows_do_not_double_count_turn_usage, a_grok_delegates_spend_is_priced_at_grok_rates_not_at_the_claude_rung_it_shares, a_claude_delegates_spend_is_unmoved_by_the_kind_overlay, usage_repeated_across_one_api_calls_entries_is_counted_once, spend_from_before_the_task_was_dispatched_is_not_charged_to_it, a_turn_that_ended_before_this_task_was_dispatched_is_not_a_report_for_it, a_report_after_the_reuse_compaction_settles_against_the_brief, a_compaction_the_delegate_runs_mid_task_still_settles_against_the_brief, an_unmarked_turn_after_dispatch_is_still_an_uncorrelated_report, a_turn_opened_by_a_queued_brief_settles_the_task, a_queued_prompt_after_the_brief_caps_the_report_window, a_queued_prompt_without_the_marker_is_an_uncorrelated_report_not_a_settle_on_the_brief, a_task_notification_is_still_a_notification_not_a_queued_turn_prompt, a_turn_that_launched_background_agents_does_not_settle_on_its_announcement, a_task_notification_turn_is_not_an_uncorrelated_report, the_last_subagent_notification_settles_the_task_with_the_verdict, a_synchronous_agent_call_settles_normally, a_subagent_that_never_reports_settles_after_the_subagent_grace, a_session_running_no_task_is_ignored, a_settled_shared_delegate_goes_warm_instead_of_dying, a_settled_worktree_delegate_still_retires, a_users_standing_agent_is_never_pooled_or_deleted, a_blocked_delegate_keeps_its_session_and_agent, a_failed_verdict_pools_a_shared_delegate_warm, a_failed_verdict_stops_a_worktree_delegate, a_kill_that_leaves_the_session_live_keeps_the_row_idle, C691_settlement_through_the_real_session_service_keeps_a_false_kill_owner, C691_settlement_preserves_an_AlwaysOn_or_standing_pool_delegate, a_succeeded_worktree_task_lands_its_branch_and_says_so_in_the_note, a_worktree_code_task_with_no_progress_fails_completed_without_progress, a_worktree_code_task_with_a_post_dispatch_commit_succeeds, a_worktree_code_task_with_a_changed_file_succeeds, unavailable_git_on_a_code_worktree_fails_open, a_legacy_task_without_a_baseline_gets_no_remote_credit, a_shared_code_task_is_not_failed_for_zero_worktree_progress, a_plan_task_with_no_commits_does_not_warn, a_shared_task_reports_git_unattributable, a_shared_report_naming_an_uncommitted_path_warns_the_caller, a_shared_report_naming_an_uncommitted_path_is_committed_when_the_policy_is_on, a_shared_report_whose_claimed_paths_are_clean_reports_git_landed, a_merge_conflict_blocks_the_task_and_spawns_a_merge_delegate, a_finished_merge_delegate_unblocks_its_conflicted_parent, C753_MergeHelperCannotMakeConflictedRecoveryOwnerLandable, a_retryable_api_error_defers_the_task_and_never_stores_the_error_text, real_narration_beside_the_stub_still_does_not_settle_on_it, a_second_on_turn_end_on_the_same_stub_adds_nothing, the_api_error_incident_is_warning_when_the_agent_is_not_channel_bound, the_api_error_incident_is_critical_when_the_agent_is_channel_bound, a_needs_human_error_is_critical_even_without_a_channel, a_parked_recovery_fails_the_task_naming_exhaustion, an_exhausted_capacity_wait_fails_the_wall_paused_task, a_dirty_shared_checkout_is_named_in_the_api_error_incident, an_unmarked_stub_turn_is_not_an_uncorrelated_report, a_codex_401_fails_as_authentication_required_with_no_resume, an_unexpected_settlement_exception_is_logged_and_releases_the_settle_lock, a_settled_investigate_report_stamps_next_stage_plan_and_header_next_plan, a_stage_role_without_the_block_gets_next_unmarked, a_docs_task_without_the_block_gets_no_next_bit, artifact_wins_over_the_regex_first_match_when_it_resolves, a_missing_artifact_file_falls_back_to_the_regex_path |
+| Antiphon.Tests | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests` | B027, R005 | C519_Queue_to_busy_adapter, C519_Partial_prompt_requires_complete_receipt, C519_Enabled_loss_notice_reaches_adapter, C519_Size_refusal, C519_Converter_handoff |
+| Antiphon.Tests | `Antiphon.Tests.Application.DelegationDispatchRecoveryBoundaryTests` | C084 | C1153_Real_client_certificate_holds_original_input, C1153_Real_client_bad_evidence_keeps_failure, C1153_Final_certificate_is_revalidated_under_lock, C1153_Certificate_age_is_monotonic, C1153_Working_or_unknown_inventory_withholds, C1153_Only_new_cold_dispatch_prepares_evidence, C1153_Nonpristine_brief_never_closes_identity, C1153_Certificate_failure_does_not_leak_a_hold_on_later_save, C1153_Due_hold_statement_ceiling, C1149_Absent_launch_is_blocked_with_original_input, C1591_Withheld_brief_still_holds_absent_launch, C1149_Hold_is_once_and_automatic_relaunch_bound_is_zero, C1149_Listed_or_unknown_runner_is_never_absence, C1149_Changed_or_working_attempt_is_untouched, C1149_Different_reason_or_attempted_brief_still_uses_failure_policy, C1149_Native_attempt_keeps_the_failure_path, C1149_Failed_hold_does_not_persist_on_a_later_save, C1149_Caller_note_has_one_complete_user_prompt, C1149_Unknown_native_evidence_is_not_unattempted, C1149_Whitelist_gap_keeps_previous_failure, C1151_Brief_and_spill_remain_byte_identical, C1151_Ceiling_failure_note_has_one_complete_user_prompt, C1213_Recovered_brief_keeps_branch_protections_without_git_common, C1150_Brief_envelope_corpus_matches_the_expected_matrix, C1150_Working_probe_failure_keeps_the_committed_brief, C1150_Outer_envelope_and_receipt_floor_through_the_queue, C1150_Concurrent_producers_ensure_one_brief, C1150_Existing_brief_and_spill_are_byte_identical, C1150_Uncertain_evidence_cannot_create_a_replacement, C1150_Old_attempt_evidence_does_not_suppress_current_brief, C1150_Brief_evidence_whitelist_flips_one_condition, C1150_Inline_brief_mentioning_spill_paths_is_not_held, C1150_Real_producers_race_to_one_brief_and_keep_the_followup, C1150_Late_ensure_after_remote_receipt_and_payload_release, C1150_Local_spill_must_be_present_and_intact, C1150_Spill_pointer_forms_fail_closed, C1150_Brief_decision_table_flips_one_condition, C1161_Failed_caller_note_has_one_complete_user_prompt, C1182_Gone_parent_stamps_the_lost_note_once, C1186_Recovered_failure_preserves_obligation_guidance, C1150_Resumed_backfill_event_save_failure_keeps_the_working_recipient, C1150_Resumed_launch_post_input_bookkeeping_flips_one_step, C1150_Resume_input_rule_classifies_every_delivery_result, C1150_Running_cut_is_discovered_and_delivered_once, C1150_Insert_before_flush_cut_reuses_pending_row, C1150_Followup_survives_both_queue_orders, C1150_Discovery_gates_withhold_recovery, C1150_Readiness_or_persistence_fault_preserves_custody, C1150_Watchdog_first_recovers_before_failure, C1149_Watchdog_first_holds_absent_launch, C1150_Recovery_exhaustion_is_visible_without_replacement, C1150_Watchdog_cleanup_requires_failure_and_fresh_safe_evidence, C1149_C1150_Working_full_tick_safety, C1149_C1150_Statement_budgets |
 
-Progress checkpoint through C021:1,312 finalized TRX passes, zero finalized failures, four skips, plus22 preserved stdout pass observations from capped C015. Launch154, watchdog/queued-input195, input-boundary120 and land-notification49 cases passed. No additional stale-contract assertion has failed in this window. Remaining delivery/launch/refinement rows retain priority over the broader consumer ledger.
+Exact remaining parameter rows for partial classes (one UID per sub-ten-minute row):
 
-Named-path priority phase complete through C031:1,540 finalized TRX passes, zero finalized failures, four Windows/headed skips, plus22 preserved capped-row stdout passes. All80 selected named-path project/classes now have full method selections represented, including the two previously partial classes; no earlier failure was rerun or cleared. Overall census:203 full selections, one partial C519,302 classes with no result. The sole E2E candidate OutputDistillationApplyCanaryTests is first guarded by NativeWindowsGate; it remains explicitly unrun on Linux. Remaining direct-consumer rows are prioritized by queue/fault/receipt proximity, sampling different class families before deeper rows of a single large class; lower-priority remainder keeps ledger order.
+| Row | Exact UID |
+|---|---|
+| C264u1 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Queue_to_busy_adapter(System.String).1.1.0` |
+| C264u2 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Queue_to_busy_adapter(System.String).2.1.0` |
+| C264u3 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Queue_to_busy_adapter(System.String).3.1.0` |
+| C268u1 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).1.1.0` |
+| C268u2 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).2.1.0` |
+| C268u3 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).3.1.0` |
+| C268u4 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).4.1.0` |
+| C268u5 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).5.1.0` |
+| C268u6 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).6.1.0` |
+| C268u7 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).7.1.0` |
+| C268u8 | `Antiphon.Tests.Application.ChannelOutboundUnifiedTransportTests.1.1.C519_Converter_handoff(System.Boolean, System.String).8.1.0` |
 
-Direct-consumer checkpoint: pre-input/refusal recovery C084 passed46, capacity C064 passed96, and the first caller-reply integration group C054 passed217. Current-window finalized total1,899 passed, zero failed, four skipped;22 capped-row stdout passes remain separate. The large dispatch-recovery and caller-reply classes are intentionally partial while different direct-consumer families receive coverage first.
+Exact outstanding row specifications, including parameter UIDs, are retained in /work/worktrees/task-15406ecc/.antiphon/sweep15406/continuation2/remaining-rows-at-stop.json (ignored generated evidence). Classes and remaining method names above remain durable in this committed report. The sole E2E class OutputDistillationApplyCanaryTests is guarded first by NativeWindowsGate and requires explicit headed/canary approvals; if unrun below it is not implied green by that guard.
 
-Direct-consumer checkpoint through C090:2,079 finalized passes, zero finalized failures, four skips, plus22 separate capped-row stdout passes. Pending-note/settlement C104 passed17, channel bridge/inbound/ingress C067 passed95, and dispatch-base/held attention C090 passed68. The remaining census is still incomplete; no new defect card has been warranted by a failing assertion in this window.
+### Final stop and source boundaries
 
-Late-window findings: C132 C544_ReportRegeneratedFromSnapshot failed immediately on null frozen rendering; inspection found the scratch was incorrectly placed under TEMP, while ReportWorkspace assumes a persistent checkout and AgentReportStore intentionally rejects TEMP. The same unchanged8cec1e74 scratch is being moved to /work/worktrees/task-15406ecc-coverage2 and rebuilt before an exact controlled validation; no source fix is applied. C134 WorktreeDefaultCallerTests.SpecialistFactoriesStayOnSeat timed out in its5-second task-admission poll and is queued for its required once-alone retry. Original failures and costs will remain in the final report.
+Coverage stopped before the closing validation phase; the final planned agent-family row was refused by the owned driver outer timebox before any test process started and remains in the exact unrun ledger. Final snapshot at2026-11-14T17:49Z:265 classes with no result and three partial. The two isolated validations completed before the hard stop2026-11-14T17:58:21Z. Final origin/master fetch resolved to f701b2ba967d503427d7064fe4fffa17b8c1738d; all measurements remain bound to8cec1e74e75819ef20756c228add987ce4ae4170, not that later tip. No additional stale-contract failure was found in this window. CARD-1940 records the fixture TEMP-checkout precondition; the other new failed case passed its required once-alone retry and is LOAD. Both original failures remain in the counters.
+
+### Completion and handoff
+
+The additional authorized time box is complete. Execution that remains absent is stated explicitly; the report does not claim exhaustive green coverage or authorize a land. No source repair was applied. Newly classified failures need the cards above; earlier repair owners retain their scope.
+
+--- next stage ---
+next: debug
+handoff: Repair any newly classified stale-contract tests listed in this window, coordinate the earlier CARD-1923/CARD-1924/CARD-1926/CARD-1936 repairs with their active owners, and diagnose the separately filed REAL-DEFECT families. Exact absent coverage remains in the stop ledger.
+artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
