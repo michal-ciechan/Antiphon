@@ -450,7 +450,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1915-s1b/ | baseline-fixture | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)/*` | V-1 foundation | all listed, 0 failed | 2 | 7 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2b/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1915-s4/ | summary-invalidation | `/*/*/(SessionTranscriptSummaryInvalidationTests*)\|(SessionStateWarmupTests*)\|(DataRetentionServiceTests*)/*` | V-4 | all listed, 0 failed | 3 | 4 |
 | CP-5 | S5 | tests/Antiphon.Tests -> bin-c1915-s5/ | summary-backfill | `/*/*/SessionTranscriptSummaryBackfillTests/*` | V-5 | all listed, 0 failed | 2 | 2 |

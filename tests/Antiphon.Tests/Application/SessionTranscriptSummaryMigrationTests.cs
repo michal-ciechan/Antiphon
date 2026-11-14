@@ -70,8 +70,9 @@ public sealed class SessionTranscriptSummaryMigrationTests
             await using var transaction = await blocker.BeginTransactionAsync();
             await using var command = new NpgsqlCommand("LOCK TABLE \"TranscriptEntries\" IN ROW EXCLUSIVE MODE", blocker, transaction);
             await command.ExecuteNonQueryAsync();
-            var error = await Should.ThrowAsync<PostgresException>(() => db.GetService<IMigrator>().MigrateAsync(current));
-            error.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+            var error = await Should.ThrowAsync<InvalidOperationException>(() => db.GetService<IMigrator>().MigrateAsync(current));
+            var postgres = error.InnerException.ShouldBeOfType<PostgresException>();
+            postgres.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
             (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(current);
             (await db.Database.SqlQueryRaw<bool>("SELECT to_regclass('\"SessionTranscriptSummaries\"') IS NULL AS \"Value\"").SingleAsync()).ShouldBeTrue();
             await transaction.RollbackAsync();
