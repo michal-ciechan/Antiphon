@@ -1,4 +1,3 @@
-using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -39,10 +38,11 @@ internal static class SessionRuntimeActionClaimQuery
         LIMIT 1
         """;
 
-    internal static IQueryable<SessionRuntimeAction> Query(AppDbContext db, Guid sessionId, DateTime now) =>
+    internal static IQueryable<SessionRuntimeAction> Query(
+        AppDbContext db, Guid sessionId, DateTime now, int queuePhase, string channelKind) =>
         db.SessionRuntimeActions.FromSqlRaw(Sql,
             new NpgsqlParameter("sessionId", NpgsqlDbType.Uuid) { Value = sessionId },
             new NpgsqlParameter("now", NpgsqlDbType.TimestampTz) { Value = now },
-            new NpgsqlParameter("queuePhase", NpgsqlDbType.Integer) { Value = SessionRuntimeActionCoordinator.QueuePhase },
-            new NpgsqlParameter("channelKind", NpgsqlDbType.Text) { Value = SessionRuntimeActionCoordinator.ChannelReplyDebt });
+            new NpgsqlParameter("queuePhase", NpgsqlDbType.Integer) { Value = queuePhase },
+            new NpgsqlParameter("channelKind", NpgsqlDbType.Text) { Value = channelKind });
 }
