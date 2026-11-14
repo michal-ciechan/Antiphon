@@ -447,6 +447,13 @@ timeout exit 4 is not-run/blocked, never permission to run without a lease.
 
 ### Checkpoints
 
+The final hand-glob selection also matches `spawn-limit-rosters`: CP-90/91
+run its mirrored ProcessSpawnLimitTests in Agents.Pty and SessionRunner.
+Each project owns an isolated build, with a provisional 2 min test cap and
+the tool's 15 min build watchdog floor. All activities remain serial, including
+Antiphon.Tests and Agents.Pty. No FakeClaude or full Pty suite is selected.
+
+
 S4 completion additions (Code 0a2ad036): CP-14/15/16 rerun the three red
 publication methods, CP-17 reruns the two host methods using the repaired
 transport seam. Assertions and timeouts are unchanged. CP-20 onward measure
@@ -572,6 +579,8 @@ serial measurement under 10 min each; never credit an incomplete row.
 | CP-79 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementReceiptTests/Journal_intents_and_partial_resume_are_exact` | M-adjacent VolumeRetirementReceiptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-80 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementReceiptTests/Lock_order_excludes_supported_writers` | M-adjacent VolumeRetirementReceiptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-81 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementWrapperTests/*` | M-adjacent VolumeRetirementWrapperTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
+| CP-90 | S4 | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters Agents.Pty | all named class; 0 failed | 1 | 1 | true |
+| CP-91 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters SessionRunner | all named class; 0 failed | 1 | 1 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
