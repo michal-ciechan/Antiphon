@@ -32,12 +32,12 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         await f.Git.RunAsync(f.Git.Desktop, "commit", "--allow-empty", "-m", "main differs from repair source");
         (await f.Git.RevParseAsync("HEAD")).ShouldNotBe(f.Git.Baseline);
         var repairId = await f.SeedAsync(t => t.RepairSourceTaskId = ownerId);
-        var next = f.Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror) + 1;
+        var next = f.MirrorCount(repairId) + 1;
         await f.Rig.TickAsync();
         var preparing = await f.Rig.ReadTaskAsync(repairId);
         preparing.Status.ShouldBe(AgentTaskStatus.Queued,
             "a published owned ref is a repair source without a registered checkout: " + preparing.FailureReason);
-        var request = await f.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, next);
+        var request = await f.WaitForMirrorAsync(repairId, next);
         await f.Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, "/runner/repair/" + repairId.ToString("N")));
         await f.Rig.Preparer.WhenIdleAsync();
         await f.Rig.TickAsync();

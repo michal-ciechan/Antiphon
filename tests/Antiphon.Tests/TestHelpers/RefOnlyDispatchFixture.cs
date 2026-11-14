@@ -9,6 +9,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Shouldly;
+using Microsoft.Extensions.Time.Testing;
+using System.Text.Json;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -23,17 +26,80 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
     {
         public Func<string, CancellationToken, Task>? Callback { get; set; }
     }
+    internal sealed record SharedTransport(FakeTimeProvider Clock, PhoneHomeTestHost Host,
+        PhoneHomeScriptedPeer Peer, PhoneHomeLiveConnection Live);
+    private static readonly Lazy<Task<SharedTransport>> Shared = new(CreateSharedAsync);
+    private static readonly Lazy<Task<RunnerSettlementSyncTests.SyncWorld>> Seed = new(CreateSeedAsync);
+
+    private static async Task<RunnerSettlementSyncTests.SyncWorld> CreateSeedAsync()
+    {
+        using var phase = TestTiming.BeginFixturePhase("c0824-producer-seed", TestPhaseKind.FixtureSetup, "seed");
+        return await RunnerSettlementSyncTests.SyncWorld.CreateAsync(pushBranch: false);
+    }
+
+    private static async Task<SharedTransport> CreateSharedAsync()
+    {
+        using var phase = TestTiming.BeginFixturePhase("c0824-producer-transport", TestPhaseKind.HostStartup, "start");
+        var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+        var host = await PhoneHomeTestHost.StartAsync(clock);
+        // Independent isolated task databases share the transport, not a capacity scenario.
+        host.Capacity = 64;
+        try
+        {
+            var peer = await host.ConnectPeerAsync(concurrentCalls: true);
+            peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
+            var live = await host.WaitLiveAsync(runnerId: host.AllowedRunnerId);
+            host.Directory.MarkRecovered(live);
+            return new(clock, host, peer, live);
+        }
+        catch { await host.DisposeAsync(); throw; }
+    }
+
+    internal static async Task DisposeSharedAsync()
+    {
+        if (Shared.IsValueCreated)
+        {
+            using var phase = TestTiming.BeginFixturePhase("c0824-producer-transport", TestPhaseKind.HostShutdown, "stop");
+            var transport = await Shared.Value;
+            await transport.Peer.DisposeAsync();
+            await transport.Host.DisposeAsync();
+        }
+        if (Seed.IsValueCreated) await (await Seed.Value).DisposeAsync();
+    }
+
+    public int MirrorCount(Guid id) => MirrorRequests(id).Length;
+    private PhoneHomeFrame[] MirrorRequests(Guid id) => Rig.Peer.IncomingSnapshot()
+        .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceMirror)
+        .Where(f => f.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json) is { } request
+            && (request.Binding?.TaskId == id || request.Binding is null && request.Name == RemoteWorkspaceService.MirrorName(id)))
+        .ToArray();
+
+    public async Task<PhoneHomeFrame> WaitForMirrorAsync(Guid id, int count = 1)
+    {
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        while (elapsed.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            var requests = MirrorRequests(id);
+            if (requests.Length >= count) return requests[count - 1];
+            await Task.Delay(20);
+        }
+        throw new TimeoutException($"Expected {count} task-owned WorkspaceMirror requests; saw {MirrorCount(id)}.");
+    }
+
     public string Root => Path.Combine(Git.Root, "managed");
 
     public static async Task<RefOnlyDispatchFixture> CreateAsync(bool enabled = true, bool slots = false, int capacity = 1)
     {
-        var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(pushBranch: false);
+        var seed = await Seed.Value;
+        var git = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(pushBranch: false, immutableSeedOrigin: seed.Origin);
         var monitor = new MutableMonitor<RefOnlyDesktopSettings>(new() { Enabled = enabled, Roles = "Plan" });
         var boundary = new PublicationBoundary();
         try
         {
+            // Lost-reply/store/clock recovery is the explicit fresh-transport exception.
+            var transport = slots ? null : await Shared.Value;
             var rig = await RemoteWorkspacePreparerTests.Rig.StartAsync(
-                tweak: s => s.WorkspaceSlotsEnabled = slots, capacity: capacity,
+                tweak: s => s.WorkspaceSlotsEnabled = slots, capacity: capacity, transport: transport,
                 capabilities: slots ? new("InboxConhost", "inbox", "test", false,
                     Features: [RunnerCapabilityFeatures.WorkspaceSlotV1], VerificationCustodyBackend: null) : null,
                 configure: services =>
@@ -68,12 +134,12 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
 
     public async Task<AgentTask> PrepareAsync(Guid id)
     {
-        var next = Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror) + 1;
+        var next = MirrorCount(id) + 1;
         await Rig.TickAsync();
         var queued = await Rig.ReadTaskAsync(id);
         queued.Status.ShouldBe(AgentTaskStatus.Queued, queued.FailureReason);
         PhoneHomeFrame request;
-        try { request = await Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, next); }
+        try { request = await WaitForMirrorAsync(id, next); }
         catch (TimeoutException ex)
         {
             await using var db = Rig.NewDb();

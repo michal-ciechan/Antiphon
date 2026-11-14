@@ -28,7 +28,13 @@ internal static class TestDbFixtureAssemblyHook
 
     [After(Assembly)]
     public static Task DisposeAsync() =>
-        DisposeAfterClassTeardownsAsync(ClassTeardownTracker.Default, TestDbFixture.DisposeAsync, ClassTeardownBound);
+        DisposeAfterClassTeardownsAsync(ClassTeardownTracker.Default, DisposeResourcesAsync, ClassTeardownBound);
+
+    private static async Task DisposeResourcesAsync()
+    {
+        await RefOnlyDispatchFixture.DisposeSharedAsync();
+        await TestDbFixture.DisposeAsync();
+    }
 
     /// <summary>
     /// TUnit 1.44 can start After(Assembly) while another class's After(Class) still runs; wait for
