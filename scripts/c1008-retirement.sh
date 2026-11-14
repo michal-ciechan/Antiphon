@@ -520,6 +520,8 @@ c1609_publication_gate() {
         [ "$attempt" != 2 ] || return 1
     done
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
+    # Prepare inputs in memory before the final observation; publish nothing Ready.
+    if [ "$purpose" = ready ]; then c1609_prepare_ready_receipt || return 1; fi
     C1609_CONTROL_STARTED="$(c1609_monotonic_ms)" || return 1
     c1609_recheck_origin_bindings effect || return 1
     printf 'C1609_CONTROL_REQUEST %s %s %s %s\n' "$nonce" "$purpose" "$C1609_BOUND_PROOF_DIGEST" "$objects"
@@ -555,7 +557,8 @@ c1609_recheck_target() {
     [ "$current" = "$expected" ]
 }
 
-c1609_write_ready_receipt() {
+c1609_prepare_ready_receipt() {
+    C1609_READY_PREPARED_PID=
     local root targets digest now daemon nonce snapshot manual admission_time='' monotonic elapsed
     root="$(c1609_retirement_root)"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
@@ -582,15 +585,29 @@ c1609_write_ready_receipt() {
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || return 1
     [ ! -e "$root/preview-$nonce.json" ] && [ ! -L "$root/preview-$nonce.json" ] || return 1
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
-    c1609_phase_preview_issued || return 1
-    jq -cn --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg now "$now" \
+    C1609_READY_PREPARED_ROOT="$root"
+    C1609_READY_PREPARED_NONCE="$nonce"
+    C1609_READY_PREPARED_JSON="$(jq -cn --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --arg now "" \
         --arg digest "$digest" --arg image "${C994_IMAGE:-}" --arg daemon "$daemon" \
         --arg retiredAt "$C1008_RETIRED_AT" --arg nonce "$nonce" --argjson targets "$targets" --argjson fingerprints "$snapshot" \
         --arg mode "${C1008_MODE:-scripted}" --argjson manual "$manual" \
         '({schema:2,policyVersion:1,operationId:$op,project:$project,mode:$mode,state:"Ready",consumed:false,
           targets:$targets,image:$image,inventoryDigest:$digest,readyAt:$now,daemon:$daemon,
-          retiredAt:$retiredAt,phaseNonce:$nonce,fingerprints:$fingerprints} + $manual)' | c1609_persist "$root/preview-$nonce.json" || return 1
+          retiredAt:$retiredAt,phaseNonce:$nonce,fingerprints:$fingerprints} + $manual)')" || return 1
+    C1609_READY_PREPARED_PID="$BASHPID"
+}
+
+c1609_write_ready_receipt() {
+    local root nonce now prepared
+    if [ "${C1609_READY_PREPARED_PID:-}" != "$BASHPID" ]; then
+        c1609_prepare_ready_receipt || return 1
+    fi
+    root="$C1609_READY_PREPARED_ROOT"; nonce="$C1609_READY_PREPARED_NONCE"
+    prepared="$C1609_READY_PREPARED_JSON"
+    C1609_READY_PREPARED_PID=; C1609_READY_PREPARED_JSON=
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    c1609_phase_preview_issued || return 1
+    printf '%s\n' "$prepared" | jq -c --arg now "$now" '.readyAt=$now' | c1609_persist "$root/preview-$nonce.json" || return 1
     # Each nonce artifact is immutable. preview.json is only a current rendering.
     cat -- "$root/preview-$nonce.json" | c1609_persist "$root/preview.json" || return 1
     c1609_copy_preview_rows "$root" Ready || return 1

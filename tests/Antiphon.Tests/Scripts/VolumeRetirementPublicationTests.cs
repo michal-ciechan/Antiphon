@@ -697,6 +697,8 @@ public sealed class VolumeRetirementPublicationTests
         Refused(refused, "RecycleGitAuditUnknown");
         f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+        File.Exists(Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation, "receipt.json"))
+            .ShouldBeFalse("receipt preparation must not publish Ready before the final live check");
     }
 
     [Test]
@@ -713,6 +715,8 @@ public sealed class VolumeRetirementPublicationTests
         Refused(refused, "RecycleGitAuditUnknown");
         f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+        File.Exists(Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation, "receipt.json"))
+            .ShouldBeFalse("receipt preparation must not publish Ready before the final live check");
     }
 
     [Test]
@@ -729,6 +733,8 @@ public sealed class VolumeRetirementPublicationTests
         Refused(refused, "RecycleGitAuditUnknown");
         f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1, "the full writer already succeeded before publication was withdrawn");
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
+        File.Exists(Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation, "receipt.json"))
+            .ShouldBeFalse("receipt preparation must not publish Ready before the final live check");
     }
 
     [Test]

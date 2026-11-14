@@ -899,3 +899,14 @@ landing operation/source before closing that verification obligation.
 next: review
 handoff: Accepted D-1..D-8: accept only exact canonical origin salvage in temp/v2, retain patch/reflog/tag protections, and commission the over-30-minute performance Debug obligation. Then dispatch Code against the closed verification design; leave live activation to a separate Deploy.
 artifact: docs/superpowers/plans/2026-11-14-card-1901-retirement-audit-plan.md
+
+Round-2 Ready preparation correction: source 83840716c5cbd06e9857f53f70772ecb503ae82f
+executed CP-4.V1 and CP-4.V2 as assertion reds (1 each): correct live proof, but
+snapshot/manual/daemon/digest preparation after control aged the unchanged five-second
+window. Prepare these inputs in process memory before the final binding observation;
+publish no Ready artifact until control succeeds. Keep the same receipt schema,
+manual admission checks, one-use nonce and final freshness assertion. CP-112/113/114
+also assert absence of receipt.json after refused final control. PC-29 remains
+pending SourceLanding Mutation. This is a normal-path timing repair, not a retry or
+an enlarged timeout. Re-run the affected publication/receipt rows and unfinished
+closed rows; retain already-green unrelated guards with their actual tested SHA.
