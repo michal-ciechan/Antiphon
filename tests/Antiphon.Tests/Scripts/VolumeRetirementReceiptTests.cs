@@ -893,7 +893,7 @@ public sealed class VolumeRetirementReceiptTests
                                     return 1
                                 fi
                             fi
-                            if [ -d "$arg" ] && [ "$C1901_PAYLOAD_SYNCED" = 1 ]; then
+                            if [ -d "$arg" ] && [ "$C1901_PAYLOAD_SYNCED" = 1 ] && [ -f {{VolumeRetirementFixture.Quote(ReceiptPath(fixture))}} ]; then
                                 printf 'directory-after-payload\n' >> {{VolumeRetirementFixture.Quote(trace)}}
                                 if [ {{VolumeRetirementFixture.Quote(vector)}} = directory ]; then
                                     printf 'fault-directory\n' >> {{VolumeRetirementFixture.Quote(trace)}}
@@ -920,6 +920,7 @@ public sealed class VolumeRetirementReceiptTests
                 run.Output.ShouldContain("RecycleReceiptUnavailable");
                 run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
                 if (vector == "file") File.Exists(receipt).ShouldBeFalse("file contents must be durable before publishing the authority receipt");
+                else File.Exists(receipt).ShouldBeTrue("the directory fault must occur after the authoritative receipt rename");
                 continue;
             }
             run.Exit.ShouldBe(0, run.Output);
