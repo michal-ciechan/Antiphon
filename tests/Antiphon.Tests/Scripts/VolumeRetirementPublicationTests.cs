@@ -731,6 +731,37 @@ public sealed class VolumeRetirementPublicationTests
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
     }
 
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Final_origin_binding_refresh_is_inside_effect_window()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        // Delay the real final binding observation after it has read the URL.
+        // The production gate and monotonic clock remain unchanged.
+        var delayedBindings = """
+            eval "$(declare -f c1609_recheck_origin_bindings | sed '1s/c1609_recheck_origin_bindings/c1901_original_origin_binding_check/')"
+            C1901_BINDING_CHECKS=0
+            c1609_recheck_origin_bindings() {
+                C1901_BINDING_CHECKS=$((C1901_BINDING_CHECKS+1))
+                c1901_original_origin_binding_check || return 1
+                if [ "$C1901_BINDING_CHECKS" = 2 ]; then
+                    sleep 6
+                    printf 'C1901_FINAL_BINDING_DELAYED\n'
+                fi
+            }
+            """;
+        var refused = await f.Preview(proof, extra: delayedBindings);
+        refused.Output.ShouldContain("C1901_FINAL_BINDING_DELAYED");
+        f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1);
+        f.ControlRequests.ShouldBe(1, "the fresh advertisement succeeds; the effect-window bound must refuse the stale binding observation");
+        Refused(refused, "RecycleGitAuditUnknown");
+    }
+
     private static void Refused((int Exit, string Output) run, string diagnosis)
     {
         run.Exit.ShouldBe(2, run.Output);

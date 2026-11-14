@@ -405,6 +405,7 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-25/rolled-back-after-staging | Skip the final live advertisement after staging. | `/*/*/VolumeRetirementPublicationTests/Head_rolled_back_after_staging_refuses_control` | pending |
 | PC-25/unreachable-after-staging | Accept final network failure after successful graph renewal. | `/*/*/VolumeRetirementPublicationTests/Origin_unreachable_after_staging_refuses_control` | pending |
 | PC-26 | Reuse the sealed bundle instead of fetching the fresh graph at a gate. | `/*/*/VolumeRetirementWrapperTests/Retire_temp_real_wrapper_renews_each_effect` | pending |
+| PC-27 | Start the effect-window clock after the final binding refresh, allowing an old URL observation. | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | pending |
 
 ### Checkpoint execution and lanes
 
@@ -490,6 +491,13 @@ capable bridge to the production boundary: c1008-retirement.sh, c590-real.ps1
 and the c1008-host-proof.ps1 v2 dispatch parameter. It preserves the approved
 origin registry and offline Docker boundary. Tests drive the real shell gate,
 writer and final check; the fixture maps only its private network/CLI boundaries.
+
+R2-15 / CP-125 covers the complete final binding refresh in the existing
+five-second effect window. Its real-gate witness delays the second real binding
+check by six seconds after the URL observation, while both the writer and final
+advertisement succeed. Before the clock-scope repair this reaches Ready; after
+repair it must refuse Unknown. The first binding scan and graph-fetch budgets
+are unchanged. No timeout or assertion is widened. PC-27 remains pending.
 
 CP-24 preserves all 11 V-6/V-7 vectors across four methods. CP-36 (40 methods),
 CP-39 (225 methods) and CP-40 (23 methods) are split by their complete declared
@@ -802,6 +810,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-122 | S4 | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness Agents.Pty | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-123 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-125 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | R2-15 | exactly 1 passed; real delayed binding observation refuses Unknown | 1 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -853,7 +862,7 @@ the existing apply gate, re-proving objects before each effect. It must not reus
 the 2026-11-13 token or expire reflogs to obtain Ready. Run the documented
 post-retirement cache/volume checks only after a successful apply. Do not claim
 this Plan or local tests have qualified deletion of real volumes. Commission
-the separate post-land verification companion with all 26 PCs and their variants and the exact
+the separate post-land verification companion with all 27 PCs and their variants and the exact
 landing operation/source before closing that verification obligation.
 
 --- next stage ---
