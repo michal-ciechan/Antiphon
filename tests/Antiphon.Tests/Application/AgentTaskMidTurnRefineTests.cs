@@ -237,7 +237,7 @@ public sealed class AgentTaskMidTurnRefineTests
     [Arguments("cancelled-then-prompt")]
     [Arguments("cancelled-then-head-only-prompt")]
     [Arguments("cancelled-then-no-prompt")]
-    [Arguments("flush-transport-failure-then-retry")]
+    [Arguments("flush-definitive-refusal-then-retry")]
     public async Task C0491_CancelledBoundaryKeepsWorkingFlushesTheRowAndConfirmsFromTheUserPrompt(string arm)
     {
         using var workspace = new TempWorkspace();
@@ -249,8 +249,11 @@ public sealed class AgentTaskMidTurnRefineTests
         summary.InterruptWritten.ShouldBe("written");
         summary.RefinementDelivered.ShouldBe("pending");
 
-        if (arm == "flush-transport-failure-then-retry")
-            fx.Runner.ThrowOnInputOnce = new HttpRequestException("delivery write failed");
+        // This fixture refuses before recording any input. A lost transport reply
+        // cannot establish that boundary and retains its attempt under CARD-1892.
+        if (arm == "flush-definitive-refusal-then-retry")
+            fx.Runner.ThrowOnInputOnce = new RunnerProblemException(
+                409, "Input refused before write.", "fixture_input_refused");
 
         await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
 
@@ -262,7 +265,7 @@ public sealed class AgentTaskMidTurnRefineTests
             (await afterBoundary.AgentTaskEvents.CountAsync(e => e.AgentTaskId == fx.Task.Id
                 && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
                 .ShouldBe(0, arm);
-            if (arm == "flush-transport-failure-then-retry")
+            if (arm == "flush-definitive-refusal-then-retry")
             {
                 row.Status.ShouldBe(QueuedMessageStatus.Pending);
                 row.DeliveryAttempts.ShouldBe(1);
@@ -315,7 +318,7 @@ public sealed class AgentTaskMidTurnRefineTests
                 && (e.Type == AgentTaskEventType.Completed || e.Type == AgentTaskEventType.Failed)))
                 .ShouldBe(0);
         }
-        else if (arm == "flush-transport-failure-then-retry")
+        else if (arm == "flush-definitive-refusal-then-retry")
         {
             after.Status.ShouldBe(QueuedMessageStatus.Sent);
             after.DeliveryVerdict.ShouldBeNull();
