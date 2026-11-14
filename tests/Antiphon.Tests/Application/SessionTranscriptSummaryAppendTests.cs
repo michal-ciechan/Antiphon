@@ -67,7 +67,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         if (scenario == "rollback" || scenario == "ambiguous") fault.Armed.ShouldBeFalse("the real commit cut must have fired");
         var added = scenario == "rollback" ? 0 : scenario is "partial" or "stub" ? 2 : scenario == "normal" ? 100 : 1;
         (await db.TranscriptEntries.LongCountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(101 + added);
-        var statements = await db.Database.SqlQueryRaw<AppendStatement>("SELECT \"First\",\"Last\",\"Rows\" FROM \"C1915AppendAudit\" WHERE \"AgentSessionId\"=@id ORDER BY \"Ordinal\"", new NpgsqlParameter("id", f.SessionId)).ToListAsync();
+        var statements = await db.Database.SqlQueryRaw<AppendStatement>("SELECT \"Ordinal\",\"First\",\"Last\",\"Rows\" FROM \"C1915AppendAudit\" WHERE \"AgentSessionId\"=@id", new NpgsqlParameter("id", f.SessionId)).OrderBy(x => x.Ordinal).ToListAsync();
         statements.Sum(x => x.Rows).ShouldBe(added, "audit contains only actual committed INSERT transitions");
         long frontier = 1000;
         var monotonicSql = true;
@@ -240,6 +240,7 @@ public sealed class SessionTranscriptSummaryAppendTests
 
     private sealed class AppendStatement
     {
+        public long Ordinal { get; set; }
         public long First { get; set; }
         public long Last { get; set; }
         public long Rows { get; set; }
