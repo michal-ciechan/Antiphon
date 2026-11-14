@@ -514,6 +514,7 @@ c1609_scan_hooks() {
 c1609_emit_binding_clock() {
     local boot namespace uptime ignored started
     read -r boot < /proc/sys/kernel/random/boot_id || return 1
+    [ -d /proc/self/ns ] && [ -r /proc/self/ns ] && [ -x /proc/self/ns ] || return 1
     if [ -e /proc/self/ns/time ] || [ -L /proc/self/ns/time ]; then
         namespace="$(readlink /proc/self/ns/time)" || return 1
     elif [ ! -e /proc/self/ns/time_for_children ] && [ ! -L /proc/self/ns/time_for_children ]; then
