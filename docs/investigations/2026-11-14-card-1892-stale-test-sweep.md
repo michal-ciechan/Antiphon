@@ -1,6 +1,8 @@
 # CARD-1892 stale test sweep — 2026-11-14
 
-Found four stale-contract families (two supplied, two additional) and separate fixture/native/infrastructure failures. **The sweep is incomplete:** 504 Linux project/class candidates were inventoried; 382 have no result, 1 has only partial method coverage, and 4 selected classes have only skips. The commissioned 150-minute limit and failed broker prerequisite leave further execution owed. This report does not establish that the failure list is exhaustive and does not authorize landing.
+The original bounded phase found four stale-contract families (two supplied, two additional) and separate fixture/native/infrastructure failures. **The caller refinement below adds one stale PhoneHome family, a standing-switch admission defect candidate, and two platform-fixture failures.** **The sweep is incomplete:** 504 Linux project/class candidates were inventoried; 382 have no result, 1 has only partial method coverage, and 4 selected classes have only skips. The commissioned 150-minute limit and failed broker prerequisite leave further execution owed. This report does not establish that the failure list is exhaustive and does not authorize landing.
+
+After the caller-refinement rows at the end of this report: five stale-contract families; 17 distinct failing cases overall; 506 required classes, 380 unobserved and three partial. The full sweep remains incomplete.
 
 Baseline captured from current origin/master at task start: **b559bfba2e9a420495122d27171352fe9b7e1ba4**. Assigned branch: feat/card-task-15406ecc. All ten native test binaries report source version **9fcc87bcb5c6b0af6e6ee3e51e30d75af3a00572**; that commit changes this investigation document only relative to the baseline. Subsequent task commits also change only this document. No product/test file was edited; the task applies no repair. Native-output builds and runs consistently used UseAppHost=false. This is direct Debug evidence, not a validated checkpoint/Review receipt or a reviewedSourceClean assertion.
 
@@ -1252,12 +1254,124 @@ Searches used scripts/card.ps1 search -Board Antiphon -All and full candidate ca
 
 Task publication history before this final report: 9fcc87bcb5c6b0af6e6ee3e51e30d75af3a00572 (scope), 2637e291265a25231ca17362165eff1f8e09b66f (known failures/census), e16346cfaaef1ba0533ddf39acb28485f3b2bb74 (new Grok/lock findings). All were pushed to the assigned branch. Final publication/compatibility results are appended at settlement.
 
+
+
+## Caller refinement: additional suspects — completed follow-up
+
+The caller refinement arrived after the original 150-minute sweep and added Code c995680c's remaining suspects. Four additional serial rows ran in the same unchanged source snapshot, without a new build or a source fix. This is a limited follow-up; the original coverage ledger above is historical. C1029 was already confirmed STALE-CONTRACT in K2 (CARD-1923, supplied g58, repair Debug 31c683a8), and was not repeated without a source change. The caller states c995680c used older master 8c06c7e11 before Merge 224; none of these new results relies on that obsolete run.
+
+**Follow-up: 22 executed, 18 passed, 4 failed, 3 skipped.** No pure timeout occurred, so no LOAD retry was needed. Across both phases: 2,499 executed, 2,475 passed, 24 failed, 169 skipped, 17 distinct failing cases. These are repeated-observation totals, not unique-case coverage. Excluding the earlier OAuth-removal diagnostic R003: 2,498 executed, 2,474 passed, 24 failed, 169 skipped.
+
+PtyDeliveryCeilingsTests and UnixDeliveryCeilingTests were outside the original 504-class census; adding them makes 506 required classes. Both were selected fully here. StandingSessionSwitchConcurrencyTests and PhoneHomeOutageMentionTests now have the named method selected, but the rest of each class remains unrun: **123 classes have full selections (including four all-skipped), three are partial, and 380 have no result.** The sweep remains incomplete. The earlier table's NOT RUN entries for those two classes are superseded only for the exact methods below.
+
+| Row | Exact selection | Executed/passed/failed/skipped | Wall seconds | Slot wait/held seconds | /proc/loadavg start | /proc/loadavg end |
+|---|---|---|---|---|---|---|
+| A001 | `/*/Antiphon.Tests.Application/StandingSessionSwitchConcurrencyTests/Reservation_and_real_queue_flush_serialize_in_both_orders` | 2/1/1/0 | 55.947 | 0/54 | 20.18 20.49 22.07 28/4013 2950 | 16.58 19.76 21.74 7/3767 6629 |
+| A002 | `/*/Antiphon.Tests.Application/PtyDeliveryCeilingsTests/*` | 10/8/2/3 | 9.045 | 0/8 | 16.58 19.76 21.74 6/3767 6629 | 15.81 19.55 21.66 6/3802 7001 |
+| A003 | `/*/Antiphon.Tests.Application/UnixDeliveryCeilingTests/*` | 9/9/0/0 | 10.156 | 0/9 | 15.81 19.55 21.66 7/3802 7003 | 14.70 19.18 21.52 5/3878 7545 |
+| A004 | `/*/Antiphon.Tests.Application/PhoneHomeOutageMentionTests/In_flight_mention_Enter_late_confirms_without_retyping` | 1/0/1/0 | 36.869 | 0/36 | 14.70 19.18 21.52 6/3878 7545 | 12.93 18.18 21.08 8/3830 9817 |
+
+All four rows use tests/Antiphon.Tests and the shared PostgreSQL fixture. Runs completed and were awaited. The inherited native binary source version remains 9fcc87bcb5c6b0af6e6ee3e51e30d75af3a00572 (only this report differs from b559bfba2e9a420495122d27171352fe9b7e1ba4). Follow-up was commissioned in report-only commit 5c1ff13733; subsequent report edits cannot alter that binary provenance. The final fetch still resolved origin/master to 8cec1e74e75819ef20756c228add987ce4ae4170. Selected test files and the directly relevant SessionMessageQueueService, AgentControlService, StandingQueueSwitchPolicy, PtyDeliveryProfile, PtyBackend and PtyDeliveryCeilings sources have no diff between the measured baseline and that fetched tip. This is a source comparison, not a rebuilt qualification of later master.
+
+### Classification and repair ownership
+
+| Exact failing method (Antiphon.Tests.Application) | Classification | Basis and card | Windows applicability |
+|---|---|---|---|
+| StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(True) | REAL-DEFECT candidate: standing-switch admission | CARD-1937. IOException correctly retains a Sent/null-verdict attempt, but AgentControlService:683-687 queries only Pending and history selection succeeds. The owner at docs/session-runtime-invariants.md:1651-1655 says delivery baseline/timestamp/verdict/settlement evidence refuses switching. The current assertion retains an explicit owner basis; replacing IOException with a definitive refusal alone would conceal the untested Sent path. No loss or duplicate delivery is proved; later target.Started assertion was not reached. Repair Debug must resolve the admission fence and any necessary owner-policy qualification. False variant passes. | Portable; same source golden boundary as PhoneHome below; live numeric chunk unmapped. |
+| PtyDeliveryCeilingsTests.A_silent_runner_leaves_this_processes_own_decision_standing | REAL-DEFECT: test portability | CARD-1938. BuildProfile calls actual platform policy. PtyBackendPolicy.Resolve on non-Windows returns UnixPty before interpreting inbox; assertion demands InboxConhost before RequireRedistributable can skip. This is unrelated to CARD-1892. Preserve Linux backend resolution. | First assertion runs on Windows, where inbox is selectable; Linux mismatch does not imply a Windows red. Later modern portion requires redistributable. |
+| PtyDeliveryCeilingsTests.An_inbox_server_is_not_raised_by_a_modern_runner | REAL-DEFECT: same test portability family | CARD-1938. Same real Linux resolution, no Windows guard, expected InboxConhost versus observed UnixPty. Not a timeout. | Executes on Windows; Linux-specific backend mismatch does not apply there. |
+| PhoneHomeOutageMentionTests.In_flight_mention_Enter_late_confirms_without_retyping | STALE-CONTRACT | CARD-1936. Silent Enter response plus disconnect is uncertain Input and must remain Sent/null-verdict, while line176 asserts Pending. Fixture already inserts a complete UserPrompt and TurnEnd before disconnect. Repair initial status witness, then retain LateConfirmed, one charged attempt, no typing on successor and durable receipt assertions. Those later assertions were not reached in this run. | Portable; source golden boundary b-application-9e8ce8bfc9104381; live numeric chunk unmapped. |
+
+Pty class source golden boundary: b-application-cdbd24da9a10e90f. Unix class boundary: b-application-53a443d2545f686a. These are committed roster references, not a read of the inaccessible Windows run. UnixDeliveryCeilingTests passed 9/9, including the committed Unix receipt and supported-limit witnesses. Pty class had three explicit Windows delivery-profile skips; these do not establish the skipped paths green.
+
+The strict STALE-CONTRACT definition in this brief covers old uncertain-delivery/resend expectations; the unrelated Unix-versus-inbox fixture errors are therefore classified REAL-DEFECT (test portability), even though their platform assumption is outdated. No failure is attributed to load.
+
+### Exact new failure messages
+
+**Reservation_and_real_queue_flush_serialize_in_both_orders(True)** (A001)
+
+```text
+ShouldAssertException: Task `selection!`
+    should throw
+Antiphon.Server.Application.Exceptions.ConflictException
+    but did not
+at Antiphon.Tests.Application.StandingSessionSwitchConcurrencyTests.Reservation_and_real_queue_flush_serialize_in_both_orders(Boolean deliveryWins) in /work/worktrees/task-15406ecc/tests/Antiphon.Tests/Application/StandingSessionSwitchConcurrencyTests.Delivery.cs:line 74
+```
+
+**A_silent_runner_leaves_this_processes_own_decision_standing** (A002)
+
+```text
+ShouldAssertException: (await silentInbox.Value.RefreshAsync(CancellationToken.None))
+            .Backend
+    should be
+DeliveryBackend.InboxConhost
+    but was
+DeliveryBackend.UnixPty
+at Antiphon.Tests.Application.PtyDeliveryCeilingsTests.A_silent_runner_leaves_this_processes_own_decision_standing() in /work/worktrees/task-15406ecc/tests/Antiphon.Tests/Application/PtyDeliveryCeilingsTests.cs:line 285
+```
+
+**An_inbox_server_is_not_raised_by_a_modern_runner** (A002)
+
+```text
+ShouldAssertException: (await profile.Value.RefreshAsync(CancellationToken.None))
+            .Backend
+    should be
+DeliveryBackend.InboxConhost
+    but was
+DeliveryBackend.UnixPty
+at Antiphon.Tests.Application.PtyDeliveryCeilingsTests.An_inbox_server_is_not_raised_by_a_modern_runner() in /work/worktrees/task-15406ecc/tests/Antiphon.Tests/Application/PtyDeliveryCeilingsTests.cs:line 303
+```
+
+**In_flight_mention_Enter_late_confirms_without_retyping** (A004)
+
+```text
+ShouldAssertException: attempted.Status
+    should be
+QueuedMessageStatus.Pending
+    but was
+QueuedMessageStatus.Sent
+at Antiphon.Tests.Application.PhoneHomeOutageMentionTests.In_flight_mention_Enter_late_confirms_without_retyping() in /work/worktrees/task-15406ecc/tests/Antiphon.Tests/Application/PhoneHomeOutageMentionTests.cs:line 176
+```
+
+### Exact reruns and evidence
+
+These are measurement rows added because the caller named specific failures; they are not unlisted Code checkpoint substitutions. Build once through the host gate if recreating native outputs, retaining UseAppHost=false, then run each row serially. Historical exact commands:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-A001-a1 -SlotWaitMinutes 5 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/StandingSessionSwitchConcurrencyTests/Reservation_and_real_queue_flush_serialize_in_both_orders' --report-trx --report-trx-filename A001-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/A001 --output Detailed
+```
+
+A001 TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/A001/A001-a1.trx; SHA-256 5c6be09df3e11a81e6ae1b28c0e49244c46a2b47c285f8942033d3bade8964aa.
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-A002-a1 -SlotWaitMinutes 5 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/PtyDeliveryCeilingsTests/*' --report-trx --report-trx-filename A002-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/A002 --output Detailed
+```
+
+A002 TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/A002/A002-a1.trx; SHA-256 c0355f645edb7d799e2b7778ca02bb53bb7c245212137d5c2d41f41edc2a206e.
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-A003-a1 -SlotWaitMinutes 5 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/UnixDeliveryCeilingTests/*' --report-trx --report-trx-filename A003-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/A003 --output Detailed
+```
+
+A003 TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/A003/A003-a1.trx; SHA-256 406355741521ba51662173542da20ddc07e86659124a08f69aa0703caa006173.
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label 15406-A004-a1 -SlotWaitMinutes 5 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/Antiphon.Tests.Application/PhoneHomeOutageMentionTests/In_flight_mention_Enter_late_confirms_without_retyping' --report-trx --report-trx-filename A004-a1.trx --results-directory /work/worktrees/task-15406ecc/.antiphon/sweep15406/A004 --output Detailed
+```
+
+A004 TRX: /work/worktrees/task-15406ecc/.antiphon/sweep15406/A004/A004-a1.trx; SHA-256 efee2a87e83c599442dcd29c423f6ad4b4a91cfbcaeafe52afbf55cc364a6805.
+
+Generated receipts, logs, phase records and the follow-up driver remain ignored under /work/worktrees/task-15406ecc/.antiphon/sweep15406. No generated evidence was staged. The follow-up helper copied the earlier gated driver and extended its expired outer deadline for these four authorized rows; each execution still had a 590-second cap, with no timeout/assertion/retry relaxation.
+
+### New tracker records and why missed
+
+All three new records are Backlog: CARD-1936 (PhoneHome stale witness), CARD-1937 (standing-switch Sent admission), CARD-1938 (two ceiling portability witnesses). Searches used card.ps1 search -Board Antiphon -All. Exact PhoneHome and reservation method searches returned zero; standing_resume_delivery_pending returned CARD-0510 Done, whose full restart-escalation text was inspected and differs from this Sent history-selection path. Exact first ceiling failure returned zero; class search returned CARD-1022/0128/0161/0048. The closest CARD-1022 full text was inspected: broad inbox deprecation does not repair these Linux fixture guards. No duplicate card was treated as absent from a capped preview.
+
+Why missed: fixed CARD-1892 checkpoint lists did not select these witnesses. The two concurrency/PhoneHome classes were found by the original dependency/vocabulary census but remained unexecuted at its limit; the caller's refinement added an explicit targeted execution. The ceiling platform errors are outside the uncertainty vocabulary and original census, and were added from the caller's Code failure list. C1029 was already part of the original known-failure measurement.
+
+No source fixes were made and no live host, Windows run, desktop, Docker volume or restart was touched. The additional suspects are now measured; completing the exhaustive remaining sweep still needs a new time box.
+
 --- next stage ---
 next: debug
-handoff: Repair STALE-CONTRACT CARD-1922/CARD-1923/CARD-1924/CARD-1926; diagnose the separately filed REAL-DEFECT fixture/native/bootstrap families; continue every unexecuted or partial census selection in a new time box.
+handoff: Repair STALE-CONTRACT CARD-1922/CARD-1923/CARD-1924/CARD-1926/CARD-1936; diagnose REAL-DEFECT candidate CARD-1937 (Sent switch admission) and CARD-1938 (Linux ceiling fixture portability), plus the earlier separately filed fixture/native/bootstrap families; continue 380 unobserved and three partial classes in a new time box.
 artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
-
-
-## Caller refinement: additional suspects
-
-Refinement received after the original bounded sweep: verify the standing-session reservation race, both delivery-ceiling families, and the PhoneHome in-flight mention. C1029 was already confirmed STALE-CONTRACT in K2. The additional rows retain the same b559bfba2 source and native build provenance; results will be appended separately. No source repairs are authorized. This limited follow-up does not erase the 382 unrun classes from the original sweep.
