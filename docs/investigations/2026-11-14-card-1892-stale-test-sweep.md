@@ -1375,3 +1375,8 @@ No source fixes were made and no live host, Windows run, desktop, Docker volume 
 next: debug
 handoff: Repair STALE-CONTRACT CARD-1922/CARD-1923/CARD-1924/CARD-1926/CARD-1936; diagnose REAL-DEFECT candidate CARD-1937 (Sent switch admission) and CARD-1938 (Linux ceiling fixture portability), plus the earlier separately filed fixture/native/bootstrap families; continue 380 unobserved and three partial classes in a new time box.
 artifact: /work/worktrees/task-15406ecc/docs/investigations/2026-11-14-card-1892-stale-test-sweep.md
+
+
+## Second 150-minute coverage window — in progress
+
+Caller reopened the task at 2026-11-14 15:28:21 UTC with a hard stop at 17:58:21 UTC. Fresh detached scratch /tmp/task-15406ecc-coverage2 starts at fetched origin/master 8cec1e74e75819ef20756c228add987ce4ae4170; no source changes or merges are applied. The assigned report branch remains fast-forward-only. This window excludes already observed cases, prioritizes the named queue/input/launch/PhoneHome/standing paths, and will append its exact remaining ledger. Prior outcomes and costs remain historical.
