@@ -455,7 +455,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
 
     private const string WhyMissedSessionRunnerFilter =
-        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)"
+        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(C1514SamplerTickCpuTests*)|(HostStatsSamplerTests*)"
         + "|(HostStatsStoreTests*)|(PhoneHomeCommandDispatcherTests*)|(ProcessSpawnLimitTests*)|(RunnerCapabilitiesTests*)/*";
 
     // CARD-1843. The Server.Git mirror classes run in their own project; ProcessSpawnLimitTests runs in
