@@ -550,9 +550,14 @@ public sealed class VolumeRetirementContentTests
         await File.WriteAllTextAsync(Path.Combine(root, "helper-auth-128"), "1\n");
         if (File.Exists(helperTrace)) File.Delete(helperTrace);
 
-        var preview = await fixture.Run("retire-temp-runner",
+        var uncoordinated = await fixture.Run("retire-temp-runner",
             bound + "\nexport C1008_HOST_PROOF=" + VolumeRetirementFixture.Quote(proofDir) +
             "\nexport C1008_OPERATION_STARTED=1700000000\n" + v2Bindings + probe, dryRun: true);
+        uncoordinated.Exit.ShouldBe(2, "H7 a sealed proof alone cannot authorize Ready; " + uncoordinated.Output);
+        uncoordinated.Output.ShouldContain("RecycleGitAuditUnknown");
+        uncoordinated.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        var live = VolumeRetirementPublicationFixture.Attach(fixture, "repos/school-revision", seeded.Bare);
+        var preview = await live.Preview(new VolumeRetirementPublicationFixture.Proof(0, proved.Output, proofDir, proofFile), bound + probe);
         File.Exists(helperTrace).ShouldBeFalse("c1609-h7: admission consumes host ancestry without a helper remote lookup");
         fixture.Removed.ShouldBeEmpty();
         var admitted = preview.Exit == 0 &&
