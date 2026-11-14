@@ -598,7 +598,7 @@ public static class TranscriptKinds
     public static bool IsCompactionContinuationPrompt(string? kind, string? text) =>
         kind == UserPrompt
         && text is not null
-        && text.TrimStart().StartsWith(CompactionContinuationPromptPrefix, StringComparison.Ordinal);
+        && text.AsSpan().TrimStart().StartsWith(CompactionContinuationPromptPrefix, StringComparison.Ordinal);
 
     /// <summary>
     /// SERVER-SYNTHESIZED (never read from a JSONL): written when a session is relaunched and its
@@ -656,15 +656,15 @@ public static class TranscriptKinds
     {
         if (kind != UserPrompt || text is null)
             return null;
-        var trimmed = text.TrimStart();
+        var trimmed = text.AsSpan().TrimStart();
         if (!trimmed.StartsWith(LocalCommandPrefix, StringComparison.Ordinal))
             return null;
 
         var close = trimmed.IndexOf("</command-name>", StringComparison.Ordinal);
         if (close <= LocalCommandPrefix.Length)
             return null;
-        var name = trimmed[LocalCommandPrefix.Length..close].Trim();
-        return name.Length == 0 ? null : name;
+        var name = trimmed.Slice(LocalCommandPrefix.Length, close - LocalCommandPrefix.Length).Trim();
+        return name.Length == 0 ? null : name.ToString();
     }
 
     /// <summary>
@@ -694,18 +694,47 @@ public static class TranscriptKinds
         if (IsLocalCommandRecord(kind, text))
             return false;
 
-        var trimmed = text.TrimStart();
+        var trimmed = text.AsSpan().TrimStart();
+        // HashSet is the span caller and List/array is the session-runtime caller.
+        // Concrete enumeration avoids the interface enumerator allocation.
+        if (invokedCommands is HashSet<string> set)
+        {
+            foreach (var name in set)
+            {
+                if (EchoMatches(trimmed, name))
+                    return true;
+            }
+
+            return false;
+        }
+
+        if (invokedCommands is IList<string> listed)
+        {
+            for (var i = 0; i < listed.Count; i++)
+            {
+                if (EchoMatches(trimmed, listed[i]))
+                    return true;
+            }
+
+            return false;
+        }
+
         foreach (var name in invokedCommands)
         {
-            if (name.Length == 0 || !trimmed.StartsWith(name, StringComparison.Ordinal))
-                continue;
-            // "/compact" must not match a prompt that opens "/compacting is broken" — the
-            // invocation ends at the command name or at whitespace before its arguments.
-            if (trimmed.Length == name.Length || char.IsWhiteSpace(trimmed[name.Length]))
+            if (EchoMatches(trimmed, name))
                 return true;
         }
 
         return false;
+    }
+
+    private static bool EchoMatches(ReadOnlySpan<char> trimmed, string name)
+    {
+        if (name.Length == 0 || !trimmed.StartsWith(name, StringComparison.Ordinal))
+            return false;
+        // "/compact" must not match a prompt that opens "/compacting is broken" — the
+        // invocation ends at the command name or at whitespace before its arguments.
+        return trimmed.Length == name.Length || char.IsWhiteSpace(trimmed[name.Length]);
     }
 
     /// <summary>
@@ -753,7 +782,7 @@ public static class TranscriptKinds
     public static bool IsTaskNotificationPrompt(string? kind, string? text) =>
         kind == UserPrompt
         && text is not null
-        && text.TrimStart().StartsWith(TaskNotificationPrefix, StringComparison.Ordinal);
+        && text.AsSpan().TrimStart().StartsWith(TaskNotificationPrefix, StringComparison.Ordinal);
 
     /// <summary>
     /// The <c>toolu_…</c> id a notification answers, read out of its <c>&lt;tool-use-id&gt;</c> tag.
