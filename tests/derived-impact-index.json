@@ -243,9 +243,9 @@
     },
     {
       "path": "server/Application/Core/DelegationReportFormatter.cs",
-      "classes": 170,
+      "classes": 171,
       "reason": "cap",
-      "owed": 145,
+      "owed": 146,
       "first": [
         "AgentTaskSettlementRaceTests",
         "ClosingReportNudgeLifecycleTests",
@@ -1391,9 +1391,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 419,
+      "classes": 420,
       "reason": "cap",
-      "owed": 394,
+      "owed": 395,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -1834,9 +1834,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 428,
+      "classes": 430,
       "reason": "cap",
-      "owed": 403,
+      "owed": 405,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -11263,6 +11263,7 @@
     {
       "path": "server/Application/Services/TaskReportHousekeeping.cs",
       "classes": [
+        "TaskReportFloorIndexTests",
         "TaskReportHousekeepingTests"
       ]
     },
@@ -11271,6 +11272,7 @@
       "classes": [
         "ChannelOutboundRecoveryTests",
         "SiblingToolReportBoundaryTests",
+        "TaskReportFloorIndexTests",
         "TaskReportTurnSelectorTests"
       ]
     },
@@ -11388,6 +11390,7 @@
         "AgentTaskLandReceiptTests",
         "AgentTaskReplyIntegrationTests",
         "SessionMessageQueueDeliveryVerificationTests",
+        "TaskReportFloorIndexTests",
         "TaskReportTurnSelectorTests",
         "TranscriptLocalCommandEchoTests",
         "TranscriptPromptSpanTests"
@@ -19059,6 +19062,7 @@
       "classes": [
         "C1817RunnerRepositoryMaintenanceTests",
         "C1818GcOwnerRobustnessTests",
+        "TaskReportFloorIndexTests",
         "TaskReportTurnSelectorTests"
       ]
     },
