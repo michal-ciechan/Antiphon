@@ -1375,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 272,
+      "classes": 273,
       "reason": "cap",
-      "owed": 247,
+      "owed": 248,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1573,9 +1573,9 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 152,
+      "classes": 153,
       "reason": "cap",
-      "owed": 127,
+      "owed": 128,
       "first": [
         "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 512,
+      "classes": 513,
       "reason": "cap",
-      "owed": 487,
+      "owed": 488,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
