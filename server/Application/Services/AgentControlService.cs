@@ -690,7 +690,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
                         && m.DeliveryAttempts > 0).OrderBy(m => m.Sequence).ThenBy(m => m.Id).Select(m => m.Id).ToListAsync(ct);
                 if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)) || unresolvedSentIds.Count > 0)
                     throw new ConflictException(
-                        $"Resolve blocking message ids [{string.Join(", ", pending.Where(m => !StandingQueueSwitchPolicy.NeverAttempted(m)).Select(m => m.Id).Concat(unresolvedSentIds))}] "
+                        "Resolve attempted pending input and any unconfirmed Sent input before switching. "
+                        + $"Blocking message ids [{string.Join(", ", pending.Where(m => !StandingQueueSwitchPolicy.NeverAttempted(m)).Select(m => m.Id).Concat(unresolvedSentIds))}] "
                         + $"in GET /api/sessions/{sourceId}/messages before switching. "
                         + $"For each unconfirmed Sent id, an operator must POST /api/sessions/{sourceId}/messages/{{messageId}}/abandon "
                         + "with X-Antiphon-Operator-Token and a JSON reason. It may already have been delivered; abandonment does not recall it. "

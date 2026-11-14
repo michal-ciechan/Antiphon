@@ -74,12 +74,21 @@ input-delivery-uncertainty; their complete class lists are included below.
 Derived reverse-edge suggestions outside those globs are not ordinary scope.
 The runner/retention V-1/R-1/V-3 of the parent plan are unchanged; their earlier
 receipts remain at their actual SHAs and are not rerun or relabelled here.
+The first CP-10 overselected SessionQueueReceiptPlumbingTests: all 16 cases are
+unchanged Windows ConPTY transport witnesses, not API/listing tests. Their Linux
+skips are retained as pending native baseline evidence, never passed. The corrected
+portable CP-10 runs the 37 service/listing/spill cases without that unrelated class.
+C1210's Windows-only child audit also stays pending native placement; its portable
+roster failure is verified at the task base and reported separately, as commissioned.
+The new CP-21 builds client/dist before contract E2E. CP-5's existing diagnostic
+assertion was retained: the switch text keeps its established pending-input phrase
+and adds Sent uncertainty, exact ids, the actual queue route and operator action.
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-done/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 17 | 8 |
+| CP-1 | green | tests/Antiphon.Tests -> bin-ac7f-last/ | abandon-api | `/*/*/SessionQueueAbandonTests/*` | V-1,V-3,V-4,V-5 | all listed, 0 failed | 17 | 8 |
 | CP-2 | green | CP-1 | standing-switch | `/*/*/StandingSessionSwitchConcurrencyTests/*` | V-2 | all listed, 0 failed | 31 | 2 |
 | CP-3 | green | CP-1 | standing-history | `/*/*/(StandingSessionSelectionTests*)\|(StandingSessionOwnershipTests*)\|(StandingSessionQueueSwitchTests*)\|(StandingSessionRecoveryHttpTests*)/*` | R-1,V-2 | all listed, 0 failed | 54 | 3 |
 | CP-4 | green | CP-1 | control-resume | `/*/*/(AgentControlServiceIntegrationTests*)\|(StandingResumeReceiptReadinessTests*)/*` | R-1 | all listed, 0 failed | 34 | 2 |
@@ -87,14 +96,15 @@ receipts remain at their actual SHAs and are not rerun or relabelled here.
 | CP-6 | green | CP-1 | outage-mention | `/*/*/PhoneHomeOutageMentionTests/*` | R-1 | all listed, 0 failed | 8 | 2 |
 | CP-7 | green | CP-1 | rules-recovery | `/*/*/(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)/*` | R-1,R-3 | all listed, 0 failed | 16 | 2 |
 | CP-8 | green | CP-1 | delivery-witnesses | `/*/*/(LandRefusalDeliveryWitnessTests*)\|(AgentTaskMidTurnRefineTests*)/*` | R-1,R-3 | all listed, 0 failed | 63 | 3 |
-| CP-9 | green | CP-1 | phone-home-observation | `/*/*/(SessionMessageQueuePhoneHomeDropTests*)\|(CodexCliObservationGapTests*)/*` | R-1,R-3 | all listed, 0 failed | 12 | 2 |
-| CP-10 | green | CP-1 | queue-listing | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionQueueReceiptPlumbingTests*)\|(SessionMessageQueueDeliveredSpillRecoveryTests*)/*` | R-1 | all listed, 0 failed | 3 | 3 |
+| CP-9 | green | CP-1 | phone-home-observation | `/*/*/(SessionMessageQueuePhoneHomeDropTests*)\|(CodexCliObservationGapTests*)/*` | R-1,R-3 | all listed, 0 failed | 12 | 8 |
+| CP-10 | green | CP-1 | queue-listing | `/*/*/(SessionMessageQueueServiceTests*)\|(SessionMessageQueueDeliveredSpillRecoveryTests*)/*` | R-1 | all listed, 0 failed | 37 | 3 |
 | CP-11 | green | CP-1 | late-confirmation | `/*/*/(SessionMessageQueueInterruptedAttemptTests*)\|(SessionMessageQueueCodexPointerTests*)/*` | V-4,R-1 | all listed, 0 failed | 2 | 3 |
 | CP-12 | green | CP-1 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)\|(StandingBootAttentionTests*)\|(StandingContinuityAttentionTests*)/*` | V-5,R-1 | all listed, 0 failed | 4 | 3 |
 | CP-13 | green | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all listed, 0 failed | 5 | 2 |
-| CP-14 | green | CP-1 | contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2,R-3 | all listed, 0 failed | 7 | 3 |
-| CP-15 | green | tests/Antiphon.E2E -> bin-ac7f-done-contract/ | api-contract | `/*/*/ContractSnapshotTests/*` | R-3,R-4 | all listed, 0 failed | 1 | 6 |
+| CP-14 | green | CP-1 | contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(DerivedImpactIndexTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2,R-3 | all listed, 0 failed | 7 | 9 |
+| CP-15 | green | tests/Antiphon.E2E -> bin-ac7f-last-contract/ | api-contract | `/*/*/ContractSnapshotTests/*` | R-3,R-4 | all listed, 0 failed | 1 | 6 |
 | CP-20 | green | n/a | abandon-ui | `pwsh -NoProfile -File scripts/test-client.ps1 -TypecheckProject client/tsconfig.app.json SessionMessageQueue AttentionPanel` | R-4 | typecheck/lint and both targeted files green | n/a | 2 |
 | CP-16 | green | CP-1 | rules-abandon | `/*/*/SessionQueueAbandonTests/Grok_rules_late_prompt_does_not_resurrect_abandoned_input` | V-4 | all listed, 0 failed | 1 | 1 |
 | CP-17 | green | CP-1 | rules-judging | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesReceiptTests*)/*` | V-4,R-1 | all listed, 0 failed | 3 | 3 |
 | CP-18 | green | CP-1 | rules-transactions | `/*/*/(GrokRulesTransactionTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesCompactionTests*)/*` | V-4,R-1 | all listed, 0 failed | 3 | 3 |
+| CP-21 | green | n/a | client-bundle | `npm --prefix client run build` | R-4 | typecheck and Vite bundle exit 0 before CP-15 | n/a | 3 |
