@@ -1418,6 +1418,17 @@
           "owner": "CARD-0590"
         },
         {
+          "suite": "session-runner",
+          "class": "HostTopConsumerTests",
+          "methods": [
+            "Live_proc_scan_reads_proc_off_the_tick",
+            "Production_factory_selects_the_linux_proc_table"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: CARD-1884 reads /proc for the production factory and the live scan. The cases remain required on Linux.",
+          "owner": "CARD-1884"
+        },
+        {
           "suite": "antiphon",
           "class": "RunnerGrokAdapterReadyTestsPty",
           "methods": [

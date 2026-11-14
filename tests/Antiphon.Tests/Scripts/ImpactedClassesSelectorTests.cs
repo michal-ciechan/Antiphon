@@ -435,7 +435,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)|(DelegationTestServicesTests*)"
         + "|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)"
         + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)"
-        + "|(ImpactedClassesSelectorTests*)"
+        + "|(HostTopConsumerUpgradeReplayTests*)|(ImpactedClassesSelectorTests*)"
         + "|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)|(LandReceiptScanCacheTests*)"
         + "|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)|(LiveLaneRunnerTests*)"
         + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
@@ -455,8 +455,9 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
 
     private const string WhyMissedSessionRunnerFilter =
-        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(HostStatsSamplerTests*)"
-        + "|(HostStatsStoreTests*)|(PhoneHomeCommandDispatcherTests*)|(ProcessSpawnLimitTests*)|(RunnerCapabilitiesTests*)/*";
+        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(C1514SamplerTickCpuTests*)"
+        + "|(HostStatsSamplerTests*)|(HostStatsStoreTests*)|(HostTopConsumerTests*)"
+        + "|(PhoneHomeCommandDispatcherTests*)|(ProcessSpawnLimitTests*)|(RunnerCapabilitiesTests*)/*";
 
     // CARD-1843. The Server.Git mirror classes run in their own project; ProcessSpawnLimitTests runs in
     // every project that declares it (Antiphon.Tests, SessionRunner above, and Agents.Pty).
