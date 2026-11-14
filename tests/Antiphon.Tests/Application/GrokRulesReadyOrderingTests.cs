@@ -38,7 +38,11 @@ public sealed class GrokRulesReadyOrderingTests
         await using var h = await BridgeQueueHarness.CreateAsync(new() {
             ConnectionString = schema.ConnectionString, AlwaysOn = false,
             ConfigureServices = s => {
-                s.AddSingleton(Options.Create(new GrokRulesSettings { InitializationTimeoutSeconds = 1 }));
+                // The rules deadline runs on the real clock and starts before the first flush.
+                // It must not fire inside this test's 15 s launch budget: a cold, loaded Windows
+                // chunk took over 1 s to reach that flush (rc run 34d41b7e g83). The expired-
+                // deadline contract is forced explicitly below (RulesDeadlineAt in the past).
+                s.AddSingleton(Options.Create(new GrokRulesSettings { InitializationTimeoutSeconds = 30 }));
                 s.AddSingleton<GrokRulesRefreshService>();
                 s.AddSingleton<IAgentProtocolAdapterFactory>(factory);
             }});
