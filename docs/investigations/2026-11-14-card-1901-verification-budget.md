@@ -217,7 +217,7 @@ part of this measurement.
 
 `C1364BoundLandWaitProofTests` was stopped after 703.5 s including cancellation/join; exit 1, no TRX. Counts are unavailable and this row is not green. The phase journal completed `C1364_Wrapper_redeploy_reports_waited` (29.7 s) and `C1364_Host_recycle_post_removal_reports_waited` (513.2 s), then had the admission method pending. The latter full method alone needs a smaller vector/setup design to support a 10-minute cap near 2x observed cost. All stop targets were proven descendants of the owned measurement driver; `census-stop.json` records zero remaining owned processes.
 
-The full-class keyword census is not complete. Its exact outstanding classes are listed above. A further measurement timebox is needed to satisfy that portion of the brief; none of those rows is credited. The closed Code method selections have timings, and the partition proposal is usable, but this report does not claim complete adjacent coverage.
+The full-class keyword census is not complete. Its exact 28 outstanding classes are listed above; none of those full-class rows is credited. The orchestrator accepted this budget report and handoff as sufficient and assigned those measurements to the Code task's own rows. No further Debug measurement timebox is required. The closed Code method selections have timings, and the partition proposal is usable; complete adjacent coverage remains a Code obligation.
 
 ## Independent real-Git oracle
 
@@ -257,5 +257,5 @@ Build both declared prerequisites first. Raw evidence is retained in `.antiphon/
 
 --- next stage ---
 next: code
-handoff: Add CP-0; use CP-3/CP-4/CP-11 method rows at H=2 min and V=7 min; CP-6a/b/c=5/5/7 min and CP-10a/b/c/d=4/2/9/6 min; cold preparation 8+1 min, admission 10 min separately. Preserve the incomplete adjacent census and commission another bounded measurement task for its 28 outstanding classes.
+handoff: Add CP-0; use CP-3/CP-4/CP-11 method rows at H=2 min and V=7 min; CP-6a/b/c=5/5/7 min and CP-10a/b/c/d=4/2/9/6 min; cold preparation 8+1 min, admission 10 min separately. Code measures the 28 named outstanding adjacent classes in its own rows, as accepted by the orchestrator.
 artifact: docs/investigations/2026-11-14-card-1901-verification-budget.md
