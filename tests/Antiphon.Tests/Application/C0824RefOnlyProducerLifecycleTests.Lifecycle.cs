@@ -42,6 +42,8 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         await world.SettleAsync(RunnerSettlementWorld.Report("Published. " + world.Claim(source)));
         world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, world.Task.CompletionProgressEvidenceJson);
         world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(source);
+        (await f.Git.RevParseAsync("HEAD")).ShouldBe(main, "settlement preserves canonical HEAD");
+        (await f.Git.RunAsync(f.Git.Desktop, "write-tree")).ShouldBe(index, "settlement preserves canonical index");
         await world.EndDelegateSessionAsync();
         // Late land must use S although the canonical target independently advanced.
         await f.Git.RunAsync(f.Git.Desktop, "commit", "--allow-empty", "-m", "independent late target");
@@ -53,9 +55,11 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
             await land.RequestAsync(first.Id, new LandAgentTaskRequest("c0824-controlled-verifier", source), default);
             (await land.RunAsync(first.Id, "c0824-controlled-verifier", default)).ShouldBe(LandRunResult.Complete);
         }
+        string? landed = null;
         await using (var db = world.CreateContext())
         {
             var op = await db.AgentTaskLandings.SingleAsync(o => o.TaskId == first.Id && o.RemoteConfirmedAt != null);
+            landed = op.VerifiedSourceSha.ShouldNotBeNull();
             op.OriginalSourceSha.ShouldBe(source);
             op.SourceDesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
             op.SourceTaskRefWorkspaceBindingId.ShouldBe(first.TaskRefWorkspaceBindingId);
@@ -67,7 +71,9 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
         (await f.Git.RevParseAsync("refs/heads/" + second.WorktreeBranch)).ShouldBe(f.Git.Baseline);
         (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + second.WorktreeBranch)).ShouldBe(f.Git.Baseline);
         f.Git.SnapshotWorktree().ShouldBe(decoy);
-        (await f.Git.RunAsync(f.Git.Desktop, "write-tree")).ShouldBe(index);
+        (await f.Git.RevParseAsync("HEAD")).ShouldBe(landed, "ordinary land advances only the canonical target");
+        (await f.Git.RunAsync(f.Git.Desktop, "write-tree")).ShouldBe(
+            await f.Git.RevParseAsync(landed + "^{tree}"), "canonical index equals the verified landed tree");
         // Land owns its separate temporary checkout; neither source acquires a registration.
         (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldNotContain("branch refs/heads/" + first.WorktreeBranch);
         registry.ShouldContain("branch " + f.Git.FullRef);
