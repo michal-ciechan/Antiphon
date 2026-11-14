@@ -37,6 +37,9 @@ public sealed class HostStatsSamplerService : BackgroundService
     private int _abandoned;
     private int _disposeOnce;
     private static readonly TimeSpan ScanJoinBudget = TimeSpan.FromSeconds(2);
+
+    /// <summary>Test seam. Runs after the epoch check and before the ranking is published.</summary>
+    internal Action? BeforeTopConsumerPublish { get; set; }
     private static int _selfPid;
     private static DateTime _selfStartedUtc;
     private static bool _selfCached;
@@ -220,7 +223,10 @@ public sealed class HostStatsSamplerService : BackgroundService
             if (fault is not null)
                 LogFault(fault);
             else if (rows is not null && ScanStillCurrent(epoch))
+            {
+                BeforeTopConsumerPublish?.Invoke();
                 _top.Observe(rows, truncated, _time);
+            }
 
             try
             {

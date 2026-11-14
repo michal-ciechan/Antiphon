@@ -517,6 +517,64 @@ public class HostTopConsumerTests
         }
     }
 
+    /// <summary>
+    /// CARD-1884 round 4. The epoch check and the publish are one operation. Holding Observe
+    /// after the check lets StopAsync return; releasing the hold must not publish.
+    /// </summary>
+    [Test, Timeout(15_000)]
+    public async Task Stop_after_the_epoch_check_discards_the_held_observe()
+    {
+        using var release = new ManualResetEventSlim(false);
+        using var entered = new ManualResetEventSlim(false);
+        var generation = 0;
+        var table = new ScriptedTable();
+        table.Rows.Add(Obs(99, 5, 0, "VBCSCompiler", "compiler"));
+        var time = new FakeTimeProvider(T0);
+        var store = new HostStatsStore(new HostStatsSettings(), time);
+        var sampler = Sampler(new ScriptedHostStatsProbe(), store, time, new HostStatsSettings(), table);
+        sampler.BeforeTopConsumerPublish = () =>
+        {
+            if (Interlocked.Increment(ref generation) < 2)
+                return;
+            entered.Set();
+            release.Wait();
+        };
+        var pump = Task.CompletedTask;
+        using var stopPump = new ManualResetEventSlim(false);
+        try
+        {
+            await sampler.StartAsync(CancellationToken.None);
+            var first = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+            while (table.Completed < 1 && DateTime.UtcNow < first)
+                await Task.Delay(10);
+            table.Completed.ShouldBeGreaterThanOrEqualTo(1);
+            table.Rows[0] = Obs(99, 5, 9_000_000, "VBCSCompiler", "compiler");
+            pump = Task.Run(async () =>
+            {
+                while (!entered.IsSet && !stopPump.IsSet)
+                {
+                    time.Advance(TimeSpan.FromSeconds(5));
+                    await Task.Delay(10);
+                }
+            });
+            entered.Wait(TimeSpan.FromSeconds(3)).ShouldBeTrue();
+            var started = Stopwatch.StartNew();
+            await sampler.StopAsync(CancellationToken.None);
+            started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3), "stop returns while Observe is held");
+            release.Set();
+            await Task.Delay(200);
+            await sampler.SampleOnceAsync();
+            var sample = store.Latest().ShouldNotBeNull();
+            sample.TopConsumers.ShouldBeEmpty("a publish from the stopped epoch is discarded");
+        }
+        finally
+        {
+            release.Set();
+            stopPump.Set();
+            await pump;
+        }
+    }
+
     /// <summary>CARD-1884 round 3. Dispose is idempotent and a late read cannot publish after it.</summary>
     [Test, Timeout(8_000)]
     public async Task Dispose_twice_while_scan_is_held_drops_the_late_result()
@@ -600,6 +658,54 @@ public class HostTopConsumerTests
         {
             DeleteRoot(root);
         }
+    }
+
+    /// <summary>
+    /// CARD-1884 round 4. 0,1,1,1,... and 0,5,4,4,... are stuck or moving backwards against the
+    /// previous reading. Comparing them only with the origin reads the whole cap.
+    /// </summary>
+    [Test, Timeout(30_000)]
+    public void Stalled_and_regressing_clocks_fail_closed()
+    {
+        var root = NewRoot();
+        try
+        {
+            for (var pid = 1; pid <= 520; pid++)
+                WriteProc(root, pid, "pwsh", 10, 10, 1, 1);
+            AssertClockFailsClosed(root, StallThenFlat(), "0,1,1,1");
+            AssertClockFailsClosed(root, AdvanceThenRegress(), "0,5,4");
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
+    private static void AssertClockFailsClosed(string root, Func<double?> clock, string sequence)
+    {
+        var table = new LinuxHostProcessTable(root, 4096, 100, clock, TimeSpan.FromMilliseconds(10));
+        var rows = table.Read(HostTopConsumerLimits.ScanCap, Array.Empty<int>());
+        table.LastReadTruncated.ShouldBeTrue(sequence);
+        rows.Count.ShouldBeLessThanOrEqualTo(32, sequence);
+    }
+
+    /// <summary>Constructor consumes 0. Every later reading is 1.</summary>
+    private static Func<double?> StallThenFlat()
+    {
+        var phase = 0;
+        return () => Interlocked.Increment(ref phase) == 1 ? 0d : 1d;
+    }
+
+    /// <summary>Constructor consumes 0, the next reading is 5, and every later reading is 4.</summary>
+    private static Func<double?> AdvanceThenRegress()
+    {
+        var phase = 0;
+        return () =>
+        {
+            var n = Interlocked.Increment(ref phase);
+            if (n == 1) return 0d;
+            return n == 2 ? 5d : 4d;
+        };
     }
 
     [Test, Timeout(30_000)]
