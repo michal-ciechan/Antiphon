@@ -619,6 +619,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             ConversationKey = conversationKey,
             CreatedAt = sent,
             SentAt = sent,
+            DeliveryVerdict = DeliveryVerdict.Delivered,
+            DeliveryVerdictAt = sent,
             DeliveryAttempts = 1,
             LastDeliveryStartedAt = sent,
             LastDeliveryBaselineSequence = await CurrentTranscriptMaxSequenceAsync(sid),
