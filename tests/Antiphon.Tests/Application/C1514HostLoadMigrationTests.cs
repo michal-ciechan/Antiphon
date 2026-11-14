@@ -19,6 +19,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
     private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
     private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
+    private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -51,7 +52,8 @@ public sealed class C1514HostLoadMigrationTests
         chain[previous + 3].ShouldBe(Catchup, "retention-catchup-follows-membership");
         chain[previous + 4].ShouldBe(PromptStamp, "prompt-stamp-index-follows-retention-catchup");
         chain[previous + 5].ShouldBe(ShadowCohort, "shadow-cohort-follows-prompt-stamp");
-        (chain.Length - previous).ShouldBe(6, "shadow-cohort-is-the-tip");
+        chain[previous + 6].ShouldBe(Summary, "transcript-summary-follows-shadow-cohort");
+        (chain.Length - previous).ShouldBe(7, "transcript-summary-is-the-tip");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 

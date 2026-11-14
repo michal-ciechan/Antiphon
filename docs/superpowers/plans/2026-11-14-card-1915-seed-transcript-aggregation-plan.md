@@ -64,6 +64,12 @@ CP-3-migration-callers covers both complete classes at an 8-minute row cap.
 Production Down remains refusing; no historical migration or shared rewind helper
 is edited. This is ordinary regression repair, not deliberate Mutation.
 
+R-1 chain repair: both existing chain/model witnesses pass at task base and fail
+at 173c8aae because their exact expected suffix ends at ShadowCohort. Append the
+new summary ID to the full ordered suffix, retain every prior ID/link and model
+parity assertion, and assert the new exact tip/count. CP-3-migration-chain reruns
+the complete affected CP-14 class union at its unchanged 8-minute cap.
+
 S3 fixture correction after observed red: EF's 100-entity append can emit singleton
 INSERT statements in primary-key order, causing genuine out-of-order SQL and
 conservative D-5 invalidation. The test now independently audits committed
@@ -488,6 +494,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3b/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
 | CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-3-migration-callers | S3 | CP-3 | historical-migration-callers | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(C0824RefOnlyIdentityTests*)/*` | R-1 affected callers | all listed, 0 failed | 2 | 3 |
+| CP-3-migration-chain | S3 | CP-3 | migration-chain-regression | `/*/*/(C0824RefOnlySnapshotMigrationTests*)\|(C1514HostLoadMigrationTests*)\|(CapacityAdmissionLifecycleTests*)/*` | R-1 chain/model guards | all listed, 0 failed | 3 | 3 |
 | CP-3-guards-a | S3 | CP-3 | final-guards-policy | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 slice guards | all listed, 0 failed | 4 | 2 |
 | CP-3-guards-b | S3 | CP-3 | final-guards-contract | `/*/*/(SlowTestRegistryMergeTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 slice guards | all listed, 0 failed | 5 | 2 |
 | CP-3-guards-c1 | S3 | CP-3 | final-guards-derived | `/*/*/(DerivedImpactIndexTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 slice guards | all listed, 0 failed | 2 | 2 |
