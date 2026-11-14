@@ -706,6 +706,8 @@ guard/limiter census, not a whole Unit lane.
 | CP-24 | G1 | tests/Antiphon.Agents.Pty.Tests -> bin-c0824-all-pty-roster/ | portable-pty-roster | `/*/*/ProcessSpawnLimitTests/*` | assembly limiter census | all listed, 0 failed | 1 | 3 | true |
 | CP-25 | F1 | tests/Antiphon.Tests -> bin-c0824-all-base/ | portable-legacy-base | `/*/*/DelegationWorktreeTests/(C508_ReuseKeepsRecordedBase*)\|(C508_BaseResolutionRequiresOwnedLease*)` | existing base and repository-lease callers | both exact intended methods, 0 failed | 2 | 6 | true |
 | CP-26 | F2 | tests/Antiphon.Tests -> bin-c0824-all-sync/ | portable-legacy-sync | `/*/*/RunnerSettlementSyncTests/(Pushed_tip_fast_forwards_exact_owned_checkout*)\|(Endpoint_change_is_not_followed*)\|(C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource*)` | existing Checkout settlement callers | all 3 intended methods, 0 failed | 3 | 6 | true |
+| CP-27 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-native-policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | exact impacted Linux exclusion-policy methods | both methods, 0 failed | 2 | 6 | true |
+| CP-28 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-nightly-policy | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | impacted policy reader and repinned live-lane contract | every named class, 0 failed | 2 | 7 | true |
 
 For required baseline reds, run the same precise new acceptance method through
 the checkpoint tool at the committed test-first SHA, with expected assertion
@@ -742,6 +744,9 @@ under the build-slot gate if needed; `scripts/check-evidence-diff.ps1 -BaseRef
 `git merge-tree --write-tree origin/master HEAD`. Never merge master into the
 task branch. Native policy changes, additional migrations or remote-script fixes
 must get their own exact added rows rather than silently bypassing CARD-1782.
+Code added CP-27/CP-28 for the actual F4 native-policy change and its input-pin
+update. These cover the exact hand-glob obligations selected by the full task diff.
+The two rows share their isolated build at one committed source; no wider lane is selected.
 
 ### Cost
 
