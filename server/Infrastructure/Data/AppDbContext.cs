@@ -36,6 +36,7 @@ public partial class AppDbContext : DbContext
     public DbSet<AgentSession> AgentSessions => Set<AgentSession>();
     public DbSet<TaskSupervisionNotice> TaskSupervisionNotices => Set<TaskSupervisionNotice>();
     public DbSet<TranscriptEntry> TranscriptEntries => Set<TranscriptEntry>();
+    public DbSet<SessionTranscriptSummary> SessionTranscriptSummaries => Set<SessionTranscriptSummary>();
     public DbSet<SessionRuntimeAction> SessionRuntimeActions => Set<SessionRuntimeAction>();
     public DbSet<ApiErrorRecovery> ApiErrorRecoveries => Set<ApiErrorRecovery>();
     public DbSet<SessionQueuedMessage> SessionQueuedMessages => Set<SessionQueuedMessage>();
@@ -1709,6 +1710,19 @@ public partial class AppDbContext : DbContext
             entity.HasIndex(a => new { a.DueAt, a.AgentSessionId });
             entity.HasOne<AgentSession>().WithMany().HasForeignKey(a => a.AgentSessionId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<TranscriptEntry>().WithMany().HasForeignKey(a => a.TranscriptEntryId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<SessionTranscriptSummary>(entity =>
+        {
+            entity.ToTable("SessionTranscriptSummaries");
+            entity.HasKey(s => s.AgentSessionId);
+            entity.HasOne<AgentSession>().WithMany().HasForeignKey(s => s.AgentSessionId).OnDelete(DeleteBehavior.Cascade);
+            entity.Property(s => s.SchemaVersion).HasDefaultValue(1);
+            entity.Property(s => s.Valid).HasDefaultValue(false);
+            entity.Property(s => s.LastKind).HasMaxLength(40);
+            entity.HasIndex(s => new { s.NextBackfillAttemptAt, s.AgentSessionId })
+                .HasDatabaseName("IX_SessionTranscriptSummaries_Incomplete")
+                .HasFilter("NOT \"Valid\" OR \"SchemaVersion\" <> 1");
         });
 
         modelBuilder.Entity<TranscriptEntry>(entity =>
