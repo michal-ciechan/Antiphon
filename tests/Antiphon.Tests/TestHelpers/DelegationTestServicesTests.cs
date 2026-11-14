@@ -45,6 +45,21 @@ public sealed class DelegationTestServicesTests
     }
 
     [Test]
+    public void Managed_root_seam_preserves_invalid_path_failure_without_fallback()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = "valid-service-root" });
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+
+        Should.Throw<ArgumentException>(() => service.ResolveWorktreeRoot(
+            new GitSettings { WorktreeBasePath = "invalid\0caller-root" }));
+    }
+
+    [Test]
     [Arguments(null)]
     [Arguments("")]
     [Arguments(" ")]

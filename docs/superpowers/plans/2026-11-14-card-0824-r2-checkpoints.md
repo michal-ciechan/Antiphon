@@ -34,9 +34,9 @@ Run each bounded committed group separately; no whole Unit or assembly run.
 |---|---|---|---|---|---|---|---:|---:|---|
 | R2-RED | R2-RED | tests/Antiphon.Tests -> bin-c0824-r2-red/ | portable-layering-red | `/*/*/C1729LayeringGuardTests/*` | warn-mode producer edge, existing query witness, inventory | one producer assertion red before fix; VIOLATIONS 1 LISTED 162 | 10 | 5 | true |
 | R2-GREEN | R2-GREEN | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-layering-green | `/*/*/C1729LayeringGuardTests/*` | same full guard after seam | all pass; VIOLATIONS 0 LISTED 162 | 10 | 5 | true |
-| R2-ROOTS | R2-GREEN | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-managed-roots | `/*/*/DelegationTestServicesTests/*` | caller settings, relative and absolute paths, native separators, no mkdir, missing config, DI | every method and argument, 0 failed | 11 | 2 | true |
-| CP-1 | R2-GREEN | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-intent | `/*/*/(C0824RefOnlyProvisionTests*)\|(C0824RefOnlyIdentityTests*)\|(C0824RefOnlyGateTests*)\|(ServerGitProcessTests*)\|(DelegationTestServicesTests*)/*` | F1-F4, recorded mode, Git start sites, DI | all listed, 0 failed | 17 | 8 | true |
-| CP-2 | R2-GREEN | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-publication | `/*/*/C0824RefOnlyPreparationTests/*` | P1-P4 | 4 methods, 0 failed/skipped | 4 | 7 | true |
+| R2-ROOTS | R2-A2 | tests/Antiphon.Tests -> bin-c0824-r2-a2/ | portable-managed-roots | `/*/*/DelegationTestServicesTests/*` | caller settings, relative and absolute paths, native separators, no mkdir, missing config, DI | every method and argument, 0 failed | 11 | 2 | true |
+| CP-1 | R2-A2 | tests/Antiphon.Tests -> bin-c0824-r2-a2/ | portable-intent | `/*/*/(C0824RefOnlyProvisionTests*)\|(C0824RefOnlyIdentityTests*)\|(C0824RefOnlyGateTests*)\|(ServerGitProcessTests*)\|(DelegationTestServicesTests*)/*` | F1-F4, recorded mode, Git start sites, DI | all listed, 0 failed | 17 | 8 | true |
+| CP-2 | R2-A2 | tests/Antiphon.Tests -> bin-c0824-r2-a2/ | portable-publication | `/*/*/C0824RefOnlyPreparationTests/*` | P1-P4 | 4 methods, 0 failed/skipped | 4 | 7 | true |
 | CP-3 | R2-B | tests/Antiphon.Tests -> bin-c0824-r2-b/ | linux-dispatch | `/*/*/(C0824RefOnlyProvisionTests*)\|(C0824RefOnlyPreparationTests*)\|(RemoteWorkspacePreparerTests*)/*` | F1-F6,P1-P6, legacy prep | all listed, 0 failed | 13 | 10 | true |
 | CP-4 | R2-B | tests/Antiphon.Tests -> bin-c0824-r2-b/ | portable-statement-budget | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | CARD-1782 statement budget | exact method, 0 failed | 1 | 6 | true |
 | CP-5 | R2-C | tests/Antiphon.Tests -> bin-c0824-r2-c/ | linux-lifecycle | `/*/*/(C0824RefOnlyProducerLifecycleTests*)\|(C0824RefOnlySyncTests*)\|(C0824RefOnlyDebtTests*)\|(C0824RefOnlyContinuationTests*)/*` | L1-L5, CAS/debt/reply | all listed, 0 failed | 8 | 10 | true |
@@ -73,6 +73,12 @@ body guard scan 0.213s, startup 28.341s, host wall 29.040s, source 2150a37ac3b5,
 run 20261114-184101-1958. It is one loaded sample, not a p95.
 Run Git, runner and Pty rows separately, each in its declaring project.
 No whole-assembly selection or native Windows acceptance is added by this packing.
+The first A run retained a roster-miss: ten root/DI cases passed against a floor
+of eleven. The missing invalid-path compatibility negative was then added; no
+timeout or assertion/floor was relaxed. Re-run R2-ROOTS, CP-1 and the red CP-2
+in fresh A2 output. The two CP-2 timeout methods each passed alone on the original
+unchanged source/build; retain the original failures as transient/unattributed.
+
 Windows CP-8 and live canary remain pending, never credited by Linux skips.
 Parent F/P/L acceptance and all PC variants retain their original obligations.
 No ordinary V-n/R-n acceptance IDs are declared by the parent F scope.

@@ -48,6 +48,7 @@ does not discharge their SourceLanding red/restoration/green receipts.
 | PC-23a | Resolve the service's settings instead of the caller's settings | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_caller_paths_without_creating_them` | Pending |
 | PC-23b | Resolve with create=true | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_caller_paths_without_creating_them` | Pending |
 | PC-23c | Fall back when the caller's root is missing | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_missing_configuration_refusal` | Pending |
+| PC-23d | Suppress an invalid caller path and use a configured service fallback | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_invalid_path_failure_without_fallback` | Pending |
 
 These are the remaining accepted-plan IDs and separate variants. Their future
 classes are not implemented by this F1-F4 commission. No execution or pass is
