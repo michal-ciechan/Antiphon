@@ -796,7 +796,7 @@ public sealed class VolumeRetirementPublicationTests
         inventory.Exit.ShouldBe(0, inventory.Output);
         inventory.Output.ShouldContain("C1901_ORIGIN_MOVED_AT_CLOCK");
         (await f.Git(f.Repo, "remote", "get-url", "origin")).ShouldBe(rebound);
-        inventory.Output.ShouldContain("C1008_PRIVATE_ORIGIN repo=" + f.Relative + " origin=" + rebound +
+        inventory.Output.ShouldContain("C1008_PRIVATE_ORIGIN repo=" + Path.GetRelativePath(f.Work, f.Repo).Replace(Path.DirectorySeparatorChar, '/') + " origin=" + rebound +
             " originHash=" + VolumeRetirementPublicationFixture.Sha(rebound),
             customMessage: "the actual URL must be read after the clock, rather than cached before it");
         var entry = inventory.Output.LastIndexOf("entry repo=", StringComparison.Ordinal);
