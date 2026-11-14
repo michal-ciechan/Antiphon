@@ -482,10 +482,13 @@ S5 verification repair (Code 0a2ad036): CP-92/94/95 repair fixture input or
 expected evidence format, preserving all acceptance assertions. CP-96 completes
 ordinary prior-proof header vectors and preserves the required graph while
 omitting a bundle ref, isolating equality from object availability. All PCs
-remain pending for Mutation. CP-97 reruns only the two CP-81 child-deadline
-failures, after CP-100 checks the same methods at the task base. No child or row
+remain pending for Mutation. CP-97/98 rerun the two CP-81 child-deadline failures separately, after
+CP-100 checks the same methods at the task base. CP-100 exhausted its combined
+4 min budget after Retire_temp_uses_current_proof_protocol completed its body
+in 226.5 s (diagnostic only, no TRX); Retained_volumes had just started.
+Splitting keeps each method under the existing 4 min row bound. No child or row
 timeout is widened. S5 caps are CP-92/93=9 min, CP-94/95=7 min, CP-96=2 min,
-CP-97=4 min; admission remains 10 min separately. Expected execution including
+CP-97/98=4 min; admission remains 10 min separately. Expected execution including
 cold preparation is provisionally under 30 min; actual timings and load decide.
 CP-99/100 run in an owned detached base checkout at
 ca8737e78170c9a441e216408da5fab636c34ca0, with that checkout HEAD as expected SHA,
@@ -603,7 +606,8 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-94 | S5 | CP-92 | linux-publication-repair | `/*/*/VolumeRetirementPublicationTests/V2_invalid_bundle_cannot_use_present_head_fallback` | V7 | exactly 1 passed; including restoration; 0 failed/skipped | 1 | 3 | true |
 | CP-95 | S5 | CP-92 | linux-publication-repair | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_file_stays_in_full_audit` | V8 | exactly 1 passed; exact census identity; 0 failed/skipped | 1 | 2 | true |
 | CP-96 | S5 | CP-92 | linux-host-repair | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; prior headers and present-graph missing-ref vector; 0 failed/skipped | 1 | 1 | true |
-| CP-97 | S5 | CP-92 | linux-wrapper-rerun | `/*/*/VolumeRetirementWrapperTests/(Retained_volumes_block_deploy_and_completion*)\|(Retire_temp_uses_current_proof_protocol*)` | R-wrapper | both prior child-deadline failures; exactly 2 passed; 0 failed/skipped | 2 | 2 | true |
+| CP-97 | S5 | CP-92 | linux-wrapper-rerun | `/*/*/VolumeRetirementWrapperTests/Retained_volumes_block_deploy_and_completion` | R-wrapper | exactly 1 intended method; record actual outcome; 0 failed/skipped for green | 1 | 2 | true |
+| CP-98 | S5 | CP-92 | linux-wrapper-rerun | `/*/*/VolumeRetirementWrapperTests/Retire_temp_uses_current_proof_protocol` | R-wrapper | exactly 1 intended method; record actual outcome; 0 failed/skipped for green | 1 | 2 | true |
 | CP-99 | BaseAttribution | tests/Antiphon.Tests -> bin-c1901-base/ | linux-base-cost | `/*/*/C1364BoundLandWaitProofTests/C1364_Host_recycle_post_removal_reports_waited` | R-base-attribution | exactly 1 intended method; record actual outcome at task base; a deadline is incomplete, never green | 1 | 9 | true |
 | CP-100 | BaseAttribution | CP-99 | linux-base-wrapper | `/*/*/VolumeRetirementWrapperTests/(Retained_volumes_block_deploy_and_completion*)\|(Retire_temp_uses_current_proof_protocol*)` | R-base-attribution | both exact methods at task base; record actual outcome; do not widen child deadline | 2 | 2 | true |
 
