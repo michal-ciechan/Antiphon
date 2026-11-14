@@ -463,6 +463,9 @@ public enum AttentionAction
     /// <c>POST /api/agent-tasks/{id}/continue</c>. Appended after shipped 10; do not renumber.
     /// </summary>
     Continue = 11,
+
+    /// <summary>Operator-only POST /api/sessions/{id}/messages/{messageId}/abandon. Never resends.</summary>
+    AbandonMessage = 12,
 }
 
 /// <summary>

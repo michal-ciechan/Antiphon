@@ -2,12 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +24,7 @@ namespace Antiphon.Tests.Api;
 [ClassDataSource<AbandonWebAppFactory>(Shared = SharedType.PerTestSession)]
 public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
 {
+    private readonly Dictionary<Guid, FakeAgentProtocolAdapter> _adapters = [];
     [Test]
     [Arguments(SessionStatus.Running)]
     [Arguments(SessionStatus.Stopped)]
@@ -38,6 +41,15 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         visible.GetProperty("deliveryAttempts").GetInt32().ShouldBe(1);
         visible.GetProperty("lastDeliveryStartedAt").GetDateTime().ShouldBe(row.LastDeliveryStartedAt!.Value);
         visible.GetProperty("body").GetString().ShouldBe(row.Body);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var feed = await scope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(default, includeProgressProbe: false);
+            var held = feed.Items.Single(i => i.MessageId == row.Id);
+            held.Kind.ShouldBe(AttentionKind.ParkedMessage);
+            held.Actions.ShouldBe([AttentionAction.OpenAgent, AttentionAction.AbandonMessage]);
+            held.Headline.ShouldContain("switching is blocked");
+            held.SinceUtc.ShouldBe(row.LastDeliveryStartedAt);
+        }
         using var result = await AbandonAsync(row, "operator inspected the stopped pane");
         result.StatusCode.ShouldBe(HttpStatusCode.OK);
         var reply = await result.Content.ReadFromJsonAsync<JsonElement>();
@@ -45,6 +57,12 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         (await ReloadAsync(row)).Status.ShouldBe(QueuedMessageStatus.Canceled);
         var after = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{row.AgentSessionId}/messages");
         after.GetProperty("messages").GetArrayLength().ShouldBe(0);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var feed = await scope.ServiceProvider.GetRequiredService<AttentionService>().GetAsync(default, includeProgressProbe: false);
+            feed.Items.ShouldNotContain(i => i.MessageId == row.Id);
+        }
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
     }
 
     [Test]
@@ -61,11 +79,10 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         (await ReloadAsync(row)).CanceledAt.ShouldBe(canceled.CanceledAt);
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var audit = (await db.AgentIncidents.Where(i => i.SessionId == row.AgentSessionId
-            && i.FailureReason == "operator-abandon:" + row.Id).ToListAsync()).ShouldHaveSingleItem();
-        audit.Message.ShouldContain("admin (operator token)");
-        audit.Message.ShouldContain("no longer needed");
-        audit.Message.ShouldNotContain("different retry");
+        var audit = (await db.AuditRecords.Where(i => i.Id == row.Id).ToListAsync()).ShouldHaveSingleItem();
+        audit.Summary.ShouldContain("admin (operator token)");
+        audit.Summary.ShouldContain("no longer needed");
+        audit.Summary.ShouldNotContain("different retry");
         audit.CreatedAt.ShouldBe(canceled.CanceledAt!.Value);
         canceled.DeliveryAttempts.ShouldBe(1);
         canceled.DeliveryVerdict.ShouldBeNull();
@@ -124,6 +141,7 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         after.Status.ShouldBe(QueuedMessageStatus.Canceled);
         after.DeliveryVerdict.ShouldBeNull();
         after.DeliveryAttempts.ShouldBe(1);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
     }
 
     [Test]
@@ -160,6 +178,10 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
             after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
         }
         after.DeliveryAttempts.ShouldBe(1);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var audits = await scope.ServiceProvider.GetRequiredService<AppDbContext>().AuditRecords.CountAsync(i => i.Id == row.Id);
+        audits.ShouldBe(after.Status == QueuedMessageStatus.Canceled ? 1 : 0);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
     }
 
     private async Task<SessionQueuedMessage> SeedAsync(SessionStatus status = SessionStatus.Stopped, bool refinement = false)
@@ -171,9 +193,13 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         var row = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = session.Id, Sequence = 1,
             Body = "An operator must decide about this uniquely identifiable lost input reply", CreatedAt = DateTime.UtcNow,
             Status = QueuedMessageStatus.Sent, SentAt = DateTime.UtcNow, DeliveryAttempts = 1,
-            LastDeliveryStartedAt = DateTime.UtcNow, LastDeliveryBaselineSequence = 0,
+            LastDeliveryStartedAt = DateTime.UtcNow.AddDays(-2).Date, LastDeliveryBaselineSequence = 0,
             ConversationKey = refinement ? MidTurnInterruptPolicy.ConversationKeyPrefix + "test" : null };
-        db.AgentSessions.Add(session); db.SessionQueuedMessages.Add(row); await db.SaveChangesAsync(); return row;
+        db.AgentSessions.Add(session); db.SessionQueuedMessages.Add(row); await db.SaveChangesAsync();
+        var adapter = new FakeAgentProtocolAdapter();
+        _adapters[session.Id] = adapter;
+        factory.Services.GetRequiredService<AgentSessionRuntime>().Register(session.Id, adapter);
+        return row;
     }
     private async Task AddReceiptAsync(SessionQueuedMessage row)
     {

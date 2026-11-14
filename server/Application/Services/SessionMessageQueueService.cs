@@ -1253,7 +1253,7 @@ public sealed partial class SessionMessageQueueService
         return (await GetQueueAsync(sessionId, ct)) with { LastDelivery = ToReceipt(outcome) };
     }
 
-    /// <summary>Pending messages for the session, plus whether the agent is currently working.</summary>
+    /// <summary>Pending and unconfirmed Sent messages, plus whether the agent is currently working.</summary>
     public async Task<SessionQueueDto> GetQueueAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -6024,7 +6024,8 @@ public sealed partial class SessionMessageQueueService
     {
         var messages = await db.SessionQueuedMessages
             .AsNoTracking()
-            .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending)
+            .Where(m => m.AgentSessionId == sessionId && (m.Status == QueuedMessageStatus.Pending
+                || m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null && m.DeliveryAttempts > 0))
             .OrderBy(m => m.Sequence)
             .Select(m => new QueuedMessageDto(
                 m.Id,
@@ -6034,10 +6035,12 @@ public sealed partial class SessionMessageQueueService
                 m.CreatedAt,
                 m.DeliveryAttempts,
                 m.Origin.ToString(),
-                m.DeliveryAttempts >= maxAttempts,
+                m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts,
                 m.NoteHeader,
                 false,
-                (string?)null))
+                (string?)null,
+                m.Status == QueuedMessageStatus.Sent,
+                m.LastDeliveryStartedAt))
             .ToListAsync(ct);
         var working = await ReadWorkingAsync(db, sessionId, ct);
         var reason = await ModalBlockReasonAsync(db, sessionId, ct);

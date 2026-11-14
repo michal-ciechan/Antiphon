@@ -15,6 +15,11 @@ public sealed record EnqueueMessageRequest(string Body, MessageSendMode Mode = M
 /// <summary>CARD-0650: the operator's reason for releasing an expectation-watchdog composer hold. Required.</summary>
 public sealed record ReleaseExpectationHoldRequest(string? Reason);
 
+public sealed record AbandonQueuedMessageRequest(string? Reason);
+
+public sealed record AbandonQueuedMessageResult(
+    Guid SessionId, Guid MessageId, string Status, DateTime CanceledAt, string Warning);
+
 /// <summary>The watchdog nudges whose composer hold was released. Empty when the session held nothing.</summary>
 public sealed record ExpectationHoldReleaseResult(Guid SessionId, IReadOnlyList<Guid> ReleasedNudgeIds);
 
@@ -44,7 +49,9 @@ public sealed record QueuedMessageDto(
     bool Parked = false,
     string? NoteHeader = null,
     bool ModalBlocked = false,
-    string? WithholdReason = null);
+    string? WithholdReason = null,
+    bool DeliveryUnconfirmed = false,
+    DateTime? LastDeliveryStartedAt = null);
 
 /// <summary>
 /// How a Mode:Now delivery was confirmed. Values of <see cref="DeliveryReceiptDto.ConfirmedBy"/>.

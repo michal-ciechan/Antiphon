@@ -1850,11 +1850,13 @@ public sealed partial class AttentionService
         // to that file — so the view and the queue can never disagree about what parked means.
         var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
         var parked = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts && m.SourceLandNotificationId == null)
+            .Where(m => (m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts && m.SourceLandNotificationId == null)
+                || (m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null && m.DeliveryAttempts > 0))
             .Select(m => new
             {
                 m.Id, m.AgentSessionId, m.Body, m.Origin, m.CreatedAt,
                 m.DeliveryAttempts, m.LastDeliveryStartedAt,
+                Unconfirmed = m.Status == QueuedMessageStatus.Sent,
             })
             .ToListAsync(ct);
         if (parked.Count == 0)
@@ -1886,14 +1888,18 @@ public sealed partial class AttentionService
                 message.AgentSessionId,
                 agentId,
                 message.Id,
-                $"Parked message to {agentName ?? $"session {message.AgentSessionId.ToString("N")[..8]}"}",
-                $"{message.Origin} message parked after {message.DeliveryAttempts} delivery "
+                $"{(message.Unconfirmed ? "Unconfirmed delivery" : "Parked message")} to {agentName ?? $"session {message.AgentSessionId.ToString("N")[..8]}"}",
+                message.Unconfirmed
+                    ? $"Sent, delivery unconfirmed after {message.DeliveryAttempts} attempt(s). Standing-session switching is blocked. "
+                      + "An operator may abandon this message; it may already have been delivered and cannot be recalled."
+                    : $"{message.Origin} message parked after {message.DeliveryAttempts} delivery "
                 + $"attempt(s) — nothing will retry it."
                 + (bound ? " This agent is channel-bound: someone is waiting on a reply." : string.Empty),
                 Excerpt(message.Body),
                 message.LastDeliveryStartedAt ?? message.CreatedAt,
                 null,
-                [AttentionAction.SendNow, AttentionAction.CancelMessage]));
+                message.Unconfirmed ? [AttentionAction.OpenAgent, AttentionAction.AbandonMessage]
+                    : [AttentionAction.SendNow, AttentionAction.CancelMessage]));
         }
 
         return items;
