@@ -2808,11 +2808,19 @@ public sealed class RollingVolumeRecycleScriptTests
             ShareVolumeWithApply(fixture);
             var url = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
             var tip = (await C994ScriptProcess.Run("git", "-C", repo, "rev-parse", "HEAD")).Output.Trim();
+            // Capture only the published tip, before the unpublished-child witness.
+            var bundleFile = Path.Combine(root, "published.bundle");
+            var bundled = await C994ScriptProcess.Run("git", "-C", repo, "bundle", "create", bundleFile, "refs/heads/main");
+            bundled.Exit.ShouldBe(0, "private-origin: real published bundle; " + bundled.Output);
+            var bundleHeads = await C994ScriptProcess.Run("git", "-C", repo, "bundle", "list-heads", bundleFile);
+            bundleHeads.Exit.ShouldBe(0, bundleHeads.Output);
+            bundleHeads.Output.Trim().ShouldBe(tip + " refs/heads/main");
+            var bundleBytes = await File.ReadAllBytesAsync(bundleFile);
             var proofDir = Path.Combine(root, "host-proof");
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var refs = tip + "\trefs/heads/main\n";
             var proofEnv = "export C1008_HOST_PROOF=" + BashSingle(proofDir) + "\nexport C1008_OPERATION_STARTED=" + started + "\n" +
-                WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs);
+                WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, bundleBytes);
 
             ResetPreviewTrace(fixture);
             var admitted = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
@@ -2852,16 +2860,16 @@ public sealed class RollingVolumeRecycleScriptTests
                 " && rm -f -- " + BashSingle(Path.Combine(repo, ".git", "ORIG_HEAD")));
             dropAbandoned.Exit.ShouldBe(0, "private-origin: drop the abandoned child; " + dropAbandoned.Output);
 
-            WriteV2BoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", now, refs);
+            WriteV2BoundProof(proofDir, repoRel, url, "c100800000000000000000000000000000002", now, refs, bundleBytes);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-binding", "private-origin: another operation id refuses");
-            WriteV2BoundProof(proofDir, repoRel, url, operation, started - 1, refs);
+            WriteV2BoundProof(proofDir, repoRel, url, operation, started - 1, refs, bundleBytes);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-stale", "private-origin: a proof older than the operation refuses");
-            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerOrigin: new string('0', 64));
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, bundleBytes, headerOrigin: new string('0', 64));
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-binding", "private-origin: a different origin hash refuses");
-            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, headerRepo: "repos/other");
+            WriteV2BoundProof(proofDir, repoRel, url, operation, now, refs, bundleBytes, headerRepo: "repos/other");
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-binding", "private-origin: a different repository refuses");
             WriteV1ShapedProof(proofDir, repoRel, url);
@@ -2877,7 +2885,7 @@ public sealed class RollingVolumeRecycleScriptTests
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-missing", "private-origin: an empty proof refuses");
 
-            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs, bundleBytes);
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: repository 'https://github.com/example/missing.git' not found", 128));
             await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
                 "private-origin: a 404 still admits when the v2 proof matches");
@@ -2907,7 +2915,7 @@ public sealed class RollingVolumeRecycleScriptTests
                 " && git -C " + BashSingle(repo) + " push -q origin main");
             publish.Exit.ShouldBe(0, "private-origin: public stand-in; " + publish.Output);
             var publicUrl = (await C994ScriptProcess.Run("git", "-C", repo, "remote", "get-url", "origin")).Output.Trim();
-            WriteV2BoundProof(proofDir, repoRel, publicUrl, "c100800000000000000000000000000000002", now, refs);
+            WriteV2BoundProof(proofDir, repoRel, publicUrl, "c100800000000000000000000000000000002", now, refs, bundleBytes);
             await AssertPrivateRefusal(fixture, bound + "\n" + proofEnv, "RecycleGitAuditUnknown",
                 "reason=proof-binding", "private-origin: a readable origin still refuses a mismatched proof");
             var restore = await C994ScriptProcess.Run("git", "-C", repo, "remote", "set-url", "origin", "ext::" + origin);
@@ -2916,7 +2924,7 @@ public sealed class RollingVolumeRecycleScriptTests
             // stand-in left a second operation's proof beside this one.
             foreach (var staleProof in Directory.GetFiles(proofDir))
                 File.Delete(staleProof);
-            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs);
+            WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs, bundleBytes);
 
             // Inventory exports only origins named in the control-host registry.
             // The helper URL is minted per run, so register that exact string.
@@ -3068,9 +3076,8 @@ public sealed class RollingVolumeRecycleScriptTests
         File.WriteAllText(Path.Combine(directory, ProofFileName(repo, origin)), text);
     }
 
-    // Eleven-line v2 proof plus a dummy bundle. The audit checks the bundle hash
-    // and does not unbundle. Inventory is the one request line the audit will hash.
-    private static string WriteV2BoundProof(string directory, string repo, string origin, string operation, long created, string refs, string? headerOrigin = null, string? headerRepo = null)
+    // Bind the real published graph to this operation's inventory and manifest.
+    private static string WriteV2BoundProof(string directory, string repo, string origin, string operation, long created, string refs, byte[] bundleBytes, string? headerOrigin = null, string? headerRepo = null)
     {
         const string nonce = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         var originHash = Sha256Hex(origin);
@@ -3083,7 +3090,6 @@ public sealed class RollingVolumeRecycleScriptTests
         var refText = refs.Replace("\r\n", "\n", StringComparison.Ordinal);
         if (!refText.EndsWith('\n')) refText += "\n";
         var refCount = refText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-        var bundleBytes = "c1609-dummy-bundle\n"u8.ToArray();
         var bundleHash = Convert.ToHexString(SHA256.HashData(bundleBytes)).ToLowerInvariant();
         var advertisement = Sha256Hex(refText);
         var body = string.Join('\n', new[]

@@ -92,10 +92,56 @@ public sealed class VolumeRetirementPublicationTests
 
         var originalBundle = await File.ReadAllBytesAsync(first.File + ".bundle");
         var originalHeader = await File.ReadAllLinesAsync(first.File);
+        foreach (var (index, value) in new[]
+        {
+            (1, "operation c1008" + new string('f', 32)), (2, "origin " + new string('0', 64)),
+            (3, "repo repos/not-outer"), (5, "nonce " + new string('z', 32)),
+            (6, "inventory " + new string('z', 64)), (7, "bundle " + new string('0', 64)),
+            (8, "advertisement " + new string('0', 64)), (9, "count 0")
+        })
+        {
+            var header = originalHeader.ToArray(); header[index] = value;
+            await File.WriteAllTextAsync(first.File, string.Join('\n', header) + "\n");
+            (await f.WriteProof([(f.A, "commit")], previous: first.File)).Exit.ShouldBe(2,
+                "H3 malformed or mismatched prior-proof field " + index);
+        }
+        await f.RehashProof(first, originalHeader.Append(originalHeader[11]).ToArray());
+        (await f.WriteProof(previous: first.File)).Exit.ShouldBe(2, "H3 duplicate prior advertisement refuses");
+        // Reproof creates a new phase nonce and inventory (c590-real.ps1). Old
+        // valid bindings are not the new authority; fresh origin/graph checks are.
+        var renewalHeader = originalHeader.ToArray();
+        renewalHeader[5] = "nonce " + new string('a', 32);
+        renewalHeader[6] = "inventory " + new string('b', 64);
+        await File.WriteAllTextAsync(first.File, string.Join('\n', renewalHeader) + "\n");
+        (await f.WriteProof([(f.U, "commit")], previous: first.File)).Exit.ShouldBe(0,
+            "H3 a fresh phase replaces valid old nonce/inventory after graph revalidation");
+        var damagedBundle = originalBundle.ToArray(); damagedBundle[0] ^= 0xff;
+        await File.WriteAllBytesAsync(first.File + ".bundle", damagedBundle);
+        await f.RehashProof(first, originalHeader.ToArray());
+        (await f.WriteProof(previous: first.File)).Exit.ShouldBe(2,
+            "H3 a hash-bound unusable prior bundle refuses");
+        await File.WriteAllBytesAsync(first.File + ".bundle", originalBundle);
+        await File.WriteAllTextAsync(first.File, string.Join('\n', originalHeader) + "\n");
         // Same live advertisement, different bundle ref set. Recomputed hashes
-        // prove equality is checked independently of file integrity.
-        await f.Git(f.Repo, "bundle", "create", first.File + ".head-only", "refs/heads/main");
-        await File.WriteAllBytesAsync(first.File + ".bundle", await File.ReadAllBytesAsync(first.File + ".head-only"));
+        // and an independently readable U graph isolate ref equality from object
+        // availability: HEAD imports U without advertising its canonical name.
+        var missingRepo = Path.Combine(f.Root, "missing-bundle.git");
+        await f.Git(f.Root, "init", "-q", "--bare", "--template=", missingRepo);
+        await f.Git(missingRepo, "bundle", "unbundle", first.File + ".bundle");
+        await f.Git(missingRepo, "update-ref", "refs/heads/main", f.A);
+        await f.Git(missingRepo, "update-ref", "--no-deref", "HEAD", f.U);
+        var missingBundle = Path.Combine(f.Root, "missing-ref.bundle");
+        await f.Git(missingRepo, "bundle", "create", missingBundle, "refs/heads/main", "HEAD");
+        var missingHeads = await f.Git(missingRepo, "bundle", "list-heads", missingBundle);
+        missingHeads.ShouldContain(f.A + " refs/heads/main");
+        missingHeads.ShouldContain(f.U + " HEAD");
+        missingHeads.ShouldNotContain(VolumeRetirementPublicationFixture.Canonical(f.U));
+        var verifyRepo = Path.Combine(f.Root, "missing-verify.git");
+        await f.Git(f.Root, "init", "-q", "--bare", "--template=", verifyRepo);
+        (await f.Run("git", ["-C", verifyRepo, "cat-file", "-e", f.U])).Exit.ShouldNotBe(0);
+        await f.Git(verifyRepo, "bundle", "unbundle", missingBundle);
+        (await f.Git(verifyRepo, "cat-file", "-t", f.U)).ShouldBe("commit");
+        await File.WriteAllBytesAsync(first.File + ".bundle", await File.ReadAllBytesAsync(missingBundle));
         await f.RehashProof(first, originalHeader.ToArray());
         (await f.WriteProof([(f.A, "commit")], previous: first.File)).Exit.ShouldBe(2, "H3 missing bundle salvage ref must refuse reuse");
         await f.Protect(f.U, VolumeRetirementPublicationFixture.Canonical(f.U));
@@ -399,8 +445,9 @@ public sealed class VolumeRetirementPublicationTests
         Refused(await f.Audit(proof), "RecycleGitAuditUnknown");
         await f.RehashProof(proof, originalHeader.ToArray());
         await f.Protect(f.X, VolumeRetirementPublicationFixture.Canonical(f.X));
-        await f.Git(f.Repo, "bundle", "create", proof.File + ".extra", "refs/heads/main", VolumeRetirementPublicationFixture.Canonical(f.X));
-        await File.WriteAllBytesAsync(proof.File + ".bundle", await File.ReadAllBytesAsync(proof.File + ".extra"));
+        var extraBundle = Path.Combine(f.Root, "extra-bundle");
+        await f.Git(f.Repo, "bundle", "create", extraBundle, "refs/heads/main", VolumeRetirementPublicationFixture.Canonical(f.X));
+        await File.WriteAllBytesAsync(proof.File + ".bundle", await File.ReadAllBytesAsync(extraBundle));
         await f.RehashProof(proof, originalHeader.ToArray());
         Refused(await f.Audit(proof), "RecycleGitAuditUnknown");
         await f.Git(f.Repo, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.X));
@@ -539,7 +586,16 @@ public sealed class VolumeRetirementPublicationTests
         Refused(retained, "RecycleGitAuditUnknown");
         retained.Output.ShouldNotContain("disposable-fixture classifier=selector-evidence-v1", Case.Sensitive,
             "V8/V9 the only nested selector fixture stays in the full audit");
-        retained.Output.ShouldContain(".antiphon/selector-evidence/x/fixtures/y", Case.Sensitive,
-            "V8/V9 the valid fixture reaches the production census boundary");
+        if (symlink)
+            retained.Output.ShouldContain(".antiphon/selector-evidence/x/fixtures/y", Case.Sensitive,
+                "V9 the valid fixture reaches the production census boundary");
+        else
+        {
+            var mountedRepo = "/work/" + Path.GetRelativePath(f.Work, nested).Replace('\\', '/');
+            var mountedAdmin = "/work/" + Path.GetRelativePath(f.Work, admin).Replace('\\', '/');
+            retained.Output.ShouldContain("entry repo=" + VolumeRetirementPublicationFixture.Sha(mountedRepo) +
+                " common=" + VolumeRetirementPublicationFixture.Sha(mountedAdmin), Case.Sensitive,
+                "V8 the exact valid fixture and its owned admin reach the production census boundary");
+        }
     }
 }

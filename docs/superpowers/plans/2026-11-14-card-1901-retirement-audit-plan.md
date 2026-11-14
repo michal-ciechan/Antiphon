@@ -478,6 +478,23 @@ is provisionally 8 min tests + 1 min driver. The tool build watchdog has a
 The 28 adjacent full-class census rows in the budget report require separate
 serial measurement under 10 min each; never credit an incomplete row.
 
+S5 verification repair (Code 0a2ad036): CP-92/94/95 repair fixture input or
+expected evidence format, preserving all acceptance assertions. CP-96 completes
+ordinary prior-proof header vectors and preserves the required graph while
+omitting a bundle ref, isolating equality from object availability. All PCs
+remain pending for Mutation. CP-97 reruns only the two CP-81 child-deadline
+failures, after CP-100 checks the same methods at the task base. No child or row
+timeout is widened. S5 caps are CP-92/93=9 min, CP-94/95=7 min, CP-96=2 min,
+CP-97=4 min; admission remains 10 min separately. Expected execution including
+cold preparation is provisionally under 30 min; actual timings and load decide.
+CP-99/100 run in an owned detached base checkout at
+ca8737e78170c9a441e216408da5fab636c34ca0, with that checkout HEAD as expected SHA,
+not the candidate SHA. Caps are 9/4 min; expected build plus execution under
+30 min. Preserve baseline outcomes and all S4 reds/timeouts. The S4 batch
+exceeded 30 min and its capped class/method selections need a separately
+commissioned performance Debug using the retained source, membership and load.
+Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
+
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1901-s1/ | linux-host-red | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 baseline | 1 intended publication-acceptance assertion failure; no build/setup failure | 1 | 6 | true |
@@ -581,6 +598,14 @@ serial measurement under 10 min each; never credit an incomplete row.
 | CP-81 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/VolumeRetirementWrapperTests/*` | M-adjacent VolumeRetirementWrapperTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-90 | S4 | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters Agents.Pty | all named class; 0 failed | 1 | 1 | true |
 | CP-91 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-spawn-impact | `/*/*/ProcessSpawnLimitTests/*` | R-1782 spawn-limit-rosters SessionRunner | all named class; 0 failed | 1 | 1 | true |
+| CP-92 | S5 | tests/Antiphon.Tests -> bin-c1901-s5/ | linux-auth-repair | `/*/*/RollingVolumeRecycleScriptTests/C1008_Host_proof_admits_only_an_authenticated_private_origin` | R-v1-transport | exactly 1 passed; real immutable published bundle; 0 failed/skipped | 1 | 5 | true |
+| CP-93 | S5 | CP-92 | linux-index-repair | `/*/*/DerivedImpactIndexTests/*` | R-index | all 27 current methods; 0 failed/skipped | 27 | 2 | true |
+| CP-94 | S5 | CP-92 | linux-publication-repair | `/*/*/VolumeRetirementPublicationTests/V2_invalid_bundle_cannot_use_present_head_fallback` | V7 | exactly 1 passed; including restoration; 0 failed/skipped | 1 | 3 | true |
+| CP-95 | S5 | CP-92 | linux-publication-repair | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_file_stays_in_full_audit` | V8 | exactly 1 passed; exact census identity; 0 failed/skipped | 1 | 2 | true |
+| CP-96 | S5 | CP-92 | linux-host-repair | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; prior headers and present-graph missing-ref vector; 0 failed/skipped | 1 | 1 | true |
+| CP-97 | S5 | CP-92 | linux-wrapper-rerun | `/*/*/VolumeRetirementWrapperTests/(Retained_volumes_block_deploy_and_completion*)\|(Retire_temp_uses_current_proof_protocol*)` | R-wrapper | both prior child-deadline failures; exactly 2 passed; 0 failed/skipped | 2 | 2 | true |
+| CP-99 | BaseAttribution | tests/Antiphon.Tests -> bin-c1901-base/ | linux-base-cost | `/*/*/C1364BoundLandWaitProofTests/C1364_Host_recycle_post_removal_reports_waited` | R-base-attribution | exactly 1 intended method; record actual outcome at task base; a deadline is incomplete, never green | 1 | 9 | true |
+| CP-100 | BaseAttribution | CP-99 | linux-base-wrapper | `/*/*/VolumeRetirementWrapperTests/(Retained_volumes_block_deploy_and_completion*)\|(Retire_temp_uses_current_proof_protocol*)` | R-base-attribution | both exact methods at task base; record actual outcome; do not widen child deadline | 2 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
