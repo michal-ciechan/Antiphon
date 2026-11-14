@@ -121,9 +121,9 @@ internal sealed class VolumeRetirementPublicationFixture
         var baselineSource = "";
         if (baselineWriter)
         {
-            var file = Path.Combine(Root, "base-c1609-host-proof.ps1");
-            await File.WriteAllTextAsync(file, await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c1609-host-proof.ps1"));
-            baselineSource = ". " + Ps(file) + "; ";
+            var baselineFile = Path.Combine(Root, "base-c1609-host-proof.ps1");
+            await File.WriteAllTextAsync(baselineFile, await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c1609-host-proof.ps1"));
+            baselineSource = ". " + Ps(baselineFile) + "; ";
         }
         var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
             baselineSource +
