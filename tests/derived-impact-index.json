@@ -481,17 +481,18 @@
     },
     {
       "path": "server/Application/Services/AgentControlService.cs",
-      "classes": 32,
+      "classes": 33,
       "reason": "cap",
-      "owed": 7,
+      "owed": 8,
       "first": [
-        "SessionMessageQueueDeliveryVerificationTests",
         "SpecialistToolPolicyLaunchTests",
         "SpecialistToolPolicyTests",
         "StandingContinuityAttentionTests",
         "StandingContinuityRecoveryTests",
         "StandingRestartAccountingTests",
-        "OrchestratorInvestigationDetectorTests"
+        "ImpactedClassesSelectorTests",
+        "OrchestratorInvestigationDetectorTests",
+        "StandingSessionSwitchConcurrencyTests"
       ]
     },
     {
@@ -1191,14 +1192,14 @@
       "reason": "cap",
       "owed": 126,
       "first": [
-        "ChannelOutboundRecoveryTests",
-        "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskSettlementRaceTests",
+        "CapacityAdmissionLifecycleTests"
       ]
     },
     {
@@ -5470,6 +5471,12 @@
       ]
     },
     {
+      "path": "server/Application/Exceptions/InputDeliveryUncertainException.cs",
+      "classes": [
+        "ImpactedClassesSelectorTests"
+      ]
+    },
+    {
       "path": "server/Application/Exceptions/ModelDisabledException.cs",
       "classes": [
         "AgentControlServiceIntegrationTests",
@@ -6031,10 +6038,10 @@
         "ProviderEndpointSentinelCanaryTests",
         "RemoteExecutableLaunchTests",
         "SessionHealthTests",
+        "SessionMessageQueueDeliveryVerificationTests",
         "SpecialistStartIntentTests",
         "StandingRestartEscalationTests",
-        "StandingSessionSelectionTests",
-        "StandingSessionSwitchConcurrencyTests"
+        "StandingSessionSelectionTests"
       ]
     },
     {
@@ -10718,16 +10725,16 @@
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandPersistenceFailureTests",
-        "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
         "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrPaneDisposalApplicationTests",
+        "MatrixChildReceiptTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
-        "PhoneHomeOutageMentionTests",
         "ReceiptFailureDeliveryTests",
         "RunnerClaudeFinalLaunchArgvTests",
         "SessionMessageQueueGrokPtyIntegrationTests",
