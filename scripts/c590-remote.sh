@@ -7831,8 +7831,14 @@ consider_linked() {
 # so negotiation still sends them as haves.
 # A host bundle is the advertised graph when the helper cannot fetch. It is a
 # sibling of the proof file. Tags stay in the pack; only branch tips are comparisons.
+# CARD-1901: authority is the exact advertised origin object, not a local ref
+# bearing the preservation convention. v1 never admits this namespace.
+c1609_is_origin_salvage_ref() {
+    local salvage_re='^refs/antiphon/salvage/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/([0-9a-f]{40})$'
+    [ "${C1609_CONTENT_V2:-}" = 1 ] && [[ "$2" =~ $salvage_re ]] && [ "${BASH_REMATCH[1]}" = "$1" ]
+}
 c1609_unbundle_host_proof() {
-    local rel url name bundle n=0 oid ref type
+    local rel url name bundle n=0 heads=0 oid ref type
     [ -n "${C1008_HOST_PROOF:-}" ] || return 1
     [ -d "$proof" ] || return 1
     rel="$(rel_repo "${audit_repo:-}")" || return 1
@@ -7856,6 +7862,12 @@ c1609_unbundle_host_proof() {
         [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || return 1
         case "$ref" in
             refs/heads/*)
+                heads=$((heads + 1))
+                n=$((n + 1))
+                printf 'create refs/c1008/origin/%s %s\n' "$n" "$oid" >> "$proof.bundle-updates" || return 1
+                ;;
+            refs/antiphon/salvage/*)
+                c1609_is_origin_salvage_ref "$oid" "$ref" || return 1
                 n=$((n + 1))
                 printf 'create refs/c1008/origin/%s %s\n' "$n" "$oid" >> "$proof.bundle-updates" || return 1
                 ;;
@@ -7863,7 +7875,7 @@ c1609_unbundle_host_proof() {
             *) return 1 ;;
         esac
     done < "$proof.bundle-refs"
-    [ "$n" -ge 1 ] || return 1
+    [ "$heads" -ge 1 ] || return 1
     git --git-dir="$proof" update-ref --stdin < "$proof.bundle-updates" >/dev/null 2>&1 || return 1
     fetched=()
     git --git-dir="$proof" for-each-ref --format='%(objectname) %(objecttype)' refs/c1008/origin/ > "$proof.heads" 2>/dev/null || return 1
@@ -8121,13 +8133,14 @@ consider_common() {
     [ -s "$scratch/origin-sorted" ] || refuse_unknown origin-empty 0 "$rep"
     : > "$scratch/origin-oids"
     : > "$scratch/advertised"
-    # Heads are the commit comparisons. Every advertised object (head, tag, peeled
-    # tag) can prove a non-commit tip that names that very object.
+    # Heads may be present-head comparisons. V2 salvage commits become comparisons
+    # only after the bound bundle validates. Tags retain exact-object semantics.
     while IFS=$'\t' read -r oid ref || [ -n "$oid$ref" ]; do
         [[ "$oid" =~ ^[0-9a-f]{40}$ ]] || refuse_unknown origin-parse 2 "$rep"
         case "$ref" in
             refs/heads/*) printf '%s\n' "$oid" >> "$scratch/origin-oids" ;;
             refs/tags/*) ;;
+            refs/antiphon/salvage/*) c1609_is_origin_salvage_ref "$oid" "$ref" || refuse_unknown origin-parse 2 "$rep" ;;
             *) refuse_unknown origin-parse 2 "$rep" ;;
         esac
         printf '%s\n' "$oid" >> "$scratch/advertised"
@@ -8136,7 +8149,8 @@ consider_common() {
     # runners push. The advertised heads present here are comparisons; a present
     # non-commit head refuses. Origin's heads fetched into the scratch proof
     # repository are added (fetch_origin); without them only the present heads
-    # count, which can only refuse more tips. No comparison at all refuses.
+    # count for v1. V2 must validate its offline bundle even when all heads are
+    # already local; a failed graph cannot authorize a present-head fallback.
     audit_check=origin-present
     git --git-dir="$top" cat-file --batch-check='%(objectname) %(objecttype)' < "$scratch/origin-oids" > "$scratch/present" 2>/dev/null || fail $?
     present=()
@@ -8152,7 +8166,10 @@ consider_common() {
     done < "$scratch/present"
     [ "$lines" = "$(wc -l < "$scratch/origin-oids")" ] || fail 2
     commons_fetched=$((commons_fetched + 1))
-    fetch_origin "$commons_fetched" || { proof_dir=''; fetched=(); }
+    fetch_origin "$commons_fetched" || {
+        [ "${C1609_CONTENT_V2:-}" != 1 ] || refuse_unknown origin-bundle 2 "$rep"
+        proof_dir=''; fetched=()
+    }
     comparisons=("${present[@]}" "${fetched[@]}")
     if [ -n "$proof_dir" ]; then cmp=(git --git-dir="$proof_dir"); proof=fetched; else cmp=(git --git-dir="$top"); proof=present; fi
     audit_check=origin-present
