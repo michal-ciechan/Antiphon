@@ -496,3 +496,5 @@ Antiphon.Tests.Application.SessionTranscriptSummaryMigrationTests
 
 # CARD-1915 round 2: shared 3,118,500-row fixture and descriptive append-option matrix; measured 268s in CP-36 at 017ef0fc4c.
 Antiphon.Tests.Application.SessionTranscriptSummaryAppendCostTests
+# CARD-1901: real Git origins, bound host proofs and native offline retirement audit corpus.
+Antiphon.Tests.Scripts.VolumeRetirementPublicationTests
