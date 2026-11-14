@@ -199,7 +199,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         Capture = new(Options.Create(Runner), Clock, new C1514Authority(Clock), NullLogger<HostLoadCaptureService>.Instance,
             identity, () => Spool);
         await Capture.StartAsync(Token); History = Capture;
-        await EventuallyAsync(() => { try { Capture.ReadHistory(null, 120); return true; } catch (IOException e) when (e.Message == "host_load_history_busy") { return false; } }, cancellationToken: Token);
+        await EventuallyAsync(() => { try { Capture.ReadHistory(null, 120); return true; } catch (IOException e) when (e.Message is "host_load_history_busy" or "host_load_history_unavailable") { return false; } }, cancellationToken: Token);
         Progress("capture ready");
         Live = new(Runner, Clock);
         Sampler = new(Probe, Live, new C1514MissingCpu(), () => [], _ => null, Clock, Options.Create(Runner), NullLogger<HostStatsSamplerService>.Instance, Capture);
