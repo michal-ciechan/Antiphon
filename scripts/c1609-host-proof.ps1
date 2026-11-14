@@ -86,8 +86,11 @@ function Assert-C1609RequiredObjects {
     }
     if($seen.Count -ne $expected.Count){throw 'object-coverage'}
     $advertised=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $heads=[Collections.Generic.List[string]]::new()
-    foreach($line in $Advertisement){[void]$advertised.Add($line.Substring(0,40));if($line -cmatch '\trefs/heads/'){$heads.Add('^'+$line.Substring(0,40))}}
+    $roots=[Collections.Generic.List[string]]::new()
+    foreach($line in $Advertisement){
+        [void]$advertised.Add($line.Substring(0,40))
+        if($line -cmatch '\trefs/(heads/|antiphon/salvage/)'){$roots.Add($line.Substring(0,40))}
+    }
     $commits=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $trees=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($pair in $expected.GetEnumerator()){
@@ -107,7 +110,7 @@ function Assert-C1609RequiredObjects {
     }
     if($commits.Count){
         $remaining=$TimeoutMs-[int]$watch.ElapsedMilliseconds;if($remaining -le 0){throw 'deadline'}
-        $revisions=[Collections.Generic.List[string]]::new();foreach($oid in $commits){$revisions.Add($oid)};foreach($head in $heads){$revisions.Add($head)}
+        $revisions=[Collections.Generic.List[string]]::new();foreach($oid in $commits){$revisions.Add($oid)};foreach($root in $roots){$revisions.Add('^'+$root)}
         $count=Invoke-C1609HostGit -Repo $Repo -WorkingDirectory $Scratch -TimeoutMs $remaining `
             -GitArgs @('--git-dir',$Scratch,'rev-list','--count','--stdin') -InputText (($revisions.ToArray() -join $nl)+$nl)
         if($count.Trim() -cne '0'){throw 'unpublished-commit'}
@@ -116,7 +119,8 @@ function Assert-C1609RequiredObjects {
         $remaining=$TimeoutMs-[int]$watch.ElapsedMilliseconds;if($remaining -le 0){throw 'deadline'}
         $file=Join-Path $Scratch 'required-trees'
         [void](Invoke-C1609HostGit -Repo $Repo -WorkingDirectory $Scratch -TimeoutMs $remaining -OutputFile $file `
-            -GitArgs @('--git-dir',$Scratch,'rev-list','--objects','--no-object-names','--filter=blob:none','--missing=error','--branches'))
+            -GitArgs (@('--git-dir',$Scratch,'rev-list','--objects','--no-object-names','--filter=blob:none','--missing=error','--stdin')) `
+            -InputText (($roots.ToArray() -join $nl)+$nl))
         foreach($line in [IO.File]::ReadLines($file)){if($line -cnotmatch '^[0-9a-f]{40}$'){throw 'tree-graph'};[void]$trees.Remove($line)}
         if($trees.Count){throw 'unpublished-tree'}
     }
@@ -129,8 +133,12 @@ function Read-C1609Advertisement([string]$Text) {
     for($i=0;$i -lt $lines.Length;$i++){
         $line=$lines[$i].TrimEnd([char]13)
         if($line -eq '' -and $i -eq $lines.Length-1){continue}
-        if($line -cnotmatch '^[0-9a-f]{40}\trefs/(heads|tags)/[^\s]+$'){throw 'advertisement'}
+        if($line -cnotmatch '^[0-9a-f]{40}\trefs/[^\s]+$'){throw 'advertisement'}
         $ref=$line.Substring(41)
+        if($ref -cnotmatch '^refs/(heads|tags)/[^\s]+$'){
+            if($ref -cnotmatch '^refs/antiphon/salvage/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/([0-9a-f]{40})$' -or
+                $Matches[1] -cne $line.Substring(0,40)){throw 'advertisement'}
+        }
         if(-not $seen.Add($ref)){throw 'advertisement'}
         if($line.ToLowerInvariant() -match 'gh[pousr]_|github_pat_|token|password|secret'){throw 'advertisement'}
         $rows.Add($line)
@@ -138,6 +146,39 @@ function Read-C1609Advertisement([string]$Text) {
     if($rows.Count -eq 0 -or @($rows|Where-Object{$_ -cmatch '\trefs/heads/'}).Count -eq 0){throw 'advertisement'}
     $array=$rows.ToArray(); [Array]::Sort($array,[StringComparer]::Ordinal)
     return $array
+}
+
+# The advertisement has already passed the closed name/OID check. Validate all
+# commit comparison roots even when no renewal objects were requested, including
+# graphs recovered from a previous bundle. Tags retain exact-object semantics.
+function Assert-C1609CommitRoots {
+    param([string[]]$Advertisement,[string]$Scratch,[string]$Repo,[int]$TimeoutMs)
+    $roots=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($line in $Advertisement){
+        if($line -cmatch '\trefs/(heads/|antiphon/salvage/)'){[void]$roots.Add($line.Substring(0,40))}
+    }
+    $nl=[string][char]10
+    $types=Invoke-C1609HostGit -Repo $Repo -WorkingDirectory $Scratch -TimeoutMs $TimeoutMs `
+        -GitArgs @('--git-dir',$Scratch,'cat-file','--batch-check=%(objectname) %(objecttype)') -InputText (($roots -join $nl)+$nl)
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($line in $types.TrimEnd([char]10).Split([char]10)){
+        if($line -cnotmatch '^([0-9a-f]{40}) commit$' -or -not $roots.Contains($Matches[1]) -or -not $seen.Add($Matches[1])){throw 'origin-type'}
+    }
+    if($seen.Count -ne $roots.Count){throw 'origin-type'}
+}
+
+function Assert-C1609BundleAdvertisement {
+    param([string]$Text,[string[]]$Advertisement)
+    $rows=[Collections.Generic.List[string]]::new()
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($line in $Text.TrimEnd([char]10).Split([char]10)){
+        if($line -cnotmatch '^([0-9a-f]{40}) ([^\s]+)$' -or -not $seen.Add($Matches[2])){throw 'bundle-refs'}
+        if($Matches[2] -ceq 'HEAD'){continue}
+        $rows.Add($Matches[1]+[char]9+$Matches[2])
+    }
+    $actual=@(Read-C1609Advertisement (($rows.ToArray() -join [char]10)+[char]10))
+    $expected=@($Advertisement|Where-Object{-not $_.EndsWith('^{}')})
+    if(($actual -join [char]10) -cne ($expected -join [char]10)){throw 'bundle-refs'}
 }
 
 # CARD-1693: the standing fleet pushes to the shared origin all the time, so the before/after
@@ -226,7 +267,7 @@ function Invoke-C1609HostOriginProofAttempt {
         if($fresh){[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs @('init','-q','--bare','--template=',$scratch) -WorkingDirectory $scratch)}
         $common=@('--git-dir',$scratch)
         $cap=[Math]::Min(30000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
-        $before=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote','--heads','--tags',$OriginUrl)) -TimeoutMs $cap -WorkingDirectory $scratch))
+        $before=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote',$OriginUrl,'refs/heads/*','refs/tags/*','refs/antiphon/salvage/*')) -TimeoutMs $cap -WorkingDirectory $scratch))
         $reuse=$false
         if($PreviousProofFile){
             $old=[IO.File]::ReadAllLines($PreviousProofFile)
@@ -235,6 +276,9 @@ function Invoke-C1609HostOriginProofAttempt {
                 ([IO.FileInfo]::new($PreviousProofFile).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
                 (Get-FileHash -LiteralPath ($PreviousProofFile+'.bundle') -Algorithm SHA256).Hash.ToLowerInvariant() -cne $old[7].Substring(7)){throw 'previous-proof'}
             $oldAdvertisement=@(Read-C1609Advertisement (($old[11..($old.Length-1)] -join [char]10)+[char]10))
+            if($old[3] -cne ('repo '+$RepoRelative) -or $old[5] -cnotmatch '^nonce [0-9a-f]{32}$' -or
+                $old[6] -cnotmatch '^inventory [0-9a-f]{64}$' -or $old[8] -cne ('advertisement '+(Get-C1008Sha256 (($oldAdvertisement -join [char]10)+[char]10))) -or
+                $old[9] -cne ('count '+$oldAdvertisement.Count)){throw 'previous-proof'}
             $reuse=$fresh -and ($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
         }
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
@@ -245,16 +289,20 @@ function Invoke-C1609HostOriginProofAttempt {
         if($reuse){
             [IO.File]::Copy($PreviousProofFile+'.bundle',$staged,$false)
             if((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash.ToLowerInvariant() -cne $old[7].Substring(7)){throw 'previous-proof'}
-            [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','unbundle',$staged)) -TimeoutMs $cap -WorkingDirectory $scratch)
+            $bundleRefs=Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','unbundle',$staged)) -TimeoutMs $cap -WorkingDirectory $scratch
+            Assert-C1609BundleAdvertisement -Text $bundleRefs -Advertisement $before
             $updates=@($before|Where-Object{-not $_.EndsWith('^{}')}|ForEach-Object{'create '+$_.Substring(41)+' '+$_.Substring(0,40)})
             [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('update-ref','--stdin')) -TimeoutMs $cap -WorkingDirectory $scratch -InputText (($updates -join [char]10)+[char]10))
         } else {
             [void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('fetch','-q','--prune','--no-tags','--no-write-fetch-head',
-                '--no-recurse-submodules',$OriginUrl,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*')) -TimeoutMs $cap -WorkingDirectory $scratch)
+                '--no-recurse-submodules',$OriginUrl,'+refs/heads/*:refs/heads/*','+refs/tags/*:refs/tags/*',
+                '+refs/antiphon/salvage/*:refs/antiphon/salvage/*')) -TimeoutMs $cap -WorkingDirectory $scratch)
         }
         $actual=Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('show-ref','--dereference')) -WorkingDirectory $scratch
         $actual=@(Read-C1609Advertisement ($actual.Replace(' ',[string][char]9)))
         if(($before -join [char]10) -cne ($actual -join [char]10)){throw 'snapshot'}
+        $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
+        Assert-C1609CommitRoots -Advertisement $before -Scratch $scratch -Repo $RepoRelative -TimeoutMs $cap
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
         Assert-C1609RequiredObjects -RequiredObjects $RequiredObjects -Advertisement $before -Scratch $scratch -Repo $RepoRelative -TimeoutMs $cap
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
@@ -262,7 +310,7 @@ function Invoke-C1609HostOriginProofAttempt {
         if(-not $reuse){[void](Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('bundle','create',$staged,'--all')) -TimeoutMs $cap -WorkingDirectory $scratch)}
         [IO.File]::Move($staged,$bundle)
         $cap=[Math]::Min(30000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
-        $after=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote','--heads','--tags',$OriginUrl)) -TimeoutMs $cap -WorkingDirectory $scratch))
+        $after=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -GitArgs ($common+@('ls-remote',$OriginUrl,'refs/heads/*','refs/tags/*','refs/antiphon/salvage/*')) -TimeoutMs $cap -WorkingDirectory $scratch))
         if(($before -join [char]10) -cne ($after -join [char]10)){throw 'snapshot'}
         $completed=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         if([Math]::Abs(($completed-$now)*1000-$watch.ElapsedMilliseconds) -gt 60000){throw 'clock'}
