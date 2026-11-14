@@ -381,42 +381,55 @@ public sealed class C0824WorkspaceSlotCustodyTests
     [Test]
     public async Task C0824_LeaseWaitsForTheDispatcherMutationLock(CancellationToken ct)
     {
-        // CARD-0824 S1 mutation survivor PC-74 (G-74). A slot lease is a workspace mutation: while an Input holds the
-        // dispatcher's mutation lock, a WorkspaceMirror frame does not enter the pool (no Leasing slot is written) and
-        // its reply arrives only after the lock is released.
+        // CARD-0824 S1 mutation survivor PC-74 (G-74). A slot lease is a workspace mutation: while a non-slot mirror
+        // holds the dispatcher's MutateAsync lock, the slot mirror does not enter the pool (no Leasing slot is written)
+        // and its reply arrives only after the lock is released. Input no longer owns this lock (CARD-1892).
         using var scratch = Create();
         var service = scratch.Service();
         var pool = scratch.Pool(service: service);
         var storeId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-        var runtime = new C0824StoreRuntime(storeId)
+        var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.WorkspaceAdmissionForTest = async () =>
         {
-            InputGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            mutationStarted.TrySetResult();
+            await mutationGate.Task.WaitAsync(ct);
         };
-        var dispatcher = SlotDispatcher(scratch, service, runtime, storeId);
+        var dispatcher = SlotDispatcher(scratch, service, new C0824StoreRuntime(storeId), storeId);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         pool.PhaseCut = phase => { if (phase == "enter") entered.TrySetResult(); };
-        var input = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Input,
-            JsonSerializer.SerializeToElement(new { sessionId = Guid.NewGuid(), input = "x" }, PhoneHomeFraming.Json)), ct);
-        await runtime.InputStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        var mutation = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+            JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorRequest(BranchB, scratch.ShaB, "task-bbbbbbbb"), PhoneHomeFraming.Json)), ct);
+        Task<PhoneHomeFrame>? mirror = null;
+        try
+        {
+            await mutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            var request = new PhoneHomeWorkspaceMirrorRequest(BranchA, scratch.ShaA, "task-aaaaaaaa",
+                Binding: new PhoneHomeWorkspaceMirrorBinding(TaskA, 1, Guid.NewGuid(), "runner-a", storeId.ToString("D")),
+                Slot: true, Cold: false);
+            mirror = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
+                JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json)), ct);
+            // Unlocked, the pool is entered within milliseconds (empty ledger); 2 s is the observation window.
+            await Task.WhenAny(entered.Task, mirror, Task.Delay(TimeSpan.FromSeconds(2), ct));
+            entered.Task.IsCompleted.ShouldBeFalse("the lease entered the pool while the mutation lock was held");
+            mirror.IsCompleted.ShouldBeFalse("the lease replied while the mutation lock was held");
+            pool.Ledger().Slots.ShouldBeEmpty("no slot is Leasing before the lock is released");
+            mutation.IsCompleted.ShouldBeFalse();
 
-        var request = new PhoneHomeWorkspaceMirrorRequest(BranchA, scratch.ShaA, "task-aaaaaaaa",
-            Binding: new PhoneHomeWorkspaceMirrorBinding(TaskA, 1, Guid.NewGuid(), "runner-a", storeId.ToString("D")),
-            Slot: true, Cold: false);
-        var mirror = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.WorkspaceMirror,
-            JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json)), ct);
-        // Unlocked, the pool is entered within milliseconds (empty ledger); 2 s is the observation window.
-        await Task.WhenAny(entered.Task, mirror, Task.Delay(TimeSpan.FromSeconds(2), ct));
-        entered.Task.IsCompleted.ShouldBeFalse("the lease entered the pool while the mutation lock was held");
-        mirror.IsCompleted.ShouldBeFalse("the lease replied while the mutation lock was held");
-        pool.Ledger().Slots.ShouldBeEmpty("no slot is Leasing before the lock is released");
-        input.IsCompleted.ShouldBeFalse();
-
-        runtime.InputGate.SetResult();
-        (await input.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
-        var reply = await mirror.WaitAsync(TimeSpan.FromSeconds(8), ct);
-        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
-        reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!.SlotId.ShouldBe("ws-01");
-        pool.Ledger().Slot("ws-01")!.State.ShouldBe(WorkspaceSlotStates.Leased);
+            mutationGate.SetResult();
+            (await mutation.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            var reply = await mirror.WaitAsync(TimeSpan.FromSeconds(8), ct);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!.SlotId.ShouldBe("ws-01");
+            pool.Ledger().Slot("ws-01")!.State.ShouldBe(WorkspaceSlotStates.Leased);
+        }
+        finally
+        {
+            mutationGate.TrySetResult();
+            await mutation.WaitAsync(TimeSpan.FromSeconds(5));
+            if (mirror is not null)
+                await mirror.WaitAsync(TimeSpan.FromSeconds(8));
+        }
     }
 
     private static PhoneHomeCommandDispatcher SlotDispatcher(C0824SlotScratch scratch, RunnerWorkspaceService service,
@@ -476,17 +489,7 @@ internal sealed class C0824StoreRuntime(Guid storeId) : IPhoneHomeRuntimeSurface
     public RunnerBufferDto GetBuffer(Guid sessionId) => throw new NotSupportedException();
     public Task<RunnerSnapshotDto> GetSnapshotAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     public RunnerTranscriptDto GetTranscript(Guid sessionId) => throw new NotSupportedException();
-    public TaskCompletionSource? InputGate { get; init; }
-    public TaskCompletionSource InputStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-    public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
-    {
-        if (InputGate is not { } gate)
-            throw new NotSupportedException();
-        InputStarted.TrySetResult();
-        await gate.Task.WaitAsync(ct);
-    }
-
+    public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) => throw new NotSupportedException();
     public Task<RunnerConditionalInputResult> SendConditionalInputAsync(Guid sessionId, RunnerConditionalInputRequest request, CancellationToken ct) => throw new NotSupportedException();
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => throw new NotSupportedException();
     public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => throw new NotSupportedException();

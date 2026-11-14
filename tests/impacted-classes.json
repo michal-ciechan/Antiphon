@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "card": "CARD-1782, CARD-1801, CARD-1819, CARD-1829, CARD-1830",
+  "card": "CARD-1782, CARD-1801, CARD-1819, CARD-1829, CARD-1830, CARD-1926",
   "cache": "none",
   "maximumStaleness": 0,
   "kinds": [
@@ -241,6 +241,15 @@
       ],
       "classes": [
         "C1514TaskLoadWindowTests"
+      ]
+    },
+    {
+      "id": "workspace-mutation-lock",
+      "globs": [
+        "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs"
+      ],
+      "classes": [
+        "C0824WorkspaceSlotCustodyTests"
       ]
     },
     {
