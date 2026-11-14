@@ -865,18 +865,18 @@
     },
     {
       "path": "server/Application/Services/AttentionService.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
-        "DiagnosticsBundleServiceTests",
         "DispatchBaseInspectionDiagnosticsTests",
         "DispatchHeldAttentionTests",
         "GhostSeatReleaseTests",
         "PostLandMutationWorkflowTests",
         "RemoteWorkspaceReadinessTests",
         "RoutingExhaustedPlacementTests",
-        "RunnerAlarmAttentionTests"
+        "RunnerAlarmAttentionTests",
+        "SeatOccupancyAttentionTests"
       ]
     },
     {
@@ -979,14 +979,16 @@
     },
     {
       "path": "server/Application/Services/GrokRulesRefreshService.cs",
-      "classes": 29,
+      "classes": 31,
       "reason": "cap",
-      "owed": 4,
+      "owed": 6,
       "first": [
-        "GrokRulesDispatchAcceptanceTests",
-        "GrokRulesLiveMappedDispatchTests",
-        "GrokStartupReadyOrderingTests",
-        "TranscriptPromptSpanTests"
+        "TranscriptPromptSpanTests",
+        "ImpactedClassesSelectorTests",
+        "GrokRulesReadyOrderingTests",
+        "GrokRulesCompactionRecoveryTests",
+        "SessionQueueAbandonTests",
+        "CodexCliObservationGapTests"
       ]
     },
     {
@@ -1076,18 +1078,18 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Abandon.cs",
-      "classes": 150,
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
-        "ChannelOutboundRecoveryTests",
-        "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
-        "StandingSessionSwitchConcurrencyTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
+        "AgentTaskCheckInterpreterTests",
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskSettlementRaceTests",
+        "CapacityAdmissionLifecycleTests"
       ]
     },
     {
@@ -1771,18 +1773,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/GrokRulesTransport.cs",
-      "classes": 36,
+      "classes": 37,
       "reason": "cap",
-      "owed": 11,
+      "owed": 12,
       "first": [
+        "GrokRulesReplayMatrixTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "TaskPlatformDispatchTests",
         "WindowsDeliveryFixtureWitnessTests",
         "GrokRulesFileLaunchTests",
         "GrokRulesCompactionAcceptanceTests",
         "GrokRulesCompositionTests",
-        "AgentPinnedInstructionCompositionTests",
-        "GrokRulesDispatchAcceptanceTests"
+        "AgentPinnedInstructionCompositionTests"
       ]
     },
     {
@@ -4118,6 +4120,12 @@
       ]
     },
     {
+      "path": "server/Api/Endpoints/SessionEndpoints.cs",
+      "classes": [
+        "ImpactedClassesSelectorTests"
+      ]
+    },
+    {
       "path": "server/Api/Middleware/CurrentUserMiddleware.cs",
       "classes": [
         "AgentPinnedInstructionEndpointTests",
@@ -5106,6 +5114,7 @@
         "ChannelOutboundRecoveryTests",
         "DeliveryUnverifiedDiagnosticTests",
         "ExpectationHoldReleaseEndpointTests",
+        "ImpactedClassesSelectorTests",
         "PendingNoteWithholdTests",
         "PhoneHomeQueuedTurnTests",
         "ProjectCascadeForeignKeyTests",
@@ -7302,7 +7311,6 @@
         "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskLandMonitoringTests",
         "AgentTaskServiceIntegrationTests",
-        "AttentionServiceTests",
         "AwayDigestNotifierTests",
         "AwayDigestProjectionTests",
         "BlockedReplyReportRetentionTests",
@@ -7319,6 +7327,7 @@
         "ChannelOutboundDeliveryTests",
         "CheckCompactionAttentionTests",
         "DecisionCardNotifierTests",
+        "DiagnosticsBundleServiceTests",
         "PendingNoteWithholdTests",
         "RoutingPinCandidateDispatchTests",
         "SessionMessageQueueInterruptedAttemptTests",
@@ -8939,21 +8948,21 @@
         "AgentTaskSettlementRaceTests",
         "CardSpawnModelArgumentTests",
         "ChannelOutboundRecoveryTests",
-        "CodexCliObservationGapTests",
         "DurableRunnerSpillReceiptTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "GrokRulesChannelTests",
         "GrokRulesCompactionAcceptanceTests",
-        "GrokRulesCompactionRecoveryTests",
         "GrokRulesCompactionTests",
+        "GrokRulesDispatchAcceptanceTests",
         "GrokRulesFailureTests",
         "GrokRulesInitializationTests",
-        "GrokRulesReadyOrderingTests",
+        "GrokRulesLiveMappedDispatchTests",
         "GrokRulesReceiptTests",
         "GrokRulesReplayMatrixTests",
         "GrokRulesResumeMigrationTests",
         "GrokRulesTransactionTests",
+        "GrokStartupReadyOrderingTests",
         "PhoneHomeQueuedTurnTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "StandingBootQueueWitnessTests",
@@ -10531,16 +10540,16 @@
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskLandNotificationRecoveryTests",
         "AgentTaskLandPersistenceFailureTests",
-        "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
         "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrPaneDisposalApplicationTests",
+        "MatrixChildReceiptTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
-        "PhoneHomeOutageMentionTests",
         "ReceiptFailureDeliveryTests",
         "RunnerClaudeFinalLaunchArgvTests",
         "SessionMessageQueueGrokPtyIntegrationTests",
@@ -17879,13 +17888,13 @@
         "GrokRulesNativeReadWireTests",
         "GrokRulesReadyOrderingTests",
         "GrokRulesReceiptTests",
-        "GrokRulesReplayMatrixTests",
         "GrokRulesResumeMigrationTests",
         "GrokRulesTransactionTests",
         "GrokStartupReadyOrderingTests",
         "PhoneHomeQueuedTurnTests",
         "PolicyRefreshServiceTests",
         "PoolClaudeEffortTests",
+        "SessionQueueAbandonTests",
         "StandingBootQueueWitnessTests",
         "StandingSessionSelectionTests"
       ]
