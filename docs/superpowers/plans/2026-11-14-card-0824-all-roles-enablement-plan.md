@@ -749,7 +749,8 @@ Code added CP-29 for the shared producer fixture teardown boundary. Normal
 caller cases reuse one loopback host and immutable Git seed per test run; mutable
 repositories and task databases remain isolated. Lost-reply/store/clock recovery
 retains its explicitly fresh transport. Existing transport fixtures retain their
-default execution path; concurrent writes are opt-in for this shared fixture.
+default execution path and peer; the assembly-local process limiter serializes
+producer callers, and task-scoped frame selection separates retained requests.
 Code added CP-27/CP-28 for the actual F4 native-policy change and its input-pin
 update. These cover the exact hand-glob obligations selected by the full task diff.
 The two rows share their isolated build at one committed source; no wider lane is selected.

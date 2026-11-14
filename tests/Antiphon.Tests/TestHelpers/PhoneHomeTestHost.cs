@@ -202,11 +202,11 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
 
     public async Task<PhoneHomeScriptedPeer> ConnectPeerAsync(
         bool autoReply = true, Guid? bootId = null, string? runnerId = null, Guid? storeId = null, string? secret = null,
-        string? platform = null, RunnerCapabilitiesDto? capabilities = null, bool concurrentCalls = false)
+        string? platform = null, RunnerCapabilitiesDto? capabilities = null)
     {
         var id = runnerId ?? AllowedRunnerId;
         var ticket = await RegisterAsync(bootId, storeId, secret, id, platform, capabilities);
-        var peer = new PhoneHomeScriptedPeer { AutoReply = autoReply, ConcurrentCalls = concurrentCalls };
+        var peer = new PhoneHomeScriptedPeer { AutoReply = autoReply };
         peer.Socket.Options.SetRequestHeader(PhoneHomeProtocol.TicketHeader, ticket.Ticket);
         var uri = runnerId is null
             ? ConnectUri
@@ -390,14 +390,6 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public List<PhoneHomeFrame> Incoming { get; } = [];
-    // Opt-in for the producer's assembly-shared transport. Existing fixtures retain their path.
-    public bool ConcurrentCalls { get; init; }
-    private readonly SemaphoreSlim _writeGate = new(1, 1);
-    public PhoneHomeFrame[] IncomingSnapshot()
-    {
-        if (!ConcurrentCalls) return Incoming.ToArray();
-        lock (Incoming) return Incoming.ToArray();
-    }
     public List<PhoneHomeFrame> Launches { get; } = [];
     public List<PhoneHomeFrame> Inputs { get; } = [];
     public List<RunnerRetireRequest> Retires { get; } = [];
@@ -455,18 +447,9 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
         throw new TimeoutException($"Did not observe {operation} request.");
     }
 
-    public Task EmitAsync(PhoneHomeFrame frame) => SendAsync(frame, CancellationToken.None);
-
-    private async Task SendAsync(PhoneHomeFrame frame, CancellationToken ct)
+    public async Task EmitAsync(PhoneHomeFrame frame)
     {
-        if (!ConcurrentCalls)
-        {
-            await PhoneHomeFraming.WriteFrameAsync(Socket, frame, 16 * 1024 * 1024, ct);
-            return;
-        }
-        await _writeGate.WaitAsync(ct);
-        try { await PhoneHomeFraming.WriteFrameAsync(Socket, frame, 16 * 1024 * 1024, ct); }
-        finally { _writeGate.Release(); }
+        await PhoneHomeFraming.WriteFrameAsync(Socket, frame, 16 * 1024 * 1024, CancellationToken.None);
     }
 
     public async Task EmitTranscriptAsync(RunnerTranscriptEvent entry, long epoch)
@@ -498,8 +481,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
 
                     break;
                 }
-                if (ConcurrentCalls) { lock (Incoming) Incoming.Add(frame); }
-                else Incoming.Add(frame);
+                Incoming.Add(frame);
                 if (frame.Kind != PhoneHomeFrameKind.Request)
                     continue;
                 if (frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained)
@@ -521,14 +503,14 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                         await _held.Task.WaitAsync(CancellationToken.None);
                         var heldReply = Reply?.Invoke(heldFrame) ?? DefaultReply(heldFrame);
                         if (heldReply is not null)
-                            await SendAsync(heldReply, CancellationToken.None);
+                            await PhoneHomeFraming.WriteFrameAsync(Socket, heldReply, 16 * 1024 * 1024, CancellationToken.None);
                     }, ct);
                     continue;
                 }
 
                 var reply = Reply?.Invoke(frame) ?? DefaultReply(frame);
                 if (reply is not null)
-                    await SendAsync(reply, ct);
+                    await PhoneHomeFraming.WriteFrameAsync(Socket, reply, 16 * 1024 * 1024, ct);
             }
         }
         catch (OperationCanceledException)
