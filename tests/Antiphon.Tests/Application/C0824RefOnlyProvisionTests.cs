@@ -135,10 +135,11 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Dispatcher_creates_ref_without_desktop_checkout()
     {
-        foreach (var scenario in new[] { "new-on", "new-off", "existing-checkout-on" })
+        string? legacyRefusal = null;
+        foreach (var scenario in new[] { "new-on", "new-off", "existing-checkout-on", "existing-checkout-off" })
         {
-            var enabled = scenario != "new-off";
-            var legacy = scenario == "existing-checkout-on";
+            var enabled = scenario.EndsWith("-on", StringComparison.Ordinal);
+            var legacy = scenario.StartsWith("existing-", StringComparison.Ordinal);
             var refOnly = enabled && !legacy;
             await using var f = await RefOnlyDispatchFixture.CreateAsync(enabled);
             var before = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
@@ -156,7 +157,23 @@ public sealed class C0824RefOnlyProvisionTests
             }
             await f.Rig.TickAsync();
             var planned = await f.Rig.ReadTaskAsync(id);
-            planned.Status.ShouldBe(AgentTaskStatus.Queued, "existing Checkout coordinates stay on legacy recovery: " + planned.FailureReason);
+            if (legacy)
+            {
+                planned.Status.ShouldBe(AgentTaskStatus.Failed);
+                planned.FailureReason.ShouldContain("exists but its directory is gone");
+                planned.FailureReason.ShouldContain("Worktree branch already exists");
+                var refusal = planned.FailureReason!.Replace(id.ToString("N")[..8], "<task>", StringComparison.Ordinal);
+                if (legacyRefusal is null) legacyRefusal = refusal;
+                else refusal.ShouldBe(legacyRefusal, "gate-on and gate-off retain the exact legacy recovery refusal");
+                planned.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.Checkout);
+                planned.TaskRefWorkspaceBindingId.ShouldBeNull();
+                Path.Exists(planned.WorktreePath).ShouldBeFalse();
+                (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(before);
+                (await f.Git.RevParseAsync("refs/heads/" + planned.WorktreeBranch)).ShouldBe(f.Git.Baseline);
+                f.Rig.Peer.RequestCount(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+                continue;
+            }
+            planned.Status.ShouldBe(AgentTaskStatus.Queued, planned.FailureReason);
             planned.DesktopWorkspaceKind.ShouldBe(refOnly ? DesktopWorkspaceKind.RefOnly : DesktopWorkspaceKind.Checkout,
                 "the production dispatcher selects ref-only only when admitted");
             if (refOnly)
