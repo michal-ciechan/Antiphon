@@ -259,9 +259,9 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         await EventuallyAsync(() =>
         {
             if (Capture.LastAppendedAt != at) return false;
-            try { sample = Capture.ReadHistory(null, 120).Samples.LastOrDefault(s => s.Source.Sequence == LastSequence); }
+            try { sample = Capture.ReadHistory(null, 120).Samples.LastOrDefault(); }
             catch (IOException e) when (e.Message == "host_load_history_busy") { return false; }
-            return sample is not null;
+            return sample?.Source.Sequence == LastSequence;
         }, () => _completed, Token);
         LastSource = sample!.Source; Progress("durable sample " + LastSequence); return sample;
     }
@@ -334,8 +334,12 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         _stop.Cancel();
         try
         {
-            foreach (var task in _owned) try { await task; } catch (OperationCanceledException) when (Token.IsCancellationRequested) { }
-            if (Pump is not null) await Pump.StopAsync(CancellationToken.None);
+            try
+            {
+                // WhenAll joins every child even when an earlier one faulted.
+                try { await Task.WhenAll(_owned); } catch (OperationCanceledException) when (Token.IsCancellationRequested) { }
+            }
+            finally { if (Pump is not null) await Pump.StopAsync(CancellationToken.None); }
         }
         finally
         {
