@@ -823,9 +823,15 @@ public sealed class C1895OutputDropEngineTests
         var ledger = s.Root + "/ledger";
         Directory.CreateDirectory(ledger);
         var temp = Path.Combine(ledger, id.ToString("N") + ".json.tmp");
-        Directory.CreateDirectory(temp);
         var engine = s.Engine();
         engine.OutputDropLedgerRoot = ledger;
+        var blocked = 0;
+        engine.BeforeLedgerWrite = (phase, path) =>
+        {
+            if (phase != "intent" || ++blocked != 1)
+                return;
+            Directory.CreateDirectory(path);
+        };
         var request = DropRequest(m, requestId: id);
 
         var thrown = false;
