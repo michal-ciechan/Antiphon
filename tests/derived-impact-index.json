@@ -1621,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1637,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 511,
+      "classes": 512,
       "reason": "cap",
-      "owed": 486,
+      "owed": 487,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -14971,6 +14971,13 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Data/ApplicationPostgresConnection.cs",
+      "classes": [
+        "PostgresJitPolicyTests",
+        "TestDbFixtureLifecycleTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Data/DbCommandMetrics.cs",
       "classes": [
         "DbCommandMetricsTests",
@@ -25846,6 +25853,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/SessionStateTestFixture.cs",
       "classes": [
         "CapacityRecoveryTranscriptTests",
+        "PostgresJitPolicyTests",
         "SessionContextUsagePersistenceTests",
         "SessionRuntimeActionRecoveryTests",
         "SessionRuntimeActionTests",
@@ -26046,6 +26054,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixtureLifecycle.cs",
       "classes": [
+        "PostgresJitPolicyTests",
         "TestDbBakedImageDataDirectoryTests",
         "TestDbBakedImageLifecycleTests",
         "TestDbClonePoolTests",
@@ -26121,6 +26130,7 @@
       "path": "tests/Antiphon.Tests/TestHelpers/TranscriptHotPathFixture.cs",
       "classes": [
         "AgentSessionRuntimeTests",
+        "PostgresJitPolicyTests",
         "TranscriptHotPathMigrationTests",
         "TranscriptHotPathQueryTests",
         "TranscriptWorkingStateQueryTests"
