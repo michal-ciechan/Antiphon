@@ -20,9 +20,10 @@ internal sealed class RefOnlySyncFixture : IAsyncDisposable
     public TaskWorkspaceContextResolver Contexts => new(Db);
     public string Identity => Task.WorktreePath!;
 
-    public static async Task<RefOnlySyncFixture> CreateAsync(bool modern = false)
+    public static async Task<RefOnlySyncFixture> CreateAsync(bool modern = false, bool producerSeed = false)
     {
-        var git = await SyncWorld.CreateAsync(cardBranch: modern);
+        var git = await SyncWorld.CreateAsync(cardBranch: modern,
+            immutableSeedOrigin: producerSeed ? await RefOnlyDispatchFixture.SeedOriginAsync() : null);
         IsolatedTestSchema? schema = null;
         AppDbContext? db = null;
         try

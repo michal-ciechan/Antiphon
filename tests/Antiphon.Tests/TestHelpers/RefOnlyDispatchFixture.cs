@@ -31,6 +31,8 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
     private static readonly Lazy<Task<SharedTransport>> Shared = new(CreateSharedAsync);
     private static readonly Lazy<Task<RunnerSettlementSyncTests.SyncWorld>> Seed = new(CreateSeedAsync);
 
+    internal static async Task<string> SeedOriginAsync() => (await Seed.Value).Origin;
+
     private static async Task<RunnerSettlementSyncTests.SyncWorld> CreateSeedAsync()
     {
         using var phase = TestTiming.BeginFixturePhase("c0824-producer-seed", TestPhaseKind.FixtureSetup, "seed");
