@@ -504,6 +504,17 @@
       ]
     },
     {
+      "id": "e2e-unknown-input-hold",
+      "globs": [
+        "server/Application/Exceptions/InputDeliveryUncertainException.cs",
+        "server/Application/Services/SessionMessageQueueService.cs"
+      ],
+      "methods": [
+        "AgentTaskLandDeliveryE2ETests/C488_ReviewDeliveryCrashMatrix_Batch4"
+      ],
+      "windows": "only"
+    },
+    {
       "id": "linux-shared-compiler-policy",
       "globs": [
         "scripts/lib/BuildDriverEnvironment.cs",
