@@ -60,8 +60,9 @@ public sealed class SessionTranscriptSummaryAppendTests
             ? new[] { f.Event(1, uuid: "one"), f.Event(2, "TurnEnd", uuid: "poison"), f.Event(3, uuid: "three") }
             : scenario == "stub"
                 ? new[] { f.Event(1, uuid: "one"), f.Event(2, "CompactBoundary", text: "(manual)", uuid: "poison") }
-                : Enumerable.Range(1, scenario == "normal" ? 100 : 1).Select(n => f.Event(n, uuid: "ef-" + n)).ToArray();
+                : Enumerable.Range(1, scenario == "normal" ? 100 : 1).Select(n => f.Event(n, scenario == "normal" ? "AssistantText" : "TurnEnd", uuid: "ef-" + n)).ToArray();
         await f.Runtime.PersistTranscriptAsync(f.SessionId, events);
+        if (scenario == "rollback" || scenario == "ambiguous") fault.Armed.ShouldBeFalse("the real commit cut must have fired");
         var added = scenario == "rollback" ? 0 : scenario is "partial" or "stub" ? 2 : scenario == "normal" ? 100 : 1;
         (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(101 + added);
         await EqualAsync(db, [f.SessionId]);
@@ -140,7 +141,63 @@ public sealed class SessionTranscriptSummaryAppendTests
         (await SummaryAsync(db, ids[1])).Valid.ShouldBeFalse();
     }
 
-    private static readonly DateTime Epoch = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+    [Test]
+    public async Task Opposite_multisession_transactions_abort_atomically_on_deadlock()
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        var ids = new[] { f.SessionId, f.OtherId };
+        db.SessionTranscriptSummaries.AddRange(ids.Select(id => new SessionTranscriptSummary { AgentSessionId = id, Valid = true }));
+        await db.SaveChangesAsync();
+        await using var left = new NpgsqlConnection(db.Database.GetConnectionString());
+        await using var right = new NpgsqlConnection(db.Database.GetConnectionString());
+        await using var observer = new NpgsqlConnection(db.Database.GetConnectionString());
+        await Task.WhenAll(left.OpenAsync(), right.OpenAsync(), observer.OpenAsync());
+        await using var lt = await left.BeginTransactionAsync();
+        await using var rt = await right.BeginTransactionAsync();
+        await InsertAsync(left, lt, ids[0], 1);
+        await InsertAsync(right, rt, ids[1], 1);
+        var first = FinishAsync(left, lt, ids[1]);
+        try
+        {
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (true)
+            {
+                await using var blocked = new NpgsqlCommand("SELECT @owner = ANY(pg_blocking_pids(@waiter))", observer) { CommandTimeout = 10 };
+                blocked.Parameters.AddWithValue("owner", right.ProcessID);
+                blocked.Parameters.AddWithValue("waiter", left.ProcessID);
+                if ((bool)(await blocked.ExecuteScalarAsync(budget.Token))!) break;
+                await Task.Yield();
+            }
+            var second = FinishAsync(right, rt, ids[0]);
+            var outcomes = await Task.WhenAll(first, second);
+            outcomes.Count(aborted => aborted).ShouldBe(1, "one complete transaction must abort; a partial summary cannot commit");
+            await EqualAsync(db, ids);
+            (await db.TranscriptEntries.CountAsync(t => ids.Contains(t.AgentSessionId))).ShouldBe(2);
+            (await db.SessionTranscriptSummaries.AsNoTracking().Where(s => ids.Contains(s.AgentSessionId)).ToListAsync()).ShouldAllBe(s => s.Count == 1);
+        }
+        finally
+        {
+            if (!first.IsCompleted) await rt.RollbackAsync();
+            await first;
+        }
+
+        static async Task InsertAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id, long sequence)
+        {
+            await using var command = new NpgsqlCommand("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES (gen_random_uuid(),@id,@seq,'AssistantText',now())", connection, transaction) { CommandTimeout = 10 };
+            command.Parameters.AddWithValue("id", id); command.Parameters.AddWithValue("seq", sequence);
+            await command.ExecuteNonQueryAsync();
+        }
+        static async Task<bool> FinishAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid id)
+        {
+            try { await InsertAsync(connection, transaction, id, 2); await transaction.CommitAsync(); return false; }
+            catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.DeadlockDetected)
+            { await transaction.RollbackAsync(); return true; }
+            catch { await transaction.RollbackAsync(); throw; }
+        }
+    }
+
+    private static DateTime Epoch => new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private static bool Working(SessionTranscriptSummary s) => new SessionStateSnapshot(s.AgentSessionId) {
         EndSequence = s.EndSequence, EndTimestamp = s.EndTimestamp, HasActivity = s.HasActivity,
         HasNullTimestampActivity = s.HasNullTimestampActivity, ActivityTimestamp = s.ActivityTimestamp }.Working;
