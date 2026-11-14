@@ -604,25 +604,41 @@ public sealed class VolumeRetirementPublicationTests
         refused.Output.ShouldContain("RecycleGitAuditUnknown");
     }
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1901() => RenewalCorpus(1901);
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1902() => RenewalCorpus(1902);
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1903() => RenewalCorpus(1903);
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1904() => RenewalCorpus(1904);
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1901_second_half() => RenewalCorpus(1901, 35);
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1902_second_half() => RenewalCorpus(1902, 35);
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1903_second_half() => RenewalCorpus(1903, 35);
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public Task Origin_graph_corpus_seed_1904_second_half() => RenewalCorpus(1904, 35);
 
     private static async Task RenewalCorpus(int seed, int firstShape = 0)
@@ -667,7 +683,9 @@ public sealed class VolumeRetirementPublicationTests
         }
     }
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Salvage_withdrawn_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -681,7 +699,9 @@ public sealed class VolumeRetirementPublicationTests
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
     }
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Head_rolled_back_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -695,7 +715,9 @@ public sealed class VolumeRetirementPublicationTests
         f.ControlRequests.ShouldBe(1, "the final live check, rather than the initial scan or graph fetch, refuses");
     }
 
-    [Test, NativeLinuxOnly(NativeLinuxReason), ParallelLimiter<ProcessSpawnLimit>]
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Origin_unreachable_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
