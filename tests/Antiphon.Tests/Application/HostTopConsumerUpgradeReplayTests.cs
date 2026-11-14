@@ -190,6 +190,76 @@ public class HostTopConsumerUpgradeReplayTests(C1514HostLoadFixture fixture)
         stored.TopConsumers.Any(row => row.Pid == 9).ShouldBeFalse();
     }
 
+    /// <summary>
+    /// CARD-1884 round 4. A full append queue refuses a populated capture and records the gap.
+    /// A later populated capture still round-trips through the ingest pump.
+    /// </summary>
+    [Test, Timeout(60_000)]
+    public async Task Populated_capture_refused_by_a_full_append_queue_still_round_trips()
+    {
+        await using var world = await fixture.WorldAsync();
+        var queued = CaptureSample(C1514HostLoadWorld.T0.AddSeconds(1), 33, "dotnet", HostConsumerRules.Build, 2.0);
+        var refused = CaptureSample(C1514HostLoadWorld.T0.AddSeconds(2), 11, "VBCSCompiler", HostConsumerRules.Compiler, 3.5);
+        var later = CaptureSample(C1514HostLoadWorld.T0.AddSeconds(3), 22, "pwsh", HostConsumerRules.Other, 1.2);
+        var historyPath = Path.Combine(world.Root, "capture-enqueue-full");
+        var settings = CaptureSettings(world, historyPath);
+        settings.AppendQueueCapacity = 1;
+        using var release = new ManualResetEventSlim(false);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
+        var capture = new HostLoadCaptureService(Options.Create(settings), world.Clock, new C1514Authority(world.Clock),
+            NullLogger<HostLoadCaptureService>.Instance, open: () => new HostLoadSpool(settings.HistoryPath!, settings, world.Clock,
+                appendObservation: (stage, _) =>
+                {
+                    if (stage != "before-flush" || Interlocked.Increment(ref held) != 1) return;
+                    entered.TrySetResult();
+                    if (!release.Wait(TimeSpan.FromSeconds(15)))
+                        throw new TimeoutException("before-flush hold was not released");
+                }));
+        try
+        {
+            await capture.StartAsync(CancellationToken.None);
+            await C1514HostLoadWorld.EventuallyAsync(() => SpoolReady(capture));
+            capture.TryCapture(CaptureSample(C1514HostLoadWorld.T0, 1, "csc", HostConsumerRules.Compiler, 0.1)).ShouldBeTrue();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            capture.TryCapture(queued).ShouldBeTrue();
+            capture.TryCapture(refused).ShouldBeFalse();
+            capture.DroppedSamples.ShouldBe(1);
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await C1514HostLoadWorld.EventuallyAsync(() => capture.LastAppendedAt == queued.At);
+        capture.TryCapture(later).ShouldBeTrue();
+        await C1514HostLoadWorld.EventuallyAsync(() => capture.LastAppendedAt == later.At);
+        var page = capture.ReadHistory(null, 120);
+        page.Gaps.ShouldContain(gap => gap.FromSequence <= 3 && gap.ToSequence >= 3);
+        page.Samples.SelectMany(sample => sample.TopConsumers).Any(row => row.Pid == refused.TopConsumers[0].Pid).ShouldBeFalse();
+        page.Samples.SelectMany(sample => sample.TopConsumers).Select(row => row.Pid).ShouldContain(22);
+
+        world.Pump.TryEnqueue(new HostLoadIngestBatch("grok-linux", null, page)).ShouldBeTrue();
+        await capture.StopAsync(CancellationToken.None);
+        capture.Dispose();
+        var receipt = await world.Pump.ProcessOneAsync(CancellationToken.None);
+        receipt.Inserted.ShouldBeGreaterThan(0);
+
+        await using var db = world.Db(false);
+        var laterRow = page.Samples.Single(sample => sample.TopConsumers.Any(row => row.Pid == 22));
+        var stored = JsonSerializer.Deserialize<HostLoadSample>(
+            (await db.HostLoadSamples.SingleAsync(row => row.Sequence == laterRow.Source.Sequence)).PayloadJson,
+            PhoneHomeFraming.Json);
+        stored.ShouldNotBeNull();
+        stored.TopConsumers.Select(row => row.Pid).ShouldBe([22]);
+    }
+
+    private static HostSample CaptureSample(DateTimeOffset at, int pid, string name, string role, double cores) =>
+        new(at, 40, 24, null, null, null, null, null, null, null, [], null, [])
+        {
+            TopConsumers = [new HostTopConsumerSample(pid, 100, name, role, cores, 4096)],
+        };
+
     private static HostStatsSettings CaptureSettings(C1514HostLoadWorld world, string path) => new()
     {
         HistoryPath = path,
