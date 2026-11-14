@@ -68,16 +68,23 @@ public sealed class CheckpointStepDeadlineTests : CheckpointTestBase
     public async Task step_child_that_never_finishes_a_step_times_out_naming_startup(CancellationToken cancellationToken)
     {
         _ = cancellationToken.CanBeCanceled;
-        var root = TempDir();
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = root };
+        var work = Directory.CreateDirectory(Path.Combine(TempDir(), "step-child")).FullName;
+        // rc run 34d41b7e g111: the child's working directory stays outside the fixture tree (as the
+        // validator corpus child does). Windows keeps a process's current directory open until the
+        // process and its console host are gone, and a cancelled child's conhost.exe outlives it.
+        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 600" })
             start.ArgumentList.Add(token);
         var clock = Stopwatch.StartNew();
-        var error = await Thrown(CheckpointFixtureProcess.RunStepsAsync(start, Path.Combine(root, "progress"), ["first", "second"],
+        var error = await Thrown(CheckpointFixtureProcess.RunStepsAsync(start, Path.Combine(work, "progress"), ["first", "second"],
             TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3)));
         error.ShouldBeOfType<TimeoutException>(error?.ToString());
         error!.Message.ShouldContain("before the first step finished", Case.Sensitive);
         clock.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(30), "cancelled near the 3-s startup budget, not after the child's 600 s");
+        // rc run 34d41b7e g111: the fixture tree is removable as soon as the cancelled run returns. With
+        // the child's working directory inside it, the scope teardown failed "being used by another
+        // process" on a loaded Windows host while the killed child's console host was still exiting.
+        Should.NotThrow(() => Directory.Delete(work, recursive: true), "the cancelled step child holds nothing under its fixture directory");
     }
 
     private static async Task<Exception?> Thrown(Task call)
