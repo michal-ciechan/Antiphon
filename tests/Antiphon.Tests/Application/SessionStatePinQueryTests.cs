@@ -21,6 +21,39 @@ namespace Antiphon.Tests.Application;
 public class SessionStatePinQueryTests
 {
     [Test]
+    public async Task Frozen_seed_matches_randomized_histories()
+    {
+        // S1's oracle is independently frozen SQL, never the loader's private query.
+        var oracle = typeof(SessionStateTestFixture).Assembly.GetType("Antiphon.Tests.TestHelpers.SessionStateSeedBaseline");
+        oracle.ShouldNotBeNull("the post-CARD-1887 semantic baseline must be available to later slices");
+        var sql = (string)oracle.GetField("Sql", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetRawConstantValue()!;
+        var capture = new PinCapture();
+        await using var f = await SessionStateTestFixture.CreateAsync(fault: capture);
+        await using var db = f.Db();
+        var random = new Random(1915);
+        var ids = Enumerable.Range(0, 128).Select(_ => Guid.NewGuid()).ToArray();
+        db.AgentSessions.AddRange(ids.Select(id => new AgentSession { Id = id, DefinitionName = "c1915", Cwd = "/synthetic", Status = SessionStatus.Stopped }));
+        var kinds = new[] { "AssistantText", "TurnEnd", "TurnTitle", "UserPrompt", "CompactBoundary", "SessionRestartBoundary", "QueueEnqueue" };
+        var texts = new string?[] { null, "hello", "(manual)", "(auto)", "[Request interrupted by user]", "<command-name>x", "<local-command-stdout>x", "This session is being continued from a previous conversation" };
+        foreach (var id in ids.Skip(1))
+        foreach (var n in Enumerable.Range(0, random.Next(1, 25)))
+            db.TranscriptEntries.Add(new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = id,
+                Sequence = n == 0 ? long.MinValue : n * 13 - 31, Kind = kinds[random.Next(kinds.Length)], Text = texts[random.Next(texts.Length)],
+                Timestamp = random.Next(4) == 0 ? null : new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(random.Next(5)),
+                CreatedAt = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc) });
+        await db.SaveChangesAsync();
+        var requested = ids.Append(Guid.NewGuid()).ToArray();
+        capture.Commands.Clear();
+        var actual = await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync(requested, default);
+        actual[ids[0]].Count.ShouldBe(0);
+        actual[requested[^1]].Readiness.ShouldBe(SessionStateReadiness.Missing);
+        await db.Database.OpenConnectionAsync();
+        var connection = (NpgsqlConnection)db.Database.GetDbConnection();
+        (await RowsAsync(connection, capture.Commands.Single())).ShouldBe(await RowsAsync(connection,
+            new CapturedTranscriptCommand(sql, capture.Commands.Single().Parameters)));
+    }
+
+    [Test]
     public async Task Pin_membership_preserves_all_reasons()
     {
         var capture = new PinCapture();
