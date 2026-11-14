@@ -8908,6 +8908,79 @@ namespace Antiphon.Server.Migrations
                     b.ToTable("SessionRuntimeActions", (string)null);
                 });
 
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionTranscriptSummary", b =>
+                {
+                    b.Property<Guid>("AgentSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ActivityTimestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("Count")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("EndSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("EndTimestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("HasActivity")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("HasNullTimestampActivity")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastCreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LastEntryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LastKind")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<long>("LastSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("LastTimestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("LastTurnEndSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("LastTurnTitleSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("LastUserPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("NewestEffectiveTimestamp")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NextBackfillAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("SchemaVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<bool>("Valid")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.HasKey("AgentSessionId");
+
+                    b.HasIndex("NextBackfillAttemptAt", "AgentSessionId")
+                        .HasDatabaseName("IX_SessionTranscriptSummaries_Incomplete")
+                        .HasFilter("NOT \"Valid\" OR \"SchemaVersion\" <> 1");
+
+                    b.ToTable("SessionTranscriptSummaries", (string)null);
+                });
+
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.SpecialistAttempt", b =>
                 {
                     b.Property<Guid>("Id")
@@ -12137,6 +12210,15 @@ namespace Antiphon.Server.Migrations
                         .WithMany()
                         .HasForeignKey("TranscriptEntryId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.SessionTranscriptSummary", b =>
+                {
+                    b.HasOne("Antiphon.Server.Domain.Entities.AgentSession", null)
+                        .WithMany()
+                        .HasForeignKey("AgentSessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.Stage", b =>
