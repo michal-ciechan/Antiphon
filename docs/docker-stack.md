@@ -489,6 +489,8 @@ helper observation phase, control request, custody writes and effect have a
 five-second monotonic bound. The inventory start record must match the host's
 kernel boot and time namespace and this invocation's start/end bracket. Setup
 before any repository observation is excluded; a slow observation phase refuses.
+When both time-namespace interfaces are absent, the explicit global clock domain
+is used; present but unreadable interfaces still refuse.
 An origin move after the final observation cannot be detected atomically across
 hosts; each later effect repeats the full gate. A sealed proof alone, unchanged
 object digest, or the 900-second receipt lifetime grants no exemption.
