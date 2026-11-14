@@ -19,6 +19,27 @@ an exact count. Have the caller settle that scope on the card and commission the
 migration-roster performance Debug described below. The artifact is ready for plan
 review/decision; it does not authorize silently starting the expanded implementation.
 
+## Code commissioning amendment (8e452527, S1–S3 only)
+
+D-1 and D-3 were accepted on CARD-1915 revision 6 under standing authority.
+Performance Debug: task 71aaddba, report commit c42a35a57; see
+[roster evidence](../../investigations/2026-11-14-card-1915-roster-performance.md).
+RP replacements supersede CP-15/18/19/23/24/29 without changing membership.
+Replacement filters remain unmeasured standalone; bounds are provisional, not p95.
+Execution caps: RP-15a=600s, RP-15b=480s, RP-15c=510s, RP-18a=330s, RP-18b=510s, RP-18c=510s, RP-18d=300s, RP-19a=330s, RP-19b=330s, RP-19c=540s, RP-19d=300s, RP-23a=570s, RP-23b=270s, RP-24a=420s, RP-24b=540s, RP-24c=420s, RP-29a=450s, RP-29b=300s.
+
+Still unmeasured: CP-30..33; requested repeats CP-11/15/19/23; additional
+budget repeats CP-24/28/29. These remain owed for S8 qualification. S1–S3
+are explicitly commissioned now with CP-1/2/3. The brief narrows CP-1's
+provisional execution cap from 14 to 10 minutes; CP-2/3 retain 8/4.
+Later S4–S8, V-4..8, completion of V-1/R-1/R-2 and operational acceptance
+remain for the separately commissioned continuation. No reader, backfill or
+activation is introduced by S1–S3. All PCs remain pending SourceLanding Mutation.
+
+Publication correction: 59ff5ab imported the plan/report, but the amendment
+script could not run because Python is absent. This follow-up applies the actual
+partitions; the earlier commit title does not constitute amendment evidence.
+
 ## Ground truth
 
 | Card/brief assumption | Code and observed behavior at the source SHA | Consequence |
@@ -442,21 +463,33 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-12 | S8 | CP-8 | impacted-5 | `/*/*/(AgentTaskMidTurnRefineTests*)\|(AgentTaskReplyOverlayTests*)\|(AgentTaskStandingAgentDispatchTests*)\|(AgentTaskWorktreeBaseMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-13 | S8 | CP-8 | impacted-6 | `/*/*/(AgentTuiPersistenceTests*)\|(AgentTuiSecretMigratorTests*)\|(AppDbContextModelTests*)\|(C0824RefOnlyIdentityTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-14 | S8 | CP-8 | impacted-7 | `/*/*/(C0824RefOnlySnapshotMigrationTests*)\|(C1514HostLoadMigrationTests*)\|(C1729LayeringGuardTests*)\|(CapacityAdmissionLifecycleTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-15 | S8 | CP-8 | impacted-8 | `/*/*/(CapacityRecoveryCompatibilityTests*)\|(Card1619ExitMigrationIdTests*)\|(Card1619ExitPersistenceTests*)\|(Card1773TranscriptPromptStampMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
+| RP-15a | S8 | CP-8 | impacted-rp-15a | `/*/*/(CapacityRecoveryCompatibilityTests*)\|(Card1619ExitPersistenceTests*)/*` | R-1,R-2 | all listed, 0 failed | 292.8 | 5 |
+| RP-15b | S8 | CP-8 | impacted-rp-15b | `/*/*/Card1619ExitMigrationIdTests*/*` | R-1,R-2 | all listed, 0 failed | 237.2 | 4 |
+| RP-15c | S8 | CP-8 | impacted-rp-15c | `/*/*/Card1773TranscriptPromptStampMigrationTests*/*` | R-1,R-2 | all listed, 0 failed | 252.0 | 4 |
 | CP-16 | S8 | CP-8 | impacted-9 | `/*/*/(CardCleanupSchedulingSchemaTests*)\|(CardFilePrivacyMigrationTests*)\|(CardPlatformTests*)\|(CardThreadEndpointTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-17 | S8 | CP-8 | impacted-10 | `/*/*/(CardVerificationPolicyTests*)\|(CardWorktreeMirrorBindingTests*)\|(ChannelBridgeTests*)\|(ChannelOutboundDeliveryTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-18 | S8 | CP-8 | impacted-11 | `/*/*/(ChannelOutboundDurabilitySchemaTests*)\|(ChannelOutboundMigrationTests*)\|(ChannelOutboundRecoveryTests*)\|(ChannelOutboundRetentionTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-19 | S8 | CP-8 | impacted-12 | `/*/*/(CheckpointSourceApprovalTests*)\|(DataRetentionServiceTests*)\|(DelegationDispatchRecoveryBoundaryTests*)\|(DispatchBaseNotificationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
+| RP-18a | S8 | CP-8 | impacted-rp-18a | `/*/*/(ChannelOutboundDurabilitySchemaTests*)\|(ChannelOutboundMigrationTests*)\|(ChannelOutboundRetentionTests*)/*` | R-1,R-2 | all listed, 0 failed | 158.3 | 3 |
+| RP-18b | S8 | CP-8 | impacted-rp-18b | `/*/*/ChannelOutboundRecoveryTests*/Process_death_preserves_ownership_at_each_boundary*` | R-1,R-2 | all listed, 0 failed | 247.2 | 4 |
+| RP-18c | S8 | CP-8 | impacted-rp-18c | `/*/*/ChannelOutboundRecoveryTests*/(Recovery_preserves_settled_worker_and_publication_boundaries*)\|(Running_converter_reconciles_after_dispatcher_death*)` | R-1,R-2 | all listed, 0 failed | 244.1 | 4 |
+| RP-18d | S8 | CP-8 | impacted-rp-18d | `/*/*/ChannelOutboundRecoveryTests*/(Resume_held_after_conversion_returns_to_ready*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)\|(Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not*)\|(Expired_publishing_lease_is_uncertain_until_explicit_retry*)` | R-1,R-2 | all listed, 0 failed | 135.2 | 2 |
+| RP-19a | S8 | CP-8 | impacted-rp-19a | `/*/*/CheckpointSourceApprovalTests*/*` | R-1,R-2 | all listed, 0 failed | 160.6 | 3 |
+| RP-19b | S8 | CP-8 | impacted-rp-19b | `/*/*/(DataRetentionServiceTests*)\|(DelegationDispatchRecoveryBoundaryTests*)/*` | R-1,R-2 | all listed, 0 failed | 163.2 | 3 |
+| RP-19c | S8 | CP-8 | impacted-rp-19c | `/*/*/DispatchBaseNotificationTests*/C508*` | R-1,R-2 | all listed, 0 failed | 258.7 | 4 |
+| RP-19d | S8 | CP-8 | impacted-rp-19d | `/*/*/DispatchBaseNotificationTests*/(C1349*)\|(C540*)` | R-1,R-2 | all listed, 0 failed | 136.8 | 2 |
 | CP-20 | S8 | CP-8 | impacted-13 | `/*/*/(DispatchConcurrencyMigrationTests*)\|(DurableRunnerSpillReceiptTests*)\|(ExpectationSnapshotTests*)\|(GitIgnorePreviewTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-21 | S8 | CP-8 | impacted-14 | `/*/*/(HangfireLeaseDocumentationTests*)\|(HangfirePostgreSqlStorageTests*)\|(HerdrPlacementSettingsTests*)\|(HostCleanupOrchestrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-22 | S8 | CP-8 | impacted-15 | `/*/*/(ImpactedClassesSelectorTests*)\|(LandRequestWriteDiagnosticTests*)\|(LegacyCheckNotePublicationTests*)\|(OutboundConversionPublicCreateTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-23 | S8 | CP-8 | impacted-16 | `/*/*/(OutputDistillationApplyRaceTests*)\|(OutputDistillationDeliveryTests*)\|(OutputDistillationMigrationTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-24 | S8 | CP-8 | impacted-17 | `/*/*/(PipelineDefinitionMigrationShapeTests*)\|(PipelineDefinitionMigrationTests*)\|(PipelineSpeedIntegrationTests*)\|(PoolClaudeEffortMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
+| RP-23a | S8 | CP-8 | impacted-rp-23a | `/*/*/OutputDistillationDeliveryTests*/*` | R-1,R-2 | all listed, 0 failed | 282.8 | 5 |
+| RP-23b | S8 | CP-8 | impacted-rp-23b | `/*/*/(OutputDistillationApplyRaceTests*)\|(OutputDistillationMigrationTests*)\|(PhoneHomeTaskDispatchProjectionTests*)/*` | R-1,R-2 | all listed, 0 failed | 132.8 | 2 |
+| RP-24a | S8 | CP-8 | impacted-rp-24a | `/*/*/(PipelineDefinitionMigrationShapeTests*)\|(PipelineDefinitionMigrationTests*)\|(PoolClaudeEffortMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | undefined | 3 |
+| RP-24b | S8 | CP-8 | impacted-rp-24b | `/*/*/PipelineSpeedIntegrationTests*/C1281_WiredDeliveryRecovery*` | R-1,R-2 | all listed, 0 failed | undefined | 4 |
+| RP-24c | S8 | CP-8 | impacted-rp-24c | `/*/*/PipelineSpeedIntegrationTests*/(C1281_B*)\|(C1281_Admission*)\|(C1281_WiredRoundtrip*)\|(C1288*)\|(C1289*)\|(C1300*)\|(C1303*)` | R-1,R-2 | all listed, 0 failed | undefined | 3 |
 | CP-25 | S8 | CP-8 | impacted-18 | `/*/*/(PostLandMutationAdmissionTests*)\|(ProjectCascadeForeignKeyTests*)\|(RoutingCandidateParseTests*)\|(RoutingPinCandidateTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-26 | S8 | CP-8 | impacted-19 | `/*/*/(RunnerDefaultMigrationTests*)\|(RunnerDefaultPlacementTests*)\|(RunnerDefaultSettingsTests*)\|(RunnerDefaultsWireTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-27 | S8 | CP-8 | impacted-20 | `/*/*/(RunnerSlotEndpointTests*)\|(ScopeResolverAreaTests*)\|(SeatOccupancySamplerTests*)\|(SessionRunnerEventPumpTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-28 | S8 | CP-8 | impacted-21 | `/*/*/(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionTests*)\|(SessionStateWarmupTests*)\|(SpecialistExecutionIdentityTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-29 | S8 | CP-8 | impacted-22 | `/*/*/(StaleWorkingTranscriptWatchdogTests*)\|(StandingRestartEscalationTests*)\|(StandingSessionOwnershipTests*)\|(StandingSpecialistRoutingMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
+| RP-29a | S8 | CP-8 | impacted-rp-29a | `/*/*/(StandingSpecialistRoutingMigrationTests*)\|(StaleWorkingTranscriptWatchdogTests*)/*` | R-1,R-2 | all listed, 0 failed | undefined | 4 |
+| RP-29b | S8 | CP-8 | impacted-rp-29b | `/*/*/(StandingRestartEscalationTests*)\|(StandingSessionOwnershipTests*)/*` | R-1,R-2 | all listed, 0 failed | undefined | 2 |
 | CP-30 | S8 | CP-8 | impacted-23 | `/*/*/(TaskPlatformDispatchTests*)\|(TaskPlatformPersistenceTests*)\|(TestDbFixtureLifecycleTests*)\|(TranscriptHotPathMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-31 | S8 | CP-8 | impacted-24 | `/*/*/(WorkerWorkspaceDefaultMigrationTests*)\|(WorkingTranscriptRecoveryTests*)\|(WorktreeBaseSelectionTests*)\|(WorktreeDefaultCallerTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-32 | S8 | tests/Antiphon.Messaging.Tests -> bin-c1915-messaging/ | migration-messaging | `/*/*/(InboxConversationMigrationTests*)/*` | R-1 | all listed, 0 failed | 1 | 4 |
