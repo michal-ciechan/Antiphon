@@ -41,7 +41,12 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
             if (variant == "dropped")
                 await ExecuteAsync("DROP TRIGGER c1915_insert ON \"TranscriptEntries\"; DROP TRIGGER c1915_update ON \"TranscriptEntries\"; DROP TRIGGER c1915_delete ON \"TranscriptEntries\"; DROP TRIGGER c1915_truncate ON \"TranscriptEntries\"");
             else
+            {
                 await ExecuteAsync(variant == "index-probe" ? probe : variant == "database-gate" ? gated : installed);
+                // The installed physical gate is disabled by default. Scratch lookup
+                // candidates must actually fire, even when measured on that schema.
+                if (variant != "installed") await ExecuteAsync("ALTER TABLE \"TranscriptEntries\" ENABLE TRIGGER c1915_insert");
+            }
             var id = ids[^1]; // The fixture's empty session; the other 511 retain 3,118,500 rows.
             if (state == "invalid")
                 await ExecuteAsync("INSERT INTO \"SessionTranscriptSummaries\" (\"AgentSessionId\",\"SchemaVersion\",\"Valid\",\"Count\",\"LastSequence\",\"HasActivity\",\"HasNullTimestampActivity\") VALUES (@id,1,false,0,0,false,false)", id);
@@ -52,6 +57,8 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
             // Warm the function/query plans, without turning the absent case into invalid.
             for (long n = 1; n <= 10; n++) { singleton.Parameters["seq"].Value = n; await singleton.ExecuteNonQueryAsync(); }
             if (state == "absent") await ExecuteAsync("DELETE FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id", id);
+            await using var stateQuery = new NpgsqlCommand("SELECT COALESCE((SELECT tgenabled::text FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'),'absent')", connection, tx) { CommandTimeout = 60 };
+            var triggerState = (string)(await stateQuery.ExecuteScalarAsync())!;
             var load = File.Exists("/proc/loadavg") ? await File.ReadAllTextAsync("/proc/loadavg") : "unknown";
             var timer = Stopwatch.StartNew();
             for (long n = 11; n <= 110; n++) { singleton.Parameters["seq"].Value = n; await singleton.ExecuteNonQueryAsync(); }
@@ -60,7 +67,7 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
             await ExecuteAsync("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") SELECT gen_random_uuid(),@id,n,'AssistantText',timestamptz '2026-01-02' FROM generate_series(111,1110) n", id);
             var multirowMs = timer.Elapsed.TotalMilliseconds;
             (await CountAsync()).ShouldBe(1110, "the measurement must execute all 100 singleton statements and the 1000-row statement");
-            var result = new { round, state, variant, singletonStatements = 100, multirowStatements = 1, multirowRows = 1000, singletonMs, multirowMs, load = load.Trim() };
+            var result = new { round, state, variant, triggerState, singletonStatements = 100, multirowStatements = 1, multirowRows = 1000, singletonMs, multirowMs, load = load.Trim() };
             results.Add(result);
             Console.WriteLine("C1915 COST " + JsonSerializer.Serialize(result));
             await tx.RollbackAsync();
