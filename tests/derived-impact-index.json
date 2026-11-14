@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 321,
+      "classes": 322,
       "reason": "allowlist"
     },
     {
@@ -408,9 +408,9 @@
     },
     {
       "path": "server/Application/Exceptions/ConflictException.cs",
-      "classes": 178,
+      "classes": 179,
       "reason": "cap",
-      "owed": 153,
+      "owed": 154,
       "first": [
         "StandingSessionSelectionTests",
         "WorktreeManagerGitIntegrationTests",
@@ -433,18 +433,18 @@
     },
     {
       "path": "server/Application/Exceptions/ValidationException.cs",
-      "classes": 98,
+      "classes": 99,
       "reason": "cap",
-      "owed": 73,
+      "owed": 74,
       "first": [
+        "StartRefAvailabilityTests",
         "WorktreeDefaultContinuationTests",
         "WorktreeStartRefDispatchTests",
         "AgentTaskCallerResolutionTests",
         "AgentTaskWorktreeBaseCreateTests",
         "ApiKeyStoreTests",
         "BlockedTaskParkDeliveryTests",
-        "RepairSourceDispatchTests",
-        "RunnerDefaultSettingsTests"
+        "RepairSourceDispatchTests"
       ]
     },
     {
@@ -1786,18 +1786,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 74,
+      "classes": 77,
       "reason": "cap",
-      "owed": 49,
+      "owed": 52,
       "first": [
+        "PhoneHomeSessionRoutingTests",
+        "PtyConditionalReadClientTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "DelegateBranchDeliveryTests",
+        "HostTopConsumerIngestTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeStrandedQueueTests",
-        "C0824DesktopLegacyReleaseSwitchTests",
-        "C1514HostLoadSampleTests",
-        "C1677RetentionServerTests",
-        "C1677TempSweepDispatchTests"
+        "C0824DesktopLegacyReleaseSwitchTests"
       ]
     },
     {
@@ -2207,9 +2207,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 563,
+      "classes": 565,
       "reason": "cap",
-      "owed": 538,
+      "owed": 540,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 513,
+      "classes": 514,
       "reason": "cap",
-      "owed": 488,
+      "owed": 489,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -5642,6 +5642,7 @@
         "ComplexityChainServiceTests",
         "DelegationCapabilityTests",
         "DispatchConcurrencySettingsTests",
+        "HostTopConsumerIngestTests",
         "InternalDecisionPolicyTests",
         "LaunchEnvLayersIntegrationTests",
         "ModelAvailabilityManualTests",
@@ -5650,7 +5651,6 @@
         "ProviderEndpointProjectionTests",
         "RoutingPinCandidateTests",
         "RoutingPinServiceTests",
-        "StartRefAvailabilityTests",
         "WorkflowEngineParsingTests"
       ]
     },
@@ -13690,6 +13690,12 @@
       ]
     },
     {
+      "path": "server/Domain/Entities/HostLoadHistory.cs",
+      "classes": [
+        "HostTopConsumerUpgradeReplayTests"
+      ]
+    },
+    {
       "path": "server/Domain/Entities/HostMaintenanceActivity.cs",
       "classes": [
         "HostCleanupMaintenanceTests"
@@ -15573,7 +15579,9 @@
     {
       "path": "server/Infrastructure/HostLoad/HostLoadIngestService.cs",
       "classes": [
-        "C1514HostLoadHistoryTests"
+        "C1514HostLoadHistoryTests",
+        "HostTopConsumerIngestTests",
+        "HostTopConsumerUpgradeReplayTests"
       ]
     },
     {
@@ -17857,6 +17865,14 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner.Contracts/HostConsumerRules.cs",
+      "classes": [
+        "C1514HostLoadHistoryTests",
+        "HostTopConsumerTests",
+        "HostTopConsumerUpgradeReplayTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner.Contracts/HostLoadContracts.cs",
       "classes": [
         "C1514HostLoadAuthorityTests",
@@ -17866,7 +17882,10 @@
         "C1514HostLoadSampleTests",
         "C1514HostLoadScriptTests",
         "C1514HostLoadSpoolTests",
-        "C1514HostLoadWireTests"
+        "C1514HostLoadWireTests",
+        "HostTopConsumerIngestTests",
+        "HostTopConsumerTests",
+        "HostTopConsumerUpgradeReplayTests"
       ]
     },
     {
@@ -17920,6 +17939,8 @@
         "CompletedCardWorkspaceRemovalTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesReadyOrderingTests",
+        "HostTopConsumerTests",
+        "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
@@ -17927,8 +17948,6 @@
         "PhoneHomeLaunchTransportTests",
         "PhoneHomeReadAdmissionTests",
         "PhoneHomeRollingRunnerTests",
-        "PhoneHomeSessionRoutingTests",
-        "PtyConditionalReadClientTests",
         "RemoteWorkspacePreparerTests",
         "RunnerCapacityEndpointTests",
         "RunnerWorkspaceBindingTests",
@@ -18659,7 +18678,8 @@
     {
       "path": "src/Antiphon.SessionRunner/HostLoadCaptureService.cs",
       "classes": [
-        "C1514HostLoadSpoolTests"
+        "C1514HostLoadSpoolTests",
+        "HostTopConsumerUpgradeReplayTests"
       ]
     },
     {
@@ -18672,7 +18692,8 @@
       "path": "src/Antiphon.SessionRunner/HostLoadProjection.cs",
       "classes": [
         "C1514HostLoadNativeTests",
-        "C1514HostLoadSampleTests"
+        "C1514HostLoadSampleTests",
+        "HostTopConsumerTests"
       ]
     },
     {
@@ -18682,7 +18703,14 @@
         "C1514HostLoadNativeTests",
         "C1514HostLoadSpoolTests",
         "C1514HostLoadWireTests",
-        "C1514TaskLoadWindowTests"
+        "C1514TaskLoadWindowTests",
+        "HostTopConsumerUpgradeReplayTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/HostProcessTable.cs",
+      "classes": [
+        "HostTopConsumerTests"
       ]
     },
     {
@@ -18690,7 +18718,8 @@
       "classes": [
         "C1514HostLoadNativeTests",
         "HostStatsProbeLiveTests",
-        "HostStatsProbeParseTests"
+        "HostStatsProbeParseTests",
+        "HostTopConsumerTests"
       ]
     },
     {
@@ -18709,7 +18738,8 @@
         "C1514HostLoadSampleTests",
         "C1514HostLoadSpoolTests",
         "C1514SamplerTickCpuTests",
-        "HostStatsSamplerTests"
+        "HostStatsSamplerTests",
+        "HostTopConsumerTests"
       ]
     },
     {
@@ -18720,8 +18750,18 @@
         "C1514SamplerTickCpuTests",
         "HostStatsSamplerTests",
         "HostStatsStoreTests",
+        "HostTopConsumerTests",
         "ImpactedClassesSelectorTests",
         "PhoneHomeCommandDispatcherTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/HostTopConsumerTracker.cs",
+      "classes": [
+        "ChannelReplyLateConfirmDispatchTests",
+        "ExpectationWatchdogJobTests",
+        "HostTopConsumerTests",
+        "SessionGenerationExitTests"
       ]
     },
     {
@@ -20798,7 +20838,8 @@
         "C1514HostLoadSpoolTests",
         "C1514SamplerTickCpuTests",
         "HostStatsEndpointTests",
-        "HostStatsSamplerTests"
+        "HostStatsSamplerTests",
+        "HostTopConsumerTests"
       ]
     },
     {
@@ -24238,6 +24279,7 @@
         "C1514HostLoadHistoryTests",
         "C1514HostLoadScriptTests",
         "C1514TaskLoadWindowTests",
+        "HostTopConsumerUpgradeReplayTests",
         "ImpactedClassesSelectorTests"
       ]
     },
