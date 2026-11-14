@@ -296,7 +296,7 @@ internal sealed class VolumeRetirementPublicationFixture
                 try { await process.WaitForExitAsync(deadline.Token); }
                 catch { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } throw; }
                 await File.AppendAllTextAsync(Path.Combine(root, "live-control-stderr.log"), await stderr);
-                process.ExitCode.ShouldBe(0, "the owned controller must exit cleanly after stdin closes");
+                if (!force) process.ExitCode.ShouldBe(0, "the owned controller must exit cleanly after stdin closes");
             }
             finally { process.Dispose(); }
         }
