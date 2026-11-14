@@ -116,6 +116,11 @@ fenced gate transaction before any summary can become eligible. CP-2 asserts the
 exact three names off and all four names on; it retains the active four-guard check.
 CP-36 must measure this actual installed state, not assume zero measured cost.
 The scratch dropped-trigger path measures inactive append cost, not activation DDL.
+Red-first activation-only witness: CP-35 at
+`14d3a557d850058edde22b92b438b64803614ec3`, run 20261114-161719-97b1,
+executed 2, passed 1, failed 1: the old disabled trigger still existed (actual 1,
+expected 0). The fix retains active four-guard equality and adds both enabling and
+disabling concurrency schedules, each with both transaction orders.
 
 The SQL-only singleton `SessionTranscriptSummaryMaintenance` controls the append
 trigger. `UPDATE ... SET "Enabled"=true/false WHERE "Id"` executes a trigger that

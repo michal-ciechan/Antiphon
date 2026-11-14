@@ -135,14 +135,16 @@ public sealed class SessionTranscriptSummaryAppendTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Maintenance_transitions_serialize_with_appends(bool transitionFirst)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task Maintenance_transitions_serialize_with_appends(bool enabled, bool transitionFirst)
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
-        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
-        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, !enabled);
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = !enabled });
         await db.SaveChangesAsync();
         await using var writer = new NpgsqlConnection(db.Database.GetConnectionString());
         await using var gate = new NpgsqlConnection(db.Database.GetConnectionString());
@@ -152,7 +154,8 @@ public sealed class SessionTranscriptSummaryAppendTests
         await using var gateTx = await gate.BeginTransactionAsync();
         await using var insert = new NpgsqlCommand("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES (gen_random_uuid(),@id,1,'AssistantText',timestamptz '2026-01-01')", writer, writeTx) { CommandTimeout = 10 };
         insert.Parameters.AddWithValue("id", f.SessionId);
-        await using var disable = new NpgsqlCommand("UPDATE \"SessionTranscriptSummaryMaintenance\" SET \"Enabled\"=false WHERE \"Id\"", gate, gateTx) { CommandTimeout = 10 };
+        await using var transition = new NpgsqlCommand("UPDATE \"SessionTranscriptSummaryMaintenance\" SET \"Enabled\"=@enabled WHERE \"Id\"", gate, gateTx) { CommandTimeout = 10 };
+        transition.Parameters.AddWithValue("enabled", enabled);
         Task? pending = null;
         var writeDone = false;
         var gateDone = false;
@@ -160,7 +163,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         {
             if (transitionFirst)
             {
-                await disable.ExecuteNonQueryAsync();
+                await transition.ExecuteNonQueryAsync();
                 pending = insert.ExecuteNonQueryAsync();
                 await BlockedAsync(observer, writer.ProcessID, gate.ProcessID, pending);
                 await gateTx.CommitAsync(); gateDone = true;
@@ -170,7 +173,7 @@ public sealed class SessionTranscriptSummaryAppendTests
             else
             {
                 await insert.ExecuteNonQueryAsync();
-                pending = disable.ExecuteNonQueryAsync();
+                pending = transition.ExecuteNonQueryAsync();
                 await BlockedAsync(observer, gate.ProcessID, writer.ProcessID, pending);
                 await writeTx.CommitAsync(); writeDone = true;
                 await pending;
@@ -178,7 +181,9 @@ public sealed class SessionTranscriptSummaryAppendTests
             }
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(1);
             (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
-            (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(transitionFirst ? 0 : 1);
+            (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(!enabled && !transitionFirst ? 1 : 0);
+            (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBe(enabled);
+            (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe(enabled ? 1 : 0);
             await AppendRowsAsync(db, new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = 2, Kind = "AssistantText", CreatedAt = Epoch });
             (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
             (await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId].Count.ShouldBe(2);

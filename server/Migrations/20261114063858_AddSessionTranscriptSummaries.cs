@@ -78,9 +78,15 @@ namespace Antiphon.Server.Migrations
                 UPDATE "SessionTranscriptSummaries" SET "Valid" = false, "NextBackfillAttemptAt" = NULL
                 WHERE "Valid" OR "NextBackfillAttemptAt" IS NOT NULL;
                 IF NEW."Enabled" THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger WHERE tgrelid='"TranscriptEntries"'::regclass AND tgname='c1915_insert'
+                    ) THEN
+                        CREATE TRIGGER c1915_insert AFTER INSERT ON "TranscriptEntries"
+                            REFERENCING NEW TABLE AS new_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_insert();
+                    END IF;
                     ALTER TABLE "TranscriptEntries" ENABLE TRIGGER c1915_insert;
                 ELSE
-                    ALTER TABLE "TranscriptEntries" DISABLE TRIGGER c1915_insert;
+                    DROP TRIGGER IF EXISTS c1915_insert ON "TranscriptEntries";
                 END IF;
                 RETURN NEW;
             END;
@@ -216,8 +222,6 @@ namespace Antiphon.Server.Migrations
             END;
             $body$;
 
-            CREATE TRIGGER c1915_insert AFTER INSERT ON "TranscriptEntries"
-                REFERENCING NEW TABLE AS new_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_insert();
             CREATE TRIGGER c1915_update AFTER UPDATE ON "TranscriptEntries"
                 REFERENCING OLD TABLE AS old_entries NEW TABLE AS new_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_update();
             CREATE TRIGGER c1915_delete AFTER DELETE ON "TranscriptEntries"
@@ -225,9 +229,9 @@ namespace Antiphon.Server.Migrations
             CREATE TRIGGER c1915_truncate AFTER TRUNCATE ON "TranscriptEntries"
                 FOR EACH STATEMENT EXECUTE FUNCTION c1915_truncate();
 
-            -- Off by default, with no per-append function, probe, placeholder or row lock.
+            -- The append trigger is created only by activation: even a disabled transition
+            -- trigger retained measurable append overhead. All non-append guards stay on.
             -- Reader disablement does not change this maintenance gate (D-7).
-            ALTER TABLE "TranscriptEntries" DISABLE TRIGGER c1915_insert;
             """.ReplaceLineEndings("\n"));
         }
 
