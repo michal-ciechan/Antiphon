@@ -910,3 +910,12 @@ also assert absence of receipt.json after refused final control. PC-29 remains
 pending SourceLanding Mutation. This is a normal-path timing repair, not a retry or
 an enlarged timeout. Re-run the affected publication/receipt rows and unfinished
 closed rows; retain already-green unrelated guards with their actual tested SHA.
+
+The first receipt-preparation repair still left CP-4.V1 red at 6f2fdfcc9010ba903ec7405213e33c9960cad35d:
+99.7 seconds, actual Unknown/2 after successful live control, no Ready receipt.
+The final inventory completed about 2.8 seconds after observation and control was
+durable at about 4.0 seconds; repeated external dirname/sed processes in the
+remaining custody/header checks exhausted the unchanged five-second bound.
+Use Bash path decomposition and one bounded header read, preserving every
+ownership, mode, symlink, hard-link, header-binding and completion-age predicate.
+All receipt/custody rows remain in the required adjacent selection.
