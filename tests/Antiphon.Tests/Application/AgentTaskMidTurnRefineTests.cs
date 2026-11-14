@@ -238,6 +238,7 @@ public sealed class AgentTaskMidTurnRefineTests
     [Arguments("cancelled-then-head-only-prompt")]
     [Arguments("cancelled-then-no-prompt")]
     [Arguments("flush-definitive-refusal-then-retry")]
+    [Arguments("flush-transport-failure-then-retry")]
     public async Task C0491_CancelledBoundaryKeepsWorkingFlushesTheRowAndConfirmsFromTheUserPrompt(string arm)
     {
         using var workspace = new TempWorkspace();
@@ -254,6 +255,8 @@ public sealed class AgentTaskMidTurnRefineTests
         if (arm == "flush-definitive-refusal-then-retry")
             fx.Runner.ThrowOnInputOnce = new RunnerProblemException(
                 409, "Input refused before write.", "fixture_input_refused");
+        else if (arm == "flush-transport-failure-then-retry")
+            fx.Runner.ThrowOnInputOnce = new HttpRequestException("Input transport reply lost.");
 
         await IngestAsync(fx, TurnEnd(fx.SessionId, 42, TranscriptKinds.StopReasons.Cancelled));
 
@@ -276,7 +279,10 @@ public sealed class AgentTaskMidTurnRefineTests
                 row.Status.ShouldBe(QueuedMessageStatus.Sent);
                 row.DeliveryVerdict.ShouldBeNull();
                 row.DeliveryAttempts.ShouldBe(1);
-                TypedOnce(fx, row.Body);
+                if (arm == "flush-transport-failure-then-retry")
+                    fx.Runner.RawInputs.ShouldBeEmpty();
+                else
+                    TypedOnce(fx, row.Body);
                 fx.Runner.KillCalls.ShouldBe(0);
             }
         }
@@ -330,7 +336,21 @@ public sealed class AgentTaskMidTurnRefineTests
             after.DeliveryAttempts.ShouldBe(1);
             after.DeliveryVerdict.ShouldBeNull();
             MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending");
-            TypedOnce(fx, after.Body);
+            if (arm == "flush-transport-failure-then-retry")
+            {
+                // CARD-1892: an ambiguous reply is no authority to resend to composer-less Grok.
+                fx.Runner.RawInputs.ShouldBeEmpty();
+                await IngestAsync(fx, UserPrompt(fx.SessionId, 44, after.Body, DateTimeOffset.UtcNow));
+                await using var confirmed = CreateContext();
+                var delivered = await confirmed.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+                delivered.Status.ShouldBe(QueuedMessageStatus.Sent);
+                delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+                delivered.DeliveryAttempts.ShouldBe(1);
+                MidTurnInterruptPolicy.ReadRefinementDelivered(delivered.DeliveryVerdict).ShouldBe("delivered");
+                fx.Runner.RawInputs.ShouldBeEmpty();
+            }
+            else
+                TypedOnce(fx, after.Body);
             fx.Runner.KillCalls.ShouldBe(0);
         }
 
@@ -485,8 +505,9 @@ public sealed class AgentTaskMidTurnRefineTests
     /// <summary>
     /// CARD-1169. A screen-only interrupt refinement stays Sent with a null verdict. Once the
     /// queue clock passes the interrupted-attempt age, the next boundary uses the existing
-    /// recovery: a complete prompt late-confirms, a head-only prompt parks at the attempts cap
-    /// with a truncation verdict, and no prompt either re-presses Enter or reverts and retypes.
+    /// recovery: a complete prompt late-confirms and a head-only prompt parks at the attempts cap
+    /// with a truncation verdict. CARD-1892 holds composer-less Grok without Enter or retyping
+    /// when no prompt confirms delivery, regardless of screen contents, until a complete prompt arrives.
     /// </summary>
     [Test]
     [Arguments("complete-prompt")]
@@ -589,27 +610,23 @@ public sealed class AgentTaskMidTurnRefineTests
             return;
         }
 
-        if (arm == "no-prompt-enter-only")
-        {
-            after.Status.ShouldBe(QueuedMessageStatus.Pending, arm);
-            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoTranscriptRecord, arm);
-            after.DeliveryAttempts.ShouldBe(2, arm);
-            MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending", arm);
-            fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[]
-            {
-                PtyInputEncoding.EncodeBody(body),
-                "\r",
-                "\r",
-            }, arm);
-            return;
-        }
-
+        // CARD-1892: aging and screen redraws cannot prove delivery or authorize another Input.
         after.Status.ShouldBe(QueuedMessageStatus.Sent, arm);
         after.DeliveryVerdict.ShouldBeNull(arm);
-        after.DeliveryAttempts.ShouldBe(2, arm);
+        after.DeliveryAttempts.ShouldBe(1, arm);
         MidTurnInterruptPolicy.ReadRefinementDelivered(after.DeliveryVerdict).ShouldBe("pending", arm);
-        var typed = PtyInputEncoding.EncodeBody(body);
-        fx.Runner.RawInputs.Select(raw => raw.Input).ShouldBe(new[] { typed, "\r", typed, "\r" }, arm);
+        TypedOnce(fx, body); // Exactly the original body and Enter: zero further input sends.
+
+        await IngestAsync(fx, UserPrompt(fx.SessionId, 44, body, clock.GetUtcNow()));
+        await using var confirmed = CreateContext();
+        var delivered = await confirmed.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == fx.SessionId);
+        delivered.Status.ShouldBe(QueuedMessageStatus.Sent, arm);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed, arm);
+        delivered.DeliveryAttempts.ShouldBe(1, arm);
+        MidTurnInterruptPolicy.ReadRefinementDelivered(delivered.DeliveryVerdict).ShouldBe("delivered", arm);
+        TypedOnce(fx, body);
+        fx.Runner.KillCalls.ShouldBe(0, arm);
+        AssertNoKillOrBareEscape(fx.Runner);
     }
 
     private static SupervisionSettings RecoverySupervision()
