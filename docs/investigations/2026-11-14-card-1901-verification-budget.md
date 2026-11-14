@@ -89,3 +89,115 @@ with 13 hits. Full `CARD-1868` text explicitly records this exact prerequisite i
 A-2, including the class-wide selector and failing method. Reuse CARD-1868; no
 duplicate was filed. The cold driver build and post-preparation recheck are
 pending at this evidence slice. Preserve the original red and its timing.
+
+## Executed baseline rows
+
+Every row is on master `8c06c7e11f40cc224235ecbc68c2389913cc67ee`. E/P/F/S means TRX executed/passed/failed/notExecuted. Admission is zero additional seconds within the single foreground suite lease; its broker wait is 75 s (launcher-to-grant recorded separately in `serial-suite.json`). This lease reuse does not predict zero admission for Code checkpoints.
+
+| Row | E/P/F/S | Execution s | Additional admission s | Load start (1/5/15) | Load end |
+|---|---|---:|---:|---|---|
+| host-proof | 12/12/0/0 | 69.3 | 0.0 | 19.24/23.06/22.37 | 13.33/20.42/21.50 |
+| content-selected | 12/12/0/0 | 248.6 | 0.0 | 13.33/20.42/21.50 | 16.28/15.79/19.16 |
+| content-selected-repeat | 12/12/0/0 | 404.8 | 0.0 | 16.28/15.79/19.16 | 30.33/28.38/24.05 |
+| git-selected | 30/30/0/0 | 108.2 | 0.0 | 30.33/28.38/24.05 | 20.86/25.80/23.59 |
+| remote-impact | 5/5/0/0 | 12.5 | 0.0 | 20.86/25.80/23.59 | 19.48/25.24/23.44 |
+| transport-selected | 4/4/0/0 | 251.6 | 0.0 | 19.48/25.24/23.44 | 13.12/18.29/21.00 |
+| transport-selected-repeat | 4/4/0/0 | 227.8 | 0.0 | 13.12/18.29/21.00 | 9.71/14.24/18.80 |
+| TestClassificationPolicyTests | 42/42/0/0 | 65.0 | 0.0 | 9.71/14.24/18.80 | 9.27/13.21/18.14 |
+| TestClassificationGuardTests | 1/1/0/0 | 9.8 | 0.0 | 9.27/13.21/18.14 | 10.87/13.43/18.16 |
+| SlowTestRegistryMergeTests | 5/5/0/0 | 18.0 | 0.0 | 10.87/13.43/18.16 | 11.83/13.51/18.11 |
+| SlowTestTripwireTests | 2/2/0/0 | 19.5 | 0.0 | 11.83/13.51/18.11 | 16.92/14.62/18.37 |
+| NativeLinuxPolicyWitnessTests | 3/3/0/0 | 18.5 | 0.0 | 16.92/14.62/18.37 | 14.97/14.33/18.20 |
+| MechanicalPcContractTests | 11/11/0/0 | 7.7 | 0.0 | 14.97/14.33/18.20 | 14.17/14.18/18.13 |
+| TaskPlatformGuidanceTests | 5/5/0/0 | 7.6 | 0.0 | 14.17/14.18/18.13 | 12.93/13.91/18.00 |
+| C1729LayeringGuardTests | 10/10/0/0 | 18.5 | 0.0 | 12.93/13.91/18.00 | 11.31/13.50/17.80 |
+| TestLaneCategoryGuardTests | 1/1/0/0 | 9.2 | 0.0 | 11.31/13.50/17.80 | 11.03/13.37/17.71 |
+| ProcessSpawnLimitTests | 57/57/0/0 | 13.6 | 0.0 | 11.03/13.37/17.71 | 10.51/13.14/17.56 |
+| TestTimingOperationLabelTests | 2/2/0/0 | 8.2 | 0.0 | 10.51/13.14/17.56 | 10.05/12.95/17.46 |
+| DerivedImpactIndexTests | 27/26/1/0 | 204.8 | 0.0 | 10.05/12.95/17.46 | 11.46/12.36/16.35 |
+| ReleaseImpactEnvelopeTests | 11/11/0/0 | 59.0 | 0.0 | 11.46/12.36/16.35 | 11.43/12.05/16.00 |
+| LiveLaneRunnerTests | 4/4/0/0 | 43.2 | 0.0 | 11.43/12.05/16.00 | 14.16/12.61/16.00 |
+| NightlyCoreTests | 1/1/0/0 | 52.8 | 0.0 | 14.16/12.61/16.00 | 13.45/12.80/15.87 |
+| native-policy | 2/2/0/0 | 86.7 | 0.0 | 13.45/12.80/15.87 | 25.91/15.95/16.66 |
+| native-policy-repeat | 2/2/0/0 | 81.4 | 0.0 | 25.91/15.95/16.66 | 25.34/19.32/17.86 |
+| guards-combined | 182/181/1/0 | 493.4 | 0.0 | 25.34/19.32/17.86 | 38.69/31.73/23.94 |
+| guards-combined-repeat | 182/181/1/0 | 492.7 | 0.0 | 38.69/31.73/23.94 | 17.63/24.31/24.01 |
+
+The exact selected filters are retained in `suite-rows.json` and each row receipt; class-only rows use `/*/*/<Class>/*`. The full census came from `rg -l -i 'c590|RecycleGitAudit|WorktreeReflogSalvage|retire-temp|selector_fixture|refs/antiphon/salvage' tests/Antiphon.Tests --glob '*Tests.cs'`, then actual class declarations. Keyword hits include incidental documentation/roster consumers; they are diagnostic scope, not additions to ordinary Code verification.
+
+Adjacent census classes without a full-class receipt at this point: `C1364BoundLandWaitProofTests`, `C1708ReflogSalvageTests`, `CacheSeedNpmOwnershipTests`, `ClaudeTokenRefreshOptInTests`, `DockerDeliveryBarrierTests`, `DockerDeliveryDatabaseTests`, `DockerDeliveryRecoveryCommandTests`, `DockerStackContractTests`, `DockerStackDocumentationTests`, `DockerStackSmokeCommandTests`, `DockerTestCommandTests`, `HostJqFixtureClosureTests`, `HostJqPrerequisiteScriptTests`, `LinuxTestRosterTests`, `PlanCoverageGoldenTests`, `RemoteScriptContractTests`, `RetiredTempContainerHostTests`, `RetiredTempContainerScriptTests`, `RetireTempRunnerTimestampTests`, `RollingProductionMountTests`, `RollingVolumeRecycleCensusChurnTests`, `RollingVolumeRecycleScriptTests`, `SeedSmokeTargetingPackContractTests`, `StandingPipelinePolicyDocumentationTests`, `TestAppHostPathTests`, `VolumeRetirementApplyGateTests`, `VolumeRetirementContentTests`, `VolumeRetirementReceiptTests`, `VolumeRetirementWrapperTests`.
+
+## Recommended closed rows for Code
+
+Add CP-0 (the native impact-driver build) to declared preparation. Reuse one
+`Antiphon.Tests` build within each committed S1/S2/S3/S4/platform group; every
+split row below points at that group's existing build. This is not a build per
+row. Preserve the two S1 expected assertion reds, all later expected method/count
+rosters, the separate native Windows witness, and all 19 post-land PCs.
+
+S1 keeps CP-1=H1 and CP-2=V7. Split CP-3 into CP-3.H1/H2/H3; split CP-4 into
+CP-4.H1/H2/H3/V1–V9; split Windows CP-11 into CP-11.H1/H2/H3. Each is a single
+method, exactly one result. H rows get a provisional 2 min cap and V rows 7 min.
+The new methods do not exist on this master: these are **n=0 proxy budgets**, not
+measurements. The host proxy is the existing 29.8 s ancestry/writer case; the
+full-preview proxy is the 163.8 s private-origin bridge case, plus the observed
+startup allowance. Collect actual method timing during the already-required
+first Code runs and tighten near 2x the measured maximum; neither one nor two
+samples is a p95. Windows costs remain unmeasured Linux proxies.
+
+Keep CP-5 and CP-12's full host-proof class at 3 min. Keep the exact original
+CP-7/CP-8/CP-9/CP-13 selections at 4/1/9/3 min respectively. Split CP-6 and CP-10
+as follows. These group costs are projections from their contained executions,
+not newly executed selectors. The manifest uses whole-minute caps; the report's
+raw seconds retain the measurement precision.
+
+| Row | Exact filter | Results | Cap min |
+|---|---|---:|---:|
+| CP-6a | `/*/*/VolumeRetirementContentTests/(Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent*)\|(Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof*)` | 9 | 5 |
+| CP-6b | `/*/*/VolumeRetirementContentTests/(Every_ref_recovery_tip_and_tag_object_requires_publication*)\|(Gone_tracking_retains_original_commit_protection*)` | 2 | 5 |
+| CP-6c | `/*/*/VolumeRetirementContentTests/Private_origin_advanced_head_uses_real_host_proof` | 1 | 7 |
+| CP-10a | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)/*` | all named classes | 4 |
+| CP-10b | `/*/*/(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)/*` | all named classes | 2 |
+| CP-10c | `/*/*/(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)\|(DerivedImpactIndexTests*)/*` | all named classes | 9 |
+| CP-10d | `/*/*/(ReleaseImpactEnvelopeTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | all named classes | 6 |
+
+Exact new-method filters (one hit each):
+
+| ID | Exact filter | Cap min |
+|---|---|---:|
+| H1 | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | 2 |
+| H2 | `/*/*/VolumeRetirementPublicationTests/Host_salvage_namespace_and_types_are_closed` | 2 |
+| H3 | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | 2 |
+| V1 | `/*/*/VolumeRetirementPublicationTests/Origin_salvage_graph_passes_the_full_offline_audit` | 7 |
+| V2 | `/*/*/VolumeRetirementPublicationTests/Local_salvage_refs_are_protected_roots` | 7 |
+| V3 | `/*/*/VolumeRetirementPublicationTests/Reflog_patch_equivalence_never_proves_publication` | 7 |
+| V4 | `/*/*/VolumeRetirementPublicationTests/Other_remote_tracking_refs_do_not_prove_publication` | 7 |
+| V5 | `/*/*/VolumeRetirementPublicationTests/Detached_linked_heads_and_logs_require_exact_publication` | 7 |
+| V6 | `/*/*/VolumeRetirementPublicationTests/Tags_preserve_object_and_ancestry_requirements` | 7 |
+| V7 | `/*/*/VolumeRetirementPublicationTests/V2_invalid_bundle_cannot_use_present_head_fallback` | 7 |
+| V8 | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_file_stays_in_full_audit` | 7 |
+| V9 | `/*/*/VolumeRetirementPublicationTests/Selector_fixture_own_gitdir_symlink_stays_in_full_audit` | 7 |
+
+Exact retained selectors:
+
+- `/*/*/RemoteScriptContractTests/(C1105_Git_audit_recovery_tips*)|(C1105_Git_audit_seed_content*)|(C1105_Git_audit_index_content*)|(C1105_Git_audit_object_completeness*)`
+- `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)|(C0995_Deploy_temp_checks_host_absence_before_checkout*)|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)|(C849_Deploy_ordering_contract_is_pinned*)|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)`
+- `/*/*/RollingVolumeRecycleScriptTests/(C1008_Host_proof_admits_only_an_authenticated_private_origin*)|(C1008_Host_proof_file_omits_credentials*)|(C1008_Transport_scripts_are_ascii*)|(C1008_Documentation_and_transport_pins_match*)`
+- `/*/*/ReleaseGatePlatformTests/(LinuxOnlyWindowsExclusionPolicy*)|(C1686_LinuxOnlyCensus*)`
+
+Checkpoint import's 15 min / 3x defaults are not these measured caps. Pin explicit
+per-row `timeoutMinutes` in the ignored manifest after import. The current tool's
+build deadline has a 15 min floor; setting `timeouts.rowMinutes: 8` does not remove
+it. `--row-timeout` also overrides every test row, so it cannot independently
+express the recommended 8 min cold-build cap and all the narrower row caps.
+Record the existing build-floor exception rather than claiming an 8 min tool
+watchdog. Use the tool's derived total allowance for each After/platform group;
+expected wall time is not permission to force a total below that derivation.
+Keep the 10 min admission bound separate; exit 4 remains not-run/blocked.
+
+The first Code/Review runs supply the missing comparable samples. Do not run
+extra cold builds solely to manufacture a percentile. This report does not
+measure the future bound-pack rebuilds or method bodies for the 19 mutation
+controls; keep that independent over-30-minute Debug obligation with post-land
+Mutation. No live preview, apply, deployment or real registry qualification is
+part of this measurement.
