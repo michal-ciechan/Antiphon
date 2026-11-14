@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "7763a891c3bdde500976e5391b028f3667590ba1186e036abfbf7ce826857fcb",
+  "policyHash": "355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1621,6 +1621,47 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
           "owner": "CARD-1777"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RcBridgeProbePlatformTests",
+          "methods": [
+            "Linux_probe_does_not_report_a_measured_zero"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the public RC connection probe is an unmeasured omission on Linux. The case remains required on Linux.",
+          "owner": "CARD-1907"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ZombieCensusPlatformTests",
+          "methods": [
+            "Enabled_true_off_windows_is_rejected",
+            "Linux_registration_is_not_the_wmi_census"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: off-Windows zombie census omission is observed on Linux. The case remains required on Linux.",
+          "owner": "CARD-1907"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PwshPrivateCacheTests",
+          "methods": [
+            "A_eperm_for_a_live_foreign_pid_keeps_the_cache",
+            "A_hidden_proc_stat_keeps_a_live_owner",
+            "A_missing_stat_for_a_dead_process_is_swept",
+            "A_missing_stat_for_a_live_process_keeps_the_cache"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: /proc stat and kill(pid, 0) presence are Linux. The case remains required on Linux.",
+          "owner": "CARD-1907"
+        },
+        {
+          "suite": "agents-pty",
+          "class": "UnixPtyDeliveryEnvelopeTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the Unix PTY delivery envelope measures a real Linux PTY. The case remains required on Linux.",
+          "owner": "CARD-1907"
         }
       ]
     }

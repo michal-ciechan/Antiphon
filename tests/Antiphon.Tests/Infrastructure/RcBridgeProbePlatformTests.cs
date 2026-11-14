@@ -1,4 +1,5 @@
 using Antiphon.Server.Infrastructure.Supervision;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -15,6 +16,7 @@ public sealed class RcBridgeProbePlatformTests
         "Claude RC connection count is a supported omission off Windows. A missing count is not zero connections.";
 
     [Test]
+    [NativeLinuxOnly("Linux-only by construction: the public RC connection probe is an unmeasured omission on Linux. The case remains required on Linux.")]
     public void Linux_probe_does_not_report_a_measured_zero()
     {
         if (OperatingSystem.IsWindows())
