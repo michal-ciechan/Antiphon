@@ -782,7 +782,7 @@ public sealed class VolumeRetirementPublicationTests
         var start = content.IndexOf(header, StringComparison.Ordinal); start.ShouldBeGreaterThanOrEqualTo(0);
         var end = content.IndexOf("\n}\n", start, StringComparison.Ordinal); end.ShouldBeGreaterThan(start);
         var producer = content[start..(end + 3)];
-        foreach (var variant in new[] { "valid", "missing", "duplicate", "boot", "namespace", "past", "future", "malformed" })
+        foreach (var variant in new[] { "valid", "missing", "duplicate", "boot", "namespace", "namespace-empty", "past", "future", "malformed" })
         {
             var script = $$"""
                 set -euo pipefail
@@ -797,7 +797,8 @@ public sealed class VolumeRetirementPublicationTests
                         first=0; [ "${value:0:1}" != 0 ] || first=1
                         replacement="$first${value:1}"
                         line="${line/boot=$value/boot=$replacement}" ;;
-                    namespace) line="$(printf '%s\n' "$line" | sed -E 's/namespace=time:\[[0-9]+\]/namespace=time:[0]/')" ;;
+                    namespace) line="$(printf '%s\n' "$line" | sed -E 's/namespace=[^ ]+/namespace=time:[0]/')" ;;
+                    namespace-empty) line="$(printf '%s\n' "$line" | sed -E 's/namespace=[^ ]+/namespace=/')" ;;
                     past) line="${line% started=*} started=0" ;;
                     future) line="${line% started=*} started=$((began+600000))" ;;
                     malformed) line="${line% started=*} started=invalid" ;;

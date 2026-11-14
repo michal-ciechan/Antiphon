@@ -441,13 +441,19 @@ c1609_prepare_exchange() {
 # invocation, after the content scan and before renewing publication authority.
 c1609_accept_binding_clock() {
     local file="$1" began="$2" line boot namespace started now host_boot host_namespace
-    local record_re='^C1609_BINDING_CLOCK boot=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) namespace=(time:\[[0-9]+\]) started=(0|[1-9][0-9]{0,15})$'
+    local record_re='^C1609_BINDING_CLOCK boot=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) namespace=(time:\[[0-9]+\]|global) started=(0|[1-9][0-9]{0,15})$'
     [[ "$began" =~ ^(0|[1-9][0-9]{0,15})$ ]] || return 1
     line="$(LC_ALL=C awk '/^C1609_BINDING_CLOCK/ {line=$0; n++} END {if(n!=1) exit 2; print line}' "$file")" || return 1
     [[ "$line" =~ $record_re ]] || return 1
     boot="${BASH_REMATCH[1]}"; namespace="${BASH_REMATCH[2]}"; started="${BASH_REMATCH[3]}"
     read -r host_boot < /proc/sys/kernel/random/boot_id || return 1
-    host_namespace="$(readlink /proc/self/ns/time)" || return 1
+    if [ -e /proc/self/ns/time ] || [ -L /proc/self/ns/time ]; then
+        host_namespace="$(readlink /proc/self/ns/time)" || return 1
+    elif [ ! -e /proc/self/ns/time_for_children ] && [ ! -L /proc/self/ns/time_for_children ]; then
+        host_namespace=global
+    else
+        return 1
+    fi
     [ "$boot" = "$host_boot" ] && [ "$namespace" = "$host_namespace" ] || return 1
     now="$(c1609_monotonic_ms)" || return 1
     [ "$started" -ge "$began" ] && [ "$started" -le "$now" ] || return 1

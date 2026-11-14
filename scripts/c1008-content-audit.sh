@@ -514,7 +514,13 @@ c1609_scan_hooks() {
 c1609_emit_binding_clock() {
     local boot namespace uptime ignored started
     read -r boot < /proc/sys/kernel/random/boot_id || return 1
-    namespace="$(readlink /proc/self/ns/time)" || return 1
+    if [ -e /proc/self/ns/time ] || [ -L /proc/self/ns/time ]; then
+        namespace="$(readlink /proc/self/ns/time)" || return 1
+    elif [ ! -e /proc/self/ns/time_for_children ] && [ ! -L /proc/self/ns/time_for_children ]; then
+        namespace=global
+    else
+        return 1
+    fi
     read -r uptime ignored < /proc/uptime || return 1
     [[ "$uptime" =~ ^[0-9]+\.[0-9]+$ ]] || return 1
     started="$(awk -v seconds="$uptime" 'BEGIN { printf "%.0f\n", seconds * 1000 }')" || return 1

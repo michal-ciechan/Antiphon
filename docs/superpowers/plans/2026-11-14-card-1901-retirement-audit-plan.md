@@ -410,6 +410,7 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-28/duplicate | Accept one record when multiple observation clocks are supplied. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/boot | Omit kernel boot identity matching. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/namespace | Omit time-namespace identity matching. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-28/namespace-empty | Admit an empty clock-domain identity. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/past | Admit an observation from before this inventory invocation. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/future | Admit a future observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/malformed | Admit a malformed observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
@@ -520,7 +521,11 @@ only from the same kernel boot and time namespace, within this call's start/end
 bracket. This excludes setup that observes no repository state while preserving
 the unchanged five-second bound over all actual observations. R2-16 / CP-126
 drives the real producer and consumer with valid, absent, duplicate, foreign-boot,
-foreign-namespace, past, future and malformed records. Internal inventory
+foreign-namespace, empty namespace, past, future and malformed records. The explicit
+global clock domain applies only when both time-namespace interfaces are absent;
+a present but unreadable interface refuses. This runner witnesses the absent/global
+branch. A native Linux host exposing time namespaces still owes the producer's
+present-interface branch; no seam is credited as that native execution. Internal inventory
 diagnostics gain this clock line; proof headers and receipt schemas do not change.
 
 CP-24 preserves all 11 V-6/V-7 vectors across four methods. CP-36 (40 methods),
@@ -835,7 +840,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-123 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-125 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | R2-15 | exactly 1 passed; real delayed binding observation refuses Unknown | 1 | 2 | true |
-| CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 8 real clock-record variants discriminated | 1 | 2 | true |
+| CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 9 real clock-record variants discriminated | 1 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
