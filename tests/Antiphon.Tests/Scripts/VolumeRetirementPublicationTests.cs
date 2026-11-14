@@ -38,6 +38,93 @@ public sealed class VolumeRetirementPublicationTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Host_salvage_namespace_and_types_are_closed()
+    {
+        var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Protect(f.U, VolumeRetirementPublicationFixture.Canonical(f.U));
+        (await f.WriteProof([(f.U, "commit")])).Exit.ShouldBe(2, "H2 local canonical preservation grants no authority");
+        foreach (var reference in new[] { "refs/salvage/legacy", "refs/antiphon/other", "refs/antiphon/salvage-lookalike/unique" })
+        {
+            await f.Publish(f.U, reference);
+            (await f.WriteProof()).Exit.ShouldBe(0, "H2 unrelated namespaces do not invalidate ordinary head proofs");
+            (await f.WriteProof([(f.U, "commit")])).Exit.ShouldBe(2, "H2 excluded namespace cannot prove original history: " + reference);
+            await f.Git(f.Bare, "update-ref", "-d", reference);
+        }
+        var tree = await f.Git(f.Repo, "rev-parse", f.U + "^{tree}");
+        var blob = await f.Git(f.Repo, "rev-parse", f.U + ":vector.txt");
+        await f.Git(f.Repo, "tag", "-a", "annotation", "-m", "annotation", f.U);
+        var tag = await f.Git(f.Repo, "rev-parse", "refs/tags/annotation");
+        var vectors = new[]
+        {
+            ("invalid-guid", f.U, "refs/antiphon/salvage/not-a-guid/" + f.U),
+            ("uppercase-guid", f.U, "refs/antiphon/salvage/AAAAAAAA-0000-0000-0000-000000000001/" + f.U),
+            ("mismatched-oid", f.U, VolumeRetirementPublicationFixture.Canonical(f.X)),
+            ("extra-component", f.U, VolumeRetirementPublicationFixture.Canonical(f.U) + "/extra"),
+            ("tree", tree, VolumeRetirementPublicationFixture.Canonical(tree)),
+            ("blob", blob, VolumeRetirementPublicationFixture.Canonical(blob)),
+            ("tag", tag, VolumeRetirementPublicationFixture.Canonical(tag))
+        };
+        foreach (var (label, oid, reference) in vectors)
+        {
+            await f.Publish(oid, reference);
+            var refused = await f.WriteProof();
+            refused.Exit.ShouldBe(2, "H2 malformed/non-commit canonical evidence refuses even without required objects: " + label + "; " + refused.Output);
+            await f.Git(f.Bare, "update-ref", "-d", reference);
+        }
+        await f.Publish(f.U);
+        (await f.WriteProof([(f.U, "commit")])).Exit.ShouldBe(0, "H2 exact lowercase GUID/OID commit control");
+        await f.Git(f.Bare, "update-ref", "-d", "refs/heads/main");
+        (await f.WriteProof([(f.U, "commit")])).Exit.ShouldBe(2, "H2 a branch head is still required");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Host_salvage_snapshot_prunes_and_renews_exact_objects()
+    {
+        var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U);
+        var first = await f.WriteProof([(f.U, "commit")]);
+        first.Exit.ShouldBe(0, first.Output);
+        var reused = await f.WriteProof([(f.U, "commit")], previous: first.File);
+        reused.Exit.ShouldBe(0, reused.Output);
+        (await f.WriteProof([(f.X, "commit")], previous: first.File)).Exit.ShouldBe(2, "H3 reuse rechecks required objects");
+
+        var originalBundle = await File.ReadAllBytesAsync(first.File + ".bundle");
+        var originalHeader = await File.ReadAllLinesAsync(first.File);
+        // Same live advertisement, different bundle ref set. Recomputed hashes
+        // prove equality is checked independently of file integrity.
+        await f.Git(f.Repo, "bundle", "create", first.File + ".head-only", "refs/heads/main");
+        await File.WriteAllBytesAsync(first.File + ".bundle", await File.ReadAllBytesAsync(first.File + ".head-only"));
+        await f.RehashProof(first, originalHeader.ToArray());
+        (await f.WriteProof([(f.A, "commit")], previous: first.File)).Exit.ShouldBe(2, "H3 missing bundle salvage ref must refuse reuse");
+        await f.Protect(f.U, VolumeRetirementPublicationFixture.Canonical(f.U));
+        await f.Protect(f.X, "refs/heads/extra");
+        await f.Git(f.Repo, "bundle", "create", first.File + ".extra", "refs/heads/main", VolumeRetirementPublicationFixture.Canonical(f.U), "refs/heads/extra");
+        // The canonical source ref is local preservation, independently of origin.
+        await File.WriteAllBytesAsync(first.File + ".bundle", await File.ReadAllBytesAsync(first.File + ".extra"));
+        await f.RehashProof(first, originalHeader.ToArray());
+        (await f.WriteProof(previous: first.File)).Exit.ShouldBe(2, "H3 extra bundle ref must refuse reuse");
+        await File.WriteAllBytesAsync(first.File + ".bundle", originalBundle);
+        await File.WriteAllTextAsync(first.File, string.Join('\n', originalHeader) + "\n");
+        await f.Git(f.Bare, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.U));
+        (await f.WriteProof([(f.U, "commit")], previous: first.File)).Exit.ShouldBe(2, "H3 removed origin root cannot reuse old authority");
+
+        // Real origin changes between fetch and the second advertisement. The
+        // only retryable failure is snapshot; the next fetch must prune U.
+        await f.Publish(f.U);
+        var shim = "if($GitArgs -contains 'ls-remote'){ $script:reads=1+[int]$script:reads; if($script:reads -eq 2){ " +
+            "& git -C " + VolumeRetirementPublicationFixture.Ps(f.Bare) + " update-ref -d " +
+            VolumeRetirementPublicationFixture.Ps(VolumeRetirementPublicationFixture.Canonical(f.U)) + " } }; ";
+        var raced = await f.WriteProof([(f.U, "commit")], extraShim: shim);
+        raced.Exit.ShouldBe(2, "H3 snapshot retry must not retain disappeared salvage refs");
+        var log = await File.ReadAllTextAsync(Path.Combine(f.Root, "host-proof.log"));
+        log.ShouldContain("attempt=1 reason=snapshot");
+        log.ShouldContain("attempt=2 reason=");
+        log.ShouldNotContain("attempt=3", Case.Sensitive, "H3 the pruned snapshot reaches required-object validation on the second attempt");
+    }
+
+    [Test]
     [NativeLinuxOnly(NativeLinuxReason)]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task V2_invalid_bundle_cannot_use_present_head_fallback()
