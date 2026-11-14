@@ -224,7 +224,7 @@ public sealed class RefOnlyDesktopProvisioner(AppDbContext db, TaskWorkspaceCont
         };
         task.WorktreeBaseBranch = resolved.Source == WorktreeBaseSource.CardCurrent ? cardBaseBranch : null;
         var context = await contexts.RecordPlannedAsync(task, common,
-            Infrastructure.Git.WorktreeRoots.Resolve(settings.Value), ct);
+            worktrees.ResolveWorktreeRoot(settings.Value), ct);
         // Persist the endpoint before the producer crosses Git. This is an intent baseline;
         // Published is independently required by every settlement reader.
         var now = DateTime.UtcNow;

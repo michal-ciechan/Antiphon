@@ -34,6 +34,7 @@ Run each bounded committed group separately; no whole Unit or assembly run.
 |---|---|---|---|---|---|---|---:|---:|---|
 | R2-RED | red | tests/Antiphon.Tests -> bin-c0824-r2-red/ | portable-layering-red | `/*/*/C1729LayeringGuardTests/*` | warn-mode producer edge, existing query witness, inventory | one producer assertion red before fix; VIOLATIONS 1 LISTED 162 | 10 | 5 | true |
 | R2-GREEN | fix | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-layering-green | `/*/*/C1729LayeringGuardTests/*` | same full guard after seam | all pass; VIOLATIONS 0 LISTED 162 | 10 | 5 | true |
+| R2-ROOTS | fix | tests/Antiphon.Tests -> bin-c0824-r2-green/ | portable-managed-roots | `/*/*/DelegationTestServicesTests/*` | caller settings, relative and absolute paths, native separators, no mkdir, missing config, DI | every method and argument, 0 failed | 11 | 2 | true |
 
 Windows CP-8 and live canary remain pending, never credited by Linux skips.
 Parent F/P/L acceptance and all PC variants retain their original obligations.

@@ -39,6 +39,16 @@ Use the accepted all-roles plan's exact method roster when those tracks are comm
 
 ## Uncommissioned M/I controls: all pending
 
+Round 2 adds these pending method-scoped controls; ordinary pre-fix assertion red
+does not discharge their SourceLanding red/restoration/green receipts.
+
+| PC / variant | Deliberate defect | Exact method filter | Status |
+|---|---|---|---|
+| PC-22 | Restore the direct WorktreeRoots call in RefOnlyDesktopProvisioner | `/*/*/C1729LayeringGuardTests/Ref_only_producer_has_no_infrastructure_dependency_even_in_warn_mode` | Pending |
+| PC-23a | Resolve the service's settings instead of the caller's settings | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_caller_paths_without_creating_them` | Pending |
+| PC-23b | Resolve with create=true | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_caller_paths_without_creating_them` | Pending |
+| PC-23c | Fall back when the caller's root is missing | `/*/*/DelegationTestServicesTests/Managed_root_seam_preserves_missing_configuration_refusal` | Pending |
+
 These are the remaining accepted-plan IDs and separate variants. Their future
 classes are not implemented by this F1-F4 commission. No execution or pass is
 claimed, and the F-track source must not be used as their bound Mutation pack.
