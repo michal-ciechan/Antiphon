@@ -1,11 +1,13 @@
+using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1913. A clock read inside an EF query lambda is a compiled-query-cache miss.
-/// In-memory comparisons are outside the marker parentheses and are not hits.
+/// CARD-1913. An instance clock call inside an EF query lambda is inlined as a literal and
+/// recompiles the query. Static <see cref="DateTime.UtcNow"/> and <see cref="DateTimeOffset.UtcNow"/>
+/// are Npgsql intrinsics translated to PostgreSQL <c>now()</c> and stay inline.
 /// </summary>
 [Category("Unit")]
 public class EfLambdaClockGuardTests
@@ -36,14 +38,119 @@ public class EfLambdaClockGuardTests
         const string sample = """
             await _db.AgentTasks.Where(t => t.ExecutionDeadlineAt <= UtcNow())
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.CompletedAt, UtcNow()), ct);
-            await _db.Rows.Where(d => d.LeaseUntil > DateTime.UtcNow)
-                .ExecuteUpdateAsync(s => s.SetProperty(d => d.Version, d => d.Version + 1), ct);
+            await _db.Rows.Where(d => d.LeaseUntil > clock.GetUtcNow().UtcDateTime).ToListAsync(ct);
             """;
         var hits = EfLambdaClockScanner.FindIn(sample, "sample.cs");
         hits.Count.ShouldBe(3);
         hits.ShouldContain("sample.cs:1");
         hits.ShouldContain("sample.cs:2");
         hits.ShouldContain("sample.cs:3");
+    }
+
+    [Test]
+    public void Static_provider_clocks_stay_inline()
+    {
+        const string sample = """
+            await _db.Rows.Where(d => d.LeaseUntil > DateTime.UtcNow).ToListAsync(ct);
+            await _db.Rows.Where(d => d.LeaseUntil > DateTimeOffset.UtcNow).ToListAsync(ct);
+            """;
+        EfLambdaClockScanner.FindIn(sample, "sample.cs").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Whitespace_before_an_instance_clock_call_is_a_hit()
+    {
+        const string sample = """
+            await _db.Rows.Where(x => x.At < UtcNow ()).ToListAsync();
+            """;
+        var hits = EfLambdaClockScanner.FindIn(sample, "sample.cs");
+        hits.ShouldBe(["sample.cs:1"]);
+    }
+
+    [Test]
+    public void Query_finished_with_to_array_async_is_a_hit()
+    {
+        const string sample = """
+            await query.Where(x => x.At < UtcNow()).ToArrayAsync();
+            """;
+        var hits = EfLambdaClockScanner.FindIn(sample, "sample.cs");
+        hits.ShouldBe(["sample.cs:1"]);
+    }
+
+    [Test]
+    public void In_memory_where_beside_a_database_count_is_not_a_hit()
+    {
+        const string sample = """
+            return cached.Where(x => x.At < UtcNow()).Count() > await db.Rows.CountAsync();
+            """;
+        EfLambdaClockScanner.FindIn(sample, "sample.cs").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Outbound_conversion_lease_keeps_database_now()
+    {
+        var source = File.ReadAllText(Path.Combine(ServerRoot(),
+            "Application", "Services", "OutboundConversionTaskRunner.cs"));
+        source.ShouldContain("d.LeaseUntil > DateTime.UtcNow");
+        source.ShouldNotContain("= DateTime.UtcNow");
+    }
+
+    [Test]
+    public void Bulk_optional_work_expiry_keeps_a_per_row_token()
+    {
+        var source = File.ReadAllText(Path.Combine(ServerRoot(),
+            "Application", "Services", "AgentTaskDispatcher.cs"));
+        const string marker = "Optional work expired before execution.";
+        var bulk = Slice(source, marker, 0, 80, 160);
+        bulk.ShouldContain(".SetProperty(t => t.ConcurrencyToken, Guid.NewGuid())");
+        var single = Slice(source, marker, 1, 240, 160);
+        single.ShouldContain("t.Id == claimed.Id");
+        single.ShouldContain(".SetProperty(t => t.ConcurrencyToken, expiryToken)");
+    }
+
+    [Test]
+    public void Pinned_provider_translates_static_clocks_and_parameters_differently()
+    {
+        using var db = new ClockProbeContext();
+
+        var inline = db.Rows
+            .Where(row => row.LeaseUntil > DateTime.UtcNow)
+            .Select(row => new { row.Id, Token = Guid.NewGuid() })
+            .ToQueryString();
+        inline.ShouldContain("now()");
+        inline.ShouldContain("gen_random_uuid()");
+
+        var offset = db.Rows
+            .Where(row => row.OffsetUntil > DateTimeOffset.UtcNow)
+            .Select(row => row.Id)
+            .ToQueryString();
+        offset.ShouldContain("now()");
+
+        var now = DateTime.UtcNow;
+        var token = Guid.NewGuid();
+        var hoisted = db.Rows
+            .Where(row => row.LeaseUntil > now)
+            .Select(row => new { row.Id, Token = token })
+            .ToQueryString();
+        hoisted.ShouldContain("@__now_0");
+        hoisted.ShouldContain("@__token_1");
+        hoisted.ShouldNotContain("now()");
+        hoisted.ShouldNotContain("gen_random_uuid()");
+    }
+
+    private static string Slice(string source, string marker, int occurrence, int before, int after)
+    {
+        var at = -1;
+        for (var n = 0; n <= occurrence; n++)
+        {
+            at = source.IndexOf(marker, at + 1, StringComparison.Ordinal);
+            if (at < 0)
+                throw new InvalidOperationException("missing marker occurrence " + occurrence.ToString());
+        }
+
+        var start = Math.Max(0, at - before);
+        var end = Math.Min(source.Length, at + marker.Length + after);
+        return source.Substring(start, end - start);
     }
 
     private static string ServerRoot()
@@ -368,4 +475,24 @@ internal static class EfLambdaClockScanner
 
     private readonly record struct FrameStart(int Index, string? Kind);
     private readonly record struct Frame(int Open, int Close, string? Kind);
+}
+
+internal sealed class ClockProbeContext : DbContext
+{
+    public DbSet<ClockProbeRow> Rows => Set<ClockProbeRow>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+        optionsBuilder.UseNpgsql(
+            "Host=unreachable;Database=diagnostic;Username=diagnostic",
+            npgsql => npgsql.SetPostgresVersion(16, 0));
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+        modelBuilder.Entity<ClockProbeRow>().HasKey(row => row.Id);
+}
+
+internal sealed class ClockProbeRow
+{
+    public Guid Id { get; set; }
+    public DateTime LeaseUntil { get; set; }
+    public DateTimeOffset OffsetUntil { get; set; }
 }
