@@ -68,8 +68,9 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
 
     public async Task<AgentTask> PrepareAsync(Guid id)
     {
+        var next = Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror) + 1;
         await Rig.TickAsync();
-        var request = await Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var request = await Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, next);
         var path = "/runner/ref-only/" + id.ToString("N");
         await Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, path));
         await Rig.Preparer.WhenIdleAsync();
