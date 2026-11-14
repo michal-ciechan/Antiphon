@@ -171,9 +171,9 @@ public sealed class C0824RefOnlyProvisionTests
         await using var f = await RefOnlyDispatchFixture.CreateAsync();
         var id = await f.SeedAsync();
         var observed = new TaskCompletionSource<(bool Unlocked, AgentTask? Task, TaskRefWorkspacePreparationState? State)>(TaskCreationOptions.RunContinuationsAsynchronously);
-        f.Git.Git.BeforeCommandAsync = async (_, arguments, ct) =>
+        f.Boundary.Callback = async (site, ct) =>
         {
-            if (arguments[0] != "push" || observed.Task.IsCompleted) return;
+            if (site != "before-push" || observed.Task.IsCompleted) return;
             await using var observer = f.Rig.NewDb();
             await using var tx = await observer.Database.BeginTransactionAsync(ct);
             try
@@ -188,7 +188,9 @@ public sealed class C0824RefOnlyProvisionTests
             { observed.TrySetResult((false, null, null)); }
         };
         await f.Rig.TickAsync();
-        var proof = await observed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Task.WhenAny(observed.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        observed.Task.IsCompleted.ShouldBeTrue("initial publication reached its real push boundary");
+        var proof = await observed.Task;
         proof.Unlocked.ShouldBeTrue("actual push crossed a committed, unlocked queued intent");
         proof.Task.ShouldNotBeNull().Status.ShouldBe(AgentTaskStatus.Queued);
         proof.Task!.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
