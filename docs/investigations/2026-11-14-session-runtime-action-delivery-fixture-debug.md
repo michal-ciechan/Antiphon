@@ -48,10 +48,66 @@ compilation. Host load exceeded 30 repeatedly (peaking near 70); no timeout was
 classified as a defect. Fixture phase attribution is unknown; TRX test durations
 and gate/build elapsed times are retained. No full assembly or namespace ran.
 
-## Verification pending
+## Repair and completed verification
 
-After the fixture repair: whole Recovery and Routing classes, the breaking
-commit's C1722GitTimeoutBudgetTests, and the brief's exact guard union. Also run
-SessionMessageQueueInterruptedAttemptTests to preserve the composer-less no-input
-hold and resolved-attention regressions. This additional class is justified by
-the behavioral decision above. All rows run serially through the host slot gate.
+Red evidence was committed and pushed first as
+`52e1708e2d343fd9a92c1efd786fa7a07969be60`. Test-only repair:
+`cb212a5801328038581a6d98b40556f1a72ba06d`. It adds Delivered/DeliveredAt to
+the already-delivered channel fixture and Delivered to the mixed-source test's
+already-delivered machine note. No assertion, timeout, or production code changed.
+
+Master advanced during the bisect to
+`f805ae444dcfdec07fd1ed18727817b16f2e5bc0`. To honor both current-master
+verification and the assigned branch's no-rebase/no-target-merge contract, the
+scratch worktree checked out that master and applied the committed task delta
+with git apply --index. Its git write-tree exactly matched git merge-tree's
+combined tree: `636b8442299dfd79e94fe51e31b5764029448a97`. The working files
+matched the index before each row and after all verification. No source changed
+while a build or test ran. A final fetch still observed the same master and the
+same conflict-free combined tree. The subsequent task report amendment is prose.
+
+All rows ran serially via scripts/build-slot.ps1, with native default output,
+UseAppHost=false on build and no-build run, and TUnit through dotnet run.
+
+| Whole-class selection | Project | Passed | Failed | Skipped | TRX seconds |
+|---|---|---:|---:|---:|---:|
+| SessionRuntimeActionRecoveryTests | Antiphon.Tests | 24 | 0 | 0 | 116.18 |
+| SessionRuntimeActionRoutingTests | Antiphon.Tests | 35 | 0 | 0 | 222.14 |
+| SessionMessageQueueInterruptedAttemptTests | Antiphon.Tests | 24 | 0 | 0 | 79.40 |
+| Requested seven-class guard union | Antiphon.Tests | 89 | 0 | 0 | 246.81 |
+| C1722GitTimeoutBudgetTests | Antiphon.SessionRunner.Tests | 98 | 0 | 0 | 0.66 |
+| Total | | 270 | 0 | 0 | |
+
+The exact guard union was TestClassificationPolicyTests*,
+TestClassificationGuardTests*, SlowTestRegistryMergeTests*, SlowTestTripwireTests*,
+NativeLinuxPolicyWitnessTests*, DerivedImpactIndexTests*, and
+C1729LayeringGuardTests*. C1722GitTimeoutBudgetTests is the other test class
+changed by the breaking commit. The additional interrupted-attempt class is
+justified by the behavioral decision: all composer-less no-Enter/no-retype and
+resolved-attention cases remain green. Original-roster inspection independently
+confirmed all 11 variants of the three originally selected methods passed,
+including all eight previously red cases.
+
+The DerivedImpactIndex driver was built first (7.23 seconds), then regeneration
+ran twice through the gate with -NoBuild: both printed
+`derived-impact-index unchanged`. No generated-index commit was needed. The final
+Antiphon.Tests build took 429.49 seconds and the runner test build 26.76 seconds,
+excluding admission; both succeeded. Every test row remained below ten minutes.
+No full suite, namespace lane, timeout widening, or repeat of a green test row ran.
+
+One local orchestration wrapper stalled before launching a child or any tests.
+Its owned PID/cwd/command and lack of children were checked, it was terminated and
+joined, and direct gated commands completed the required selections above. That
+attempt supplied no test receipt and is not credited. Its file and empty log are
+retained as historical evidence; use the direct commands, not that wrapper.
+
+For reruns, build tests/Antiphon.Tests and tests/Antiphon.SessionRunner.Tests
+through build-slot.ps1 with -p:UseAppHost=false. Run each table row through the
+same gate using `dotnet run --project tests/<Project> --no-build
+-p:UseAppHost=false -- --treenode-filter '/*/*/<Class>/*'`. The guard row uses
+the seven named class operands joined with TUnit's class-level OR syntax and
+a trailing wildcard on each operand. The exact executed commands, TRX files,
+original-roster.json, and verification-summary.txt are in the external evidence
+root. No production host or service was restarted.
+
+Next stage: merge directly; the repair is test-only.
