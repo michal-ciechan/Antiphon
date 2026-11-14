@@ -38,7 +38,7 @@ public sealed class HostStatsSamplerService : BackgroundService
     private int _disposeOnce;
     private static readonly TimeSpan ScanJoinBudget = TimeSpan.FromSeconds(2);
 
-    /// <summary>Test seam. Runs after the epoch check and before the ranking is published.</summary>
+    /// <summary>Test seam. Runs after the scan returns and before the locked epoch commit.</summary>
     internal Action? BeforeTopConsumerPublish { get; set; }
     private static int _selfPid;
     private static DateTime _selfStartedUtc;
@@ -222,10 +222,20 @@ public sealed class HostStatsSamplerService : BackgroundService
                 return;
             if (fault is not null)
                 LogFault(fault);
-            else if (rows is not null && ScanStillCurrent(epoch))
+            else if (rows is not null)
             {
                 BeforeTopConsumerPublish?.Invoke();
-                _top.Observe(rows, truncated, _time);
+                var publishedEpoch = epoch;
+                _top.Observe(rows, truncated, _time, publish =>
+                {
+                    lock (_scanState)
+                    {
+                        if (_disposed != 0 || _abandoned != 0 || _epoch != publishedEpoch)
+                            return false;
+                        publish();
+                        return true;
+                    }
+                });
             }
 
             try
@@ -237,12 +247,6 @@ public sealed class HostStatsSamplerService : BackgroundService
                 break;
             }
         }
-    }
-
-    private bool ScanStillCurrent(int epoch)
-    {
-        lock (_scanState)
-            return _disposed == 0 && _abandoned == 0 && _epoch == epoch;
     }
 
     private void InvalidateScan()
