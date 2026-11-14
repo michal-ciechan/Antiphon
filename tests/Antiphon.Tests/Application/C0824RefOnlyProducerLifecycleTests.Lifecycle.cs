@@ -141,7 +141,7 @@ public sealed partial class C0824RefOnlyProducerLifecycleTests
             var queued = await db.SessionQueuedMessages.Where(m => m.AgentSessionId == task.AgentSessionId).ToListAsync();
             queued.ShouldContain(m => m.Body.Contains("Continue on the same runner."));
             // Corrupt a persisted execution coordinate: recovery must refuse before another session.
-            session.RunnerCwd = null; await db.SaveChangesAsync();
+            session.RunnerCwd = task.RemoteWorktreePath + "-foreign"; await db.SaveChangesAsync();
             var count = await db.AgentSessions.CountAsync();
             await using var scope = f.Rig.Provider.CreateAsyncScope();
             await Should.ThrowAsync<ConflictException>(() => scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
