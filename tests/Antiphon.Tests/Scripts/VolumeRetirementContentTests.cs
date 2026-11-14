@@ -1618,7 +1618,7 @@ public sealed class VolumeRetirementContentTests
             var expected = "{\"origins\":[\"" + ExchangeOrigin + "\",\"" + second + "\"],\"projectId\":\"" + ExchangeProject + "\",\"schema\":1}\n";
             Encoding.UTF8.GetString(exported).ShouldBe(expected);
             exported.SequenceEqual(Encoding.UTF8.GetBytes(expected)).ShouldBeTrue("trusted-origins.json bytes");
-            var memory = await VolumeRetirementFixture.Bash($"""
+            var memory = await VolumeRetirementFixture.Bash($$"""
                 set -euo pipefail
                 SERVER2_ROOT={{VolumeRetirementFixture.Quote(Path.Combine(root, "server"))}}
                 C1008_PROJECT_ID={{VolumeRetirementFixture.Quote(ExchangeProject)}}
