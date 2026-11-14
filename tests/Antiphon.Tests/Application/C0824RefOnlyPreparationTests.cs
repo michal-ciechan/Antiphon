@@ -44,7 +44,7 @@ public sealed class C0824RefOnlyPreparationTests
         await using var f = await RefOnlySyncFixture.CreateAsync();
         var task = await PlannedAsync(f);
         var foreign = await f.Git.PublishForeignBranchAsync(task.WorktreeBranch!, "foreign.txt");
-        foreign.ShouldNotBe(f.Git.Baseline, "a foreign descendant would pass ordinary FF publication");
+        foreign.ShouldNotBe(f.Git.Baseline, "foreign branch has independent work");
         var result = await C0824RefOnlyProvisionTests.Producer(f).PublishAsync(task, default);
         result.Pushed.ShouldBeFalse();
         result.Warning.ShouldBe("ref_only_remote_ref_collision");
@@ -114,7 +114,9 @@ public sealed class C0824RefOnlyPreparationTests
         await f.Git.RunAsync(f.Git.Runner, "commit", "--allow-empty", "-m", "runner progress");
         var advanced = await f.Git.RunAsync(f.Git.Runner, "rev-parse", "HEAD");
         await f.Git.RunAsync(f.Git.Runner, "push", "origin", "refs/heads/" + task.WorktreeBranch);
+        f.Git.Git.Clear();
         await producer.PublishAsync(task, default);
+        f.Git.Git.Commands.ShouldNotContain(c => c.StartsWith("push ", StringComparison.Ordinal), "no creation push on replay");
         (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + task.WorktreeBranch))
             .ShouldBe(advanced, "replay must never rewind the runner");
         Path.Exists(task.WorktreePath).ShouldBeFalse();

@@ -132,6 +132,64 @@ public sealed class C0824RefOnlyProvisionTests
             WorkingDirectory = f.Git.Desktop, WorktreeBaseRequestedRef = f.Git.Baseline };
     }
 
+    [Test]
+    public async Task Dispatcher_creates_ref_without_desktop_checkout()
+    {
+        foreach (var enabled in new[] { true, false })
+        {
+            await using var f = await RefOnlyDispatchFixture.CreateAsync(enabled);
+            var before = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
+            var id = await f.SeedAsync();
+            await f.Rig.TickAsync();
+            var planned = await f.Rig.ReadTaskAsync(id);
+            planned.DesktopWorkspaceKind.ShouldBe(enabled ? DesktopWorkspaceKind.RefOnly : DesktopWorkspaceKind.Checkout,
+                "the production dispatcher selects ref-only only when admitted");
+            if (enabled)
+            {
+                Path.Exists(planned.WorktreePath).ShouldBeFalse("no desktop identity directory");
+                Path.Exists(f.Root).ShouldBeFalse("no empty desktop workspace root");
+                (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(before);
+            }
+            else
+            {
+                Directory.Exists(planned.WorktreePath).ShouldBeTrue("gate-off legacy checkout is still created");
+                planned.TaskRefWorkspaceBindingId.ShouldBeNull();
+                planned.WorktreeBaseSha.ShouldBe(f.Git.Baseline);
+                planned.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Explicit);
+                (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldNotBe(before);
+            }
+            var request = await f.Rig.WaitForRequestsAsync(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror, 1);
+            await f.Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, "/runner/source/" + id.ToString("N")));
+            await f.Rig.Preparer.WhenIdleAsync();
+            (await f.Git.RevParseAsync("refs/heads/" + planned.WorktreeBranch)).ShouldBe(f.Git.Baseline);
+        }
+    }
+
+    [Test]
+    public async Task Dispatcher_commits_preparation_before_network_work()
+    {
+        await using var f = await RefOnlyDispatchFixture.CreateAsync();
+        var id = await f.SeedAsync();
+        var checkedCommit = false;
+        f.Git.Git.BeforeCommandAsync = async (_, arguments, ct) =>
+        {
+            if (arguments[0] != "push" || checkedCommit) return;
+            checkedCommit = true;
+            await using var observer = f.Rig.NewDb();
+            await using var tx = await observer.Database.BeginTransactionAsync(ct);
+            var row = await observer.AgentTasks.FromSqlInterpolated(
+                $"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {id} FOR UPDATE NOWAIT").SingleAsync(ct);
+            row.Status.ShouldBe(AgentTaskStatus.Queued);
+            row.DesktopWorkspaceKind.ShouldBe(DesktopWorkspaceKind.RefOnly);
+            row.TaskRefWorkspaceBindingId.ShouldNotBeNull();
+            row.AgentSessionId.ShouldBeNull("publication precedes launch");
+            (await observer.TaskRefWorkspaceBindings.SingleAsync(b => b.Id == row.TaskRefWorkspaceBindingId, ct))
+                .PreparationState.ShouldBe(TaskRefWorkspacePreparationState.RefCreated);
+        };
+        await f.PrepareAsync(id);
+        checkedCommit.ShouldBeTrue("actual push crossed a committed, unlocked queued intent");
+    }
+
     internal static RefOnlyDesktopProvisioner Producer(RefOnlySyncFixture f)
     {
         var settings = new GitSettings { WorktreeBasePath = f.Git.Root };
