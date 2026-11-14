@@ -708,6 +708,7 @@ guard/limiter census, not a whole Unit lane.
 | CP-26 | F2 | tests/Antiphon.Tests -> bin-c0824-all-sync/ | portable-legacy-sync | `/*/*/RunnerSettlementSyncTests/(Pushed_tip_fast_forwards_exact_owned_checkout*)\|(Endpoint_change_is_not_followed*)\|(C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource*)` | existing Checkout settlement callers | all 3 intended methods, 0 failed | 3 | 6 | true |
 | CP-27 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-native-policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | exact impacted Linux exclusion-policy methods | both methods, 0 failed | 2 | 6 | true |
 | CP-28 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-nightly-policy | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | impacted policy reader and repinned live-lane contract | every named class, 0 failed | 2 | 7 | true |
+| CP-29 | G1 | tests/Antiphon.Tests -> bin-c0824-all-guards/ | portable-fixture-teardown | `/*/*/ClassTeardownTrackerTests/*` | shared producer host closes before shared database disposal | 3 methods, 0 failed | 3 | 2 | true |
 
 For required baseline reds, run the same precise new acceptance method through
 the checkpoint tool at the committed test-first SHA, with expected assertion
@@ -744,6 +745,11 @@ under the build-slot gate if needed; `scripts/check-evidence-diff.ps1 -BaseRef
 `git merge-tree --write-tree origin/master HEAD`. Never merge master into the
 task branch. Native policy changes, additional migrations or remote-script fixes
 must get their own exact added rows rather than silently bypassing CARD-1782.
+Code added CP-29 for the shared producer fixture teardown boundary. Normal
+caller cases reuse one loopback host and immutable Git seed per test run; mutable
+repositories and task databases remain isolated. Lost-reply/store/clock recovery
+retains its explicitly fresh transport. Existing transport fixtures retain their
+default execution path; concurrent writes are opt-in for this shared fixture.
 Code added CP-27/CP-28 for the actual F4 native-policy change and its input-pin
 update. These cover the exact hand-glob obligations selected by the full task diff.
 The two rows share their isolated build at one committed source; no wider lane is selected.

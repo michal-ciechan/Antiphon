@@ -1157,6 +1157,7 @@ public sealed class RemoteWorkspacePreparerTests
         private readonly List<IServiceScope> _scopes = [];
         private Action<DelegationSettings>? _tweak;
         private bool _recovered;
+        private bool _ownsTransport = true;
         private Action<IServiceCollection>? _configure;
         private Action<PhoneHomeRunnerSettings>? _runnerSettings;
 
@@ -1164,7 +1165,7 @@ public sealed class RemoteWorkspacePreparerTests
         public PhoneHomeTestHost Host { get; private set; } = null!;
         public PhoneHomeScriptedPeer Peer { get; private set; } = null!;
         public PhoneHomeLiveConnection Live { get; private set; } = null!;
-        public FakeTimeProvider Clock { get; } =
+        public FakeTimeProvider Clock { get; private set; } =
             new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         public ServiceProvider Provider { get; private set; } = null!;
         public RecordingLaunchSink Sink { get; } = new();
@@ -1181,14 +1182,17 @@ public sealed class RemoteWorkspacePreparerTests
         public static async Task<Rig> StartAsync(
             Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1,
             Action<IServiceCollection>? configure = null, RunnerCapabilitiesDto? capabilities = null,
-            Action<PhoneHomeRunnerSettings>? runnerSettings = null)
+            Action<PhoneHomeRunnerSettings>? runnerSettings = null,
+            RefOnlyDispatchFixture.SharedTransport? transport = null)
         {
             var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure, _runnerSettings = runnerSettings };
+            if (transport is not null) rig.Clock = transport.Clock;
+            rig._ownsTransport = transport is null;
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            rig.Host = await PhoneHomeTestHost.StartAsync(rig.Clock, configureRunnerSettings: runnerSettings);
-            rig.Host.Capacity = capacity;
-            rig.Peer = await rig.Host.ConnectPeerAsync(capabilities: capabilities);
-            rig.Live = await rig.Host.WaitLiveAsync(runnerId: rig.RunnerId);
+            rig.Host = transport?.Host ?? await PhoneHomeTestHost.StartAsync(rig.Clock, configureRunnerSettings: runnerSettings);
+            if (transport is null) rig.Host.Capacity = capacity;
+            rig.Peer = transport?.Peer ?? await rig.Host.ConnectPeerAsync(capabilities: capabilities);
+            rig.Live = transport?.Live ?? await rig.Host.WaitLiveAsync(runnerId: rig.RunnerId);
             if (recovered)
                 rig.Host.Directory.MarkRecovered(rig.Live);
             rig.Provider = rig.BuildProvider();
@@ -1431,8 +1435,11 @@ public sealed class RemoteWorkspacePreparerTests
             foreach (var scope in _scopes)
                 scope.Dispose();
             await Provider.DisposeAsync();
-            await Peer.DisposeAsync();
-            await Host.DisposeAsync();
+            if (_ownsTransport)
+            {
+                await Peer.DisposeAsync();
+                await Host.DisposeAsync();
+            }
             await Schema.DisposeAsync();
             try { Directory.Delete(WorkspacePath, recursive: true); } catch (IOException) { }
         }
