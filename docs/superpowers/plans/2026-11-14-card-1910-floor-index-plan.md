@@ -85,13 +85,15 @@ Mutation; Code runs only ordinary test-first red/green, no deliberate mutants.
 
 Run through tools/Antiphon.Checkpoints with --serial --row-timeout 9 and
 --expected-source-sha <committed HEAD>; CP-2 runs red at S1, then green at S2.
-CP-0/1 precede CP-2; remaining rows follow regenerated S3. Command rows are
-explicitly gated because their command execution is outside TUnit isolation.
+CP-0/1 precede CP-2; remaining rows follow regenerated S3. Command rows acquire their own executor build-slot lease; do not nest a wrapper.
+The first run 20261114-004558-46dd completed CP-0, then was stopped while CP-1
+waited for a redundant nested lease. CP-2 had not started. Preserve those outcomes;
+resume CP-1/CP-2 with one executor-owned lease per driver.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-0 | S1 | n/a | impact-driver-build | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1910-driver -- dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | R-4 | exit 0, standalone driver only | n/a | 1 |
-| CP-1 | S1 | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1910-driver-witness -- pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1910-driver-witness` | R-4 | DRIVER WITNESS passed=3 failed=0 | n/a | 1 |
+| CP-0 | S1 | n/a | impact-driver-build | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | R-4 | exit 0, standalone driver only | n/a | 1 |
+| CP-1 | S1 | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1910-driver-witness` | R-4 | DRIVER WITNESS passed=3 failed=0 | n/a | 1 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1910-server/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
 | CP-3 | S2 | CP-2 | report-turn-integration | `/*/*/(SiblingToolReportBoundaryTests*)\|(ChannelOutboundRecoveryTests*)/*` | R-1 | all listed, 0 failed/skipped | 35 | 4 |
 | CP-4 | S2 | CP-2 | guards-and-derived | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed/skipped | 79 | 5 |
