@@ -674,13 +674,14 @@ public sealed class TerminalRunnerSeatReleaseService(
                     await tx.CommitAsync(ct);
                     return;
                 }
+                var updatedAt = clock.GetUtcNow().UtcDateTime;
                 var changed = await db.RunnerSeatReleases.Where(r => r.Id == release.Id
                     && r.Revision == release.Revision && r.State == RunnerSeatReleaseState.Reserved
                     && r.ActionId == release.ActionId)
                     .ExecuteUpdateAsync(u => u.SetProperty(r => r.State, RunnerSeatReleaseState.Unresolved)
                         .SetProperty(r => r.Revision, r => r.Revision + 1)
                         .SetProperty(r => r.OutcomeCode, "Unresolved")
-                        .SetProperty(r => r.UpdatedAt, clock.GetUtcNow().UtcDateTime), ct);
+                        .SetProperty(r => r.UpdatedAt, updatedAt), ct);
                 await tx.CommitAsync(ct);
                 if (changed != 1) return;
             }
@@ -792,17 +793,19 @@ public sealed class TerminalRunnerSeatReleaseService(
         await LockIdentityAsync(release, ct);
         if (await RevalidateAsync(release, recoveryOnly: false, ct) is null)
         {
+            var actionId = source == null ? Guid.NewGuid() : source.Request.Binding.ActionId;
+            var updatedAt = clock.GetUtcNow().UtcDateTime;
             await db.RunnerSeatReleases.Where(r => r.Id == release.Id && r.Revision == release.Revision
                 && r.State == RunnerSeatReleaseState.Unresolved && r.ActionId == release.ActionId)
                 .ExecuteUpdateAsync(u => u.SetProperty(r => r.State, RunnerSeatReleaseState.Reserved)
                     .SetProperty(r => r.Revision, r => r.Revision + 1)
-                    .SetProperty(r => r.ActionId, source == null ? Guid.NewGuid() : source.Request.Binding.ActionId)
+                    .SetProperty(r => r.ActionId, actionId)
                     .SetProperty(r => r.ObservationToken, fresh.Token)
                     .SetProperty(r => r.BindingIdentity, fresh.Transcript.BindingIdentity)
                     .SetProperty(r => r.FileRevision, fresh.Transcript.FileRevision)
                     .SetProperty(r => r.TranscriptRevision, fresh.Transcript.TranscriptRevision)
                     .SetProperty(r => r.OutcomeCode, (string?)null)
-                    .SetProperty(r => r.UpdatedAt, clock.GetUtcNow().UtcDateTime), ct);
+                    .SetProperty(r => r.UpdatedAt, updatedAt), ct);
         }
         await tx.CommitAsync(ct);
         // The next advance must revalidate this new reservation again before dispatch.
@@ -965,11 +968,12 @@ public sealed class TerminalRunnerSeatReleaseService(
 
     private async Task PendingAsync(RunnerSeatRelease release, string outcome, CancellationToken ct)
     {
+        var updatedAt = clock.GetUtcNow().UtcDateTime;
         await db.RunnerSeatReleases.Where(r => r.Id == release.Id && r.Revision == release.Revision
             && r.ActionId == release.ActionId && r.State != RunnerSeatReleaseState.Confirmed)
             .ExecuteUpdateAsync(u => u.SetProperty(r => r.State, RunnerSeatReleaseState.Unresolved)
                 .SetProperty(r => r.Revision, r => r.Revision + 1).SetProperty(r => r.OutcomeCode, outcome)
-                .SetProperty(r => r.UpdatedAt, clock.GetUtcNow().UtcDateTime), ct);
+                .SetProperty(r => r.UpdatedAt, updatedAt), ct);
     }
 
     private Task<Guid?> SettlementEventAsync(AgentTask task, CancellationToken ct) => task.Status == AgentTaskStatus.Blocked

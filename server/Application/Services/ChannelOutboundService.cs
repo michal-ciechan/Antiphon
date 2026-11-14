@@ -207,12 +207,13 @@ public sealed class ChannelOutboundService
             "channel-outbound:" + root.ChannelId.ToString("N")));
         await _db.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock({BitConverter.ToInt64(lockBytes, 0)})", ct);
+        var closedAt = _clock.GetUtcNow().UtcDateTime;
         await _db.ChannelOutboundDeliveries.Where(d => d.Id == root.Id && d.Version == root.Version
             && d.ReservedThroughSequence == root.ReservedThroughSequence && d.TailClosedAt == null
             && (terminalGeneration == null || _db.AgentSessions.Any(s => s.Id == d.SourceSessionId
                 && s.StartedAt == terminalGeneration
                 && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed))))
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.TailClosedAt, _clock.GetUtcNow().UtcDateTime)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.TailClosedAt, closedAt)
                 .SetProperty(d => d.Version, d => d.Version + 1), ct);
         await transaction.CommitAsync(ct);
     }
