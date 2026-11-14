@@ -1,0 +1,62 @@
+# CARD-1915 S1-S3 Final Review, round 1
+
+Do not land yet. The insert trigger is always on, and with no valid summary (the state this slice actually ships) singleton appends are much slower than the same inserts after the triggers are dropped.
+
+Reviewed Code owner: `8e452527-6112-47e3-9512-b545440805dd`. Review task: `6f663ce6-2b87-4ac9-ad5c-8562639f8320`. Subject tip: `a46bd7af4b37a30a5fddcbdaca7ab1e6747bc224`. Range: `ca8737e78170c9a441e216408da5fab636c34ca0..a46bd7af4b37a30a5fddcbdaca7ab1e6747bc224`. Ordinary rows ran on a scratch compose of that tip onto `origin/master` `b559bfba2e9a420495122d27171352fe9b7e1ba4`, commit `f14600eb07a1c79ed6c770c598717c540c9bec39`. The only compose delta in the feature files is the regenerated `tests/derived-impact-index.json`. Product and new test blobs match the subject tip. No product code was edited. All 14 positive controls stay pending. S4-S8, native Windows, and the full downgrade census were not this round.
+
+## Blocking finding
+
+**Where:** `server/Migrations/20261114063858_AddSessionTranscriptSummaries.cs` function `c1915_insert`, the four `c1915_*` statement triggers. `SessionState:DurableTranscriptSummaryEnabled` does not exist in any `.cs` or `.json`. `SessionStateSettings` is the existing session-state cache and defaults `Enabled=true` for that other feature. Nothing in the server reads `SessionTranscriptSummaries`.
+
+**Failure:** After a summary row is already invalid (warmup inserts create the placeholder; production after this migration has only absent or invalid rows), 100 further single-row inserts cost more than the same inserts with the four triggers dropped. Three rounds on one schema:
+
+| Round | Invalid summary, 100 singletons | Triggers dropped, 100 singletons | Overhead | Invalid summary, 1000-row statement | Triggers dropped, 1000-row statement |
+|---|---:|---:|---:|---:|---:|
+| 0 | 304 ms | 104 ms | 192% | 173 ms | 88 ms |
+| 1 | 300 ms | 105 ms | 186% | 170 ms | 87 ms |
+| 2 | 170 ms | 105 ms | 62% | 77 ms | 157 ms |
+| Median | 300 ms | 105 ms | 186% | 170 ms | 88 ms |
+
+The bare singleton time stayed at 104-105 ms. The triggered path was slower on every round. The best round was still 62%. A 1000-row statement was noisy (one round beat the baseline). The real application path is the singleton shape: `PersistTranscriptAsync` of 100 events emitted 100 singleton INSERT statements.
+
+A maintained valid summary is slower still on singletons (527 ms, 407 ms, 296 ms) and is not what this slice turns on. The blocker is the path that runs for every append while the feature is off.
+
+**Why:** Each insert statement inserts an invalid placeholder on conflict, locks the summary row, and updates it when `Valid` or `NextBackfillAttemptAt` is set. There is no flag around that work. The plan's choice to keep maintaining valid summaries while the reader is off still runs this body for the default invalid row.
+
+**Fix:** Make the already-invalid, feature-off path stop taking that per-statement lock, or gate trigger work so a disabled reader does not pay it. Keep folding a valid summary in the same transaction. Remeasure 100 singleton inserts and one multi-row statement, three rounds, against the triggers dropped, and land only at a single-digit percent on the feature-off path.
+
+## What held
+
+Migration `Up` is `CreateTable` `SessionTranscriptSummaries`, one partial index on that new table, and SQL for `lock_timeout`, four functions, and four `AFTER STATEMENT` triggers. It does not `UPDATE`, `DELETE`, or `INSERT` `TranscriptEntries`. `Down` throws `NotSupportedException` and does not delete rows. The migration id sorts after master's `20261110213738_Card1294ShadowCohort`.
+
+Held `ROW EXCLUSIVE` on `TranscriptEntries`: a concurrent append blocked for 4914 ms while `MigrateAsync` waited, then the migration failed `55P03` at 5334 ms and rolled back. The stall matches the 5 second `lock_timeout`. It did not stay queued behind the holder after the migration gave up.
+
+An independent probe (seed 20261114, 16 sessions, four generations, in-order and shuffled multi-session batches, a duplicate `ON CONFLICT DO NOTHING`, a rolled-back insert, an out-of-order sequence, an update, and a delete) passed. Every summary that stayed `Valid=true` matched `SessionStateSeedBaseline.Sql` on all 15 stored fields. Out-of-order, update, and delete cleared `Valid`. Eight concurrent writers committed 190 of 192 inserts; one transaction aborted; zero summaries stayed valid, and none stayed valid while disagreeing with the recompute. CP-3's two-writer deadlock test passed 17/17 in the class (`Opposite_multisession_transactions_abort_atomically_on_deadlock` included).
+
+`PersistTranscriptAsync` of 100 events: `statements=100 singletons=100 monotonic=False valid=False`. CP-3 recorded the same shape for `Monotonic_append_folds_only_committed_rows(normal)`: `C1915 EF rows=100 statements=100 monotonic=False`. Invalid is the designed answer. The fast path does not survive an ordinary EF batch. S7 is already assigned that cost in the plan amendment. Advisory card CARD-1933 (`f2efff67-bcb3-4e25-be67-602bad5f5696`) records it. Searches for "EF singleton transcript summary" and "transcript summary invalidat" returned 0 cards before it was filed.
+
+The scale fixture seeded 3,118,500 transcript rows and 27,695 tasks in 207.0 s on a tip schema that already had the triggers (load 14.81, table 381,296,640 bytes). This review did not take that populated database back to the predecessor and time `MigrateAsync` on it. The generated `Up` has no statement that reads or rewrites `TranscriptEntries`.
+
+Nightly pins are unchanged against `origin/master`: `policyHash` `355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233`, live-lane `PinnedInputDigest` `0854031a9cc816e959f182bac02aa28e5be420abd2fd1b43113d7bcee1f669bd`. `git merge-tree --write-tree origin/master a46bd7af` conflicts only in `tests/derived-impact-index.json`. The allowlist auto-merges. The compose regenerated the index with `scripts/regenerate-derived-impact-index.ps1` rather than hand-editing it. Landing should do the same. Evidence diff: commits=24 entries=0 violations=0. Downgrade selector `-MergeSubset`: `migrations=True`, 69 classes in the `Antiphon.Tests` union, plus `ContractSnapshotTests` and `InboxConversationMigrationTests`. This round ran the commissioned caller, chain, CP-2, and CP-32 rows, not that full census.
+
+`CP-3-guards-c1` failed `TestTimingOperationLabelTests.C1620_EveryCallSiteOperationLabelIsKept`: omitted labels `host-load 100 durable receipts`, `host-load cancel and join world`, `host-load world initialization`. Those call sites are on `origin/master` in `C1514HostLoadFixture.cs`. `tests/Shared/TestTiming.cs` is blob `4d2d4d5985590e323f1dbdd6306564ffbfde2df8` on master, on the subject, and on the compose, and the set does not contain those three strings. The subject does not touch that fixture. This is master's red, not a CARD-1915 regression.
+
+## Checkpoint receipt
+
+Run `20261114-132054-af80`. Load at start `14.68 18.65 19.48`. Receipt `sourceState=clean` `buildSource=verified` on `f14600eb07a1c79ed6c770c598717c540c9bec39`. Wall 44m50s. 10 green, 1 red, 0 skipped. The red row is the inherited label test above, duration 0.63 s, not a timeout.
+
+```
+CHECKPOINT CP-1 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=ok filter=/*/*/(SessionStatePinQueryTests*)|(SessionStateProjectionTests*)/* executed=15 passed=15 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-2 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=ok filter=/*/*/(SessionTranscriptSummaryMigrationTests*)|(AppDbContextModelTests*)|(AdditiveMigrationRuleWitnessTests*)/* executed=14 passed=14 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-2/run.trx slot=granted waited=120s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=ok filter=/*/*/(SessionTranscriptSummaryAppendTests*)|(SessionStateCommitTests*)/* executed=17 passed=17 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3/run.trx slot=granted waited=45s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-adjacent commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/AgentSessionRuntimeTests*/* executed=48 passed=48 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-adjacent/run.trx slot=granted waited=15s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-migration-callers commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/(AgentTaskLandHeldNotificationTests*)|(C0824RefOnlyIdentityTests*)/* executed=19 passed=19 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-migration-callers/run.trx slot=granted waited=90s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-migration-chain commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/(C0824RefOnlySnapshotMigrationTests*)|(C1514HostLoadMigrationTests*)|(CapacityAdmissionLifecycleTests*)/* executed=48 passed=48 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-migration-chain/run.trx slot=granted waited=90s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-guards-a commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)/* executed=48 passed=48 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-guards-a/run.trx slot=granted waited=0s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-guards-b commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/(SlowTestRegistryMergeTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)/* executed=32 passed=32 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-guards-b/run.trx slot=granted waited=45s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-guards-c1 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/(DerivedImpactIndexTests*)|(TestTimingOperationLabelTests*)/* executed=29 passed=28 failed=1 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-guards-c1/run.trx slot=granted waited=15s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-3-guards-c2 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=reused filter=/*/*/ReleaseImpactEnvelopeTests*/* executed=11 passed=11 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-3-guards-c2/run.trx slot=granted waited=0s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+CHECKPOINT CP-32 commit=f14600eb07a1c79ed6c770c598717c540c9bec39 build=ok filter=/*/*/(InboxConversationMigrationTests*)/* executed=1 passed=1 failed=0 skipped=0 trx=/tmp/card-1915-review-compose/.antiphon/checkpoints-review/20261114-132054-af80/rows/CP-32/run.trx slot=granted waited=15s dirty=0 source=f14600eb07a1c79ed6c770c598717c540c9bec39 sourceState=clean buildSource=verified
+```
+
+The extra differential, writer, cost, and lock probe was a leased `dotnet run` of an untracked test on the subject worktree. It passed and was deleted. It is not part of this commit. Two eligible runners were visible (windows and linux) plus one ineligible with an empty platform. Runner defaults revision 2, placement empty.
