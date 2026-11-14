@@ -25405,6 +25405,7 @@
         "VolumeRetirementDockerTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
+        "VolumeRetirementWrapperTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
     },
