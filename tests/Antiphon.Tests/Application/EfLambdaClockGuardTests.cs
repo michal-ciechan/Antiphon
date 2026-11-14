@@ -103,7 +103,7 @@ public class EfLambdaClockGuardTests
         const string marker = "Optional work expired before execution.";
         var bulk = Slice(source, marker, 0, 80, 160);
         bulk.ShouldContain(".SetProperty(t => t.ConcurrencyToken, Guid.NewGuid())");
-        var single = Slice(source, marker, 1, 240, 160);
+        var single = Slice(source, marker, 2, 400, 160);
         single.ShouldContain("t.Id == claimed.Id");
         single.ShouldContain(".SetProperty(t => t.ConcurrencyToken, expiryToken)");
     }
@@ -178,8 +178,8 @@ internal static class EfLambdaClockScanner
 
     private static readonly string[] Terminals =
     [
-        "ExecuteUpdateAsync", "ExecuteUpdate", "ToListAsync", "AnyAsync", "CountAsync", "LongCountAsync",
-        "FirstOrDefaultAsync", "SingleOrDefaultAsync", "FirstAsync", "SingleAsync",
+        "ExecuteUpdateAsync", "ExecuteUpdate", "ToListAsync", "ToArrayAsync", "AnyAsync", "CountAsync",
+        "LongCountAsync", "FirstOrDefaultAsync", "SingleOrDefaultAsync", "FirstAsync", "SingleAsync",
     ];
 
     public static IReadOnlyList<string> Find(string serverRoot)
@@ -206,7 +206,7 @@ internal static class EfLambdaClockScanner
         var hits = new List<string>();
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
             text,
-            @"(?<![A-Za-z0-9_])(?:GetUtcNow\(\)|UtcNow\(\)|DateTimeOffset\.UtcNow|DateTime\.UtcNow)"))
+            @"(?<![A-Za-z0-9_])(?:GetUtcNow|UtcNow)\s*\(\s*\)"))
         {
             if (IsDefinition(text, match.Index + match.Length))
                 continue;
@@ -237,21 +237,103 @@ internal static class EfLambdaClockScanner
         return hits;
     }
 
-    private static bool WhereIsQuery(string text, Frame frame)
+    private static bool WhereIsQuery(string text, Frame frame) =>
+        ChainHasTerminal(text, frame.Close) || ReceiverIsDb(text, frame.Open);
+
+    // The terminal has to belong to this Where's call chain. A later database call in the
+    // same statement, after a comparison, is a different expression.
+    private static bool ChainHasTerminal(string text, int closeParen)
     {
-        var start = text.LastIndexOf(';', frame.Open);
-        var end = text.IndexOf(';', frame.Close);
-        if (end < 0)
-            end = text.Length;
-        var statement = text.Substring(start + 1, end - start - 1);
-        foreach (var terminal in Terminals)
+        var i = closeParen + 1;
+        while (i < text.Length)
         {
-            if (statement.Contains(terminal, StringComparison.Ordinal))
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+            if (i >= text.Length || text[i] != '.')
+                return false;
+            i++;
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+            var start = i;
+            while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_'))
+                i++;
+            if (i == start)
+                return false;
+            var name = text.Substring(start, i - start);
+            if (Terminals.Contains(name, StringComparer.Ordinal))
                 return true;
+            while (i < text.Length && char.IsWhiteSpace(text[i]))
+                i++;
+            if (i >= text.Length || text[i] != '(')
+                continue;
+            var depth = 0;
+            for (; i < text.Length; i++)
+            {
+                if (text[i] == '(')
+                    depth++;
+                else if (text[i] == ')')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        i++;
+                        break;
+                    }
+                }
+            }
         }
 
-        return statement.Contains("_db.", StringComparison.Ordinal)
-            || statement.Contains("db.", StringComparison.Ordinal);
+        return false;
+    }
+
+    private static bool ReceiverIsDb(string text, int whereParen)
+    {
+        var i = whereParen - 1;
+        while (i >= 0 && char.IsWhiteSpace(text[i]))
+            i--;
+        while (i >= 0 && (char.IsLetterOrDigit(text[i]) || text[i] == '_'))
+            i--;
+        var end = i;
+        while (i >= 0)
+        {
+            if (char.IsWhiteSpace(text[i]))
+            {
+                i--;
+                continue;
+            }
+
+            var c = text[i];
+            if (char.IsLetterOrDigit(c) || c == '_' || c == '.')
+            {
+                i--;
+                continue;
+            }
+
+            if (c is ')' or ']')
+            {
+                var open = c == ')' ? '(' : '[';
+                var depth = 1;
+                i--;
+                while (i >= 0 && depth > 0)
+                {
+                    if (text[i] == c)
+                        depth++;
+                    else if (text[i] == open)
+                        depth--;
+                    i--;
+                }
+
+                continue;
+            }
+
+            break;
+        }
+
+        var receiver = text.Substring(i + 1, Math.Max(0, end - i));
+        if (receiver.Contains("_db", StringComparison.Ordinal))
+            return true;
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            receiver, @"(?<![A-Za-z0-9_])db(?![A-Za-z0-9_])");
     }
 
     private static List<Frame> Frames(string text)

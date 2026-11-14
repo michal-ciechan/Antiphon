@@ -532,15 +532,15 @@ public sealed partial class AgentTaskDispatcher
                 ct);
 
         // Deadline is durable: recovery does not depend on the optional caller surviving.
-        // The clock and token are locals so EF parameters them instead of inlining a new literal.
+        // The injected clock is a local so EF parameters it. Guid.NewGuid() stays inline so
+        // Npgsql emits gen_random_uuid() and each canceled row gets its own token.
         var expiredAt = UtcNow();
-        var expiryToken = Guid.NewGuid();
         await _db.AgentTasks.Where(AgentTaskRoles.OptionalWork)
             .Where(t => t.Status == AgentTaskStatus.Queued && t.ExecutionDeadlineAt <= expiredAt)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Canceled)
                 .SetProperty(t => t.CompletedAt, expiredAt)
                 .SetProperty(t => t.FailureReason, "Optional work expired before execution.")
-                .SetProperty(t => t.ConcurrencyToken, expiryToken), ct);
+                .SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()), ct);
         var queued = await _db.AgentTasks
             .Where(t => t.Status == AgentTaskStatus.Queued)
             .OrderBy(t => t.CreatedAt)
