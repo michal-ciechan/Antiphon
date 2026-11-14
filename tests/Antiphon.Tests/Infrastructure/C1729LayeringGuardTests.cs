@@ -114,6 +114,19 @@ public sealed class C1729LayeringGuardTests
     }
 
     [Test]
+    public void Ref_only_producer_has_no_infrastructure_dependency_even_in_warn_mode()
+    {
+        const string producer = "server/Application/Services/RefOnlyDesktopProvisioner.cs";
+        var result = _repository.Analysis;
+        _repository.Paths.ShouldContain(producer, "the real producer must be in the analyzed census");
+        result.Unlisted.Concat(result.Listed)
+            .Where(v => v.FromFile == producer && v.ToFile.StartsWith("server/Infrastructure/", StringComparison.Ordinal))
+            .ShouldBeEmpty("the producer must obtain managed roots from its Application caller seam, including in warn mode");
+        result.Ambiguous.Where(a => a.FromFile == producer && a.IsViolation)
+            .ShouldBeEmpty("ambiguous infrastructure references must not bypass the producer guard");
+    }
+
+    [Test]
     public void Synthetic_core_file_referencing_an_application_type_fails_in_strict_mode()
     {
         var result = Analyze(SyntheticMap, "strict: true\n# slice test\ncore/Value.cs -> Svc @ app/Svc.cs",
