@@ -173,7 +173,8 @@ public class PhoneHomeOutageMentionTests
         };
         (await h.MentionAsync("fake", "submitted before disconnect")).ShouldBeTrue();
         var attempted = (await h.RowsAsync()).Single();
-        attempted.Status.ShouldBe(QueuedMessageStatus.Pending);
+        attempted.Status.ShouldBe(QueuedMessageStatus.Sent);
+        attempted.DeliveryVerdict.ShouldBeNull();
         attempted.DeliveryAttempts.ShouldBe(1);
         attempted.LastDeliveryBaselineSequence.ShouldNotBeNull();
         await h.RecreateGraphAsync();
