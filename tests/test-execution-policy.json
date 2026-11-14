@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "1bd58e188921481097ea1d75b319cb631ab51117509aa05925050252223c0023",
+  "policyHash": "8df7ff9bb6ad667970bd6e6689ac2f32a0b885d4339094ffc03515d79d401e5a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
