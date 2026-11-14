@@ -21,3 +21,26 @@ The uncapped reconstruction has 272 distinct production consumers (257 are absen
 | SessionMessageQueueDeliveredSpillRecoveryTests | 5 | 5 | 0 | 0 | 169.167 | recorded in ignored results.jsonl | Passed |
 
 After these complete rows, the measurement driver was stopped at the next row boundary before launching another test. No test process was interrupted. Continued selections group related class families to amortize repeated discovery/fixture startup, retain serial execution and the ten-minute row ceiling. Execution remains in progress; this interim report does not establish an exhaustive list of remaining failures.
+
+## Second published measurement slice
+
+The syntax-audited vocabulary union was expanded to include deferred IOException construction (including Task.FromException), not only explicit throw statements. Current census: **504 Linux project/class selections and nine Windows-only selections**. Two earlier regex-only selections were fixture strings, not live classes, and were removed. Remaining coverage is still not claimed exhaustive.
+
+Additional stale families:
+
+- **CARD-1924**: GrokRulesCompactionRecoveryTests.Captured_native_boundary_reaches_one_durable_refresh_without_idle_input(in-flight, standing), line 172: SubmittedBodies should contain one item, actual zero. Its prior-row LateConfirmed assertion passes. CARD-1892 composerless recovery deliberately makes that flush receipt-only; the test expects automatic advancement to the next body in the same flush. Preserve the no-write boundary and drive a subsequent safe flush in the repair.
+- **CARD-1926**: C0824WorkspaceSlotCustodyTests.C0824_LeaseWaitsForTheDispatcherMutationLock, line 409: entered.Task.IsCompleted should be false, actual true. The fixture uses held Input as MutationLock owner; CARD-1892 deliberately removed Input from that lock. Hold a genuine workspace mutation to preserve the PC-74 lease-serialization witness.
+
+A separate non-delivery failure is under diagnosis: ClaudeAuthProbeTests.Fresh_config_dir_reports_logged_out_with_the_real_cli expects false, actual true. The test overrides the probe's environment lookup but the launched CLI still inherits the process environment. Presence-only inspection confirmed an inherited Claude OAuth variable; no secret value or raw auth response was printed. This is a test-isolation candidate, not a stale delivery contract.
+
+| Row | Executed | Passed | Failed | Skipped | Wall seconds | Family |
+|---|---:|---:|---:|---:|---:|---|
+| F001 | 144 | 143 | 1 | 14 | 150.768 | GrokRules* |
+| F002 | 304 | 304 | 0 | 13 | 439.519 | SessionMessageQueue* |
+| F003 | 230 | 230 | 0 | 1 | 132.804 | AgentSession* |
+| F004b | 20 | 20 | 0 | 2 | 593.509 | runner C1514HostLoad*; execution 574s, slot wait 15s |
+| F005b | 217 | 216 | 1 | 0 | 45.287 | runner input/auth/phone-home |
+| F006b | 95 | 94 | 1 | 0 | 88.144 | runner C0824Workspace* |
+| F007b | 472 | 472 | 0 | 21 | 272.212 | runner workspace/retention/custody |
+
+F004-F007 returned zero tests with the initial OR syntax; those attempts are preserved and receive no coverage credit. Their corrected suffix-wildcard filters are the b rows above. The first per-class driver stopped before S027 at a measurement boundary; no test process was interrupted. All builds, prerequisite builds and test runs used the slot gate. Shared-Postgres rows and all test projects ran serially.
