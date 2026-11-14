@@ -474,16 +474,23 @@
       "globs": [
         "server/Application/Exceptions/InputDeliveryUncertainException.cs",
         "server/Application/Services/SessionMessageQueueService.cs",
-        "server/Application/Services/AgentControlService.cs"
+        "server/Application/Services/AgentControlService.cs",
+        "server/Application/Services/SessionMessageQueueService.Abandon.cs",
+        "server/Application/Services/GrokRulesRefreshService.cs",
+        "server/Application/Services/AttentionService.cs",
+        "server/Api/Endpoints/SessionEndpoints.cs",
+        "server/Application/Dtos/SessionQueueDtos.cs"
       ],
       "classes": [
         "AgentTaskMidTurnRefineTests",
+        "AttentionServiceTests",
         "CodexCliObservationGapTests",
         "GrokRulesCompactionRecoveryTests",
         "GrokRulesReadyOrderingTests",
         "LandRefusalDeliveryWitnessTests",
         "PhoneHomeOutageMentionTests",
         "SessionMessageQueuePhoneHomeDropTests",
+        "SessionQueueAbandonTests",
         "StandingSessionSwitchConcurrencyTests"
       ]
     },

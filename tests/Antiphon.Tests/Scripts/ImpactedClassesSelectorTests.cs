@@ -39,6 +39,11 @@ public sealed partial class ImpactedClassesSelectorTests
     [Arguments("server/Application/Exceptions/InputDeliveryUncertainException.cs")]
     [Arguments("server/Application/Services/SessionMessageQueueService.cs")]
     [Arguments("server/Application/Services/AgentControlService.cs")]
+    [Arguments("server/Application/Services/SessionMessageQueueService.Abandon.cs")]
+    [Arguments("server/Application/Services/GrokRulesRefreshService.cs")]
+    [Arguments("server/Application/Services/AttentionService.cs")]
+    [Arguments("server/Api/Endpoints/SessionEndpoints.cs")]
+    [Arguments("server/Application/Dtos/SessionQueueDtos.cs")]
     public async Task Input_uncertainty_paths_select_delivery_and_switch_witnesses(string path)
     {
         var selected = await RunAsync(Root(), "-Path", path, "-Json");
@@ -52,6 +57,7 @@ public sealed partial class ImpactedClassesSelectorTests
             "SessionMessageQueuePhoneHomeDropTests", "PhoneHomeOutageMentionTests",
             "GrokRulesCompactionRecoveryTests", "StandingSessionSwitchConcurrencyTests",
             "CodexCliObservationGapTests", "GrokRulesReadyOrderingTests",
+            "SessionQueueAbandonTests", "AttentionServiceTests",
         })
             filters.Any(row => row.Item1 == "tests/Antiphon.Tests"
                 && row.Filter.Contains("(" + name + "*)", StringComparison.Ordinal))

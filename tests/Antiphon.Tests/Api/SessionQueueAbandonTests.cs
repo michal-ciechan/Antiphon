@@ -168,6 +168,8 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         after.DeliveryVerdict.ShouldBeNull();
         after.RulesAcknowledgedAt.ShouldBeNull();
         after.DeliveryAttempts.ShouldBe(1);
+        await using var scope = factory.Services.CreateAsyncScope();
+        (await scope.ServiceProvider.GetRequiredService<AppDbContext>().SessionQueuedMessages.CountAsync(m => m.AgentSessionId == row.AgentSessionId)).ShouldBe(1);
         _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
     }
 
@@ -198,6 +200,7 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         var after = await ReloadAsync(row);
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var audits = await verifyScope.ServiceProvider.GetRequiredService<AppDbContext>().AuditRecords.CountAsync(i => i.Id == row.Id);
+        (await verifyScope.ServiceProvider.GetRequiredService<AppDbContext>().SessionQueuedMessages.CountAsync(m => m.AgentSessionId == row.AgentSessionId)).ShouldBe(1);
         if (after.Status == QueuedMessageStatus.Canceled)
         {
             result.StatusCode.ShouldBe(HttpStatusCode.OK);
