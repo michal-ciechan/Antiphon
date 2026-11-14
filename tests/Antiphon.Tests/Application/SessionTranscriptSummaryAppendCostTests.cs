@@ -39,13 +39,21 @@ public sealed class SessionTranscriptSummaryAppendCostTests(SessionStateScaleFix
         {
             await using var tx = await connection.BeginTransactionAsync();
             if (variant == "dropped")
-                await ExecuteAsync("DROP TRIGGER c1915_insert ON \"TranscriptEntries\"; DROP TRIGGER c1915_update ON \"TranscriptEntries\"; DROP TRIGGER c1915_delete ON \"TranscriptEntries\"; DROP TRIGGER c1915_truncate ON \"TranscriptEntries\"");
+                await ExecuteAsync("DROP TRIGGER IF EXISTS c1915_insert ON \"TranscriptEntries\"; DROP TRIGGER c1915_update ON \"TranscriptEntries\"; DROP TRIGGER c1915_delete ON \"TranscriptEntries\"; DROP TRIGGER c1915_truncate ON \"TranscriptEntries\"");
             else
             {
                 await ExecuteAsync(variant == "index-probe" ? probe : variant == "database-gate" ? gated : installed);
-                // The installed physical gate is disabled by default. Scratch lookup
+                // The installed physical gate has no append trigger by default. Scratch lookup
                 // candidates must actually fire, even when measured on that schema.
-                if (variant != "installed") await ExecuteAsync("ALTER TABLE \"TranscriptEntries\" ENABLE TRIGGER c1915_insert");
+                if (variant != "installed") await ExecuteAsync("""
+                    DO $candidate$ BEGIN
+                        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='"TranscriptEntries"'::regclass AND tgname='c1915_insert') THEN
+                            CREATE TRIGGER c1915_insert AFTER INSERT ON "TranscriptEntries"
+                                REFERENCING NEW TABLE AS new_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_insert();
+                        END IF;
+                    END; $candidate$;
+                    ALTER TABLE "TranscriptEntries" ENABLE TRIGGER c1915_insert;
+                    """);
             }
             var id = ids[^1]; // The fixture's empty session; the other 511 retain 3,118,500 rows.
             if (state == "invalid")

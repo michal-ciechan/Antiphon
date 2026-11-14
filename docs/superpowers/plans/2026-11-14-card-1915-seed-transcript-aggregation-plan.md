@@ -99,18 +99,28 @@ multi-row. Neither meets the requested single-digit target. Original installed
 singleton overhead was 77.17% / 187.11%. These are noisy descriptive samples,
 not p95 or production acceptance. Raw numbers remain in the ignored evidence.
 
-Choose a physical database gate: keep the four guards installed in S2 but install
-the append trigger **disabled**. Unlike creating guards only during activation,
-this preserves the migration's all-or-nothing install and bounded 5s DDL admission.
-The disabled append path executes no function or lookup. CP-36 must measure this
-actual installed state against dropped triggers; these pre-fix numbers do not
-establish the resulting overhead. The scratch dropped-trigger path measures
-inactive append cost, not the cost of future activation DDL.
+The first physical-gate candidate installed the append trigger disabled. Run
+20261114-153309-1712 at `cbc4d23af0e5077dfba393b7c25fc3b43774b3dc`
+passed its 237 tests but **missed performance acceptance**: absent-summary medians
+29.9879ms versus 27.0868ms for 100 singletons were 10.71% overhead. Invalid-summary
+medians were 27.7807ms versus 32.2738ms (-13.92%, noisy); 1000-row overhead was
+3.69% absent / -1.06% invalid. Do not relabel this receipt as single-digit acceptance.
+
+Choose option (c), activation-only append trigger creation. S2 installs the append
+function and all three UPDATE/DELETE/TRUNCATE guards atomically. The maintenance
+gate creates c1915_insert only while active and drops it on an explicit maintenance
+shutdown. Even the disabled transition-trigger descriptor is absent from the off
+path. The migration still installs the three non-append guards under the original
+5s DDL admission bound; activation installs the exact fourth guard under the same
+fenced gate transaction before any summary can become eligible. CP-2 asserts the
+exact three names off and all four names on; it retains the active four-guard check.
+CP-36 must measure this actual installed state, not assume zero measured cost.
+The scratch dropped-trigger path measures inactive append cost, not activation DDL.
 
 The SQL-only singleton `SessionTranscriptSummaryMaintenance` controls the append
 trigger. `UPDATE ... SET "Enabled"=true/false WHERE "Id"` executes a trigger that
 fences TranscriptEntries writers, then summary writers, invalidates all summaries,
-and enables/disables c1915_insert in the same transaction. It caps an unbounded or
+and creates/drops c1915_insert in the same transaction. It caps an unbounded or
 longer lock_timeout at 5s and preserves a shorter caller deadline. DELETE, TRUNCATE
 and replacement INSERT of this control row refuse. All operations here are test-
 owned; live activation stays separately commissioned. This is an internal PostgreSQL
