@@ -1609,8 +1609,8 @@
       "reason": "cap",
       "owed": 99,
       "first": [
+        "SessionMessageQueueGrokPtyIntegrationTests",
         "SessionMessageQueueServiceTests",
-        "SessionTranscriptSummaryAppendTests",
         "StaleWorkingTranscriptWatchdogTests",
         "StandingSessionQueueSwitchTests",
         "TaskSupervisionVisibilityTests",
@@ -14278,9 +14278,9 @@
         "PostLandMutationDeliveryTests",
         "ReviewEvidenceDeliveryTests",
         "ReviewLoopTests",
-        "SessionMessageQueueGrokPtyIntegrationTests",
         "SessionQueueReceiptPlumbingTests",
         "SessionStateCommitTests",
+        "SessionTranscriptSummaryAppendTests",
         "TaskInputAttentionCostTests",
         "WorkingTranscriptRecoveryTests"
       ]
