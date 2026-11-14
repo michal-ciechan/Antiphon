@@ -480,8 +480,8 @@ coordinator cannot produce Ready. Every gate re-observes origin bindings and
 approvals, invokes the real v2 writer with FreshGraph (fresh scratch fetch, bound
 manifest and exact required-object coverage), and rejects any prior advertised
 ref that disappeared or changed OID. A final host control read repeats the live
-advertisement after staging; the five-second monotonic bound includes that
-request, custody recording and the Ready/effect boundary. Each destructive volume
+advertisement after staging; the five-second monotonic bound includes the entire
+final origin-binding scan, that request, custody recording and the Ready/effect boundary. Each destructive volume
 effect repeats the full gate. A ref or URL moved after the final observation
 cannot be detected atomically across hosts; this residual interval is at most
 five seconds, and no later effect reuses it. No schema or v1 authority changes.
@@ -498,6 +498,13 @@ check by six seconds after the URL observation, while both the writer and final
 advertisement succeed. Before the clock-scope repair this reaches Ready; after
 repair it must refuse Unknown. The first binding scan and graph-fetch budgets
 are unchanged. No timeout or assertion is widened. PC-27 remains pending.
+The witness's initial entry hook was overwritten by module loading and was not
+a valid red. Its corrected owned module ran the delay, but the fixture's cold
+PowerShell launch could itself expire the control window. Preview now keeps one
+owned live-check host warm, matching the production controller; every request
+still calls the real helper and reads origin, and the process is joined before
+preview returns. With that fixture CP-125 was assertion-red at committed source
+cead11e754c1586a83a1ec614bdc21e7ea6f7723: actual Ready/exit 0, expected Unknown/2.
 
 CP-24 preserves all 11 V-6/V-7 vectors across four methods. CP-36 (40 methods),
 CP-39 (225 methods) and CP-40 (23 methods) are split by their complete declared
