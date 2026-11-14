@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 320,
+      "classes": 321,
       "reason": "allowlist"
     },
     {
@@ -19977,6 +19977,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Agents.Pty.Tests/UnixPtyDeliveryEnvelopeTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Agents.Pty.Tests/WindowsPtyArgvNativeTests.cs",
       "classes": [
         "ConPtyEnvironmentIsolationGuardTests"
@@ -23680,6 +23686,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Infrastructure/RcBridgeProbePlatformTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs",
       "classes": [
         "DerivedImpactIndexTests",
@@ -23713,6 +23725,12 @@
       "path": "tests/Antiphon.Tests/Infrastructure/WorktreeRemovalAuthorityTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Infrastructure/ZombieCensusPlatformTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
       ]
     },
     {
@@ -23882,6 +23900,12 @@
         "C1008PlatformContractTests",
         "OuterRowBuildStampTests",
         "WindowsUnitPlatformAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs",
+      "classes": [
+        "LinuxOnlyExpectedSkipClosureTests"
       ]
     },
     {
