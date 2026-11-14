@@ -21,6 +21,7 @@ public sealed class SessionTranscriptSummaryAppendTests
 {
     [Test]
     [Arguments("normal")]
+    [Arguments("ef-single")]
     [Arguments("rollback")]
     [Arguments("ambiguous")]
     [Arguments("partial")]
@@ -55,23 +56,44 @@ public sealed class SessionTranscriptSummaryAppendTests
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},2001,'TurnEnd',now())");
             await tx.RollbackAsync();
         }
+        await InstallStatementAuditAsync(db);
         fault.Armed = true;
         var events = scenario == "partial"
             ? new[] { f.Event(1, uuid: "one"), f.Event(2, "TurnEnd", uuid: "poison"), f.Event(3, uuid: "three") }
             : scenario == "stub"
                 ? new[] { f.Event(1, uuid: "one"), f.Event(2, "CompactBoundary", text: "(manual)", uuid: "poison") }
-                : Enumerable.Range(1, scenario == "normal" ? 100 : 1).Select(n => f.Event(n, scenario == "normal" ? "AssistantText" : "TurnEnd", uuid: "ef-" + n)).ToArray();
-        await f.Runtime.PersistTranscriptAsync(f.SessionId, events);
+                : Enumerable.Range(1, scenario == "normal" ? 100 : 1).Select(n => f.Event(n, scenario == "normal" || scenario == "ef-single" ? "AssistantText" : "TurnEnd", uuid: "ef-" + n)).ToArray();
+        var result = await f.Runtime.PersistTranscriptAsync(f.SessionId, events);
         if (scenario == "rollback" || scenario == "ambiguous") fault.Armed.ShouldBeFalse("the real commit cut must have fired");
         var added = scenario == "rollback" ? 0 : scenario is "partial" or "stub" ? 2 : scenario == "normal" ? 100 : 1;
-        (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(101 + added);
-        await EqualAsync(db, [f.SessionId]);
-        // Actual runtime replay dedupes UUIDs; it must not increment metadata again.
+        (await db.TranscriptEntries.LongCountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(101 + added);
+        var statements = await db.Database.SqlQueryRaw<AppendStatement>("SELECT \"First\",\"Last\",\"Rows\" FROM \"C1915AppendAudit\" WHERE \"AgentSessionId\"=@id ORDER BY \"Ordinal\"", new NpgsqlParameter("id", f.SessionId)).ToListAsync();
+        statements.Sum(x => x.Rows).ShouldBe(added, "audit contains only actual committed INSERT transitions");
+        long frontier = 1000;
+        var monotonicSql = true;
+        foreach (var statement in statements)
+        {
+            if (statement.First <= frontier) monotonicSql = false;
+            frontier = Math.Max(frontier, statement.Last);
+        }
+        // EF may emit one INSERT per entity in primary-key order. The observed statement order,
+        // independently audited in PostgreSQL, determines D-5 validity. Never branch on Valid.
+        (await SummaryAsync(db, f.SessionId)).Valid.ShouldBe(monotonicSql);
+        Console.WriteLine($"C1915 EF rows={added} statements={statements.Count} monotonic={monotonicSql}");
+        if (monotonicSql)
+        {
+            (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(101 + added);
+            await EqualAsync(db, [f.SessionId]);
+        }
         if (scenario == "normal")
         {
-            await f.Runtime.PersistTranscriptAsync(f.SessionId, events);
-            (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(201);
-            await EqualAsync(db, [f.SessionId]);
+            result.CommittedRows.Count.ShouldBe(100);
+            var beforeReplay = System.Text.Json.JsonSerializer.Serialize(await SummaryAsync(db, f.SessionId));
+            var replay = await f.Runtime.PersistTranscriptAsync(f.SessionId, events);
+            replay.CommittedRows.ShouldBeEmpty();
+            (await db.TranscriptEntries.LongCountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(201);
+            System.Text.Json.JsonSerializer.Serialize(await SummaryAsync(db, f.SessionId)).ShouldBe(beforeReplay);
+            if (monotonicSql) await EqualAsync(db, [f.SessionId]);
         }
         await using var fresh = f.NewContainer();
         var cold = (await fresh.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId];
@@ -89,24 +111,23 @@ public sealed class SessionTranscriptSummaryAppendTests
             Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = seq, Kind = kind, Text = text,
             Timestamp = seconds is {} n ? Epoch.AddSeconds(n) : null, CreatedAt = Epoch.AddDays(1) };
         // Greatest sequence, greatest end timestamp, and greatest effective time are different rows.
-        db.TranscriptEntries.AddRange(Row(4, "AssistantText", 100), Row(2, "TurnEnd", 10), Row(1, "TurnEnd", 100), Row(5, "TurnTitle", 500));
-        await db.SaveChangesAsync();
+        await AppendRowsAsync(db, Row(4, "AssistantText", 100), Row(2, "TurnEnd", 10), Row(1, "TurnEnd", 100), Row(5, "TurnTitle", 500));
         var summary = await SummaryAsync(db, f.SessionId);
-        summary.EndSequence.ShouldBe(2); summary.EndTimestamp.ShouldBe(Epoch.AddSeconds(100));
+        summary.Valid.ShouldBeTrue();
+        summary.EndSequence.ShouldBe(2);
+        summary.EndTimestamp.ShouldBe(Epoch.AddSeconds(100));
         summary.LastSequence.ShouldBe(5); Working(summary).ShouldBeTrue("equality with the independent end timestamp is working");
         await EqualAsync(db, [f.SessionId]);
-        db.TranscriptEntries.AddRange(Row(6, "CompactBoundary", null, "(auto)"), Row(7, "UserPrompt", null, "<command-name>/x"));
-        await db.SaveChangesAsync();
+        await AppendRowsAsync(db, Row(6, "CompactBoundary", null, "(auto)"), Row(7, "UserPrompt", null, "<command-name>/x"));
         (await SummaryAsync(db, f.SessionId)).HasNullTimestampActivity.ShouldBeFalse();
         await EqualAsync(db, [f.SessionId]);
-        db.TranscriptEntries.Add(Row(8, "CompactBoundary", null, "(manual)")); await db.SaveChangesAsync();
+        await AppendRowsAsync(db, Row(8, "CompactBoundary", null, "(manual)"));
         summary = await SummaryAsync(db, f.SessionId);
         summary.EndSequence.ShouldBe(8); summary.EndTimestamp.ShouldBe(Epoch.AddSeconds(100)); Working(summary).ShouldBeFalse();
         await EqualAsync(db, [f.SessionId]);
-        db.TranscriptEntries.Add(Row(9, "AssistantText", null)); await db.SaveChangesAsync();
+        await AppendRowsAsync(db, Row(9, "AssistantText", null));
         Working(await SummaryAsync(db, f.SessionId)).ShouldBeTrue("null activity timestamps cannot prove stale");
-        db.TranscriptEntries.AddRange(Row(10, "UserPrompt", 5, "[Request interrupted by user]"), Row(11, "AssistantText", 20));
-        await db.SaveChangesAsync();
+        await AppendRowsAsync(db, Row(10, "UserPrompt", 5, "[Request interrupted by user]"), Row(11, "AssistantText", 20));
         Working(await SummaryAsync(db, f.SessionId)).ShouldBeFalse("later sequence does not make an earlier timestamp current");
         await EqualAsync(db, [f.SessionId]);
     }
@@ -195,6 +216,33 @@ public sealed class SessionTranscriptSummaryAppendTests
             { await transaction.RollbackAsync(); return true; }
             catch { await transaction.RollbackAsync(); throw; }
         }
+    }
+
+    // These audit objects exist only in this test's owned clone. They observe real EF SQL order;
+    // no command is rewritten, no production trigger is replaced and no transcript text is logged.
+    private static Task InstallStatementAuditAsync(AppDbContext db) => db.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE "C1915AppendAudit" ("Ordinal" bigint GENERATED ALWAYS AS IDENTITY,
+            "AgentSessionId" uuid NOT NULL, "First" bigint NOT NULL, "Last" bigint NOT NULL, "Rows" bigint NOT NULL);
+        CREATE FUNCTION c1915_test_audit() RETURNS trigger LANGUAGE plpgsql AS $audit$
+        BEGIN
+            INSERT INTO "C1915AppendAudit" ("AgentSessionId","First","Last","Rows")
+            SELECT "AgentSessionId", min("Sequence"), max("Sequence"), count(*) FROM audit_entries GROUP BY "AgentSessionId";
+            RETURN NULL;
+        END;
+        $audit$;
+        CREATE TRIGGER zz_c1915_test_audit AFTER INSERT ON "TranscriptEntries"
+            REFERENCING NEW TABLE AS audit_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_test_audit();
+        """);
+
+    private static Task AppendRowsAsync(AppDbContext db, params TranscriptEntry[] rows) => db.Database.ExecuteSqlRawAsync(
+        "INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"Text\",\"Timestamp\",\"CreatedAt\") SELECT \"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"Text\",\"Timestamp\",\"CreatedAt\" FROM jsonb_populate_recordset(NULL::\"TranscriptEntries\", @rows::jsonb)",
+        new NpgsqlParameter("rows", System.Text.Json.JsonSerializer.Serialize(rows)));
+
+    private sealed class AppendStatement
+    {
+        public long First { get; set; }
+        public long Last { get; set; }
+        public long Rows { get; set; }
     }
 
     private static DateTime Epoch => new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
