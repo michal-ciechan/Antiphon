@@ -45,10 +45,10 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
         var clock = new FakeTimeProvider(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         var host = await PhoneHomeTestHost.StartAsync(clock);
         // Independent isolated task databases share the transport, not a capacity scenario.
-        host.Capacity = 64;
+        host.Capacity = 2;
         try
         {
-            var peer = await host.ConnectPeerAsync(concurrentCalls: true);
+            var peer = await host.ConnectPeerAsync();
             peer.SilentFor(PhoneHomeOperation.WorkspaceMirror);
             var live = await host.WaitLiveAsync(runnerId: host.AllowedRunnerId);
             host.Directory.MarkRecovered(live);
@@ -59,18 +59,24 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
 
     internal static async Task DisposeSharedAsync()
     {
-        if (Shared.IsValueCreated)
+        try
         {
-            using var phase = TestTiming.BeginFixturePhase("c0824-producer-transport", TestPhaseKind.HostShutdown, "stop");
-            var transport = await Shared.Value;
-            await transport.Peer.DisposeAsync();
-            await transport.Host.DisposeAsync();
+            if (Shared.IsValueCreated)
+            {
+                using var phase = TestTiming.BeginFixturePhase("c0824-producer-transport", TestPhaseKind.HostShutdown, "stop");
+                var transport = await Shared.Value;
+                await transport.Peer.DisposeAsync();
+                await transport.Host.DisposeAsync();
+            }
         }
-        if (Seed.IsValueCreated) await (await Seed.Value).DisposeAsync();
+        finally
+        {
+            if (Seed.IsValueCreated) await (await Seed.Value).DisposeAsync();
+        }
     }
 
     public int MirrorCount(Guid id) => MirrorRequests(id).Length;
-    private PhoneHomeFrame[] MirrorRequests(Guid id) => Rig.Peer.IncomingSnapshot()
+    private PhoneHomeFrame[] MirrorRequests(Guid id) => Rig.Peer.Incoming.ToArray()
         .Where(f => f.Kind == PhoneHomeFrameKind.Request && f.Operation == PhoneHomeOperation.WorkspaceMirror)
         .Where(f => f.Payload?.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json) is { } request
             && (request.Binding?.TaskId == id || request.Binding is null && request.Name == RemoteWorkspaceService.MirrorName(id)))
