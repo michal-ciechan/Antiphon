@@ -869,6 +869,7 @@ public sealed class VolumeRetirementReceiptTests
         {
             using var fixture = new C1008HostFixture(main: false);
             var trace = Path.Combine(fixture.Root, "ready-sync.trace");
+            await File.WriteAllTextAsync(trace, "");
             var module = Path.Combine(fixture.Root, "ready-durability-module.sh");
             var hooks = $$"""
                 eval "$(declare -f c1609_write_ready_receipt | sed '1s/c1609_write_ready_receipt/c1901_original_ready_writer/')"
@@ -915,8 +916,8 @@ public sealed class VolumeRetirementReceiptTests
             var receipt = ReceiptPath(fixture);
             if (vector != "positive")
             {
-                events.ShouldContain("fault-" + vector, "the intended Ready publication fsync was reached");
                 run.Exit.ShouldBe(2, run.Output);
+                events.ShouldContain("fault-" + vector, "the intended Ready publication fsync was reached");
                 run.Output.ShouldContain("RecycleReceiptUnavailable");
                 run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
                 if (vector == "file") File.Exists(receipt).ShouldBeFalse("file contents must be durable before publishing the authority receipt");
