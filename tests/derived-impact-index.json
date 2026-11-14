@@ -1203,18 +1203,18 @@
     },
     {
       "path": "server/Application/Services/SessionRuntimeActionCoordinator.cs",
-      "classes": 33,
+      "classes": 34,
       "reason": "cap",
-      "owed": 8,
+      "owed": 9,
       "first": [
+        "ChannelOutboundRetentionTests",
         "ChannelPromptCorrelationTests",
         "CodexCliObservationGapTests",
         "CompactionRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesCompactionRecoveryTests",
         "PostLandMutationDeliveryTests",
-        "SessionFinishedDuplicateTests",
-        "StandingResumeReceiptReadinessTests"
+        "SessionFinishedDuplicateTests"
       ]
     },
     {
@@ -1375,9 +1375,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 271,
+      "classes": 272,
       "reason": "cap",
-      "owed": 246,
+      "owed": 247,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1573,9 +1573,9 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
         "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
@@ -1621,9 +1621,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1637,9 +1637,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 596,
+      "classes": 597,
       "reason": "cap",
-      "owed": 571,
+      "owed": 572,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2335,9 +2335,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 511,
+      "classes": 512,
       "reason": "cap",
-      "owed": 486,
+      "owed": 487,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -10783,11 +10783,11 @@
         "ChannelBridgeTests",
         "ChannelInboundRecoveryTests",
         "ChannelOutboundRecoveryTests",
-        "ChannelOutboundRetentionTests",
         "ChannelReplyDurabilityTests",
         "ChannelReplyLateConfirmDispatchTests",
         "GrokDelegateEndToEndTests",
         "ReviewLoopTests",
+        "RuntimeActionClaimQueryTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "SessionRuntimeActionDeferralTests",
         "SessionRuntimeActionRecoveryTests",
@@ -14041,6 +14041,7 @@
       "path": "server/Domain/Entities/SessionRuntimeAction.cs",
       "classes": [
         "AgentTaskCatchUpSettlementTests",
+        "RuntimeActionClaimQueryTests",
         "SessionRuntimeActionDeferralTests",
         "SessionRuntimeActionRoutingTests",
         "SessionRuntimeActionTests",
@@ -15033,6 +15034,13 @@
         "PipelineResolutionTests",
         "PipelineSpeedIntegrationTests",
         "ProjectDeletionTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/SessionRuntimeActionClaimQuery.cs",
+      "classes": [
+        "C1729LayeringGuardTests",
+        "RuntimeActionClaimQueryTests"
       ]
     },
     {
