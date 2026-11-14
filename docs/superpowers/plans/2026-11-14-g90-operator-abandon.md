@@ -7,8 +7,8 @@ All nine original round-1 commits are retained by cherry-pick -x on current mast
 Dedicated POST /api/sessions/{id}/messages/{messageId}/abandon is the smallest
 safe addition: DELETE retains ordinary Pending cancellation, and abandonment needs
 an operator credential and mandatory reason. Reuse Canceled. Persist an Info
-AgentIncident using the existing DeliveryTransportFailed kind, with an exact
-operator-abandon:<message-id> identity, actor, reason and timestamp, atomically
+AuditRecord using the existing ToolInvocation kind, keyed by message id with an exact
+operator-abandon:<message-id> summary, session, actor, reason and timestamp, atomically
 with the status change. Duplicate requests return the original cancellation time
 and do not overwrite the audit. No timer, Enter, resend or retype.
 

@@ -131,6 +131,7 @@ public static class SessionEndpoints
         });
 
         sessions.MapExpectationHoldRelease();
+        sessions.MapQueuedMessageAbandon();
 
         sessions.MapPost("/{id:guid}/resize", async (
             Guid id,
@@ -195,6 +196,18 @@ public static class SessionEndpoints
                 "Releasing an expectation-watchdog hold requires the operator token (X-Antiphon-Operator-Token).");
             var releasedBy = $"{user.UserName} (operator token)";
             return Results.Ok(await queue.ReleaseExpectationHoldAsync(id, request.Reason, releasedBy, cancellationToken));
+        });
+
+    public static RouteHandlerBuilder MapQueuedMessageAbandon(this IEndpointRouteBuilder sessions) =>
+        sessions.MapPost("/{id:guid}/messages/{messageId:guid}/abandon", async (
+            HttpContext http, Guid id, Guid messageId, AbandonQueuedMessageRequest request,
+            IOptions<PhoneHomeRunnerSettings> settings, ICurrentUser user,
+            SessionMessageQueueService queue, CancellationToken cancellationToken) =>
+        {
+            OperatorCredential.Require(http, settings.Value,
+                "Abandoning unconfirmed input requires the operator token (X-Antiphon-Operator-Token).");
+            return Results.Ok(await queue.AbandonAsync(id, messageId, request.Reason,
+                $"{user.UserName} (operator token)", cancellationToken));
         });
 
     private static void ValidateTerminalSize(int cols, int rows)

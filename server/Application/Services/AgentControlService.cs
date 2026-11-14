@@ -685,11 +685,17 @@ public sealed class AgentControlService : ICompactionContinuationResume
                     && m.Status == QueuedMessageStatus.Pending && m.RulesRefreshKey == null).OrderBy(m => m.Sequence).ThenBy(m => m.Id).ToListAsync(ct);
                 // A lost Input reply leaves a charged attempt Sent without a verdict.
                 // Keep it on the source conversation until recovery resolves it.
-                if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m))
-                    || await _db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == sourceId
+                var unresolvedSentIds = await _db.SessionQueuedMessages.Where(m => m.AgentSessionId == sourceId
                         && m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null
-                        && m.DeliveryAttempts > 0, ct))
-                    throw new ConflictException($"Resolve attempted pending input in /sessions/{sourceId}/queue before switching.", "standing_resume_delivery_pending");
+                        && m.DeliveryAttempts > 0).OrderBy(m => m.Sequence).ThenBy(m => m.Id).Select(m => m.Id).ToListAsync(ct);
+                if (pending.Any(m => !StandingQueueSwitchPolicy.NeverAttempted(m)) || unresolvedSentIds.Count > 0)
+                    throw new ConflictException(
+                        $"Resolve blocking message ids [{string.Join(", ", pending.Where(m => !StandingQueueSwitchPolicy.NeverAttempted(m)).Select(m => m.Id).Concat(unresolvedSentIds))}] "
+                        + $"in GET /api/sessions/{sourceId}/messages before switching. "
+                        + $"For each unconfirmed Sent id, an operator must POST /api/sessions/{sourceId}/messages/{{messageId}}/abandon "
+                        + "with X-Antiphon-Operator-Token and a JSON reason. It may already have been delivered; abandonment does not recall it. "
+                        + $"For Pending ids use ordinary DELETE /api/sessions/{sourceId}/messages/{{messageId}}.",
+                        "standing_resume_delivery_pending");
                 if (supervisedFresh is not null && pending.Any(m => !_restartEscalation.CanTransfer(m)))
                     throw new ConflictException($"Resolve producer-bound pending input in /sessions/{sourceId}/queue before automatic recovery.", "standing_resume_delivery_pending");
                 if (pending.Count > 0)
