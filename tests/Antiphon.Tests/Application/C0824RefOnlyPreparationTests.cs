@@ -40,6 +40,22 @@ public sealed class C0824RefOnlyPreparationTests
         refused.Pushed.ShouldBeFalse("equal SHA does not establish local ownership");
         refused.Warning.ShouldBe("ref_only_local_ref_collision");
         (await f.Git.RevParseAsync("refs/heads/" + foreign.WorktreeBranch)).ShouldBe(f.Git.Baseline);
+
+        var raced = await PlannedAsync(f);
+        var author = "local-race-" + Guid.NewGuid().ToString("N");
+        var other = await f.Git.PublishForeignBranchAsync(author, "race.txt");
+        await f.Git.RunAsync(f.Git.Desktop, "fetch", "origin", "refs/heads/" + author);
+        var crossed = false;
+        producer.PreparationBoundaryAsync = async (site, _) =>
+        {
+            if (site != "before-local-ref") return;
+            crossed = true;
+            await f.Git.RunAsync(f.Git.Desktop, "update-ref", "refs/heads/" + raced.WorktreeBranch, other);
+        };
+        var lost = await producer.PublishAsync(raced, default);
+        crossed.ShouldBeTrue("race reaches the actual expected-absence CAS");
+        lost.Pushed.ShouldBeFalse();
+        (await f.Git.RevParseAsync("refs/heads/" + raced.WorktreeBranch)).ShouldBe(other, "CAS loser preserves the winner");
     }
 
     [Test]
@@ -67,6 +83,24 @@ public sealed class C0824RefOnlyPreparationTests
         result.Pushed.ShouldBeFalse("foreign ancestor is never adopted by fast-forward");
         result.Warning.ShouldBe("ref_only_remote_ref_collision");
         (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + newer.WorktreeBranch)).ShouldBe(f.Git.Baseline);
+
+        var raced = C0824RefOnlyProvisionTests.NewTask(f);
+        raced.WorktreeBaseRequestedRef = newer.WorktreeBaseSha;
+        f.Db.AgentTasks.Add(raced); await f.Db.SaveChangesAsync();
+        var producer = C0824RefOnlyProvisionTests.Producer(f);
+        await using (var lease = await f.Git.Leases.TryAcquireAsync(f.Git.Desktop, default))
+            await producer.PlanAsync(raced, lease!, default);
+        var crossed = false;
+        producer.PreparationBoundaryAsync = async (site, _) =>
+        {
+            if (site != "before-push") return;
+            crossed = true;
+            await f.Git.RunAsync(f.Git.Desktop, "push", "origin", f.Git.Baseline + ":refs/heads/" + raced.WorktreeBranch);
+        };
+        result = await producer.PublishAsync(raced, default);
+        crossed.ShouldBeTrue("race reaches the actual remote absence lease");
+        result.Pushed.ShouldBeFalse("a foreign ancestor arriving after observation is preserved");
+        (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + raced.WorktreeBranch)).ShouldBe(f.Git.Baseline);
     }
 
     [Test]
