@@ -797,6 +797,9 @@ public sealed class TestTimingSession : IDisposable
         "historical migration database",
         "host-load API read fixtures",
         "host-load probe initialization",
+        "host-load world initialization",
+        "host-load 100 durable receipts",
+        "host-load cancel and join world",
     };
 
     private static string BoundOperation(string? operation) =>

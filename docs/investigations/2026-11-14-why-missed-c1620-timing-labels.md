@@ -26,7 +26,22 @@ the three exact literals without allowing arbitrary operation text.
 `6a4bea739d2e66e1f2da2f7bbcb65ca9ff2803d2` (original Debug commit
 `74a4543adedd71365027c1343334f108cf4e9e46`) as the introducing change. Its diff
 adds all three `BeginPhase` calls and does not change `tests/Shared/TestTiming.cs`.
-Adjacent-commit execution at its parent and this commit is pending below.
+Adjacent-commit execution confirms the boundary: parent
+`ca3dff3c7d13862cb0b6132c97ab9af506ca468b` passes 1/1; this commit fails 1/1
+with exactly the same three dropped labels. Each detached historical worktree
+was built once and ran only the exact C1620 method. `git bisect start
+--no-checkout <bad> <good>` with these tested adjacent bounds reports this SHA
+as first bad. The bisect was reset without changing the assigned branch.
+
+| Historical row | Passed / failed / skipped | Driver wall seconds | Slot wait seconds | Build/run seconds |
+|---|---|---:|---:|---:|
+| Parent build | 0 errors, 2091 warnings | 274.986 | 0 | 272.69 |
+| Parent exact method | 1 / 0 / 0 | 54.260 | 45 | 5.448 |
+| First-bad build | 0 errors, 2063 warnings | 218.354 | 0 | 216.47 |
+| First-bad exact method | 0 / 1 / 0 | 36.039 | 15 | 13.089 |
+
+Historical build/load metadata and all nonzero test results are retained under
+`.antiphon/debug-abd9b404/`; no historical failure is replaced by a later green.
 
 ## Why Merge 221 missed it
 
