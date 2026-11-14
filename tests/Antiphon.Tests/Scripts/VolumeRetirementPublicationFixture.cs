@@ -149,10 +149,10 @@ internal sealed class VolumeRetirementPublicationFixture
         "\nexport C1008_OPERATION_STARTED=1700000000\nexport C1609_PROOF_NONCE=" + Nonce +
         "\nexport C1609_PROOF_INVENTORY=" + Inventory + "\n";
 
-    internal async Task<(int Exit, string Output)> Preview(Proof proof)
+    internal async Task<(int Exit, string Output)> Preview(Proof proof, string extra = "")
     {
         Host.ShouldNotBeNull();
-        var result = await Host.Run("retire-temp-runner", Bindings(proof), dryRun: true);
+        var result = await Host.Run("retire-temp-runner", Bindings(proof) + "\n" + extra, dryRun: true);
         Host.Removed.ShouldBeEmpty("preview never removes volumes");
         var text = result.Output + await VolumeRetirementFixture.AuditText(Host);
         await File.WriteAllTextAsync(Path.Combine(Root, "preview-" + ++sequence + ".out"), text);
