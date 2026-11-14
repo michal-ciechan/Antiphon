@@ -474,6 +474,86 @@ public sealed class VolumeRetirementPublicationTests
         await SelectorVector(symlink: true);
     }
 
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Salvage_deleted_after_sealing_refuses_ready()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        await f.Git(f.Bare, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.U));
+        var audit = await f.Preview(proof);
+        Refused(audit, "RecycleGitAuditUnknown");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Head_rolled_back_after_sealing_refuses_ready()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, "refs/heads/published-original");
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        await f.Git(f.Bare, "update-ref", "refs/heads/published-original", f.A);
+        var audit = await f.Preview(proof);
+        Refused(audit, "RecycleGitAuditUnknown");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Salvage_replaced_after_sealing_refuses_ready()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        await f.Git(f.Bare, "update-ref", VolumeRetirementPublicationFixture.Canonical(f.U), f.X);
+        var audit = await f.Preview(proof);
+        Refused(audit, "RecycleGitAuditUnknown");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Origin_unreachable_at_final_check_refuses_ready()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        Directory.Move(f.Bare, f.Bare + "-unreachable");
+        var audit = await f.Preview(proof);
+        Refused(audit, "RecycleGitAuditUnknown");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Origin_rebound_at_final_check_refuses_ready()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        await f.Publish(f.U, null);
+        await f.Protect(f.U, "refs/heads/recovery");
+        var proof = await f.WriteProof();
+        proof.Exit.ShouldBe(0, proof.Output);
+        await f.Git(f.Repo, "remote", "set-url", "origin", "https://fixture.invalid/unbound.git");
+        var audit = await f.Preview(proof);
+        Refused(audit, "RecycleGitAuditUnknown");
+    }
+
     private static void Refused((int Exit, string Output) run, string diagnosis)
     {
         run.Exit.ShouldBe(2, run.Output);
