@@ -17,6 +17,14 @@ flush/watchdog pass records a durable Error-level incident in ATTENTION requirin
 without changing the attempt or stopping the process. Receipt/attention discovery
 continues beyond the retry window and while the session is working. A complete
 matching UserPrompt may still confirm the original attempt after that incident.
+An operator may explicitly abandon an unresolved Sent attempt through
+POST /api/sessions/{id}/messages/{messageId}/abandon with the operator credential
+and a reason. Queue and attention expose those rows even when stopped, unstartable
+or beyond incident recency. Cancellation and a permanent actor/time/reason audit
+commit together under the queue lock. This sends no input and makes no claim that
+delivery failed: the message may already have reached the agent. It is never
+automatic. A later prompt remains in the transcript and is ignored for the
+Canceled row; it does not resurrect or re-deliver that message.
 Input and ConditionalInput use the runtime's per-session gate, independently of
 the workspace mutation gate. Retention remains serialized with Launch/Mirror and
 keeps its live/recent-use and holder checks. Slow workspace gate owners log their

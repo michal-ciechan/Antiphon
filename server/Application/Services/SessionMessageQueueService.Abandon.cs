@@ -37,7 +37,7 @@ public sealed partial class SessionMessageQueueService
                 m => m.Id == messageId && m.AgentSessionId == sessionId, ct)
                 ?? throw new NotFoundException(nameof(SessionQueuedMessage), messageId);
             var auditKey = $"operator-abandon:{messageId}; session={sessionId};";
-            if (message.Status == QueuedMessageStatus.Canceled && message.CanceledAt is { } canceled
+            if (message.Status == QueuedMessageStatus.Canceled && message.DeliveryVerdict == null && message.CanceledAt is { } canceled
                 && await db.AuditRecords.AnyAsync(i => i.Id == messageId
                     && i.EventType == AuditEventType.ToolInvocation && i.Summary.StartsWith(auditKey), ct))
             {

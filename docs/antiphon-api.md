@@ -307,11 +307,30 @@ GET    /api/sessions/{id}/messages           the delivery queue
 GET    /api/sessions/{id}/pending-notes?since={sequence}&limit={n}  pending notes after since, read only (CARD-1591)
 POST   /api/sessions/{id}/messages           enqueue (Now / WhenIdle)
 DELETE /api/sessions/{id}/messages/{messageId}
+POST   /api/sessions/{id}/messages/{messageId}/abandon  { "reason": "..." }; X-Antiphon-Operator-Token required
 POST   /api/sessions/{id}/messages/{messageId}/send-now
 POST   /api/sessions/{id}/expectation-hold/release  { "reason": "..." } (required); audited release of an expectation-watchdog composer hold (CARD-0650). Needs X-Antiphon-Operator-Token (403 operator_token_required otherwise); the audit names the authenticated operator. Types nothing; 422 without a reason, 404 unknown session, 200 with the released nudge ids (empty when nothing held).
 GET    /api/expectation-watchdog?boardId=<guid>&skip=0&take=20  read-only CARD-0650 status: directive/config faults, scan freshness, lane counts, paged episodes and nudge receipt/answer/operator evidence. boardId is required; task and capability tokens are constrained to their board/project. No channel address, transcript body or send/ACK route is returned.
 POST   /api/sessions/{id}/resize  |  /resume  |  /kill
 ```
+
+The delivery queue lists Pending rows and Sent rows with a null verdict and at least
+one attempt. `deliveryUnconfirmed`, `deliveryAttempts`, `lastDeliveryStartedAt` and
+the existing body identify uncertain delivery. Unconfirmed Sent rows offer operator
+abandonment, never send-now. POST abandon requires a trimmed reason of 1–1000
+characters and the same operator header as expectation-hold release (403 without
+it). It returns `{sessionId,messageId,status:"Canceled",canceledAt,warning}`;
+the warning says the message may have been delivered and cannot be recalled.
+Status cancellation and the permanent AuditRecord (message/session, actor, reason,
+time) commit together. Retries of an already-abandoned retained row preserve the
+original audit/time. Pending, confirmed, zero-attempt and ordinary-cancelled rows
+return 409 `queue_abandon_not_unconfirmed`; use DELETE for ordinary Pending
+cancellation. Unknown/wrong-session ids return 404, invalid reasons 422.
+Abandon sends no terminal input. Later transcript prompts remain recorded but do
+not resurrect the cancelled row. Attention retains an actionable ParkedMessage
+for unresolved Sent rows without an incident age cutoff, including stopped/failed
+sessions; its actions are OpenAgent and AbandonMessage. The switch 409 names the
+blocking ids, queue route and exact resolution action.
 
 `PATCH /api/agents/{id}` is where `alwaysOn`, `kind`, `tuiProfileId`, `modelId`, `launchEnv`,
 `bundleKeys`, `replyStyle`, `systemPromptAppend`, `sessionBackend`, `herdrWorkspaceLabel` and

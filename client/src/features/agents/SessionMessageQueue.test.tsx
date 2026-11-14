@@ -76,6 +76,22 @@ describe('SessionMessageQueue', () => {
     expect(screen.getByLabelText('Reason')).toBeInTheDocument()
     expect(screen.getByLabelText('Operator token')).toHaveAttribute('type', 'password')
     expect(screen.getByRole('button', { name: 'Confirm abandonment' })).toBeDisabled()
+    let abandoned = false
+    server.use(
+      http.post('/api/sessions/s1/messages/m1/abandon', async ({ request }) => {
+        expect(request.headers.get('X-Antiphon-Operator-Token')).toBe('fixture-operator')
+        expect(await request.json()).toEqual({ reason: 'Give up waiting for this input' })
+        abandoned = true
+        return HttpResponse.json({ sessionId: 's1', messageId: 'm1', status: 'Canceled',
+          canceledAt: '2026-11-14T12:00:00Z', warning: 'It may have been delivered.' })
+      }),
+      http.get('/api/sessions/s1/messages', () => HttpResponse.json({ sessionId: 's1', messages: [], working: false })),
+    )
+    await user.type(screen.getByLabelText('Reason'), 'Give up waiting for this input')
+    await user.type(screen.getByLabelText('Operator token'), 'fixture-operator')
+    await user.click(screen.getByRole('button', { name: 'Confirm abandonment' }))
+    await waitFor(() => expect(abandoned).toBe(true))
+    await waitFor(() => expect(screen.queryByText('Sent, delivery unconfirmed')).not.toBeInTheDocument())
   })
   it('marks a parked message, because Pending alone does not say it is going nowhere', async () => {
     // CARD-0055 shipped parking and nothing rendered it: a message that spent its delivery attempts

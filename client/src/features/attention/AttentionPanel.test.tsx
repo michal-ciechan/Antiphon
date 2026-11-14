@@ -506,6 +506,17 @@ describe('AttentionPanel', () => {
 
   // ---- slice 4: the actions ---------------------------------------------------------------------
 
+  it('opens the operator abandon decision for unresolved Sent input', async () => {
+    serve({ items: [item({ kind: 'ParkedMessage', severity: 'Error', sessionId: 'sess-1',
+      messageId: 'msg-1', agentId: 'agent-1', title: 'Unconfirmed delivery',
+      actions: ['OpenAgent', 'AbandonMessage'] })] })
+    renderWithProviders(<AttentionPanel />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Abandon message' }))
+    expect(await screen.findByText(/may have been delivered/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send now' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirm abandonment' })).toBeDisabled()
+  })
+
   it('sends a parked message now, at the manual endpoint that bypasses parking', async () => {
     // CARD-0055 parks a message after it spends its delivery attempts and every AUTOMATIC path then
     // excludes it — deliberately. The manual send is the only thing left that moves it, and until

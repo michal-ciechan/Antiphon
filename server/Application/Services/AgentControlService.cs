@@ -697,7 +697,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
                         + $"For Pending ids use ordinary DELETE /api/sessions/{sourceId}/messages/{{messageId}}.",
                         "standing_resume_delivery_pending");
                 if (supervisedFresh is not null && pending.Any(m => !_restartEscalation.CanTransfer(m)))
-                    throw new ConflictException($"Resolve producer-bound pending input in /sessions/{sourceId}/queue before automatic recovery.", "standing_resume_delivery_pending");
+                    throw new ConflictException($"Resolve producer-bound pending input in GET /api/sessions/{sourceId}/messages before automatic recovery.", "standing_resume_delivery_pending");
                 if (pending.Count > 0)
                 {
                     var sourceSession = await _db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sourceId, ct);
