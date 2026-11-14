@@ -41,9 +41,9 @@ and not a product defect.
 
 ## Fix (master)
 
-The child's working directory is now `CheckpointFixtures.RepoRoot`, as in the validator corpus
-child that `RunStepsAsync` was written for, so nothing the child or its console host holds is under
-the fixture tree. The test also deletes its fixture subdirectory immediately after the cancelled run
+The child's working directory is now the system temp directory (`Path.GetTempPath()`), which is
+never removed, so nothing the child or its console host holds is under the fixture tree. (The repo
+root would make the class a shared-checkout starter under the C1810 guard.) The test also deletes its fixture subdirectory immediately after the cancelled run
 returns (`Should.NotThrow`), which guards the property the teardown needs. No timeout or budget
 changed. On Linux nothing changes (no console host; `pwsh` runs in its own session and is killed by
 process group).

@@ -69,10 +69,11 @@ public sealed class CheckpointStepDeadlineTests : CheckpointTestBase
     {
         _ = cancellationToken.CanBeCanceled;
         var work = Directory.CreateDirectory(Path.Combine(TempDir(), "step-child")).FullName;
-        // rc run 34d41b7e g111: the child's working directory stays outside the fixture tree (as the
-        // validator corpus child does). Windows keeps a process's current directory open until the
-        // process and its console host are gone, and a cancelled child's conhost.exe outlives it.
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = CheckpointFixtures.RepoRoot };
+        // rc run 34d41b7e g111: the child's working directory stays outside the fixture tree. Windows
+        // keeps a process's current directory open until the process and its console host are gone,
+        // and a cancelled child's conhost.exe outlives it. The system temp directory is never removed
+        // and is not the shared checkout (C1810).
+        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Path.GetTempPath() };
         foreach (var token in new[] { "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 600" })
             start.ArgumentList.Add(token);
         var clock = Stopwatch.StartNew();
