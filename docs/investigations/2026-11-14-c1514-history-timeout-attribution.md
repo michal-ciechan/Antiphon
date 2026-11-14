@@ -1,6 +1,6 @@
 # C1514 history timeout attribution
 
-Debug task `7bd634da`, 2026-11-14. Reopened-task outcome: Incomplete: EXPLAIN completed and test-side repair pushed, but no direct merge. Guards passed 90/90 and fixture witnesses 2/2 at the earlier build; integration validation passed 1/37 and failed 36/37 due to an introduced readiness regression. Startup correction e40d61c3f612341628d978353a05fb291bc56602 is pushed but unbuilt/unverified: two corrective build admissions exited 4. Three green C1514 repetitions remain outstanding within the caller hard stop. This is diagnostic evidence, not a release qualification or an ordinary Review approval.
+Debug task `7bd634da`, 2026-11-14. Final continuation outcome: Complete: corrected test-side source built successfully; three serial C1514 repetitions passed 37/37 each and fixture witnesses passed 2/2. No merge performed; next: merge. This is targeted repair evidence, not a release qualification or an ordinary Review approval.
 
 Commissioning evidence (reported by Review `23794b24`, not re-created here): reviewed tip `25fe10cebde5e8e17530d579a7c4e0b57f080515` passed 16/21 in a combined run and 20/21 on an isolated retry. `HistoryFailureDoesNotStopLiveSamples` hit its 10 s limit twice. The four first-run timeouts that passed on retry were the derive-before-save and derive-after-write recovery arguments, `IdentityConflictsNeverOverwriteStoredSamples`, and `RawAndRollupsSurviveRetentionAndLateReplay`. Reported host load was about 26; no base run had completed. Those historical failures remain failures; this comparison does not rewrite them or fabricate their missing stacks.
 
@@ -1539,3 +1539,112 @@ Additional Info:
 ````
 
 Next stage: code: build and validate e40d61c3f612341628d978353a05fb291bc56602, then complete all four C1514HostLoadServer classes three times serially; rerun affected guards/index only if subsequent source changes require it. Do not merge the currently unverified tip.
+
+## Final 45-minute continuation: corrected source validation
+
+Complete: corrected test-side source built successfully; three serial C1514 repetitions passed 37/37 each and fixture witnesses passed 2/2. No merge performed; next: merge.
+
+Source correction: `e40d61c3f612341628d978353a05fb291bc56602`. Build/run HEAD and compiled informational version: `2658e5285759883e2df8d58ba9bffb627f373be4`; this later commit adds only the preceding report. `git diff e40d61c3f612341628d978353a05fb291bc56602 HEAD -- tests server src` was empty. No compiled source changed during this continuation or any run.
+
+Build admission was requested with `-SlotWaitMinutes 45`, the documented full default. The script parses an unrestricted double and defines no finite maximum; 45 minutes covers the entire caller hard stop. Admission succeeded on the first request (0 seconds queued), so the up-to-three lease retries and five-minute pauses were not needed. No unleased command, build retry, or alternate output directory was used. Build: 0 errors, 2,063 warnings.
+
+All rows below used separate granted build-slot leases. Fixture witnesses ran once before the uninterrupted block of three C1514 processes. The four C1514 classes retain `NotInParallel("C1514HostLoadServer")`; no other own build or test was interleaved with the three repetitions. Foreign host activity was uncontrolled. The normal repository `TestDbFixture` owns its session-shared PostgreSQL container and per-world isolated cloned databases; no custom diagnostic container was created.
+
+| Row | Executed / passed / failed / skipped | Driver wall seconds | Slot wait / held seconds | Start load | End load |
+|---|---|---:|---:|---|---|
+| final45-build-1 | build exit 0 | 273.312 | 0 / 271 | `25.40 29.59 29.60 13/4749 6335` | `33.84 36.85 33.05 6/4616 1037` |
+| final45-witnesses | 2 / 2 / 0 / 0 | 92.854 | 75 / 16 | `28.32 35.47 32.66 18/4599 13205` | `22.07 31.41 31.47 22/4767 25819` |
+| final45-c1514-1 | 37 / 37 / 0 / 0 | 557.756 | 225 / 331 | `33.15 33.29 32.10 14/4887 821` | `15.45 22.58 27.95 23/4879 15936` |
+| final45-c1514-2 | 37 / 37 / 0 / 0 | 452.29 | 30 / 420 | `20.26 23.07 27.96 28/4964 23035` | `29.13 28.10 28.54 13/4702 13881` |
+| final45-c1514-3 | 37 / 37 / 0 / 0 | 563.853 | 165 / 397 | `27.84 27.85 28.46 10/4741 14989` | `14.26 24.33 28.31 10/4510 18252` |
+
+TUnit-reported execution durations were 5m22.754s, 6m53.968s and 6m31.022s for repetitions 1–3, and 10.014s for the fixture-witness process. The corrected build's native MSBuild duration was 4m29.10s. Current selected verification totals: 113 executed, 113 passed, zero failed, zero skipped. Each repetition contains exactly 21 history, four API, eight task-window and four script cases.
+
+### final45-witnesses
+
+UTC: 11/14/2026 06:02:26 to 11/14/2026 06:03:59. Compiled version: `1.0.0+2658e5285759883e2df8d58ba9bffb627f373be4`. Exit: 0.
+
+- Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests: 2 executed, 2 passed, 0 failed, 0 skipped; summed case duration 0.085 s.
+
+Slowest five (or all fixture witnesses):
+
+- `DeadlineCancelsAndJoinsHeldWorkBeforeReturning`: 0.0751435 s, Passed.
+- `ReceiptsRenewTheQuietBudgetButPollingDoesNot`: 0.0098612 s, Passed.
+
+### final45-c1514-1
+
+UTC: 11/14/2026 06:04:28 to 11/14/2026 06:13:46. Compiled version: `1.0.0+2658e5285759883e2df8d58ba9bffb627f373be4`. Exit: 0.
+
+- Antiphon.Tests.Application.C1514HostLoadApiTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 13.3855 s.
+- Antiphon.Tests.Application.C1514HostLoadHistoryTests: 21 executed, 21 passed, 0 failed, 0 skipped; summed case duration 190.0938 s.
+- Antiphon.Tests.Application.C1514TaskLoadWindowTests: 8 executed, 8 passed, 0 failed, 0 skipped; summed case duration 23.5873 s.
+- Antiphon.Tests.Scripts.C1514HostLoadScriptTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 27.0565 s.
+
+Slowest five (or all fixture witnesses):
+
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-before-save)`: 23.2260453 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-before-enqueue)`: 19.9134517 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(derive-before-save)`: 18.0686465 s, Passed.
+- `BusyRecipientEventuallyReadsSameSample`: 16.6702816 s, Passed.
+- `ReadyRecipientReadsDurableSample`: 15.6665852 s, Passed.
+- Attribution target `HistoryFailureDoesNotStopLiveSamples`: 2.6027063 s, Passed; no failure message or stack.
+
+### final45-c1514-2
+
+UTC: 11/14/2026 06:14:14 to 11/14/2026 06:21:46. Compiled version: `1.0.0+2658e5285759883e2df8d58ba9bffb627f373be4`. Exit: 0.
+
+- Antiphon.Tests.Application.C1514HostLoadApiTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 9.5195 s.
+- Antiphon.Tests.Application.C1514HostLoadHistoryTests: 21 executed, 21 passed, 0 failed, 0 skipped; summed case duration 267.8289 s.
+- Antiphon.Tests.Application.C1514TaskLoadWindowTests: 8 executed, 8 passed, 0 failed, 0 skipped; summed case duration 41.7748 s.
+- Antiphon.Tests.Scripts.C1514HostLoadScriptTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 43.7076 s.
+
+Slowest five (or all fixture witnesses):
+
+- `RecoveryAtEveryHandoffPreservesReceipt(derive-before-save)`: 34.6982704 s, Passed.
+- `ReadyRecipientReadsDurableSample`: 27.747456 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(derive-after-write)`: 24.916792 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-before-enqueue)`: 24.1298995 s, Passed.
+- `FailuresNeverPrintPositiveCapacity`: 20.2347625 s, Passed.
+- Attribution target `HistoryFailureDoesNotStopLiveSamples`: 5.339996 s, Passed; no failure message or stack.
+
+### final45-c1514-3
+
+UTC: 11/14/2026 06:21:51 to 11/14/2026 06:31:15. Compiled version: `1.0.0+2658e5285759883e2df8d58ba9bffb627f373be4`. Exit: 0.
+
+- Antiphon.Tests.Application.C1514HostLoadApiTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 16.5933 s.
+- Antiphon.Tests.Application.C1514HostLoadHistoryTests: 21 executed, 21 passed, 0 failed, 0 skipped; summed case duration 253.2687 s.
+- Antiphon.Tests.Application.C1514TaskLoadWindowTests: 8 executed, 8 passed, 0 failed, 0 skipped; summed case duration 54.4073 s.
+- Antiphon.Tests.Scripts.C1514HostLoadScriptTests: 4 executed, 4 passed, 0 failed, 0 skipped; summed case duration 27.0639 s.
+
+Slowest five (or all fixture witnesses):
+
+- `RecoveryAtEveryHandoffPreservesReceipt(derive-before-call)`: 27.2720014 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-after-enqueue)`: 26.5624038 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-after-commit)`: 26.2705561 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(derive-before-save)`: 22.6669784 s, Passed.
+- `RecoveryAtEveryHandoffPreservesReceipt(ingest-before-commit)`: 21.8740627 s, Passed.
+- Attribution target `HistoryFailureDoesNotStopLiveSamples`: 3.8000069 s, Passed; no failure message or stack.
+
+### Baseline, repair strength and retained history
+
+Pinned master baseline remains 8c06c7e11f40cc224235ecbc68c2389913cc67ee: HistoryFailure durations 8.6584864 s pass, 3.6091813 s pass, 5.8500869 s failed with host_load_history_busy before the held INSERT. Master also failed RawAndRollups; B3/C3 PrimaryEpoch timeouts remain unattributed. The original nine runs executed 189 cases: 184 passed, five failed, zero skipped. Three samples are not statistics, and the four-class repaired envelope is broader than the original history-only envelope; compare case durations rather than total row walls.
+
+I reread the complete test-side diff against the baseline. No assertion was weakened or deleted, no test was deleted, and no timeout constant was raised. Existing 10/60-second test budgets, the five-second gate-entry budget, and the 15-second helper budget retain their values but now measure inactivity between observable receipts. Polling itself does not renew the budget. Latest-sample readiness checks retain the exact expected sequence. Timed-out work is cancelled and joined, and teardown unconditionally stops/joins the pump before fixture resources are released. Product code is unchanged.
+
+Earlier expected red witness (one assertion failure), earlier green guards (90/90) and witnesses (2/2), the introduced readiness regression (36 failures / 37 at compiled 075e0640f6939008c7c0e70e27925a7499460945), and the two exit-4 corrective admissions remain historical outcomes above. This continuation builds and verifies the e40 correction; it does not erase those costs or treat the introduced regression as inherited. The derived-impact driver was built first and regeneration ran twice, with the second unchanged; index-only commit 179fdbbd4f1e08b02bb6d79db10259a292821348 remains separate. No source graph changed in this continuation, so no further regeneration or guard rerun was needed.
+
+### EXPLAIN provenance correction
+
+The accepted EXPLAIN was NOT run on the shared test PostgreSQL requested by the brief. It ran on owned diagnostic container `c1514-debug-7bd634da-explain`, ID `711fcb21c654157c5fec40ddc3b11598e6efdcf7dc2d4f28dffef255d2116c39`, database `antiphon_test`, image `antiphon-test-pg:00dff8e528e322e6270bde83f8049466`, PostgreSQL 16.15. That container and its anonymous volume were removed. This was a procedural deviation; the caller accepted the plan finding, and no replacement diagnostic container or EXPLAIN was created in this continuation. The normal shared test fixture used for requested test runs is separate from that removed diagnostic container.
+
+The realistic one-million-identity table was about 239 MB. Large-table plans used nested-loop composite-primary-key probes: one match 0.249 ms (3 shared hits / 1 read / 1 written); one miss 0.131 ms (3 hits); 100 matches 1.106 ms (399 hits / 1 read / 1 written); 120 mixed 1.288 ms (416 hits / 4 reads / 4 written); generic 120 mixed 0.971 ms (420 hits); repeated generic 0.655 ms (420 hits). The 100-row empty match ran 0.205 ms (2 hits). These are the already accepted measurements, not new shared-Postgres evidence. No query-plan concern was found; product-path attribution beyond that remains limited by the original baseline instability.
+
+### Reproduction
+
+```text
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label C1514-corrected-build -SlotWaitMinutes 45 -- dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label C1514-fixture-witnesses -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter "/*/*/C1514HostLoadScenarioTests/*" --output Detailed
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label C1514-serial-repetition -SlotWaitMinutes 45 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter "/*/*/(C1514HostLoadHistoryTests*)|(C1514HostLoadApiTests*)|(C1514TaskLoadWindowTests*)|(C1514HostLoadScriptTests*)/*" --output Detailed
+```
+
+Run the last command three times, awaiting each foreground process and lease release before the next. Generated TRX, exact command arrays, full load values, phase journals, output and run metadata remain ignored under `.antiphon/debug-7bd634da/continuation-final45-*`. No merge or live-stack mutation was performed.
