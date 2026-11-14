@@ -1,10 +1,10 @@
 # C1514 history timeout attribution
 
-Debug task `7bd634da`, 2026-11-14. This is diagnostic evidence, not a release qualification or an ordinary Review approval.
+Debug task `7bd634da`, 2026-11-14. Reopened-task outcome: Incomplete: EXPLAIN completed and test-side repair pushed, but no direct merge. Guards passed 90/90 and fixture witnesses 2/2 at the earlier build; integration validation passed 1/37 and failed 36/37 due to an introduced readiness regression. Startup correction e40d61c3f612341628d978353a05fb291bc56602 is pushed but unbuilt/unverified: two corrective build admissions exited 4. Three green C1514 repetitions remain outstanding within the caller hard stop. This is diagnostic evidence, not a release qualification or an ordinary Review approval.
 
 Commissioning evidence (reported by Review `23794b24`, not re-created here): reviewed tip `25fe10cebde5e8e17530d579a7c4e0b57f080515` passed 16/21 in a combined run and 20/21 on an isolated retry. `HistoryFailureDoesNotStopLiveSamples` hit its 10 s limit twice. The four first-run timeouts that passed on retry were the derive-before-save and derive-after-write recovery arguments, `IdentityConflictsNeverOverwriteStoredSamples`, and `RawAndRollupsSurviveRetentionAndLateReplay`. Reported host load was about 26; no base run had completed. Those historical failures remain failures; this comparison does not rewrite them or fabricate their missing stacks.
 
-## Outcome
+## Original outcome (historical; see reopened task below)
 
 **Incomplete: the required PostgreSQL EXPLAIN diagnostic was not admitted before the time box.** Its build-slot log records `BUILD SLOT waiting label=C1514-debug-7bd634da-explain position=3 occupied=4/4 elapsed=0m` then `BUILD SLOT timeout after 15s position=3`. No SQL process/container was launched. The gate timeout is exit 4 by the gate contract; the outer shell displayed the log afterward, so its final status was that display command, not a retained native driver status. No unleased retry was made.
 
@@ -719,3 +719,823 @@ MILLION_120_REPEATED
 Time: 1.231 ms
 
 ````
+
+## Reopened task: test-side repair and verification
+
+Incomplete: EXPLAIN completed and test-side repair pushed, but no direct merge. Guards passed 90/90 and fixture witnesses 2/2 at the earlier build; integration validation passed 1/37 and failed 36/37 due to an introduced readiness regression. Startup correction e40d61c3f612341628d978353a05fb291bc56602 is pushed but unbuilt/unverified: two corrective build admissions exited 4. Three green C1514 repetitions remain outstanding within the caller hard stop.
+
+Only test-side source changed: C1514HostLoadHistoryTests, C1514HostLoadApiTests, C1514TaskLoadWindowTests, C1514HostLoadScriptTests, C1514HostLoadFixture, C1514HostLoadCrashCases, and the new C1514HostLoadScenario/C1514HostLoadScenarioTests helpers. Product SQL, product clocks, production deadlines, existing outcome assertions and test cases are unchanged.
+
+The fixture executor replaces fixed 10/60-second whole-case watchdogs with those same numeric inactivity budgets. Completed durable sample receipts, enqueue/commit receipts, derivation/retention, initialization phases and completed HTTP/script operations renew a monotonic receipt counter and the quiet timer. Poll attempts do not renew it. The spool receipt poll retains its 15-second quiet budget; the held-command receipt retains five seconds. As in CheckpointStepDeadline, steady progress can take longer in total while silence stays bounded. Existing child-supervisor execution/drain bounds remain unchanged. These budgets remain provisional inherited values, not a new measured p95.
+
+The sample receipt now includes the successful spool history read and requires the latest sequence to equal the expected sequence. Only host_load_history_busy is treated as a pending sample receipt; other IO errors still fail. Initial capture readiness additionally accepts host_load_history_unavailable until the worker publishes its spool. This closes the LastAppendedAt/read race without changing the product's short read lock or weakening sample assertions.
+
+Each world has a linked cancellation token. Held ingest consumers and scripted/crash children are owned tasks. Timeout cancels and awaits the scenario body, including await-using/finally teardown, before TUnit releases the C1514HostLoadServer group. World teardown cancels and joins all owned children with WhenAll, unconditionally stops/joins its hosted pump even when a child failed, then stops capture and disposes services/database. Partial initialization also disposes its world. These changes prevent a timed-out body from running into a subsequent mutable Current world; the original cross-test causality remains an inference, not a retroactively measured fact.
+
+The committed red witness used a fake clock and a held task with deliberately blocked cleanup. It failed as an assertion (one executed, one failed), rather than as a build/fixture error, because the initial wait-only deadline returned before cancellation had been observed. The repaired witness requires cancellation plus joining blocked cleanup before the deadline returns. A second witness checks that real receipts extend total running time and silent polling still expires.
+
+Red source: b3ee874763486cf9a4c2d4f6e9ce9555f151ab51. Progress/ownership repair: 74a4543adedd71365027c1343334f108cf4e9e46. Final source/teardown repair: 075e0640f6939008c7c0e70e27925a7499460945. EXPLAIN report: d3a1f1e4088ab869e279c0717033ea754338b729. Each was pushed to the assigned task branch before the next long run. The additional final build was justified by the unconditional pump-join correction; no compiled source was edited during a running build/test.
+
+The planned three C1514 repetitions select only the four classes sharing C1514HostLoadServer. Only c1514-1 completed. Its existing NotInParallel group serialized cases; no other build/test of this task was co-scheduled with it. Corrective build admission requests followed the failed row; repetitions two and three were not started. PostgreSQL/hosts are shared once per run, with cloned databases per world. The original baseline selected the history class alone; these new four-class rows have a different fixture envelope, so compare raw history-method durations and failures rather than treating whole-row wall times as like-for-like samples. Other C1514 classes outside this shared fixture/group are outside this repair selection.
+
+The first integration validation exposed an implementation regression introduced by this task: narrowing the initial readiness catch to busy alone made normal pre-publication host_load_history_unavailable fatal. c1514-1 executed 37 cases, passed one and failed 36 during readiness (one BeforeTest failure); these are owned regressions, not inherited baseline failures or valid assertion-red mutation controls. Commit e40d61c3f612341628d978353a05fb291bc56602 restores the normal pending-startup state. The two corrected-build admission timeouts are separately identified below; neither launched a build or test. The failed row is retained. The three green repetitions are not established by that failed row.
+
+Native default outputs and UseAppHost=false were used throughout. The guard/witness build is bound to 075e0640f6939008c7c0e70e27925a7499460945, before the startup correction. Each later build/test row gives its actual source HEAD; test-run metadata also records the compiled assembly ProductVersion. The index-only commit is 179fdbbd4f1e08b02bb6d79db10259a292821348 (driver built first; first generation changed, second unchanged; ten added lines). The subsequent startup condition changes no dependency types or classification metadata. Every row below has a separate build-slot admission, retained console output/TRX when executed, UTC/load samples and opt-in phase journals. Unavailable individual external-call phase splits remain unknown/remainder. TUnit also reported its existing 100-external-span cap; no missing spans are credited. No row is release qualification.
+
+| Row | Exit | Wall s (includes admission) | Slot wait/held s | UTC start/end | Load start/end |
+|---|---:|---:|---|---|---|
+| c1514-1 | 2 | 237.404 | 180/56 | 11/14/2026 05:44:16 / 11/14/2026 05:48:14 | 48.09 32.62 28.16 25/5053 18422 / 18.27 28.69 27.92 8/4576 14760 |
+| driver-build | 0 | 188.978 | 180/7 | 11/14/2026 05:28:41 / 11/14/2026 05:31:50 | 24.15 27.45 28.68 7/4504 16919 / 12.94 20.41 25.69 6/4454 14273 |
+| final-build | 0 | 202.917 | 15/187 | 11/14/2026 05:25:15 / 11/14/2026 05:28:38 | 22.58 28.63 29.27 4/4691 459 / 24.15 27.45 28.68 8/4483 14161 |
+| green-build | 0 | 337.316 | 135/200 | 11/14/2026 05:19:12 / 11/14/2026 05:24:49 | 35.70 29.76 29.49 8/4809 4212 / 25.33 29.64 29.61 14/4642 26388 |
+| guards-green | 0 | 345.629 | 45/300 | 11/14/2026 05:37:37 / 11/14/2026 05:43:23 | 23.36 22.51 24.85 37/4755 2226 / 29.33 27.42 26.35 13/4873 853 |
+| index-1 | 0 | 190.158 | 150/39 | 11/14/2026 05:32:22 / 11/14/2026 05:35:32 | 14.57 20.10 25.41 10/4637 24292 / 25.46 21.84 24.99 7/4598 10873 |
+| index-2 | 0 | 89.033 | 45/42 | 11/14/2026 05:35:57 / 11/14/2026 05:37:26 | 24.22 21.73 24.86 31/4876 18343 / 24.30 22.66 24.93 9/4656 31196 |
+| red-build | 0 | 414.521 | 60/353 | 11/14/2026 05:07:05 / 11/14/2026 05:13:59 | 27.31 30.53 27.53 13/4768 7847 / 35.05 37.86 31.81 14/4711 18626 |
+| red-join | 2 | 100.788 | 90/10 | 11/14/2026 05:14:04 / 11/14/2026 05:15:45 | 33.13 37.42 31.70 15/4533 22579 / 21.39 32.39 30.49 7/4500 14693 |
+| startup-build | 4 | 61.477 | / | 11/14/2026 05:48:58 / 11/14/2026 05:50:00 | 22.27 28.22 27.79 32/4896 32708 / 47.17 33.85 29.74 12/5015 15194 |
+| startup-build-retry | 4 | 91.317 | / | 11/14/2026 05:50:44 / 11/14/2026 05:52:16 | 32.52 31.96 29.30 9/4785 31730 / 39.07 34.05 30.27 32/4945 16102 |
+
+c1514-2 : NOT RUN / no completed receipt before the caller hard stop.
+
+c1514-3 : NOT RUN / no completed receipt before the caller hard stop.
+
+### c1514-1
+
+Command: dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter /*/*/(C1514HostLoadHistoryTests*)|(C1514HostLoadApiTests*)|(C1514TaskLoadWindowTests*)|(C1514HostLoadScriptTests*)/* --report-trx --report-trx-filename run.trx --results-directory /work/worktrees/task-7bd634da/.antiphon/debug-7bd634da/continuation-c1514-1 --output Detailed
+
+Git HEAD: 179fdbbd4f1e08b02bb6d79db10259a292821348. Compiled ProductVersion: 1.0.0+075e0640f6939008c7c0e70e27925a7499460945.
+
+| Class | Executed | Passed | Failed | Skipped | Sum of case durations s |
+|---|---:|---:|---:|---:|---:|
+| Antiphon.Tests.Application.C1514HostLoadApiTests | 4 | 1 | 3 | 0 | 5.521402 |
+| Antiphon.Tests.Application.C1514HostLoadHistoryTests | 21 | 0 | 21 | 0 | 1.728185 |
+| Antiphon.Tests.Application.C1514TaskLoadWindowTests | 8 | 0 | 8 | 0 | 0.73955 |
+| Antiphon.Tests.Scripts.C1514HostLoadScriptTests | 4 | 0 | 4 | 0 | 0.228725 |
+
+Slowest five cases (TRX body/envelope durations, not row wall):
+
+- Antiphon.Tests.Application.C1514HostLoadApiTests.CurrentAndTaskReadsRespectExistingScope: 3.50643 s, Passed.
+- Antiphon.Tests.Application.C1514HostLoadApiTests.OldPeersRemainLiveOnly: 1.9512136 s, Failed.
+- Antiphon.Tests.Application.C1514TaskLoadWindowTests.AttemptsAndMovesKeepSeparateWindows: 0.2654174 s, Failed.
+- Antiphon.Tests.Application.C1514HostLoadHistoryTests.BatchesAndQueriesStayBounded: 0.1233385 s, Failed.
+- Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-before-commit): 0.111858 s, Failed.
+
+HistoryFailure: 0.0801442 s, Failed.
+
+Failure Antiphon.Tests.Application.C1514HostLoadApiTests.RoutesReturnDurableProvenanceAndPages:
+
+````text
+BeforeTestException: BeforeTest hook failed: host_load_history_unavailable
+   at TUnit.Engine.Services.HookExecutor.ExecuteBeforeTestHooksCoreAsync(AbstractExecutableTest test, Type testClassType, IReadOnlyList`1 beforeEveryTestHooks, IReadOnlyList`1 cachedBeforeTestHooks, CancellationToken cancellationToken)
+   at TUnit.Engine.TestExecutor.ExecuteAsync(AbstractExecutableTest executableTest, TestInitializer testInitializer, CancellationToken cancellationToken, Nullable`1 testTimeout)
+   at TUnit.Engine.TestExecutor.ExecuteAsync(AbstractExecutableTest executableTest, TestInitializer testInitializer, CancellationToken cancellationToken, Nullable`1 testTimeout)
+   at TUnit.Engine.Services.TestExecution.TestCoordinator.ExecuteTestAsync(AbstractExecutableTest test, CancellationToken cancellationToken)
+   at TUnit.Engine.Services.TestExecution.TestCoordinator.ExecuteTestAsync(AbstractExecutableTest test, CancellationToken cancellationToken)
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadApiTests.OldPeersRemainLiveOnly:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadApiTests.OldPeersRemainLiveOnly() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadApiTests.cs:line 109
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadApiTests.ShadowProjectionCannotChangeAdmission:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadApiTests.ShadowProjectionCannotChangeAdmission() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadApiTests.cs:line 129
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-before-commit):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.ReadyRecipientReadsDurableSample:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.ReadyRecipientReadsDurableSample() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 31
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.BusyRecipientEventuallyReadsSameSample:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.BusyRecipientEventuallyReadsSameSample() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 66
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(append-before-flush):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(append-after-flush):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-before-enqueue):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.FullSeatsRecommendNothingWhenTaskRowsAreEmpty:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.FullSeatsRecommendNothingWhenTaskRowsAreEmpty() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 241
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-before-save):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-after-commit):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(derive-before-call):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(ingest-after-enqueue):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(derive-after-commit):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.IdentityConflictsNeverOverwriteStoredSamples:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.IdentityConflictsNeverOverwriteStoredSamples() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 102
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.PrimaryEpochsDoNotDoubleCount:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.PrimaryEpochsDoNotDoubleCount() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 116
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.CountersKeepObservationTimeAndUnknowns:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.CountersKeepObservationTimeAndUnknowns() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 141
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RawAndRollupsSurviveRetentionAndLateReplay:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RawAndRollupsSurviveRetentionAndLateReplay() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 159
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.HistoryFailureDoesNotStopLiveSamples:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.HistoryFailureDoesNotStopLiveSamples() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 176
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.BatchesAndQueriesStayBounded:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.BatchesAndQueriesStayBounded() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 191
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.OneRetentionPassReclaimsMoreThanOneBatch:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.OneRetentionPassReclaimsMoreThanOneBatch() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 205
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(derive-before-save):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(derive-after-write):
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.TestHelpers.C1514HostLoadCrashCases.RunAsync(C1514HostLoadFixture fixture, String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadCrashCases.cs:line 20
+   at Antiphon.Tests.Application.C1514HostLoadHistoryTests.RecoveryAtEveryHandoffPreservesReceipt(String cut, CancellationToken ct) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514HostLoadHistoryTests.cs:line 98
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.AttemptsAndMovesKeepSeparateWindows:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.AttemptsAndMovesKeepSeparateWindows() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 30
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.BackwardsTerminalClosesWithoutLeavingTheWindowOpen:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.BackwardsTerminalClosesWithoutLeavingTheWindowOpen() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 143
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.KnownBoundariesWithMissingInteriorAreIncomplete:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.KnownBoundariesWithMissingInteriorAreIncomplete() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 162
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.BoundarySamplesRespectFifteenSeconds:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.BoundarySamplesRespectFifteenSeconds() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.ShortAndOverlappingTasksKeepAmbientMeaning:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.ShortAndOverlappingTasksKeepAmbientMeaning() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 73
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.LongTasksKeepStatisticsAfterRawExpiry:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.LongTasksKeepStatisticsAfterRawExpiry() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 101
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.RestartReconcilesMissedEventsWithoutClosingOpenTask:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.RestartReconcilesMissedEventsWithoutClosingOpenTask() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 87
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Application.C1514TaskLoadWindowTests.ReusedSessionOpensAtAcceptance:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Application.C1514TaskLoadWindowTests.ReusedSessionOpensAtAcceptance() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Application/C1514TaskLoadWindowTests.cs:line 115
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Scripts.C1514HostLoadScriptTests.DefaultsAndScopeResolveFromLiveReads:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Scripts.C1514HostLoadScriptTests.DefaultsAndScopeResolveFromLiveReads() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Scripts/C1514HostLoadScriptTests.cs:line 39
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Scripts.C1514HostLoadScriptTests.TokenStaysInHeaders:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Scripts.C1514HostLoadScriptTests.TokenStaysInHeaders() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Scripts/C1514HostLoadScriptTests.cs:line 79
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Scripts.C1514HostLoadScriptTests.FailuresNeverPrintPositiveCapacity:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Scripts.C1514HostLoadScriptTests.FailuresNeverPrintPositiveCapacity() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Scripts/C1514HostLoadScriptTests.cs:line 53
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Failure Antiphon.Tests.Scripts.C1514HostLoadScriptTests.JsonIsOneValueWithArithmetic:
+
+````text
+IOException: host_load_history_unavailable
+   at Antiphon.SessionRunner.HostLoadCaptureService.ReadHistory(String after, Int32 limit) in /work/worktrees/task-7bd634da/src/Antiphon.SessionRunner/HostLoadCaptureService.cs:line 56
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<InitializeAsync>b__118_1() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.<>c__DisplayClass138_0.<<EventuallyAsync>b__1>d.MoveNext() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 370
+--- End of stack trace from previous location ---
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.EventuallyAsync(Func`1 predicate, Func`1 progress, CancellationToken cancellationToken, Nullable`1 quiet) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 367
+   at Antiphon.Tests.TestHelpers.C1514HostLoadWorld.InitializeAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 202
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 52
+   at Antiphon.Tests.TestHelpers.C1514HostLoadFixture.WorldAsync(Boolean phoneHome, Boolean advertiseHistory) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs:line 54
+   at Antiphon.Tests.Scripts.C1514HostLoadScriptTests.JsonIsOneValueWithArithmetic() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/Scripts/C1514HostLoadScriptTests.cs:line 22
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenario.RunAsync(Func`2 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 47
+   at Antiphon.Tests.TestHelpers.C1514HostLoadProgressExecutor.ExecuteTest(TestContext context, Func`1 action) in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenario.cs:line 77
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+### guards-green
+
+Command: dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter /*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(C1729LayeringGuardTests*)|(C1514HostLoadScenarioTests*)/* --report-trx --report-trx-filename run.trx --results-directory /work/worktrees/task-7bd634da/.antiphon/debug-7bd634da/continuation-guards-green --output Detailed
+
+Git HEAD: 179fdbbd4f1e08b02bb6d79db10259a292821348. Compiled ProductVersion: 1.0.0+075e0640f6939008c7c0e70e27925a7499460945.
+
+| Class | Executed | Passed | Failed | Skipped | Sum of case durations s |
+|---|---:|---:|---:|---:|---:|
+| Antiphon.Tests.Infrastructure.C1729LayeringGuardTests | 10 | 10 | 0 | 0 | 0.191573 |
+| Antiphon.Tests.Infrastructure.SlowTestRegistryMergeTests | 5 | 5 | 0 | 0 | 83.013728 |
+| Antiphon.Tests.Scripts.DerivedImpactIndexTests | 27 | 27 | 0 | 0 | 177.315699 |
+| Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests | 2 | 2 | 0 | 0 | 0.227815 |
+| Antiphon.Tests.TestHelpers.SlowTestTripwireTests | 2 | 2 | 0 | 0 | 0.15303 |
+| Antiphon.Tests.TestHelpers.TestClassificationPolicyTests | 42 | 42 | 0 | 0 | 97.957616 |
+| Antiphon.TestSupport.NativeLinuxPolicyWitnessTests | 3 | 3 | 0 | 0 | 12.893559 |
+| Antiphon.TestSupport.TestClassificationGuardTests | 1 | 1 | 0 | 0 | 3.064846 |
+
+Slowest five cases (TRX body/envelope durations, not row wall):
+
+- Antiphon.Tests.Scripts.DerivedImpactIndexTests.merge_subset_matches_the_hand_selector: 64.5224121 s, Passed.
+- Antiphon.Tests.Scripts.DerivedImpactIndexTests.committed_index_matches_the_builder: 33.9285618 s, Passed.
+- Antiphon.Tests.TestHelpers.TestClassificationPolicyTests.C487_G065: 32.0099438 s, Passed.
+- Antiphon.Tests.Scripts.DerivedImpactIndexTests.override_file_names_exist_and_are_undeclared: 28.6753347 s, Passed.
+- Antiphon.Tests.Infrastructure.SlowTestRegistryMergeTests.C1383_Union_collapsed_lines_are_rejected(different-reasons-same-class): 17.6660122 s, Passed.
+
+### red-join
+
+Command: dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter /*/*/C1514HostLoadScenarioTests/DeadlineCancelsAndJoinsHeldWorkBeforeReturning --report-trx --report-trx-filename run.trx --results-directory /work/worktrees/task-7bd634da/.antiphon/debug-7bd634da/continuation-red-join --output Detailed
+
+Git HEAD: b3ee874763486cf9a4c2d4f6e9ce9555f151ab51. Compiled ProductVersion: .
+
+| Class | Executed | Passed | Failed | Skipped | Sum of case durations s |
+|---|---:|---:|---:|---:|---:|
+| Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests | 1 | 0 | 1 | 0 | 0.087281 |
+
+Slowest five cases (TRX body/envelope durations, not row wall):
+
+- Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests.DeadlineCancelsAndJoinsHeldWorkBeforeReturning: 0.0872812 s, Failed.
+
+Failure Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests.DeadlineCancelsAndJoinsHeldWorkBeforeReturning:
+
+````text
+ShouldAssertException: cancelled.Task.IsCompleted
+    should be
+True
+    but was
+False
+
+Additional Info:
+    the held operation must observe cancellation
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests.DeadlineCancelsAndJoinsHeldWorkBeforeReturning() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenarioTests.cs:line 26
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at Antiphon.Tests.TestHelpers.C1514HostLoadScenarioTests.DeadlineCancelsAndJoinsHeldWorkBeforeReturning() in /work/worktrees/task-7bd634da/tests/Antiphon.Tests/TestHelpers/C1514HostLoadScenarioTests.cs:line 37
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   at System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw()
+   at System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   at System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task, ConfigureAwaitOptions options)
+   --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+````
+
+Next stage: code: build and validate e40d61c3f612341628d978353a05fb291bc56602, then complete all four C1514HostLoadServer classes three times serially; rerun affected guards/index only if subsequent source changes require it. Do not merge the currently unverified tip.
