@@ -219,31 +219,41 @@ c1609_target_snapshot() {
 # Trusted control-host configuration, never an audited volume's origin list.
 # C1609_ORIGINS_REASON names the failed registry check (CARD-1689).
 c1609_export_trusted_origins() {
-    local requests="$1" destination="$2" registry="$SERVER2_ROOT/retirement-origins.json"
+    local requests="$1" destination="$2" registry="$SERVER2_ROOT/retirement-origins.json" mode="${3:-durable}" body result
     C1609_ORIGINS_REASON=''
+    case "$mode" in durable|memory) ;; *) C1609_ORIGINS_REASON=registry-invalid; return 1 ;; esac
     [ -s "$requests" ] || return 0
     if [ ! -e "$registry" ] && [ ! -L "$registry" ]; then C1609_ORIGINS_REASON=registry-missing; return 1; fi
     C1609_ORIGINS_REASON=registry-invalid
-    c1609_read_canonical "$registry" >/dev/null || return 1
-    jq -e '
-      keys==["projects","schema"] and .schema==1 and (.projects|type)=="object" and
-      all(.projects|to_entries[]; (.key|test("^[0-9a-f-]{36}$")) and
-        (.value|keys)==["origins"] and (.value.origins|type)=="array" and
-        (.value.origins|length)==(.value.origins|unique|length) and
-        all(.value.origins[];type=="string" and length>0))
-      ' "$registry" >/dev/null || return 1
-    C1609_ORIGINS_REASON=registry-project
-    jq -e --arg project "$C1008_PROJECT_ID" '.projects[$project]!=null' "$registry" >/dev/null || return 1
+    body="$(c1609_read_canonical "$registry")" || return 1
     C1609_ORIGINS_REASON=unapproved-origin
-    # An unmatched capture yields nothing, which all() would count as approved.
-    jq -Rse --arg project "$C1008_PROJECT_ID" --slurpfile registry "$registry" '
-      split("\n")|map(select(length>0))|all(.[];
+    result="$(printf '%s\n' "$body" | jq -cS --arg project "$C1008_PROJECT_ID" --rawfile requests "$requests" '
+      . as $registry |
+      if (try (
+        keys==["projects","schema"] and .schema==1 and (.projects|type)=="object" and
+        all(.projects|to_entries[]; (.key|test("^[0-9a-f-]{36}$")) and
+          (.value|keys)==["origins"] and (.value.origins|type)=="array" and
+          (.value.origins|length)==(.value.origins|unique|length) and
+          all(.value.origins[];type=="string" and length>0))
+      ) catch false)|not then "registry-invalid"
+      elif $registry.projects[$project]==null then "registry-project"
+      elif ($requests|split("\n")|map(select(length>0))|all(.[];
         first(capture("^C1008_PRIVATE_ORIGIN repo=[A-Za-z0-9._/-]+ origin=(?<origin>[^ ]+) originHash=[0-9a-f]{64} proofName=[0-9a-f]{64}$").origin, null) as $origin |
-        $origin!=null and ($registry[0].projects[$project].origins|index($origin)!=null))
-      ' "$requests" >/dev/null || return 1
+        $origin!=null and ($registry.projects[$project].origins|index($origin)!=null)))|not then "unapproved-origin"
+      else {schema:1,projectId:$project,origins:$registry.projects[$project].origins} end
+      ')" || return 1
+    case "$result" in
+        '"registry-invalid"') C1609_ORIGINS_REASON=registry-invalid; return 1 ;;
+        '"registry-project"') C1609_ORIGINS_REASON=registry-project; return 1 ;;
+        '"unapproved-origin"') C1609_ORIGINS_REASON=unapproved-origin; return 1 ;;
+    esac
+    [[ "$result" = \{*\} ]] || return 1
     C1609_ORIGINS_REASON=''
-    jq -cS --arg project "$C1008_PROJECT_ID" '{schema:1,projectId:$project,origins:.projects[$project].origins}' "$registry" |
-        c1609_persist "$destination"
+    if [ "$mode" = memory ]; then
+        printf '%s\n' "$result"
+    else
+        printf '%s\n' "$result" | c1609_persist "$destination"
+    fi
 }
 
 # The coordinator renews an aged observation through the bound host exchange.
@@ -477,13 +487,12 @@ c1609_recheck_origin_bindings() {
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     out="$directory/live-inventory-$nonce.out"
     requests="$directory/live-origins-$nonce.txt"
-    trusted="$directory/live-trusted-$nonce.json"
     C1008_HOST_PROOF= c1008_audit_readonly inventory > "$out" || return 1
     LC_ALL=C awk '/^C1008_PRIVATE_ORIGIN / {print}' "$out" | LC_ALL=C sort -u > "$requests" || return 1
     cmp -s "$directory/private-origins.txt" "$requests" || return 1
     if [ -s "$requests" ]; then
-        c1609_export_trusted_origins "$requests" "$trusted" || return 1
-        cmp -s "$directory/trusted-origins.json" "$trusted" || return 1
+        trusted="$(c1609_export_trusted_origins "$requests" '' memory)" || return 1
+        cmp -s "$directory/trusted-origins.json" <(printf '%s\n' "$trusted") || return 1
     fi
     if [ "${1:-}" = effect ] && [ -n "${C1008_HOST_PROOF:-}" ]; then
         c1609_accept_binding_clock "$out" "$began" || return 1
@@ -611,20 +620,33 @@ c1609_prepare_ready_receipt() {
 }
 
 c1609_write_ready_receipt() {
-    local root nonce now prepared
+    local root nonce now prepared file nonce_tmp preview_tmp receipt_tmp
     if [ "${C1609_READY_PREPARED_PID:-}" != "$BASHPID" ]; then
         c1609_prepare_ready_receipt || return 1
     fi
     root="$C1609_READY_PREPARED_ROOT"; nonce="$C1609_READY_PREPARED_NONCE"
     prepared="$C1609_READY_PREPARED_JSON"
     C1609_READY_PREPARED_PID=; C1609_READY_PREPARED_JSON=
+    c1609_custody "$root" dir || return 1
+    [ ! -e "$root/preview-$nonce.json" ] && [ ! -L "$root/preview-$nonce.json" ] || return 1
+    for file in "$root/preview.json" "$root/receipt.json"; do
+        if [ -e "$file" ] || [ -L "$file" ]; then c1609_custody "$file" file || return 1; fi
+    done
+    nonce_tmp="$(umask 077; mktemp "$root/record.XXXXXXXX")" || return 1
+    preview_tmp="$(umask 077; mktemp "$root/record.XXXXXXXX")" || return 1
+    receipt_tmp="$(umask 077; mktemp "$root/record.XXXXXXXX")" || return 1
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
+    printf '%s\n' "$prepared" | jq -cS --arg now "$now" '.readyAt=$now' > "$nonce_tmp" || return 1
+    cp -- "$nonce_tmp" "$preview_tmp" && cp -- "$nonce_tmp" "$receipt_tmp" || return 1
+    # Flush every payload before any canonical Ready path is published. The
+    # authoritative receipt is renamed last; one directory flush covers all names.
+    sync -- "$nonce_tmp" "$preview_tmp" "$receipt_tmp" || return 1
     c1609_phase_preview_issued || return 1
-    printf '%s\n' "$prepared" | jq -c --arg now "$now" '.readyAt=$now' | c1609_persist "$root/preview-$nonce.json" || return 1
-    # Each nonce artifact is immutable. preview.json is only a current rendering.
-    cat -- "$root/preview-$nonce.json" | c1609_persist "$root/preview.json" || return 1
+    mv -T -- "$nonce_tmp" "$root/preview-$nonce.json" || return 1
+    mv -T -- "$preview_tmp" "$root/preview.json" || return 1
     c1609_copy_preview_rows "$root" Ready || return 1
-    cat -- "$root/preview-$nonce.json" | c1609_persist "$root/receipt.json" || return 1
+    mv -T -- "$receipt_tmp" "$root/receipt.json" || return 1
+    sync -- "$root"
 }
 
 c1609_write_refused_preview() {
