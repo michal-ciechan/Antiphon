@@ -306,6 +306,7 @@ public sealed class AgentTaskLandHeldNotificationTests
 
         await using (var db = h.CreateContext())
         {
+            await SessionTranscriptSummaryMigrationFixture.DetachFromOwnedCloneAsync(h.Schema);
             await MigrationTestDatabase.DetachHostLoadAsync(db);
             var migrations = db.Database.GetMigrations().ToArray();
             var added = Array.FindIndex(migrations, m => m.EndsWith("_AddLandHoldNotificationOwner", StringComparison.Ordinal));
