@@ -485,7 +485,8 @@ invocation before Ready or any volume removal. It rechecks repository/origin
 bindings and the approved-origin registry, fetches a fresh graph and requires
 every previously advertised ref to remain at its exact OID. A final live
 advertisement after staging closes the transfer/census interval. The final
-control request, custody writes and effect have a five-second monotonic bound.
+origin-binding scan, control request, custody writes and effect have a five-second
+monotonic bound. A slow final binding scan refuses rather than resetting that clock.
 An origin move after the final observation cannot be detected atomically across
 hosts; each later effect repeats the full gate. A sealed proof alone, unchanged
 object digest, or the 900-second receipt lifetime grants no exemption.
