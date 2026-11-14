@@ -243,9 +243,9 @@
     },
     {
       "path": "server/Application/Core/DelegationReportFormatter.cs",
-      "classes": 172,
+      "classes": 173,
       "reason": "cap",
-      "owed": 147,
+      "owed": 148,
       "first": [
         "AgentTaskSettlementRaceTests",
         "ClosingReportNudgeLifecycleTests",
@@ -2287,9 +2287,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
@@ -25660,7 +25660,8 @@
         "C0824RefOnlyNativeTests",
         "C0824RefOnlyPreparationTests",
         "C0824RefOnlyProducerLifecycleTests",
-        "C0824RefOnlyProvisionTests"
+        "C0824RefOnlyProvisionTests",
+        "RemoteWorkspacePreparerTests"
       ]
     },
     {
