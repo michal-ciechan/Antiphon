@@ -51,7 +51,7 @@ public sealed class C0824RefOnlyIdentityTests
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
             // The class budget is 60s. A full walk from an empty database does not fit it.
-            // Drop only the throwing host-load suffix, then rewind the reversible predecessor.
+            // Detach the forward-only additions, then rewind the reversible predecessor.
             await SessionTranscriptSummaryMigrationFixture.DetachFromOwnedCloneAsync(schema);
             await MigrationTestDatabase.DetachHostLoadAsync(db);
             await db.Database.GetService<IMigrator>().MigrateAsync(migrations[migration - 1]);
