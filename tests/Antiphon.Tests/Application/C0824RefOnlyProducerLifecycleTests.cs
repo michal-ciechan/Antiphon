@@ -1,4 +1,6 @@
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Application.Services;
+using System.Text;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +13,7 @@ namespace Antiphon.Tests.Application;
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
 [Timeout(60_000)] // CARD-0824 provisional production-caller lifecycle budget.
-public sealed class C0824RefOnlyProducerLifecycleTests
+public sealed partial class C0824RefOnlyProducerLifecycleTests
 {
     [Test]
     public async Task Repair_from_ref_only_uses_exact_owned_source()
@@ -19,13 +21,13 @@ public sealed class C0824RefOnlyProducerLifecycleTests
         await using var f = await RefOnlyDispatchFixture.CreateAsync();
         var ownerId = await f.SeedAsync();
         var owner = await f.LaunchAsync(ownerId);
-        await using (var db = f.Rig.NewDb())
+        var source = await f.CommitAsync(owner, new Dictionary<string, byte[]> { ["owner.txt"] = Encoding.UTF8.GetBytes("owned repair S\n") });
+        await using (var settlement = await RunnerSettlementWorld.AttachProducedAsync(f, owner))
         {
-            var row = await db.AgentTasks.SingleAsync(t => t.Id == ownerId);
-            row.Status = AgentTaskStatus.Succeeded; row.CompletedAt = DateTime.UtcNow;
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == row.AgentSessionId);
-            session.Status = SessionStatus.Stopped; session.EndedAt = DateTime.UtcNow;
-            await db.SaveChangesAsync();
+            await settlement.SettleAsync(RunnerSettlementWorld.Report("Published. " + settlement.Claim(source)));
+            settlement.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, settlement.Task.CompletionProgressEvidenceJson);
+            settlement.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(source);
+            await settlement.EndDelegateSessionAsync();
         }
         await f.Git.RunAsync(f.Git.Desktop, "commit", "--allow-empty", "-m", "main differs from repair source");
         (await f.Git.RevParseAsync("HEAD")).ShouldNotBe(f.Git.Baseline);
@@ -41,11 +43,34 @@ public sealed class C0824RefOnlyProducerLifecycleTests
         await f.Rig.TickAsync();
         var repair = await f.Rig.ReadTaskAsync(repairId);
         repair.Status.ShouldBe(AgentTaskStatus.Dispatched, repair.FailureReason);
-        repair.WorktreeBaseSha.ShouldBe(f.Git.Baseline);
+        repair.WorktreeBaseSha.ShouldBe(source);
         repair.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Repair);
         repair.WorktreeBaseTaskId.ShouldBe(ownerId);
         Path.Exists(repair.WorktreePath).ShouldBeFalse();
         Path.Exists(owner.WorktreePath).ShouldBeFalse();
-        (await f.Git.RevParseAsync("refs/heads/" + owner.WorktreeBranch)).ShouldBe(f.Git.Baseline);
+        (await f.Git.RevParseAsync("refs/heads/" + owner.WorktreeBranch)).ShouldBe(source);
+        await using (var db = f.Rig.NewDb())
+        {
+            var done = await db.AgentTasks.SingleAsync(t => t.Id == repairId);
+            done.Status = AgentTaskStatus.Succeeded; done.CompletedAt = DateTime.UtcNow;
+            var session = await db.AgentSessions.SingleAsync(t => t.Id == done.AgentSessionId);
+            session.Status = SessionStatus.Stopped; session.EndedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        await f.CommitAsync(owner, new Dictionary<string, byte[]> { ["ahead.txt"] = Encoding.UTF8.GetBytes("remote advanced\n") });
+        var aheadId = await f.SeedAsync(t => t.RepairSourceTaskId = ownerId);
+        await f.Rig.TickAsync();
+        var ahead = await f.Rig.ReadTaskAsync(aheadId);
+        ahead.Status.ShouldBe(AgentTaskStatus.Failed);
+        ahead.FailureReason.ShouldContain("repair_source_owner_remote_ahead");
+        (await f.Git.RevParseAsync("refs/heads/" + owner.WorktreeBranch)).ShouldBe(source);
+        var divergent = await f.Git.PublishForeignBranchAsync("feat/diverged-" + ownerId.ToString("N"), "diverged.txt");
+        await f.Git.RunAsync(f.Git.Runner, "push", "--force", "origin", divergent + ":refs/heads/" + owner.WorktreeBranch);
+        var divergedId = await f.SeedAsync(t => t.RepairSourceTaskId = ownerId);
+        await f.Rig.TickAsync();
+        var diverged = await f.Rig.ReadTaskAsync(divergedId);
+        diverged.Status.ShouldBe(AgentTaskStatus.Failed);
+        diverged.FailureReason.ShouldContain("repair_source_owner_diverged");
+        (await f.Git.RevParseAsync("refs/heads/" + owner.WorktreeBranch)).ShouldBe(source);
     }
 }

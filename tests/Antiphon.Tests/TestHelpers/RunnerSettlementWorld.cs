@@ -31,10 +31,12 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public SyncWorld Git { get; }
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
-    public Guid SessionId { get; } = Guid.NewGuid();
+    public Guid SessionId { get; private init; } = Guid.NewGuid();
     public Guid CallerSessionId { get; } = Guid.NewGuid();
     public AgentTask Task { get; private set; } = null!;
-    public Guid TaskId => Git.TaskId;
+    private Guid? _attachedTaskId;
+    private bool _borrowed;
+    public Guid TaskId => _attachedTaskId ?? Git.TaskId;
 
     /// <summary>The settlement sync's budget clock when created with a controlled clock; else null.</summary>
     public FakeTimeProvider? SyncClock { get; }
@@ -128,6 +130,29 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         });
         await db.SaveChangesAsync();
         await world.ReloadAsync();
+        return world;
+    }
+
+    /// <summary>Continue the actual producer row through settlement; the dispatch fixture retains ownership.</summary>
+    public static async Task<RunnerSettlementWorld> AttachProducedAsync(RefOnlyDispatchFixture fixture, AgentTask produced)
+    {
+        var world = new RunnerSettlementWorld(fixture.Git, false, false, false, true)
+        {
+            Schema = fixture.Rig.Schema, SessionId = produced.AgentSessionId!.Value,
+            _attachedTaskId = produced.Id, _borrowed = true,
+        };
+        world.BuildServices();
+        await using var db = world.CreateContext();
+        var now = DateTime.UtcNow;
+        db.AgentSessions.Add(new AgentSession { Id = world.CallerSessionId, DefinitionName = "caller",
+            AgentKind = AgentKind.ClaudeCode, Status = SessionStatus.Running, Cwd = fixture.Git.Desktop,
+            Cols = 120, Rows = 30, CreatedAt = now, StartedAt = now, LastSeenAt = now });
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == produced.Id);
+        task.Status = AgentTaskStatus.Working; task.ParentSessionId = world.CallerSessionId;
+        task.ReplyTo = AgentTaskReplyTo.Session;
+        var session = await db.AgentSessions.SingleAsync(t => t.Id == world.SessionId);
+        session.Status = SessionStatus.Running;
+        await db.SaveChangesAsync(); await world.ReloadAsync();
         return world;
     }
 
@@ -558,7 +583,10 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Services is not null) await Services.DisposeAsync();
-        if (Schema is not null) await Schema.DisposeAsync();
-        await Git.DisposeAsync();
+        if (!_borrowed)
+        {
+            if (Schema is not null) await Schema.DisposeAsync();
+            await Git.DisposeAsync();
+        }
     }
 }
