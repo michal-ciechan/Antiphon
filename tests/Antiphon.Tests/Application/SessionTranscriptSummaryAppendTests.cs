@@ -24,7 +24,7 @@ public sealed class SessionTranscriptSummaryAppendTests
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
-        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("D");
+        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe(0);
         var retryAt = Epoch.AddYears(10);
         db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary {
             AgentSessionId = f.OtherId, Valid = false, NextBackfillAttemptAt = retryAt });
@@ -113,6 +113,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         {
             await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, false);
             (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse("gate-off invalidation belongs to the same transaction as trigger disablement");
+            (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe(0);
             if (rollback) await transaction.RollbackAsync();
             else await transaction.CommitAsync();
         }
@@ -161,7 +162,7 @@ public sealed class SessionTranscriptSummaryAppendTests
             {
                 await disable.ExecuteNonQueryAsync();
                 pending = insert.ExecuteNonQueryAsync();
-                await BlockedAsync(observer, writer.ProcessID, gate.ProcessID);
+                await BlockedAsync(observer, writer.ProcessID, gate.ProcessID, pending);
                 await gateTx.CommitAsync(); gateDone = true;
                 await pending;
                 await writeTx.CommitAsync(); writeDone = true;
@@ -170,7 +171,7 @@ public sealed class SessionTranscriptSummaryAppendTests
             {
                 await insert.ExecuteNonQueryAsync();
                 pending = disable.ExecuteNonQueryAsync();
-                await BlockedAsync(observer, gate.ProcessID, writer.ProcessID);
+                await BlockedAsync(observer, gate.ProcessID, writer.ProcessID, pending);
                 await writeTx.CommitAsync(); writeDone = true;
                 await pending;
                 await gateTx.CommitAsync(); gateDone = true;
@@ -235,12 +236,20 @@ public sealed class SessionTranscriptSummaryAppendTests
         (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeFalse();
     }
 
-    private static async Task BlockedAsync(NpgsqlConnection observer, int waiter, int owner)
+    private static async Task BlockedAsync(NpgsqlConnection observer, int waiter, int owner, Task pending)
     {
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var command = new NpgsqlCommand("SELECT @owner = ANY(pg_blocking_pids(@waiter))", observer) { CommandTimeout = 10 };
         command.Parameters.AddWithValue("owner", owner); command.Parameters.AddWithValue("waiter", waiter);
-        while (!(bool)(await command.ExecuteScalarAsync(budget.Token))!) await Task.Yield();
+        while (!(bool)(await command.ExecuteScalarAsync(budget.Token))!)
+        {
+            if (pending.IsCompleted)
+            {
+                await pending; // An unrelated command error is not an assertion witness.
+                pending.IsCompleted.ShouldBeFalse("the pending operation must wait for the observed owner transaction");
+            }
+            await Task.Yield();
+        }
     }
 
     [Test]

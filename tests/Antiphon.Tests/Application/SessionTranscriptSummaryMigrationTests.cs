@@ -79,10 +79,14 @@ public sealed class SessionTranscriptSummaryMigrationTests
         }
         await db.GetService<IMigrator>().MigrateAsync(current);
         await db.GetService<IMigrator>().MigrateAsync(current); // complete install is idempotent
-        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe(4);
+        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe(3, "all UPDATE/DELETE/TRUNCATE guards are installed while append maintenance is off");
+        (await db.Database.SqlQueryRaw<string>("SELECT string_agg(tgname,',' ORDER BY tgname) AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe("c1915_delete,c1915_truncate,c1915_update");
         (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeFalse();
-        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("D");
+        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe(0);
         await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
+        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe(4, "activation installs the append guard before any summary can be published valid");
+        (await db.Database.SqlQueryRaw<string>("SELECT string_agg(tgname,',' ORDER BY tgname) AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe("c1915_delete,c1915_insert,c1915_truncate,c1915_update");
+        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("O");
         var id = Guid.NewGuid();
         db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "c1915-migration", Cwd = "/synthetic", Status = SessionStatus.Stopped, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();
