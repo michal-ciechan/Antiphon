@@ -114,11 +114,19 @@ internal sealed class VolumeRetirementPublicationFixture
     internal sealed record Proof(int Exit, string Output, string Directory, string File);
 
     internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, int version = 2,
-        string previous = "", string extraShim = "")
+        string previous = "", string extraShim = "", bool baselineWriter = false)
     {
         var directory = Path.Combine(Root, "proof-" + ++sequence);
         Directory.CreateDirectory(directory);
+        var baselineSource = "";
+        if (baselineWriter)
+        {
+            var file = Path.Combine(Root, "base-c1609-host-proof.ps1");
+            await File.WriteAllTextAsync(file, await Git(DelegateScriptRunner.RepoRoot, "show", TaskBase + ":scripts/c1609-host-proof.ps1"));
+            baselineSource = ". " + Ps(file) + "; ";
+        }
         var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
+            baselineSource +
             // Only transport is mapped; the real bounded Git runner and writer stay active.
             "$original=${function:Invoke-C1609HostGit}; function Invoke-C1609HostGit { " +
             "param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory=''," +
@@ -165,12 +173,13 @@ internal sealed class VolumeRetirementPublicationFixture
         const string stub = "# C1609_CONTENT_AUDIT_INSERT\nc1609_prepare_common() { c1609_skip_publication=0; }\nc1609_consider_fetch_head() { consider_pseudoref \"$1\" FETCH_HEAD; }\nc1609_list_offenders() { :; }\nc1609_finish_blocks() { :; }";
         body.ShouldContain(stub);
         body = body.Replace(stub, content, StringComparison.Ordinal);
-        // Map only mount constants; retain every production verdict and cleanup rule.
+        // Map mount constants and retain scratch evidence; verdict logic is verbatim.
         // /tmp is an independent runner role, not the host's temporary parent.
         var scratch = Path.Combine(Root, "audit-scratch"); Directory.CreateDirectory(scratch);
         body = body.Replace("readlink -e /work", "readlink -e " + Q(Work), StringComparison.Ordinal)
             .Replace("/audit-scratch/c1008-audit-XXXXXXXX", scratch + "/c1008-audit-XXXXXXXX", StringComparison.Ordinal)
-            .Replace("runner_tmp=/tmp", "runner_tmp=" + Q(Path.Combine(Root, "absent-runner-tmp")), StringComparison.Ordinal);
+            .Replace("runner_tmp=/tmp", "runner_tmp=" + Q(Path.Combine(Root, "absent-runner-tmp")), StringComparison.Ordinal)
+            .Replace("if [ -n \"$scratch\" ] && [ -d \"$scratch\" ]; then rm -rf -- \"$scratch\" || :; fi", ": # retain owned oracle scratch", StringComparison.Ordinal);
         var file = Path.Combine(Root, "audit-" + ++sequence + (baseline ? "-base" : "-candidate") + ".sh");
         await File.WriteAllTextAsync(file, "export C1609_CONTENT_V2=1 C1008_OPERATION=" + VolumeRetirementFixture.Operation + "\n" + Bindings(proof) + body);
         var run = await Run("bash", [file], seconds: 60);
@@ -218,9 +227,35 @@ internal sealed class VolumeRetirementPublicationFixture
         {
             var old = await Audit(proof, baseline: true);
             old.Exit.ShouldBe(audit.Exit, label + " unaffected base/candidate verdict");
+            old.Output.ShouldBe(audit.Output, label + " unchanged findings and exact OIDs");
         }
         await File.WriteAllTextAsync(Path.Combine(Root, "oracle-" + ++sequence + ".json"), JsonSerializer.Serialize(new
         { label, protectedCommits, acceptedRoots, expectedPublished, published, observations, exit = audit.Exit, baseSha = TaskBase }));
+    }
+
+    internal async Task SetReflog(string relative, string old, string current)
+    {
+        var file = Path.Combine(Repo, ".git", relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllTextAsync(file, old + " " + current + " Fixture <fixture@example.invalid> 1767225600 +0000\tretained history\n");
+    }
+
+    internal string Snapshot() => string.Join('\n', Directory.EnumerateFiles(Path.Combine(Repo, ".git"), "*", SearchOption.AllDirectories)
+        .Order(StringComparer.Ordinal).Select(p => Path.GetRelativePath(Repo, p) + " " +
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(p))).ToLowerInvariant()));
+
+    internal async Task<(int Exit, string Output)> LinkedPreview(Proof proof)
+    {
+        var pointers = Directory.EnumerateFiles(Work, "*", SearchOption.AllDirectories)
+            .Where(p => Path.GetFileName(p) == "gitdir" || (Path.GetFileName(p) == ".git" && !Directory.Exists(p)))
+            .ToDictionary(p => p, File.ReadAllText);
+        try
+        {
+            foreach (var (file, text) in pointers)
+                await File.WriteAllTextAsync(file, text.Replace(Work, "/work", StringComparison.Ordinal));
+            return await Preview(proof);
+        }
+        finally { foreach (var (file, text) in pointers) await File.WriteAllTextAsync(file, text); }
     }
 
     internal async Task<(int Exit, string Output)> Run(string program, IEnumerable<string> args, string? input = null, int seconds = 15)
