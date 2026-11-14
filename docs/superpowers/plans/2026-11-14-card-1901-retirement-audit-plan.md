@@ -414,6 +414,8 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-28/past | Admit an observation from before this inventory invocation. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/future | Admit a future observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
 | PC-28/malformed | Admit a malformed observation tick. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | pending |
+| PC-29 | Publish Ready during preparation before successful final control. | `/*/*/VolumeRetirementPublicationTests/Salvage_withdrawn_after_staging_refuses_control` | pending |
+| PC-30 | Cache origin URL before emitting the binding clock. | `/*/*/VolumeRetirementPublicationTests/Binding_clock_precedes_fresh_origin_url_observation` | pending |
 
 ### Checkpoint execution and lanes
 
@@ -841,6 +843,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-125 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Final_origin_binding_refresh_is_inside_effect_window` | R2-15 | exactly 1 passed; real delayed binding observation refuses Unknown | 1 | 2 | true |
 | CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 9 real clock-record variants discriminated | 1 | 2 | true |
+| CP-127 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_precedes_fresh_origin_url_observation` | R2-17 | exactly 1 passed; actual URL changes at clock and is read afterward | 1 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -919,3 +922,15 @@ remaining custody/header checks exhausted the unchanged five-second bound.
 Use Bash path decomposition and one bounded header read, preserving every
 ownership, mode, symlink, hard-link, header-binding and completion-age predicate.
 All receipt/custody rows remain in the required adjacent selection.
+
+R2-17 / CP-127 pins the real origin-observation boundary. The real helper enumerates
+repositories first; the clock must immediately precede its final inventory URL
+loop. The test changes the actual Git URL at clock emission and requires the new
+URL in the actual inventory, after the clock and after repository enumeration.
+Caching a URL before that clock fails this witness (PC-30 pending). Earlier prose
+that times all repository/content discovery is superseded: those preparatory
+checks still run, but the five-second bound covers all final URL observations,
+approval recheck, live advertisement, custody and the effect. No scan is skipped.
+At 7d87426eebb3a6d34121c53f5004fb62bada0346 V1-V6 and the renewal/delay/withdrawal
+rows were green, but V7 positive control expired at5360ms before any Ready receipt.
+The missing receipt rules out Ready-file batching as a repair for that failure.

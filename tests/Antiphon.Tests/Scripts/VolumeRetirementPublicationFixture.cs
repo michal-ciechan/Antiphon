@@ -304,7 +304,7 @@ internal sealed class VolumeRetirementPublicationFixture
         public async ValueTask DisposeAsync() => await Stop(force: false);
     }
 
-    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true, string? sourceRevision = null)
+    internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true, string? sourceRevision = null, bool inventory = false, string? beforeInventoryClock = null)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");
         var revision = sourceRevision ?? (baseline ? TaskBase : null);
@@ -326,8 +326,15 @@ internal sealed class VolumeRetirementPublicationFixture
             .Replace("/audit-scratch/c1008-audit-XXXXXXXX", scratch + "/c1008-audit-XXXXXXXX", StringComparison.Ordinal)
             .Replace("runner_tmp=/tmp", "runner_tmp=" + Q(Path.Combine(Root, "absent-runner-tmp")), StringComparison.Ordinal)
             .Replace("if [ -n \"$scratch\" ] && [ -d \"$scratch\" ]; then rm -rf -- \"$scratch\" || :; fi", ": # retain owned oracle scratch", StringComparison.Ordinal);
+        if (beforeInventoryClock is not null)
+        {
+            const string entry = "trap 'fail $?' ERR\n";
+            body.ShouldContain(entry);
+            body = body.Replace(entry, beforeInventoryClock + "\n" + entry, StringComparison.Ordinal);
+        }
         var file = Path.Combine(Root, "audit-" + ++sequence + (baseline ? "-base" : "-candidate") + ".sh");
-        await File.WriteAllTextAsync(file, "export C1609_CONTENT_V2=1 C1008_OPERATION=" + VolumeRetirementFixture.Operation + "\n" + Bindings(proof) + body);
+        await File.WriteAllTextAsync(file, "export C1609_CONTENT_V2=1 C1008_OPERATION=" + VolumeRetirementFixture.Operation + "\n" + Bindings(proof) +
+            (inventory ? "\nexport C1008_HOST_PROOF= C1008_AUDIT_MODE=inventory\n" : "") + body);
         var run = await Run("bash", [file], seconds: 60);
         await File.WriteAllTextAsync(file + ".out", run.Output);
         if (complete && run.Exit == 6)

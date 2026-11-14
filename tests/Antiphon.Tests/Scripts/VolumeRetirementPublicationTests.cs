@@ -778,6 +778,38 @@ public sealed class VolumeRetirementPublicationTests
     [Test]
     [NativeLinuxOnly(NativeLinuxReason)]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Binding_clock_precedes_fresh_origin_url_observation()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        var f = await VolumeRetirementPublicationFixture.Create();
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        const string rebound = "https://fixture.invalid/card-1901/rebound.git";
+        var moveAtClock = $$"""
+            eval "$(declare -f c1609_emit_binding_clock | sed '1s/c1609_emit_binding_clock/c1901_original_binding_clock/')"
+            c1609_emit_binding_clock() {
+                c1901_original_binding_clock || return $?
+                git -C {{VolumeRetirementPublicationFixture.Q(f.Repo)}} remote set-url origin {{VolumeRetirementPublicationFixture.Q(rebound)}}
+                printf 'C1901_ORIGIN_MOVED_AT_CLOCK\n'
+            }
+            """;
+        var inventory = await f.Audit(proof, complete: false, inventory: true, beforeInventoryClock: moveAtClock);
+        inventory.Exit.ShouldBe(0, inventory.Output);
+        inventory.Output.ShouldContain("C1901_ORIGIN_MOVED_AT_CLOCK");
+        (await f.Git(f.Repo, "remote", "get-url", "origin")).ShouldBe(rebound);
+        inventory.Output.ShouldContain("C1008_PRIVATE_ORIGIN repo=" + f.Relative + " origin=" + rebound +
+            " originHash=" + VolumeRetirementPublicationFixture.Sha(rebound),
+            customMessage: "the actual URL must be read after the clock, rather than cached before it");
+        var entry = inventory.Output.LastIndexOf("entry repo=", StringComparison.Ordinal);
+        var clock = inventory.Output.IndexOf("C1609_BINDING_CLOCK ", StringComparison.Ordinal);
+        var origin = inventory.Output.IndexOf("C1008_PRIVATE_ORIGIN ", StringComparison.Ordinal);
+        entry.ShouldBeGreaterThanOrEqualTo(0, "the real helper enumerated its repository");
+        clock.ShouldBeGreaterThan(entry, "repository/content discovery must finish before timing the final URL observations");
+        origin.ShouldBeGreaterThan(clock, "the fresh URL observation is inside the effect window");
+    }
+
+    [Test]
+    [NativeLinuxOnly(NativeLinuxReason)]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Binding_clock_record_requires_current_kernel_and_call()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
