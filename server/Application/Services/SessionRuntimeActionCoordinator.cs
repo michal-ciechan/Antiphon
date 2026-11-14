@@ -162,7 +162,8 @@ public sealed class SessionRuntimeActionCoordinator(
             // Late-confirmed sources count too, even when the carried key is a different chat
             // (CARD-1826).
             var now = clock.GetUtcNow().UtcDateTime;
-            var action = (await SessionRuntimeActionClaimQuery.Query(db, sessionId, now).ToListAsync(ct)).SingleOrDefault();
+            var action = (await SessionRuntimeActionClaimQuery.Query(db, sessionId, now, QueuePhase, ChannelReplyDebt)
+                .ToListAsync(ct)).SingleOrDefault();
             if (action is null) return false;
             // A queue wakeup is coalescible only after all of its routing has completed.
             // New work must be able to replace a deferred wakeup before its retry is due.

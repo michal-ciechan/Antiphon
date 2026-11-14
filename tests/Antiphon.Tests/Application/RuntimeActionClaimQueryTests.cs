@@ -18,6 +18,24 @@ namespace Antiphon.Tests.Application;
 public class RuntimeActionClaimQueryTests
 {
     [Test]
+    public void Query_binds_the_phase_and_channel_kind_supplied_by_its_caller()
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=unused;Database=claim-parameters").Options);
+        var session = Guid.NewGuid();
+        var now = new DateTime(2026, 11, 13, 12, 0, 0, DateTimeKind.Utc);
+        using var command = SessionRuntimeActionClaimQuery.Query(db, session, now, 23, "custom-channel")
+            .CreateDbCommand();
+        var parameters = command.Parameters.Cast<NpgsqlParameter>().ToArray();
+        parameters.Select(p => p.ParameterName).ShouldBe(["sessionId", "now", "queuePhase", "channelKind"]);
+        parameters.Select(p => p.NpgsqlDbType).ShouldBe(
+            [NpgsqlTypes.NpgsqlDbType.Uuid, NpgsqlTypes.NpgsqlDbType.TimestampTz,
+                NpgsqlTypes.NpgsqlDbType.Integer, NpgsqlTypes.NpgsqlDbType.Text]);
+        parameters.Select(p => p.Value).ShouldBe([session, now, 23, "custom-channel"],
+            "the query must bind caller values without duplicating Application constants");
+    }
+
+    [Test]
     public async Task Selection_and_drain_match_legacy_and_independent_destination_oracle()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -82,7 +100,8 @@ public class RuntimeActionClaimQueryTests
             db.ChangeTracker.Clear();
             // Explain every semantic fixture as well as the separate large-table matrix.
             var oldPlan = await ExplainAsync(connection, Legacy(db, session.Id, now), generic: false, jit: false);
-            var newPlan = await ExplainAsync(connection, SessionRuntimeActionClaimQuery.Query(db, session.Id, now), generic: false, jit: false);
+            var newPlan = await ExplainAsync(connection, SessionRuntimeActionClaimQuery.Query(db, session.Id, now,
+                SessionRuntimeActionCoordinator.QueuePhase, SessionRuntimeActionCoordinator.ChannelReplyDebt), generic: false, jit: false);
             await File.WriteAllTextAsync(Path.Combine(evidence, scenario + ".json"), JsonSerializer.Serialize(new { oldPlan, newPlan }));
             var expectedOrder = new List<Guid>();
             var actualOrder = new List<Guid>();
@@ -90,7 +109,8 @@ public class RuntimeActionClaimQueryTests
             {
                 var expected = Oracle(rows, messages, now);
                 var legacy = (await Legacy(db, session.Id, now).AsNoTracking().ToListAsync()).SingleOrDefault();
-                var actual = (await SessionRuntimeActionClaimQuery.Query(db, session.Id, now).ToListAsync()).SingleOrDefault();
+                var actual = (await SessionRuntimeActionClaimQuery.Query(db, session.Id, now,
+                SessionRuntimeActionCoordinator.QueuePhase, SessionRuntimeActionCoordinator.ChannelReplyDebt).ToListAsync()).SingleOrDefault();
                 (legacy?.Id).ShouldBe(expected?.Id, scenario + " legacy oracle");
                 (actual?.Id).ShouldBe(expected?.Id, scenario + " production oracle");
                 if (actual is null) break;
@@ -156,7 +176,8 @@ public class RuntimeActionClaimQueryTests
             foreach (var jit in new[] { false, true })
             {
                 var oldPlan = await ExplainAsync(connection, Legacy(db, session.Id, now), generic, jit);
-                var newPlan = await ExplainAsync(connection, SessionRuntimeActionClaimQuery.Query(db, session.Id, now), generic, jit);
+                var newPlan = await ExplainAsync(connection, SessionRuntimeActionClaimQuery.Query(db, session.Id, now,
+                SessionRuntimeActionCoordinator.QueuePhase, SessionRuntimeActionCoordinator.ChannelReplyDebt), generic, jit);
                 observations.Add((shape, generic, jit, oldPlan, newPlan));
                 await File.WriteAllTextAsync(Path.Combine(evidence, $"{shape}-{generic}-{jit}.json"),
                     JsonSerializer.Serialize(new { shape, generic, jit, oldPlan, newPlan }));
