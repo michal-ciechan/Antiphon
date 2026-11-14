@@ -73,9 +73,18 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         using (var refused = await client.PostAsJsonAsync(Route(row), new { reason = "explicit decision" }))
             refused.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         using (var blank = await AbandonAsync(row, " ")) blank.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
-        using (var first = await AbandonAsync(row, "no longer needed")) first.StatusCode.ShouldBe(HttpStatusCode.OK);
+        DateTime firstAt;
+        using (var first = await AbandonAsync(row, "no longer needed"))
+        {
+            first.StatusCode.ShouldBe(HttpStatusCode.OK);
+            firstAt = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("canceledAt").GetDateTime();
+        }
         var canceled = await ReloadAsync(row);
-        using (var again = await AbandonAsync(row, "a different retry reason")) again.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using (var again = await AbandonAsync(row, "a different retry reason"))
+        {
+            again.StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await again.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("canceledAt").GetDateTime().ShouldBe(firstAt);
+        }
         (await ReloadAsync(row)).CanceledAt.ShouldBe(canceled.CanceledAt);
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

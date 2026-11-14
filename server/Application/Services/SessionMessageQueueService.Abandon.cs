@@ -49,7 +49,9 @@ public sealed partial class SessionMessageQueueService
                     throw new ConflictException(
                         "Only a Sent message with an unconfirmed delivery attempt can be abandoned. Use ordinary DELETE cancellation for Pending messages.",
                         "queue_abandon_not_unconfirmed");
-                var now = UtcNow();
+                // PostgreSQL persists microseconds; return that same instant on the first
+                // request and every idempotent retry.
+                var now = new DateTime(UtcNow().Ticks / 10 * 10, DateTimeKind.Utc);
                 message.Status = QueuedMessageStatus.Canceled;
                 message.CanceledAt = now;
                 // Keep attempt identity and null verdict: cancellation makes no delivery claim.
