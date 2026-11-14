@@ -755,10 +755,17 @@ public sealed class VolumeRetirementPublicationTests
                 fi
             }
             """;
-        var refused = await f.Preview(proof, extra: delayedBindings);
+        var delayedModule = Path.Combine(f.Root, "delayed-binding-module.sh");
+        await File.WriteAllTextAsync(delayedModule,
+            await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")) +
+            "\n" + delayedBindings + "\n");
+        var refused = await f.Preview(proof, extra: "export C1609_RETIREMENT_FILE=" +
+            VolumeRetirementPublicationFixture.Q(delayedModule) + "\n");
         refused.Output.ShouldContain("C1901_FINAL_BINDING_DELAYED");
         f.RenewalRequests.ShouldBeGreaterThanOrEqualTo(1);
         f.ControlRequests.ShouldBe(1, "the fresh advertisement succeeds; the effect-window bound must refuse the stale binding observation");
+        (await File.ReadAllTextAsync(Path.Combine(f.Root, "coordinator.log"))).ShouldContain("C1609_CONTROL_REQUEST ",
+            "the final real advertisement and bound response succeeded before the window verdict");
         Refused(refused, "RecycleGitAuditUnknown");
     }
 
