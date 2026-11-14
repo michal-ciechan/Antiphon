@@ -461,8 +461,12 @@ timeout exit 4 is not-run/blocked, never permission to run without a lease.
 ## Round 2: live-origin renewal (Code e594649c)
 
 Review dc70c718 reproduced deleted-salvage and rolled-back-head fail-open states.
-CP-101..105 are committed assertion-red witnesses before repair; their frozen
-receipts keep the original SHA and outcomes. CP-105 was corrected to change the
+CP-101, CP-102 and CP-104 are committed assertion-red witnesses before repair;
+their frozen receipts keep the original SHA and outcomes. CP-103's first runs
+failed in setup and are not qualifying regression reds. Its corrected witness
+transfers the replacement object, independently counts the unique live-origin
+commit, asserts exit 0 from the real committed pre-fix reader/writer, and then
+asserts refusal from the current coordinator. CP-105 was corrected to change the
 URL after the scan; its first green only covered the existing initial binding.
 The corrected witness was red before the repair. R2-1..R2-5 map to those rows;
 R2-6 is repeated same-object gate execution, R2-7 is provisional offline scan
@@ -508,6 +512,17 @@ retained as history rather than repeated after green. CP-4.H1/H2/H3 and CP-4.V1-
 are the current H/V selections. CP-81 is split into its five remaining exact methods; CP-98 and CP-98.native
 cover the other two class methods. CP-97 is the duplicate retained-volume repair
 and is credited by CP-81.retained. Every other final row retains its exact filter.
+
+The C1364 method split extends its frozen native-witness key without expanding
+the exclusion policy. CP-121 covers the adjacent witness model/matcher classes;
+CP-122..124 run the shared witness in its other three compiled suites. They are
+ordinary tests over synthetic inspection inputs, not SourceLanding PC cycles.
+The final guard also exposed three existing host-load labels missing from the
+recorder vocabulary. The exact C1620 method failed identically at task base
+b559bfba2e9a420495122d27171352fe9b7e1ba4 (one executed assertion failure).
+Add only those literal labels; keep unlisted-text omission assertions unchanged.
+Its base-only native build and exact-method run are unlisted attribution work
+required by git-common, with native default outputs and separate build slots.
 
 All test rows are serial and at most nine minutes; H rows and new short gate
 rows use two minutes, V rows and corpus rows seven minutes, the retained CP-98
@@ -783,6 +798,10 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-118 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1902_second_half` | R2-corpus-1902-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
 | CP-119 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1903_second_half` | R2-corpus-1903-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
 | CP-120 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1904_second_half` | R2-corpus-1904-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
+| CP-121 | R2Final | CP-101 | linux-witness-adjacent | `/*/*/(NativeLinuxPolicyWitnessMutationTests*)\|(NativeLinuxPolicyMatcherParityTests*)/*` | R-native-witness-model | both named classes; 0 failed/skipped | 2 | 2 | true |
+| CP-122 | R2Final | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness Agents.Pty | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-123 | R2Final | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
