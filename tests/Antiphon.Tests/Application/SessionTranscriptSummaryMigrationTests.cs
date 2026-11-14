@@ -80,6 +80,9 @@ public sealed class SessionTranscriptSummaryMigrationTests
         await db.GetService<IMigrator>().MigrateAsync(current);
         await db.GetService<IMigrator>().MigrateAsync(current); // complete install is idempotent
         (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname LIKE 'c1915_%' AND NOT tgisinternal").SingleAsync()).ShouldBe(4);
+        (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeFalse();
+        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("D");
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         var id = Guid.NewGuid();
         db.AgentSessions.Add(new AgentSession { Id = id, DefinitionName = "c1915-migration", Cwd = "/synthetic", Status = SessionStatus.Stopped, CreatedAt = DateTime.UtcNow });
         await db.SaveChangesAsync();

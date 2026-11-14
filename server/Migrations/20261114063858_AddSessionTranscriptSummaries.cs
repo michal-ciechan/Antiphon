@@ -55,6 +55,51 @@ namespace Antiphon.Server.Migrations
 
             // No transcript rewrite or backfill. Only recognized valid summaries fold new rows.
             migrationBuilder.Sql("""
+            -- PostgreSQL-only activation metadata, like the trigger functions below;
+            -- application EF reads/writes do not map this control relation.
+            CREATE TABLE "SessionTranscriptSummaryMaintenance" (
+                "Id" boolean PRIMARY KEY DEFAULT true CHECK ("Id"),
+                "Enabled" boolean NOT NULL DEFAULT false
+            );
+            INSERT INTO "SessionTranscriptSummaryMaintenance" DEFAULT VALUES;
+
+            CREATE FUNCTION c1915_maintenance_transition() RETURNS trigger LANGUAGE plpgsql AS $gate$
+            DECLARE configured_timeout interval;
+            BEGIN
+                -- Respect a caller's shorter deadline. Never leave DDL admission unbounded.
+                configured_timeout := current_setting('lock_timeout')::interval;
+                IF configured_timeout = interval '0' OR configured_timeout > interval '5 seconds' THEN
+                    PERFORM set_config('lock_timeout', '5s', true);
+                END IF;
+                -- Join appends first, then backfill writes. S5 must check Enabled after
+                -- acquiring its summary write/row lock and before reading/publishing.
+                LOCK TABLE "TranscriptEntries" IN SHARE ROW EXCLUSIVE MODE;
+                LOCK TABLE "SessionTranscriptSummaries" IN SHARE ROW EXCLUSIVE MODE;
+                UPDATE "SessionTranscriptSummaries" SET "Valid" = false, "NextBackfillAttemptAt" = NULL
+                WHERE "Valid" OR "NextBackfillAttemptAt" IS NOT NULL;
+                IF NEW."Enabled" THEN
+                    ALTER TABLE "TranscriptEntries" ENABLE TRIGGER c1915_insert;
+                ELSE
+                    ALTER TABLE "TranscriptEntries" DISABLE TRIGGER c1915_insert;
+                END IF;
+                RETURN NEW;
+            END;
+            $gate$;
+
+            CREATE FUNCTION c1915_maintenance_row_only() RETURNS trigger LANGUAGE plpgsql AS $gate$
+            BEGIN
+                RAISE EXCEPTION 'Update the singleton maintenance gate; removing or replacing it is unsupported.'
+                    USING ERRCODE = '55000';
+            END;
+            $gate$;
+
+            CREATE TRIGGER c1915_maintenance_transition BEFORE UPDATE OF "Enabled"
+                ON "SessionTranscriptSummaryMaintenance" FOR EACH ROW
+                EXECUTE FUNCTION c1915_maintenance_transition();
+            CREATE TRIGGER c1915_maintenance_row_only BEFORE INSERT OR DELETE OR TRUNCATE
+                ON "SessionTranscriptSummaryMaintenance" FOR EACH STATEMENT
+                EXECUTE FUNCTION c1915_maintenance_row_only();
+
             CREATE FUNCTION c1915_insert() RETURNS trigger LANGUAGE plpgsql AS $body$
             DECLARE
                 session_id uuid;
@@ -179,6 +224,10 @@ namespace Antiphon.Server.Migrations
                 REFERENCING OLD TABLE AS old_entries FOR EACH STATEMENT EXECUTE FUNCTION c1915_delete();
             CREATE TRIGGER c1915_truncate AFTER TRUNCATE ON "TranscriptEntries"
                 FOR EACH STATEMENT EXECUTE FUNCTION c1915_truncate();
+
+            -- Off by default, with no per-append function, probe, placeholder or row lock.
+            -- Reader disablement does not change this maintenance gate (D-7).
+            ALTER TABLE "TranscriptEntries" DISABLE TRIGGER c1915_insert;
             """.ReplaceLineEndings("\n"));
         }
 

@@ -84,11 +84,50 @@ S7 must price this observed ordinary-batch invalidation/backfill cost.
 
 Round-2 Code commissioning (5675aac7): Review 6f663ce6 found feature-off
 singleton overhead. CP-35 is the red-first no-write/no-row-lock regression;
-CP-36 compares the installed trigger, an index-probe early return, a scratch
-one-row database gate and dropped triggers on the shared scale fixture. Three
+CP-36 compares the installed trigger state, an index-probe early return, a scratch
+per-append one-row database lookup and dropped triggers on the shared scale fixture. Three
 samples per option/state, rotating order; timings are descriptive, never a test
 gate. CP-35 retains CP-3's 4-minute cap; CP-36 has a provisional 10-minute cap
 (scale preparation plus bounded small measurements). S1-S3 scope is unchanged.
+
+Round-2 measured choice: run 20261114-150337-0dec at
+`017ef0fc4cb25f13c681d47b915d348fbe21a1d0` seeded 3,118,500 transcript rows
+and 27,695 tasks in 243.173s. The index probe's median 100-singleton overhead
+was 41.53% absent / 57.52% invalid; its 1000-row overhead was 14.80% / 97.85%.
+The per-append table lookup cost 14.27% / 61.62% singleton and 0.85% / 73.13%
+multi-row. Neither meets the requested single-digit target. Original installed
+singleton overhead was 77.17% / 187.11%. These are noisy descriptive samples,
+not p95 or production acceptance. Raw numbers remain in the ignored evidence.
+
+Choose a physical database gate: keep the four guards installed in S2 but install
+the append trigger **disabled**. Unlike creating guards only during activation,
+this preserves the migration's all-or-nothing install and bounded 5s DDL admission.
+The disabled append path executes no function or lookup. CP-36 must measure this
+actual installed state against dropped triggers; these pre-fix numbers do not
+establish the resulting overhead. The scratch dropped-trigger path measures
+inactive append cost, not the cost of future activation DDL.
+
+The SQL-only singleton `SessionTranscriptSummaryMaintenance` controls the append
+trigger. `UPDATE ... SET "Enabled"=true/false WHERE "Id"` executes a trigger that
+fences TranscriptEntries writers, then summary writers, invalidates all summaries,
+and enables/disables c1915_insert in the same transaction. It caps an unbounded or
+longer lock_timeout at 5s and preserves a shorter caller deadline. DELETE, TRUNCATE
+and replacement INSERT of this control row refuse. All operations here are test-
+owned; live activation stays separately commissioned. This is an internal PostgreSQL
+control relation, intentionally outside the application's EF entity model.
+
+S5 enables maintenance before backfill and checks Enabled after acquiring the
+summary write/row lock and before reading or publishing. No history rewrite is
+needed: absent/invalid summaries are reconstructed by its ordinary backfill.
+S6 must treat the database gate being off as invalid for every summary, in the same
+seed statement snapshot. Reader flag disablement **leaves maintenance on**, as D-7
+requires; an explicit maintenance shutdown is a separate transition that physically
+invalidates summaries before it admits off-path appends. Re-enable also invalidates;
+it never certifies old fields. The ordinary reader/backfill flag remains S5/S6 work.
+The index-probe alternative would additionally need a parent-row/FK publication
+barrier during S5 backfill, since a skipped invalid row no longer joins its lock.
+It is not selected. CP-3 proves both gate/append orders, rollback, shorter admission,
+singleton protection, and valid fold equality with the reader still on legacy SQL.
 
 | Card/brief assumption | Code and observed behavior at the source SHA | Consequence |
 |---|---|---|
@@ -265,7 +304,7 @@ publish only half. A seed statement sees both through one MVCC snapshot. If the
 probe finds any invalid row, its result is discarded before cache publication and
 one complete legacy statement supplies the final snapshot.
 
-The trigger locks touched summary keys in UUID order before changing them. For a
+When maintenance is enabled, the trigger locks touched summary keys in UUID order before changing them. For a
 missing key it creates an invalid placeholder with conflict handling, then locks
 that row. A concurrent older writer still runs these database triggers. Duplicate
 replays with no inserted rows do not increment counts. Multi-row statements fold
@@ -304,6 +343,9 @@ as a queue; invalid rows are durable retry work. Timeout/cancellation rolls back
 and leaves invalidity. Failed sessions receive NextBackfillAttemptAt = now +
 5 seconds, with at most one attempt per scheduling cycle; keyset fairness keeps a poison/busy key from starving
 other sessions. Invalidation clears the delay when fresh data can repair the state.
+The round-2 commissioning amendment additionally requires the maintenance admission
+check under that write/row lock. Gate transitions fence both transcript and summary
+writes; S5 must not publish a summary while maintenance is off.
 
 Migration contains only new table/index/trigger/function definitions. Use
 `SET LOCAL lock_timeout = '5s'` as a bounded DDL admission wait and surface refusal,
@@ -497,9 +539,9 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1915-s1b/ | baseline-fixture | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)/*` | V-1 foundation | all listed, 0 failed | 2 | 7 |
-| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2b/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
-| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3b/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1915-r2-s1/ | baseline-fixture | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)/*` | V-1 foundation | all listed, 0 failed | 2 | 7 |
+| CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-r2-s2/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
+| CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-r2-s3/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
 | CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-3-migration-callers | S3 | CP-3 | historical-migration-callers | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(C0824RefOnlyIdentityTests*)/*` | R-1 affected callers | all listed, 0 failed | 2 | 3 |
 | CP-3-migration-chain | S3 | CP-3 | migration-chain-regression | `/*/*/(C0824RefOnlySnapshotMigrationTests*)\|(C1514HostLoadMigrationTests*)\|(CapacityAdmissionLifecycleTests*)/*` | R-1 chain/model guards | all listed, 0 failed | 3 | 3 |
@@ -549,7 +591,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | RP-29b | S8 | CP-8 | impacted-rp-29b | `/*/*/(StandingRestartEscalationTests*)\|(StandingSessionOwnershipTests*)/*` | R-1,R-2 | all listed, 0 failed | 57 | 2 |
 | CP-30 | S8 | CP-8 | impacted-23 | `/*/*/(TaskPlatformDispatchTests*)\|(TaskPlatformPersistenceTests*)\|(TestDbFixtureLifecycleTests*)\|(TranscriptHotPathMigrationTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
 | CP-31 | S8 | CP-8 | impacted-24 | `/*/*/(WorkerWorkspaceDefaultMigrationTests*)\|(WorkingTranscriptRecoveryTests*)\|(WorktreeBaseSelectionTests*)\|(WorktreeDefaultCallerTests*)/*` | R-1,R-2 | all listed, 0 failed | 4 | 4 |
-| CP-32 | S8 | tests/Antiphon.Messaging.Tests -> bin-c1915-messaging/ | migration-messaging | `/*/*/(InboxConversationMigrationTests*)/*` | R-1 | all listed, 0 failed | 1 | 4 |
+| CP-32 | S8 | tests/Antiphon.Messaging.Tests -> bin-c1915-r2-messaging/ | migration-messaging | `/*/*/(InboxConversationMigrationTests*)/*` | R-1 | all listed, 0 failed | 1 | 4 |
 | CP-33 | S8 | CP-8 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 | all listed, 0 failed | 12 | 2 |
 | CP-34 | S8 | tests/Antiphon.Tests -> bin-c1915-windows/ | native-Windows-impact | `/*/*/(GrokDelegateEndToEndTests*)\|(SessionMessageQueueGrokPtyIntegrationTests*)\|(SessionMessageQueuePtyIntegrationTests*)\|(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 10 |
 

@@ -24,6 +24,7 @@ public sealed class SessionTranscriptSummaryAppendTests
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
+        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("D");
         var retryAt = Epoch.AddYears(10);
         db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary {
             AgentSessionId = f.OtherId, Valid = false, NextBackfillAttemptAt = retryAt });
@@ -84,6 +85,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         // maintenance to be independent of the reader, including its disabled state.
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
         await db.SaveChangesAsync();
         for (var n = 1; n <= 2; n++)
@@ -93,6 +95,152 @@ public sealed class SessionTranscriptSummaryAppendTests
         (await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId].Count.ShouldBe(2);
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},0,'TurnEnd',{Epoch})");
         (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse("out-of-order appends still invalidate while the reader is off");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Maintenance_disable_never_leaves_stale_valid_rows(bool rollback)
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
+        await db.SaveChangesAsync();
+        await AppendRowsAsync(db, new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = 1, Kind = "AssistantText", CreatedAt = Epoch });
+        await EqualAsync(db, [f.SessionId]);
+        await using (var transaction = await db.Database.BeginTransactionAsync())
+        {
+            await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, false);
+            (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse("gate-off invalidation belongs to the same transaction as trigger disablement");
+            if (rollback) await transaction.RollbackAsync();
+            else await transaction.CommitAsync();
+        }
+        var version = await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id", new NpgsqlParameter("id", f.SessionId)).SingleAsync();
+        await AppendRowsAsync(db, new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = 2, Kind = "TurnEnd", CreatedAt = Epoch });
+        if (rollback)
+        {
+            (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeTrue();
+            await EqualAsync(db, [f.SessionId]);
+        }
+        else
+        {
+            (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
+            (await db.Database.SqlQueryRaw<string>("SELECT xmin::text AS \"Value\" FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id", new NpgsqlParameter("id", f.SessionId)).SingleAsync()).ShouldBe(version);
+            await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
+            (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse("re-enable cannot invent a backfill or certify stale fields");
+        }
+        (await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId].Count.ShouldBe(2);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Maintenance_transitions_serialize_with_appends(bool transitionFirst)
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
+        await db.SaveChangesAsync();
+        await using var writer = new NpgsqlConnection(db.Database.GetConnectionString());
+        await using var gate = new NpgsqlConnection(db.Database.GetConnectionString());
+        await using var observer = new NpgsqlConnection(db.Database.GetConnectionString());
+        await Task.WhenAll(writer.OpenAsync(), gate.OpenAsync(), observer.OpenAsync());
+        await using var writeTx = await writer.BeginTransactionAsync();
+        await using var gateTx = await gate.BeginTransactionAsync();
+        await using var insert = new NpgsqlCommand("INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES (gen_random_uuid(),@id,1,'AssistantText',timestamptz '2026-01-01')", writer, writeTx) { CommandTimeout = 10 };
+        insert.Parameters.AddWithValue("id", f.SessionId);
+        await using var disable = new NpgsqlCommand("UPDATE \"SessionTranscriptSummaryMaintenance\" SET \"Enabled\"=false WHERE \"Id\"", gate, gateTx) { CommandTimeout = 10 };
+        Task? pending = null;
+        var writeDone = false;
+        var gateDone = false;
+        try
+        {
+            if (transitionFirst)
+            {
+                await disable.ExecuteNonQueryAsync();
+                pending = insert.ExecuteNonQueryAsync();
+                await BlockedAsync(observer, writer.ProcessID, gate.ProcessID);
+                await gateTx.CommitAsync(); gateDone = true;
+                await pending;
+                await writeTx.CommitAsync(); writeDone = true;
+            }
+            else
+            {
+                await insert.ExecuteNonQueryAsync();
+                pending = disable.ExecuteNonQueryAsync();
+                await BlockedAsync(observer, gate.ProcessID, writer.ProcessID);
+                await writeTx.CommitAsync(); writeDone = true;
+                await pending;
+                await gateTx.CommitAsync(); gateDone = true;
+            }
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(1);
+            (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
+            (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(transitionFirst ? 0 : 1);
+            await AppendRowsAsync(db, new TranscriptEntry { Id = Guid.NewGuid(), AgentSessionId = f.SessionId, Sequence = 2, Kind = "AssistantText", CreatedAt = Epoch });
+            (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
+            (await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId].Count.ShouldBe(2);
+        }
+        finally
+        {
+            // Release the blocking transaction before joining the command on the other
+            // connection. No pending command or transaction may outlive this test.
+            if (transitionFirst) { if (!gateDone) await gateTx.RollbackAsync(); }
+            else { if (!writeDone) await writeTx.RollbackAsync(); }
+            if (pending is not null) { try { await pending; } catch { /* preserve the original assertion/command failure */ } }
+            if (transitionFirst) { if (!writeDone) await writeTx.RollbackAsync(); }
+            else { if (!gateDone) await gateTx.RollbackAsync(); }
+        }
+    }
+
+    [Test]
+    public async Task Maintenance_admission_preserves_a_shorter_lock_deadline()
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
+        await db.Database.OpenConnectionAsync();
+        foreach (var (configured, expected) in new[] { ("0", "5s"), ("1s", "1s"), ("10s", "5s") })
+        {
+            await using var probe = await db.Database.BeginTransactionAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT set_config('lock_timeout',{configured},true)");
+            await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, false);
+            (await db.Database.SqlQueryRaw<string>("SELECT current_setting('lock_timeout') AS \"Value\"").SingleAsync()).ShouldBe(expected);
+            await probe.RollbackAsync();
+        }
+        await using var blocker = new NpgsqlConnection(db.Database.GetConnectionString());
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using var hold = new NpgsqlCommand("LOCK TABLE \"TranscriptEntries\" IN ROW EXCLUSIVE MODE", blocker, transaction) { CommandTimeout = 10 };
+        await hold.ExecuteNonQueryAsync();
+        await db.Database.ExecuteSqlRawAsync("SET lock_timeout='1s'");
+        var error = await Should.ThrowAsync<PostgresException>(() => SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, false));
+        error.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+        (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeTrue("refused admission must roll back the whole gate change");
+        (await db.Database.SqlQueryRaw<string>("SELECT tgenabled::text AS \"Value\" FROM pg_trigger WHERE tgrelid='\"TranscriptEntries\"'::regclass AND tgname='c1915_insert'").SingleAsync()).ShouldBe("O");
+        await transaction.RollbackAsync();
+    }
+
+    [Test]
+    [Arguments("DELETE FROM \"SessionTranscriptSummaryMaintenance\"")]
+    [Arguments("TRUNCATE \"SessionTranscriptSummaryMaintenance\"")]
+    [Arguments("INSERT INTO \"SessionTranscriptSummaryMaintenance\" DEFAULT VALUES")]
+    public async Task Maintenance_singleton_cannot_be_removed_or_replaced(string sql)
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        var error = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlRawAsync(sql));
+        error.SqlState.ShouldBe(PostgresErrorCodes.ObjectNotInPrerequisiteState);
+        (await db.Database.SqlQueryRaw<bool>("SELECT \"Enabled\" AS \"Value\" FROM \"SessionTranscriptSummaryMaintenance\" WHERE \"Id\"").SingleAsync()).ShouldBeFalse();
+    }
+
+    private static async Task BlockedAsync(NpgsqlConnection observer, int waiter, int owner)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var command = new NpgsqlCommand("SELECT @owner = ANY(pg_blocking_pids(@waiter))", observer) { CommandTimeout = 10 };
+        command.Parameters.AddWithValue("owner", owner); command.Parameters.AddWithValue("waiter", waiter);
+        while (!(bool)(await command.ExecuteScalarAsync(budget.Token))!) await Task.Yield();
     }
 
     [Test]
@@ -107,6 +255,7 @@ public sealed class SessionTranscriptSummaryAppendTests
         var fault = new PersistenceFault(scenario);
         await using var f = await SessionStateTestFixture.CreateAsync(fault);
         await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},1,'AssistantText',now())");
@@ -181,6 +330,7 @@ public sealed class SessionTranscriptSummaryAppendTests
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
         await db.SaveChangesAsync();
         TranscriptEntry Row(long seq, string kind, int? seconds, string? text = null) => new() {
@@ -213,6 +363,7 @@ public sealed class SessionTranscriptSummaryAppendTests
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         var random = new Random(191503);
         var ids = Enumerable.Range(0, 128).Select(_ => Guid.NewGuid()).ToArray();
         db.AgentSessions.AddRange(ids.Select(id => new AgentSession { Id = id, DefinitionName = "c1915-fold", Cwd = "/synthetic", Status = SessionStatus.Stopped, CreatedAt = Epoch }));
@@ -243,6 +394,7 @@ public sealed class SessionTranscriptSummaryAppendTests
     {
         await using var f = await SessionStateTestFixture.CreateAsync();
         await using var db = f.Db();
+        await SessionTranscriptSummaryMigrationFixture.SetMaintenanceAsync(db, true);
         var ids = new[] { f.SessionId, f.OtherId };
         db.SessionTranscriptSummaries.AddRange(ids.Select(id => new SessionTranscriptSummary { AgentSessionId = id, Valid = true }));
         await db.SaveChangesAsync();
