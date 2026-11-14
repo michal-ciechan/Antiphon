@@ -50,6 +50,19 @@ public sealed class C0824RefOnlyPreparationTests
         result.Warning.ShouldBe("ref_only_remote_ref_collision");
         (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + task.WorktreeBranch)).ShouldBe(foreign);
         Path.Exists(task.WorktreePath).ShouldBeFalse();
+
+        // A foreign ancestor would be overwritten by an ordinary fast-forward push.
+        await f.Git.RunAsync(f.Git.Desktop, "commit", "--allow-empty", "-m", "new selected base");
+        var newer = C0824RefOnlyProvisionTests.NewTask(f);
+        newer.WorktreeBaseRequestedRef = await f.Git.RevParseAsync("HEAD");
+        f.Db.AgentTasks.Add(newer); await f.Db.SaveChangesAsync();
+        await using (var lease = await f.Git.Leases.TryAcquireAsync(f.Git.Desktop, default))
+            await C0824RefOnlyProvisionTests.Producer(f).PlanAsync(newer, lease!, default);
+        await f.Git.RunAsync(f.Git.Desktop, "push", "origin", f.Git.Baseline + ":refs/heads/" + newer.WorktreeBranch);
+        result = await C0824RefOnlyProvisionTests.Producer(f).PublishAsync(newer, default);
+        result.Pushed.ShouldBeFalse("foreign ancestor is never adopted by fast-forward");
+        result.Warning.ShouldBe("ref_only_remote_ref_collision");
+        (await f.Git.RunAsync(f.Git.Origin, "rev-parse", "refs/heads/" + newer.WorktreeBranch)).ShouldBe(f.Git.Baseline);
     }
 
     [Test]
