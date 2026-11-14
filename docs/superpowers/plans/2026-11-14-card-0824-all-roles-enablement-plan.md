@@ -710,6 +710,7 @@ guard/limiter census, not a whole Unit lane.
 | CP-28 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-nightly-policy | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | impacted policy reader and repinned live-lane contract | every named class, 0 failed | 2 | 7 | true |
 | CP-29 | G1 | tests/Antiphon.Tests -> bin-c0824-all-guards/ | portable-fixture-teardown | `/*/*/ClassTeardownTrackerTests/*` | shared producer host closes before shared database disposal | 3 methods, 0 failed | 3 | 2 | true |
 | CP-30 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-policy-pin-regression | `/*/*/(NativeLinuxPolicyWitnessMutationTests*)\|(NativeLinuxPolicyMatcherParityTests*)/*` | exact exclusion pin and existing independent rejection/matcher controls | every named class, 0 failed | 13 | 6 | true |
+| CP-31 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-policy-pin-repair | `/*/*/NativeLinuxPolicyWitnessTests/*` | exact red-class rerun from CP-22 after the exclusion-pin repair | 3 methods, 0 failed | 3 | 2 | true |
 
 For required baseline reds, run the same precise new acceptance method through
 the checkpoint tool at the committed test-first SHA, with expected assertion
@@ -762,6 +763,9 @@ on Windows. Independent canonicalization verifies the unchanged prior rows and
 the exact old/new digest. The pin update changes no guard assertion or marker
 authority. CP-22's unrelated three dropped host-load operation labels reproduced
 at the task base and remain inherited; their assertions and vocabulary are unchanged.
+CP-31 reruns the repaired CP-22 class at the new committed source, sharing the
+F4-policy isolated build. Retain CP-22's full 177-result receipt and its inherited
+timing-label red; do not rerun its other green classes merely to restate that result.
 
 ### Cost
 
