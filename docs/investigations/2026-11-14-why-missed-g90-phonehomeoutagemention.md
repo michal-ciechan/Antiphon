@@ -26,8 +26,8 @@ The first repaired whole-class run (`green-phone`, source
 masked fixture assumption: 8 executed, 7 passed, 1 failed because the final
 LateConfirmed verdict was still null. Pending had been immediately eligible
 with StrandedAgeSeconds=0; the new Sent shape enters the existing
-InterruptedSent discovery gate only after 3 s transcript timeout + 3 s grace
-+ 30 s clock tolerance in BridgeQueueHarness. The reconnect happened in
+InterruptedSent discovery gate only after 3 s transcript timeout, 3 s grace
+and 30 s clock tolerance in BridgeQueueHarness. The reconnect happened in
 about one second. This is not caused by the unrelated switch guard.
 
 Advance the harness's existing OutageQueueClock by one minute before graph
