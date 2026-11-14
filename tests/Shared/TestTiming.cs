@@ -795,8 +795,11 @@ public sealed class TestTimingSession : IDisposable
         "c1653-unsafe-dir-launch",
         "raw-reflog-fault", "source-snapshot",
         "historical migration database",
+        "host-load 100 durable receipts",
         "host-load API read fixtures",
+        "host-load cancel and join world",
         "host-load probe initialization",
+        "host-load world initialization",
     };
 
     private static string BoundOperation(string? operation) =>
