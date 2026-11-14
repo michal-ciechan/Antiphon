@@ -472,12 +472,19 @@
     {
       "id": "input-delivery-uncertainty",
       "globs": [
-        "server/Application/Exceptions/InputDeliveryUncertainException.cs"
+        "server/Application/Exceptions/InputDeliveryUncertainException.cs",
+        "server/Application/Services/SessionMessageQueueService.cs",
+        "server/Application/Services/AgentControlService.cs"
       ],
       "classes": [
         "AgentTaskMidTurnRefineTests",
+        "CodexCliObservationGapTests",
+        "GrokRulesCompactionRecoveryTests",
+        "GrokRulesReadyOrderingTests",
         "LandRefusalDeliveryWitnessTests",
-        "SessionMessageQueuePhoneHomeDropTests"
+        "PhoneHomeOutageMentionTests",
+        "SessionMessageQueuePhoneHomeDropTests",
+        "StandingSessionSwitchConcurrencyTests"
       ]
     },
     {
