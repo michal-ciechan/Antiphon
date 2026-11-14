@@ -20,6 +20,9 @@ implementation or live retirement operation is authorized by this report.
   -p:UseAppHost=false`. Native default build output is retained for reuse.
 - Admission is measured separately from lease-held execution. Load columns use
   `/proc/loadavg`; one run is not a p95. Uninstrumented phases remain unknown.
+- Tracked measurement source was clean after all runs. Binary SHA-256:
+  `Antiphon.Tests.dll`: `8adf611cea6147a197059a13e34c1cbb1f531c08dec92a18746f3a06602f7d39`;
+  impact driver: `e0fa1b3a3cdf7c94239a1c8e8ae2fe4ff05fe3557d9acf35877a199eb9979b65`.
 
 ## Cold build
 
@@ -32,6 +35,13 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1901-cold-build -SlotWai
 | Outcome | Admission (s) | Execution (s) | Whole wall (s) | Load start (1/5/15 min) | Load end |
 |---|---:|---:|---:|---|---|
 | Passed; 0 errors, 2,091 warnings | 211.6 | 232.4 | 444.1 | 19.50 / 23.57 / 22.02 | 23.14 / 22.06 / 21.67 |
+| Impact driver; 0 errors/warnings | 213.1* | 11.0 | 224.1* | 50.44 / 40.27 / 32.19 | 49.27 / 40.36 / 32.30 |
+
+\* The driver was first in the finalization lease: its admission is that batch's
+launcher-to-grant time; the subsequent oracle/tests reused the lease. Both cold
+projects total **243.4 s execution**. Recommend **8 min test build + 1 min driver
+build**, or **9 min combined preparation**, with admission separate. Broker waits
+were 210 s for each cold admission; launcher overhead explains 211.6/213.1 s.
 
 MSBuild itself reported 231.22 s. The graph includes the checkpoint coordinator
 and referenced fixture/probe projects; no separate coordinator bootstrap build
@@ -55,7 +65,7 @@ separate provisional 95–190 min is additional, not included in either total.
 
 ## Measurement status
 
-Existing-test measurements are in progress. Test rows execute alone and serially
+The closed existing checkpoint selections have been measured. The adjacent full-class census remains incomplete within the 90-minute task timebox. Test rows execute alone and serially
 inside one foreground, slot-gated measurement driver. Top-level test launches
 use `--no-build`; its admission is charged once. Each child row reports zero
 additional admission and records reuse of the held lease. Existing policy tests
@@ -87,12 +97,11 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1901-impact-driver -Slot
 Board search `card.ps1 search 'DerivedImpactIndex' -Board Antiphon -All` completed
 with 13 hits. Full `CARD-1868` text explicitly records this exact prerequisite in
 A-2, including the class-wide selector and failing method. Reuse CARD-1868; no
-duplicate was filed. The cold driver build and post-preparation recheck are
-pending at this evidence slice. Preserve the original red and its timing.
+duplicate was filed. The driver cold build took 11.0 s (exit 0); the exact failing method was rechecked after preparation in 17.3 s: 1 executed / 1 passed / 0 failed / 0 skipped. The original class and combined-row reds remain historical red receipts.
 
 ## Executed baseline rows
 
-Every row is on master `8c06c7e11f40cc224235ecbc68c2389913cc67ee`. E/P/F/S means TRX executed/passed/failed/notExecuted. Admission is zero additional seconds within the single foreground suite lease; its broker wait is 75 s (launcher-to-grant recorded separately in `serial-suite.json`). This lease reuse does not predict zero admission for Code checkpoints.
+Every row is on master `8c06c7e11f40cc224235ecbc68c2389913cc67ee`. E/P/F/S means TRX executed/passed/failed/notExecuted. Rows have zero additional admission within their foreground batch lease. `serial-suite` waited 75 s (77.0 s launcher-to-grant); the final C1708/recheck rows reused the finalization lease after its cold driver build, whose broker wait was 210 s. These reused leases do not predict zero admission for Code checkpoints.
 
 | Row | E/P/F/S | Execution s | Additional admission s | Load start (1/5/15) | Load end |
 |---|---|---:|---:|---|---|
@@ -122,10 +131,12 @@ Every row is on master `8c06c7e11f40cc224235ecbc68c2389913cc67ee`. E/P/F/S means
 | native-policy-repeat | 2/2/0/0 | 81.4 | 0.0 | 25.91/15.95/16.66 | 25.34/19.32/17.86 |
 | guards-combined | 182/181/1/0 | 493.4 | 0.0 | 25.34/19.32/17.86 | 38.69/31.73/23.94 |
 | guards-combined-repeat | 182/181/1/0 | 492.7 | 0.0 | 38.69/31.73/23.94 | 17.63/24.31/24.01 |
+| C1708ReflogSalvageTests-full | 30/30/0/0 | 116.8 | 0.0 | 49.49/40.55/32.41 | 24.85/33.74/30.87 |
+| derived-driver-prepared | 1/1/0/0 | 17.3 | 0.0 | 24.85/33.74/30.87 | 22.64/32.82/30.61 |
 
 The exact selected filters are retained in `suite-rows.json` and each row receipt; class-only rows use `/*/*/<Class>/*`. The full census came from `rg -l -i 'c590|RecycleGitAudit|WorktreeReflogSalvage|retire-temp|selector_fixture|refs/antiphon/salvage' tests/Antiphon.Tests --glob '*Tests.cs'`, then actual class declarations. Keyword hits include incidental documentation/roster consumers; they are diagnostic scope, not additions to ordinary Code verification.
 
-Adjacent census classes without a full-class receipt at this point: `C1364BoundLandWaitProofTests`, `C1708ReflogSalvageTests`, `CacheSeedNpmOwnershipTests`, `ClaudeTokenRefreshOptInTests`, `DockerDeliveryBarrierTests`, `DockerDeliveryDatabaseTests`, `DockerDeliveryRecoveryCommandTests`, `DockerStackContractTests`, `DockerStackDocumentationTests`, `DockerStackSmokeCommandTests`, `DockerTestCommandTests`, `HostJqFixtureClosureTests`, `HostJqPrerequisiteScriptTests`, `LinuxTestRosterTests`, `PlanCoverageGoldenTests`, `RemoteScriptContractTests`, `RetiredTempContainerHostTests`, `RetiredTempContainerScriptTests`, `RetireTempRunnerTimestampTests`, `RollingProductionMountTests`, `RollingVolumeRecycleCensusChurnTests`, `RollingVolumeRecycleScriptTests`, `SeedSmokeTargetingPackContractTests`, `StandingPipelinePolicyDocumentationTests`, `TestAppHostPathTests`, `VolumeRetirementApplyGateTests`, `VolumeRetirementContentTests`, `VolumeRetirementReceiptTests`, `VolumeRetirementWrapperTests`.
+Adjacent census classes without a full-class receipt at this point: `C1364BoundLandWaitProofTests`, `CacheSeedNpmOwnershipTests`, `ClaudeTokenRefreshOptInTests`, `DockerDeliveryBarrierTests`, `DockerDeliveryDatabaseTests`, `DockerDeliveryRecoveryCommandTests`, `DockerStackContractTests`, `DockerStackDocumentationTests`, `DockerStackSmokeCommandTests`, `DockerTestCommandTests`, `HostJqFixtureClosureTests`, `HostJqPrerequisiteScriptTests`, `LinuxTestRosterTests`, `PlanCoverageGoldenTests`, `RemoteScriptContractTests`, `RetiredTempContainerHostTests`, `RetiredTempContainerScriptTests`, `RetireTempRunnerTimestampTests`, `RollingProductionMountTests`, `RollingVolumeRecycleCensusChurnTests`, `RollingVolumeRecycleScriptTests`, `SeedSmokeTargetingPackContractTests`, `StandingPipelinePolicyDocumentationTests`, `TestAppHostPathTests`, `VolumeRetirementApplyGateTests`, `VolumeRetirementContentTests`, `VolumeRetirementReceiptTests`, `VolumeRetirementWrapperTests`.
 
 ## Recommended closed rows for Code
 
@@ -201,3 +212,50 @@ measure the future bound-pack rebuilds or method bodies for the 19 mutation
 controls; keep that independent over-30-minute Debug obligation with post-land
 Mutation. No live preview, apply, deployment or real registry qualification is
 part of this measurement.
+
+## Partial census and remaining work
+
+`C1364BoundLandWaitProofTests` was stopped after 703.5 s including cancellation/join; exit 1, no TRX. Counts are unavailable and this row is not green. The phase journal completed `C1364_Wrapper_redeploy_reports_waited` (29.7 s) and `C1364_Host_recycle_post_removal_reports_waited` (513.2 s), then had the admission method pending. The latter full method alone needs a smaller vector/setup design to support a 10-minute cap near 2x observed cost. All stop targets were proven descendants of the owned measurement driver; `census-stop.json` records zero remaining owned processes.
+
+The full-class keyword census is not complete. Its exact outstanding classes are listed above. A further measurement timebox is needed to satisfy that portion of the brief; none of those rows is credited. The closed Code method selections have timings, and the partition proposal is usable, but this report does not claim complete adjacent coverage.
+
+## Independent real-Git oracle
+
+The owned fixture has an approved bare origin, separate bare backup, publisher, audited common repository and detached linked checkout. It contains 16 original commits, fourteen unequal-OID/equal-stable-patch-id alternatives, a unique sibling and an annotated tag. Explicit expected accepted commit sets are 15 before and 32 after exact publication. The first v2 audit refuses at `check=rev-list` with 17 unpublished commits (all sixteen originals plus the sibling); exact original-chain/sibling publication then passes with two repositories. No production ref predicate was copied into the oracle.
+
+| Phase | Execution s | Load start (1/5/15) | Load end |
+|---|---:|---|---|
+| Graph construction, independent assertions and extraction | 2.7 | 49.27/40.36/32.30 | 49.27/40.36/32.30 |
+| v2 unpublished audit; exit 2 | 3.4 | 49.27/40.36/32.30 | 49.49/40.55/32.41 |
+| v2 published audit; exit 0 | 0.6 | 49.49/40.55/32.41 | 49.49/40.55/32.41 |
+
+Total fixture/oracle wall 6.9 s; 161 explicitly instrumented Git children outside the audit shell consumed 2.9 s. Bundle/manifest preparation cost 0.052 / 0.016 s. Audit-internal Git child attribution remains unknown. Scratch and fixtures were retained as evidence, so teardown deletion is unmeasured. The oracle reused the finalization lease; additional admission was zero.
+
+The committed audit body and content splice ran under Bash. Only mount-root constants were mapped to owned temporary paths, and scratch deletion was suppressed to retain evidence; verdict logic was unchanged. This measures the current head-only v2 path, not the future canonical-salvage implementation. Two earlier harness attempts failed before a valid oracle verdict (literal shell-splice expansion, then temporary `/tmp` mount classification); their logs are retained and excluded from valid oracle timings.
+
+## Serial total and phase attribution
+
+The original existing Linux checkpoint selection, counted once using each row's measured maximum, is **23.8 min execution** (247 result executions, including the known prerequisite red). The separate individual-class census and required over-budget repeats are measurement expense, not extra ordinary Code gates.
+
+The full future plan cannot have an observed total on this master: its 12 new methods and native Windows executions are absent/unrun. A conservative **~85 min serial execution forecast** uses the measured existing rows, the smaller-group projections, ten new H executions at the existing writer-case proxy, ten new V executions at the existing full-preview proxy, five cold test builds at the Linux observation (including an explicitly unmeasured Windows proxy), one driver preparation build, and the Windows existing host-proof proxy. The forecast includes extra launch allowance for CP-6 splitting. Separate coordinator bootstrap cost was not isolated from the test build; allow the plan's provisional 10–60 s in addition. This is not a p95 or a complete executed plan. New H/V and Windows rows remain n=0 until their ordinary Code runs.
+
+Queue time is additional and unforecast: the cold-test broker wait was 210 s; the serial test battery waited 75 s. The actual Code coordinator acquires leases per activity, unlike this batch's reused lease; do not multiply zero additional row waits into a wall-time promise. Keep each admission finite at 10 min and derive total/hard-wall allowances from the real manifest. Mutation and Review expense are additional.
+
+In the slower content sample, the private-origin case spent 163.8 s overall, with 154.3 s exclusive process work, 0.052 s attributed fixture work and the remainder unattributed. Host-proof internals have no equivalent child spans: their uninstrumented time is unknown, not zero. Launch-to-first-test includes discovery; the combined filter observed up to 35.5 s, so the plan's 2–10 s host-start figure is not a measured bound. Keep immutable Git graph setup shared, isolate mutable origin refs, reuse slice builds, and measure setup/process/teardown in the first new-method executions.
+
+## Completion and rerun
+
+TRX-backed rows total 660 executions, 657 passed, 3 failed and 0 skipped, including repeated selections. Three historical failures are the same known driver-precondition assertion. The stopped C1364 row is additional partial evidence and has no credited counts.
+
+Rerun any exact filter from the tables with:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label card1901-row -SlotWaitMinutes 10 -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter "<exact filter above>" --report-trx --report-trx-filename run.trx --results-directory .antiphon/evidence/card-1901/rerun
+```
+
+Build both declared prerequisites first. Raw evidence is retained in `.antiphon/evidence/card-1901/budget-7555b555/` (ignored); essential source, outcomes, timings and loads are in this committed report. No CARD-1901 implementation or live host/volume/registry operation was performed.
+
+--- next stage ---
+next: code
+handoff: Add CP-0; use CP-3/CP-4/CP-11 method rows at H=2 min and V=7 min; CP-6a/b/c=5/5/7 min and CP-10a/b/c/d=4/2/9/6 min; cold preparation 8+1 min, admission 10 min separately. Preserve the incomplete adjacent census and commission another bounded measurement task for its 28 outstanding classes.
+artifact: docs/investigations/2026-11-14-card-1901-verification-budget.md
