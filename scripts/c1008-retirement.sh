@@ -553,7 +553,10 @@ c1609_effect_publication_fresh() {
     [[ "${C1609_CONTROL_STARTED:-}" =~ ^[0-9]+$ ]] || return 1
     now="$(c1609_monotonic_ms)" || return 1
     elapsed=$((now-C1609_CONTROL_STARTED))
-    [ "$elapsed" -ge 0 ] && [ "$elapsed" -le 5000 ]
+    if [ "$elapsed" -lt 0 ] || [ "$elapsed" -gt 5000 ]; then
+        printf 'C1609_EFFECT_WINDOW elapsed_ms=%s limit_ms=5000\n' "$elapsed" >&2
+        return 1
+    fi
 }
 
 c1609_recheck_target() {
