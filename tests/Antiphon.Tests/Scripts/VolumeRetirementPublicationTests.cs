@@ -516,13 +516,18 @@ public sealed class VolumeRetirementPublicationTests
         proof = await f.WriteProof(baselineWriter: true);
         proof.Exit.ShouldBe(0, proof.Output);
         Ready(await f.Preview(proof));
-        var admin = Path.Combine(nested, "owned-admin");
+        // Keep administrative bytes outside the checkout so the primary witness
+        // reaches gitdir classification rather than untracked-content refusal.
+        var admin = Path.Combine(f.Repo, ".antiphon/selector-evidence/x/owned-admin");
         Directory.Move(Path.Combine(nested, ".git"), admin);
-        if (symlink) Directory.CreateSymbolicLink(Path.Combine(nested, ".git"), "owned-admin");
-        else await File.WriteAllTextAsync(Path.Combine(nested, ".git"), "gitdir: owned-admin\n");
+        var relativeAdmin = Path.GetRelativePath(nested, admin);
+        if (symlink) Directory.CreateSymbolicLink(Path.Combine(nested, ".git"), relativeAdmin);
+        else await File.WriteAllTextAsync(Path.Combine(nested, ".git"), "gitdir: " + relativeAdmin + "\n");
         (await f.Git(nested, "rev-parse", "--absolute-git-dir")).ShouldBe(admin, "V8/V9 valid own-gitdir pointer, no confinement error");
         (await f.Git(nested, "rev-parse", "--show-toplevel")).ShouldBe(nested);
         (await f.Git(nested, "rev-parse", "HEAD")).Length.ShouldBe(40);
+        (await f.Git(nested, "status", "--porcelain", "--untracked-files=all")).ShouldBeEmpty("V8/V9 independent fixture is clean");
+        (await f.Git(f.Repo, "status", "--porcelain", "--untracked-files=all")).ShouldBeEmpty("V8/V9 enclosing parent is clean and published");
         var source = await File.ReadAllTextAsync(Path.Combine(Antiphon.Tests.Application.DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var script = "set -euo pipefail\nC1609_CONTENT_V2=1\nroot=" + VolumeRetirementPublicationFixture.Q(f.Work) +
             "\ntop=" + VolumeRetirementPublicationFixture.Q(admin) + "\ngitdir=" + VolumeRetirementPublicationFixture.Q(admin) + "\n" +
