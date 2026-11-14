@@ -157,12 +157,15 @@ public sealed class C0824RefOnlyPreparationTests
         f.Rig.Sink.Specs.ShouldHaveSingleItem().Cwd.ShouldBe(task.RemoteWorktreePath);
         Path.Exists(task.WorktreePath).ShouldBeFalse();
         Path.Exists(Path.Combine(f.Git.Desktop, ".antiphon", "task-" + DelegationReportFormatter.Short(id) + "-brief.md")).ShouldBeFalse();
-        var courier = f.Rig.Provider.GetRequiredService<RemoteSpillCourier>();
-        courier.TryPeek(session.Id, out var staged).ShouldBeTrue("production brief spill is staged for the remote input owner");
-        staged.RunnerCwd.ShouldBe(task.RemoteWorktreePath);
-        staged.Spill.Body.ShouldContain(new string('x', 1000));
-        staged.Spill.RelativePath.ShouldStartWith(".antiphon/");
-        staged.Spill.Body.ShouldNotContain("desktop checkout " + task.WorktreePath);
+        // The fake launch sink does not perform Grok's rules-ready handshake. Exercise the
+        // same production queue entry point that readiness invokes, against the real binding.
+        using (var scope = f.Rig.Provider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                .EnsureLaunchBriefAsync(task, session.Id, session.StartedAt, default);
+        var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == session.Id);
+        message.RemoteSpillBody.ShouldNotBeNull().ShouldContain(new string('x', 1000));
+        message.RemoteSpillRelativePath.ShouldNotBeNull().ShouldStartWith(".antiphon/");
+        message.RemoteSpillBody.ShouldNotContain("desktop checkout " + task.WorktreePath);
         // Missing remote coordinates must refuse before even an inline brief can use local fallback.
         Should.Throw<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
             AgentTaskDispatcher.FitBriefForTyping(task, new(), runnerCwd: null));
