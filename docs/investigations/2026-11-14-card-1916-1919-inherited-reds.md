@@ -1,10 +1,10 @@
 # CARD-1916..1919 inherited-red investigation
 
-Debug task 55b46f7e. Base/current master at start: ca8737e78170c9a441e216408da5fab636c34ca0. Linux x64; time box 120 minutes. Work order: 1919, 1917, 1918, 1916. The original eight reds and timings are preserved in Debug 71aaddba's roster report; this task independently verifies relevant methods before repairs.
+Debug task 55b46f7e. Base/current master at start: ca8737e78170c9a441e216408da5fab636c34ca0. Linux x64; original time box 120 minutes, followed by an authorized 40-minute reopening. Work order: 1919, 1917, 1918, 1916. The original eight reds and timings are preserved in Debug 71aaddba's roster report; this task independently verifies relevant methods before repairs.
 
-Verification scope: exact failing methods for diagnosis/bisection, then the three affected classes whole and the caller's seven-class guard union on the final tree. Builds and runs use build-slot.ps1, native default outputs and UseAppHost=false. Rows ran serially; every build/test execution held a slot for less than ten minutes. Admission is separate: the final guard row was 680.792s wall including 135s queued, with 543s held. Per-run load, source, wall duration, slot output and TRX/phase evidence are retained under `.antiphon/evidence/debug-1916-1919/`. Unknown phases remain unknown. No new test timeouts are authorized.
+Verification scope: exact failing methods for diagnosis/bisection, then the three affected classes whole and the caller's seven-class guard union on the final tree. Builds and runs use build-slot.ps1, native default outputs and UseAppHost=false. Rows ran serially; every build/test execution held a slot for less than ten minutes. Admission is separate: the original-pass guard row was 680.792s wall including 135s queued, with 543s held. Per-run load, source, wall duration, slot output and TRX/phase evidence are retained under `.antiphon/evidence/debug-1916-1919/`. Unknown phases remain unknown. No new test timeouts are authorized.
 
-**Incomplete: six of eight inherited failures are repaired on the task branch. Two CARD-1916 assertions remain red pending a contract decision; the branch is not green or landable.** All authorized independent diagnosis and final named verification completed. The minimal product correction requires ordinary Review after the outstanding decision.
+**Complete: all eight inherited failures are repaired. Final reopened verification: 562 executed, 562 passed, zero failed or skipped.** CARD-1916/1917/1919 are test corrections; CARD-1918 is the only product change and requires ordinary Review. Merge must wait for that Review. The earlier two-red result and its costs below are historical evidence, superseded by the reopened verification.
 
 ## CARD-1919: stale selector expectation
 
@@ -30,14 +30,14 @@ Minimal repair: this recovered-launch catch accepts only the typed InputDelivery
 
 Test wrong for the changed Input contract. `git bisect run` identifies **5b80144d3cc7dcdcdb50c85ee03cd737e1508b41** as first bad for the transport arm: 3/4 passed, that arm failed. The transport/refusal fixture throws before RecordingInterruptRunner records any input. HttpRequestException cannot prove that boundary on a real transport; CARD-1892 intentionally retains ambiguous writes. Change this retry arm to a definitive runner problem (409, fixture_input_refused), name it flush-definitive-refusal-then-retry, and preserve its original raw Pending, attempt-count, no-input and subsequent single-body retry assertions. This is test repair, not a product rollback or a Delivered marker on an unconfirmed row.
 
-The two aged Grok no-prompt cases still have their original raw Pending/second-attempt assertions. The four-case method passes at 4e4362beccf9b0be06c191990c4d323656809dad; `git bisect run` identifies **ecc9eb97130680c19e634f2a6ce236e61991cd3a** as first bad, with 2/4 passed and the two no-prompt cases failed. The brief explicitly forbids weakening raw Pending assertions, while docs/session-runtime-invariants.md's Input uncertainty section explicitly requires holding Grok Sent/null-verdict attempts without Enter/retype. A clarification is pending; no dependent change is authorized by silence. These are real unconfirmed attempts, not Merge 218's already-confirmed Sent fixtures, so seeding Delivered would conceal the obligation.
+Original-pass state before the caller decision (historical): the two aged Grok no-prompt cases still had their original raw Pending/second-attempt assertions. The four-case method passes at 4e4362beccf9b0be06c191990c4d323656809dad; `git bisect run` identifies **ecc9eb97130680c19e634f2a6ce236e61991cd3a** as first bad, with 2/4 passed and the two no-prompt cases failed. The brief explicitly forbids weakening raw Pending assertions, while docs/session-runtime-invariants.md's Input uncertainty section explicitly requires holding Grok Sent/null-verdict attempts without Enter/retype. A clarification is pending; no dependent change is authorized by silence. These are real unconfirmed attempts, not Merge 218's already-confirmed Sent fixtures, so seeding Delivered would conceal the obligation.
 
 ## Why the checks were missed
 
 - CARD-1919: sampler Review **2cef094f-670c-454f-aeaa-8047c6cd752a**, source 1a79c5119bce4c36e07e81bb43f5030ef072a4bf, ran named SessionRunner classes and an eleven-class Antiphon.Tests guard filter (116 passed). Its stored report lists the filter, which omits ImpactedClassesSelectorTests. The subsequent a9f8cd21 repair reports 23 named SessionRunner checks plus 80 guards, also omitting it. The new class/index dependency was covered; the exact selector output consumer was not.
 - CARD-1917/1918/1916: CARD-1892 Reviews **d552541f-0d4b-42be-9386-7c2f8f495a38** (round 1) and **caeec914-1116-45ef-b19e-5e087159296f** (round 2), and the round-3 plan, use CP-2's eight-class queue/rules/launch union and CP-3's guards. They omit DelegationDispatchRecoveryBoundaryTests and AgentTaskMidTurnRefineTests. Their findings concerned other real defects; do not relabel those historical Found outcomes as Clean. Merge 218's b445b5254e438c1e4313a51846ac5f1d0bc6b083 repair touches SessionRuntimeActionRecoveryTests and BridgeQueueHarness, not these two omitted classes. Stored review reports and stage-outcome metadata were retrieved read-only for this audit.
 
-## Final verification and disposition
+## Original-pass verification and disposition (historical; superseded)
 
 Final code/index source: **2c3b91248b657889fc7dd3f8f48c0d312e75dfe6**. Both final rows began and ended at this SHA with clean tracked source/index, and both reused the final native build, UseAppHost=false. Antiphon.Tests.dll SHA-256: `c11efe41204d6c99bfb47e36c2366787edec3dfdf7095fb059122cdecaff2697`. These are direct-run records, not an asserted checkpoint or Review source-clean receipt.
 
@@ -59,9 +59,9 @@ Final code/index source: **2c3b91248b657889fc7dd3f8f48c0d312e75dfe6**. Both fina
 
 The only final failures are `C1169_AgedScreenOnlyRefinementFollowsInterruptedSentRecovery(no-prompt-enter-only)` (raw Status expected Pending, actual Sent) and `(no-prompt-retype)` (DeliveryAttempts expected 2, actual 1). Both are inherited at the measured first-bad hold commit. The final four-case definitive-refusal method and the original Running-cut cancellation method pass; all 14 exact statement budgets pass.
 
-**Decision required:** permit the two obsolete aged-Grok expectations to adopt the intentional Sent/null-verdict hold, keeping refinementDelivered pending, one charged attempt and no automatic Enter/retype until complete UserPrompt; or explicitly require a product contract change for refinement rows. The brief forbids weakening the raw Pending assertion while the runtime owner explicitly forbids the automatic Enter/retype these tests expect. The clarification asked during the task remains unanswered. Existing raw Pending/attempt assertions are preserved. No Delivered marker was added to unconfirmed rows. No timeout or cancellation assertion was loosened.
+**Original decision request, resolved by the reopening:** permit the two obsolete aged-Grok expectations to adopt the intentional Sent/null-verdict hold, keeping refinementDelivered pending, one charged attempt and no automatic Enter/retype until complete UserPrompt; or explicitly require a product contract change for refinement rows. The brief forbids weakening the raw Pending assertion while the runtime owner explicitly forbids the automatic Enter/retype these tests expect. The clarification asked during the task remains unanswered. Existing raw Pending/attempt assertions are preserved. No Delivered marker was added to unconfirmed rows. No timeout or cancellation assertion was loosened.
 
-The recommended disposition is to retain CARD-1892’s hold and correct these two tests after resolving that explicit brief constraint. Verification remains incomplete until then; do not merge this branch as green. Product repair still owes ordinary Review. Repairs proceeded under the caller’s standing Debug authority; no restart, deployment, live run, or production volume was touched.
+The original recommendation was to retain CARD-1892’s hold and correct these two tests after resolving that explicit brief constraint. Verification remains incomplete until then; do not merge this branch as green. Product repair still owes ordinary Review. Repairs proceeded under the caller’s standing Debug authority; no restart, deployment, live run, or production volume was touched.
 
 ## Index and pinned inputs
 
@@ -69,7 +69,7 @@ Built Antiphon.DerivedImpactIndex first, separately gated. A single leased gener
 
 Protected nightly inputs are byte-unchanged from the task base. policyHash stays `355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233`; live-lane PinnedInputDigest stays `0854031a9cc816e959f182bac02aa28e5be420abd2fd1b43113d7bcee1f669bd`. No repin.
 
-## Evidence and phase limits
+## Original-pass evidence and phase limits
 
 Evidence root: `/work/worktrees/task-55b46f7e/.antiphon/evidence/debug-1916-1919/`. Exact commands, per-test TRX duration/membership, full SQL rosters, all four bisect logs, per-run load/source/duration JSON, native console output and final phase journals remain ignored there. The detached scratch worktree was source-clean, its bisect state reset, then removed via its exact literal absolute path after all owned commands finished. No scratch commit, target merge, branch switch, reset/rebase of a pushed branch, or force-push occurred.
 
@@ -77,7 +77,7 @@ Historical phase journals are unavailable: the initial recorder setup supplied i
 
 TRX SHA-256: integration `5108b172c4e9614cf34b4048e28e6f2ab5668f61bd661707ad1271b14f955e7e`; selector/guards `bf4187c36d9065ca035ed94cf615f92ea6f0623bf636d346c740d92e6aef69b0`.
 
-## Run costs
+## Original-pass run costs
 
 Linux x64, Debian 12, TUnit 1.44.0 / .NET runtime 9.0.23. Load is host 1/5/15-minute load at invocation and exit. Wall includes admission and wrapper overhead; held is the broker’s integer-second execution window. n=1 for each row; these are observations, not p95 or a new timeout policy. Earlier reds and their costs are retained.
 
@@ -107,6 +107,69 @@ Linux x64, Debian 12, TUnit 1.44.0 / .NET runtime 9.0.23. Load is host 1/5/15-mi
 | index-driver-build | 8ffed72a49ee2b583a74c24b837cfab0de71e3e2 | build/tool exit 0 | 268.920 | 256 | 11 | 22.59/31.95/31.64 -> 32.00/31.98/31.73 |
 | index-generation | 8ffed72a49ee2b583a74c24b837cfab0de71e3e2 | build/tool exit 0 | 153.881 | 75 | 77 | 42.09/34.30/32.50 -> 26.82/29.36/30.80 |
 
+## Reopened decision, repair and final verification
+
+The caller explicitly chose option A: CARD-1892 round 2/3 and CARD-1905 supersede the older raw-Pending requirement for unconfirmed Grok Input. The row remains Sent with a null verdict (logical refinementDelivered=pending), without automatic resend, Enter or retyping; only a complete transcript UserPrompt proves delivery. This reopening required no new permission and changed tests only.
+
+Commit 2cdfc81b68fb26c70efd17940acc47d62895f174 restores the original C0491 flush-transport-failure-then-retry arm as a separate ambiguous-transport witness while retaining the definitive-refusal retry arm. After the ambiguous failure and another boundary, the row is Sent/null with one charged attempt and zero further raw inputs; a later complete UserPrompt yields LateConfirmed and refinementDelivered=delivered without another send. The fake throws before recording Input; real transport ambiguity cannot establish that boundary, which is why the test does not authorize a retry.
+
+Both aged C1169 no-prompt variants now assert Sent/null, exactly one charged attempt, and exactly the initial encoded body plus CR throughout aging, the boundary, and later confirmation. Screen-visible and screen-empty variants remain distinct. Both then ingest a complete UserPrompt and require LateConfirmed/delivered with no further Input. No cases were deleted and no unconfirmed fixture was seeded Delivered. The commit message cites 5b80144d3cc7dcdcdb50c85ee03cd737e1508b41 (ambiguous Input retention) and ecc9eb97130680c19e634f2a6ce236e61991cd3a (composer-less hold) as the semantic changes.
+
+Pending remains asserted for definitive refusal, non-Grok kind-claude refusal, unsuccessful conditional interrupts, and the aged head-only prompt's proven truncation. All these cases pass in the full class. No timeouts, cancellation assertions, policy inputs or nightly pins changed.
+
+Final source for build, integration, index and guards: **2cdfc81b68fb26c70efd17940acc47d62895f174**, tracked tree clean before/after each row. Both test rows reuse Antiphon.Tests.dll SHA-256 **1a411537b8333dac9232579869d172e54d40579aa5190026f2457929ed4f03a7**; UseAppHost=false, native outputs. Their distinct native TRX files are retained alongside normalized run.trx copies under the ignored evidence root. These are direct-run records, not an ordinary Review approval or checkpoint source-clean receipt.
+
+| Selection | Executed | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| DelegationDispatchRecoveryBoundaryTests, whole class | 382 | 382 | 0 | 0 |
+| AgentTaskMidTurnRefineTests, whole class | 39 | 39 | 0 | 0 |
+| AgentSessionInterruptedLaunchResumeTests, whole class | 9 | 9 | 0 | 0 |
+| ImpactedClassesSelectorTests, whole class | 42 | 42 | 0 | 0 |
+| Requested seven-class guard union | 90 | 90 | 0 | 0 |
+| Total | 562 | 562 | 0 | 0 |
+
+The guard union is unchanged: TestClassificationPolicyTests 42, TestClassificationGuardTests 1, SlowTestRegistryMergeTests 5, SlowTestTripwireTests 2, NativeLinuxPolicyWitnessTests 3, DerivedImpactIndexTests 27, C1729LayeringGuardTests 10. All 14 exact statement budgets pass. The original running-cut OperationCanceledException assertion passes unchanged. Adjacent real-failure witnesses (Ready_false_fails_kills_the_adapter_and_the_agent and Sign_in_block_persists_LaunchBlock) also pass; ordinary Review still owns assessment of the narrowed catch's full real-failure behavior.
+
+Rebuilt the syntax-only index driver first with the gate's explicit maxcpucount, then ran the canonical generator twice with -NoBuild in the same lease (one build total). Both passes printed derived-impact-index unchanged. No new index commit is needed; the earlier separately committed refusal-dependency update remains. The non-dotnet wrapper's generic BUILD SLOT warning is retained; the helper explicitly passes -maxcpucount from ANTIPHON_BUILD_SLOT_MAXCPUCOUNT to its single build.
+
+| Run | Source | Executed/passed/failed/skipped | Wall s | Slot wait s | Held s | Load start -> end |
+|---|---|---|---:|---:|---:|---|
+| final-r2-build | 2cdfc81b68fb26c70efd17940acc47d62895f174 | build/tool exit 0 | 304.846 | 45 | 258 | 24.03/26.75/27.85 -> 28.53/32.37/30.40 |
+| final-r2-integration | 2cdfc81b68fb26c70efd17940acc47d62895f174 | 430/430/0/0 | 382.011 | 240 | 141 | 25.13/31.52/30.14 -> 16.24/24.13/27.68 |
+| final-r2-index | 2cdfc81b68fb26c70efd17940acc47d62895f174 | build/tool exit 0 | 201.969 | 120 | 80 | 14.84/23.57/27.46 -> 20.98/21.04/25.59 |
+| final-r2-selector-guards | 2cdfc81b68fb26c70efd17940acc47d62895f174 | 132/132/0/0 | 521.901 | 60 | 460 | 20.10/20.85/25.50 -> 10.44/13.48/19.60 |
+
+final-r2-integration: 430 complete case journals; known phase union 46.021s; phase unions {"db-create":18.892,"db-cleanup":21.859,"fixture-setup":5.275}; health failure=null, droppedPhaseCount=0.
+
+final-r2-selector-guards: 132 complete case journals; known phase union 1.198s; phase unions {"process-spawn":0.11,"process-wait":1.198}; health failure=null, droppedPhaseCount=0.
+
+Phase unions overlap; the rest of slot-held wall is uninstrumented/remainder, not attributed to an unavailable phase. n=1 per row; no p95 or timeout conclusion is inferred. Historical measurements and failed outcomes above remain preserved. Reopened TRX SHA-256: integration 10041d4a1efe0bdf3464f3e0d2fda56583835b56c2be23873f9e0d896e299e87; selector/guards 0ac858e6e909ab71ffd62276761deb7926ccdab4a48b26b1e2bb43aee4c4e2c5.
+
+### Ordinary Review focus; Merge waits
+
+The branch has one product change, cc7e81afc442e1de02e0769bc807b875bcd04e07 in AgentSessionService.cs: the recovered-launch handler catches only typed InputDeliveryUncertainException after Running and retains ct.ThrowIfCancellationRequested. Review must try to break the original running-cut cancellation witness and verify that a real failure is not swallowed and follows the existing failure/cleanup path. Verify that actual typed ambiguous Input still retains the running process.
+
+The 72/67/67 budgets intentionally include two safety reads, introduced by 4e4362beccf9b0be06c191990c4d323656809dad and ecc9eb97130680c19e634f2a6ce236e61991cd3a. Review must verify these are exactly the queries logged, not unrelated growth. Below are unedited statements 37/38 from the final existing-brief SQL roster (72 statements); missing-brief and watchdog have these probes at 35/36 (67 each). The two probes are byte-identical across all three final rosters: SHA-256 7793e76b7b923cf77433d14d188464cd861037d2b99d308319d247d0726afc97 and d48e9d0e515676fb427ee58ddbbf9e04958d5d29cf89cce9eefa100d881136ff, respectively. Full rosters and their old-endpoint counterparts remain under the evidence root; no parameter values or secrets are emitted.
+
+```sql
+-- statement 37
+SELECT s."Id", s."AgentSessionId", s."Body", s."CanceledAt", s."CapacityRecoveryActionKey", s."CapacityWaitId", s."CapacityWaitVersion", s."ChannelOutboundDeliveryId", s."ChannelReplyDiscoveryClosedAt", s."ChannelReplySettledAt", s."ContentDigest", s."ConversationKey", s."CreatedAt", s."DeferredFromRunAttemptId", s."DeliveryAttempts", s."DeliveryVerdict", s."DeliveryVerdictAt", s."DirectReplyConversationId", s."DirectReplyHandle", s."DirectReplyPendingThroughSequence", s."DirectReplyPromptSequence", s."DirectReplyProvider", s."DirectReplyTailClosedAt", s."DirectReplyThroughSequence", s."ExecutionDeadlineAt", s."ExecutionTaskId", s."FirstWithheldAt", s."HoldUntil", s."LastDeliveryBaselineSequence", s."LastDeliveryGeneration", s."LastDeliveryStartedAt", s."LastWithheldAt", s."LastWithholdReason", s."MaintenanceAcceptedStartedAt", s."MaintenanceEvidence", s."MaintenanceKind", s."MaintenanceResult", s."MaintenanceResultAt", s."MaintenanceSlotActive", s."NoteHeader", s."Origin", s."PinRefreshKey", s."PinRequestedHash", s."PinRequestedLocationGeneration", s."PinRequestedRevision", s."RemoteSpillBody", s."RemoteSpillRelativePath", s."ReviewReplyConsumedAt", s."ReviewThreadId", s."RulesAcknowledgedAt", s."RulesBoundarySequence", s."RulesChainId", s."RulesCoveredByMessageId", s."RulesDeadlineAt", s."RulesFailure", s."RulesFollowOnCount", s."RulesPromptSequence", s."RulesReceiptJson", s."RulesRefreshKey", s."RulesTurnEndSequence", s."RuntimeActionKey", s."SentAt", s."Sequence", s."SourceChannelInboundId", s."SourceLandNotificationId", s."SourceScheduleId", s."SourceTaskId", s."SourceTaskSupervisionNoticeId", s."SpecialistInputPolicyJson", s."Status", s."SubmissionStartedAt", s."WithholdCount"
+FROM "SessionQueuedMessages" AS s
+WHERE s."Status" = 1 AND s."DeliveryVerdict" IS NULL AND s."DeliveryAttempts" > 0 AND s."MaintenanceKind" = 0 AND EXISTS (
+    SELECT 1
+    FROM "AgentSessions" AS a
+    WHERE a."Id" = s."AgentSessionId" AND a."Status" = 2 AND a."AgentKind" <> 1 AND a."AgentKind" <> 2) AND s."AgentSessionId" = @__sessionId_0
+ORDER BY s."Sequence"
+
+-- statement 38
+SELECT s."Id", s."AgentSessionId", s."Body", s."CanceledAt", s."CapacityRecoveryActionKey", s."CapacityWaitId", s."CapacityWaitVersion", s."ChannelOutboundDeliveryId", s."ChannelReplyDiscoveryClosedAt", s."ChannelReplySettledAt", s."ContentDigest", s."ConversationKey", s."CreatedAt", s."DeferredFromRunAttemptId", s."DeliveryAttempts", s."DeliveryVerdict", s."DeliveryVerdictAt", s."DirectReplyConversationId", s."DirectReplyHandle", s."DirectReplyPendingThroughSequence", s."DirectReplyPromptSequence", s."DirectReplyProvider", s."DirectReplyTailClosedAt", s."DirectReplyThroughSequence", s."ExecutionDeadlineAt", s."ExecutionTaskId", s."FirstWithheldAt", s."HoldUntil", s."LastDeliveryBaselineSequence", s."LastDeliveryGeneration", s."LastDeliveryStartedAt", s."LastWithheldAt", s."LastWithholdReason", s."MaintenanceAcceptedStartedAt", s."MaintenanceEvidence", s."MaintenanceKind", s."MaintenanceResult", s."MaintenanceResultAt", s."MaintenanceSlotActive", s."NoteHeader", s."Origin", s."PinRefreshKey", s."PinRequestedHash", s."PinRequestedLocationGeneration", s."PinRequestedRevision", s."RemoteSpillBody", s."RemoteSpillRelativePath", s."ReviewReplyConsumedAt", s."ReviewThreadId", s."RulesAcknowledgedAt", s."RulesBoundarySequence", s."RulesChainId", s."RulesCoveredByMessageId", s."RulesDeadlineAt", s."RulesFailure", s."RulesFollowOnCount", s."RulesPromptSequence", s."RulesReceiptJson", s."RulesRefreshKey", s."RulesTurnEndSequence", s."RuntimeActionKey", s."SentAt", s."Sequence", s."SourceChannelInboundId", s."SourceLandNotificationId", s."SourceScheduleId", s."SourceTaskId", s."SourceTaskSupervisionNoticeId", s."SpecialistInputPolicyJson", s."Status", s."SubmissionStartedAt", s."WithholdCount"
+FROM "SessionQueuedMessages" AS s
+WHERE s."AgentSessionId" = @__8__locals1_sessionId_0 AND s."Status" = 1 AND s."DeliveryVerdict" IS NULL AND s."LastDeliveryStartedAt" > @__freshFloor_1
+ORDER BY s."Sequence"
+```
+
+Final changed paths: server/Application/Services/AgentSessionService.cs; tests/Antiphon.Tests/Application/AgentTaskMidTurnRefineTests.cs; tests/Antiphon.Tests/Application/DelegationDispatchRecoveryBoundaryTests.cs; tests/Antiphon.Tests/Scripts/ImpactedClassesSelectorTests.cs; tests/derived-impact-index.json; this investigation report. Product correction is limited to the first path; other executable changes are tests/index. No merge, restart, activation, live session or volume operation occurred.
+
 ## Pushed slices
 
 - 33e2322e3a1476d2bc48058999483a620c5df629 docs(debug): record inherited-red baseline and diagnostic scope
@@ -116,11 +179,14 @@ Linux x64, Debian 12, TUnit 1.44.0 / .NET runtime 9.0.23. Load is host 1/5/15-mi
 - 8ffed72a49ee2b583a74c24b837cfab0de71e3e2 test(card-1916): model definitive refusal without weakening Pending assertions
 - 2c3b91248b657889fc7dd3f8f48c0d312e75dfe6 chore(debug): regenerate derived index for refusal fixture dependency
 
+- 5e7de331f9ca902f9a9738efac9badeae371ba8d docs(debug): original blocked report publication
+- 2cdfc81b68fb26c70efd17940acc47d62895f174 test(CARD-1916): assert ambiguous Grok hold and late confirmation
+
 The final narrative-only publication commit follows these tested slices.
 
 ## Exact replay
 
-Run from the task checkout. These commands reproduce the current final status, including the two outstanding integration failures. Each build/run takes its own slot. Build the syntax-only driver before the guard reader. Use a fresh results root; no generator rebuild or assembly-wide selection is needed.
+Run from the task checkout. These commands reproduce the repaired final selection; no failures are expected. Each build/run takes its own slot. Build the syntax-only driver before the guard reader. Use a fresh results root; no generator rebuild or assembly-wide selection is needed.
 
 ```powershell
 $reviewRoot = Join-Path ([IO.Path]::GetTempPath()) ('debug55b-' + [Guid]::NewGuid().ToString('N'))
@@ -130,9 +196,9 @@ pwsh -NoProfile -File scripts/build-slot.ps1 -Label review-integration -- dotnet
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label review-guards -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(ImpactedClassesSelectorTests*)|(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(C1729LayeringGuardTests*)/*' --report-trx --results-directory (Join-Path $reviewRoot 'guards')
 ```
 
-Final evidence-diff and merge-tree checks over the published report tip are recorded in the task completion report; the remote target remains current master ca8737e78170c9a441e216408da5fab636c34ca0 at the final fetch.
+Final evidence-diff and merge-tree results over the published report tip are recorded in the task completion report. The original-pass target was ca8737e78170c9a441e216408da5fab636c34ca0; the reopening fetch checks the then-current target separately.
 
 --- next stage ---
-next: decide
-handoff: Resolve CARD-1916 raw Pending versus the intentional Grok Sent/null-verdict hold; then correct the two remaining expectations or commission the chosen product contract, verify the exact affected selection, and route the minimal CARD-1918 product fix to ordinary Review. No green merge is authorized.
+next: review
+handoff: Ordinary Review of the single CARD-1918 product change must preserve running-cut cancellation and must not swallow a real failure; verify the two logged safety queries justify exact 72/67/67 budgets and the Grok Sent/null/no-resend/late-UserPrompt contract. Merge must wait for Review approval.
 artifact: docs/investigations/2026-11-14-card-1916-1919-inherited-reds.md
