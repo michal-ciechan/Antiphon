@@ -1076,9 +1076,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.CheckPublication.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1092,9 +1092,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.CodexPointers.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1108,9 +1108,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.DialogAdmission.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1124,9 +1124,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.DispatchBrief.cs",
-      "classes": 150,
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
         "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
@@ -1140,9 +1140,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Expectations.cs",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1156,9 +1156,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.ResumeReceipt.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1172,9 +1172,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Supervision.cs",
-      "classes": 149,
+      "classes": 150,
       "reason": "cap",
-      "owed": 124,
+      "owed": 125,
       "first": [
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
@@ -1188,9 +1188,9 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.cs",
-      "classes": 151,
+      "classes": 153,
       "reason": "cap",
-      "owed": 126,
+      "owed": 128,
       "first": [
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
@@ -1376,9 +1376,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 273,
+      "classes": 274,
       "reason": "cap",
-      "owed": 248,
+      "owed": 249,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1574,18 +1574,18 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 153,
+      "classes": 154,
       "reason": "cap",
-      "owed": 128,
+      "owed": 129,
       "first": [
+        "CheckCompactionReceiptTests",
         "ProviderQuotaRefusalAcceptanceTests",
         "RemoteControlMaintenanceQueueTests",
         "SessionRuntimeActionTests",
         "StandingBootQueueWitnessTests",
         "AgentTaskLandNotificationParkFollowUpTests",
         "ChannelFollowUpAttachmentTests",
-        "ChannelMachineTurnTextTests",
-        "ChannelOutboundDiscoveryTests"
+        "ChannelMachineTurnTextTests"
       ]
     },
     {
@@ -1606,9 +1606,9 @@
     },
     {
       "path": "server/Domain/Entities/TranscriptEntry.cs",
-      "classes": 123,
+      "classes": 124,
       "reason": "cap",
-      "owed": 98,
+      "owed": 99,
       "first": [
         "SessionMessageQueueServiceTests",
         "StaleWorkingTranscriptWatchdogTests",
@@ -1622,9 +1622,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 599,
+      "classes": 600,
       "reason": "cap",
-      "owed": 574,
+      "owed": 575,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1638,9 +1638,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 599,
+      "classes": 600,
       "reason": "cap",
-      "owed": 574,
+      "owed": 575,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1835,9 +1835,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 430,
+      "classes": 431,
       "reason": "cap",
-      "owed": 405,
+      "owed": 406,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -9439,7 +9439,8 @@
         "AgentTaskEventDetailCutTests",
         "AgentTaskMidTurnRefineTests",
         "GrokDelegateEndToEndTests",
-        "MidTurnInterruptPolicyTests"
+        "MidTurnInterruptPolicyTests",
+        "SessionQueueAbandonTests"
       ]
     },
     {
@@ -14038,12 +14039,12 @@
         "ChannelInputWithheldIncidentTests",
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundRecoveryTests",
-        "CheckCompactionReceiptTests",
         "DataRetentionServiceTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "RemoteCompletionSpillTests",
         "RemoteControlRecoveryPtyIntegrationTests",
         "RunnerAlarmDeliveryTests",
+        "SessionQueueAbandonTests",
         "StandingRestartEscalationTests",
         "StandingSessionQueueSwitchTests",
         "StandingSessionSwitchConcurrencyTests",
@@ -15787,6 +15788,7 @@
         "ProjectCascadeForeignKeyTests",
         "ReviewEvidenceRecoveryEndpointTests",
         "RunnerSlotEndpointTests",
+        "SessionQueueAbandonTests",
         "TaskCeilingControlTests"
       ]
     },
