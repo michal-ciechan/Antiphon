@@ -211,7 +211,7 @@ public sealed class C0824RefOnlyPreparationTests
         await using var f = await RefOnlyDispatchFixture.CreateAsync(slots: true);
         var id = await f.SeedAsync();
         await f.Rig.TickAsync();
-        var first = await f.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 1);
+        var first = await f.WaitForMirrorAsync(id);
         var initial = first.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
         initial.Binding.ShouldNotBeNull();
         initial.Slot.ShouldBe(true);
@@ -219,7 +219,7 @@ public sealed class C0824RefOnlyPreparationTests
         await f.Rig.RestartAsync();
         f.Gate.CurrentValue.Enabled = false; f.Gate.CurrentValue.Roles = "none";
         await f.Rig.TickAsync();
-        var second = await f.Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, 2);
+        var second = await f.WaitForMirrorAsync(id, 2);
         var replay = second.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorRequest>(PhoneHomeFraming.Json)!;
         replay.Binding.ShouldNotBeNull().PreparationId.ShouldBe(initial.Binding!.PreparationId);
         replay.Binding.RunnerStoreId.ShouldBe(initial.Binding.RunnerStoreId);

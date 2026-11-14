@@ -136,12 +136,15 @@ public sealed class C0824RefOnlyProvisionTests
     public async Task Dispatcher_creates_ref_without_desktop_checkout()
     {
         string? legacyRefusal = null;
+        PhoneHomeTestHost? sharedHost = null;
         foreach (var scenario in new[] { "new-on", "new-off", "existing-checkout-on", "existing-checkout-off" })
         {
             var enabled = scenario.EndsWith("-on", StringComparison.Ordinal);
             var legacy = scenario.StartsWith("existing-", StringComparison.Ordinal);
             var refOnly = enabled && !legacy;
             await using var f = await RefOnlyDispatchFixture.CreateAsync(enabled);
+            if (sharedHost is null) sharedHost = f.Rig.Host;
+            else ReferenceEquals(sharedHost, f.Rig.Host).ShouldBeTrue("ordinary caller cases share one loopback host per run");
             var before = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
             var id = await f.SeedAsync(t =>
             {
@@ -170,7 +173,7 @@ public sealed class C0824RefOnlyProvisionTests
                 Path.Exists(planned.WorktreePath).ShouldBeFalse();
                 (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldBe(before);
                 (await f.Git.RevParseAsync("refs/heads/" + planned.WorktreeBranch)).ShouldBe(f.Git.Baseline);
-                f.Rig.Peer.RequestCount(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror).ShouldBe(0);
+                f.MirrorCount(id).ShouldBe(0);
                 continue;
             }
             planned.Status.ShouldBe(AgentTaskStatus.Queued, planned.FailureReason);
@@ -190,7 +193,7 @@ public sealed class C0824RefOnlyProvisionTests
                 planned.WorktreeBaseSource.ShouldBe(WorktreeBaseSource.Explicit);
                 (await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain")).ShouldNotBe(before);
             }
-            var request = await f.Rig.WaitForRequestsAsync(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror, 1);
+            var request = await f.WaitForMirrorAsync(id);
             await f.Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, "/runner/source/" + id.ToString("N")));
             await f.Rig.Preparer.WhenIdleAsync();
             (await f.Git.RevParseAsync("refs/heads/" + planned.WorktreeBranch)).ShouldBe(f.Git.Baseline);
@@ -229,7 +232,7 @@ public sealed class C0824RefOnlyProvisionTests
         proof.Task.TaskRefWorkspaceBindingId.ShouldNotBeNull();
         proof.Task.AgentSessionId.ShouldBeNull("publication precedes launch");
         proof.State.ShouldBe(TaskRefWorkspacePreparationState.RefCreated);
-        var request = await f.Rig.WaitForRequestsAsync(Antiphon.SessionRunner.Contracts.PhoneHomeOperation.WorkspaceMirror, 1);
+        var request = await f.WaitForMirrorAsync(id);
         await f.Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, "/runner/source/" + id.ToString("N")));
         await f.Rig.Preparer.WhenIdleAsync();
     }

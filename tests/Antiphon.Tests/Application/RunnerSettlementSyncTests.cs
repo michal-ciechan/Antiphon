@@ -1180,45 +1180,56 @@ public sealed class RunnerSettlementSyncTests
 
         public static async Task<SyncWorld> CreateAsync(
             bool pushBranch = true, bool extraMasterCommit = false, bool withSubmodule = false, bool cardBranch = false,
-            IReadOnlyDictionary<string, string>? initialFiles = null)
+            IReadOnlyDictionary<string, string>? initialFiles = null, string? immutableSeedOrigin = null)
         {
             var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
-            await world.RunAsync(world.Root, "init", "--bare", "-b", "master", world.Origin);
-            Directory.CreateDirectory(world.Desktop);
-            await world.RunAsync(world.Desktop, "init", "-b", "master");
-            await world.ConfigureAsync(world.Desktop);
-            File.WriteAllText(Path.Combine(world.Desktop, "README.md"), "base\n");
-            await world.RunAsync(world.Desktop, "add", "README.md");
-            foreach (var file in initialFiles ?? new Dictionary<string, string>())
+            if (immutableSeedOrigin is not null)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(world.Desktop, file.Key))!);
-                await File.WriteAllTextAsync(Path.Combine(world.Desktop, file.Key), file.Value);
-                await world.RunAsync(world.Desktop, "add", "--", file.Key);
+                if (extraMasterCommit || withSubmodule || initialFiles is { Count: > 0 })
+                    throw new InvalidOperationException("Immutable seed clones require the unmodified base fixture.");
+                await world.RunAsync(world.Root, "clone", "--bare", immutableSeedOrigin, world.Origin);
+                await world.RunAsync(world.Root, "clone", world.Origin, world.Desktop);
+                await world.ConfigureAsync(world.Desktop);
             }
-            await world.RunAsync(world.Desktop, "commit", "-m", "base");
-            if (extraMasterCommit)
+            else
             {
-                File.WriteAllText(Path.Combine(world.Desktop, "second.txt"), "second\n");
-                await world.RunAsync(world.Desktop, "add", "second.txt");
-                await world.RunAsync(world.Desktop, "commit", "-m", "second");
+                await world.RunAsync(world.Root, "init", "--bare", "-b", "master", world.Origin);
+                Directory.CreateDirectory(world.Desktop);
+                await world.RunAsync(world.Desktop, "init", "-b", "master");
+                await world.ConfigureAsync(world.Desktop);
+                File.WriteAllText(Path.Combine(world.Desktop, "README.md"), "base\n");
+                await world.RunAsync(world.Desktop, "add", "README.md");
+                foreach (var file in initialFiles ?? new Dictionary<string, string>())
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(world.Desktop, file.Key))!);
+                    await File.WriteAllTextAsync(Path.Combine(world.Desktop, file.Key), file.Value);
+                    await world.RunAsync(world.Desktop, "add", "--", file.Key);
+                }
+                await world.RunAsync(world.Desktop, "commit", "-m", "base");
+                if (extraMasterCommit)
+                {
+                    File.WriteAllText(Path.Combine(world.Desktop, "second.txt"), "second\n");
+                    await world.RunAsync(world.Desktop, "add", "second.txt");
+                    await world.RunAsync(world.Desktop, "commit", "-m", "second");
+                }
+                if (withSubmodule)
+                {
+                    // Part of baseline B; left uninitialized (clean) in the task worktree until a case uses it.
+                    var sub = Path.Combine(world.Root, "sub");
+                    Directory.CreateDirectory(sub);
+                    await world.RunAsync(sub, "init", "-b", "master");
+                    await world.ConfigureAsync(sub);
+                    File.WriteAllText(Path.Combine(sub, "lib.txt"), "lib\n");
+                    await world.RunAsync(sub, "add", "lib.txt");
+                    await world.RunAsync(sub, "commit", "-m", "lib");
+                    await world.RunAsync(world.Desktop, "-c", "protocol.file.allow=always",
+                        "submodule", "add", sub.Replace('\\', '/'), "sub");
+                    await world.RunAsync(world.Desktop, "commit", "-m", "submodule");
+                }
+                await world.RunAsync(world.Desktop, "remote", "add", "origin", world.Origin);
+                await world.RunAsync(world.Desktop, "push", "origin", "master");
             }
-            if (withSubmodule)
-            {
-                // Part of baseline B; left uninitialized (clean) in the task worktree until a case uses it.
-                var sub = Path.Combine(world.Root, "sub");
-                Directory.CreateDirectory(sub);
-                await world.RunAsync(sub, "init", "-b", "master");
-                await world.ConfigureAsync(sub);
-                File.WriteAllText(Path.Combine(sub, "lib.txt"), "lib\n");
-                await world.RunAsync(sub, "add", "lib.txt");
-                await world.RunAsync(sub, "commit", "-m", "lib");
-                await world.RunAsync(world.Desktop, "-c", "protocol.file.allow=always",
-                    "submodule", "add", sub.Replace('\\', '/'), "sub");
-                await world.RunAsync(world.Desktop, "commit", "-m", "submodule");
-            }
-            await world.RunAsync(world.Desktop, "remote", "add", "origin", world.Origin);
-            await world.RunAsync(world.Desktop, "push", "origin", "master");
             await world.RunAsync(world.Desktop, "worktree", "add", "-b", world.Branch, world.Worktree, "master");
 
             // The dispatcher's own capture, before remote preparation pushes the branch.
