@@ -22,8 +22,7 @@ to each method; counters measure algorithmic work, never elapsed time. Corpus
 strings and JIT warmup precede the thread-local allocation measurement. Existing
 integration fixtures retain their assembly/shared database lifetimes and isolation.
 App ownership is server report settlement plus shared runner contracts; project
-is Antiphon.Tests with their existing transitive
-ProjectReferences. No project graph changes. No new external calls or timeouts.
+is Antiphon.Tests with its existing transitive ProjectReferences. No project graph changes. No new external calls or timeouts.
 
 Budget is provisional (CARD-1404): no comparable p95 for this new selection.
 Collect one red and one green witness sample, then one run of each remaining row;
@@ -58,6 +57,14 @@ No repetitions required after green; at most 3 normal + 2 loaded per unchanged s
 - R-2: standing policy/mechanical/platform/layering/census union plus
   DerivedImpactIndexTests. Check matching impacted-classes globs over full base..HEAD
   and append any newly selected bounded classes before executing them.
+  Full base..HEAD audit at S3 selected the test-lane-category glob kind, covered
+  by CP-4. The brief limits ordinary impact expansion to matching glob rows.
+  Reverse-type suggestions also include 33 classes and a capped 405-consumer
+  remainder for SessionRunnerContracts.cs; retain that census in ignored evidence,
+  with no passing claim for unexecuted suggestions. The changed shared behavior is
+  bounded by the local-record equivalence/allocation witnesses and the named
+  prompt/working integrations. DTO shapes, serialization and HTTP contracts are
+  unchanged; this task does not commission an assembly-wide contract replay.
 - R-3: TranscriptPromptSpanTests, TranscriptWorkingStateQueryTests and
   TaskReportHousekeepingTests cover local-command filtering and turn ownership.
   Eligibility audit before execution found FakeClaudeContractTests requires Windows
