@@ -473,3 +473,6 @@ Antiphon.Tests.TestHelpers.StagedHelperBuildTests
 Antiphon.Tests.Application.SessionStatePinQueryTests
 # CARD-1886: isolated PostgreSQL destination/drain differential and 12,000-row prepared EXPLAIN matrix; methods measured 25.2s and 33.7s on loaded Linux.
 Antiphon.Tests.Application.RuntimeActionClaimQueryTests
+
+# CARD-1901: real Git origins, bound host proofs and native offline retirement audit corpus.
+Antiphon.Tests.Scripts.VolumeRetirementPublicationTests
