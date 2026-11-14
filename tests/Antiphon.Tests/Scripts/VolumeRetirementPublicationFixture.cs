@@ -123,18 +123,14 @@ internal sealed class VolumeRetirementPublicationFixture
             "[string]$InputText='', [string]$OutputFile=''); " + extraShim +
             "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
             "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
-            // v1 has its own Git wrapper, retaining its existing heads/tags behavior.
-            "$oldGit=${function:Invoke-C1008HostGit}; function Invoke-C1008HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000) " +
-            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
-            "& $oldGit -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs }; " +
-            "try { Write-C1008HostOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(RepoRelative) +
+            "try { Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(RepoRelative) +
             " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofVersion " + version +
             " -PhaseNonce " + Ps(Nonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +
             "-ProofDirectory " + Ps(directory) + " -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath " + Ps(Path.Combine(Root, "host-proof.log")) +
             " -RequiredObjects @(" + string.Join(',', (required ?? []).Select(r => "[pscustomobject]@{objectId=" + Ps(r.Oid) + ";type=" + Ps(r.Type) + "}")) + ") " +
             "-PreviousProofFile " + Ps(previous) + "; exit 0 } catch { Write-Output $_.Exception.Message; exit 2 }";
         var result = await Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], seconds: 60);
-        var file = Path.Combine(directory, Sha(RepoRelative + "\n" + Origin));
+        var file = Path.Combine(directory, Sha(RepoRelative + "\n" + (version == 1 ? Bare : Origin)));
         if (result.Exit != 0) File.Exists(file).ShouldBeFalse("a refused writer cannot emit an authorizing header");
         return new Proof(result.Exit, result.Output, directory, file);
     }
