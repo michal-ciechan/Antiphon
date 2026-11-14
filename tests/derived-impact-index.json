@@ -25922,6 +25922,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/SessionTranscriptSummaryMigrationFixture.cs",
+      "classes": [
+        "AgentTaskLandHeldNotificationTests",
+        "C0824RefOnlyIdentityTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/SettledRemovalHarness.cs",
       "classes": [
         "SettledWorktreeRemovalTests",
