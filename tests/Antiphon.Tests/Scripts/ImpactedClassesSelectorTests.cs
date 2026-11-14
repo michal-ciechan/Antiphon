@@ -430,7 +430,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(C0824TransportGitTests*)"
         + "|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)"
         + "|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
-        + "|(C1677RetentionServerTests*)|(Card1761RunnerReadPollTests*)"
+        + "|(C1677RetentionServerTests*)|(C1895OutputDropServerTests*)|(Card1761RunnerReadPollTests*)"
         + "|(CheckNoteDeliveryHandoffTests*)|(CompletionNoteDurableSweepTests*)"
         + "|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)|(DelegationTestServicesTests*)"
         + "|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)"
