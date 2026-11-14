@@ -31,7 +31,7 @@ retain TRX per-test times and checkpoint build/slot timings. CP-0/1 are bounded
 driver costs (CARD-1861 precedent); cold server build estimated 4 minutes,
 pure tests under 1 minute, named integrations under 4 minutes, guard replay under
 5 minutes, fake-Claude under 4 minutes plus its cold build. Each row is limited
-to 9 minutes (`--row-timeout 9`), below the caller's ten-minute ceiling; slot
+to 9 minutes (`--row-timeout 9m`), below the caller's ten-minute ceiling; slot
 admission remains separately bounded by the broker default. Record /proc/loadavg;
 timeout with load >30 is infrastructure evidence, not a product verdict.
 Unknown fixture/external phases remain unknown, not zero. A complete run above
@@ -83,18 +83,22 @@ Mutation; Code runs only ordinary test-first red/green, no deliberate mutants.
 
 ### Checkpoints
 
-Run through tools/Antiphon.Checkpoints with --serial --row-timeout 9 and
+Run through tools/Antiphon.Checkpoints with --serial --row-timeout 9m and
 --expected-source-sha <committed HEAD>; CP-2 runs red at S1, then green at S2.
 CP-0/1 precede CP-2; remaining rows follow regenerated S3. Command rows acquire their own executor build-slot lease; do not nest a wrapper.
 The first run 20261114-004558-46dd completed CP-0, then was stopped while CP-1
 waited for a redundant nested lease. CP-2 had not started. Preserve those outcomes;
 resume CP-1/CP-2 with one executor-owned lease per driver.
+Run 20261114-004745-27cc passed CP-1, but CP-2 built with a one-minute deadline
+because the CLI interpreted bare 9 as seconds. No tests executed. Correct the
+CLI unit to 9m (the existing nine-minute budget); retain the failed output and
+use the fresh bin-c1910-s1/ output. CP-0/1 need no further repetition.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-0 | S1 | n/a | impact-driver-build | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | R-4 | exit 0, standalone driver only | n/a | 1 |
 | CP-1 | S1 | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1910-driver-witness` | R-4 | DRIVER WITNESS passed=3 failed=0 | n/a | 1 |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1910-server/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1910-s1/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
 | CP-3 | S2 | CP-2 | report-turn-integration | `/*/*/(SiblingToolReportBoundaryTests*)\|(ChannelOutboundRecoveryTests*)/*` | R-1 | all listed, 0 failed/skipped | 35 | 4 |
 | CP-4 | S2 | CP-2 | guards-and-derived | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed/skipped | 79 | 5 |
 | CP-5 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1910-pty/` | local-command-contract | `/*/*/FakeClaudeContractTests/*` | R-3 | all listed, 0 failed/skipped | 50 | 6 |
