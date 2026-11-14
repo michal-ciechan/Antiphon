@@ -23815,7 +23815,8 @@
         "C0824BranchDeletionRecycleAuditTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
-        "RollingVolumeRecycleScriptTests"
+        "RollingVolumeRecycleScriptTests",
+        "VolumeRetirementPublicationTests"
       ]
     },
     {
