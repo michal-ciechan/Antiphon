@@ -142,7 +142,10 @@ c1609_custody() {
         [ -f "$path" ] || return 1
         read -r uid mode links < <(stat -c '%u %a %h' -- "$path") || return 1
         [ "$uid" = "$EUID" ] && [ "$links" = 1 ] && (( (8#$mode & 022) == 0 )) || return 1
-        here="$(dirname -- "$path")"
+        case "$path" in
+            */*) here="${path%/*}"; [ -n "$here" ] || here=/ ;;
+            *) here=. ;;
+        esac
     else
         here="$path"
     fi
@@ -157,7 +160,10 @@ c1609_custody() {
                 [[ "$SERVER2_ROOT/" == "$here/"* ]] && [ "$here" != "$SERVER2_ROOT" ] || return 1
         fi
         [ "$here" != / ] || break
-        here="$(dirname -- "$here")"
+        case "$here" in
+            */*) here="${here%/*}"; [ -n "$here" ] || here=/ ;;
+            *) here=. ;;
+        esac
     done
 }
 
@@ -243,6 +249,7 @@ c1609_export_trusted_origins() {
 # The coordinator renews an aged observation through the bound host exchange.
 # Direct callers still refuse before Ready/intent when no renewal is available.
 c1609_publication_fresh() {
+    local -a header
     local proof="${C1008_HOST_PROOF:-}" file name completed now count=0
     [ -n "$proof" ] || return 0
     c1609_custody "$proof" dir || return 1
@@ -256,11 +263,14 @@ c1609_publication_fresh() {
         fi
         [[ "$name" =~ ^[0-9a-f]{64}$ ]] || return 1
         c1609_custody "$file" file || return 1
-        [ "$(sed -n '1p' "$file")" = 'c1008-host-proof 2' ] &&
-          [ "$(sed -n '2p' "$file")" = "operation $C1008_OPERATION" ] &&
-          [ "$(sed -n '6p' "$file")" = "nonce ${C1609_PROOF_NONCE:-}" ] &&
-          [ "$(sed -n '7p' "$file")" = "inventory ${C1609_PROOF_INVENTORY:-}" ] || return 1
-        completed="$(sed -n '11s/^completed //p' "$file")" || return 1
+        mapfile -t -n 11 header < "$file" || return 1
+        [ "${#header[@]}" = 11 ] &&
+          [ "${header[0]}" = 'c1008-host-proof 2' ] &&
+          [ "${header[1]}" = "operation $C1008_OPERATION" ] &&
+          [ "${header[5]}" = "nonce ${C1609_PROOF_NONCE:-}" ] &&
+          [ "${header[6]}" = "inventory ${C1609_PROOF_INVENTORY:-}" ] &&
+          [[ "${header[10]}" = completed\ * ]] || return 1
+        completed="${header[10]#completed }"
         [[ "$completed" =~ ^(0|[1-9][0-9]{0,11})$ ]] &&
           [ "$((now-completed))" -ge -60 ] && [ "$((now-completed))" -le 900 ] || return 1
         count=$((count+1))
