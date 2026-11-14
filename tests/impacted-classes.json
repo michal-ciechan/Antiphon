@@ -46,7 +46,8 @@
     {
       "id": "timing-labels",
       "globs": [
-        "tests/Shared/TestTiming.cs"
+        "tests/Shared/TestTiming.cs",
+        "tests/Antiphon.Tests/**/C1514HostLoad*.cs"
       ],
       "added": {
         "glob": "tests/**",
