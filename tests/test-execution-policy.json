@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "355a567e792404412f25cfbfd138a117b42def354739e26b037889dd03d72233",
+  "policyHash": "c71c7423cbc53405b41be84a670b3006835589b15cf0ef85b73acd84af5d6b7a",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1662,6 +1662,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the Unix PTY delivery envelope measures a real Linux PTY. The case remains required on Linux.",
           "owner": "CARD-1907"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C0824RefOnlyNativeTests",
+          "platform": "linux",
+          "reason": "CARD-0824 actual Windows path, registration and restart witnesses; all three remain required on Windows.",
+          "owner": "CARD-0824"
         }
       ]
     }
