@@ -5562,6 +5562,7 @@
     {
       "path": "server/Application/Exceptions/RunnerProblemException.cs",
       "classes": [
+        "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "SessionRunnerGenerationWireTests",
         "SessionRunnerHttpClientHerdrWireTests"
