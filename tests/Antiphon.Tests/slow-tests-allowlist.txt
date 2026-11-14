@@ -3,6 +3,9 @@
 ## Tripwire still accepts caller-supplied simple names. No substring or argument matching.
 ## Each single-# reason must immediately precede its class; blank lines separate complete pairs.
 
+# CARD-0824: producer intent uses real temporary Git and an isolated clone of shared PostgreSQL.
+Antiphon.Tests.Application.C0824RefOnlyProvisionTests
+
 # CARD-1769: seeded scan of 1,500 AwaitingReceipt notes and the parked rescan; measured above the five-second tripwire.
 Antiphon.Tests.Application.AgentTaskLandNotificationRescanTests
 
