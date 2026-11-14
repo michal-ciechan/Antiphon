@@ -20,3 +20,19 @@ The cheapest pre-land repair is the shared
 [`input-delivery-uncertainty` row](2026-11-14-why-missed-g90-three-classes.md#cheapest-pre-land-selection):
 watch the queue service and guard as well as the exception, and name this
 whole class explicitly. Local evidence: `.antiphon/evidence/g90/red-phone-2/`.
+
+The first repaired whole-class run (`green-phone`, source
+`9192820aec5a906587acb8e48e2eef9185f06a30`) exposed a second, previously
+masked fixture assumption: 8 executed, 7 passed, 1 failed because the final
+LateConfirmed verdict was still null. Pending had been immediately eligible
+with StrandedAgeSeconds=0; the new Sent shape enters the existing
+InterruptedSent discovery gate only after 3 s transcript timeout + 3 s grace
++ 30 s clock tolerance in BridgeQueueHarness. The reconnect happened in
+about one second. This is not caused by the unrelated switch guard.
+
+Advance the harness's existing OutageQueueClock by one minute before graph
+recreation, as PhoneHomeImmediateSendTests already does for interrupted
+delivery. This passes the unchanged 36 s discovery gate without a real sleep,
+timeout change or product change. All original late-confirmation, receipt,
+single-attempt and no-retyping assertions remain intact. The failed run is
+retained rather than credited as green.
