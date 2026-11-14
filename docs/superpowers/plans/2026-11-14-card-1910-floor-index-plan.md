@@ -13,6 +13,8 @@ S2: materialize sequence-ordered real rows once; binary-search strict bounds,
 including the rightmost equal-sequence row. Use the same index for floor owner, adjacent owner helpers, final caps
 and next-real lookups. Replace only IsLocalCommandRecord's TrimStart with a span.
 S3: regenerate derived impact bytes in their own commit and run remaining rows.
+S4: split the timed-out combined integration row into the named methods/classes
+already in that row; preserve assertions and the nine-minute execution cap.
 No migrations, policy-input changes, timeout increases or assertion weakening.
 
 ## Performance budget
@@ -87,9 +89,41 @@ PC-1: restore scan-based index queries; V-4 must fail with excess classification
 PC-2: restore TrimStart string copies; V-2 must fail with nonzero bytes.
 PC-3 variants: make before inclusive, make floor inclusive, choose first tie,
 include housekeeping, omit queued prompts; V-3 must reject each.
-PC-4 variants: case-insensitive marker or missing whitespace trim; V-1 must reject.
+PC-4 variants: case-insensitive command-name prefix, case-insensitive stdout
+prefix, or missing whitespace trim; V-1 must reject each.
+The unbound candidate is docs/superpowers/mutations/card-1910/candidate.md.
 All PC variants remain pending for caller-commissioned method-scoped SourceLanding
 Mutation; Code runs only ordinary test-first red/green, no deliberate mutants.
+
+## S2 execution and S4 bounded rerun
+
+Run 20261114-011456-a95a at f85e785c94fbc1f054c757406995c846b7bb979d
+passed CP-2 (6), CP-4 (106), and CP-5 (32), with no failed/skipped TRX
+results in those rows. CP-3, the combined SiblingToolReportBoundaryTests and
+ChannelOutboundRecoveryTests row, reached its nine-minute deadline without TRX.
+Its journal diagnostic completed 38 cases (36 passed, 2 failed) and had one
+in-flight case; this is diagnostic, not a passing checkpoint or a TRX count.
+The two failed method names were Running_converter_reconciles_after_dispatcher_death
+and Recovery_preserves_settled_worker_and_publication_boundaries. Attribution is
+unresolved until bounded reruns and, if red persists, exact base verification.
+The full class union expands to 44 cases (26 sibling + 18 channel), not 35.
+
+The historical CP-3 filter was
+`/*/*/(SiblingToolReportBoundaryTests*)|(ChannelOutboundRecoveryTests*)/*`.
+It is replaced in the current closed list by CP-6 through CP-9, preserving every
+class, method and argument case. The failed methods run first so their complete
+TRX can establish the assertion failures. No already-green proof, guard or
+contract row is repeated. Keep the historical CHECKPOINT lines unchanged.
+
+Measured S2 run wall was 1900.694s: charged execution 1330.186s, admission-only
+570.507s. Build phase 368.086s (dotnet body 4m12s); CP-2 body 21.448s; CP-4
+264.863s; CP-5 60.935s. Source/finalization remainder is retained in report JSON,
+not attributed to fixture time. The over-30-minute run triggers caller-commissioned
+Debug under CARD-1906. This delegate cannot sub-delegate; Debug is still pending.
+S4 costs are provisional from the partial journal and fixed bounded selections:
+CP-6 includes one cold build, CP-7 has six native publication cases, CP-8 the
+26 sibling cases, CP-9 the remaining eleven channel cases. One measured attempt
+per shard, under the unchanged nine-minute cap, supplies the collection sample.
 
 ### Checkpoints
 
@@ -114,6 +148,9 @@ use the fresh bin-c1910-s1/ output. CP-0/1 need no further repetition.
 | CP-0 | S1 | n/a | impact-driver-build | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | R-4 | exit 0, standalone driver only | n/a | 1 |
 | CP-1 | S1 | n/a | impact-driver-witness | `pwsh -NoProfile -File scripts/test-derived-impact-driver.ps1 -EvidenceRoot .antiphon/c1910-driver-witness` | R-4 | DRIVER WITNESS passed=3 failed=0 | n/a | 1 |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1910-s2/` | floor-and-record | `/*/*/(TaskReportFloorIndexTests*)\|(LocalCommandRecordTests*)\|(TaskReportTurnSelectorTests*)/*` | V-1,V-2,V-3,V-4 | all 6 methods, 0 failed/skipped after repair | 6 | 5 |
-| CP-3 | S2 | CP-2 | report-turn-integration | `/*/*/(SiblingToolReportBoundaryTests*)\|(ChannelOutboundRecoveryTests*)/*` | R-1 | all listed, 0 failed/skipped | 35 | 4 |
 | CP-4 | S2 | CP-2 | guards-and-derived | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-2 | all listed, 0 failed/skipped | 79 | 5 |
 | CP-5 | S2 | CP-2 | prompt-working-contract | `/*/*/(TranscriptPromptSpanTests*)\|(TranscriptWorkingStateQueryTests*)\|(TaskReportHousekeepingTests*)/*` | R-3 | all listed, 0 failed/skipped | 32 | 3 |
+| CP-6 | S4 | `tests/Antiphon.Tests -> bin-c1910-s4/` | running-converter-rerun | `/*/*/ChannelOutboundRecoveryTests/Running_converter_reconciles_after_dispatcher_death` | R-1 | exact method, 0 failed/skipped | 1 | 6 |
+| CP-7 | S4 | CP-6 | publication-boundaries-rerun | `/*/*/ChannelOutboundRecoveryTests/Recovery_preserves_settled_worker_and_publication_boundaries` | R-1 | all six argument cases, 0 failed/skipped | 6 | 6 |
+| CP-8 | S4 | CP-6 | sibling-boundaries-rerun | `/*/*/SiblingToolReportBoundaryTests/*` | R-1 | all 26 methods, 0 failed/skipped | 26 | 2 |
+| CP-9 | S4 | CP-6 | channel-remainder-rerun | `/*/*/ChannelOutboundRecoveryTests/(Resume_held_after_conversion_returns_to_ready*)\|(Held_head_blocks_later_reply_until_original_binding_is_repaired_and_resumed*)\|(Restart_preserves_two_inbound_slack_routes_behind_an_uncertain_head*)\|(Broker_ack_before_process_death_remains_uncertain_without_replay*)\|(Process_death_preserves_ownership_at_each_boundary*)\|(Definite_queue_refusal_retries_sealed_payload_but_ambiguous_failure_does_not*)\|(Expired_publishing_lease_is_uncertain_until_explicit_retry*)` | R-1 | all 11 argument-expanded cases, 0 failed/skipped | 11 | 5 |
