@@ -491,7 +491,7 @@ serial measurement under 10 min each; never credit an incomplete row.
 | CP-11.H1 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | H1 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-11.H2 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_namespace_and_types_are_closed` | H2 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
 | CP-11.H3 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host | `/*/*/VolumeRetirementPublicationTests/Host_salvage_snapshot_prunes_and_renews_exact_objects` | H3 | exactly 1 passed; 0 failed/skipped | 1 | 1 | true |
-| CP-12 | S4-Windows | CP-11 | windows-host-regression | `/*/*/VolumeRetirementHostProofTests/*` | R-host native Windows | all 12 existing methods; 0 failed/skipped | 12 | 3 | true |
+| CP-12 | S4-Windows | tests/Antiphon.Tests -> bin-c1901-win/ | windows-host-regression | `/*/*/VolumeRetirementHostProofTests/*` | R-host native Windows | all 12 existing methods; 0 failed/skipped | 12 | 3 | true |
 | CP-13 | S4 | CP-7 | linux-native-policy | `/*/*/ReleaseGatePlatformTests/(LinuxOnlyWindowsExclusionPolicy*)\|(C1686_LinuxOnlyCensus*)` | R-platform | exactly 2 passed; 0 failed/skipped | 2 | 1 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
