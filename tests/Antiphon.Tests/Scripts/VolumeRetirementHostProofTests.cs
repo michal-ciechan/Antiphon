@@ -575,9 +575,9 @@ public sealed class VolumeRetirementHostProofTests
             "$url=if($env:C1609_UNSAFE -eq '1'){$env:C1609_BARE}else{'https://fixture.invalid/proof.git'}; " +
             "$extra=@{ProofVersion=2;PhaseNonce=('b'*32);InventoryDigest=('c'*64);ApprovedOrigins=@($url)}; " +
             "$original=${function:Invoke-C1609HostGit}; " +
-            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='') " +
+            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='',[string]$InputText='',[string]$OutputFile='') " +
             "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
-            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory } }; " +
+            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile } }; " +
             "Write-C1008HostOriginProof -OriginUrl $url -RepoRelative '" + Repo + "' -OperationId '" + Operation +
             "' -ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @extra";
         return await Pwsh(command,new[]{("C1609_BARE",origin),("C1609_PROOF",proof),("C1609_LOG",Path.Combine(root,"proof.log")),("C1609_UNSAFE",unsafeOrigin?"1":"0")});
