@@ -549,8 +549,14 @@ public sealed class VolumeRetirementPublicationTests
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
-        await f.Git(f.Repo, "remote", "set-url", "origin", "https://fixture.invalid/unbound.git");
-        var audit = await f.Preview(proof);
+        // Change the URL after the helper has consumed its bound proof, at the
+        // last status check before the Ready gate. Changing it before the scan
+        // exercises the existing manifest binding rather than this defect.
+        var change = "eval \"$(declare -f c1008_status_proof | sed '1s/c1008_status_proof/c1901_status_proof/')\"\n" +
+            "c1008_status_proof() { c1901_status_proof; if [ -f \"$CASE_DIR/preview-audit.out\" ] && " +
+            "grep -q '^repositories=' \"$CASE_DIR/preview-audit.out\"; then git -C " +
+            VolumeRetirementPublicationFixture.Q(f.Repo) + " remote set-url origin https://fixture.invalid/unbound.git; fi; }\n";
+        var audit = await f.Preview(proof, change);
         Refused(audit, "RecycleGitAuditUnknown");
     }
 
