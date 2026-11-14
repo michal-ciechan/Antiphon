@@ -135,16 +135,31 @@ public sealed class C0824RefOnlyProvisionTests
     [Test]
     public async Task Dispatcher_creates_ref_without_desktop_checkout()
     {
-        foreach (var enabled in new[] { true, false })
+        foreach (var scenario in new[] { "new-on", "new-off", "existing-checkout-on" })
         {
+            var enabled = scenario != "new-off";
+            var legacy = scenario == "existing-checkout-on";
+            var refOnly = enabled && !legacy;
             await using var f = await RefOnlyDispatchFixture.CreateAsync(enabled);
             var before = await f.Git.RunAsync(f.Git.Desktop, "worktree", "list", "--porcelain");
-            var id = await f.SeedAsync();
+            var id = await f.SeedAsync(t =>
+            {
+                if (!legacy) return;
+                t.WorktreeBranch = RemoteWorkspaceService.OwnedBranch(t.Id);
+                t.WorktreeBaseRef = "master"; t.WorktreeBaseSha = f.Git.Baseline;
+                t.WorktreeBaseSource = WorktreeBaseSource.Explicit;
+            });
+            if (legacy)
+            {
+                var old = await f.Rig.ReadTaskAsync(id);
+                await f.Git.RunAsync(f.Git.Desktop, "update-ref", "refs/heads/" + old.WorktreeBranch, f.Git.Baseline);
+            }
             await f.Rig.TickAsync();
             var planned = await f.Rig.ReadTaskAsync(id);
-            planned.DesktopWorkspaceKind.ShouldBe(enabled ? DesktopWorkspaceKind.RefOnly : DesktopWorkspaceKind.Checkout,
+            planned.Status.ShouldBe(AgentTaskStatus.Queued, "existing Checkout coordinates stay on legacy recovery: " + planned.FailureReason);
+            planned.DesktopWorkspaceKind.ShouldBe(refOnly ? DesktopWorkspaceKind.RefOnly : DesktopWorkspaceKind.Checkout,
                 "the production dispatcher selects ref-only only when admitted");
-            if (enabled)
+            if (refOnly)
             {
                 Path.Exists(planned.WorktreePath).ShouldBeFalse("no desktop identity directory");
                 Path.Exists(f.Root).ShouldBeFalse("no empty desktop workspace root");
