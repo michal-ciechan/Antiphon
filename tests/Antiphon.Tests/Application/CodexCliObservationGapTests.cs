@@ -356,7 +356,16 @@ public sealed class CodexCliObservationGapTests
             var held = HoldPrompts(w, loseInputReply: true);
             w.Launch(); await w.JoinLaunchAsync();
             var row = await QueueAsync(w, id);
-            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            if (kind == AgentKind.ClaudeCode)
+            {
+                // CARD-1892: a lost guarded (ConditionalInput) reply is delivery-unknown, not a
+                // refusal. The claimed attempt stays Sent with no verdict, awaiting evidence.
+                row.Status.ShouldBe(QueuedMessageStatus.Sent, "CARD-1892 unknown guarded Input retains the attempt");
+                row.DeliveryVerdict.ShouldBeNull("CARD-1892 no verdict without transcript evidence");
+                row.DeliveryAttempts.ShouldBe(1);
+            }
+            // Codex body writes use plain Input; a lost reply is a definitive failure and reverts.
+            else row.Status.ShouldBe(QueuedMessageStatus.Pending);
             row.LastDeliveryBaselineSequence.ShouldBeNull();
             var started = row.LastDeliveryStartedAt.ShouldNotBeNull();
             var floor = started.AddSeconds(-30);
