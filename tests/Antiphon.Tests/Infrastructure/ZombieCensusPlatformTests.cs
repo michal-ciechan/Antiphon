@@ -1,6 +1,7 @@
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents;
+using Antiphon.TestSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
 using TUnit.Core;
@@ -18,6 +19,7 @@ public sealed class ZombieCensusPlatformTests
         "Zombie census is a supported omission off Windows. Set ZombieCensus:Enabled to false.";
 
     [Test]
+    [NativeLinuxOnly("Linux-only by construction: off-Windows zombie census omission is observed on Linux. The case remains required on Linux.")]
     public void Enabled_true_off_windows_is_rejected()
     {
         if (OperatingSystem.IsWindows())
@@ -43,6 +45,7 @@ public sealed class ZombieCensusPlatformTests
     }
 
     [Test]
+    [NativeLinuxOnly("Linux-only by construction: off-Windows zombie census omission is observed on Linux. The case remains required on Linux.")]
     public void Linux_registration_is_not_the_wmi_census()
     {
         if (OperatingSystem.IsWindows())

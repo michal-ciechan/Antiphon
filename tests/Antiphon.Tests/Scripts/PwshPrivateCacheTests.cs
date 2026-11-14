@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -468,6 +469,7 @@ public sealed class PwshPrivateCacheTests
     // is unknown, so the sweep keeps the cache. Master's kill(pid, 0) did the same on EPERM.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux-only by construction: /proc stat and kill(pid, 0) presence are Linux. The case remains required on Linux.")]
     public void A_missing_stat_for_a_live_process_keeps_the_cache()
     {
         if (!OperatingSystem.IsLinux())
@@ -495,6 +497,7 @@ public sealed class PwshPrivateCacheTests
     // and calling kill deletes this cache.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux-only by construction: /proc stat and kill(pid, 0) presence are Linux. The case remains required on Linux.")]
     public void A_hidden_proc_stat_keeps_a_live_owner()
     {
         if (!OperatingSystem.IsLinux())
@@ -523,6 +526,7 @@ public sealed class PwshPrivateCacheTests
     // ESRCH is the only errno that means gone. Success is covered by the live-process witness.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux-only by construction: /proc stat and kill(pid, 0) presence are Linux. The case remains required on Linux.")]
     public void A_eperm_for_a_live_foreign_pid_keeps_the_cache()
     {
         if (!OperatingSystem.IsLinux())
@@ -551,6 +555,7 @@ public sealed class PwshPrivateCacheTests
     // A missing stat for a pid that kill(pid, 0) reports gone is still dead and is swept.
     [Test]
     [Timeout(60_000)]
+    [NativeLinuxOnly("Linux-only by construction: /proc stat and kill(pid, 0) presence are Linux. The case remains required on Linux.")]
     public void A_missing_stat_for_a_dead_process_is_swept()
     {
         if (!OperatingSystem.IsLinux())

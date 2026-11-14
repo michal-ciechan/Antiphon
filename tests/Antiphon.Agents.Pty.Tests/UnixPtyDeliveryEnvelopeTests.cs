@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using Antiphon.Agents.Pty;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -13,6 +14,7 @@ namespace Antiphon.Agents.Pty.Tests;
 /// <see cref="Delivery_latency_is_recorded"/>. Checkpoint runs leave that variable unset
 /// and only read the committed receipt.
 /// </summary>
+[NativeLinuxOnly("Linux-only by construction: the Unix PTY delivery envelope measures a real Linux PTY. The case remains required on Linux.")]
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class UnixPtyDeliveryEnvelopeTests
