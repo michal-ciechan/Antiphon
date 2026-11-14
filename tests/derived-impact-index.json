@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 321,
+      "classes": 322,
       "reason": "allowlist"
     },
     {
@@ -2015,9 +2015,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 128,
+      "classes": 129,
       "reason": "cap",
-      "owed": 103,
+      "owed": 104,
       "first": [
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -3454,6 +3454,7 @@
         "DockerStackDocumentationTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
