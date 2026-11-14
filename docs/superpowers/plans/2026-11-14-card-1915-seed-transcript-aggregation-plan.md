@@ -55,6 +55,15 @@ The initial c union at 36cf6062 also reached 240s with journal33 passed and
 OrdinaryModeRemainsAdvisory still in flight; no final TRX, no pass credit. Split
 that union into c1/c2 at the same 240s cap; a/b remain green and need no repeat.
 
+R-1 historical caller repair: C641 held-notification upgrade and RefOnly mode
+upgrade both pass at task base ca8737e7 and fail at 1af25a62 on the new safe Down
+refusal. Their owned tip clones now detach only the summary migration's objects
+and history through a summary-specific fixture before the existing historical
+rewind. All debt/identity assertions and the RefOnly 60-second budget stay intact.
+CP-3-migration-callers covers both complete classes at an 8-minute row cap.
+Production Down remains refusing; no historical migration or shared rewind helper
+is edited. This is ordinary regression repair, not deliberate Mutation.
+
 S3 fixture correction after observed red: EF's 100-entity append can emit singleton
 INSERT statements in primary-key order, causing genuine out-of-order SQL and
 conservative D-5 invalidation. The test now independently audits committed
@@ -478,6 +487,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2b/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3b/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
 | CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
+| CP-3-migration-callers | S3 | CP-3 | historical-migration-callers | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(C0824RefOnlyIdentityTests*)/*` | R-1 affected callers | all listed, 0 failed | 2 | 3 |
 | CP-3-guards-a | S3 | CP-3 | final-guards-policy | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 slice guards | all listed, 0 failed | 4 | 2 |
 | CP-3-guards-b | S3 | CP-3 | final-guards-contract | `/*/*/(SlowTestRegistryMergeTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 slice guards | all listed, 0 failed | 5 | 2 |
 | CP-3-guards-c1 | S3 | CP-3 | final-guards-derived | `/*/*/(DerivedImpactIndexTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 slice guards | all listed, 0 failed | 2 | 2 |
