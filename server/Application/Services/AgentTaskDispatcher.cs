@@ -6134,7 +6134,11 @@ public sealed partial class AgentTaskDispatcher
                 : null;
             using (AntiphonTrace.Span("dispatch.worktree-create"))
             {
-                if (_refOnlyGate?.Admits(claimed) == true)
+                if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.Checkout
+                    && claimed.TaskRefWorkspaceBindingId is null && claimed.WorktreeBranch is null
+                    && claimed.WorktreeBaseSha is null && claimed.WorktreeBaseRef is null
+                    && claimed.WorktreeBaseSource == WorktreeBaseSource.Unset
+                    && claimed.ProgressBaselineJson is null && _refOnlyGate?.Admits(claimed) == true)
                 {
                     if (_refOnlyProvisioner is null) throw new ConflictException("ref_only_preparation_unavailable");
                     await _refOnlyProvisioner.PlanAsync(claimed, repositoryLease!, repairStartSha,
@@ -6729,7 +6733,8 @@ public sealed partial class AgentTaskDispatcher
             if (!RefOnlyCommittedSource.BaselineMatches(task, context, TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson))
                 || string.IsNullOrWhiteSpace(remoteCwd) || remoteCwd != task.RemoteWorktreePath
                 || session.RunnerCwd != remoteCwd || session.RunnerId != task.RunnerId
-                || session.RunnerStoreId is null)
+                || session.RunnerStoreId is null || session.RunnerStoreId == Guid.Empty
+                || _runners?.GetLiveStoreId(task.RunnerId) != session.RunnerStoreId)
                 throw new ConflictException("ref_only_execution_binding_required");
         }
         var spec = await BuildLaunchSpecAsync(task, agent, session, program, attachedBundleKeys, ct);
@@ -6880,6 +6885,17 @@ public sealed partial class AgentTaskDispatcher
             .Where(s => s.Id == oldSessionId)
             .Select(s => new { s.DefinitionName, s.RunnerId, s.RunnerStoreId, s.RunnerCwd })
             .FirstOrDefaultAsync(ct);
+        if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+        {
+            var context = await new TaskWorkspaceContextResolver(_db).RequireRemoteExecutionAsync(task, ct);
+            if (task.AgentSessionId != oldSessionId || previous is null
+                || previous.RunnerId != task.RunnerId || previous.RunnerCwd != context.ExecutionDirectory
+                || previous.RunnerStoreId is null || previous.RunnerStoreId == Guid.Empty
+                || _runners?.GetLiveStoreId(task.RunnerId) != previous.RunnerStoreId
+                || !RefOnlyCommittedSource.BaselineMatches(task, context,
+                    TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)))
+                throw new ConflictException("ref_only_execution_binding_required");
+        }
         var previousDefinition = previous?.DefinitionName;
         var session = new AgentSession
         {
@@ -8043,6 +8059,9 @@ public sealed partial class AgentTaskDispatcher
         if (owner is null || string.IsNullOrWhiteSpace(owner.WorktreeBranch))
             return new(null, warnings, "repair_source_identity_unavailable: owner is missing.");
 
+        if (owner.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
+            return await PrepareRefOnlyRepairSourceAsync(task, owner, lease, ct);
+
         var ownerRef = TaskCompletionProgressService.FullRef(owner.WorktreeBranch);
         var local = await _progressGit.RevParseCommitAsync(task.RepoPath, ownerRef, ct);
         if (!local.Succeeded || local.Sha is null)
@@ -8124,6 +8143,56 @@ public sealed partial class AgentTaskDispatcher
             warnings.Add("snapshot excludes uncommitted source files.");
 
         return new(local.Sha, warnings, null);
+    }
+
+    private async Task<RepairSourcePrep> PrepareRefOnlyRepairSourceAsync(
+        AgentTask task, AgentTask owner, RepositoryLease lease, CancellationToken ct)
+    {
+        var warnings = new List<string>();
+        if (_landingGit is null || _progressGit is null || _repositoryLeases is null)
+            return new(null, warnings, RepairSourceIdentityUnavailable + ": ref-only source services are unavailable.");
+        try
+        {
+            var baseline = TaskProgressJson.TryReadBaseline(owner.ProgressBaselineJson);
+            if (baseline is not { SchemaVersion: 2 })
+                throw new ConflictException("ref_only_baseline_identity_mismatch");
+            var strategy = new RefOnlyDesktopWorkspaceService(new TaskWorkspaceContextResolver(_db),
+                _landingGit, _progressGit, _repositoryLeases);
+            var source = await strategy.InspectAsync(owner, baseline.Primary, null, ct);
+            var repo = await _progressGit.CanonicalDirectoryAsync(task.RepoPath!, ct);
+            if (!WorkspaceReservationKey.PathsEqual(repo, source.Context.GitWorkingDirectory)
+                || !_repositoryLeases.Owns(lease, source.Context.CommonDirectory!))
+                throw new ConflictException("ref_only_repository_lease_required");
+            var observed = await _progressGit.ObserveExactRefUnderLeaseAsync(repo, source.Context.FullRef,
+                baseline.Primary.Remote.EndpointFingerprint, task.Id, lease, ct);
+            if (observed.State == ProgressRemoteState.Present && observed.Sha is { } remote && remote != source.Sha)
+            {
+                var behind = await _progressGit.IsAncestorAsync(repo, source.Sha, remote, ct);
+                if (behind is null) throw new ConflictException(RepairSourceIdentityUnavailable);
+                if (behind.Value)
+                    return new(null, warnings, RepairSourceCurrencyReason(RepairSourceOwnerRemoteAhead,
+                        owner.Id, source.Sha, remote, "behind origin"));
+                var ahead = await _progressGit.IsAncestorAsync(repo, remote, source.Sha, ct);
+                if (ahead is null) throw new ConflictException(RepairSourceIdentityUnavailable);
+                if (!ahead.Value)
+                    return new(null, warnings, RepairSourceCurrencyReason(RepairSourceOwnerDiverged,
+                        owner.Id, source.Sha, remote, "diverged from origin"));
+            }
+            else if (observed.State == ProgressRemoteState.Unavailable)
+            {
+                if (observed.Reason is "source_remote_endpoint_changed" or "source_remote_endpoint_ambiguous")
+                    throw new ConflictException(observed.Reason);
+                warnings.Add($"owner remote unobserved ({observed.Reason ?? "source_remote_unreadable"}); repair base is the owned ref {source.Sha}.");
+            }
+            var checkedSource = await strategy.InspectAsync(owner, baseline.Primary, source.Context, ct);
+            if (checkedSource.Sha != source.Sha) throw new ConflictException("ref_only_source_changed");
+            warnings.Add($"ref-only source {source.Context.FullRef}; routing to an isolated branch at {source.Sha}.");
+            return new(source.Sha, warnings, null);
+        }
+        catch (ConflictException ex)
+        {
+            return new(null, warnings, RepairSourceIdentityUnavailable + ": " + ex.Message);
+        }
     }
 
     private static string RepairSourceCurrencyReason(string code, Guid ownerId, string local, string remote,
