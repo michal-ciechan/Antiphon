@@ -6,6 +6,9 @@
 # CARD-0824: producer intent uses real temporary Git and an isolated clone of shared PostgreSQL.
 Antiphon.Tests.Application.C0824RefOnlyProvisionTests
 
+# CARD-0824: initial publication and crash recovery use real Git plus isolated shared PostgreSQL clones.
+Antiphon.Tests.Application.C0824RefOnlyPreparationTests
+
 # CARD-1769: seeded scan of 1,500 AwaitingReceipt notes and the parked rescan; measured above the five-second tripwire.
 Antiphon.Tests.Application.AgentTaskLandNotificationRescanTests
 
