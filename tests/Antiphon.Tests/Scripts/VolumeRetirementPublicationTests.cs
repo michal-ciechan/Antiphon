@@ -515,9 +515,16 @@ public sealed class VolumeRetirementPublicationTests
         var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
-        var proof = await f.WriteProof();
+        const string beforeRepair = "137fde4adc58f98b4d59b5d945b3380e9b1a5749";
+        var proof = await f.WriteProof(writerRevision: beforeRepair);
         proof.Exit.ShouldBe(0, proof.Output);
+        // Transfer the replacement object without advertising it as publication.
+        await f.Git(f.Bare, "fetch", "-q", f.Repo, f.X);
         await f.Git(f.Bare, "update-ref", VolumeRetirementPublicationFixture.Canonical(f.U), f.X);
+        (await f.Git(f.Repo, "rev-list", "--count", f.U, "^" + f.A)).ShouldBe("1", "the protected original is unique against valid live origin roots");
+        var old = await f.Audit(proof, complete: false, sourceRevision: beforeRepair);
+        old.Exit.ShouldBe(0, "the committed pre-repair reader reproduces the fail-open; " + old.Output);
+        old.Output.ShouldContain("C1609_PROVED_OBJECT repo=repos/outer object=" + f.U);
         var audit = await f.Preview(proof);
         Refused(audit, "RecycleGitAuditUnknown");
     }
