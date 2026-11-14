@@ -494,8 +494,8 @@ c1609_publication_gate() {
         [ "$attempt" != 2 ] || return 1
     done
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
-    c1609_recheck_origin_bindings || return 1
     C1609_CONTROL_STARTED="$(c1609_monotonic_ms)" || return 1
+    c1609_recheck_origin_bindings || return 1
     printf 'C1609_CONTROL_REQUEST %s %s %s %s\n' "$nonce" "$purpose" "$C1609_BOUND_PROOF_DIGEST" "$objects"
     IFS=' ' read -r -t 10 marker reply returned_purpose returned_proof returned_objects extra || return 1
     [ "$marker" = C1609_CONTROL_RESPONSE ] && [ "$reply" = "$nonce" ] && [ "$returned_purpose" = "$purpose" ] &&
