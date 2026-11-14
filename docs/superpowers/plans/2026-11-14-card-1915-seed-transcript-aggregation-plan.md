@@ -82,6 +82,14 @@ S7 must price this observed ordinary-batch invalidation/backfill cost.
 
 ## Ground truth
 
+Round-2 Code commissioning (5675aac7): Review 6f663ce6 found feature-off
+singleton overhead. CP-35 is the red-first no-write/no-row-lock regression;
+CP-36 compares the installed trigger, an index-probe early return, a scratch
+one-row database gate and dropped triggers on the shared scale fixture. Three
+samples per option/state, rotating order; timings are descriptive, never a test
+gate. CP-35 retains CP-3's 4-minute cap; CP-36 has a provisional 10-minute cap
+(scale preparation plus bounded small measurements). S1-S3 scope is unchanged.
+
 | Card/brief assumption | Code and observed behavior at the source SHA | Consequence |
 |---|---|---|
 | Loader is under Application | `server/Infrastructure/Data/SessionStateLoader.cs`; interface is `server/Application/Interfaces/ISessionStateLoader.cs` | Change the infrastructure implementation; keep the public snapshot contract. |
@@ -499,6 +507,8 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-3-guards-b | S3 | CP-3 | final-guards-contract | `/*/*/(SlowTestRegistryMergeTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 slice guards | all listed, 0 failed | 5 | 2 |
 | CP-3-guards-c1 | S3 | CP-3 | final-guards-derived | `/*/*/(DerivedImpactIndexTests*)\|(TestTimingOperationLabelTests*)/*` | R-2 slice guards | all listed, 0 failed | 2 | 2 |
 | CP-3-guards-c2 | S3 | CP-3 | final-guards-envelope | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-2 slice guards | all listed, 0 failed | 1 | 2 |
+| CP-35 | S3 | CP-3 | feature-off-no-writes | `/*/*/SessionTranscriptSummaryAppendTests/(Absent_and_invalid_summaries_receive_no_write_statements*)\|(Invalid_summary_row_locks_do_not_block_appends*)` | Round-2 regression | all listed, 0 failed | 2 | 2 |
+| CP-36 | S3 | CP-3 | feature-off-scale-cost | `/*/*/SessionTranscriptSummaryAppendCostTests/*` | Round-2 append measurements | 3 samples per option/state, no clock assertion | 1 | 5 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1915-s4/ | summary-invalidation | `/*/*/(SessionTranscriptSummaryInvalidationTests*)\|(SessionStateWarmupTests*)\|(DataRetentionServiceTests*)/*` | V-4 | all listed, 0 failed | 3 | 4 |
 | CP-5 | S5 | tests/Antiphon.Tests -> bin-c1915-s5/ | summary-backfill | `/*/*/SessionTranscriptSummaryBackfillTests/*` | V-5 | all listed, 0 failed | 2 | 2 |
 | CP-6 | S6 | tests/Antiphon.Tests -> bin-c1915-s6/ | summary-seed | `/*/*/(SessionTranscriptSummarySeedTests*)\|(SessionStateProjectionTests*)\|(SessionStateCacheReadTests*)\|(SessionStateWarmupTests*)\|(TranscriptWorkingStateQueryTests*)\|(TranscriptHotPathQueryTests*)/*` | V-1,V-6 | all listed, 0 failed | 6 | 4 |

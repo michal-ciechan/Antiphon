@@ -20,6 +20,81 @@ namespace Antiphon.Tests.Application;
 public sealed class SessionTranscriptSummaryAppendTests
 {
     [Test]
+    public async Task Absent_and_invalid_summaries_receive_no_write_statements()
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        var retryAt = Epoch.AddYears(10);
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary {
+            AgentSessionId = f.OtherId, Valid = false, NextBackfillAttemptAt = retryAt });
+        await db.SaveChangesAsync();
+        var version = await db.Database.SqlQueryRaw<string>(
+            "SELECT xmin::text AS \"Value\" FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id",
+            new NpgsqlParameter("id", f.OtherId)).SingleAsync();
+        // Statement triggers see attempted writes too, including INSERT ... ON CONFLICT
+        // DO NOTHING and UPDATEs matching zero rows. xmin alone would miss those.
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE "C1915SummaryWrites" ("Operation" text NOT NULL);
+            CREATE FUNCTION c1915_summary_write_audit() RETURNS trigger LANGUAGE plpgsql AS $audit$
+            BEGIN INSERT INTO "C1915SummaryWrites" VALUES (TG_OP); RETURN NULL; END; $audit$;
+            CREATE TRIGGER c1915_summary_write_audit AFTER INSERT OR UPDATE OR DELETE
+                ON "SessionTranscriptSummaries" FOR EACH STATEMENT EXECUTE FUNCTION c1915_summary_write_audit();
+            """);
+        foreach (var id in new[] { f.SessionId, f.OtherId })
+        for (var n = 1; n <= 100; n++)
+            await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{id},{n},'AssistantText',{Epoch})");
+        (await db.Database.SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM \"C1915SummaryWrites\"").SingleAsync())
+            .ShouldBe(0, "100 absent and 100 invalid appends must issue zero summary write statements");
+        (await db.SessionTranscriptSummaries.AnyAsync(s => s.AgentSessionId == f.SessionId)).ShouldBeFalse();
+        var invalid = await SummaryAsync(db, f.OtherId);
+        invalid.Valid.ShouldBeFalse();
+        invalid.NextBackfillAttemptAt.ShouldBe(retryAt);
+        (await db.Database.SqlQueryRaw<string>(
+            "SELECT xmin::text AS \"Value\" FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id",
+            new NpgsqlParameter("id", f.OtherId)).SingleAsync()).ShouldBe(version);
+        var cold = await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId, f.OtherId], default);
+        cold.Values.ShouldAllBe(s => s.Count == 100);
+    }
+
+    [Test]
+    public async Task Invalid_summary_row_locks_do_not_block_appends()
+    {
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId });
+        await db.SaveChangesAsync();
+        await using var blocker = new NpgsqlConnection(db.Database.GetConnectionString());
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using var hold = new NpgsqlCommand("SELECT 1 FROM \"SessionTranscriptSummaries\" WHERE \"AgentSessionId\"=@id FOR UPDATE", blocker, transaction) { CommandTimeout = 10 };
+        hold.Parameters.AddWithValue("id", f.SessionId);
+        await hold.ExecuteScalarAsync();
+        await db.Database.ExecuteSqlRawAsync("SET lock_timeout='1s'");
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},1,'AssistantText',{Epoch})");
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == f.SessionId)).ShouldBe(1);
+        (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse();
+        await transaction.RollbackAsync();
+    }
+
+    [Test]
+    public async Task Existing_valid_summaries_stay_current_without_an_enabled_reader()
+    {
+        // S1-S3 has no durable-summary reader or activation flag. D-7 requires
+        // maintenance to be independent of the reader, including its disabled state.
+        await using var f = await SessionStateTestFixture.CreateAsync();
+        await using var db = f.Db();
+        db.SessionTranscriptSummaries.Add(new SessionTranscriptSummary { AgentSessionId = f.SessionId, Valid = true });
+        await db.SaveChangesAsync();
+        for (var n = 1; n <= 2; n++)
+            await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},{n},'AssistantText',{Epoch})");
+        await EqualAsync(db, [f.SessionId]);
+        (await SummaryAsync(db, f.SessionId)).Count.ShouldBe(2);
+        (await f.Services.GetRequiredService<ISessionStateLoader>().LoadAsync([f.SessionId], default))[f.SessionId].Count.ShouldBe(2);
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO \"TranscriptEntries\" (\"Id\",\"AgentSessionId\",\"Sequence\",\"Kind\",\"CreatedAt\") VALUES ({Guid.NewGuid()},{f.SessionId},0,'TurnEnd',{Epoch})");
+        (await SummaryAsync(db, f.SessionId)).Valid.ShouldBeFalse("out-of-order appends still invalidate while the reader is off");
+    }
+
+    [Test]
     [Arguments("normal")]
     [Arguments("ef-single")]
     [Arguments("rollback")]
