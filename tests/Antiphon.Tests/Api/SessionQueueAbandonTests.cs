@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
@@ -138,9 +139,10 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
     }
 
     [Test]
-    public async Task Late_prompt_after_abandon_leaves_row_terminal_and_never_types()
+    [Arguments(false)] [Arguments(true)]
+    public async Task Late_prompt_after_abandon_leaves_row_terminal_and_never_types(bool refinement)
     {
-        var row = await SeedAsync(refinement: true);
+        var row = await SeedAsync(status: SessionStatus.Running, refinement: refinement);
         using (var abandoned = await AbandonAsync(row, "explicitly give up waiting")) abandoned.StatusCode.ShouldBe(HttpStatusCode.OK);
         await AddReceiptAsync(row);
         var queue = factory.Services.GetRequiredService<SessionMessageQueueService>();
@@ -151,6 +153,88 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         after.DeliveryVerdict.ShouldBeNull();
         after.DeliveryAttempts.ShouldBe(1);
         _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Grok_rules_late_prompt_does_not_resurrect_abandoned_input()
+    {
+        var row = await SeedRulesAsync();
+        using (var abandoned = await AbandonAsync(row, "Explicitly abandon the unconfirmed rules input"))
+            abandoned.StatusCode.ShouldBe(HttpStatusCode.OK);
+        await AddReceiptAsync(row);
+        await factory.Services.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(row.AgentSessionId, default);
+        var after = await ReloadAsync(row);
+        after.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        after.DeliveryVerdict.ShouldBeNull();
+        after.RulesAcknowledgedAt.ShouldBeNull();
+        after.DeliveryAttempts.ShouldBe(1);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(false)] [Arguments(true)]
+    public async Task Grok_rules_confirmation_races_abandon_without_resurrection(bool reconcileFirst)
+    {
+        var row = await SeedRulesAsync();
+        await AddReceiptAsync(row);
+        Task? reconcile = null; Task<HttpResponseMessage>? abandon = null;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await using var tx = await db.Database.BeginTransactionAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentSessions\" WHERE \"Id\" = {row.AgentSessionId} FOR UPDATE");
+            try
+            {
+                if (reconcileFirst) reconcile = factory.Services.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(row.AgentSessionId, default);
+                else abandon = AbandonAsync(row, "Operator decision during rules receipt");
+                await Should.ThrowAsync<TimeoutException>((reconcileFirst ? reconcile! : abandon!).WaitAsync(TimeSpan.FromMilliseconds(150)));
+                if (reconcileFirst) abandon = AbandonAsync(row, "Operator decision after rules receipt");
+                else reconcile = factory.Services.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(row.AgentSessionId, default);
+            }
+            finally { await tx.CommitAsync(); }
+        }
+        using var result = await abandon!;
+        await reconcile!;
+        var after = await ReloadAsync(row);
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var audits = await verifyScope.ServiceProvider.GetRequiredService<AppDbContext>().AuditRecords.CountAsync(i => i.Id == row.Id);
+        if (after.Status == QueuedMessageStatus.Canceled)
+        {
+            result.StatusCode.ShouldBe(HttpStatusCode.OK);
+            after.DeliveryVerdict.ShouldBeNull();
+            audits.ShouldBe(1);
+        }
+        else
+        {
+            after.Status.ShouldBe(QueuedMessageStatus.Sent);
+            after.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            result.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            audits.ShouldBe(0);
+        }
+        after.DeliveryAttempts.ShouldBe(1);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
+    }
+
+    private async Task<SessionQueuedMessage> SeedRulesAsync()
+    {
+        var row = await SeedAsync(status: SessionStatus.Running);
+        var receipt = new GrokRulesReceipt($"C:\\remote\\instructions\\grok\\{row.AgentSessionId:N}\\rules.md",
+            GrokRulesTransport.Hash("standing rules"u8.ToArray()), "standing rules"u8.Length, 1, Guid.NewGuid());
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = (await db.AgentSessions.FindAsync(row.AgentSessionId))!;
+        session.GrokRulesGeneration = receipt.Generation;
+        session.GrokRulesExpectedSha256 = receipt.Sha256;
+        session.GrokRulesExpectedByteCount = receipt.ByteCount;
+        session.GrokRulesReceiptJson = JsonSerializer.Serialize(receipt);
+        session.GrokRulesState = GrokRulesState.Pending;
+        var stored = (await db.SessionQueuedMessages.FindAsync(row.Id))!;
+        stored.RulesRefreshKey = $"launch:{receipt.Generation:N}";
+        stored.RulesReceiptJson = session.GrokRulesReceiptJson;
+        stored.RulesDeadlineAt = DateTime.UtcNow.AddMinutes(-2);
+        stored.Body = GrokRulesRefreshService.Prompt(row.Id, receipt);
+        await db.SaveChangesAsync();
+        return await ReloadAsync(row);
     }
 
     [Test]
@@ -239,5 +323,11 @@ public sealed class AbandonWebAppFactory : AntiphonWebAppFactory
     protected override void ApplyTestOverrides(IServiceCollection services)
     {
         services.Configure<PhoneHomeRunnerSettings>(o => o.OperatorTokenPath = Path.Combine(TestRoot, "test-operator-token"));
+    }
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        File.Delete(Path.Combine(TestRoot, "test-operator-token"));
+        if (Directory.Exists(TestRoot)) Directory.Delete(TestRoot);
     }
 }
