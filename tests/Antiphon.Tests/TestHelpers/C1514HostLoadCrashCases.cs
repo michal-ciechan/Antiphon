@@ -9,7 +9,8 @@ using Shouldly;
 namespace Antiphon.Tests.TestHelpers;
 internal static class C1514HostLoadCrashCases
 {
-    public static async Task RunAsync(C1514HostLoadFixture fixture, string cut, CancellationToken ct)
+    public static async Task RunAsync(C1514HostLoadFixture fixture, string cut, CancellationToken ct,
+        IReadOnlyList<HostLoadTopConsumer>? topConsumers = null)
     {
         using var scenarioStop = CancellationTokenSource.CreateLinkedTokenSource(ct, C1514HostLoadScenario.Current?.Token ?? CancellationToken.None);
         ct = scenarioStop.Token;
@@ -19,8 +20,12 @@ internal static class C1514HostLoadCrashCases
             Console.WriteLine("c1514 crash cut=" + cut);
             await using var world = await fixture.WorldAsync(phoneHome: true);
             HostLoadSample sample;
-            if (cut.StartsWith("append-", StringComparison.Ordinal)) sample = new() { Source = new("grok-linux", world.Spool.RunnerStoreId, world.Spool.BootId, 101), SampledAt = C1514HostLoadWorld.T0,
-                PhysicalHostKey = "owned-host", SourceEpoch = world.Runner.SourceEpoch, BindingRevision = 1, CpuPercent = 40, HostLogicalCores = 24, BusyCoreEquivalent = 9.6 };
+            if (cut.StartsWith("append-", StringComparison.Ordinal))
+            {
+                sample = new() { Source = new("grok-linux", world.Spool.RunnerStoreId, world.Spool.BootId, 101), SampledAt = C1514HostLoadWorld.T0,
+                    PhysicalHostKey = "owned-host", SourceEpoch = world.Runner.SourceEpoch, BindingRevision = 1, CpuPercent = 40, HostLogicalCores = 24, BusyCoreEquivalent = 9.6 };
+                if (topConsumers is not null) sample = sample with { TopConsumers = topConsumers };
+            }
             else { await world.SeedPrefixAsync(); sample = await world.ProduceAsync(C1514HostLoadWorld.T0); }
             Guid? taskId = null;
             if (cut.StartsWith("derive-", StringComparison.Ordinal))
@@ -74,7 +79,11 @@ internal static class C1514HostLoadCrashCases
             { rows.ShouldBeEmpty(); api.RootElement.GetProperty("complete").GetBoolean().ShouldBeFalse(); api.RootElement.GetProperty("gaps").GetArrayLength().ShouldBeGreaterThan(0); }
             else
             {
-                rows.Count.ShouldBe(1, cut); JsonSerializer.Deserialize<HostLoadSample>(rows[0].PayloadJson, PhoneHomeFraming.Json)!.CpuPercent.ShouldBe(40d);
+                rows.Count.ShouldBe(1, cut);
+                var stored = JsonSerializer.Deserialize<HostLoadSample>(rows[0].PayloadJson, PhoneHomeFraming.Json)!;
+                stored.CpuPercent.ShouldBe(40d);
+                if (topConsumers is not null)
+                    stored.TopConsumers.Select(row => (row.Pid, row.Name)).ShouldBe(topConsumers.Select(row => (row.Pid, row.Name)).ToArray(), cut);
                 api.RootElement.GetProperty("items").GetArrayLength().ShouldBe(1, cut);
                 var rollup = await fresh.HostLoadHourlyRollups.SingleAsync(r => r.HourUtc == C1514HostLoadWorld.T0 && r.Metric == "cpuPercent");
                 var summary = JsonSerializer.Deserialize<HostLoadMetricSummary>(rollup.StatisticsJson, PhoneHomeFraming.Json)!;

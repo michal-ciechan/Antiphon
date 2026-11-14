@@ -96,6 +96,18 @@ public class C1514HostLoadHistoryTests(C1514HostLoadFixture fixture)
     [Arguments("ingest-before-commit"), Arguments("ingest-after-commit")]
     [Arguments("derive-before-call"), Arguments("derive-before-save"), Arguments("derive-after-write"), Arguments("derive-after-commit")]
     public async Task RecoveryAtEveryHandoffPreservesReceipt(string cut, CancellationToken ct) => await C1514HostLoadCrashCases.RunAsync(fixture, cut, ct);
+
+    /// <summary>CARD-1884 round 4. A crash after a durable append keeps the populated top-consumer list.</summary>
+    [Test, C1514ProgressBudget(60_000)]
+    public async Task Populated_top_consumers_survive_an_append_after_flush_crash(CancellationToken ct)
+    {
+        HostLoadTopConsumer[] top =
+        [
+            new(11, 100, "VBCSCompiler", HostConsumerRules.Compiler, 3.5, 4096),
+            new(22, 100, "pwsh", HostConsumerRules.Other, 0.4, 8192),
+        ];
+        await C1514HostLoadCrashCases.RunAsync(fixture, "append-after-flush", ct, top);
+    }
     [Test, C1514ProgressBudget(10_000)]
     public async Task IdentityConflictsNeverOverwriteStoredSamples()
     {
