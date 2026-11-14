@@ -496,8 +496,9 @@ public sealed class LandRefusalDeliveryWitnessTests
     }
 
     /// <summary>
-    /// case: one transport failure before typing reverts the same row, and the stranded sweep
-    /// retries it once. mutation: skip the revert. red: the row stays Sent after the fault.
+    /// case: one definitive runner refusal before typing reverts the same row, and the stranded
+    /// sweep retries it once. An ambiguous transport exception is held Sent under CARD-1892, so the
+    /// fault is a definitive refusal. mutation: skip the revert. red: the row stays Sent after the fault.
     /// </summary>
     [Test]
     [Timeout(180_000)]

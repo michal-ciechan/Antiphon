@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -591,8 +592,13 @@ internal sealed class CutBoundary(RefusalFault fault) : LandDeliveryBoundary
         if (!fault.Armed || RefusalNames.For(fault.Cut) != boundary)
             return Task.CompletedTask;
         fault.MarkFired();
-        if (fault.Cut is RefusalCut.BeforeEnqueue or RefusalCut.QueueBeforeTyping)
+        if (fault.Cut is RefusalCut.BeforeEnqueue)
             throw new IOException("C1196:" + boundary);
+        // CARD-1892 retains an ambiguous transport exception at the Input boundary as a Sent
+        // attempt awaiting transcript evidence. This seam refuses before any byte is typed, so it
+        // models a definitive runner refusal, which still takes the revert-to-Pending path.
+        if (fault.Cut is RefusalCut.QueueBeforeTyping)
+            throw new RunnerProblemException(409, "C1196:" + boundary, "fixture_input_refused");
         throw new OperationCanceledException("C1196:" + boundary);
     }
 }
