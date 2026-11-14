@@ -432,9 +432,7 @@ public sealed class DelegationWorktreeService
                     NewlyRecorded: false)
                 : null;
         }
-        var probe = await ProbeConfiguredDefaultAsync(task, ct);
-        var resolved = cardBase ?? WorktreeBaseResolver.Resolve(
-            startAtSha, task.WorktreeBaseRequestedRef, task.MergeTargetRef, probe);
+        var resolved = await SelectBaseAsync(task, startAtSha, cardBase, ct);
         var decision = new WorktreeBaseDecision(resolved, NewlyRecorded: !alreadyRecorded);
         var baseRef = resolved.Ref;
 
@@ -494,6 +492,15 @@ public sealed class DelegationWorktreeService
             DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,
             (alreadyRecorded ? task.WorktreeBaseSha : head) ?? "(unknown)", resolved.Source);
         return decision;
+    }
+
+    // Shared selection only: the legacy caller retains its checkout adoption and HEAD capture.
+    internal async Task<ResolvedBase> SelectBaseAsync(AgentTask task, string? repairSha,
+        ResolvedBase? cardBase, CancellationToken ct)
+    {
+        var probe = await ProbeConfiguredDefaultAsync(task, ct);
+        return cardBase ?? WorktreeBaseResolver.Resolve(
+            repairSha, task.WorktreeBaseRequestedRef, task.MergeTargetRef, probe);
     }
 
     /// <summary>
