@@ -799,8 +799,8 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-119 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1903_second_half` | R2-corpus-1903-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
 | CP-120 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Origin_graph_corpus_seed_1904_second_half` | R2-corpus-1904-second-half | exactly 1 method, 35 independent shapes; 0 failed/skipped | 1 | 3 | true |
 | CP-121 | R2Final | CP-101 | linux-witness-adjacent | `/*/*/(NativeLinuxPolicyWitnessMutationTests*)\|(NativeLinuxPolicyMatcherParityTests*)/*` | R-native-witness-model | both named classes; 0 failed/skipped | 2 | 2 | true |
-| CP-122 | R2Final | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness Agents.Pty | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
-| CP-123 | R2Final | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-122 | S4 | tests/Antiphon.Agents.Pty.Tests -> bin-c1901-agpty/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness Agents.Pty | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
+| CP-123 | S4 | tests/Antiphon.SessionRunner.Tests -> bin-c1901-runner/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness SessionRunner | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 | CP-124 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-witness-mirror | `/*/*/NativeLinuxPolicyWitnessTests/*` | R-native-witness PtyHost | exactly 3 passed; 0 failed/skipped | 3 | 2 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
