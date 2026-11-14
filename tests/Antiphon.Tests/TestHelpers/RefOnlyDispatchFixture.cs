@@ -70,7 +70,22 @@ internal sealed class RefOnlyDispatchFixture : IAsyncDisposable
     {
         var next = Rig.Peer.RequestCount(PhoneHomeOperation.WorkspaceMirror) + 1;
         await Rig.TickAsync();
-        var request = await Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, next);
+        var queued = await Rig.ReadTaskAsync(id);
+        queued.Status.ShouldBe(AgentTaskStatus.Queued, queued.FailureReason);
+        PhoneHomeFrame request;
+        try { request = await Rig.WaitForRequestsAsync(PhoneHomeOperation.WorkspaceMirror, next); }
+        catch (TimeoutException ex)
+        {
+            await using var db = Rig.NewDb();
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == id);
+            var state = await db.TaskRefWorkspaceBindings.AsNoTracking().Where(b => b.TaskId == id)
+                .Select(b => new { b.PreparationState, b.Revision }).SingleOrDefaultAsync();
+            var events = await db.AgentTaskEvents.Where(e => e.AgentTaskId == id).OrderByDescending(e => e.At)
+                .Take(5).Select(e => new { e.Type, e.Detail }).ToListAsync();
+            var diagnostic = System.Text.Json.JsonSerializer.Serialize(new
+                { task.Status, task.FailureReason, task.RemotePrepFailures, state, progress = Rig.Preparer.Progress(id), events });
+            throw new TimeoutException("Mirror request missing: " + diagnostic, ex);
+        }
         var path = "/runner/ref-only/" + id.ToString("N");
         await Rig.Peer.EmitAsync(RemoteWorkspacePreparerTests.MirrorResult(request, path));
         await Rig.Preparer.WhenIdleAsync();
