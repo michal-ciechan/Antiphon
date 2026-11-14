@@ -110,7 +110,7 @@ internal static class TaskReportTurnSelector
             if (phantomBarrier is not null && rawPrompt.Sequence < phantomBarrier.Sequence)
             {
                 return SelectionBehindPhantomBarrier(
-                    phantomBarrier, phantomBarrierBoundary, task, raw, rulesIds, invoked, sessionKind, skipped);
+                    phantomBarrier, phantomBarrierBoundary, task, raw, realPrompts, skipped);
             }
 
             if (TaskReportHousekeeping.IsAllowlistedPrompt(sessionKind, rawPrompt.Text, rulesIds))
@@ -119,7 +119,7 @@ internal static class TaskReportTurnSelector
                     ? "grok-background-completion"
                     : "grok-rules-refresh";
                 var owned = RealOwnerOfSkippedTurn(
-                    end, olderEnd, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: false);
+                    end, olderEnd, rawPrompt, task, raw, realPrompts, settleMarkedOwner: false);
                 if (owned is not null)
                     return owned with { Skipped = skipped };
                 skipped.Add(new TaskReportSkip(end.Sequence, reason));
@@ -130,7 +130,7 @@ internal static class TaskReportTurnSelector
                 && TaskReportHousekeeping.IsClaudeTaskNotification(rawPrompt.Text))
             {
                 var continuation = await TryClaudeContinuationAsync(
-                    db, sessionId, task, raw, rawPrompt, end.Sequence, olderEnd, end.StopReason, rulesIds, invoked, sessionKind, ct);
+                    db, sessionId, task, raw, rawPrompt, end.Sequence, olderEnd, end.StopReason, realPrompts, ct);
                 if (continuation is null)
                 {
                     skipped.Add(new TaskReportSkip(end.Sequence, "claude-notification-ack"));
@@ -163,7 +163,7 @@ internal static class TaskReportTurnSelector
                 var floor = PhantomTransparentFloor(
                     boundaries, index, realPrompts, toolRows, task);
                 var owned = RealOwnerOfSkippedTurn(
-                    end, floor, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
+                    end, floor, rawPrompt, task, raw, realPrompts, settleMarkedOwner: true);
                 if (owned is not null)
                 {
                     // CARD-1821: compaction and local-command records share the brief's turn,
@@ -195,19 +195,19 @@ internal static class TaskReportTurnSelector
 
             if (task.RepliedAtSequence is long watermark && rawPrompt.Sequence <= watermark)
             {
-                return Finish(TaskReportSelectionKind.PreReply, end.Sequence, rawPrompt, rawPrompt, raw, rulesIds, invoked, sessionKind, skipped);
+                return Finish(TaskReportSelectionKind.PreReply, end.Sequence, rawPrompt, rawPrompt, raw, realPrompts, skipped);
             }
 
             if (!TranscriptKinds.IsReportBoundary(end.Kind, end.StopReason))
             {
-                return Finish(TaskReportSelectionKind.Interrupted, end.Sequence, rawPrompt, rawPrompt, raw, rulesIds, invoked, sessionKind, skipped);
+                return Finish(TaskReportSelectionKind.Interrupted, end.Sequence, rawPrompt, rawPrompt, raw, realPrompts, skipped);
             }
 
             // CARD-1473: an end_turn that shares its ApiCallId with a ToolCall in this
             // prompt span is a sibling phantom, not a finished report. max_tokens and
             // other stop reasons stay terminal. A different response id does not count,
             // and a newer real prompt remains the attribution barrier.
-            var nextReal = NextRealPromptSequence(raw, rawPrompt.Sequence, sessionKind, rulesIds, invoked);
+            var nextReal = realPrompts.NextSequence(rawPrompt.Sequence);
             if (IsEndTurnSiblingPhantom(end, rawPrompt.Sequence, nextReal, toolRows))
             {
                 skipped.Add(new TaskReportSkip(end.Sequence, "sibling-tool"));
@@ -223,10 +223,10 @@ internal static class TaskReportTurnSelector
             if (rawPrompt.Text is not string promptText
                 || !promptText.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
             {
-                return Finish(TaskReportSelectionKind.Uncorrelated, end.Sequence, rawPrompt, rawPrompt, raw, rulesIds, invoked, sessionKind, skipped);
+                return Finish(TaskReportSelectionKind.Uncorrelated, end.Sequence, rawPrompt, rawPrompt, raw, realPrompts, skipped);
             }
 
-            return Finish(TaskReportSelectionKind.Selected, end.Sequence, rawPrompt, rawPrompt, raw, rulesIds, invoked, sessionKind, skipped);
+            return Finish(TaskReportSelectionKind.Selected, end.Sequence, rawPrompt, rawPrompt, raw, realPrompts, skipped);
         }
 
         return new TaskReportSelection(TaskReportSelectionKind.None, null, null, null, null, null, skipped);
@@ -274,15 +274,13 @@ internal static class TaskReportTurnSelector
         long boundarySequence,
         long? olderEndSequence,
         string? stopReason,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind,
+        RealPromptIndex realPrompts,
         CancellationToken ct)
     {
         // Judge the in-turn owner before the closing-token check. An answer with no token
         // used to return null here, and the caller then walked back across the unmarked prompt.
-        var inTurn = NewestRealBetween(raw, olderEndSequence, boundarySequence, sessionKind, rulesIds, invoked);
-        if (OwnRealPrompt(inTurn, notification, boundarySequence, stopReason, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: false) is { } inTurnOwned)
+        var inTurn = realPrompts.NewestBetween(olderEndSequence, boundarySequence);
+        if (OwnRealPrompt(inTurn, notification, boundarySequence, stopReason, task, raw, realPrompts, settleMarkedOwner: false) is { } inTurnOwned)
             return inTurnOwned;
 
         var nextRaw = NextSequence(raw, notification.Sequence, static _ => true);
@@ -297,19 +295,7 @@ internal static class TaskReportTurnSelector
         if (!bodies.Any(text => DelegationReportFormatter.TryFindReportToken(task.Id, text, out _)))
             return null;
 
-        TranscriptPromptSpan.PromptRow? owner = null;
-        for (var i = raw.Count - 1; i >= 0; i--)
-        {
-            var row = raw[i];
-            if (row.Sequence >= notification.Sequence)
-                continue;
-            if (IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
-                continue;
-            if (!IsTurnOwningKind(row.Kind))
-                continue;
-            owner = row;
-            break;
-        }
+        var owner = realPrompts.NewestBetween(null, notification.Sequence);
 
         if (owner is null)
             return null;
@@ -317,16 +303,16 @@ internal static class TaskReportTurnSelector
             return null;
         if (task.RepliedAtSequence is long watermark && owner.Sequence <= watermark)
         {
-            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, notification, owner, raw, rulesIds, invoked, sessionKind, []);
+            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, notification, owner, raw, realPrompts, []);
         }
 
         if (owner.Text is not string ownerText
             || !ownerText.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
         {
-            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, notification, owner, raw, rulesIds, invoked, sessionKind, []);
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, notification, owner, raw, realPrompts, []);
         }
 
-        return Finish(TaskReportSelectionKind.Selected, boundarySequence, notification, owner, raw, rulesIds, invoked, sessionKind, []);
+        return Finish(TaskReportSelectionKind.Selected, boundarySequence, notification, owner, raw, realPrompts, []);
     }
 
     /// <summary>
@@ -339,14 +325,12 @@ internal static class TaskReportTurnSelector
         TranscriptPromptSpan.PromptRow boundaryPrompt,
         AgentTask task,
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind,
+        RealPromptIndex realPrompts,
         bool settleMarkedOwner)
     {
-        var owner = NewestRealBetween(raw, olderEndSequence, end.Sequence, sessionKind, rulesIds, invoked);
+        var owner = realPrompts.NewestBetween(olderEndSequence, end.Sequence);
         return OwnRealPrompt(
-            owner, boundaryPrompt, end.Sequence, end.StopReason, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner);
+            owner, boundaryPrompt, end.Sequence, end.StopReason, task, raw, realPrompts, settleMarkedOwner);
     }
 
     /// <summary>
@@ -362,27 +346,25 @@ internal static class TaskReportTurnSelector
         string? stopReason,
         AgentTask task,
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind,
+        RealPromptIndex realPrompts,
         bool settleMarkedOwner)
     {
         if (owner is null || !IsTimeEligible(owner, task.DispatchedAt))
             return null;
         if (task.RepliedAtSequence is long watermark && owner.Sequence <= watermark)
         {
-            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, boundaryPrompt, owner, raw, realPrompts, []);
         }
 
         if (stopReason is not null && !TranscriptKinds.IsReportBoundary(TranscriptKinds.TurnEnd, stopReason))
         {
-            return Finish(TaskReportSelectionKind.Interrupted, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+            return Finish(TaskReportSelectionKind.Interrupted, boundarySequence, boundaryPrompt, owner, raw, realPrompts, []);
         }
 
         if (owner.Text is not string text
             || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
         {
-            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, boundaryPrompt, owner, raw, realPrompts, []);
         }
 
         // A Grok completion reminder or rules refresh is its own turn. Publishing that
@@ -392,35 +374,7 @@ internal static class TaskReportTurnSelector
         if (!settleMarkedOwner)
             return null;
 
-        return Finish(TaskReportSelectionKind.Selected, boundarySequence, boundaryPrompt, owner, raw, rulesIds, invoked, sessionKind, []);
-    }
-
-    /// <summary>
-    /// Newest UserPrompt or QueuedUserPrompt strictly after <paramref name="afterSequence"/>
-    /// and strictly before <paramref name="beforeSequence"/> that is not housekeeping.
-    /// Either kind owns the turn.
-    /// </summary>
-    private static TranscriptPromptSpan.PromptRow? NewestRealBetween(
-        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
-        long? afterSequence,
-        long beforeSequence,
-        AgentKind sessionKind,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked)
-    {
-        TranscriptPromptSpan.PromptRow? newest = null;
-        foreach (var row in rows)
-        {
-            if (afterSequence is long floor && row.Sequence <= floor)
-                continue;
-            if (row.Sequence >= beforeSequence)
-                break;
-            if (!IsTurnOwningKind(row.Kind) || IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
-                continue;
-            newest = row;
-        }
-
-        return newest;
+        return Finish(TaskReportSelectionKind.Selected, boundarySequence, boundaryPrompt, owner, raw, realPrompts, []);
     }
 
     private static bool IsTurnOwningKind(string kind) =>
@@ -443,19 +397,16 @@ internal static class TaskReportTurnSelector
         TranscriptPromptSpan.PromptRow rawPrompt,
         TranscriptPromptSpan.PromptRow owner,
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind,
+        RealPromptIndex realPrompts,
         IReadOnlyList<TaskReportSkip> skipped)
     {
-        var real = raw.Where(row => !IsHousekeepingRow(sessionKind, row, rulesIds, invoked)).ToList();
         return new TaskReportSelection(
             kind,
             boundarySequence,
             rawPrompt.Sequence,
             owner.Sequence,
             NextSequence(raw, rawPrompt.Sequence, static _ => true),
-            NextSequence(real, owner.Sequence, static _ => true),
+            realPrompts.NextSequence(owner.Sequence),
             skipped);
     }
 
@@ -482,42 +433,21 @@ internal static class TaskReportTurnSelector
         long boundarySequence,
         AgentTask task,
         IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind,
+        RealPromptIndex realPrompts,
         List<TaskReportSkip> skipped)
     {
         if (task.RepliedAtSequence is long watermark && blocker.Sequence <= watermark)
         {
-            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, blocker, blocker, raw, rulesIds, invoked, sessionKind, skipped);
+            return Finish(TaskReportSelectionKind.PreReply, boundarySequence, blocker, blocker, raw, realPrompts, skipped);
         }
 
         if (blocker.Text is not string text
             || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
         {
-            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, blocker, blocker, raw, rulesIds, invoked, sessionKind, skipped);
+            return Finish(TaskReportSelectionKind.Uncorrelated, boundarySequence, blocker, blocker, raw, realPrompts, skipped);
         }
 
         return new TaskReportSelection(TaskReportSelectionKind.None, null, null, null, null, null, skipped);
-    }
-
-    private static long? NextRealPromptSequence(
-        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
-        long after,
-        AgentKind sessionKind,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked)
-    {
-        foreach (var row in rows)
-        {
-            if (row.Sequence <= after)
-                continue;
-            if (!IsTurnOwningKind(row.Kind) || IsHousekeepingRow(sessionKind, row, rulesIds, invoked))
-                continue;
-            return row.Sequence;
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -705,28 +635,47 @@ internal static class TaskReportTurnSelector
             return IsTurnOwningKind(row.Kind) && !IsHousekeepingRow(sessionKind, row, rulesIds, invoked);
         });
 
-    // Sequence-ordered rows, with the same strict bounds as the original scans.
+    /// <summary>
+    /// Per-selection ordered index of real prompts. Classify each source row once;
+    /// subsequent strict-bound queries use binary search, preserving source order
+    /// among equal sequences (NewestBetween returns the last such row).
+    /// </summary>
     internal sealed class RealPromptIndex(
         IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
         Func<TranscriptPromptSpan.PromptRow, bool> isReal)
     {
+        private readonly TranscriptPromptSpan.PromptRow[] _rows = rows.Where(isReal).ToArray();
+
         internal TranscriptPromptSpan.PromptRow? NewestBetween(long? after, long before)
         {
-            TranscriptPromptSpan.PromptRow? newest = null;
-            foreach (var row in rows)
-            {
-                if (after is long floor && row.Sequence <= floor) continue;
-                if (row.Sequence >= before) break;
-                if (isReal(row)) newest = row;
-            }
-            return newest;
+            var index = InsertionPoint(before, includeEqual: false) - 1;
+            if (index < 0 || (after is long floor && _rows[index].Sequence <= floor))
+                return null;
+            return _rows[index];
         }
 
         internal long? NextSequence(long after)
         {
-            foreach (var row in rows)
-                if (row.Sequence > after && isReal(row)) return row.Sequence;
-            return null;
+            var index = InsertionPoint(after, includeEqual: true);
+            return index < _rows.Length ? _rows[index].Sequence : null;
+        }
+
+        // The first row >= sequence, or > sequence when equal rows are included
+        // in the prefix. Keeping these bounds explicit also handles duplicate keys.
+        private int InsertionPoint(long sequence, bool includeEqual)
+        {
+            var low = 0;
+            var high = _rows.Length;
+            while (low < high)
+            {
+                var middle = low + (high - low) / 2;
+                var value = _rows[middle].Sequence;
+                if (value < sequence || (includeEqual && value == sequence))
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+            return low;
         }
     }
 
