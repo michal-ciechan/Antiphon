@@ -702,13 +702,14 @@ guard/limiter census, not a whole Unit lane.
 | CP-20 | M3 | tests/Antiphon.SessionRunner.Tests -> bin-c0824-all-m3/ | linux-merge-release | `/*/*/(C0824MergeSlotReleaseTests*)\|(C0824MergeSlotPublicationTests*)/*` | MR1-MR5,MP1-MP5 | 10 methods, 0 failed/skipped | 10 | 6 | true |
 | CP-21 | M3 | tests/Antiphon.SessionRunner.Tests -> bin-c0824-all-slot-reg/ | linux-slot-regression | `/*/*/(C0824WorkspaceSlotResetTests*)\|(C0824WorkspaceSlotCustodyTests*)\|(C0824WorkspaceSlotRehomeTests*)\|(C0824WorkspaceSlotOverflowTests*)\|(C0824WorkspaceSlotColdResetTests*)\|(C0824WorkspaceSlotProcessScanTests*)\|(C0824WorkspaceSlotTimeoutBudgetTests*)/*` | strict ordinary custody, warm/cold, bounds | all listed, 0 failed | 7 | 6 | true |
 | CP-22 | G1 | tests/Antiphon.Tests -> bin-c0824-all-guards/ | portable-final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | policy, labels, index, process roster | every named class, 0 failed | 13 | 8 | true |
-| CP-23 | G1 | tests/Antiphon.SessionRunner.Tests -> bin-c0824-all-runner-roster/ | portable-runner-roster | `/*/*/ProcessSpawnLimitTests/*` | assembly limiter census | all listed, 0 failed | 1 | 3 | true |
-| CP-24 | G1 | tests/Antiphon.Agents.Pty.Tests -> bin-c0824-all-pty-roster/ | portable-pty-roster | `/*/*/ProcessSpawnLimitTests/*` | assembly limiter census | all listed, 0 failed | 1 | 3 | true |
+| CP-23 | G1 | tests/Antiphon.SessionRunner.Tests -> bin-c0824-all-runner-roster/ | portable-runner-roster | `/*/*/(ProcessSpawnLimitTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | assembly limiter census and shared exclusion pin | every named class, 0 failed | 4 | 3 | true |
+| CP-24 | G1 | tests/Antiphon.Agents.Pty.Tests -> bin-c0824-all-pty-roster/ | portable-pty-roster | `/*/*/(ProcessSpawnLimitTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | assembly limiter census and shared exclusion pin | every named class, 0 failed | 4 | 3 | true |
 | CP-25 | F1 | tests/Antiphon.Tests -> bin-c0824-all-base/ | portable-legacy-base | `/*/*/DelegationWorktreeTests/(C508_ReuseKeepsRecordedBase*)\|(C508_BaseResolutionRequiresOwnedLease*)` | existing base and repository-lease callers | both exact intended methods, 0 failed | 2 | 6 | true |
 | CP-26 | F2 | tests/Antiphon.Tests -> bin-c0824-all-sync/ | portable-legacy-sync | `/*/*/RunnerSettlementSyncTests/(Pushed_tip_fast_forwards_exact_owned_checkout*)\|(Endpoint_change_is_not_followed*)\|(C1082_SettledDebtSyncOnlyFastForwardsToTheRecordedSource*)` | existing Checkout settlement callers | all 3 intended methods, 0 failed | 3 | 6 | true |
 | CP-27 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-native-policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | exact impacted Linux exclusion-policy methods | both methods, 0 failed | 2 | 6 | true |
 | CP-28 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-nightly-policy | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | impacted policy reader and repinned live-lane contract | every named class, 0 failed | 2 | 7 | true |
 | CP-29 | G1 | tests/Antiphon.Tests -> bin-c0824-all-guards/ | portable-fixture-teardown | `/*/*/ClassTeardownTrackerTests/*` | shared producer host closes before shared database disposal | 3 methods, 0 failed | 3 | 2 | true |
+| CP-30 | F4-policy | tests/Antiphon.Tests -> bin-c0824-producer-policy/ | portable-policy-pin-regression | `/*/*/(NativeLinuxPolicyWitnessMutationTests*)\|(NativeLinuxPolicyMatcherParityTests*)/*` | exact exclusion pin and existing independent rejection/matcher controls | every named class, 0 failed | 13 | 6 | true |
 
 For required baseline reds, run the same precise new acceptance method through
 the checkpoint tool at the committed test-first SHA, with expected assertion
@@ -754,6 +755,13 @@ producer callers, and task-scoped frame selection separates retained requests.
 Code added CP-27/CP-28 for the actual F4 native-policy change and its input-pin
 update. These cover the exact hand-glob obligations selected by the full task diff.
 The two rows share their isolated build at one committed source; no wider lane is selected.
+Code added CP-30 and the shared native-policy witness to CP-23/CP-24 after CP-22
+found the missing exact legacy-exclusion pin. The only appended record is
+`antiphon/C0824RefOnlyNativeTests/platform=linux`; all three methods remain required
+on Windows. Independent canonicalization verifies the unchanged prior rows and
+the exact old/new digest. The pin update changes no guard assertion or marker
+authority. CP-22's unrelated three dropped host-load operation labels reproduced
+at the task base and remain inherited; their assertions and vocabulary are unchanged.
 
 ### Cost
 
