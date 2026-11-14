@@ -491,7 +491,7 @@ approvals, invokes the real v2 writer with FreshGraph (fresh scratch fetch, boun
 manifest and exact required-object coverage), and rejects any prior advertised
 ref that disappeared or changed OID. A final host control read repeats the live
 advertisement after staging; the five-second monotonic bound includes the complete
-final helper observation phase, that request, custody recording and the Ready/effect boundary. Each destructive volume
+final URL-observation phase, approval refresh, that request, custody recording and the Ready/effect boundary. Each destructive volume
 effect repeats the full gate. A ref or URL moved after the final observation
 cannot be detected atomically across hosts; this residual interval is at most
 five seconds, and no later effect reuses it. No schema or v1 authority changes.
@@ -502,7 +502,7 @@ and the c1008-host-proof.ps1 v2 dispatch parameter. It preserves the approved
 origin registry and offline Docker boundary. Tests drive the real shell gate,
 writer and final check; the fixture maps only its private network/CLI boundaries.
 
-R2-15 / CP-125 covers the complete final binding refresh in the existing
+R2-15 / CP-125 covers the final URL observations and approval refresh in the existing
 five-second effect window. Its real-gate witness delays the second real binding
 check by six seconds after the URL observation, while both the writer and final
 advertisement succeed. Before the clock-scope repair this reaches Ready; after
@@ -517,8 +517,8 @@ preview returns. With that fixture CP-125 was assertion-red at committed source
 cead11e754c1586a83a1ec614bdc21e7ea6f7723: actual Ready/exit 0, expected Unknown/2.
 The first repaired run kept CP-125 green but exposed CP-106's normal path taking
 about 12 seconds in inventory invocation preparation; the actual read-only
-helper ran for about 0.6 seconds. The helper now emits its monotonic start before
-any repository/content discovery. The host admits exactly one canonical record
+helper ran for about 0.6 seconds. The helper emits its monotonic start immediately before the final inventory
+URL loop, after complete repository/content discovery. The host admits exactly one canonical record
 only from the same kernel boot and time namespace, within this call's start/end
 bracket. This excludes setup that observes no repository state while preserving
 the unchanged five-second bound over all actual observations. R2-16 / CP-126
@@ -934,3 +934,11 @@ approval recheck, live advertisement, custody and the effect. No scan is skipped
 At 7d87426eebb3a6d34121c53f5004fb62bada0346 V1-V6 and the renewal/delay/withdrawal
 rows were green, but V7 positive control expired at5360ms before any Ready receipt.
 The missing receipt rules out Ready-file batching as a repair for that failure.
+
+CP-127 was assertion-red at f721ba501f41ba461aa145e5dfc318d3ba18c9a7,
+run20261114-204231-4c36: 1executed/0passed/1failed,15.9426s,waited15s.
+Actual URL mutation and fresh inventory assertions passed; clock offset0 preceded
+repository entry offset917. Its earlier a4d build had CS0122 and zero tests,
+not a qualifying red. The production change moves only the clock call; the
+producer, record validator, five-second limit, complete scans and durable Ready
+publication are otherwise unchanged. All42 PC variants throughPC30 remain pending.

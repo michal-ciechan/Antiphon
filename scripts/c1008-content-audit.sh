@@ -531,11 +531,6 @@ c1609_emit_binding_clock() {
 c1609_list_offenders() {
     local flag
     [ "${C1609_CONTENT_V2:-}" = 1 ] || return 0
-    # Container setup precedes observation. Bind the actual observation phase
-    # to the caller's kernel clock before any repository/content discovery.
-    if [ "${C1008_AUDIT_MODE:-}" = inventory ]; then
-        c1609_emit_binding_clock || fail 2 ' reason=binding-clock'
-    fi
     c1609_findings_complete=true
     c1609_unvisited_json=''
     c1609_block_reason=''
