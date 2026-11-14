@@ -40,7 +40,7 @@ internal sealed class VolumeRetirementPublicationFixture
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "shape-git");
         // Native preview needs owned mount paths outside /tmp (the runner-tmp role).
-        var root = preview ? Path.Combine("/var/tmp", "c1901-" + Guid.NewGuid().ToString("N")) :
+        var root = preview ? Path.Combine("/var/tmp", "c1008-host-c1901-" + Guid.NewGuid().ToString("N")) :
             Path.Combine(DelegateScriptRunner.RepoRoot, ".antiphon/evidence/card-1901/fixtures", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         C1008HostFixture? host = preview ? new C1008HostFixture(main: false, root) : null;
