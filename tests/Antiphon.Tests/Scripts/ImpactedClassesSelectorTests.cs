@@ -35,6 +35,29 @@ public sealed partial class ImpactedClassesSelectorTests
         "migrations", "contracts", "timing-labels", "remote-scripts", "statement-budgets", "checkpoint-tool",
     ];
 
+    [Test]
+    [Arguments("server/Application/Exceptions/InputDeliveryUncertainException.cs")]
+    [Arguments("server/Application/Services/SessionMessageQueueService.cs")]
+    [Arguments("server/Application/Services/AgentControlService.cs")]
+    public async Task Input_uncertainty_paths_select_delivery_and_switch_witnesses(string path)
+    {
+        var selected = await RunAsync(Root(), "-Path", path, "-Json");
+        selected.Exit.ShouldBe(0, selected.Text);
+        using var json = JsonDocument.Parse(selected.Stdout);
+        Strings(json.RootElement, "kinds").ShouldContain("input-delivery-uncertainty", path);
+        var filters = FilterRows(json.RootElement, "filters");
+        foreach (var name in new[]
+        {
+            "AgentTaskMidTurnRefineTests", "LandRefusalDeliveryWitnessTests",
+            "SessionMessageQueuePhoneHomeDropTests", "PhoneHomeOutageMentionTests",
+            "GrokRulesCompactionRecoveryTests", "StandingSessionSwitchConcurrencyTests",
+            "CodexCliObservationGapTests", "GrokRulesReadyOrderingTests",
+        })
+            filters.Any(row => row.Item1 == "tests/Antiphon.Tests"
+                && row.Filter.Contains("(" + name + "*)", StringComparison.Ordinal))
+                .ShouldBeTrue(path + " selects " + name);
+    }
+
     [GeneratedRegex(@"MigrateAsync\s*\(\s*[^)\s]", RegexOptions.CultureInvariant)]
     private static partial Regex MigrateTarget();
 
