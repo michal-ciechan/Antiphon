@@ -41,6 +41,22 @@ internal static class RunnerWorkspaceNoFollowDelete
         return LinuxMetadata(fd.DangerousGetHandle().ToInt32()).Identity;
     }
 
+    /// <summary>
+    /// Identity of one directory entry. <see cref="Identity"/> opens every component with
+    /// <c>O_DIRECTORY</c>, so a regular file such as a git index is statted from its parent.
+    /// </summary>
+    internal static string EntryIdentity(string path)
+    {
+        if (OperatingSystem.IsWindows())
+            return Identity(path);
+        var parentPath = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(parentPath) || string.IsNullOrEmpty(name))
+            throw new IOException("no_follow_stat_failed: " + path);
+        using var parent = OpenLinuxPath(parentPath);
+        return LinuxMetadata(parent.DangerousGetHandle().ToInt32(), name).Identity;
+    }
+
     // C1032_TransportRequiredPayload exercises unreadable registration and a Linux link.
     // The read is bounded to 128 bytes and shares S5's pinned path/type metadata.
     internal static Guid ReadStoreGuid(string path)

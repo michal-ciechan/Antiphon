@@ -727,7 +727,7 @@ public sealed class C1895OutputDropEngineTests
         File.WriteAllText(shm + "/keep.txt", "keep");
         try
         {
-            var shmDevice = RunnerWorkspaceNoFollowDelete.Identity(shm + "/keep.txt").Split(':')[0];
+            var shmDevice = RunnerWorkspaceNoFollowDelete.EntryIdentity(shm + "/keep.txt").Split(':')[0];
             var fixtureDevice = RunnerWorkspaceNoFollowDelete.Identity(s.Root).Split(':')[0];
             shmDevice.ShouldNotBe(fixtureDevice, "/dev/shm is a different filesystem from this fixture");
 

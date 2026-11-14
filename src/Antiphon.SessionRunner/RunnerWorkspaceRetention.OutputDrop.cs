@@ -726,7 +726,7 @@ public sealed partial class RunnerWorkspaceRetention
                 if (!File.Exists(index))
                     return "none";
                 var info = new FileInfo(index);
-                return RunnerWorkspaceNoFollowDelete.Identity(index)
+                return RunnerWorkspaceNoFollowDelete.EntryIdentity(index)
                     + ":" + info.Length.ToString(CultureInfo.InvariantCulture)
                     + ":" + info.LastWriteTimeUtc.Ticks.ToString(CultureInfo.InvariantCulture);
             }
