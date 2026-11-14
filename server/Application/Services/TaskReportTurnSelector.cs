@@ -78,6 +78,8 @@ internal static class TaskReportTurnSelector
             .OfType<string>()
             .ToHashSet(StringComparer.Ordinal);
 
+        var realPrompts = CreateRealPromptIndex(raw, sessionKind, rulesIds, invoked);
+
         var boundaries = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.TurnEnd
                 && (boundaryCeiling == null || t.Sequence <= boundaryCeiling))
@@ -159,7 +161,7 @@ internal static class TaskReportTurnSelector
                 // record is the continuation prompt. A sibling phantom is not a
                 // finished turn, so it does not hide that brief from a newer boundary.
                 var floor = PhantomTransparentFloor(
-                    boundaries, index, raw, toolRows, task, rulesIds, invoked, sessionKind);
+                    boundaries, index, realPrompts, toolRows, task);
                 var owned = RealOwnerOfSkippedTurn(
                     end, floor, rawPrompt, task, raw, rulesIds, invoked, sessionKind, settleMarkedOwner: true);
                 if (owned is not null)
@@ -524,21 +526,18 @@ internal static class TaskReportTurnSelector
     /// boundary keeps the marked brief behind it. <c>max_tokens</c> and <c>cancelled</c>
     /// stay opaque.
     /// </summary>
-    private static long? PhantomTransparentFloor(
+    internal static long? PhantomTransparentFloor(
         IReadOnlyList<BoundaryRow> boundaries,
         int index,
-        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        RealPromptIndex realPrompts,
         IReadOnlyList<ToolSiblingRow> tools,
-        AgentTask task,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind)
+        AgentTask task)
     {
         long? floor = null;
         for (var i = boundaries.Count - 1; i > index; i--)
         {
             var candidate = boundaries[i];
-            if (IsTransparentSiblingPhantom(candidate, floor, raw, tools, task, rulesIds, invoked, sessionKind))
+            if (IsTransparentSiblingPhantom(candidate, floor, realPrompts, tools, task))
                 continue;
             floor = candidate.Sequence;
         }
@@ -549,19 +548,16 @@ internal static class TaskReportTurnSelector
     private static bool IsTransparentSiblingPhantom(
         BoundaryRow candidate,
         long? floor,
-        IReadOnlyList<TranscriptPromptSpan.PromptRow> raw,
+        RealPromptIndex realPrompts,
         IReadOnlyList<ToolSiblingRow> tools,
-        AgentTask task,
-        IReadOnlySet<Guid> rulesIds,
-        IReadOnlySet<string> invoked,
-        AgentKind sessionKind)
+        AgentTask task)
     {
         if (!string.Equals(candidate.StopReason, TranscriptKinds.StopReasons.EndTurn, StringComparison.Ordinal))
             return false;
         if (string.IsNullOrEmpty(candidate.ApiCallId))
             return false;
 
-        var owner = NewestRealBetween(raw, floor, candidate.Sequence, sessionKind, rulesIds, invoked);
+        var owner = realPrompts.NewestBetween(floor, candidate.Sequence);
         if (owner is null || !IsTimeEligible(owner, task.DispatchedAt))
             return false;
         if (task.RepliedAtSequence is long watermark && owner.Sequence <= watermark)
@@ -570,7 +566,7 @@ internal static class TaskReportTurnSelector
             || !text.Contains(DelegationReportFormatter.TaskMarker(task.Id), StringComparison.Ordinal))
             return false;
 
-        var nextReal = NextRealPromptSequence(raw, owner.Sequence, sessionKind, rulesIds, invoked);
+        var nextReal = realPrompts.NextSequence(owner.Sequence);
         return IsEndTurnSiblingPhantom(candidate, owner.Sequence, nextReal, tools);
     }
 
@@ -698,7 +694,43 @@ internal static class TaskReportTurnSelector
         return found < 0 ? null : rows[found];
     }
 
-    private readonly record struct BoundaryRow(long Sequence, string? Kind, string? StopReason, string? ApiCallId);
+    internal static RealPromptIndex CreateRealPromptIndex(
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
+        AgentKind sessionKind,
+        IReadOnlySet<Guid> rulesIds,
+        IReadOnlySet<string> invoked,
+        Action? onClassification = null) => new(rows, row =>
+        {
+            onClassification?.Invoke();
+            return IsTurnOwningKind(row.Kind) && !IsHousekeepingRow(sessionKind, row, rulesIds, invoked);
+        });
 
-    private readonly record struct ToolSiblingRow(long Sequence, string ApiCallId);
+    // Sequence-ordered rows, with the same strict bounds as the original scans.
+    internal sealed class RealPromptIndex(
+        IReadOnlyList<TranscriptPromptSpan.PromptRow> rows,
+        Func<TranscriptPromptSpan.PromptRow, bool> isReal)
+    {
+        internal TranscriptPromptSpan.PromptRow? NewestBetween(long? after, long before)
+        {
+            TranscriptPromptSpan.PromptRow? newest = null;
+            foreach (var row in rows)
+            {
+                if (after is long floor && row.Sequence <= floor) continue;
+                if (row.Sequence >= before) break;
+                if (isReal(row)) newest = row;
+            }
+            return newest;
+        }
+
+        internal long? NextSequence(long after)
+        {
+            foreach (var row in rows)
+                if (row.Sequence > after && isReal(row)) return row.Sequence;
+            return null;
+        }
+    }
+
+    internal readonly record struct BoundaryRow(long Sequence, string? Kind, string? StopReason, string? ApiCallId);
+
+    internal readonly record struct ToolSiblingRow(long Sequence, string ApiCallId);
 }
