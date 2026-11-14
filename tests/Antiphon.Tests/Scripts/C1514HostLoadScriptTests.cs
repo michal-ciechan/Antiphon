@@ -8,7 +8,8 @@ using Microsoft.AspNetCore.Http;
 using Shouldly;
 using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
-[Category("Integration"), Timeout(60_000), NotInParallel("C1514HostLoadServer"), ParallelLimiter<ProcessSpawnLimit>]
+[Category("Integration"), C1514ProgressBudget(60_000), NotInParallel("C1514HostLoadServer"), ParallelLimiter<ProcessSpawnLimit>]
+[TUnit.Core.Executors.TestExecutor<C1514HostLoadProgressExecutor>]
 [ClassDataSource<C1514HostLoadFixture>(Shared = SharedType.PerTestSession)]
 public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
 {
@@ -85,7 +86,7 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
         world.Override = async c => { c.Response.StatusCode = 503; await c.Response.WriteAsync("owned error echo " + c.Request.Headers["X-Antiphon-Task-Token"].ToString()); };
         var failed = await RunAsync(world, json: true, token: OwnedToken); failed.ExitCode.ShouldNotBe(0); failed.Stdout.ShouldBeEmpty(); failed.Stderr.ShouldNotContain(OwnedToken);
     }
-    internal static Task<ScriptHarnessResult> RunAsync(C1514HostLoadWorld world, bool json, string? hostId = null,
+    internal static async Task<ScriptHarnessResult> RunAsync(C1514HostLoadWorld world, bool json, string? hostId = null,
         string? project = null, string? role = null, string? token = null, bool diagnostic = false)
     {
         var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-host-load.ps1");
@@ -93,8 +94,9 @@ public class C1514HostLoadScriptTests(C1514HostLoadFixture fixture)
         if (json) args.Add("-JsonMode"); if (diagnostic) args.Add("-Diagnostic");
         if (hostId is not null) args.AddRange(["-HostId", hostId]); if (project is not null) args.AddRange(["-Project", project]); if (role is not null) args.AddRange(["-Role", role]);
         if (token is not null) { var path = Path.Combine(world.Root, "owned-token-" + Guid.NewGuid().ToString("N")); File.WriteAllText(path, token); args.AddRange(["-TokenFile", path]); }
-        return ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514", "Run", script,
-            new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, AdditionalArguments: args), CancellationToken.None);
+        var result = await world.Own(ScriptHarnessProcess.RunAsync("test-host-load.ps1", "c1514", "Run", script,
+            new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10), ScriptPath: script, AdditionalArguments: args), world.Token));
+        world.Progress("script completed"); return result;
     }
     private static void Recorder(C1514HostLoadWorld world, bool incomplete = false)
     {

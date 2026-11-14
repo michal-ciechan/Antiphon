@@ -43,9 +43,15 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
     internal async Task<C1514HostLoadWorld> WorldAsync(bool phoneHome = false, bool advertiseHistory = true)
     {
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        C1514HostLoadScenario.Current?.Observe("database clone ready");
         var world = new C1514HostLoadWorld(this, schema); Current = world;
-        await _host.Value; await _runner.Value;
-        await world.InitializeAsync(phoneHome, advertiseHistory); return world;
+        try
+        {
+            await _host.Value; world.Progress("server ready");
+            await _runner.Value; world.Progress("runner ready");
+            await world.InitializeAsync(phoneHome, advertiseHistory); return world;
+        }
+        catch { await world.DisposeAsync(); throw; }
     }
     private async Task<PhoneHomeTestHost> StartServerAsync() => await PhoneHomeTestHost.StartAsync(clock: new CurrentClock(this),
         configureServices: services =>
@@ -128,6 +134,13 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     private readonly C1514HostLoadFixture _fixture;
     private PhoneHomeScriptedPeer? _peer;
     private readonly HttpClient _sourceHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly CancellationTokenSource _stop;
+    private C1514HostLoadScenario? _scenario;
+    private CancellationTokenRegistration _scenarioStop;
+    private readonly List<Task> _owned = [];
+    private long _completed;
+    private Task? _disposal;
+    public CancellationToken Token => _stop.Token;
     public Guid Id { get; } = Guid.NewGuid();
     public IsolatedTestSchema Schema { get; }
     public C1514Clock Clock { get; } = new();
@@ -163,6 +176,8 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     public C1514HostLoadWorld(C1514HostLoadFixture fixture, IsolatedTestSchema schema)
     {
         _fixture = fixture; Schema = schema;
+        _stop = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current?.Execution.CancellationToken ?? CancellationToken.None);
+        AttachScenario();
         Runner = new() { HistoryPath = Path.Combine(Root, "spool"), RunnerId = "grok-linux", PhysicalHostKey = "owned-host",
             BindingRevision = 1, SourceEpoch = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), ProcessSampling = false };
         Settings.Bindings.Add(new() { RunnerId = "grok-linux", PhysicalHostKey = "owned-host", SourceEpoch = Runner.SourceEpoch.Value, Revision = 1 });
@@ -170,6 +185,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     }
     public async Task InitializeAsync(bool phoneHome, bool advertiseHistory)
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "host-load world initialization");
         System.IO.Directory.CreateDirectory(Root);
         // Every world is an isolated database/filesystem snapshot of the same owned runner.
         // The shared production directory correctly refuses an unrelated replacement store.
@@ -182,8 +198,9 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         Spool = new(Runner.HistoryPath!, Runner, Clock, identity.BootId);
         Capture = new(Options.Create(Runner), Clock, new C1514Authority(Clock), NullLogger<HostLoadCaptureService>.Instance,
             identity, () => Spool);
-        await Capture.StartAsync(CancellationToken.None); History = Capture;
-        await EventuallyAsync(() => { try { Capture.ReadHistory(null, 120); return true; } catch (IOException) { return false; } });
+        await Capture.StartAsync(Token); History = Capture;
+        await EventuallyAsync(() => { try { Capture.ReadHistory(null, 120); return true; } catch (IOException e) when (e.Message == "host_load_history_busy") { return false; } }, cancellationToken: Token);
+        Progress("capture ready");
         Live = new(Runner, Clock);
         Sampler = new(Probe, Live, new C1514MissingCpu(), () => [], _ => null, Clock, Options.Create(Runner), NullLogger<HostStatsSamplerService>.Instance, Capture);
         var dispatcher = new PhoneHomeCommandDispatcher(new C1514Runtime(), new PhoneHomeSettings(), hostStats: Live, hostLoad: new LimitedHistory(this));
@@ -195,6 +212,7 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         _peer.Reply = frame => frame.Operation is PhoneHomeOperation.HostStats or PhoneHomeOperation.HostStatsSeries or PhoneHomeOperation.HostLoadHistory
             ? (OldPeer ? oldDispatcher : dispatcher).DispatchAsync(frame, CancellationToken.None).GetAwaiter().GetResult() : null;
         _fixture.Host.Directory.MarkRecovered(await _fixture.Host.WaitLiveAsync());
+        Progress("peer registered");
         _sourceHttp.BaseAddress = await _fixture.RunnerAddressAsync();
         Source = phoneHome ? _fixture.Host.Directory.Resolve("grok-linux")
             : new SessionRunnerHttpClient(_sourceHttp, new NoReadFactory(), Options.Create(new Antiphon.Server.Application.Settings.SessionRunnerSettings
@@ -204,11 +222,12 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
         // production history-read deadline; the deadline is part of the witness.
         await using var readyScope = Services.CreateAsyncScope();
         var ready = readyScope.ServiceProvider.GetRequiredService<AppDbContext>();
-        await ready.Database.OpenConnectionAsync();
+        await ready.Database.OpenConnectionAsync(Token);
         // Use the pump's real Npgsql options and parameterized query shape. Db(false)
         // has different provider options and a literal query does not warm this plan.
         var canonical = HostLoadCounterCache.Canonical(Runner.RunnerId);
-        _ = await ready.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == canonical).Select(c => c.Cursor).SingleOrDefaultAsync();
+        _ = await ready.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == canonical).Select(c => c.Cursor).SingleOrDefaultAsync(Token);
+        Progress("database connection and cursor ready");
     }
     public void RecreateServices()
     {
@@ -232,31 +251,52 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
     }
     public async Task<HostLoadSample> ProduceAsync(DateTimeOffset at, double cpu = 40)
     {
-        Clock.Utc = at; Probe.Cpu = cpu; await Sampler.SampleOnceAsync(); LastSequence++;
-        await EventuallyAsync(() => Capture.LastAppendedAt == at);
-        var sample = Capture.ReadHistory(null, 120).Samples.Last(); LastSource = sample.Source; return sample;
+        AttachScenario();
+        Clock.Utc = at; Probe.Cpu = cpu; await Sampler.SampleOnceAsync(Token); LastSequence++;
+        HostLoadSample? sample = null;
+        // The receipt includes the fallible history read. LastAppendedAt alone
+        // does not guarantee the spool's short reader lock can be acquired.
+        await EventuallyAsync(() =>
+        {
+            if (Capture.LastAppendedAt != at) return false;
+            try { sample = Capture.ReadHistory(null, 120).Samples.LastOrDefault(s => s.Source.Sequence == LastSequence); }
+            catch (IOException e) when (e.Message == "host_load_history_busy") { return false; }
+            return sample is not null;
+        }, () => _completed, Token);
+        LastSource = sample!.Source; Progress("durable sample " + LastSequence); return sample;
     }
     public async Task SeedPrefixAsync()
     {
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "host-load 100 durable receipts");
         for (var i = 0; i < 100; i++) await ProduceAsync(T0.AddHours(-2).AddSeconds(i * 5));
-        await Pump.PollOnceAsync("grok-linux", CancellationToken.None); await Pump.ProcessOneAsync(CancellationToken.None);
+        await PollOnceAsync("grok-linux", Token); await ProcessOneAsync(Token);
         await DeriveAsync(); Clock.Utc = T0;
     }
     public async Task TransferAsync(bool derive = true)
     {
-        (await Pump.PollOnceAsync("grok-linux", CancellationToken.None)).ShouldBeTrue();
-        await Pump.ProcessOneAsync(CancellationToken.None); if (derive) await DeriveAsync();
+        (await PollOnceAsync("grok-linux", Token)).ShouldBeTrue();
+        await ProcessOneAsync(Token); if (derive) await DeriveAsync();
+    }
+    public async Task<bool> PollOnceAsync(string runner, CancellationToken ct)
+    { AttachScenario(); var enqueued = await Pump.PollOnceAsync(runner, ct); if (enqueued) Progress("history page enqueued"); return enqueued; }
+    public async Task<HostLoadIngestReceipt> ProcessOneAsync(CancellationToken ct)
+    { AttachScenario(); var receipt = await Pump.ProcessOneAsync(ct); Progress("ingest receipt committed"); return receipt; }
+    public Task<T> Own<T>(Task<T> task) { _owned.Add(task); return task; }
+    public async Task WaitForAsync(Task receipt)
+    {
+        try { await EventuallyAsync(() => receipt.IsCompleted, () => _completed, Token, TimeSpan.FromSeconds(5)); await receipt; Progress("held command entered"); }
+        catch { _stop.Cancel(); throw; }
     }
     public async Task DeriveAsync()
     {
-        using var scope = Services.CreateScope(); await scope.ServiceProvider.GetRequiredService<HostLoadDerivedService>().DeriveOnceAsync(CancellationToken.None);
+        AttachScenario(); using var scope = Services.CreateScope(); await scope.ServiceProvider.GetRequiredService<HostLoadDerivedService>().DeriveOnceAsync(Token); Progress("derivation completed");
     }
     public async Task RetainAsync()
     {
-        using var scope = Services.CreateScope(); await scope.ServiceProvider.GetRequiredService<HostLoadDerivedService>().RetainOnceAsync(CancellationToken.None);
+        AttachScenario(); using var scope = Services.CreateScope(); await scope.ServiceProvider.GetRequiredService<HostLoadDerivedService>().RetainOnceAsync(Token); Progress("retention completed");
     }
     public async Task<JsonDocument> GetAsync(string path)
-    { using var response = await Http.GetAsync(path); response.EnsureSuccessStatusCode(); return JsonDocument.Parse(await response.Content.ReadAsStringAsync()); }
+    { AttachScenario(); using var response = await Http.GetAsync(path, Token); response.EnsureSuccessStatusCode(); var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(Token)); Progress("HTTP response received"); return result; }
     public async Task<AgentTask> StartTaskAsync(DateTimeOffset start, string? runner = null, int attempt = 1, Guid? taskId = null)
     {
         await using var db = Db();
@@ -287,19 +327,50 @@ internal sealed class C1514HostLoadWorld : IAsyncDisposable
             Options.Create(settings), new MockEventBus(), new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance);
         await service.RetryAsync(taskId, CancellationToken.None);
     }
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => new(_disposal ??= DisposeCoreAsync());
+    private async Task DisposeCoreAsync()
     {
-        if (_peer is not null) await _peer.DisposeAsync();
-        await Capture.StopAsync(CancellationToken.None); Capture.Dispose(); Sampler.Dispose();
-        Services.Dispose(); _sourceHttp.Dispose(); await Schema.DisposeAsync();
-        if (System.IO.Directory.Exists(Root)) System.IO.Directory.Delete(Root, true);
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "host-load cancel and join world");
+        _stop.Cancel();
+        try
+        {
+            foreach (var task in _owned) try { await task; } catch (OperationCanceledException) when (Token.IsCancellationRequested) { }
+            if (Pump is not null) await Pump.StopAsync(CancellationToken.None);
+        }
+        finally
+        {
+            if (_peer is not null) await _peer.DisposeAsync(); Progress("peer stopped");
+            if (Capture is not null) { await Capture.StopAsync(CancellationToken.None); Capture.Dispose(); }
+            Sampler?.Dispose(); Services?.Dispose(); _sourceHttp.Dispose(); Progress("world services stopped");
+            await Schema.DisposeAsync(); Progress("database dropped");
+            if (System.IO.Directory.Exists(Root)) System.IO.Directory.Delete(Root, true);
+            _scenarioStop.Dispose(); _stop.Dispose();
+        }
     }
-    // Fixture poll for spool readiness, not the product history-read deadline. Review run
-    // 20261107-155611-da81 cancelled the previous 5s cap once inside SeedPrefixAsync while two
-    // foreign Unit lanes held the host. Provisional (R5): that exceedance was not timed, so 15s
-    // is three times the missed floor until a loaded p95 exists. Outcome assertions stay put.
-    internal static async Task EventuallyAsync(Func<bool> predicate)
-    { using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(15)); while (!predicate()) await Task.Delay(5, limit.Token); }
+    internal void Progress(string receipt)
+    { Interlocked.Increment(ref _completed); _scenario?.Observe(receipt); }
+    private void AttachScenario()
+    {
+        if (_scenario is not null || C1514HostLoadScenario.Current is not { } scenario) return;
+        _scenario = scenario; _scenarioStop = scenario.Token.Register(() => _stop.Cancel());
+    }
+    internal static async Task EventuallyAsync(Func<bool> predicate, Func<long>? progress = null,
+        CancellationToken cancellationToken = default, TimeSpan? quiet = null)
+    {
+        var parent = C1514HostLoadScenario.Current;
+        progress ??= () => parent?.Completed ?? 0;
+        using var wait = new C1514HostLoadScenario(quiet ?? TimeSpan.FromSeconds(15), cancellationToken);
+        await wait.RunAsync(async ct =>
+        {
+            var last = progress();
+            while (!predicate())
+            {
+                var current = progress();
+                if (current > last) { last = current; wait.Observe("receipt counter advanced"); }
+                await Task.Delay(5, ct);
+            }
+        });
+    }
     internal HostLoadHistoryPage ReadHistory(string? after, int limit) => History.ReadHistory(after, Math.Min(limit, ReadLimit));
     private sealed class LimitedHistory(C1514HostLoadWorld world) : IHostLoadHistorySource
     { public HostLoadHistoryPage ReadHistory(string? after, int limit) => world.ReadHistory(after, limit); }
