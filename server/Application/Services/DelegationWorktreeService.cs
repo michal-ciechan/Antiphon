@@ -334,13 +334,17 @@ public sealed class DelegationWorktreeService
 
     public sealed record KeptBranchInfo(string Tip, int CommitsAbove, string Subject);
 
+    /// <summary>Resolve the caller's managed root without creating it.</summary>
+    internal string ResolveWorktreeRoot(GitSettings settings) =>
+        Infrastructure.Git.WorktreeRoots.Resolve(settings);
+
     /// <summary>Create or reuse the task's managed checkout; never infer publication here.</summary>
     internal async Task<RepositoryPreflight?> PreflightAsync(AgentTask task, CancellationToken ct)
     {
         if (_gitSettings is null || !IsOrdinaryPreflightTask(task)
             || _db is not null && await _db.AgentTaskParks.AnyAsync(p => p.TaskId == task.Id, ct))
             return null;
-        var root = Infrastructure.Git.WorktreeRoots.Resolve(_gitSettings);
+        var root = ResolveWorktreeRoot(_gitSettings);
         return RepositoryPreflight.Worktree(task.Id,
             Path.Combine(root, "card-task-" + DelegationReportFormatter.Short(task.Id)), await MintBranchAsync(task, ct));
     }

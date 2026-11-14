@@ -19,6 +19,50 @@ namespace Antiphon.Tests.TestHelpers;
 public sealed class DelegationTestServicesTests
 {
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void Managed_root_seam_preserves_caller_paths_without_creating_them(bool absolute)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        // Deliberately different from the settings supplied to the call below.
+        services.AddDelegationWorktreeGraph(new GitSettings { WorktreeBasePath = "other-root" });
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+        var parent = absolute ? Path.GetTempPath() : AppContext.BaseDirectory;
+        var leaf = "C0824-MiXeD-" + Guid.NewGuid().ToString("N");
+        var expected = Path.Combine(parent, leaf) + Path.DirectorySeparatorChar;
+        var configured = Path.Combine(absolute ? parent : ".", "unused", "..", leaf)
+            + Path.AltDirectorySeparatorChar;
+        Directory.Exists(expected).ShouldBeFalse();
+
+        var actual = service.ResolveWorktreeRoot(new GitSettings { WorktreeBasePath = configured });
+
+        actual.ShouldBe(expected, "keep caller settings, base directory, case, dot segments and trailing separator semantics");
+        Directory.Exists(expected).ShouldBeFalse("resolution must retain create=false");
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments("")]
+    [Arguments(" ")]
+    public void Managed_root_seam_preserves_missing_configuration_refusal(string? configured)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
+        services.AddDelegationWorktreeGraph();
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<DelegationWorktreeService>();
+
+        Should.Throw<Antiphon.Server.Application.Exceptions.ValidationException>(() =>
+            service.ResolveWorktreeRoot(new GitSettings { WorktreeBasePath = configured! }));
+    }
+
+    [Test]
     public void C443_DiagnosticRegistrationPreservesOverride()
     {
         var diagnostics = System.Reflection.DispatchProxy.Create<IWorktreeLockDiagnostics, FailOnUseProxy>();
