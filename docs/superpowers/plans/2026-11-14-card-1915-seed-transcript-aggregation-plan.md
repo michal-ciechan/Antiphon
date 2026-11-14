@@ -40,6 +40,11 @@ Publication correction: 59ff5ab imported the plan/report, but the amendment
 script could not run because Python is absent. This follow-up applies the actual
 partitions; the earlier commit title does not constitute amendment evidence.
 
+S3 verification amendment: CP-3-adjacent executes the V-2-named runtime class
+using the CP-3 build. Its test cap is 4 minutes; S3 build admission/execution is
+bounded separately at 10 minutes. CP-3 retains its 4-minute test cap. No
+assertion or test timeout is widened.
+
 ## Ground truth
 
 | Card/brief assumption | Code and observed behavior at the source SHA | Consequence |
@@ -452,6 +457,7 @@ repeat after creating new classes. Never rely on `--list-tests` as execution pro
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c1915-s1b/ | baseline-fixture | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)/*` | V-1 foundation | all listed, 0 failed | 2 | 7 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1915-s2b/ | summary-schema | `/*/*/(SessionTranscriptSummaryMigrationTests*)\|(AppDbContextModelTests*)\|(AdditiveMigrationRuleWitnessTests*)/*` | R-1 | all listed, 0 failed | 3 | 4 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1915-s3/ | summary-append | `/*/*/(SessionTranscriptSummaryAppendTests*)\|(SessionStateCommitTests*)/*` | V-2,V-3 | all listed, 0 failed | 2 | 2 |
+| CP-3-adjacent | S3 | CP-3 | append-runtime-smoke | `/*/*/AgentSessionRuntimeTests*/*` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1915-s4/ | summary-invalidation | `/*/*/(SessionTranscriptSummaryInvalidationTests*)\|(SessionStateWarmupTests*)\|(DataRetentionServiceTests*)/*` | V-4 | all listed, 0 failed | 3 | 4 |
 | CP-5 | S5 | tests/Antiphon.Tests -> bin-c1915-s5/ | summary-backfill | `/*/*/SessionTranscriptSummaryBackfillTests/*` | V-5 | all listed, 0 failed | 2 | 2 |
 | CP-6 | S6 | tests/Antiphon.Tests -> bin-c1915-s6/ | summary-seed | `/*/*/(SessionTranscriptSummarySeedTests*)\|(SessionStateProjectionTests*)\|(SessionStateCacheReadTests*)\|(SessionStateWarmupTests*)\|(TranscriptWorkingStateQueryTests*)\|(TranscriptHotPathQueryTests*)/*` | V-1,V-6 | all listed, 0 failed | 6 | 4 |
