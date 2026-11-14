@@ -32,8 +32,8 @@ internal static class TestDbFixtureAssemblyHook
 
     private static async Task DisposeResourcesAsync()
     {
-        await RefOnlyDispatchFixture.DisposeSharedAsync();
-        await TestDbFixture.DisposeAsync();
+        try { await RefOnlyDispatchFixture.DisposeSharedAsync(); }
+        finally { await TestDbFixture.DisposeAsync(); }
     }
 
     /// <summary>
