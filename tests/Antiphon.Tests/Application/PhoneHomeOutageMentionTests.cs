@@ -177,6 +177,8 @@ public class PhoneHomeOutageMentionTests
         attempted.DeliveryVerdict.ShouldBeNull();
         attempted.DeliveryAttempts.ShouldBe(1);
         attempted.LastDeliveryBaselineSequence.ShouldNotBeNull();
+        // Sent recovery discovery uses the existing interrupted-attempt age gate.
+        h.QueueClock.Advance(TimeSpan.FromMinutes(1));
         await h.RecreateGraphAsync();
         await using var b = await h.RecoverAsync(claudeDialogObservation: true);
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
