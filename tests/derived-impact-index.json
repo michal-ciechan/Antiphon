@@ -158,9 +158,9 @@
     },
     {
       "path": "antiphon.areas.json",
-      "classes": 352,
+      "classes": 353,
       "reason": "cap",
-      "owed": 327,
+      "owed": 328,
       "first": [
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDetailBlockedContextTests",
@@ -593,98 +593,98 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.BootStall.cs",
-      "classes": 129,
-      "reason": "cap",
-      "owed": 104,
-      "first": [
-        "SpecialistQualificationTests",
-        "AgentTaskReuseEnqueueTests",
-        "BlockedTaskParkReleaseTests",
-        "PoolProviderProjectionStampTests",
-        "TaskSupervisionVisibilityTests",
-        "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/AgentTaskDispatcher.CeilingHold.cs",
-      "classes": 129,
-      "reason": "cap",
-      "owed": 104,
-      "first": [
-        "SpecialistQualificationTests",
-        "AgentTaskReuseEnqueueTests",
-        "BlockedTaskParkReleaseTests",
-        "PoolProviderProjectionStampTests",
-        "TaskSupervisionVisibilityTests",
-        "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
-      "classes": 129,
-      "reason": "cap",
-      "owed": 104,
-      "first": [
-        "SpecialistQualificationTests",
-        "AgentTaskReuseEnqueueTests",
-        "BlockedTaskParkReleaseTests",
-        "PoolProviderProjectionStampTests",
-        "TaskSupervisionVisibilityTests",
-        "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
-      "classes": 129,
-      "reason": "cap",
-      "owed": 104,
-      "first": [
-        "SpecialistQualificationTests",
-        "AgentTaskReuseEnqueueTests",
-        "BlockedTaskParkReleaseTests",
-        "PoolProviderProjectionStampTests",
-        "TaskSupervisionVisibilityTests",
-        "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs",
-      "classes": 129,
-      "reason": "cap",
-      "owed": 104,
-      "first": [
-        "SpecialistQualificationTests",
-        "AgentTaskReuseEnqueueTests",
-        "BlockedTaskParkReleaseTests",
-        "PoolProviderProjectionStampTests",
-        "TaskSupervisionVisibilityTests",
-        "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/AgentTaskDispatcher.cs",
       "classes": 130,
       "reason": "cap",
       "owed": 105,
       "first": [
+        "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
         "AgentTaskReuseEnqueueTests",
         "BlockedTaskParkReleaseTests",
         "PoolProviderProjectionStampTests",
         "TaskSupervisionVisibilityTests",
         "VerificationRoundDeliveryTests",
-        "CheckNoteDeliveryHandoffTests",
-        "CodexCliObservationTests"
+        "CheckNoteDeliveryHandoffTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.CeilingHold.cs",
+      "classes": 130,
+      "reason": "cap",
+      "owed": 105,
+      "first": [
+        "PostLandMutationWorktreeTests",
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
+      "classes": 130,
+      "reason": "cap",
+      "owed": 105,
+      "first": [
+        "PostLandMutationWorktreeTests",
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
+      "classes": 130,
+      "reason": "cap",
+      "owed": 105,
+      "first": [
+        "PostLandMutationWorktreeTests",
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs",
+      "classes": 130,
+      "reason": "cap",
+      "owed": 105,
+      "first": [
+        "PostLandMutationWorktreeTests",
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskDispatcher.cs",
+      "classes": 131,
+      "reason": "cap",
+      "owed": 106,
+      "first": [
+        "PostLandMutationWorktreeTests",
+        "SpecialistQualificationTests",
+        "AgentTaskReuseEnqueueTests",
+        "BlockedTaskParkReleaseTests",
+        "PoolProviderProjectionStampTests",
+        "TaskSupervisionVisibilityTests",
+        "VerificationRoundDeliveryTests",
+        "CheckNoteDeliveryHandoffTests"
       ]
     },
     {
@@ -1078,86 +1078,70 @@
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.Abandon.cs",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
+        "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskDispatchBaseGuardTests",
-        "AgentTaskSettlementRaceTests",
-        "CapacityAdmissionLifecycleTests"
+        "AgentTaskSettlementRaceTests"
       ]
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.CheckPublication.cs",
-      "classes": 150,
-      "reason": "cap",
-      "owed": 125,
-      "first": [
-        "ChannelOutboundRecoveryTests",
-        "MatrixChildReceiptTests",
-        "PhoneHomeTaskDispatchProjectionTests",
-        "SessionMessageQueueServiceTests",
-        "SessionStateWarmupTests",
-        "StandingSessionSwitchConcurrencyTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/SessionMessageQueueService.CodexPointers.cs",
-      "classes": 150,
-      "reason": "cap",
-      "owed": 125,
-      "first": [
-        "ChannelOutboundRecoveryTests",
-        "MatrixChildReceiptTests",
-        "PhoneHomeTaskDispatchProjectionTests",
-        "SessionMessageQueueServiceTests",
-        "SessionStateWarmupTests",
-        "StandingSessionSwitchConcurrencyTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/SessionMessageQueueService.DialogAdmission.cs",
-      "classes": 150,
-      "reason": "cap",
-      "owed": 125,
-      "first": [
-        "ChannelOutboundRecoveryTests",
-        "MatrixChildReceiptTests",
-        "PhoneHomeTaskDispatchProjectionTests",
-        "SessionMessageQueueServiceTests",
-        "SessionStateWarmupTests",
-        "StandingSessionSwitchConcurrencyTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
-      ]
-    },
-    {
-      "path": "server/Application/Services/SessionMessageQueueService.DispatchBrief.cs",
       "classes": 151,
       "reason": "cap",
       "owed": 126,
       "first": [
+        "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
         "StandingSessionSwitchConcurrencyTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests",
-        "AgentTaskDispatchBaseGuardTests"
+        "AgentSessionServiceIntegrationTests"
       ]
     },
     {
-      "path": "server/Application/Services/SessionMessageQueueService.Expectations.cs",
+      "path": "server/Application/Services/SessionMessageQueueService.CodexPointers.cs",
+      "classes": 151,
+      "reason": "cap",
+      "owed": 126,
+      "first": [
+        "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
+        "MatrixChildReceiptTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "SessionMessageQueueServiceTests",
+        "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
+        "AgentSessionServiceIntegrationTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/SessionMessageQueueService.DialogAdmission.cs",
+      "classes": 151,
+      "reason": "cap",
+      "owed": 126,
+      "first": [
+        "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
+        "MatrixChildReceiptTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "SessionMessageQueueServiceTests",
+        "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests",
+        "AgentSessionServiceIntegrationTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/SessionMessageQueueService.DispatchBrief.cs",
       "classes": 152,
       "reason": "cap",
       "owed": 127,
@@ -1173,14 +1157,14 @@
       ]
     },
     {
-      "path": "server/Application/Services/SessionMessageQueueService.ResumeReceipt.cs",
-      "classes": 150,
+      "path": "server/Application/Services/SessionMessageQueueService.Expectations.cs",
+      "classes": 153,
       "reason": "cap",
-      "owed": 125,
+      "owed": 128,
       "first": [
+        "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
-        "PendingNoteWithholdTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
@@ -1189,35 +1173,51 @@
       ]
     },
     {
-      "path": "server/Application/Services/SessionMessageQueueService.Supervision.cs",
-      "classes": 150,
+      "path": "server/Application/Services/SessionMessageQueueService.ResumeReceipt.cs",
+      "classes": 151,
       "reason": "cap",
-      "owed": 125,
+      "owed": 126,
       "first": [
+        "ChannelBridgeTests",
+        "ChannelOutboundRecoveryTests",
+        "MatrixChildReceiptTests",
+        "PendingNoteWithholdTests",
+        "PhoneHomeTaskDispatchProjectionTests",
+        "SessionMessageQueueServiceTests",
+        "SessionStateWarmupTests",
+        "StandingSessionSwitchConcurrencyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/SessionMessageQueueService.Supervision.cs",
+      "classes": 151,
+      "reason": "cap",
+      "owed": 126,
+      "first": [
+        "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
         "StandingSessionSwitchConcurrencyTests",
-        "AgentSessionServiceIntegrationTests",
-        "AgentTaskCheckInterpreterTests"
+        "AgentSessionServiceIntegrationTests"
       ]
     },
     {
       "path": "server/Application/Services/SessionMessageQueueService.cs",
-      "classes": 153,
+      "classes": 154,
       "reason": "cap",
-      "owed": 128,
+      "owed": 129,
       "first": [
+        "MatrixChildReceiptTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "SessionMessageQueueServiceTests",
         "SessionStateWarmupTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskDispatchBaseGuardTests",
-        "AgentTaskSettlementRaceTests",
-        "CapacityAdmissionLifecycleTests"
+        "AgentTaskSettlementRaceTests"
       ]
     },
     {
@@ -1298,9 +1298,9 @@
     },
     {
       "path": "server/Application/Settings/DelegationSettings.cs",
-      "classes": 354,
+      "classes": 355,
       "reason": "cap",
-      "owed": 329,
+      "owed": 330,
       "first": [
         "DispatchHoldVisibilityTests",
         "InstructionBundleTests",
@@ -1362,9 +1362,9 @@
     },
     {
       "path": "server/Domain/Entities/Agent.cs",
-      "classes": 195,
+      "classes": 196,
       "reason": "cap",
-      "owed": 170,
+      "owed": 171,
       "first": [
         "ChannelOutboundIsolatedTests",
         "CodexCliObservationTests",
@@ -1484,9 +1484,9 @@
     },
     {
       "path": "server/Domain/Entities/Board.cs",
-      "classes": 145,
+      "classes": 146,
       "reason": "cap",
-      "owed": 120,
+      "owed": 121,
       "first": [
         "AgentTaskProjectScopeTests",
         "ApiKeyEnvResolverTests",
@@ -1564,9 +1564,9 @@
     },
     {
       "path": "server/Domain/Entities/Project.cs",
-      "classes": 185,
+      "classes": 186,
       "reason": "cap",
-      "owed": 160,
+      "owed": 161,
       "first": [
         "ApiKeyStoreTests",
         "BoardProjectArchiveApiTests",
@@ -1592,9 +1592,9 @@
     },
     {
       "path": "server/Domain/Entities/SessionQueuedMessage.cs",
-      "classes": 154,
+      "classes": 155,
       "reason": "cap",
-      "owed": 129,
+      "owed": 130,
       "first": [
         "CheckCompactionReceiptTests",
         "ProviderQuotaRefusalAcceptanceTests",
@@ -2226,9 +2226,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 568,
+      "classes": 569,
       "reason": "cap",
-      "owed": 543,
+      "owed": 544,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2290,9 +2290,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MockEventBus.cs",
-      "classes": 224,
+      "classes": 225,
       "reason": "cap",
-      "owed": 199,
+      "owed": 200,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandQueueAgingTests",
@@ -6486,12 +6486,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -6516,12 +6516,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -6546,12 +6546,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -6576,12 +6576,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -6606,12 +6606,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -6636,12 +6636,12 @@
         "DispatchConcurrencyDispatchTests",
         "DispatcherSiblingInspectionSchedulingTests",
         "DispatcherSweepLifetimeTests",
+        "EfProductionClockQueryTests",
         "GrokDelegateDispatchTests",
         "GrokDelegateEndToEndTests",
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PoolClaudeEffortTests",
-        "PostLandMutationWorktreeTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
       ]
@@ -7894,6 +7894,7 @@
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetryPolicyTests",
         "ChannelOutboundStorageTests",
+        "EfProductionClockQueryTests",
         "HerdrAlwaysOnChannelParityTests",
         "TaskPlatformDispatchTests"
       ]
@@ -9681,6 +9682,7 @@
         "ChannelOutboundDeliveryTests",
         "ChannelOutboundDispatchIntegrationTests",
         "ChannelOutboundMaterializationTests",
+        "EfProductionClockQueryTests",
         "HerdrAlwaysOnChannelParityTests",
         "OutboundConversionTaskTests",
         "TaskPlatformDispatchTests"
@@ -10558,8 +10560,8 @@
         "ChannelOutboundRecoveryTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
-        "MatrixChildReceiptTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
         "ReceiptFailureDeliveryTests",
@@ -10585,9 +10587,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10615,9 +10617,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10645,9 +10647,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10676,8 +10678,8 @@
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
         "ChannelBridgeTests",
-        "ChannelOutboundRecoveryTests",
         "CodexStartupDeliveryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10705,9 +10707,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10735,9 +10737,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10765,9 +10767,9 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyIntegrationTests",
         "AgentTaskReuseEnqueueTests",
-        "ChannelBridgeTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
@@ -10798,8 +10800,8 @@
         "ChannelOutboundRecoveryTests",
         "CodexStartupDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
+        "EfProductionClockQueryTests",
         "HerdrPaneDisposalApplicationTests",
-        "MatrixChildReceiptTests",
         "OutputDistillationApplyRaceTests",
         "ParkedMessageSweepServiceTests",
         "ReceiptFailureDeliveryTests",
@@ -13536,6 +13538,7 @@
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetryPolicyTests",
         "ChannelOutboundTrailingRecoveryTests",
+        "EfProductionClockQueryTests",
         "OutboundConversionTaskTests",
         "TaskPlatformDispatchTests",
         "WorkerWorkspaceDefaultMigrationShapeTests"
@@ -17106,6 +17109,7 @@
         "ChannelOutboundPolicyTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetryPolicyTests",
+        "EfProductionClockQueryTests",
         "HerdrAlwaysOnChannelParityTests",
         "KafkaInboundCommitTests",
         "KafkaOutboundPayloadTests",
