@@ -44,18 +44,37 @@ for (const name of ['c1906-compiler-policy-compose.mjs', 'c346-workspace-slot-co
     child.once('close', code => resolve(code));
   });
   const timeout = setTimeout(() => child.kill('SIGTERM'), 10000);
+  let shutdownTimer;
+  let probePid;
+  let rejectShutdown;
+  const shutdownExpired = new Promise((_, reject) => { rejectShutdown = reject; });
+  let cancelled = false;
   child.stdout.on('data', bytes => {
     output += bytes;
-    if (output.includes('fixture-ready')) child.kill('SIGTERM');
+    const match = output.match(/fixture-child=(\d+)/);
+    if (match) probePid = Number(match[1]);
+    if (!cancelled && output.includes('fixture-ready')) {
+      cancelled = true;
+      child.kill('SIGTERM');
+      shutdownTimer = setTimeout(() => rejectShutdown(new Error('worker descendants survived cancellation')), 2000);
+    }
   });
   try {
-    assert.equal(await exited, 143, error);
+    assert.equal(await Promise.race([exited, shutdownExpired]), 143, error);
     assert.match(output, /fixture-ready/, 'cancel only after worker setup');
     disposed(output, 'cancellation');
     cases++;
   } finally {
     clearTimeout(timeout);
-    if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await exited; }
+    clearTimeout(shutdownTimer);
+    // Rescue only the exact child reported by this local probe, including on the
+    // deliberate red: never leave a failed cleanup assertion's process running.
+    if (probePid) {
+      try { process.kill(probePid, 'SIGTERM'); }
+      catch (failure) { if (failure.code !== 'ESRCH') throw failure; }
+    }
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    await exited;
   }
 }
 assert.deepEqual(checkoutRoots(), []);

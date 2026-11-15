@@ -34,8 +34,10 @@ export async function withComposeFixture(prefix, body) {
     if (process.env.ANTIPHON_COMPOSE_FIXTURE_WORKER === '1') {
       if (process.argv.includes('--cleanup-probe=setup-failure')) throw new Error('fixture setup failure probe');
       if (process.argv.includes('--cleanup-probe=wait')) {
-        console.log('fixture-ready');
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        const probe = cp.spawn(process.execPath, ['-e',
+          "process.title='c1953-cleanup-child'; console.log('fixture-child='+process.pid); console.log('fixture-ready'); setTimeout(()=>{},30000)"],
+          { stdio: 'inherit' });
+        await new Promise((resolve, reject) => { probe.once('error', reject); probe.once('close', resolve); });
       }
       return await body(root);
     }
