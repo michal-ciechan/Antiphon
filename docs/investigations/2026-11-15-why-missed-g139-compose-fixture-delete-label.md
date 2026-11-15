@@ -89,3 +89,17 @@ and the eleven-class guard union. The derived-index driver must be built before
 two regenerations, the second reporting unchanged. Mutation checks are waived
 by the supplied operator authority; no full-suite or Windows qualification
 credit is claimed.
+
+## Selector expectation extension
+
+The first full selector run at `03fff6f44ef180eb0e0d628891a2d59235f68a00`
+passed 49/50 and failed the strict historical-range kind list for
+`a54a6d4f755fa139b41fd7dc8aef456d3d2c0975`. That commit edits
+`C1008ComposeSeed.cs`; the new persistent glob correctly adds `timing-labels`
+to its former `remote-scripts`, `test-lane-category` selection. Replaying the
+selector with the exact baseline table confirms the original two-kind result.
+This expectation change is introduced by the intended broader coverage, not an
+inherited failure. Extend the exact expected kind list and require the label
+witness alongside the existing remote-script witnesses. Strict equality remains.
+The initial failed TRX and its 265.596-second leased wall time remain in
+`selectors/`; the corrected full-class rerun uses `selectors-green/`.
