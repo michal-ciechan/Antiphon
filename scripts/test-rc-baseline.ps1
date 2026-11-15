@@ -101,6 +101,4 @@ try {
     }
     Assert-C487 ($errors.Count -eq 0) ('BL '+$Case+'.contract') ($errors -join ';')
 } catch { Write-C487Fail ('BL '+$Case+'.contract') $_.Exception.Message }
-Write-Host ('RESULT passed={0} failed={1}' -f $script:C487Passed,$script:C487Failed)
-if ($script:C487Failed) { exit 1 }
-exit 0
+Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
