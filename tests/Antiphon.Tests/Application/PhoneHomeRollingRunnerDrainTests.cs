@@ -1016,6 +1016,7 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 AgentKind = AgentKind.ClaudeCode,
                 ModelLevel = AgentModelLevel.Frontier,
                 Workspace = WorkspaceMode.Worktree,
+                RepoPath = _root,
                 WorkingDirectory = _root,
                 WorktreePath = _root,
                 WorktreeBranch = DelegateBranchName.Legacy(id),
