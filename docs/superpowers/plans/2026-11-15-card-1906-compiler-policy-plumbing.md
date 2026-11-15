@@ -43,7 +43,7 @@ Checkpoint timings/logs and loadavg live under `.antiphon/c1906/`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-a/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-b/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
 | CP-2 | all | CP-1 | deploy-contracts | `/*/*/(DockerStackContractTests*)\|(DeployServer2ApiDefaultTests*)/*` | R-1 | all named class cases, zero failures | 2 | 2 | true |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2 | every named class, native Windows skip separately owed | 12 | 6 | true |
 | CP-4 | all | CP-1 | remote-ordering | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)\|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)` | R-1, R-2 | five impacted methods plus both other harness callers, zero failures | 7 | 2 | true |
@@ -71,3 +71,15 @@ never discharged by ordinary red-first evidence.
 ## Measured first red
 
 At `9f0b62cea551501728c6b2df365e0151e6a73a15`, CP-1 executed 33 cases: 0 passed, 33 assertion failures, 0 skipped. All 128 refusal boundaries hit the side-effect marker (91 instead of 2); real Compose lacked the setting. Build execution 423.978s (MSBuild 368.92s), row execution 18.877s, run wall 468.361s; slot waits 0s. N=1 under variable load, not calibrated p95. Keep the nine-minute deadline unchanged.
+
+## Full derived-impact expansion stop gate
+
+The committed diff expands through derived file-read edges into whole rollout and
+retirement classes, beyond the explicit four impacted-classes rows. Inventory is
+retained in the report; this is not a green or narrowed-scope claim. Prior Debug
+`docs/investigations/2026-11-13-selector-fixture-retirement-checkpoints.md` records
+a stopped over-30-minute broad selection and a 252-child aggregate roster. Its
+25/24/15-minute rows cannot satisfy this brief's under-ten-minute rows. Caller
+Debug must supply a bounded expanded inventory before those classes run. Core
+CP-1..9 remain independent and mandatory; no aggregate or full-assembly sweep is
+authorized by this manifest. All expanded unexecuted classes remain R-2 pending.
