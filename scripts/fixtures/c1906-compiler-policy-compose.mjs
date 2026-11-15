@@ -89,7 +89,7 @@ if (modelValue !== undefined) {
   assert.ok(['0', '1'].includes(modelValue));
   save(env.SERVER2_ENV, modelValue);
   save(env.SERVER2_TEMP_ENV, modelValue === '1' ? '0' : '1');
-  console.log('MODEL ' + bash('compose_host config --format json\n').trim());
+  console.log('MODEL ' + JSON.stringify(JSON.parse(bash('compose_host config --format json\n'))));
   process.exit(0);
 }
 // Refusals exercise the complete production phases and wrappers. Every boundary that could
