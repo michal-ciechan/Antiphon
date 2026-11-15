@@ -67,7 +67,6 @@ native outputs. No unchanged proof repetitions after green.
 | CP-4 | green | CP-2 | grok-rules | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesReceiptTests*)\|(GrokRulesTransactionTests*)\|(GrokRulesCompactionTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 5 |
 | CP-5 | green | CP-2 | impacted | `/*/*/(AgentTaskMidTurnRefineTests*)\|(CodexCliObservationGapTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)/*` | R-2 | all listed, 0 failed | 5 | 5 |
 | CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3,V-4 | all listed, 0 failed | 11 | 5 |
-
 | CP-7 | red-client | n/a | paging-ui-red | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel -t pages` | V-4 | 2 intended missing-navigation failures | n/a | 3 |
 | CP-8 | client | n/a | paging-ui | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel` | V-4 | both whole client files, 0 failed | n/a | 3 |
 | CP-9 | client | n/a | client-bundle | `npm --prefix client run build` | V-4 | production build exit 0 | n/a | 3 |
