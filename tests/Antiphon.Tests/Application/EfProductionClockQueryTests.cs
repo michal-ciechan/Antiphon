@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Linq.Expressions;
 using System.Reflection;
 using Antiphon.Messaging;
+using Antiphon.Messaging.Client;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -100,9 +101,9 @@ public sealed class EfProductionClockQueryTests(EfClockQueryStore store)
         await File.WriteAllTextAsync(request, "{}");
         try
         {
-            var project = new Project { Name = "clock-witness" };
-            var board = new Board { Name = "clock-witness", ProjectId = project.Id };
-            var agent = new Agent { Name = "converter", Slug = Guid.NewGuid().ToString("N"),
+            var project = new Project { Id = Guid.NewGuid(), Name = "clock-witness" };
+            var board = new Board { Id = Guid.NewGuid(), Name = "clock-witness", ProjectId = project.Id };
+            var agent = new Agent { Id = Guid.NewGuid(), Name = "converter", Slug = Guid.NewGuid().ToString("N"),
                 BoardId = board.Id, WorkingDirectory = root };
             db.AddRange(project, board, agent);
             await db.SaveChangesAsync();
