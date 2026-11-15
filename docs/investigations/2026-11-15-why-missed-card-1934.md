@@ -146,6 +146,26 @@ Docker create. The Kafka span is `Created` until `Started`: `UnsafeStartAsync`
 through `UntilMessageIsLogged("Started Kafka API server")`, including the
 container start and the startup-script copy that precede that log line.
 
+## Follow-up verification
+
+On 2026-11-15, after the 120-second alignment, the exact main UID ran alone
+once and passed. `C1934_BROKER_PHASE` was `ryukMs=14389 createMs=16701
+kafkaMs=1707`. Ryuk plus container create was 31.1 seconds, before the Kafka
+span, which is past the old 30-second token. Load at launch was 29.33, 28.51,
+25.76. That run finished inside 120 seconds. It is a pass, not a failing tail,
+so it still does not supply the p95 R5 would use.
+
+The first `C519_Converter_handoff` case in the same session recorded
+`ryukMs=30674`. That Ryuk span alone is past 30 seconds. The other seven
+converter cases passed, and the three `C519_Queue_to_adapter` arguments passed.
+The class-whole run was not taken: about 17 cases at about five minutes each
+does not fit beside the alone run and the guard.
+
+`TestTiming.BeginPhase` is a type use, so `tests/derived-impact-index.json`
+now lists `ChannelOutboundUnifiedTransportTests` on `tests/Shared/TestTiming.cs`.
+The regenerate script printed changed, then unchanged. Nightly pins were not
+inputs of this edit and were not changed.
+
 ## Exemption
 
 same cause as an already written note: none.
