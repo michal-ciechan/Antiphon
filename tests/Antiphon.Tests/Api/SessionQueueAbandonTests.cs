@@ -260,6 +260,9 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
             using var client = factory.CreateClient();
             if (!attentionOnly)
             {
+                var initial = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{first.AgentSessionId}/messages");
+                initial.GetProperty("messages").GetArrayLength().ShouldBe(50);
+                initial.GetProperty("truncated").GetBoolean().ShouldBeTrue();
                 var queueIds = new List<Guid>();
                 long since = 0;
                 do
@@ -280,6 +283,10 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
             }
             else
             {
+                var initial = await client.GetFromJsonAsync<JsonElement>("/api/attention");
+                initial.GetProperty("items").EnumerateArray()
+                    .Count(i => i.GetProperty("kind").GetString() == "ParkedMessage").ShouldBe(50);
+                initial.GetProperty("parkedMessagesTruncated").GetBoolean().ShouldBeTrue();
                 var attentionIds = new List<Guid>();
                 var skip = 0;
                 do
