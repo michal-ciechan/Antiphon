@@ -43,15 +43,16 @@ Checkpoint timings/logs and loadavg live under `.antiphon/c1906/`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-c/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-d/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
 | CP-2 | all | CP-1 | deploy-contracts | `/*/*/(DockerStackContractTests*)\|(DeployServer2ApiDefaultTests*)/*` | R-1 | all named class cases, zero failures | 2 | 2 | true |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2 | every named class, native Windows skip separately owed | 12 | 6 | true |
 | CP-4 | all | CP-1 | remote-ordering | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)\|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)` | R-1, R-2 | five impacted methods plus both other harness callers, zero failures | 7 | 2 | true |
 | CP-5 | all | n/a | workspace-slots | `node scripts/fixtures/c346-workspace-slot-compose.mjs` | R-1 | unchanged slot assertions and real Compose models | n/a | 1 | true |
 | CP-6 | all | CP-1 | limiter-main | `/*/*/ProcessSpawnLimitTests/*` | R-2 | main assembly spawn guard | 1 | 1 | true |
 | CP-7 | all | CP-1 | platform-census | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | R-2 | impacted native annotation census | 2 | 1 | true |
-| CP-8 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1906-runner/` | limiter-runner | `/*/*/ProcessSpawnLimitTests/*` | R-2 | runner assembly spawn guard | 2 | 3 | true |
-| CP-9 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c1906-pty/` | limiter-pty | `/*/*/ProcessSpawnLimitTests/*` | R-2 | PTY assembly spawn guard | 2 | 2 | true |
+| CP-8 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1906-runner-b/` | limiter-runner | `/*/*/ProcessSpawnLimitTests/*` | R-2 | runner assembly spawn guard | 2 | 3 | true |
+| CP-9 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c1906-pty-b/` | limiter-pty | `/*/*/ProcessSpawnLimitTests/*` | R-2 | PTY assembly spawn guard | 2 | 2 | true |
+| CP-10 | all | CP-1 | nightly-policy-admission | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-2 | policy-input admission and core/fallback witnesses | 5 | 2 | true |
 
 ## Scope and controls
 
@@ -82,3 +83,9 @@ a stopped over-30-minute broad selection and a 252-child aggregate roster. Its
 Debug must supply a bounded expanded inventory before those classes run. Core
 CP-1..9 remain independent and mandatory; no aggregate or full-assembly sweep is
 authorized by this manifest. All expanded unexecuted classes remain R-2 pending.
+
+## Admission repair and final receipt run
+
+At `63f94c280026ecfa2e0358f2083f50a9c2fc69c7`, all 35 new cases, 120 deployment contracts, seven adjacent remote methods, all three spawn rosters and the slot fixture passed. CP-3 had 162 passed, two introduced reverse-coverage failures and one native-Windows skip; CP-7 had one passed and one introduced marker/row mismatch. The missing NativeLinuxOnly admission row is repaired in a separate policy/pin slice, not by weakening a guard. CP-3 measured 446.191s execution, CP-7 56.099s; three builds 258.700s/72.107s/63.444s; complete run wall 1159.792s. All waits 0s.
+
+CP-10 is the newly matched nightly-live-lane row after adding the required Windows exclusion and repinning protected inputs. N=0, provisional two minutes, unchanged nine-minute hard row/build limit. The final run repeats the closed core list once because the prior parent receipt was RED; this produces source-current passing receipts after the policy repair. No further repetition after green. Core cost is now measured at 19m19s plus CP-10, below the 30-minute run stop gate. Expanded retirement/rollout selection still requires caller Debug.
