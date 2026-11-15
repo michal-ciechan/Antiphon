@@ -118,8 +118,6 @@ internal static class WindowsUnitSkipRoster
     internal static readonly Entry[] NativeSourceOnly =
     [
         new("Antiphon.Tests.Scripts", "VolumeRetirementWrapperTests", "Retire_temp_real_wrapper_renews_each_effect", 1, "CARD-1901: the real wrapper renewal witness requires native Linux Bash and POSIX mounts."),
-        new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
-        new("Antiphon.Tests.Scripts", "VolumeRetirementContentTests", "Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Manual_attestation_public_entry_preserves_all_guards", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementReceiptTests", "Ready_publication_requires_file_and_directory_durability", 1, "CARD-1609: content retirement proofs require native Linux (bash, flock, real Git and POSIX mounts); Windows skips explicitly."),
         new("Antiphon.Tests.Scripts", "VolumeRetirementPublicationTests", "Origin_salvage_graph_passes_the_full_offline_audit", 1, "CARD-1901: full retirement publication proofs require native Linux (Bash and POSIX mounts); portable host writer witnesses remain required on Windows."),
