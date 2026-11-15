@@ -76,7 +76,9 @@ public sealed class C1677TempSweepDispatchTests
         // CARD-1942: a non-slot mirror owns MutateAsync at the workspace admission hook.
         // Input no longer owns that semaphore (CARD-1892), so holding Input cannot prove this boundary.
         using var workspace = C1677RetentionScratch.Create();
-        var tree = workspace.Mirror();
+        const string branch = "feat/card-task-a1677001";
+        C1677RetentionScratch.Git(workspace.OriginGit, "branch", branch, "main");
+        var sha = C1677RetentionScratch.Git(workspace.Repository, "rev-parse", "HEAD").Trim();
         var service = workspace.Service();
         var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var mutationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -94,7 +96,7 @@ public sealed class C1677TempSweepDispatchTests
         dispatcher.UseWorkspace(service);
         var mutation = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
             PhoneHomeOperation.WorkspaceMirror, JsonSerializer.SerializeToElement(
-                new PhoneHomeWorkspaceMirrorRequest(tree.Branch, tree.Head, "task-a1677001"), PhoneHomeFraming.Json)), ct);
+                new PhoneHomeWorkspaceMirrorRequest(branch, sha, "task-a1677001"), PhoneHomeFraming.Json)), ct);
         Task<PhoneHomeFrame>? sweep = null;
         try
         {
@@ -102,9 +104,14 @@ public sealed class C1677TempSweepDispatchTests
             sweep = dispatcher.DispatchAsync(Frame(Request(execute: false)), ct);
             Single(Read(await sweep.WaitAsync(TimeSpan.FromSeconds(5), ct)), name).Verdict.ShouldBe(TempSweepCodes.WouldRemove);
             mutation.IsCompleted.ShouldBeFalse("the WorkspaceMirror still holds the lock");
+            Directory.Exists(workspace.Worktrees + "/task-a1677001").ShouldBeFalse("the mirror is held before creation");
 
             mutationGate.SetResult();
-            (await mutation.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            var reply = await mutation.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            reply.Payload!.Value.Deserialize<PhoneHomeWorkspaceMirrorResponse>(PhoneHomeFraming.Json)!.Path
+                .ShouldBe(workspace.Worktrees + "/task-a1677001");
+            Directory.Exists(workspace.Worktrees + "/task-a1677001").ShouldBeTrue("the released mutation created the mirror");
         }
         finally
         {
