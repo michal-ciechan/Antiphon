@@ -1,6 +1,6 @@
 #requires -Version 7.0
 # Shared reader fixture used by named S5b cases. No live paths or runner children.
-param([string]$Case,[string]$ResultsDirectory,[string]$RepositoryRoot,[string]$SourceSha)
+param([string]$Case,[string]$ResultsDirectory,[string]$RepositoryRoot,[string]$SourceSha,[switch]$FixtureOnly)
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/lib/rc-admission.ps1"
 function Require($ok,[string]$label) { if (-not $ok) { throw "reader-witness:$label" } }
@@ -54,6 +54,7 @@ function Freeze-And-Read {
         ExpectedSha=$SourceSha;ExpectedRunId='fixture-run';CurrentSha=$SourceSha;CurrentManifest=$manifest;Chunk=$chunk;CurrentContext=@{repository='fixture://antiphon';platform='windows';rcLine='rc/2026-11-13';contract=$contract};UtcNow=([DateTimeOffset]'2026-11-13T12:00:00Z')}
     Read-RcAdmission @readArgs
 }
+if ($FixtureOnly) { [void](Freeze-And-Read); return $script:readArgs }
 $good=Freeze-And-Read
 Require ($good.eligible -and -not $good.admitted -and $good.forceFull) ('eligible-with-incomplete-coverage:'+($good.reasons -join ';'))
 switch ($Case) {
