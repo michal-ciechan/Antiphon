@@ -178,30 +178,175 @@ public class ClaudeAuthProbeTests
         ex.StatusCode.ShouldBe(400);
     }
 
-    /// <summary>V-1: the real desktop binary against an empty store, through the production runner.</summary>
+    /// <summary>
+    /// V-1: the real CLI against an empty store. Production keeps the runner's
+    /// <c>CLAUDE_CODE_OAUTH_TOKEN</c> for the probe child; this witness allowlists that child's
+    /// environment and points <c>CLAUDE_CONFIG_DIR</c> at an empty temp profile.
+    /// </summary>
     [Test, Category("Integration"), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Fresh_config_dir_reports_logged_out_with_the_real_cli()
     {
         if (!OnPath("claude"))
             throw new SkipTestException("claude is not on PATH");
-        var home = Path.Combine(Path.GetTempPath(), "c628-claude-" + Guid.NewGuid().ToString("N"));
+        var home = Path.Combine(Path.GetTempPath(), "c1927-claude-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(home);
+        var log = new List<string>();
+        IReadOnlyList<string>? childNames = null;
+        string? isolationFault = null;
         try
         {
             var probe = new ClaudeAuthProbe(
                 new PhoneHomeSettings { ClaudeHome = home },
+                new ListLogger<ClaudeAuthProbe>(log),
+                run: (psi, ct) =>
+                {
+                    if (!TryIsolateRealCli(psi, home, out var names, out var fault))
+                    {
+                        isolationFault = fault;
+                        throw new InvalidOperationException(fault);
+                    }
+
+                    childNames = names;
+                    return StartRealCliAsync(psi, ct);
+                },
                 environment: _ => null,
                 timeout: TimeSpan.FromSeconds(60));
 
             var dto = await probe.ProbeAsync("claude", CancellationToken.None);
 
+            isolationFault.ShouldBeNull();
             dto.Error.ShouldBeNull();
             dto.LoggedIn.ShouldBe(false);
+            dto.AuthMethod.ShouldNotBe("oauth_token");
+            dto.AuthMethod.ShouldNotBe("credentials_file");
+            childNames.ShouldNotBeNull();
+            var names = childNames!;
+            names.Any(name => string.Equals(name, "PATH", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+            names.Any(name => string.Equals(name, "CLAUDE_CONFIG_DIR", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+            names.Any(name => string.Equals(name, "HOME", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+            names.ShouldNotContain(ClaudeAuthProbe.OAuthTokenVariable);
+            foreach (var stripped in ClaudeAuthProbe.StrippedVariables)
+                names.ShouldNotContain(stripped);
+            names.Count.ShouldBeLessThanOrEqualTo(ChildRuntimeNames.Length + IsolatedChildNames.Length);
+
+            var logged = string.Join("\n", log);
+            logged.ShouldContain("loggedIn=False");
+            logged.ShouldContain("tokenPresent=False");
+            logged.ShouldContain("credentialsFilePresent=False");
+            logged.ShouldNotContain(ClaudeAuthProbe.OAuthTokenVariable);
+            logged.ShouldNotContain("email");
+            logged.ShouldNotContain("orgId");
+            logged.ShouldNotContain("orgName");
+            logged.ShouldNotContain("@");
         }
         finally
         {
             try { Directory.Delete(home, recursive: true); } catch { /* best effort */ }
         }
+    }
+
+    /// <summary>Parent variables the real CLI may need to start. Credential names are never copied.</summary>
+    private static readonly string[] ChildRuntimeNames =
+    [
+        "PATH", "PATHEXT", "SystemRoot", "WINDIR", "COMSPEC",
+        "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "USER", "LOGNAME", "USERNAME",
+    ];
+
+    private static readonly string[] IsolatedChildNames =
+    [
+        "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+        "TMPDIR", "TEMP", "TMP", "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER",
+    ];
+
+    private static bool TryIsolateRealCli(
+        ProcessStartInfo psi, string profile, out string[] names, out string fault)
+    {
+        names = [];
+        fault = "";
+        if (psi.FileName != "claude"
+            || psi.ArgumentList.Count != 3
+            || psi.ArgumentList[0] != "auth"
+            || psi.ArgumentList[1] != "status"
+            || psi.ArgumentList[2] != "--json")
+        {
+            fault = "production probe command was not claude auth status --json";
+            return false;
+        }
+
+        if (!psi.Environment.TryGetValue("CLAUDE_CONFIG_DIR", out var configured)
+            || !string.Equals(configured, profile, StringComparison.Ordinal))
+        {
+            fault = "CLAUDE_CONFIG_DIR was not the isolated profile";
+            return false;
+        }
+
+        var preserved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in ChildRuntimeNames)
+        {
+            if (psi.Environment.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value))
+                preserved[name] = value;
+        }
+
+        psi.Environment.Clear();
+        foreach (var pair in preserved)
+            psi.Environment[pair.Key] = pair.Value;
+
+        var tmp = Path.Combine(profile, "tmp");
+        Directory.CreateDirectory(tmp);
+        psi.WorkingDirectory = profile;
+        psi.Environment["HOME"] = profile;
+        psi.Environment["USERPROFILE"] = profile;
+        psi.Environment["XDG_CONFIG_HOME"] = profile;
+        psi.Environment["XDG_DATA_HOME"] = profile;
+        psi.Environment["TMPDIR"] = tmp;
+        psi.Environment["TEMP"] = tmp;
+        psi.Environment["TMP"] = tmp;
+        psi.Environment["CLAUDE_CONFIG_DIR"] = profile;
+        psi.Environment["DISABLE_AUTOUPDATER"] = "1";
+
+        names = psi.Environment.Keys.ToArray();
+        var allowed = new HashSet<string>(ChildRuntimeNames, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in IsolatedChildNames)
+            allowed.Add(name);
+        foreach (var name in names)
+        {
+            if (!allowed.Contains(name) || NamesCredential(name))
+            {
+                fault = "isolated child environment has a disallowed name: " + name;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool NamesCredential(string name) =>
+        name.Contains("TOKEN", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("SECRET", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("CREDENTIAL", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("API_KEY", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> StartRealCliAsync(
+        ProcessStartInfo psi, CancellationToken ct)
+    {
+        using var process = Process.Start(psi)
+            ?? throw new InvalidOperationException("claude did not start");
+        process.StandardInput.Close();
+        var stdout = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var stderr = process.StandardError.ReadToEndAsync(CancellationToken.None);
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
+            throw;
+        }
+
+        return (process.ExitCode, await stdout, await stderr);
     }
 
     private static bool OnPath(string name)
