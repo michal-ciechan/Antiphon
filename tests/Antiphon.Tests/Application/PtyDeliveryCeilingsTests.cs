@@ -281,6 +281,7 @@ public class PtyDeliveryCeilingsTests
     [Test]
     public async Task A_silent_runner_leaves_this_processes_own_decision_standing()
     {
+        RequireWindowsInboxProfile();
         await using var silentInbox = BuildProfile("inbox", reported: null);
         (await silentInbox.Value.RefreshAsync(CancellationToken.None))
             .Backend.ShouldBe(DeliveryBackend.InboxConhost);
@@ -298,6 +299,7 @@ public class PtyDeliveryCeilingsTests
     [Test]
     public async Task An_inbox_server_is_not_raised_by_a_modern_runner()
     {
+        RequireWindowsInboxProfile();
         await using var profile = BuildProfile("inbox", PtyBackend.ModernConPty);
 
         (await profile.Value.RefreshAsync(CancellationToken.None))
@@ -313,6 +315,19 @@ public class PtyDeliveryCeilingsTests
         ceilings.Backend.ShouldBe(DeliveryBackend.InboxConhost, "unknown runner yields conservative profile");
         ceilings.SingleWriteMaxBytes.ShouldBe(1024);
         ceilings.BriefInlineMaxBytes.ShouldBe(900);
+    }
+
+    /// <summary>
+    /// CARD-1938. Inbox conhost is a Windows backend. Off Windows,
+    /// <see cref="PtyBackendPolicy"/> returns <see cref="PtyBackend.UnixPty"/> before any
+    /// Windows selector, so these InboxConhost assertions are the Windows profile.
+    /// The Linux rc row excludes exactly these two methods; the rest of the class stays required.
+    /// </summary>
+    private static void RequireWindowsInboxProfile()
+    {
+        if (!OperatingSystem.IsWindows())
+            Skip.Test(
+                "CARD-1938: Windows inbox conhost delivery profile. PtyBackendPolicy resolves UnixPty off Windows and Windows backend selectors do not apply. Required on Windows.");
     }
 
     private static void RequireRedistributable()
