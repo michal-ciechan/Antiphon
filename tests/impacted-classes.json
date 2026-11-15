@@ -11,8 +11,8 @@
         "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
         "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs"
       ],
-      "classes": [
-        "WindowsUnitPlatformAdmissionTests"
+      "methods": [
+        "WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates"
       ]
     },
     {
