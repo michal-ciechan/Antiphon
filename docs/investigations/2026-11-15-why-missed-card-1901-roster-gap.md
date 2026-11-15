@@ -55,3 +55,14 @@ expanded the filter as a filesystem glob. It produced no test result. The
 replacement uses a literal ProcessStartInfo argument list; each row takes its own
 build-slot lease and a nine-minute execution bound, and retains load/SHA/filter,
 TRX and opt-in phase records under `.antiphon/c1901-r3-*`.
+
+At `c7b7ae3a991652a4c831f6a49b7975157da5e61a`, the exact closure passed 1/1.
+The required guard union passed, with its expected Windows-placement skip. The
+extra whole `ImpactedClassesSelectorTests` run caught an introduced selector-row
+error: `C1819_linux_kind_classes_do_not_skip_off_windows` rejected selecting the
+entire admission class for a Linux row, because that class also contains the
+Windows-only runtime audit. The combined run was 156 total, 154 passed, 1 failed,
+1 skipped, 426.71s including admission and wrapper overhead. The row is therefore
+narrowed to the exact platform-neutral closure method. This keeps a single kind,
+catches the missing inventory entry on either OS, and avoids selecting the
+unrelated Windows runtime witness. No assertion or test implementation changes.
