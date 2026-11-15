@@ -25,12 +25,17 @@ function Note($ok,[string]$label) { if (-not $ok) { $errors.Add($label) } }
 Put 'scripts/lib/rc-input-owners.json' (@{schemaVersion=1;suites=@(@{id='server';project='tests/Server/Server.csproj'});roots=@(@{path='scripts/**';consumers=@('*');reason='harness'})} | ConvertTo-Json -Depth 8)
 Put 'tests/Server/Server.csproj' '<Project />'
 Put 'tests/Server/Input.cs' 'test input'
+$savedCommitterDate=$env:GIT_COMMITTER_DATE
+$env:GIT_COMMITTER_DATE='2026-11-10T12:00:00Z'
 [void](Git @('add','--all')); [void](Git @('commit','-qm','base'))
 $old=Git @('rev-parse','HEAD')
+$env:GIT_COMMITTER_DATE='2026-11-11T12:00:00Z'
 [void](Git @('commit','--allow-empty','-qm','next'))
 $new=Git @('rev-parse','HEAD')
+$env:GIT_COMMITTER_DATE='2026-11-13T12:00:00Z'
 [void](Git @('commit','--allow-empty','-qm','candidate'))
 $candidate=Git @('rev-parse','HEAD')
+$env:GIT_COMMITTER_DATE=$savedCommitterDate
 [void](Git @('branch','release/1.0.0',$old))
 [void](Git @('branch','release/1.0.1',$new))
 [void](Git @('branch','release/1.0.2',$new))
