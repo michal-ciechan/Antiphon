@@ -53,6 +53,11 @@ Keep master's pair. Otherwise `C1210_Roster_closure_matches_source_gates` fails
 with `c1210-duplicate-roster` (239 entries, 237 distinct). This task does not
 alter that combined-tree roster.
 
+The exact duplicated methods are:
+
+- `VolumeRetirementContentTests.Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent`
+- `VolumeRetirementContentTests.Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof`
+
 ## Rework and equivalence
 
 Repair commit: `06cdf6876758eb3746a82b354d42dc75894f7b2d`.
@@ -141,11 +146,24 @@ target change. The full check stops at manifest drift before real evaluation.
 The brief explicitly forbids both `-Update` and the sanctioned land refresh.
 Neither was run, and no manifest, evaluation record, pins or audit rules were
 edited. Therefore the requested full green check cannot be delivered within
-that constraint. This is an incomplete gate, not a green/landable claim. A caller
-decision is needed to authorize a separate proper graph-record refresh now that
-the refused property is removed, or to hand the repair to Merge while retaining
-that incomplete gate. Standing test-only repair authority was used without
-another approval request for the repair itself.
+that constraint. This is an incomplete gate, not a green/landable claim. The
+initial report requested a caller decision about the graph-record handoff.
+Standing test-only repair authority was used without another approval request
+for the repair itself.
+
+### Orchestrator decision on reopening
+
+The orchestrator directed this task to finish **done**, with **next: merge**,
+retaining the graph gate as incomplete and refreshing nothing on this branch.
+The property refusal is repaired. Manifest drift is expected on this old-base
+chain and remains for the landing Merge to evaluate on the **combined tree with
+master**. Merge runs `land-graph -Check` there; only there may the sanctioned
+`scripts/land-graph-land-refresh.ps1` apply to a real manifest mismatch, in its
+own commit with old/new values reported. That refresh cannot approve the property
+refusal removed here. No refresh was performed in this task, including after
+reopening. Merge must drop this chain's duplicate roster pair listed above and
+keep master's pair. No further decision is needed to settle this repair task;
+the landing verification gate remains explicitly incomplete.
 
 ## Other handoff checks
 
