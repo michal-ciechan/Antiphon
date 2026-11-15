@@ -1424,13 +1424,17 @@ public partial class AgentTaskDispatchBaseGuardTests
                 }
             : null);
         await using var scope = provider.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await dispatcher.TickInspectedAsync(ct);
         if (moveTheDefault)
         {
             // The frozen observation named the old default; the locked claim refuses it and the
             // task stays queued until a fresh inspection has observed the edited default.
             (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct)).Status.ShouldBe(AgentTaskStatus.Queued);
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(ct);
+            // The stale claim re-enqueued the old intent. Join that worker before the changed
+            // default cancels it, or the fresh cycle can spend its consumption tick just enqueueing.
+            await dispatcher.SiblingInspections!.WhenIdleAsync(ct);
+            await dispatcher.TickInspectedAsync(ct);
         }
 
         db.ChangeTracker.Clear();
