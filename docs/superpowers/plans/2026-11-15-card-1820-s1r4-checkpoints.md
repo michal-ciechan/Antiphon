@@ -20,14 +20,14 @@ The real declaration witness reads only repository files, never starts the decla
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-5 | S1R4 | `tests/Antiphon.Tests -> bin-c1820-r4-red/` | linux-runtime | `/*/*/ReleaseImpactRuntimeTests/*` | V-4 | four named methods, 0 failed/skipped for green | 4 | 8 | true |
+| CP-5 | S1R4 | `tests/Antiphon.Tests -> bin-c1820-r4-red2/` | linux-runtime | `/*/*/ReleaseImpactRuntimeTests/*` | V-4 | four named methods, 0 failed/skipped for green | 4 | 8 | true |
 | CP-101 | S1R4 | CP-5 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | Final guard union; impacted test-lane-category | all named classes, 0 failed/skipped | 79 | 3 | true |
 | CP-102 | S1R4 | CP-5 | ordinary-index | `/*/*/DerivedImpactIndexTests/*` | R-1/R-3 ordinary index and brief guard | all named methods, 0 failed/skipped | 1 | 7 | true |
 | CP-103 | S1R4 | CP-5 | adjacent-graph | `/*/*/(ReleaseImpactRelationTests*)\|(ReleaseImpactProjectTests*)/*` | V-2/V-3 adjacent regression | all named methods, 0 failed/skipped | 17 | 1 | true |
 
 ## Performance budget
 
-19 minutes provisional including one cold build, each row/build capped at 10 minutes;
+19 minutes provisional including one cold build, each row/build capped at 10 minutes (`--row-timeout 10m`);
 45-minute finite admission is separate. Red runs CP-5 alone; green uses a fresh output root
 and runs all rows serially. No repetition after green. Bootstrap checkpoint tool and ordinary
 index driver builds are necessary, declared tooling preparation through build-slot in native
