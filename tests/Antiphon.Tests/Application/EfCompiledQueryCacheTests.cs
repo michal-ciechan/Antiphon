@@ -99,39 +99,49 @@ public class EfCompiledQueryCacheTests
     public async Task Optional_work_expiry_update_compiles_once_across_ticks()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.Zero));
-        var probe = new CompileProbe(static text =>
-            text.Contains("Optional work expired before execution.", StringComparison.Ordinal));
-        await using var provider = Build(schema.ConnectionString, clock, probe);
-        for (var i = 0; i < 3; i++)
+        // Another fixture may have already compiled these production queries in this process.
+        // Each observation still needs its own initially cold cache, shared across its three ticks.
+        for (var fixture = 0; fixture < 2; fixture++)
         {
-            await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
-                .DispatchQueuedAsync(CancellationToken.None);
-            clock.Advance(TimeSpan.FromSeconds(5));
-        }
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.Zero));
+            var probe = new CompileProbe(static text =>
+                text.Contains("Optional work expired before execution.", StringComparison.Ordinal));
+            await using var provider = Build(schema.ConnectionString, clock, probe);
+            for (var i = 0; i < 3; i++)
+            {
+                await using var scope = provider.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                    .DispatchQueuedAsync(CancellationToken.None);
+                clock.Advance(TimeSpan.FromSeconds(5));
+            }
 
-        probe.Total.ShouldBeGreaterThan(0);
-        probe.Count.ShouldBe(1, probe.Describe());
+            Console.WriteLine($"fixture={fixture} {probe.Describe()}");
+            probe.Total.ShouldBeGreaterThan(0, probe.Describe());
+            probe.Count.ShouldBe(1, probe.Describe());
+        }
     }
 
     [Test]
     public async Task Delivery_failure_recovery_compiles_once_across_sweeps()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.Zero));
-        var probe = new CompileProbe(static text => text.Contains("NextAttemptAt", StringComparison.Ordinal));
-        await using var provider = Build(schema.ConnectionString, clock, probe);
-        for (var i = 0; i < 3; i++)
+        for (var fixture = 0; fixture < 2; fixture++)
         {
-            await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
-                .RemindUnacknowledgedFailuresAsync(CancellationToken.None);
-            clock.Advance(TimeSpan.FromSeconds(5));
-        }
+            var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.Zero));
+            var probe = new CompileProbe(static text => text.Contains("NextAttemptAt", StringComparison.Ordinal));
+            await using var provider = Build(schema.ConnectionString, clock, probe);
+            for (var i = 0; i < 3; i++)
+            {
+                await using var scope = provider.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>()
+                    .RemindUnacknowledgedFailuresAsync(CancellationToken.None);
+                clock.Advance(TimeSpan.FromSeconds(5));
+            }
 
-        probe.Total.ShouldBeGreaterThan(0);
-        probe.Count.ShouldBe(1, probe.Describe());
+            Console.WriteLine($"fixture={fixture} {probe.Describe()}");
+            probe.Total.ShouldBeGreaterThan(0, probe.Describe());
+            probe.Count.ShouldBe(1, probe.Describe());
+        }
     }
 
     private static async Task ExpectSame(AppDbContext db, (Guid Store, Guid Boot, long Seq)[] keys)
@@ -184,7 +194,8 @@ public class EfCompiledQueryCacheTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString, npgsql => npgsql.SetPostgresVersion(16, 0))
-            .AddInterceptors(probe));
+            .AddInterceptors(probe)
+            .LogTo(Console.WriteLine, [RelationalEventId.CommandExecuted]));
         services.AddSingleton<IEventBus, MockEventBus>();
         services.AddSingleton(clock);
         services.AddOptions<SupervisionSettings>();
