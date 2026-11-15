@@ -73,7 +73,50 @@ public sealed class C1677TempSweepDispatchTests
     [Test]
     public async Task Sweep_runs_outside_the_mutation_lock(CancellationToken ct)
     {
-        // An Input holds the dispatcher's mutation lock; a TempSweep through the real adapter still completes.
+        // CARD-1942: a non-slot mirror owns MutateAsync at the workspace admission hook.
+        // Input no longer owns that semaphore (CARD-1892), so holding Input cannot prove this boundary.
+        using var workspace = C1677RetentionScratch.Create();
+        var tree = workspace.Mirror();
+        var service = workspace.Service();
+        var mutationStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mutationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.WorkspaceAdmissionForTest = async () =>
+        {
+            mutationStarted.TrySetResult();
+            await mutationGate.Task.WaitAsync(ct);
+        };
+        using var s = new Scratch();
+        var name = "c1514-" + Hex32();
+        s.Entry(name, TimeSpan.FromHours(49));
+        await using var runtime = Runtime(s);
+        var adapter = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve(), tempSweep: s.Sweep()) { TempSweepIsLinux = true };
+        var dispatcher = Dispatcher(new Surface(adapter.Capabilities().Features!, adapter.TempSweepAsync), workspace.Root);
+        dispatcher.UseWorkspace(service);
+        var mutation = dispatcher.DispatchAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.WorkspaceMirror, JsonSerializer.SerializeToElement(
+                new PhoneHomeWorkspaceMirrorRequest(tree.Branch, tree.Head, "task-a1677001"), PhoneHomeFraming.Json)), ct);
+        Task<PhoneHomeFrame>? sweep = null;
+        try
+        {
+            await mutationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            sweep = dispatcher.DispatchAsync(Frame(Request(execute: false)), ct);
+            Single(Read(await sweep.WaitAsync(TimeSpan.FromSeconds(5), ct)), name).Verdict.ShouldBe(TempSweepCodes.WouldRemove);
+            mutation.IsCompleted.ShouldBeFalse("the WorkspaceMirror still holds the lock");
+
+            mutationGate.SetResult();
+            (await mutation.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        }
+        finally
+        {
+            mutationGate.TrySetResult();
+            await Task.WhenAll(sweep is null ? [mutation] : new[] { mutation, sweep }).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Test]
+    public async Task Sweep_does_not_wait_for_input(CancellationToken ct)
+    {
+        // Separate Input independence coverage: a pending Input does not delay the real sweep.
         using var s = new Scratch();
         var name = "c1514-" + Hex32();
         s.Entry(name, TimeSpan.FromHours(49));
@@ -85,14 +128,22 @@ public sealed class C1677TempSweepDispatchTests
         };
         var dispatcher = Dispatcher(surface);
         var input = dispatcher.DispatchAsync(InputFrame(), ct);
-        await surface.InputStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+        Task<PhoneHomeFrame>? sweep = null;
+        try
+        {
+            await surface.InputStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            sweep = dispatcher.DispatchAsync(Frame(Request(execute: false)), ct);
+            Single(Read(await sweep.WaitAsync(TimeSpan.FromSeconds(5), ct)), name).Verdict.ShouldBe(TempSweepCodes.WouldRemove);
+            input.IsCompleted.ShouldBeFalse("the Input is still pending");
 
-        var sweep = await dispatcher.DispatchAsync(Frame(Request(execute: false)), ct).WaitAsync(TimeSpan.FromSeconds(5), ct);
-        Single(Read(sweep), name).Verdict.ShouldBe(TempSweepCodes.WouldRemove);
-        input.IsCompleted.ShouldBeFalse("the Input still holds the lock");
-
-        surface.InputGate.SetResult();
-        (await input.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            surface.InputGate.SetResult();
+            (await input.WaitAsync(TimeSpan.FromSeconds(5), ct)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        }
+        finally
+        {
+            surface.InputGate.TrySetResult();
+            await Task.WhenAll(sweep is null ? [input] : new[] { input, sweep }).WaitAsync(TimeSpan.FromSeconds(5));
+        }
     }
 
     [Test]
@@ -159,13 +210,14 @@ public sealed class C1677TempSweepDispatchTests
         return frame.Payload!.Value.Deserialize<PhoneHomeTempSweepResponse>(PhoneHomeFraming.Json)!;
     }
 
-    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime)
+    private static PhoneHomeCommandDispatcher Dispatcher(IPhoneHomeRuntimeSurface runtime, string? scratchRoot = null)
     {
-        var scratch = Path.Combine(Path.GetTempPath(), "c1677-dispatch-" + Guid.NewGuid().ToString("N"));
+        var scratch = scratchRoot ?? Path.Combine(Path.GetTempPath(), "c1677-dispatch-" + Guid.NewGuid().ToString("N"));
         return new PhoneHomeCommandDispatcher(runtime, new PhoneHomeSettings
         {
             Enabled = true, AllowedCwd = scratch.Replace('\\', '/'), Capacity = 2,
             CapacityStatePath = Path.Combine(scratch, "capacity"),
+            StoreIdPath = Path.Combine(scratch, "runner-store-id"),
         });
     }
 
