@@ -218,6 +218,114 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
     }
 
+    [Test]
+    [Arguments(0)] [Arguments(1001)]
+    public async Task Abandon_reason_problem_details_pin_the_exact_field_and_message(int length)
+    {
+        var row = await SeedAsync();
+        using var result = await AbandonAsync(row, length == 0 ? "  " : new string('r', length));
+        result.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        result.Content.Headers.ContentType!.MediaType.ShouldBe("application/problem+json");
+        var problem = await result.Content.ReadFromJsonAsync<JsonElement>();
+        problem.GetProperty("status").GetInt32().ShouldBe(422);
+        problem.GetProperty("code").GetString().ShouldBe("validation_failed");
+        var error = problem.GetProperty("errors").EnumerateObject().ShouldHaveSingleItem();
+        error.Name.ShouldBe("reason");
+        error.Value.EnumerateArray().ShouldHaveSingleItem().GetString()
+            .ShouldBe("An operator reason of 1 to 1000 characters is required.");
+        (await ReloadAsync(row)).Status.ShouldBe(QueuedMessageStatus.Sent);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Current_unconfirmed_listings_are_bounded_and_every_row_is_reachable()
+    {
+        var first = await SeedAsync();
+        var rows = Enumerable.Range(2, 1002).Select(n => new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(), AgentSessionId = first.AgentSessionId, Sequence = n,
+            Body = new string('x', 4096), CreatedAt = first.CreatedAt,
+            Status = QueuedMessageStatus.Sent, DeliveryAttempts = 1,
+            LastDeliveryStartedAt = first.LastDeliveryStartedAt,
+        }).ToList();
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.SessionQueuedMessages.AddRange(rows);
+            await db.SaveChangesAsync();
+        }
+        try
+        {
+        using var client = factory.CreateClient();
+        var queueIds = new List<Guid>();
+        long since = 0;
+        do
+        {
+            var page = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{first.AgentSessionId}/messages?since={since}&limit=10000");
+            var messages = page.GetProperty("messages").EnumerateArray().ToList();
+            messages.Count.ShouldBeInRange(1, 100);
+            var sequence = messages.Select(m => m.GetProperty("sequence").GetInt64()).ToArray();
+            sequence.ShouldBe(sequence.Order().ToArray());
+            sequence[0].ShouldBeGreaterThan(since);
+            queueIds.AddRange(messages.Select(m => m.GetProperty("id").GetGuid()));
+            since = page.GetProperty("nextSince").GetInt64();
+            if (!page.GetProperty("truncated").GetBoolean()) break;
+        } while (queueIds.Count < 1100);
+        queueIds.ShouldBe(new[] { first.Id }.Concat(rows.Select(r => r.Id)).ToArray());
+        var attentionIds = new List<Guid>();
+        var skip = 0;
+        do
+        {
+            var page = await client.GetFromJsonAsync<JsonElement>($"/api/attention?parkedSkip={skip}&parkedLimit=10000");
+            var parked = page.GetProperty("items").EnumerateArray()
+                .Where(i => i.GetProperty("kind").GetString() == "ParkedMessage").ToList();
+            parked.Count.ShouldBeLessThanOrEqualTo(100);
+            attentionIds.AddRange(parked.Where(i => i.GetProperty("sessionId").GetGuid() == first.AgentSessionId)
+                .Select(i => i.GetProperty("messageId").GetGuid()));
+            if (!page.GetProperty("parkedMessagesTruncated").GetBoolean()) break;
+            var next = page.GetProperty("parkedMessagesNextSkip").GetInt32();
+            next.ShouldBeGreaterThan(skip);
+            skip = next;
+        } while (skip < 2000);
+        attentionIds.Distinct().Count().ShouldBe(1003);
+        attentionIds.Count.ShouldBe(1003);
+        _adapters[first.AgentSessionId].Inputs.ShouldBeEmpty();
+        }
+        finally
+        {
+            await using var cleanup = factory.Services.CreateAsyncScope();
+            await cleanup.ServiceProvider.GetRequiredService<AppDbContext>().SessionQueuedMessages
+                .Where(m => m.AgentSessionId == first.AgentSessionId).ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
+    public async Task Abandoned_current_rules_keep_an_explicit_fresh_start_attention_until_generation_changes()
+    {
+        var row = await SeedRulesAsync();
+        using (var result = await AbandonAsync(row, "Stop waiting for this rules read")) result.StatusCode.ShouldBe(HttpStatusCode.OK);
+        await factory.Services.GetRequiredService<GrokRulesRefreshService>().ReconcileAsync(row.AgentSessionId, default);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var attention = scope.ServiceProvider.GetRequiredService<AttentionService>();
+        var item = (await attention.GetAsync(default, includeProgressProbe: false)).Items.Single(i => i.MessageId == row.Id);
+        item.Headline.ShouldContain("fresh start");
+        item.Headline.ShouldContain("rules");
+        item.Actions.ShouldBe([AttentionAction.OpenAgent]);
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == row.AgentSessionId);
+        session.GrokRulesState.ShouldBe(GrokRulesState.Pending);
+        item.Evidence.ShouldContain(session.GrokRulesGeneration!.Value.ToString("N"));
+        item.Headline.ShouldContain("fresh=true");
+        (await ReloadAsync(row)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == row.AgentSessionId)).ShouldBe(1);
+        session.GrokRulesGeneration = Guid.NewGuid();
+        var receipt = GrokRulesRefreshService.Receipt(session)! with { Generation = session.GrokRulesGeneration.Value };
+        session.GrokRulesReceiptJson = JsonSerializer.Serialize(receipt);
+        await db.SaveChangesAsync();
+        (await attention.GetAsync(default, includeProgressProbe: false)).Items.ShouldNotContain(i => i.MessageId == row.Id);
+        _adapters[row.AgentSessionId].Inputs.ShouldBeEmpty();
+    }
+
     private async Task<SessionQueuedMessage> SeedRulesAsync()
     {
         var row = await SeedAsync(status: SessionStatus.Running);
