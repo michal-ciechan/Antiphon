@@ -26,11 +26,45 @@ internal sealed class ReportWorkspace : IAsyncDisposable
     public string Worktree => Path.Combine(Root, "worktree");
     public ReportWorkspace()
     {
-        var checkout = new DirectoryInfo(AppContext.BaseDirectory);
-        while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln"))) checkout = checkout.Parent;
-        Root = Path.Combine(checkout?.FullName ?? throw new InvalidOperationException("checkout missing"),
-            ".antiphon", "test-output", "card-0419", Guid.NewGuid().ToString("N"));
+        Root = Path.Combine(PersistentOutputParent(FindSolutionCheckout()), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Main);
+    }
+
+    internal static string FindSolutionCheckout()
+    {
+        var checkout = new DirectoryInfo(AppContext.BaseDirectory);
+        while (checkout is not null && !File.Exists(Path.Combine(checkout.FullName, "Antiphon.sln")))
+            checkout = checkout.Parent;
+        return checkout?.FullName ?? throw new InvalidOperationException("checkout missing");
+    }
+
+    // AgentReportStore refuses a root under Path.GetTempPath. The owned git fixture normally
+    // lives in the solution checkout. When that checkout is itself under temp, the same relative
+    // parent is taken from the user profile so expected paths still come from this root.
+    internal static string PersistentOutputParent(string checkout)
+    {
+        var underCheckout = Path.Combine(checkout, ".antiphon", "test-output", "card-0419");
+        if (!Under(underCheckout, Path.GetTempPath())) return underCheckout;
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(home))
+            throw new InvalidOperationException(
+                "checkout is under temp and no user profile is available for a persistent report fixture");
+        var parent = Path.Combine(home, ".antiphon", "test-output", "card-0419");
+        if (Under(parent, Path.GetTempPath()))
+            throw new InvalidOperationException(
+                "checkout and user profile are both under temp; the report fixture has no persistent root");
+        return parent;
+    }
+
+    private static bool Under(string path, string root)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        return full.Equals(prefix, comparison)
+            || full.StartsWith(prefix + Path.DirectorySeparatorChar, comparison);
     }
     public async Task InitializeAsync(bool worktree = false)
     {
