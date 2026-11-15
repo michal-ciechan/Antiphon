@@ -82,6 +82,12 @@ Any selection over 30 minutes needs caller-owned Debug commissioning. Driver
 bootstrap builds are explicitly unlisted prerequisites, through build-slot in
 native outputs. No unchanged proof repetitions after green.
 
+Current Final selection: CP-2, CP-3, CP-4, CP-6, CP-8, CP-9, CP-10, CP-11, CP-12.
+CP-1/7 are red proof, CP-5 is preserved history replaced by CP-11/12, and CP-13
+is the base-only attribution check. Do not rerun the superseded combined row as
+Final selection. See [Code evidence](2026-11-15-card-1943-code-evidence.md) for
+all actual outcomes and pending native/PC obligations.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
@@ -90,7 +96,7 @@ native outputs. No unchanged proof repetitions after green.
 | CP-2 | green | tests/Antiphon.Tests -> bin-c1943-green/ | abandon-queue | `/*/*/(SessionQueueAbandonTests*)\|(SessionMessageQueueServiceTests*)\|(StandingSessionSwitchConcurrencyTests*)\|(StandingSessionQueueSwitchTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 4 | 9 |
 | CP-3 | green | CP-2 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)/*` | R-1 | all listed, 0 failed | 2 | 5 |
 | CP-4 | green | CP-2 | grok-rules | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesReceiptTests*)\|(GrokRulesTransactionTests*)\|(GrokRulesCompactionTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 5 |
-| CP-5 | green | CP-2 | impacted | `/*/*/(AgentTaskMidTurnRefineTests*)\|(CodexCliObservationGapTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)/*` | R-2 | all listed, 0 failed | 5 | 5 |
+| CP-5 | historical-impact | CP-2 | impacted | `/*/*/(AgentTaskMidTurnRefineTests*)\|(CodexCliObservationGapTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)/*` | R-2 | all listed, 0 failed | 5 | 5 |
 | CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3,V-4 | all listed, 0 failed | 11 | 5 |
 | CP-7 | red-client | n/a | paging-ui-red | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel -t pages` | V-4 | 2 intended missing-navigation failures | n/a | 3 |
 | CP-8 | client | n/a | paging-ui | `pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath .antiphon/c1943-client.json SessionMessageQueue AttentionPanel` | V-4 | both whole client files, 0 failed | n/a | 3 |
