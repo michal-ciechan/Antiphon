@@ -9,7 +9,6 @@
       "globs": [
         "server/Application/Services/AgentTaskDispatcher*.cs",
         "server/Application/Services/RefOnlyDesktopProvisioner.cs",
-        "server/Program.cs",
         "tests/Antiphon.Tests/TestHelpers/DelegationTestServices.cs"
       ],
       "classes": [
