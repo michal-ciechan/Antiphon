@@ -826,8 +826,6 @@ public sealed class VerificationRoundDeliveryTests
         await rig.ScanAsync();
         await rig.FlushAsync();
         await rig.ScanAsync();
-        var diagnostic = (await rig.NotificationAsync(taskId))!;
-        Console.WriteLine($"C1940_NOTE state={diagnostic.State} error={diagnostic.LastErrorCode} attempts={diagnostic.EnqueueAttempts} next={diagnostic.NextAttemptAt:O} now={rig.World.Clock.GetUtcNow():O} rendering={diagnostic.CompletionDeliveryJson is not null}");
         await AssertReceivedOnceAsync(rig, taskId, "regenerated", FinalHeaderBits, expectKind: null, expectSpill: null);
         File.Exists(report).ShouldBeTrue("regenerated");
         (await AgentTaskLandNotificationService.FileHasSha256Async(report, snapshot.RawSha256, CancellationToken.None))
@@ -1113,6 +1111,8 @@ public sealed class VerificationRoundDeliveryTests
         string? expectKind, bool? expectSpill)
     {
         var note = (await rig.NotificationAsync(taskId)).ShouldNotBeNull(row);
+        if (row == "regenerated")
+            Console.WriteLine($"C1940_NOTE state={note.State} error={note.LastErrorCode} attempts={note.EnqueueAttempts} next={note.NextAttemptAt:O} now={rig.World.Clock.GetUtcNow():O} rendering={note.CompletionDeliveryJson is not null}");
         var snapshot = TaskCompletionNotification.TryReadSnapshot(note.CompletionSnapshotJson).ShouldNotBeNull(row + ": snapshot");
         var delivery = TaskCompletionNotification.TryReadDelivery(note.CompletionDeliveryJson).ShouldNotBeNull(row + ": frozen rendering");
         var rows = await rig.RowsAsync(taskId);
