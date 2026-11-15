@@ -481,27 +481,41 @@ internal sealed class LinuxHostProcessTable : IHostProcessTable
     [DllImport("libc", EntryPoint = "sysconf")]
     private static extern long Sysconf(int name);
 }
-
 /// <summary>
 /// CARD-1884. One toolhelp snapshot for image names, then one limited-information handle per
 /// selected pid. Image name only. Command lines and the process environment are not read.
 /// </summary>
 internal sealed class WindowsHostProcessTable : IHostProcessTable
 {
-    private const uint ProcessQueryLimitedInformation = 0x1000;
     private const long TicksPerSecond = 10_000_000;
+    private readonly IWindowsProcessSource _source;
+    private readonly Func<double?> _threadCpu;
+    private readonly TimeSpan _cpuBudget;
+
+    public WindowsHostProcessTable()
+        : this(new ToolhelpProcessSource(), HostStatsSamplerService.ThreadCpuMilliseconds, HostTopConsumerLimits.ScanCpuBudget)
+    {
+    }
+
+    internal WindowsHostProcessTable(IWindowsProcessSource source, Func<double?> threadCpu, TimeSpan cpuBudget)
+    {
+        _source = source;
+        _threadCpu = threadCpu;
+        _cpuBudget = cpuBudget;
+    }
 
     public bool LastReadTruncated { get; private set; }
 
     public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default)
     {
         LastReadTruncated = false;
-        if (!OperatingSystem.IsWindows()) return [];
-        var budget = new ScanBudget(HostTopConsumerLimits.ScanCpuBudget, HostStatsSamplerService.ThreadCpuMilliseconds);
+        var budget = new ScanBudget(_cpuBudget, _threadCpu);
         Dictionary<int, string> names;
         try
         {
-            names = SnapshotNames(budget, cancellationToken);
+            using var snapshot = _source.Snapshot();
+            if (snapshot is null) return [];
+            names = SnapshotNames(snapshot, budget, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -529,7 +543,7 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
 
             budget.CountRead();
             if (!names.TryGetValue(pid, out var exe)) continue;
-            if (!TryTimes(pid, out var start, out var cpu, out var rss)) continue;
+            if (!_source.TryTimes(pid, out var start, out var cpu, out var rss)) continue;
             var (name, role) = HostConsumerClassifier.Classify(exe, []);
             list.Add(new HostProcessObservation(pid, start, cpu, TicksPerSecond, rss, name, role));
         }
@@ -537,14 +551,10 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         return list;
     }
 
-    private Dictionary<int, string> SnapshotNames(ScanBudget budget, CancellationToken cancellationToken)
+    private Dictionary<int, string> SnapshotNames(IWindowsProcessSnapshot snapshot, ScanBudget budget, CancellationToken cancellationToken)
     {
         var result = new Dictionary<int, string>();
-        using var snapshot = CreateToolhelp32Snapshot(2, 0);
-        if (snapshot.IsInvalid) return result;
-        var entry = new ProcessEntry { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
-        if (!Process32FirstW(snapshot, ref entry)) return result;
-        do
+        while (snapshot.Next(out var pid, out var exe))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (budget.Exhausted())
@@ -553,13 +563,43 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
                 break;
             }
 
-            if (entry.Pid > 0) result[(int)entry.Pid] = entry.Exe ?? "";
+            if (pid > 0) result[pid] = exe;
         }
-        while (Process32NextW(snapshot, ref entry));
+
         return result;
     }
+}
 
-    private static bool TryTimes(int pid, out long startTicks, out long cpuTicks, out long? rss)
+/// <summary>CARD-1884. The Windows process facts behind <see cref="WindowsHostProcessTable"/>; a test supplies its own.</summary>
+internal interface IWindowsProcessSource
+{
+    /// <summary>One process snapshot, or null when none can be taken.</summary>
+    IWindowsProcessSnapshot? Snapshot();
+
+    bool TryTimes(int pid, out long startTicks, out long cpuTicks, out long? rss);
+}
+
+internal interface IWindowsProcessSnapshot : IDisposable
+{
+    /// <summary>The next process in the snapshot; false when it is exhausted.</summary>
+    bool Next(out int pid, out string exe);
+}
+
+/// <summary>Toolhelp image names and limited-information process times. Returns nothing off Windows.</summary>
+internal sealed class ToolhelpProcessSource : IWindowsProcessSource
+{
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    public IWindowsProcessSnapshot? Snapshot()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var handle = CreateToolhelp32Snapshot(2, 0);
+        if (!handle.IsInvalid) return new Toolhelp(handle);
+        handle.Dispose();
+        return null;
+    }
+
+    public bool TryTimes(int pid, out long startTicks, out long cpuTicks, out long? rss)
     {
         startTicks = 0;
         cpuTicks = 0;
@@ -580,6 +620,23 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         {
             CloseHandle(handle);
         }
+    }
+
+    private sealed class Toolhelp(Microsoft.Win32.SafeHandles.SafeFileHandle handle) : IWindowsProcessSnapshot
+    {
+        private ProcessEntry _entry = new() { Size = (uint)Marshal.SizeOf<ProcessEntry>() };
+        private bool _started;
+
+        public bool Next(out int pid, out string exe)
+        {
+            var more = _started ? Process32NextW(handle, ref _entry) : Process32FirstW(handle, ref _entry);
+            _started = true;
+            pid = more ? (int)_entry.Pid : 0;
+            exe = more ? _entry.Exe ?? "" : "";
+            return more;
+        }
+
+        public void Dispose() => handle.Dispose();
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
