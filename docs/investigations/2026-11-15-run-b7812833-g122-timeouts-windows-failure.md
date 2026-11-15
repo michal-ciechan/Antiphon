@@ -157,15 +157,43 @@ Across the 285 tests common to b7812833 g122 and 34d41b7e g121, the summed durat
 
 ## Isolated reruns on Linux (server2, `antiphon-server2/session-testing:ab7af12c6990`, .NET 9.0.23, `--cpus 6`)
 
+Provenance: the sources are `git archive` snapshots of each SHA, built inside a throwaway container in a private server2
+scratch directory (Debug, `-m:4`, `nice 10`; tip build 454 s, base 747 s). The desktop was not used, so the live qualification
+was not disturbed. The container has no build-slot authority, so these builds were not leased; that is stated here as an
+unlisted run. The scratch directory was deleted afterwards.
+
 Each test ran alone through `dotnet run --project tests/Antiphon.Tests --no-build -- --treenode-filter "/*/*/<Class>/<Method>"`, 5 times.
 
 | Test | 64e3d78c4 (tip) | b559bfba2 (base) |
 |---|---|---|
-| C1307 Read_deadline_leaves_marker | 5/5 pass; 0.33, 0.46, 0.58, 0.64, 0.64 s | BASE_C1307 |
-| Hangfire Unreachable_tick_... | 5/5 pass; 1.03, 1.04, 1.07, 1.02, 1.02 s | BASE_HANGFIRE |
-| Receipt_size_and_deadline_are_bounded | 5/5 pass; 0.69, 0.57, 0.83, 0.89, 0.89 s | BASE_RECEIPT |
+| C1307 Read_deadline_leaves_marker | 5/5 pass; 0.33, 0.46, 0.58, 0.64, 0.64 s | 5/5 pass; 0.73, 0.63, 0.66, 0.61, 0.33 s |
+| Hangfire Unreachable_tick_... | 5/5 pass; 1.03, 1.04, 1.07, 1.02, 1.02 s | 5/5 pass; 1.17, 1.11, 1.00, 1.02, 1.08 s |
+| Receipt_size_and_deadline_are_bounded | 5/5 pass; 0.69, 0.57, 0.83, 0.89, 0.89 s | 5/5 pass; 0.60, 0.83, 0.74, 0.83, 0.52 s |
 
-REPRO_SECTION
+Tip and base behave the same in isolation (30/30 pass, all under 1.2 s), so there is no code delta between the pins for these tests.
+
+### Reproducing the Windows failure on Linux (scratch copy of the tip, never committed)
+
+Linux refuses `127.0.0.1:1` instantly, which hides the Windows behaviour. To emulate the Windows connect latency, the scratch
+copy pointed the tick test's connection string at a blackholed address (`Host=10.255.255.1;Port=1;...;Timeout=1`), so each
+synchronous `Open()` blocks for its full 1 s. The four classes then ran together in one process, three times each:
+`HangfireStorageSelectionTests|HostCleanupCheckpointReceiptTests|C1307ToolRemovalTests|HostCleanupExecutionTests`, 49 tests.
+
+| Set | Hangfire tick | Receipt_size | Read_deadline | Other failures |
+|---|---|---|---|---|
+| unpatched #1-#3 | 1.45 / 1.05 / 1.12 s pass | 0.39 / 0.39 / 0.35 s pass | 1.69 / 1.15 / 1.15 s pass | none (49/49 x3) |
+| blackhole #1 | 4.50 s pass | 2.23 s pass | 2.74 s pass | patch artifact only* |
+| blackhole #2 | 3.01 s pass | 2.41 s pass | 1.75 s pass | patch artifact only* |
+| blackhole #3 | **22.24 s FAIL "timed out after 00:00:20"** | **6.53 s FAIL TimeoutException** | 81.4 s pass | **`Mid_removal_cancellation_leaves_marker` 6.06 s FAIL TimeoutException** |
+
+\* The sed replaced three identical literals in the file, including one in
+`PostgreSql_bootstrap_resolves_storage_and_refuses_an_unreachable_database`, which asserts `ConnectionString.Host`. That
+failure comes from the scratch patch, not from the mechanism.
+
+The only change was making each lease probe block for 1 s. That alone slowed every co-scheduled `Task.Run` handshake 2-70x,
+and in one of the three sets it reproduced the exact Windows signature: the Hangfire `[Timeout(20_000)]` at about 22 s, plus
+`Entered.Task.WaitAsync(5 s)` TimeoutExceptions in the receipt test and in the C1307 sibling that shares the handshake.
+The effect is load-dependent and runs away once it starts: 2 of 3 sets stayed under the bounds.
 
 ## Classification
 
