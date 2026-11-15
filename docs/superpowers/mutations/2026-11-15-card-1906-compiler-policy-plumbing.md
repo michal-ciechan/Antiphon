@@ -20,3 +20,42 @@ All IDs and variants remain **pending**. No red/restore/green mutant cycle ran.
 Mutation must discover missing controls, bind real committed source, retain per-PC
 provenance, and use exact method treenode filters. Never weaken assertions, widen
 timeouts or claim fixture/build errors or zero tests as a deliberate red.
+
+## Explicit pending variants
+
+- PC-1/empty: pending.
+- PC-1/space-only: pending.
+- PC-1/tab-only: pending.
+- PC-1/leading-space-key: pending.
+- PC-1/leading-tab-key: pending.
+- PC-1/space-before-equals: pending.
+- PC-1/tab-before-equals: pending.
+- PC-1/space-after-equals: pending.
+- PC-1/tab-after-equals: pending.
+- PC-1/trailing-space: pending.
+- PC-1/trailing-tab: pending.
+- PC-1/crlf: pending.
+- PC-1/boolean-true: pending.
+- PC-1/boolean-false: pending.
+- PC-1/numeric-two: pending.
+- PC-1/leading-zero: pending.
+- PC-1/lowercase-key: pending.
+- PC-1/mixed-case-key: pending.
+- PC-1/export-prefix: pending.
+- PC-1/quoted-value: pending.
+- PC-1/inline-comment: pending.
+- PC-1/comment-without-space: pending.
+- PC-1/indented-duplicate: pending.
+- PC-1/tabbed-duplicate: pending.
+- PC-1/spaced-duplicate: pending.
+- PC-1/comment-looking-duplicate: pending.
+- PC-1/case-duplicate: pending.
+- PC-1/same-value-duplicate: pending.
+- PC-1/later-duplicate: pending.
+- PC-1/invalid-value: pending.
+- PC-1/duplicate: pending.
+- PC-1/shell-value: pending.
+
+PC-2/standing, PC-3/temp, PC-4/standing, PC-4/temp, PC-5/saved-default, PC-5/Compose-absent, PC-5/Compose-empty, PC-6/session-0, PC-6/session-1, PC-6/wrapper-0 and PC-6/wrapper-1 are all pending.
+
+PC-7/native-admission is pending: remove only the new native class admission row, re-seal policy metadata as necessary, and bind `NativeLinuxPolicyWitnessTests/Markers_do_not_expand_policy_exclusions` to its specific reverse-coverage assertion. Source/pin edits and restoration belong only to commissioned Mutation. The introduced ordinary guard red is preserved in Code evidence, not credited as a mutant cycle.
