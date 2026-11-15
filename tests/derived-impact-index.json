@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 322,
+      "classes": 323,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 13,
+      "classes": 14,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 10,
+      "classes": 11,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 7,
+      "classes": 8,
       "reason": "allowlist"
     },
     {
@@ -2114,9 +2114,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 66,
+      "classes": 67,
       "reason": "cap",
-      "owed": 41,
+      "owed": 42,
       "first": [
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
@@ -2130,25 +2130,25 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "RcReleaseBaselineTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests",
         "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
         "ChangeAwareReleaseBudgetTests",
         "DirectoryLinkFixtureWindowsTests",
-        "ScriptHarnessCancellationTests",
-        "C1514HostLoadScriptTests"
+        "ScriptHarnessCancellationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 62,
+      "classes": 63,
       "reason": "cap",
-      "owed": 37,
+      "owed": 38,
       "first": [
         "ClosedCardSweepApiTests",
         "DelegationCapabilityApiTests",
@@ -4095,7 +4095,8 @@
       "path": "server/Antiphon.Server.csproj",
       "classes": [
         "DotnetToolManifestContractTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
@@ -16046,6 +16047,7 @@
         "HangfirePostgreSqlStorageTests",
         "OutputDistillationApplyRaceTests",
         "OutputDistillationDeliveryTests",
+        "ReleaseImpactRuntimeTests",
         "ScopeResolverAreaTests"
       ]
     },
@@ -16061,7 +16063,8 @@
         "HangfirePostgreSqlStorageTests",
         "HangfireStorageSelectionTests",
         "LiveLaneIsolationTests",
-        "PostgresPoolConfigurationTests"
+        "PostgresPoolConfigurationTests",
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
@@ -21294,6 +21297,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Agents/Fixtures/card0778/startup-frames.json",
+      "classes": [
+        "ReleaseImpactRuntimeTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Agents/GrokLinuxStartupReadinessTests.cs",
       "classes": [
         "GrokLinuxBlockingPromptTests",
@@ -21314,6 +21323,7 @@
         "GrokLinuxBlockingPromptTests",
         "GrokStartupReadyOrderingTests",
         "GrokStartupSizeTests",
+        "ReleaseImpactRuntimeTests",
         "RunnerGrokAdapterReadyTests",
         "RunnerGrokAdapterSignInPromptTests",
         "RunnerGrokAdapterTrustPromptTests"
@@ -21500,7 +21510,8 @@
         "ImpactedClassesSelectorTests",
         "LandGraphAuditProjectInstanceTests",
         "LandNonCodeSkipTests",
-        "PlanCoverageBindingTests"
+        "PlanCoverageBindingTests",
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
@@ -24098,13 +24109,27 @@
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
-        "ReleaseImpactRelationTests"
+        "ReleaseImpactRelationTests",
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactProjectGraph.cs",
       "classes": [
-        "ReleaseImpactProjectTests"
+        "ReleaseImpactProjectTests",
+        "ReleaseImpactRuntimeTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeInputs.cs",
+      "classes": [
+        "ReleaseImpactRuntimeTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeTests.cs",
+      "classes": [
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
@@ -26769,6 +26794,7 @@
         "Card1619RunnerExitTests",
         "Card1653PeerCheckTests",
         "Card1653SocketDirTests",
+        "ChannelOutboundUnifiedTransportTests",
         "CheckpointOutputConfinementTests",
         "CheckpointShapeConflictTests",
         "CheckpointTrackedBaselineTests",
@@ -26836,6 +26862,12 @@
       "path": "tests/live-lane-checkpoints/live-claude-core-windows.yaml",
       "classes": [
         "LiveLaneRunnerTests"
+      ]
+    },
+    {
+      "path": "tests/selector-runtime-inputs.json",
+      "classes": [
+        "ReleaseImpactRuntimeTests"
       ]
     },
     {
