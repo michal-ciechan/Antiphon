@@ -95,7 +95,7 @@ credit is claimed.
 The first full selector run at `03fff6f44ef180eb0e0d628891a2d59235f68a00`
 passed 49/50 and failed the strict historical-range kind list for
 `a54a6d4f755fa139b41fd7dc8aef456d3d2c0975`. That commit edits
-`C1008ComposeSeed.cs`; the new persistent glob correctly adds `timing-labels`
+`scripts/fixtures/c346-workspace-slot-compose.mjs`; the new persistent glob correctly adds `timing-labels`
 to its former `remote-scripts`, `test-lane-category` selection. Replaying the
 selector with the exact baseline table confirms the original two-kind result.
 This expectation change is introduced by the intended broader coverage, not an
