@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Data.Common;
 using System.Text.RegularExpressions;
@@ -18,6 +19,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
 using Shouldly;
 using Testcontainers.Redpanda;
 using TUnit.Core;
@@ -35,11 +38,131 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Test, Arguments("main"), Arguments("trailing"), Arguments("machine")]
     public Task C519_Queue_to_busy_adapter(string kind) => QueueToAdapterAsync(kind, busy: true);
 
+    // CARD-1934. C519_Partial_prompt_requires_complete_receipt, C519_Enabled_loss_notice_reaches_adapter
+    // and C519_Size_refusal already pass 120 seconds to this same StartAsync. On 08cc3dc the exact main
+    // UID spent 12.3s, 16.0s and 13.1s of the old 30-second token on Docker time before the Redpanda
+    // container existed (load 21.63, 35.46 and 27.30), 40 to 53 percent of that budget, before Kafka
+    // readiness. A failing-tail p95 is unavailable: those three passes finished inside 30 seconds, and
+    // R5 would set the budget from about twice that p95. This aligns QueueToAdapterAsync and
+    // C519_Converter_handoff with the sibling 120 seconds. Delivery assertions and every other timeout
+    // stay as they are. Phases are TestTiming FixtureSetup spans: Ryuk create/start until the default
+    // reaper reaches MaintainingConnection, Redpanda container create until Created (image check plus
+    // Docker create), then Created until Started. That last span is UnsafeStartAsync through
+    // UntilMessageIsLogged("Started Kafka API server"), including the container start and the
+    // startup-script copy that precede the log line. C1934_BROKER_PHASE repeats the same durations
+    // on the test output.
+    private static async Task<RedpandaContainer> StartOwnedBrokerAsync()
+    {
+        var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
+        try
+        {
+            using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            await TimeOwnedBrokerStartAsync(broker, startup.Token);
+            return broker;
+        }
+        catch
+        {
+            await broker.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task TimeOwnedBrokerStartAsync(RedpandaContainer broker, CancellationToken startup)
+    {
+        var ryukReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redpandaCreated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var kafkaReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<ResourceReaperStateEventArgs> onReaper = (_, args) =>
+        {
+            if (args.State == ResourceReaperState.MaintainingConnection
+                && args.Instance.SessionId == ResourceReaper.DefaultSessionId)
+                ryukReady.TrySetResult();
+        };
+        ResourceReaper.StateChanged += onReaper;
+        broker.Created += (_, _) => redpandaCreated.TrySetResult();
+        broker.Started += (_, _) => kafkaReady.TrySetResult();
+        long? ryukMs = null;
+        long? createMs = null;
+        long? kafkaMs = null;
+        var starting = broker.StartAsync(startup);
+        try
+        {
+            try
+            {
+                var ryuk = Stopwatch.StartNew();
+                try
+                {
+                    using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "c1934-ryuk-create-start"))
+                    {
+                        if (ResourceReaper.IsUnavailable && TestcontainersSettings.ResourceReaperEnabled)
+                            await WhenBrokerSignalAsync(ryukReady.Task, starting, startup);
+                    }
+                }
+                finally
+                {
+                    ryukMs = ryuk.ElapsedMilliseconds;
+                }
+
+                var create = Stopwatch.StartNew();
+                try
+                {
+                    using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "c1934-redpanda-container-create"))
+                        await WhenBrokerSignalAsync(redpandaCreated.Task, starting, startup);
+                }
+                finally
+                {
+                    createMs = create.ElapsedMilliseconds;
+                }
+
+                var kafka = Stopwatch.StartNew();
+                try
+                {
+                    using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "c1934-kafka-api-server"))
+                        await WhenBrokerSignalAsync(kafkaReady.Task, starting, startup);
+                }
+                finally
+                {
+                    kafkaMs = kafka.ElapsedMilliseconds;
+                }
+
+                await starting;
+            }
+            catch
+            {
+                // The phase wait already surfaced the startup failure. Await StartAsync so its
+                // exception is observed, then keep the original failure.
+                try
+                {
+                    await starting;
+                }
+                catch (Exception)
+                {
+                }
+
+                throw;
+            }
+        }
+        finally
+        {
+            ResourceReaper.StateChanged -= onReaper;
+            Console.WriteLine("C1934_BROKER_PHASE ryukMs=" + PhaseMs(ryukMs)
+                + " createMs=" + PhaseMs(createMs) + " kafkaMs=" + PhaseMs(kafkaMs));
+        }
+    }
+
+    private static async Task WhenBrokerSignalAsync(Task signal, Task starting, CancellationToken startup)
+    {
+        var done = await Task.WhenAny(signal, starting).WaitAsync(startup);
+        if (!ReferenceEquals(done, signal))
+            await starting;
+    }
+
+    private static string PhaseMs(long? value) =>
+        value is long ms ? ms.ToString(System.Globalization.CultureInfo.InvariantCulture) : "incomplete";
+
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await broker.StartAsync(startup.Token);
+        await using var broker = await StartOwnedBrokerAsync();
         foreach (var lateGateway in new[] { false, true })
         foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
         {
@@ -410,9 +533,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [Arguments(false, "result-committed"), Arguments(true, "result-committed")]
     public async Task C519_Converter_handoff(bool busy, string cut)
     {
-        await using var broker = new RedpandaBuilder("docker.redpanda.com/redpandadata/redpanda:v25.3.4").Build();
-        using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        await broker.StartAsync(startup.Token);
+        await using var broker = await StartOwnedBrokerAsync();
         {
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };

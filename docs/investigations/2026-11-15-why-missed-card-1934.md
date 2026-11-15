@@ -3,8 +3,9 @@
 Sweep B027/R005 on baseline `b559bfba2e9a420495122d27171352fe9b7e1ba4` failed
 `ChannelOutboundUnifiedTransportTests.C519_Queue_to_adapter(main)` before any
 delivery assertion. Current `origin/master` `08cc3dcac230658c9bb7f580d32ad91906665fbd`
-ran that same UID alone three times and passed. No product or test source was changed.
-The 30-second startup token was not widened.
+ran that same UID alone three times and passed. That Debug pass changed no product or
+test source and left the 30-second startup token in place. The follow-up section
+records the later alignment of the two startup tokens to the sibling 120 seconds.
 
 ## Classification
 
@@ -109,6 +110,41 @@ Kafka readiness finish inside 30 seconds, which is what happened on
 `08cc3dc` above. The check that would have caught the sweep failure is the
 headroom of that inner token against Docker create time, which the class filter
 does not record.
+
+## Follow-up startup budget
+
+Stated reason, test-performance standard R5. A failing-tail p95 is unavailable.
+The three alone passes on `08cc3dc` finished inside 30 seconds, so that sample
+has no failing tail. R5 would set a timeout at about twice a measured
+failing-tail p95 and would label a sample this small provisional. This change
+does not invent that p95.
+
+Measured Docker-time share, same three passes: time before the Redpanda
+container existed was 12.3s, 16.0s and 13.1s. That is 40 to 53 percent of the
+30-second token, at load 21.63, 35.46 and 27.30, and it is gone before Kafka
+readiness. The historical failures are that same token. Group B027's main case
+threw `TimeoutException` from `WaitUntilAsync`. The alone retry threw
+`TaskCanceledException` from Ryuk `CreateContainerAsync`.
+
+Sibling precedent in `ChannelOutboundUnifiedTransportTests`:
+`C519_Partial_prompt_requires_complete_receipt`,
+`C519_Enabled_loss_notice_reaches_adapter` and `C519_Size_refusal` pass a
+120-second token to the same `StartAsync`. `QueueToAdapterAsync` and
+`C519_Converter_handoff` were the only 30-second startup tokens. Both are now
+120 seconds. Delivery assertions are unchanged. Every other timeout is
+unchanged, including the 120-second scenario tokens and the 30-second
+`WaitForIdleAsync` in `C519_Converter_handoff`.
+
+Phase timing uses the existing `TestTiming.BeginPhase` recorder
+(`TestPhaseKind.FixtureSetup`) and no new framework. The operation labels are
+`c1934-ryuk-create-start`, `c1934-redpanda-container-create` and
+`c1934-kafka-api-server`. The test output repeats them as one
+`C1934_BROKER_PHASE` line. Ryuk is the default resource reaper until
+`MaintainingConnection`. Redpanda container create is the next interval, until
+the container `Created` event, and includes the image-present check plus the
+Docker create. The Kafka span is `Created` until `Started`: `UnsafeStartAsync`
+through `UntilMessageIsLogged("Started Kafka API server")`, including the
+container start and the startup-script copy that precede that log line.
 
 ## Exemption
 
