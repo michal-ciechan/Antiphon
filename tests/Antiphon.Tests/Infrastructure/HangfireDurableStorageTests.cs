@@ -213,6 +213,51 @@ public sealed class HangfireStorageSelectionTests
         await host.StopAsync();
     }
 
+    /// <summary>
+    /// rc run b7812833 g122. A tick slower than its period must not queue more ticks on the pool.
+    /// A refused loopback connect takes about 2 s on Windows, so a 50 ms period stacked blocked
+    /// pool threads and starved every other test in the process.
+    /// </summary>
+    [Test]
+    [Timeout(20_000)]
+    public async Task A_slow_tick_does_not_overlap_the_next_tick()
+    {
+        const string unreachable =
+            "Host=127.0.0.1;Port=1;Database=antiphon;Username=antiphon;Password=unused;Timeout=1;Pooling=false";
+        using var connection = new NpgsqlConnection(unreachable);
+        using var lease = new HangfireWorkerLease(connection, unreachable);
+        var inside = 0;
+        var maxInside = 0;
+        var entries = 0;
+        using var release = new ManualResetEventSlim();
+        lease.ProbeEachTick(() =>
+        {
+            Interlocked.Increment(ref entries);
+            var now = Interlocked.Increment(ref inside);
+            int seen;
+            while (now > (seen = Volatile.Read(ref maxInside))
+                && Interlocked.CompareExchange(ref maxInside, now, seen) != seen)
+            {
+            }
+            release.Wait(TimeSpan.FromSeconds(10));
+            Interlocked.Decrement(ref inside);
+        });
+        var lifetime = new Microsoft.Extensions.Hosting.Internal.ApplicationLifetime(
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<Microsoft.Extensions.Hosting.Internal.ApplicationLifetime>.Instance);
+        lease.StartSupervision(lifetime, TimeSpan.FromMilliseconds(20));
+
+        // The first tick is held inside the probe. Twenty-five more periods elapse meanwhile.
+        var started = DateTime.UtcNow;
+        while (Volatile.Read(ref entries) == 0 && DateTime.UtcNow - started < TimeSpan.FromSeconds(5))
+            await Task.Delay(10);
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        var overlapped = Volatile.Read(ref maxInside);
+        release.Set();
+
+        Volatile.Read(ref entries).ShouldBeGreaterThan(0);
+        overlapped.ShouldBe(1, "a held tick let later ticks run beside it");
+    }
+
     /// <summary>CARD-1791 A-5. A wall-clock step does not move the crash-expiry window.</summary>
     [Test]
     [Timeout(20_000)]

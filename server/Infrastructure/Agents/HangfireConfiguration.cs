@@ -459,6 +459,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     private BackendIdentity? _pending;
     private int _disposed;
     private Action? _faultAfterFreshLock;
+    private Action? _tickProbe;
 
     internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
     {
@@ -537,6 +538,10 @@ internal sealed class HangfireWorkerLease : IDisposable
     internal void FaultAfterNextFreshLock(Action fault) =>
         _faultAfterFreshLock = fault ?? throw new ArgumentNullException(nameof(fault));
 
+    /// <summary>rc run b7812833 g122. Tests hold a tick open to observe whether ticks overlap.</summary>
+    internal void ProbeEachTick(Action probe) =>
+        _tickProbe = probe ?? throw new ArgumentNullException(nameof(probe));
+
     /// <summary>CARD-1774. The command timeout Dispose uses when it unlocks.</summary>
     internal int ReadUnlockCommandTimeoutSeconds()
     {
@@ -592,6 +597,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     {
         try
         {
+            _tickProbe?.Invoke();
             EnsureHeld();
         }
         catch (Exception ex)
