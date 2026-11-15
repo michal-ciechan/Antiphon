@@ -899,6 +899,9 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-166 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C957_Scratch_mutation_controls_go_red_and_restore` | R-CP39.18 complete adjacent 5/7 | all intended arguments; 0 failed/skipped | 3 | 1 | true |
 | CP-167 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence` | R-CP39.18 complete adjacent 6/7 | all intended arguments; 0 failed/skipped | 1 | 3 | true |
 | CP-168 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C980_Repo_root_assignment_preserves_linux_bytes` | R-CP39.18 complete adjacent 7/7 | all intended arguments; 0 failed/skipped | 1 | 1 | true |
+| CP-169 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work` | R-CP39.18 explicit census partition 1/3 | all preserved argument identities; 0 failed/skipped | 4 | 3 | true |
+| CP-170 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work_binding` | R-CP39.18 explicit census partition 2/3 | all preserved argument identities; 0 failed/skipped | 5 | 4 | true |
+| CP-171 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work_landing` | R-CP39.18 explicit census partition 3/3 | all preserved argument identities; 0 failed/skipped | 5 | 4 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -1097,3 +1100,21 @@ and the native Before hook are unchanged. Fresh TRX must show both exact tests,
 not the hook. The adjacent receipt test is also covered by CP40.02; this explicit
 repair selection is the only justified duplicate and is not a repeated green
 proof budget. No new test, relaxed assertion or lower count is used.
+
+CP-148 category attempt did not qualify: at270a728b2bfb929a1534cf47c133c23459061293,
+run20261115-022751-c9e2 reached its2min cap after TUnit engine startup, with no
+test-start event or complete TRX. Root-cause attribution remains unresolved;
+this is neither an assertion red nor proof that the documented category syntax
+is unsupported. The controller was stopped/joined during the next slot wait.
+CP148..161 are historical unqualified category selections, never passed and not
+rerun. Replace them with CP169..171 explicit named methods containing4,5,5 of
+the original14 Arguments attributes, including unchanged tokens and category
+literals. All three call one original shared body verbatim; all14 assertions
+remain once in that helper and every original argument executes. New wrappers
+retain the native guard as their first statement. The old Windows skip-roster
+count12 disagreed with14 source attributes; replace it with4+5+5, not12 cases.
+Extend the same native-only policy row and frozen witnessed key, repin separately,
+and rerun the changed-input guards/mirrors already listed for CP138..147.
+Each new partition keeps the original whole-method9min ceiling, not a widened
+single-category timeout. Exact result floors4/5/5 and fresh argument identities
+are mandatory. CP162..168 still cover all16 adjacent argument results.

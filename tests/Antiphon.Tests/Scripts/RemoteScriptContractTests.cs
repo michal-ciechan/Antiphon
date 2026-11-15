@@ -3851,20 +3851,44 @@ public sealed class RemoteScriptContractTests
     [Arguments("terminal", 0, "", Categories = ["c1105-terminal"])]
     [Arguments("new-temp", 0, "", Categories = ["c1105-new-temp"])]
     [Arguments("new-desktop", 0, "", Categories = ["c1105-new-desktop"])]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_post_removal_census_tracks_open_work(string flip, int expect, string token)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        await C1105ResumePostRemovalCensusCaseAsync(flip, expect, token);
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test]
     [Arguments("new-server2", 2, "RecycleBoundTasks 44444444-4444-4444-4444-444444444444 status=Blocked runner=server2", Categories = ["c1105-new-server2"])]
     [Arguments("rebound", 0, "", Categories = ["c1105-rebound"])]
     [Arguments("rebound-server2", 2, "RecycleBoundTasks 22222222-2222-2222-2222-222222222222 status=Dispatched runner=server2", Categories = ["c1105-rebound-server2"])]
     [Arguments("preflight", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-preflight"])]
     [Arguments("missing-phase", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-missing-phase"])]
-    [Arguments("bad-tasks", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-bad-tasks"])]
-    [Arguments("verified", 0, "", Categories = ["c1105-verified"])]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1105_Resume_post_removal_census_tracks_open_work_binding(string flip, int expect, string token)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        await C1105ResumePostRemovalCensusCaseAsync(flip, expect, token);
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test]
     // CARD-1353 D-1: a pending land refuses the post-removal proof only when its row is bound to the
     // recycled runner (server2 here). A server2-temp land finishing during the recycle passes.
+    [Arguments("bad-tasks", 2, "RecycleTaskCensusUnknown cause=Unstable", Categories = ["c1105-bad-tasks"])]
+    [Arguments("verified", 0, "", Categories = ["c1105-verified"])]
     [Arguments("land", 2, "RecycleLandInFlight 44444444-4444-4444-4444-444444444444", Categories = ["c1105-land"])]
     [Arguments("land-other", 0, "", Categories = ["c1105-land-other"])]
     [Arguments("off-runner-churn", 0, "", Categories = ["c1105-off-runner-churn"])]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1105_Resume_post_removal_census_tracks_open_work(string flip, int expect, string token)
+    public async Task C1105_Resume_post_removal_census_tracks_open_work_landing(string flip, int expect, string token)
+    {
+        C1008HostFixture.RequireNativeLinux();
+        await C1105ResumePostRemovalCensusCaseAsync(flip, expect, token);
+    }
+
+    private async Task C1105ResumePostRemovalCensusCaseAsync(string flip, int expect, string token)
     {
         C1008HostFixture.RequireNativeLinux();
         const string kept = "22222222-2222-2222-2222-222222222222";
