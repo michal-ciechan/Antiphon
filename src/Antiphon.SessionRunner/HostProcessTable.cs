@@ -509,21 +509,24 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
     public IReadOnlyList<HostProcessObservation> Read(int maxProcesses, IReadOnlyCollection<int> retainPids, CancellationToken cancellationToken = default)
     {
         LastReadTruncated = false;
-        var budget = new ScanBudget(_cpuBudget, _threadCpu);
         Dictionary<int, string> names;
         try
         {
             using var snapshot = _source.Snapshot();
             if (snapshot is null) return [];
-            names = SnapshotNames(snapshot, budget, cancellationToken);
+            names = SnapshotNames(snapshot, cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             return [];
         }
 
-        if (LastReadTruncated)
-            return [];
+        // rc b7812833: on a ~500-process desktop the toolhelp capture costs ~8 ms and its walk ~9 ms
+        // of thread CPU (Process32NextW maps the snapshot per entry). Charged to the 10 ms budget,
+        // every scan stopped inside the walk and returned no rows. The snapshot is finite and its
+        // cost follows the host's process count, so the budget starts after it and governs the
+        // per-process handle reads it can stop, retained pids first.
+        var budget = new ScanBudget(_cpuBudget, _threadCpu);
         var ids = new List<int>(names.Count);
         foreach (var pid in names.Keys) ids.Add(pid);
         ids.Sort();
@@ -551,18 +554,12 @@ internal sealed class WindowsHostProcessTable : IHostProcessTable
         return list;
     }
 
-    private Dictionary<int, string> SnapshotNames(IWindowsProcessSnapshot snapshot, ScanBudget budget, CancellationToken cancellationToken)
+    private static Dictionary<int, string> SnapshotNames(IWindowsProcessSnapshot snapshot, CancellationToken cancellationToken)
     {
         var result = new Dictionary<int, string>();
         while (snapshot.Next(out var pid, out var exe))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (budget.Exhausted())
-            {
-                LastReadTruncated = true;
-                break;
-            }
-
             if (pid > 0) result[pid] = exe;
         }
 
