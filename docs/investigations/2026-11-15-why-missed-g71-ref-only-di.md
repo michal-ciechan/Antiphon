@@ -140,6 +140,117 @@ retain the requested dispatcher/provisioner paths and shared-helper path.
 The selector's exact assertion is preserved. Recheck the failing selector
 method, table audit and derived-index guard after this table-only repair.
 
+### Final verification
+
+The complete guard union and selector class were rerun after the mapping repair
+at `89424627151a29051b4c50fbf0cac58b91b2f658`: 114 passed / 1 Windows-only
+skip and 50/50 passed, respectively. The original selector assertion was not
+changed. Table audit passes, and all eleven requested guard classes occur in
+the final TRX. Layering output is exactly
+`VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`.
+
+The following are the qualified runs; historical failures above remain separate.
+Counts are actual TUnit results, not internal assertion counts.
+
+| Row | Source | Passed | Failed | Skipped | Outer wall seconds |
+|---|---|---:|---:|---:|---:|
+| Production composition | 5b657e19a0a54ef41329604b502dc7a10cb4d7ae | 1 | 0 | 0 | 34.102 |
+| Rolling launch / late drain | 82451517f8a8f079933a16b60f38a1653c5b6162 | 3 | 0 | 0 | 35.405 |
+| Rolling rebind | same fixture source | 11 | 0 | 0 | 37.176 |
+| Rolling operations | same fixture source | 20 | 0 | 0 | 38.997 |
+| DelegationTestServices + harness census | same fixture source | 18 | 0 | 0 | 27.047 |
+| AgentTaskLandAdmissionControlledTests | same fixture source | 24 | 0 | 0 | 43.803 |
+| ReviewEvidenceRecoveryEndpointTests | same fixture source | 6 | 0 | 0 | 56.846 |
+| DispatcherLeaseSpanTests | same fixture source | 5 | 0 | 0 | 39.220 |
+| Ref-only provision/preparation/identity/gate | same fixture source | 23 | 0 | 0 | 61.664 |
+| Ref-only lifecycle/sync/debt/continuation | same fixture source | 19 | 0 | 0 | 93.131 |
+| Ref-only read/deliverable/consumer/receipt | same fixture source | 11 | 0 | 0 | 74.365 |
+| Ref-only landing/cleanup/boundary | same fixture source | 20 | 0 | 0 | 98.114 |
+| Ref-only snapshot migration/native | same fixture source | 4 | 0 | 3 | 84.479 |
+| Required eleven-class guard union | 89424627151a29051b4c50fbf0cac58b91b2f658 | 114 | 0 | 1 | 238.358 |
+| ImpactedClassesSelectorTests | same final mapping source | 50 | 0 | 0 | 285.312 |
+| **Total** | **15 qualified rows** | **329** | **0** | **4** | **1248.019** |
+
+The rolling split covers all 33 declared methods and 34 argument-expanded cases.
+All 17 declared `C0824RefOnly*Tests` classes appear in the five ref-only rows.
+Three skipped cases are the Windows-only producer witnesses in
+`C0824RefOnlyNativeTests`; the fourth is
+`C1210_Windows_linux_only_outcomes_are_exact`. No Windows acceptance is claimed.
+The final mapping change touches only `tests/impacted-classes.json` and this note;
+fixture C# is identical to its passing source. Production C# and the production
+composition witness are identical to the earlier passing production source.
+
+All builds and tests used `scripts/build-slot.ps1`, native default output and
+`UseAppHost=false`. Test rows ran serially with `TUNIT_MAX_PARALLEL_TESTS=4`,
+`dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false`, the
+exact filters in `.antiphon/evidence/ac8b9d8e/run-rows.ps1`, `--report-trx` and
+an outer `--timeout 9m` ceiling. Existing assertions and test timeouts have zero
+diff. No row exceeded ten minutes; the longest was the final selector at
+285.312s. Every completed build/test lease was granted immediately and released.
+These are direct Debug runs, not checkpoint-tool receipts or a Review verdict.
+
+Native test builds: baseline 235.86s, first fix 210.57s, seed repair 219.12s,
+mapping repair 229.75s; each had zero errors (2094 existing warnings). The extra
+build/selection after each repair is attributed to that changed source, not an
+unchanged retry. The syntax-index driver was built first, 7.81s, zero errors;
+generation printed changed then unchanged and was committed separately. After
+the mapping correction, both further generations printed unchanged. The three
+historical extra rows are retained: first rolling launch 2/3, 38.793s; first
+guard union 114 passed / 1 skip, 236.318s; first selector 49/50, 250.248s.
+The 18 recorded executions total 1773.378s, excluding the original baseline red
+and builds. Costs were not erased by the fixes. These are individual loaded
+samples, not calibrated p95 measurements. CARD-1906 load was recorded per row;
+an observed build-time one-minute load sample reached 28.14.
+
+An initial task-owned outer PowerShell wrapper was stopped and joined with exit
+143 before any child test/build-slot request: native wildcard expansion scanned
+the filesystem instead of forwarding the filter. Its replacement uses
+`ProcessStartInfo.ArgumentList`; no stopped attempt is counted as test evidence.
+A read-only selector invocation with the wrong parameter name and a hash-helper
+invocation missing its common import were corrected; neither ran tests or earns
+test credit.
+
+Generated evidence remains ignored in `.antiphon/evidence/ac8b9d8e/`: per-row
+TRX/HTML, `*-run.json` with source/image/filter/load/elapsed time,
+`row-summary.json` with every case and duration, build/slot logs, historical task
+reports and phase journals under `phase/`. Fixture/DB/process phases are retained
+where journaled; unavailable external-call breakdowns remain unknown. Metadata
+binds the final guard/selector assembly to SHA-256
+`DFCCC99FDBA04E3FB00E950F3F8EC0E383608AF59A716EFDFB14890619EEBD7E`.
+The fixture assembly at its passing source is
+`33562632BB97B5008E9272DE4FD1346A69680FA3834C77751E0170222A9DA8F1`;
+the production witness assembly is
+`D5194F8ADB32A9D5CAF0C6B8ACEE573DCC70B0216E54D09DBEDBF59641E335D9`.
+
+Verified pins remain unchanged:
+
+- policyHash: `b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d`
+  (recomputed with the canonical helper).
+- PinnedInputDigest: `26d90df028d4e2358ed43b02aa7ef4ad688224c5470aba371d2fd566ff4a663e`
+  (printed by the existing read-only digest mode).
+- LegacyExclusionDigest: `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`
+  (unchanged constant, validated by the passing native-policy guard).
+
+There is no diff in production source, `tests/test-execution-policy.json`,
+`scripts/test-live-lane-run.ps1`, or `tests/Shared/TestTiming.cs`. No host was
+restarted and neither live Windows qualification was changed. Mutation remains
+operator-waived. The work proceeded under the brief's standing authority.
+
+### Published slices
+
+- `dc802819b20ea690222ec126c5c3bd1a04cd0039`: current-master DI red and why-missed record.
+- `75f476ea39ed1edfff1ad3ff317b1b2059cc2fff`: fixture progress fake, production DI witness, impact row.
+- `5b657e19a0a54ef41329604b502dc7a10cb4d7ae`: separately regenerated derived index.
+- `82451517f8a8f079933a16b60f38a1653c5b6162`: complete repository identity for seeded Code tasks.
+- `89424627151a29051b4c50fbf0cac58b91b2f658`: restrict the mapping and preserve the selector assertion.
+
+The later report-only commit contains this completed verification ledger; its
+full pushed SHA is in the caller progress marker. At final executable source,
+freshly fetched origin/master remained
+`d100f8fa2c679a5c74b6b235087308776a8f5d50`; merge-tree exited 0 with tree
+`03844172b5f1dd8c6a25bcad136a45ab5061563f`. Publication checks over the completed
+report commit are recorded in the caller report. Next stage: Merge, test-only fix.
+
 ## Exemption
 
 None; this is the first note for this cause.
