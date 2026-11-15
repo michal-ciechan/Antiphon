@@ -130,6 +130,16 @@ The original DI red and this subsequent assertion red remain separate evidence.
 The repaired source requires the full bounded verification recorded below.
 Mutation is operator-waived.
 
+At `82451517f8a8f079933a16b60f38a1653c5b6162`, all 34 rolling cases, all
+17 ref-only classes (77 passed, 3 Windows-only skips), 18 helper/census cases,
+35 replacement-fixture cases, and the guard union (114 passed, 1 Windows-only
+skip) passed. The 50-case selector row passed 49 and exposed one introduced
+selection regression: the extra `server/Program.cs` glob in the new kind also
+selected it for the historical telemetry S1 range. Remove that extra glob;
+retain the requested dispatcher/provisioner paths and shared-helper path.
+The selector's exact assertion is preserved. Recheck the failing selector
+method, table audit and derived-index guard after this table-only repair.
+
 ## Exemption
 
 None; this is the first note for this cause.
