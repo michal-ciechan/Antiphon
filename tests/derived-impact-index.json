@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 324,
+      "classes": 325,
       "reason": "allowlist"
     },
     {
@@ -1698,9 +1698,9 @@
     },
     {
       "path": "src/Antiphon.Agents.Pty/PtyAgentRunner.cs",
-      "classes": 62,
+      "classes": 63,
       "reason": "cap",
-      "owed": 37,
+      "owed": 38,
       "first": [
         "Card1619UnixExitTests",
         "Card1619WindowsExitTests",
@@ -2034,18 +2034,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 129,
+      "classes": 130,
       "reason": "cap",
-      "owed": 104,
+      "owed": 105,
       "first": [
+        "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "VerifyDindRunnerScriptTests",
         "VolumeRetirementApplyGateTests",
         "AppHostWatchdogStateObserverScriptTests",
         "InstructionBundleTests",
-        "LandGraphLandRefreshTests",
-        "MeasureSessionStateCacheScriptTests"
+        "LandGraphLandRefreshTests"
       ]
     },
     {
@@ -3434,6 +3434,7 @@
       "path": "scripts/build-slot.ps1",
       "classes": [
         "CheckpointManifestDocumentationTests",
+        "RunnerLinuxCompilerPolicyTests",
         "StableBuildOutputDocumentationTests"
       ]
     },
@@ -3719,6 +3720,18 @@
       "path": "scripts/fixtures/c1609-wrapper-v2-cases.mjs",
       "classes": [
         "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
+      "path": "scripts/fixtures/c1906-compiler-policy-compose.mjs",
+      "classes": [
+        "RunnerLinuxCompilerPolicyTests"
+      ]
+    },
+    {
+      "path": "scripts/fixtures/c589-slot-shim.ps1",
+      "classes": [
+        "RunnerLinuxCompilerPolicyTests"
       ]
     },
     {
@@ -22484,7 +22497,6 @@
         "DelegateScriptAdoptTests",
         "DelegateScriptCapabilityTests",
         "DelegateScriptKindTests",
-        "DelegateScriptLandApprovalTests",
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
@@ -22498,6 +22510,7 @@
         "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "RoutingPinScriptTests",
+        "RunnerLinuxCompilerPolicyTests",
         "VerifyPhoneHomeGrokScriptTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementReceiptTests",
