@@ -81,7 +81,16 @@
       "id": "timing-labels",
       "globs": [
         "tests/Shared/TestTiming.cs",
-        "tests/Antiphon.Tests/**/C1514HostLoad*.cs"
+        "tests/Antiphon.Tests/**/C1514HostLoad*.cs",
+        "tests/Antiphon.Tests/Scripts/ComposeFixtureRoot.cs",
+        "tests/Antiphon.Tests/Scripts/RunnerLinuxCompilerPolicyTests.cs",
+        "tests/Antiphon.Tests/Scripts/C1008ComposeSeed.cs",
+        "scripts/fixtures/compose-fixture-root.mjs",
+        "scripts/fixtures/compose-fixture-cleanup.test.mjs",
+        "scripts/fixtures/c1906-compiler-policy-compose.mjs",
+        "scripts/fixtures/c346-workspace-slot-compose.mjs",
+        "tests/Antiphon.Tests/TestHelpers/TestDbFixture*.cs",
+        "tests/Antiphon.Tests/Application/ChannelOutboundUnifiedTransportTests.cs"
       ],
       "added": {
         "glob": "tests/**",

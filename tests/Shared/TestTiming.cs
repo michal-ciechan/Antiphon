@@ -796,6 +796,7 @@ public sealed class TestTimingSession : IDisposable
         "c1934-kafka-api-server",
         "c1934-redpanda-container-create",
         "c1934-ryuk-create-start",
+        "compose-fixture-delete",
         "raw-reflog-fault", "source-snapshot",
         "historical migration database",
         "host-load API read fixtures",
