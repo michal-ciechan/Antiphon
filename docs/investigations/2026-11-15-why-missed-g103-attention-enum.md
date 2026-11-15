@@ -25,8 +25,11 @@ unchanged maximum assertion against the declared enum values. It found:
 This is a source bisection, distinct from the runtime endpoint reproductions.
 The culprit adds `AbandonMessage = 12` without changing the test. The entire
 `DelegationUnitTests.cs` file is unchanged between the old green source and
-current master. Runtime verification of the old source and the repair is recorded
-below when complete. Raw logs and fresh TRX are ignored under
+current master. The exact method also ran on a clean detached checkout of
+`b559bfba2e9a420495122d27171352fe9b7e1ba4`: 1 executed, 1 passed, 0 failed,
+0 skipped, exit 0. Its gated build passed in 209 seconds; the runner reported
+8.522 seconds, with an 11-second slot hold. This independently reproduces both
+ends of the supplied green-to-red interval. Raw logs and fresh TRX are ignored under
 `.antiphon/f21bf3ba-evidence/` in the task worktree.
 
 ## Intended contract
@@ -48,9 +51,12 @@ migration mapping under `server/Domain`, `server/Infrastructure/Data`, or
 the shipped ordinals must remain stable; renumbering either action would violate
 the append contract for no product benefit.
 
-The repair belongs in the test: retain the explicit ClearHold/Continue assertions,
-protect the shipped action name/value prefix, and allow later names only above
-that prefix. The neighboring AttentionKind contract uses the same pattern.
+The repair in `9e2dd96a3f5d7299f5556bf49ca42193b1c96758` retains the explicit
+ClearHold/Continue assertions, protects every shipped action name/value from
+Reply=0 through AbandonMessage=12, and allows later names only above 12.
+Renamed/deleted members, changed ordinals, and new aliases into the prefix fail.
+The neighboring AttentionKind contract uses the same pattern. No product source
+or client mapping changes.
 
 ## Why ordinary verification missed it
 
@@ -64,8 +70,11 @@ The existing `contracts` impacted-classes row selected `ContractSnapshotTests`
 for DTO edits, and `input-delivery-uncertainty` selected attention and queue
 behavior, but neither selected this enum contract class. A single row mapping
 `server/Application/Dtos/AttentionDtos.cs` to `UnmarkedWaitingContractTests`
-would have caught the failure before the Full run. Add that exact mapping to
-`tests/impacted-classes.json`; no selector-script change is needed.
+would have caught the failure before the Full run. The same repair commit adds
+the exact `attention-action-contract` mapping to `tests/impacted-classes.json`.
+Running `impacted-classes.ps1 -Path server/Application/Dtos/AttentionDtos.cs -Json`
+now names that kind and includes `UnmarkedWaitingContractTests` in its executable
+`tests/Antiphon.Tests` filter. The selector scripts are unchanged.
 
 ## Verification scope and performance
 
@@ -86,6 +95,11 @@ Nightly pins at the initial master are unchanged by this scope:
 - PinnedInputDigest: `26d90df028d4e2358ed43b02aa7ef4ad688224c5470aba371d2fd566ff4a663e`.
 - LegacyExclusionDigest: `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`.
 
+The policy hash was recomputed through `Read-NightlyExecutionPolicy`; the live-lane
+digest was recomputed with `test-live-lane-run.ps1 -PrintInputDigest`. Both match.
 Their protected inputs are outside this repair. The derived impact index will be
 regenerated separately after building its driver, with a second unchanged run.
 No live host, qualification run, runner setting, or release branch is touched.
+Final class/attention/guard/selector counts, index idempotence, source SHAs and
+merge/evidence audits belong to the stored Debug report, so this investigation
+can remain frozen before final source qualification.
