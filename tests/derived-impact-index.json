@@ -593,9 +593,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.BootStall.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -609,9 +609,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.CeilingHold.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -625,9 +625,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.DesktopMemory.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -641,9 +641,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PermissionWait.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -657,9 +657,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.PoolSupervision.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -673,9 +673,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskDispatcher.cs",
-      "classes": 131,
+      "classes": 132,
       "reason": "cap",
-      "owed": 106,
+      "owed": 107,
       "first": [
         "PostLandMutationWorktreeTests",
         "SpecialistQualificationTests",
@@ -10057,7 +10057,8 @@
       "classes": [
         "C0824RefOnlyPreparationTests",
         "C0824RefOnlyProvisionTests",
-        "C1729LayeringGuardTests"
+        "C1729LayeringGuardTests",
+        "RefOnlyProductionCompositionTests"
       ]
     },
     {
@@ -15543,6 +15544,7 @@
       "path": "server/Infrastructure/Git/TaskProgressGit.cs",
       "classes": [
         "C0824RefOnlySyncTests",
+        "RefOnlyProductionCompositionTests",
         "ReviewEvidenceRebindingTests",
         "RunnerSettlementSyncTests",
         "RunnerSyncLeaseFairnessTests",
@@ -25059,6 +25061,7 @@
         "BootStallDetectionTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DispatchBaseNotificationTests",
+        "PhoneHomeRollingRunnerTests",
         "TaskCompletionContinuationTests",
         "TaskCompletionProgressPolicyTests"
       ]
