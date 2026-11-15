@@ -259,3 +259,23 @@ Build both declared prerequisites first. Raw evidence is retained in `.antiphon/
 next: code
 handoff: Add CP-0; use CP-3/CP-4/CP-11 method rows at H=2 min and V=7 min; CP-6a/b/c=5/5/7 min and CP-10a/b/c/d=4/2/9/6 min; cold preparation 8+1 min, admission 10 min separately. Preserve the incomplete adjacent census and commission another bounded measurement task for its 28 outstanding classes.
 artifact: docs/investigations/2026-11-14-card-1901-verification-budget.md
+
+Round-2 repair scope: preserve the CP-5 roster-miss (12/12 executed/passed,
+Min13) and V8/V9 assertion failures from f399989c. Add direct FreshGraph fetch
+coverage as the actual thirteenth host-proof method; retain the three-minute
+full-class cap. Rerun the two stale-evidence failures and adjacent V1 only after
+the fixture observer changes. CP-124 native child-build confinement refusal
+executed zero tests and is incomplete. Repair child intermediates within the cold
+root, then run CP-124 (2min) and the affected complete six-method native factory
+class CP-129 (4min) serially. These are provisional n=0 caps, not p95 or extra
+proof repetitions; source/test inputs changed. No assertion or timeout widened.
+
+CP-39.13 measured an invalid aggregate size:540.8974s then9min row deadline,
+no complete TRX. Method-level phases showed uninspectable Git280.450s and
+promisor checkout107.276s; owned children continued changing, not one hung
+process. Keep historical failure/cost; CP-130..137 execute exactly its eight
+methods separately, retaining27 total argument results, same9min ceiling for
+six native scenarios and2min for each of the10/11-case static rosters. These
+are new selections, not a raised timeout or relaxed assertion. The original
+85min serial forecast is exceeded; it was provisional, not a measured p95.
+Record actual final group/row/slot costs and retain the performance Debug debt.

@@ -225,9 +225,22 @@ internal sealed class VolumeRetirementPublicationFixture
             "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable",
             string.Concat(Enumerable.Repeat("            c1609_publication_gate ready || c1008_refuse RecycleGitAuditUnknown\n", extraGates)) +
             "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable", StringComparison.Ordinal);
+        // An inventory refusal can precede a new full audit. Keep evidence from
+        // this invocation; an earlier successful preview must not supply its text.
+        var auditPath = Path.Combine(Root, "evidence", "retire-temp-runner", "preview-audit.out");
+        var auditStamp = File.Exists(auditPath) ? File.GetLastWriteTimeUtc(auditPath) : (DateTime?)null;
+        var inventoryRoot = Path.Combine(Root, "server", "retirement", VolumeRetirementFixture.Operation);
+        var priorInventories = Directory.Exists(inventoryRoot)
+            ? Directory.GetFiles(inventoryRoot, "inventory-*.out").ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
         var result = await Host.Run("retire-temp-runner", binding + extra, dryRun: true, sourceTransform: transform, control: callback);
         Host.Removed.ShouldBeEmpty("preview never removes volumes");
-        var text = result.Output + await VolumeRetirementFixture.AuditText(Host);
+        var text = result.Output;
+        if (File.Exists(auditPath) && File.GetLastWriteTimeUtc(auditPath) != auditStamp)
+            text += await File.ReadAllTextAsync(auditPath);
+        if (Directory.Exists(inventoryRoot))
+            foreach (var path in Directory.GetFiles(inventoryRoot, "inventory-*.out").Order(StringComparer.Ordinal))
+                if (!priorInventories.Contains(path)) text += await File.ReadAllTextAsync(path);
         await File.WriteAllTextAsync(Path.Combine(Root, "preview-" + ++sequence + ".out"), text);
         return (result.Exit, text);
     }

@@ -2833,9 +2833,13 @@ public sealed class RollingVolumeRecycleScriptTests
 
             ResetPreviewTrace(fixture);
             var admitted = await fixture.Run("retire-temp-runner", bound + "\n" + proofEnv + PreviewWitnessProbe, dryRun: true);
-            admitted.Exit.ShouldBe(0, "private-origin: a bound proof admits the authenticated tip; " + admitted.Output);
+            admitted.Exit.ShouldBe(2, "private-origin: offline content proof cannot authorize Ready without live renewal; " + admitted.Output);
             admitted.Output.ShouldContain("C1008_PREVIEW");
-            admitted.Output.ShouldNotContain("RecycleGitAuditUnknown");
+            admitted.Output.ShouldContain("RecycleGitAuditUnknown reason=proof-stale");
+            admitted.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+            (await VolumeRetirementFixture.AuditText(fixture)).ShouldContain(
+                "C1609_PROVED_OBJECT repo=" + repoRel + " object=" + tip + " type=commit", Case.Sensitive,
+                "the real offline scanner still proves the authenticated tip before the live gate refuses");
             admitted.Output.ShouldNotContain("RecycleUnpublishedWork");
             admitted.Output.ShouldNotContain("RecycleWorktreeDirty");
             File.Exists(Path.Combine(root, "host-git")).ShouldBeFalse("private-origin: the remote host does not invoke git");
@@ -2896,15 +2900,15 @@ public sealed class RollingVolumeRecycleScriptTests
 
             WriteV2BoundProof(proofDir, repoRel, url, operation, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), refs, bundleBytes);
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: repository 'https://github.com/example/missing.git' not found", 128));
-            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
-                "private-origin: a 404 still admits when the v2 proof matches");
+            await AssertPrivateProvisional(fixture, bound + "\n" + proofEnv, tip,
+                "private-origin: a 404 leaves matching offline content provisional");
             File.Exists(Path.Combine(root, "host-git")).ShouldBeFalse("private-origin: a 404 does not invoke helper git");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Could not resolve host: github.com", 128));
-            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
-                "private-origin: a DNS failure still admits when the v2 proof matches");
+            await AssertPrivateProvisional(fixture, bound + "\n" + proofEnv, tip,
+                "private-origin: a DNS failure leaves matching offline content provisional");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: Connection timed out", 124));
-            await AssertPrivateAdmission(fixture, bound + "\n" + proofEnv,
-                "private-origin: a timeout still admits when the v2 proof matches");
+            await AssertPrivateProvisional(fixture, bound + "\n" + proofEnv, tip,
+                "private-origin: a timeout leaves matching offline content provisional");
             await File.WriteAllTextAsync(origin, AuthRemote("fatal: could not read Username for 'https://github.com': terminal prompts disabled", 128));
 
             var dirtyFile = Path.Combine(repo, "dirty");
@@ -2957,20 +2961,14 @@ public sealed class RollingVolumeRecycleScriptTests
             inventory.Output.ShouldNotContain("could not read Username");
             fixture.Removed.ShouldBeEmpty("private-origin: inventory removes nothing");
 
-            // Refusal vectors replace the operation's Ready artifact with Refused,
-            // and the public-origin control changes the inventory. Apply needs a
-            // fresh real preview after restoring the private origin and proof.
-            await VolumeRetirementFixture.ReadyPreview(fixture,
-                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
+            // A sealed proof remains provisional; no Ready artifact was issued.
+            // The production wrapper's real live Preview/Apply is covered by W1.
             ResetPreviewTrace(fixture);
-            var applied = await fixture.Run("retire-temp-runner",
-                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
-            applied.Exit.ShouldBe(0, "private-origin: apply reuses the same proof check; " + applied.Output);
-            applied.Output.ShouldNotContain("RecycleGitAuditUnknown");
-            applied.Output.ShouldNotContain("RecycleUnpublishedWork");
-            applied.Output.ShouldNotContain("RecycleWorktreeDirty");
+            await AssertPrivateProvisional(fixture,
+                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv, tip,
+                "private-origin: a fresh sealed proof still requires live completion");
             var audits = fixture.Trace.Where(args => args.Length > 0 && args[0] == "run" && args.Contains("--entrypoint")).ToArray();
-            audits.Length.ShouldBeGreaterThan(0, "private-origin: apply forwards the proof bind");
+            audits.Length.ShouldBeGreaterThan(0, "private-origin: the real content scan forwards the proof bind");
             foreach (var args in audits)
             {
                 args.ShouldContain("--rm");
@@ -2981,6 +2979,11 @@ public sealed class RollingVolumeRecycleScriptTests
                 args.ShouldContain("type=bind,source=" + proofDir + ",target=/c1008-host-proof,readonly");
                 args.ShouldContain("C1008_HOST_PROOF=/c1008-host-proof");
             }
+            var applied = await fixture.Run("retire-temp-runner",
+                "C1008_CLEANUP_OPERATION=" + AppliedCleanupOperation + "\n" + proofEnv);
+            applied.Exit.ShouldBe(2, "private-origin: apply without a live Ready preview refuses; " + applied.Output);
+            applied.Output.ShouldContain("RecycleGitAuditUnknown reason=preview-required");
+            fixture.Removed.ShouldBeEmpty("a provisional proof cannot authorize any effect");
         }
         finally
         {
@@ -3142,13 +3145,16 @@ public sealed class RollingVolumeRecycleScriptTests
         File.WriteAllBytes(Path.Combine(directory, ProofFileName(repo, origin) + ".bundle"), "v1"u8.ToArray());
     }
 
-    private static async Task AssertPrivateAdmission(C1008HostFixture fixture, string extra, string because)
+    private static async Task AssertPrivateProvisional(C1008HostFixture fixture, string extra, string tip, string because)
     {
         ResetPreviewTrace(fixture);
         var run = await fixture.Run("retire-temp-runner", extra + "\n" + PreviewWitnessProbe, dryRun: true);
-        run.Exit.ShouldBe(0, because + "; " + run.Output);
+        run.Exit.ShouldBe(2, because + "; " + run.Output);
         run.Output.ShouldContain("C1008_PREVIEW", Case.Sensitive, because);
-        run.Output.ShouldNotContain("RecycleGitAuditUnknown");
+        run.Output.ShouldContain("RecycleGitAuditUnknown reason=proof-stale");
+        run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        (await VolumeRetirementFixture.AuditText(fixture)).ShouldContain(
+            "C1609_PROVED_OBJECT repo=repos/school-revision object=" + tip + " type=commit", Case.Sensitive, because);
         run.Output.ShouldNotContain("RecycleUnpublishedWork");
         run.Output.ShouldNotContain("RecycleWorktreeDirty");
         fixture.Removed.ShouldBeEmpty(because);
