@@ -546,14 +546,18 @@ public partial class AgentTaskDispatchBaseGuardTests
             }
             await using var provider = CreateProvider(Connection, Repo.WorktreeRoot, onLeaseAcquired: onLease, git: git);
             await using var scope = provider.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            await dispatcher.TickInspectedAsync(default);
             if (reobserve)
             {
                 // CARD-1349 S2: a default edited under the lease refuses the frozen claim; the next
                 // inspected tick observes the edit and dispatches from what it observed.
                 await using (var refused = Fresh())
                     (await refused.AgentTasks.SingleAsync(t => t.Id == Task.Id)).Status.ShouldBe(AgentTaskStatus.Queued);
-                await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+                // Join the old intent re-enqueued by the stale claim before starting the fresh
+                // cycle: a cancelled worker still joining would refuse its replacement enqueue.
+                await dispatcher.SiblingInspections!.WhenIdleAsync();
+                await dispatcher.TickInspectedAsync(default);
             }
             await using var check = Fresh();
             var dispatched = await check.AgentTasks.SingleAsync(t => t.Id == Task.Id);
