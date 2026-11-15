@@ -43,12 +43,19 @@ export async function withComposeFixture(prefix, body) {
     }
     console.log('evidence=' + root);
     const child = cp.spawn(process.execPath, process.argv.slice(1), {
-      stdio: 'inherit', env: { ...process.env, ANTIPHON_COMPOSE_FIXTURE_ROOT: root,
+      stdio: 'inherit', detached: process.platform !== 'win32', env: { ...process.env, ANTIPHON_COMPOSE_FIXTURE_ROOT: root,
         ANTIPHON_COMPOSE_FIXTURE_TOKEN: token, ANTIPHON_COMPOSE_FIXTURE_WORKER: '1' }
     });
     let cancelled;
-    const interrupt = () => { cancelled = 130; child.kill('SIGINT'); };
-    const terminate = () => { cancelled = 143; child.kill('SIGTERM'); };
+    const signalWorker = signal => {
+      if (!child.pid) return;
+      try {
+        if (process.platform === 'win32') child.kill(signal);
+        else process.kill(-child.pid, signal); // Own group: include an active bash/Compose child.
+      } catch (failure) { if (failure.code !== 'ESRCH') throw failure; }
+    };
+    const interrupt = () => { cancelled = 130; signalWorker('SIGINT'); };
+    const terminate = () => { cancelled = 143; signalWorker('SIGTERM'); };
     process.once('SIGINT', interrupt);
     process.once('SIGTERM', terminate);
     try {
