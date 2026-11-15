@@ -44,6 +44,12 @@ PC-1 (422 field/limit), PC-2 (queue cap/cursor/byte budget), PC-3 (attention
 cap/continuation), PC-4 (current rules action/generation) and all variants remain
 pending SourceLanding Mutation; operator waived Code mutation checks.
 
+The first split red run could not build: npm ci created two hardlinks for its
+esbuild binary, rejected by checkpoint confinement. After the run exited, the
+task-owned ignored link was replaced with identical bytes and mode in a new inode.
+That build refusal executed zero tests and is not red proof. Client paging tests
+independently failed on both missing navigation buttons.
+
 ## Performance budget
 
 Serial rows, one shared isolated server build per red/green group. Existing cold
@@ -61,7 +67,7 @@ native outputs. No unchanged proof repetitions after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | red | tests/Antiphon.Tests -> bin-c1943-red2/ | regression-red | `/*/*/SessionQueueAbandonTests/(Abandon_reason_problem_details*)\|(Current_unconfirmed_listings*)\|(Abandoned_current_rules*)` | V-1,V-2,V-3 | 2 contract passes, 3 intended failures | 5 | 9 |
+| CP-1 | red | tests/Antiphon.Tests -> bin-c1943-red3/ | regression-red | `/*/*/SessionQueueAbandonTests/(Abandon_reason_problem_details*)\|(Current_unconfirmed_listings*)\|(Abandoned_current_rules*)` | V-1,V-2,V-3 | 2 contract passes, 3 intended failures | 5 | 9 |
 | CP-2 | green | tests/Antiphon.Tests -> bin-c1943-green/ | abandon-queue | `/*/*/(SessionQueueAbandonTests*)\|(SessionMessageQueueServiceTests*)\|(StandingSessionSwitchConcurrencyTests*)\|(StandingSessionQueueSwitchTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 4 | 9 |
 | CP-3 | green | CP-2 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)/*` | R-1 | all listed, 0 failed | 2 | 5 |
 | CP-4 | green | CP-2 | grok-rules | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesReceiptTests*)\|(GrokRulesTransactionTests*)\|(GrokRulesCompactionTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 5 |
