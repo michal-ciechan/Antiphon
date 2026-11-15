@@ -213,6 +213,8 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_preserves_tmp_copyup", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Verify_tmp_accepts_an_absent_pty_host", 10, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_resume_requires_matching_receipt", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_resume_requires_matching_receipt_drift", 1, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_resume_requires_matching_receipt_recreated", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Recycle_receipt_records_disk_and_partial_failure", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Retire_temp_rechecks_absence_and_retirement", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1008_Retire_temp_reclaims_below_cache_disk_gate", 1, ExistingReason),

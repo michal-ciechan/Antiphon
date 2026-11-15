@@ -3068,6 +3068,14 @@ public sealed class RemoteScriptContractTests
             recovered.Exit.ShouldBe(0, "recycle-resume-generation: matching saved boundary " + fault + "; " + recovered.Output);
             partial.Removed.Length.ShouldBe(3);
         }
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_requires_matching_receipt_drift()
+    {
+        C1008HostFixture.RequireNativeLinux();
         foreach (var drift in new[] { "sourceSha", "project", "context", "dryRun", "composeDigest", "store", "generation", "stop-receipt" })
         {
             using var partial = new C1008HostFixture(); partial.Docker["fault"] = "rm-second-failed";
@@ -3092,6 +3100,14 @@ public sealed class RemoteScriptContractTests
             refused.Exit.ShouldBe(2, "recycle-resume-generation: bound receipt drift " + drift);
             partial.Removed.ShouldBe(new[] { "antiphon-runner_work" }, "recycle-resume-generation: no new deletion on " + drift);
         }
+    }
+
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1008_Recycle_resume_requires_matching_receipt_recreated()
+    {
+        C1008HostFixture.RequireNativeLinux();
         foreach (var foreign in new[] { false, true })
         {
             using var partial = new C1008HostFixture();

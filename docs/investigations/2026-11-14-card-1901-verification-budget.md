@@ -279,3 +279,18 @@ six native scenarios and2min for each of the10/11-case static rosters. These
 are new selections, not a raised timeout or relaxed assertion. The original
 85min serial forecast is exceeded; it was provisional, not a measured p95.
 Record actual final group/row/slot costs and retain the performance Debug debt.
+
+CP-39.15 again shows a workload-size defect: the resume method has16 paired
+recovery/drift/identity scenarios and does not finish inside the group's9min
+cap. Preserve the timeout/noTRX; divide its verbatim independent blocks among
+three native guarded methods, preserve assertions, and run all original adjacent
+methods as exact rows CP138..147 (40results). Required metadata/policy guards
+and all four witness compilations rerun because their inputs change. No timeout
+is widened; new method caps are documented in the plan.
+
+CP-39.18 phase attribution:12/14 post-removal census arguments consumed501.913s
+before the9min aggregate cap. Use its existing distinct c1105 Categories for
+14 exact per-argument checkpoint rows (2min each), requiring exactlyone fresh
+TRX identity; retain all seven adjacent methods/16results separately. Total30
+case results, unchanged tests and assertions. No category OR or whole-Unit
+selection: each filter includes exact class/method and one specific category.

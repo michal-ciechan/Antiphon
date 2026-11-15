@@ -755,7 +755,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-39.27 | S4 | CP-7 | linux-r2-final | `/*/*/RemoteScriptContractTests/(C912_Cold_seed_with_unrelated_bind_initializes_only_three_labelled_roots*)\|(C912_Cold_seed_refuses_when_created_volume_disappears_before_init*)\|(C912_Cold_volumes_seed_accepts_busy_main_without_packages*)\|(C912_Cold_volumes_seed_refuses_unknown_mounted_or_populated_targets*)\|(C912_Cold_volumes_seed_rechecks_initialization_and_probe_boundaries*)\|(C912_Cold_cache_probe_requires_uid_writes_cleanup_and_bounded_exit*)\|(C912_Cold_marker_has_distinct_validation_and_full_context_refusal*)\|(C912_Cold_runner_verification_uses_mounts_and_writability_not_payloads*)` | M-adjacent RemoteScriptContractTests slice 27 | every intended method; 0 failed/skipped | 8 | 3 | true |
 | CP-39.28 | S4 | CP-7 | linux-r2-final | `/*/*/RemoteScriptContractTests/(C912_Cold_exception_never_weakens_maintenance_or_donor_gates*)\|(C973_Cold_marker_readers_accept_pruned_seed_image_and_refuse_invalid_markers*)\|(C973_Cold_helper_readers_resolve_current_main_after_seed_image_prune*)\|(C973_Prune_and_saved_donor_still_require_full_after_seed_image_prune*)\|(C1168_State_init_tolerates_a_file_deleted_mid_walk*)\|(C1168_State_init_refuses_a_persistent_chown_error*)\|(C1168_State_init_owns_a_dangling_symlink*)\|(C1331_State_init_chowns_a_populated_tree_in_find_batches*)` | M-adjacent RemoteScriptContractTests slice 28 | every intended method; 0 failed/skipped | 8 | 3 | true |
 | CP-39.29 | S4 | CP-7 | linux-r2-final | `/*/*/RemoteScriptContractTests/(C1168_Rollout_docs_keep_redeploy_while_temp_holds_the_shared_store*)` | M-adjacent RemoteScriptContractTests slice 29 | every intended method; 0 failed/skipped | 1 | 3 | true |
-| CP-40 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(RequireNativeLinux*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)` | M-adjacent RetiredTempContainerHostTests slice 1 | every intended method; 0 failed/skipped | 2 | 3 | true |
+| CP-40 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C994_Older_retirement_receipt_does_not_block_cleanup*)\|(C994_Exited_owned_containers_are_removed_without_volumes*)` | M-adjacent RetiredTempContainerHostTests slice 1 | both actual test methods; native Before hook executes normally; 0 failed/skipped | 2 | 3 | true |
 | CP-40.02 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C994_Absent_cleanup_is_idempotent*)\|(C994_Older_retirement_receipt_does_not_block_cleanup*)` | M-adjacent RetiredTempContainerHostTests slice 2 | every intended method; 0 failed/skipped | 2 | 3 | true |
 | CP-40.03 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C994_Host_retirement_proof_is_typed*)\|(C994_Host_main_admission_is_required*)` | M-adjacent RetiredTempContainerHostTests slice 3 | every intended method; 0 failed/skipped | 2 | 3 | true |
 | CP-40.04 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C994_Host_task_and_land_census_is_complete*)\|(C994_Census_and_inspect_fail_closed*)` | M-adjacent RetiredTempContainerHostTests slice 4 | every intended method; 0 failed/skipped | 2 | 3 | true |
@@ -868,6 +868,37 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-135 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_audits_promisor_checkout` | R-CP39.13 complete split 6/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
 | CP-136 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Git_audit_recovery_tips` | R-CP39.13 complete split 7/8 | all intended method arguments; 0 failed/skipped | 10 | 1 | true |
 | CP-137 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Git_audit_seed_content` | R-CP39.13 complete split 8/8 | all intended method arguments; 0 failed/skipped | 11 | 1 | true |
+| CP-138 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1335_Mirror_owner_stamp_in_linked_admin` | R-CP39.15 complete split 1/10 | all intended method arguments; 0 failed/skipped | 12 | 1 | true |
+| CP-139 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Jq_argv_forms_are_absent` | R-CP39.15 complete split 2/10 | all intended method arguments; 0 failed/skipped | 2 | 1 | true |
+| CP-140 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Jq_file_forms_are_present` | R-CP39.15 complete split 3/10 | all intended method arguments; 0 failed/skipped | 8 | 1 | true |
+| CP-141 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Jq_argv_limit` | R-CP39.15 complete split 4/10 | all intended method arguments; 0 failed/skipped | 3 | 1 | true |
+| CP-142 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_preserves_tmp_copyup` | R-CP39.15 complete split 5/10 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-143 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Verify_tmp_accepts_an_absent_pty_host` | R-CP39.15 complete split 6/10 | all intended method arguments; 0 failed/skipped | 10 | 3 | true |
+| CP-144 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_requires_matching_receipt` | R-CP39.15 complete split 7/10 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-145 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_requires_matching_receipt_drift` | R-CP39.15 complete split 8/10 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-146 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_resume_requires_matching_receipt_recreated` | R-CP39.15 complete split 9/10 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-147 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_receipt_records_disk_and_partial_failure` | R-CP39.15 complete split 10/10 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-148 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-matching]` | R-CP39.18 exact census argument matching | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-149 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-terminal]` | R-CP39.18 exact census argument terminal | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-150 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-new-temp]` | R-CP39.18 exact census argument new-temp | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-151 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-new-desktop]` | R-CP39.18 exact census argument new-desktop | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-152 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-new-server2]` | R-CP39.18 exact census argument new-server2 | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-153 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-rebound]` | R-CP39.18 exact census argument rebound | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-154 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-rebound-server2]` | R-CP39.18 exact census argument rebound-server2 | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-155 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-preflight]` | R-CP39.18 exact census argument preflight | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-156 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-missing-phase]` | R-CP39.18 exact census argument missing-phase | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-157 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-bad-tasks]` | R-CP39.18 exact census argument bad-tasks | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-158 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-verified]` | R-CP39.18 exact census argument verified | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-159 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-land]` | R-CP39.18 exact census argument land | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-160 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-land-other]` | R-CP39.18 exact census argument land-other | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-161 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work[Category=c1105-off-runner-churn]` | R-CP39.18 exact census argument off-runner-churn | exactly 1 argument result with matching display identity; 0 failed/skipped | 1 | 1 | true |
+| CP-162 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C944_All_cache_loop_variables_are_local` | R-CP39.18 complete adjacent 1/7 | all intended arguments; 0 failed/skipped | 1 | 1 | true |
+| CP-163 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C951_Cache_paths_refuse_symlinked_mountpoints_and_refusing_sudo` | R-CP39.18 complete adjacent 2/7 | all intended arguments; 0 failed/skipped | 8 | 1 | true |
+| CP-164 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C976_Missing_helper_image_preserves_final_receipt_diagnosis` | R-CP39.18 complete adjacent 3/7 | all intended arguments; 0 failed/skipped | 1 | 1 | true |
+| CP-165 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C946_Rolling_harness_cleans_only_its_owned_success_root` | R-CP39.18 complete adjacent 4/7 | all intended arguments; 0 failed/skipped | 1 | 1 | true |
+| CP-166 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C957_Scratch_mutation_controls_go_red_and_restore` | R-CP39.18 complete adjacent 5/7 | all intended arguments; 0 failed/skipped | 3 | 1 | true |
+| CP-167 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence` | R-CP39.18 complete adjacent 6/7 | all intended arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-168 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C980_Repo_root_assignment_preserves_linux_bytes` | R-CP39.18 complete adjacent 7/7 | all intended arguments; 0 failed/skipped | 1 | 1 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -1021,3 +1052,48 @@ small static-argument rosters use2min. No timeout is widened and no case is
 removed. Other green or unfailed groups are not split speculatively.
 
 Current unbound Mutation roster: PC-1..35, 48 variant rows, all pending.
+
+CP-39.15 timeout repair: the original eight-method group was interrupted by
+Main184's aggregate budget, then exceeded its unchanged9min row cap in
+20261115-001243-ee47. No complete TRX; neither attempt passes the row. Owned
+child processes kept changing. The resume method performed paired initial/resume
+runs for16 independent logical scenarios. Keep its creation/ordinary recovery
+blocks in the original method; move the eight receipt-drift scenarios and two
+recreated-volume identity scenarios verbatim into two separately guarded methods.
+Mechanical preservation checks require identical concatenated original body bytes
+and unchanged assertion count. No timeout, fixture fault, production behavior or
+assertion changes. Extend the exact independent native roster and existing
+Windows-only test exclusions for these same cases; update the witnessed key,
+then re-pin in its own commit and regenerate the index twice.
+CP-138..147 replace execution of the historical CP-39.15 aggregate: all seven
+other original methods remain exact rows, and all three resume pieces run. Their
+40 total results preserve every original argument case plus the two new method
+identities. Static rows CP138..141 use2min caps, CP142/143 use4min, CP144/145/147
+retain the old9min ceiling, and CP146 uses5min; provisional n=0 for new selections.
+Required changed-input guards: CP10a/b/c/d, CP13, CP116, CP121 and mirror
+CP122/123/124. Their unchanged row caps apply; no whole assembly. Native Windows
+CP116 remains owed, including the two additional guarded resume identities.
+
+CP-39.18 sizing repair: original8-method group timed out at its unchanged9min
+cap in run20261115-001243-ee47, with no complete TRX. Phase records show12 of
+14 post-removal census arguments used501.913s. The existing per-argument
+Categories provide precise selectors: CP148..161 select each of the14 literal
+c1105 categories once using the documented [Category=X] TUnit predicate. No test
+source, input or assertion is changed for this selection repair. Each row has a
+provisional2min cap and MUST execute exactly one named argument; inspect fresh
+TRX display identity plus exact class/method. Zero or multiple results do not
+qualify. CP162..168 retain the seven other original methods, all16 argument
+results: total30 preserved. Caps are2min except CP167's existing-method first
+measurement ceiling9min. Keep the original CP39.18 timeout historical; do not
+rerun or mark that aggregate passed. No timeout widened and no case dropped.
+
+CP-40 roster repair: f399's plan counted public RequireNativeLinux, but source
+shows [Before(Test)], not [Test]. The161c run executed/passed the one selected
+actual test and correctly reported roster-miss against Min2. Preserve that
+failure. Replace only the non-test operand with the adjacent actual
+C994_Older_retirement_receipt_does_not_block_cleanup method; retain Min2 and
+C994_Exited_owned_containers_are_removed_without_volumes. The latter's assertions
+and the native Before hook are unchanged. Fresh TRX must show both exact tests,
+not the hook. The adjacent receipt test is also covered by CP40.02; this explicit
+repair selection is the only justified duplicate and is not a repeated green
+proof budget. No new test, relaxed assertion or lower count is used.

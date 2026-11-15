@@ -29,6 +29,8 @@ public sealed class C1008PlatformContractTests
         "RemoteScriptContractTests.C1008_Recycle_refuses_uninspectable_git",
         "RemoteScriptContractTests.C1008_Recycle_preserves_tmp_copyup",
         "RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt",
+        "RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt_drift",
+        "RemoteScriptContractTests.C1008_Recycle_resume_requires_matching_receipt_recreated",
         "RemoteScriptContractTests.C1008_Recycle_receipt_records_disk_and_partial_failure",
         "RemoteScriptContractTests.C1008_Retire_temp_rechecks_absence_and_retirement",
         "RemoteScriptContractTests.C1008_Retire_temp_reclaims_below_cache_disk_gate",
