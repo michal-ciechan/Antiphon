@@ -14,6 +14,8 @@ with the runtime resolver. The brief's guard union is split by cost/platform: CP
 nine portable classes, the ordinary index class gets CP-102, and WindowsUnitPlatformAdmissionTests
 gets six portable methods in CP-104 plus its pre-existing Windows-only method in CP-105.
 CP-105 records an expected Linux skip, never Windows execution credit. CP-103 protects the adjacent project/relation contracts.
+The full task selector also derives ReleaseImpactEnvelopeTests from the changed ordinary index;
+CP-106 includes that class (eleven argument-expanded results, source-bound envelope/drift invariant).
 TestLaneCategoryGuardTests is the matching impacted hand row. No whole Unit lane or assembly.
 Tests use in-memory trees and source parser calls; no server, DB, Docker or process fixture.
 The real declaration witness reads only repository files, never starts the declared host.
@@ -28,10 +30,11 @@ The real declaration witness reads only repository files, never starts the decla
 | CP-103 | S1R4 | CP-5 | adjacent-graph | `/*/*/(ReleaseImpactRelationTests*)\|(ReleaseImpactProjectTests*)/*` | V-2/V-3 adjacent regression | all named methods, 0 failed/skipped | 17 | 1 | true |
 | CP-104 | S1R4 | CP-5 | platform-guards | `/*/*/WindowsUnitPlatformAdmissionTests/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)\|(C1210_Host_roster_matches_windows_shaped_observation*)\|(C1226_Pin_inspection_methods_skip_off_linux*)` | Final guard union portable methods | all six methods, 0 failed/skipped | 6 | 1 | true |
 | CP-105 | S1R4 | CP-5 | native-pending | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Windows_linux_only_outcomes_are_exact` | Existing native obligation; no Windows credit | one named skip on Linux, 0 failed | 0 | 1 | true |
+| CP-106 | S1R4 | CP-5 | envelope-regression | `/*/*/ReleaseImpactEnvelopeTests/*` | V-1/V-6D derived impact | all eleven results, 0 failed/skipped | 11 | 2 | true |
 
 ## Performance budget
 
-21 minutes provisional including one cold build, each row/build capped at 10 minutes (`--row-timeout 10m`);
+23 minutes provisional including one cold build, each row/build capped at 10 minutes (`--row-timeout 10m`);
 45-minute finite admission is separate. Red runs CP-5 alone; green uses a fresh output root
 and runs all rows serially. No repetition after green. Bootstrap checkpoint tool and ordinary
 index driver builds are necessary, declared tooling preparation through build-slot in native
@@ -59,7 +62,7 @@ positives; computed paths, directory enumeration and host launch remain unresolv
 a declaration adds known inputs. This module retains runtime-reader-census-unavailable and
 every inherited graph reason. S1R6 must bind the full immutable trees and algorithm inputs;
 this module cannot supply an authoritative complete release graph on its own.
-Validate clean passing receipts for CP-5, CP-101..104; inspect CP-105's fresh TRX and source
+Validate clean passing receipts for CP-5, CP-101..104, CP-106; inspect CP-105's fresh TRX and source
 stamp separately because the green-only validator intentionally refuses skips. This existing
 native method remains owed on Windows, outside portable S1R4 acceptance; no OS branch changed.
 
