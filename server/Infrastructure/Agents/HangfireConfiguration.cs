@@ -460,6 +460,7 @@ internal sealed class HangfireWorkerLease : IDisposable
     private int _disposed;
     private Action? _faultAfterFreshLock;
     private Action? _tickProbe;
+    private int _ticking;
 
     internal HangfireWorkerLease(NpgsqlConnection connection, string probe)
     {
@@ -593,8 +594,15 @@ internal sealed class HangfireWorkerLease : IDisposable
             Interlocked.Exchange(ref _timer, null)?.Dispose();
     }
 
+    /// <summary>
+    /// rc run b7812833 g122. One tick at a time. A tick that outlasts its period (a refused
+    /// connect takes about 2 s on Windows) skips the periods it overlaps instead of parking
+    /// one more pool thread on <see cref="_gate"/> per period.
+    /// </summary>
     private void OnTick()
     {
+        if (Interlocked.Exchange(ref _ticking, 1) != 0)
+            return;
         try
         {
             _tickProbe?.Invoke();
@@ -607,6 +615,10 @@ internal sealed class HangfireWorkerLease : IDisposable
             if (!IsAnotherWorker(ex) && WithinCrashExpiryWindow())
                 return;
             StopHost();
+        }
+        finally
+        {
+            Volatile.Write(ref _ticking, 0);
         }
     }
 
