@@ -3,12 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import cp from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { withComposeFixture } from './compose-fixture-root.mjs';
 
 // Daemon-free acceptance: real Compose files, production wrappers and complete phase functions.
 // Deployment side effects are replaced; seed_runner_checkout stops each phase AFTER its env write.
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const root = fs.mkdtempSync(path.join(repo, '.antiphon/c1906-compose-'));
-console.log('evidence=' + root);
+await withComposeFixture('c1906-compose-', async root => {
 const key = 'ANTIPHON_LINUX_COMPILER_POLICY';
 const source = fs.readFileSync(path.join(repo, 'scripts/c590-remote.sh'), 'utf8');
 function extract(name) {
@@ -90,7 +90,7 @@ if (modelValue !== undefined) {
   save(env.SERVER2_ENV, modelValue);
   save(env.SERVER2_TEMP_ENV, modelValue === '1' ? '0' : '1');
   console.log('MODEL ' + JSON.stringify(JSON.parse(bash('compose_host config --format json\n'))));
-  process.exit(0);
+  return;
 }
 // Refusals exercise the complete production phases and wrappers. Every boundary that could
 // start/change anything leaves a marker and exits; checking the fixture tree catches writes too.
@@ -191,7 +191,7 @@ assert.equal(refusals, attempts);
 console.log(selectedShape || selectedAction
   ? `PASS refusals=${refusals} selected-case=${selectedShape ?? '*'} selected-action=${selectedAction ?? '*'}`
   : `PASS refusals=${refusals} original-refusals=12 malformed-refusals=${malformed.length * 4}`);
-if (process.argv.includes('--refusals-only') || selectedShape || selectedAction) process.exit(0);
+if (process.argv.includes('--refusals-only') || selectedShape || selectedAction) return;
 let matrices = 0;
 for (const temp of [false, true]) {
   const file = temp ? env.SERVER2_TEMP_ENV : env.SERVER2_ENV;
@@ -242,3 +242,5 @@ delete current.services['session-runner'].environment[key];
 assert.deepEqual(current, base, 'default render changed outside the new zero flag');
 assert.equal(matrices, 16);
 console.log(`PASS matrices=16 refusals=${refusals} missing-file=1 base-equivalence=1`);
+
+});
