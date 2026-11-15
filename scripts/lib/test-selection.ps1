@@ -156,10 +156,18 @@ function Invoke-TestSelectionGit {
     # objects): one selection reads the same contract blobs dozens of times. Only answered reads (exit 0) of
     # those two shapes are kept, per process; a missing object or any refusal is asked of git every time.
     # Whether one full commit id is an ancestor of another cannot change either: both answers (0, 1) are kept.
+    # A full commit id's recursive tree listing, its tree id, its committer time and the merge base of two full
+    # commit ids are fixed by the same objects. One rc baseline proposal re-reads them for every pointer and
+    # every admission hop (CARD-1947: 288 git calls, 90 of them the same two ls-tree reads, 58 s on Windows).
     $memoKey=$null
     $ancestry=($Arguments.Count -eq 4 -and $Arguments[0] -ceq 'merge-base' -and $Arguments[1] -ceq '--is-ancestor' -and
         $Arguments[2] -cmatch '^[0-9a-f]{40}$' -and $Arguments[3] -cmatch '^[0-9a-f]{40}$')
-    if($ancestry -or ($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'cat-file' -and
+    $immutable=(($Arguments.Count -eq 5 -and $Arguments[0] -ceq 'ls-tree' -and $Arguments[1] -ceq '-r' -and $Arguments[2] -ceq '-z' -and
+            $Arguments[3] -ceq '--full-tree' -and $Arguments[4] -cmatch '^[0-9a-f]{40}$') -or
+        ($Arguments.Count -eq 2 -and $Arguments[0] -ceq 'rev-parse' -and $Arguments[1] -cmatch '^[0-9a-f]{40}\^\{tree\}$') -or
+        ($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'merge-base' -and $Arguments[1] -cmatch '^[0-9a-f]{40}$' -and $Arguments[2] -cmatch '^[0-9a-f]{40}$') -or
+        ($Arguments.Count -eq 4 -and $Arguments[0] -ceq 'show' -and $Arguments[1] -ceq '-s' -and $Arguments[2] -ceq '--format=%ct' -and $Arguments[3] -cmatch '^[0-9a-f]{40}$'))
+    if($ancestry -or $immutable -or ($Arguments.Count -eq 3 -and $Arguments[0] -ceq 'cat-file' -and
         (($Arguments[1] -ceq '-t' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}$') -or ($Arguments[1] -ceq 'blob' -and $Arguments[2] -cmatch '^[0-9a-fA-F]{40}:[^:]')))){
         if($null -eq $script:TestSelectionGitMemo){$script:TestSelectionGitMemo=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)}
         $memoKey=$start.WorkingDirectory+[char]0+($Arguments -join [char]0)
