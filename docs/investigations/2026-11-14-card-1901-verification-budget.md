@@ -294,3 +294,11 @@ before the9min aggregate cap. Use its existing distinct c1105 Categories for
 TRX identity; retain all seven adjacent methods/16results separately. Total30
 case results, unchanged tests and assertions. No category OR or whole-Unit
 selection: each filter includes exact class/method and one specific category.
+
+Category attempt CP148 produced no test-start/TRX inside2min under host load,
+so it is not a measurement of one census case and is not passed. Keep its
+unresolved startup attribution. CP169..171 select explicit4/5/5-argument method
+partitions through one unchanged shared body; original9min whole-method ceiling
+and all14 argument/assertion literals remain. Do not widen/rerun the category
+selector. Correct native Windows roster12 to actual4+5+5=14 and refresh its
+policy pins and witness key; no extra production behavior or bypass.
