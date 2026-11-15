@@ -24036,6 +24036,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ComposeFixtureRoot.cs",
+      "classes": [
+        "RunnerLinuxCompilerPolicyTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs",
       "classes": [
         "DerivedImpactIndexTests"
