@@ -1726,8 +1726,36 @@ public class UnmarkedWaitingContractTests
     {
         ((int)AttentionAction.ClearHold).ShouldBe(10);
         ((int)AttentionAction.Continue).ShouldBe(11);
-        Enum.GetValues<AttentionAction>().Max(v => (int)v).ShouldBe(11,
-            "CARD-0294 S1 must append Continue after ClearHold=10; do not renumber");
+
+        // CARD-0294 froze ClearHold/Continue at 10/11, not the enum's maximum forever.
+        // CARD-1892 appended AbandonMessage=12. Protect the shipped prefix while allowing
+        // future actions to append, as the AttentionKind contract above does.
+        var prefix = new Dictionary<string, int>
+        {
+            ["Reply"] = 0,
+            ["Retry"] = 1,
+            ["Cancel"] = 2,
+            ["Escalate"] = 3,
+            ["SendNow"] = 4,
+            ["CancelMessage"] = 5,
+            ["OpenDrawer"] = 6,
+            ["KillSession"] = 7,
+            ["OpenAgent"] = 8,
+            ["OpenCard"] = 9,
+            ["ClearHold"] = 10,
+            ["Continue"] = 11,
+            ["AbandonMessage"] = 12,
+        };
+        foreach (var (name, value) in prefix)
+            ((int)Enum.Parse<AttentionAction>(name)).ShouldBe(value, name + " must keep value " + value);
+        foreach (var name in Enum.GetNames<AttentionAction>())
+        {
+            var value = (int)Enum.Parse<AttentionAction>(name);
+            if (prefix.TryGetValue(name, out var expected))
+                value.ShouldBe(expected, name + " is in the protected 0..12 prefix");
+            else
+                value.ShouldBeGreaterThan(12, name + " must append after AbandonMessage=12");
+        }
     }
 }
 
