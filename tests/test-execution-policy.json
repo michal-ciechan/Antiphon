@@ -1322,6 +1322,8 @@
             "C1008_Recycle_preserves_tmp_copyup",
             "C1105_Verify_tmp_accepts_an_absent_pty_host",
             "C1008_Recycle_resume_requires_matching_receipt",
+            "C1008_Recycle_resume_requires_matching_receipt_drift",
+            "C1008_Recycle_resume_requires_matching_receipt_recreated",
             "C1008_Recycle_receipt_records_disk_and_partial_failure",
             "C1008_Retire_temp_rechecks_absence_and_retirement",
             "C1008_Retire_temp_reclaims_below_cache_disk_gate",
