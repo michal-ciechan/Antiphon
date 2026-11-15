@@ -43,12 +43,11 @@ Checkpoint timings/logs and loadavg live under `.antiphon/c1906/`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-b/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1906-c/` | compiler-policy | `/*/*/RunnerLinuxCompilerPolicyTests/*` | V-1, V-2, V-3, V-4 | every new setting case, zero failures | 35 | 2 | true |
 | CP-2 | all | CP-1 | deploy-contracts | `/*/*/(DockerStackContractTests*)\|(DeployServer2ApiDefaultTests*)/*` | R-1 | all named class cases, zero failures | 2 | 2 | true |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(ImpactedClassesSelectorTests*)/*` | R-2 | every named class, native Windows skip separately owed | 12 | 6 | true |
 | CP-4 | all | CP-1 | remote-ordering | `/*/*/RemoteScriptContractTests/(C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle*)\|(C0995_Deploy_temp_checks_host_absence_before_checkout*)\|(C849_Deploy_temp_names_saved_import_when_seed_is_missing*)\|(C849_Deploy_ordering_contract_is_pinned*)\|(C849_Deploy_temp_observes_inaccessible_docker_mountpoints_with_sudo*)\|(C849_Saved_donor_archive_is_checked_and_imported_without_a_container*)\|(C849_Deploy_prepares_and_verifies_before_acceptance*)` | R-1, R-2 | five impacted methods plus both other harness callers, zero failures | 7 | 2 | true |
 | CP-5 | all | n/a | workspace-slots | `node scripts/fixtures/c346-workspace-slot-compose.mjs` | R-1 | unchanged slot assertions and real Compose models | n/a | 1 | true |
-
 | CP-6 | all | CP-1 | limiter-main | `/*/*/ProcessSpawnLimitTests/*` | R-2 | main assembly spawn guard | 1 | 1 | true |
 | CP-7 | all | CP-1 | platform-census | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | R-2 | impacted native annotation census | 2 | 1 | true |
 | CP-8 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1906-runner/` | limiter-runner | `/*/*/ProcessSpawnLimitTests/*` | R-2 | runner assembly spawn guard | 2 | 3 | true |
