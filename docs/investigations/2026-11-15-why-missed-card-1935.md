@@ -124,8 +124,92 @@ An initial logging-wrapper attempt was stopped before it had a gate child/lease 
 it supplied zero test evidence. Literal ProcessStartInfo.ArgumentList forwarding replaced that
 wrapper. It is ignored local evidence infrastructure, not a repository repair.
 
-Post-fix class and guard verification will be appended after execution. Mutation checks are
-operator-waived (2026-11-12); the separate proof obligations remain pending.
+Mutation checks are operator-waived (2026-11-12); the separate proof obligations remain pending.
+
+### Completed post-fix verification
+
+All rows below bind the repaired source
+`454c77abb7f08d3151dcfe669cb7331d373a33ce`. Subsequent changes only complete this note.
+No production file changed. The impact resolver selected the two owned-child
+PostLandMutationDeliveryWorkerTests in addition to the caller class and lane guard;
+that is the reason for including those two cases in the class pack.
+
+| Row | Outcome | Wall / slot wait / held seconds | /proc/loadavg start | /proc/loadavg end |
+|---|---|---|---|---|
+| fix-build | build exit 0, 0 errors | 398.079 / 120 / 276 | 17.40 26.01 23.35 19/4386 5005 | 39.27 32.02 26.86 34/4199 14504 |
+| class-green | 56 executed, 56 passed, 0 failed, 0 skipped | 158.490 / 30 / 128 | 31.46 30.64 26.49 7/4210 15289 | 19.30 26.18 25.44 33/3973 14072 |
+| guards | 114 executed, 113 passed, 1 failed, 1 skipped | 328.301 / 60 / 266 | 16.72 25.40 25.19 10/4062 14673 | 11.23 17.34 21.68 5/3939 1906 |
+| driver-build | standalone driver build exit 0, 0 warnings/errors | 23.771 / 15 / 7 | 21.73 19.25 22.11 8/3924 3917 | 19.24 18.86 21.92 10/4009 5544 |
+| guard-driver-green | 1 executed, 1 passed, 0 failed, 0 skipped | 45.554 / 30 / 14 | 16.55 18.27 21.68 8/4029 6952 | 15.54 17.89 21.40 11/4061 10926 |
+
+The class pack was `/*/*/(PostLandMutationDeliveryTests*)|(PostLandMutationDeliveryWorkerTests*)/*`:
+54/54 caller cases and 2/2 worker cases. MTP duration was 124.926 seconds. The exact repaired
+C699 method passed in 1.4899276 seconds within that pack, retaining the ten-second bound.
+
+The full guard union was:
+
+```text
+/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(WindowsUnitPlatformAdmissionTests*)/*
+```
+
+The initial guard failure was my omitted build prerequisite, not a product or inherited source
+defect: DerivedImpactIndexTests.regenerate_script_reports_changed_then_unchanged invokes the
+standalone driver with -NoBuild, and the driver DLL did not exist. Antiphon.Tests' project build
+does not build that standalone solution project. The other 26 derived-index cases passed,
+including the committed-index byte comparison. After a separately leased native build of
+`scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj`, only the failed
+method was rerun using
+`/*/*/DerivedImpactIndexTests*/regenerate_script_reports_changed_then_unchanged`.
+It passed both scratch-fixture regenerations, including the second `unchanged` assertion.
+No test, product code or committed index bytes were changed to repair that prerequisite.
+MTP durations were 263.390 seconds for the union and 10.368 seconds for the exact follow-up.
+The original failing guard receipt remains failed; there was no second full-union run.
+
+| Guard class | Final distinct passed | Failed after the exact prerequisite repair | Skipped |
+|---|---:|---:|---:|
+| TestClassificationPolicyTests | 42 | 0 | 0 |
+| TestClassificationGuardTests | 1 | 0 | 0 |
+| SlowTestRegistryMergeTests | 5 | 0 | 0 |
+| SlowTestTripwireTests | 2 | 0 | 0 |
+| NativeLinuxPolicyWitnessTests | 3 | 0 | 0 |
+| DerivedImpactIndexTests | 27 | 0 | 0 |
+| MechanicalPcContractTests | 11 | 0 | 0 |
+| TaskPlatformGuidanceTests | 5 | 0 | 0 |
+| C1729LayeringGuardTests | 11 | 0 | 0 |
+| TestLaneCategoryGuardTests | 1 | 0 | 0 |
+| WindowsUnitPlatformAdmissionTests | 6 | 0 | 1 |
+
+Layering printed `VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`.
+The skip is C1210_Windows_linux_only_outcomes_are_exact: its real Windows child-roster audit
+is not portable evidence and remains owed to Windows qualification. No Windows run was touched.
+
+The pins were verified unchanged: policyHash
+`bd6689bbc7ea752f13a69f872ea86a171fc8afc94e90ef9ed0c8d53aab00fbaa`;
+scripts/test-live-lane-run.ps1 -PrintInputDigest returned
+`070479b6da9902cc6cbd2b791baf855f01333599f6041cc017c45a8fe0cf9c75`.
+No protected input changed, so no re-pin was needed.
+
+Phase detail is partial, not a fabricated complete wall-time allocation. The diagnostic test
+envelope was 31.049 seconds: exclusive recorded DB 0.028 seconds, process 5.155 seconds,
+unknown remainder 25.866 seconds. Its shared database-create span was 4.439 seconds and
+runtime-model setup was 4.612 seconds. The green pack recorded 56 complete cases with summed
+envelopes 437.807 seconds (parallel and distinct from 124.926-second MTP wall), exclusive DB
+4.584 seconds, process 110.164 seconds and remainder 323.059 seconds. Shared database creation
+was 5.714 seconds and runtime-model setup 10.729 seconds. Two owned worker headers contain
+zero TUnit cases and add no execution credit. The guard journal has 115 terminal records,
+including its one skip, with 401.262 seconds of summed envelopes and 398.256 seconds of
+unattributed remainder. The follow-up case envelope was 5.865 seconds, entirely unattributed.
+Do not treat these small, contended samples or parallel sums as per-method p95 measurements.
+
+TRX SHA-256 receipts (raw files stay ignored):
+
+| Row | SHA-256 |
+|---|---|
+| base-red | 1561170ade9418e461dd0713b6f0b22bc539035a1bf9d4241d138746116a46a2 |
+| diag-red | de0bcadcb1901bdb23998f65109446ef5af4761ce34aa771c3ae1bc2def69155 |
+| class-green | b50f0a7a415ce90d1a988d91ecc5724ad9b2e5979fe607c3462b5a8fad2d7159 |
+| guards | 70310e222fbe3e87575dab05e0a24c74e974d77b9f2bcefe159db4e9d89dadfb |
+| guard-driver-green | 56e799ddecf5d93790a8f6e216e04f4fac492e4a39c6c0f181dd221e1eb3bc9f |
 
 ## Exemption
 
