@@ -35,7 +35,7 @@ CARD-0801's board history records Final Review 5, task `708672f3`, Clean Full at
 `9146736502cd349c871db03efaeb7d98c40f864c`, Linux CP-2 through CP-14, evidence
 `3933ce2b-4eda-40d6-b391-1a354e4edf48`. Its plan's CP-2 includes
 `/*/*/(FakeHerdrServerListenerTests*)|(HerdrTransportTests*)|(HerdrClientTests*)|(TestClassificationGuardTests*)/*`.
-Windows W-1 task `e5c2d317` at `4e22b0cb` records 641 executed in CP-2 through
+Windows W-1 task `e5c2d317` at `4e22b0cb8fae701da394ceab9e5eab34b9a05fd1` records 641 executed in CP-2 through
 CP-13, zero skipped, with separately tracked inherited failures. These historical
 receipts predate the November module initializer; they do not establish current
 child-host compatibility. `TestTrace.cs` does not exist at that reviewed SHA.
@@ -80,9 +80,74 @@ startup refusal and kills/joins its own child on failed startup and disposal.
 The other-process live-lease witness uses the same compatible host. All existing
 assertions are retained, including its exit-code assertion.
 
-Verification of the committed repair is pending at this note's initial commit.
-Mutation checks are operator-waived; proof obligations remain pending. No native
-Windows execution is claimed from this Linux task.
+Verified code commit: `c09fe9b0c21423300624ac8bbb1507b26ed40782`, Linux server2
+mirror `/work/worktrees/task-1ba18e23`. Every build/test driver was serialized
+through `scripts/build-slot.ps1`, with native default outputs and
+`-p:UseAppHost=false`. The final follow-up changes this narrative only.
+
+| Selection/build | Outcome | Execution wall | Slot wait |
+|---|---|---:|---:|
+| Fixed SessionRunner.Tests build | 0 errors | 28.71 s | 226 s |
+| Whole `FakeHerdrServerListenerTests` | 20 passed, 0 failed/skipped | 6.269 s | 0 s |
+| Antiphon.Tests guard build | 0 errors | 241.42 s | 75 s |
+| Required 11-class guard union, initial run | 113 passed, 1 failed, 1 skipped | 342.591 s | 60 s |
+| DerivedImpactIndex driver build | 0 errors | 10.51 s | 45 s |
+| Exact failed regeneration witness rerun | 1 passed, 0 failed/skipped | 8.765 s | 15 s |
+
+The initial guard failure was a missing local build prerequisite: its synthetic
+regeneration fixture runs the driver with `--no-build`, but the main test build
+does not produce `scripts/regenerate-derived-impact-index/bin/Debug/net9.0/Antiphon.DerivedImpactIndex.dll`.
+After explicitly building that driver, the exact method
+`regenerate_script_reports_changed_then_unchanged` passed, including its first
+changed/second unchanged assertions. No source repair or index regeneration in
+this checkout was required. The failed receipt is retained, not replaced by the
+rerun. Aggregate unique guard outcomes are 114 passed and one Windows-only skip.
+
+| Guard class | Passed | Failed in initial run | Skipped |
+|---|---:|---:|---:|
+| TestClassificationPolicyTests | 42 | 0 | 0 |
+| TestClassificationGuardTests | 1 | 0 | 0 |
+| SlowTestRegistryMergeTests | 5 | 0 | 0 |
+| SlowTestTripwireTests | 2 | 0 | 0 |
+| NativeLinuxPolicyWitnessTests | 3 | 0 | 0 |
+| DerivedImpactIndexTests | 26 + 1 targeted rerun | 1 (missing driver) | 0 |
+| MechanicalPcContractTests | 11 | 0 | 0 |
+| TaskPlatformGuidanceTests | 5 | 0 | 0 |
+| C1729LayeringGuardTests | 11 | 0 | 0 |
+| TestLaneCategoryGuardTests | 1 | 0 | 0 |
+| WindowsUnitPlatformAdmissionTests | 6 | 0 | 1 |
+
+The skipped method is `C1210_Windows_linux_only_outcomes_are_exact`; Linux
+cannot discharge that Windows child skip-roster audit. C1729's fresh TRX records
+`VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`. The committed index matches its
+builder. Nightly policy hash remains
+`bd6689bbc7ea752f13a69f872ea86a171fc8afc94e90ef9ed0c8d53aab00fbaa`;
+`test-live-lane-run.ps1 -PrintInputDigest` reproduces the unchanged protected-input
+digest `070479b6da9902cc6cbd2b791baf855f01333599f6041cc017c45a8fe0cf9c75`.
+No protected inputs or generated index bytes changed, so no re-pin was needed.
+
+The three process-boundary methods passed in 1.030 s (crashed owner), 1.051 s
+(changed/symlink), and 1.466 s (other-process live lease). The listener class
+retains all 67 assertion calls. All rows stayed below ten minutes of execution;
+slot waits were separate. Later `/proc/loadavg` samples reached
+`44.95 34.31 24.50`. Per-test durations and exact membership are in the retained
+TRX files; nested child-startup/teardown phase attribution is unknown, not zero.
+
+Fresh receipts/logs are under `.antiphon/card-1928/`, notably
+`listener-class/listener-class.trx`, `guard-union/guard-union.trx`, and
+`derived-witness-rerun/derived-witness-rerun.trx`. The listener filter is
+`/*/*/FakeHerdrServerListenerTests*/*`. The guard union is:
+
+```text
+/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(WindowsUnitPlatformAdmissionTests*)/*
+```
+
+Run selections with `dotnet run --project tests/<Project> --no-build
+-p:UseAppHost=false -- --treenode-filter <filter> --report-trx`, through the
+build-slot wrapper. Build the regeneration driver explicitly before the guard
+union. No live Herdr session, production host, Docker volume, or Windows
+qualification `34d41b7e` was changed. Mutation checks are operator-waived; proof
+obligations remain pending. No native Windows execution is claimed here.
 
 ## Exemption
 
