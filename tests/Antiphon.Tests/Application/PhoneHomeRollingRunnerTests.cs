@@ -665,6 +665,11 @@ public sealed partial class PhoneHomeRollingRunnerTests
                 WorktreeBasePath = Path.Combine(root, "trees"),
             });
             services.RemoveAll<ITaskProgressGit>();
+            // These directories model runner placement, not real repositories. Keep the
+            // shared provisioner graph resolvable and answer baseline capture from PushGit's seed.
+            var progress = new FakeTaskProgressGit { CommonDirectory = root };
+            progress.LocalRefs["HEAD"] = new string('1', 40);
+            services.AddSingleton<ITaskProgressGit>(progress);
             services.AddSingleton<RemoteWorkspaceService>();
             services.AddSingleton<RemoteWorkspacePreparer>();
             services.AddSingleton<DelegationWorkspaceResolver>();
