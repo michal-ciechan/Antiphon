@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Antiphon.Agents.Pty;
 using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
@@ -56,6 +58,50 @@ public sealed class RunnerLinuxCompilerPolicyTests
     {
         var output = await Run("--models-only");
         output.ShouldContain("PASS matrices=16 refusals=0 missing-file=1 base-equivalence=1");
+    }
+
+    [Test]
+    [Arguments("0")]
+    [Arguments("1")]
+    [NotInParallel]
+    public async Task Rendered_policy_inherits_through_session_and_build_wrapper(string saved)
+    {
+        var modelOutput = await Run("--model-value=" + saved);
+        var modelLine = modelOutput.Split('\n').Single(line => line.StartsWith("MODEL ", StringComparison.Ordinal));
+        using var model = JsonDocument.Parse(modelLine[6..]);
+        var policy = model.RootElement.GetProperty("services").GetProperty("session-runner")
+            .GetProperty("environment").GetProperty("ANTIPHON_LINUX_COMPILER_POLICY").GetString();
+        policy.ShouldBe(saved);
+        var root = Path.Combine(DelegateScriptRunner.RepoRoot, ".antiphon", "c1906", "runtime-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var probe = Path.Combine(root, "probe.ps1");
+        var observation = Path.Combine(root, "observed.txt");
+        await File.WriteAllTextAsync(probe,
+            "param([string]$ResultPath)\n$env:ANTIPHON_LINUX_COMPILER_POLICY | Set-Content -LiteralPath $ResultPath\n");
+        var overrides = new Dictionary<string, string>
+        {
+            ["C589_SLOT_SHIM"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c589-slot-shim.ps1"),
+            ["C589_SLOT_SCRIPT"] = "granted",
+            ["C589_SLOT_LOG"] = Path.Combine(root, "slot.log"),
+            ["C589_COMMAND_SHIM"] = ""
+        };
+        overrides.ContainsKey("ANTIPHON_LINUX_COMPILER_POLICY").ShouldBeFalse("the session must inherit its runner's setting");
+        await using var session = new PtyAgentRunner("inbox");
+        var previous = Environment.GetEnvironmentVariable("ANTIPHON_LINUX_COMPILER_POLICY");
+        try
+        {
+            Environment.SetEnvironmentVariable("ANTIPHON_LINUX_COMPILER_POLICY", policy);
+            await session.StartAsync("pwsh", new[]
+            {
+                "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/build-slot.ps1"),
+                "-Label", "c1906-inheritance-fixture", "--", "pwsh", "-NoProfile", "-File", probe,
+                "-ResultPath", observation
+            }, DelegateScriptRunner.RepoRoot, overrides);
+        }
+        finally { Environment.SetEnvironmentVariable("ANTIPHON_LINUX_COMPILER_POLICY", previous); }
+        (await session.Exited.WaitAsync(TimeSpan.FromSeconds(30))).ShouldBe(0, session.SnapshotText());
+        File.ReadAllText(observation).Trim().ShouldBe(saved, "real PTY and build-slot child inheritance");
+        Console.WriteLine("PASS native session/build-wrapper inherited=" + saved + " evidence=" + root);
     }
 
     private static async Task<string> Run(string selection)
