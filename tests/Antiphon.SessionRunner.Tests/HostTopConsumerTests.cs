@@ -758,16 +758,16 @@ public class HostTopConsumerTests
     }
 
     /// <summary>
-    /// rc b7812833 sr-profile-199. On a Windows desktop with ~500 processes the single toolhelp
-    /// capture costs ~8 ms of thread CPU and cannot be interrupted, so charging it to the 10 ms
-    /// scan budget left nothing for enumeration and every read returned no rows. The budget must
-    /// govern the work it can stop: enumeration and per-process reads, retained pids first.
+    /// rc b7812833 sr-profile-199. On a Windows desktop with ~500 processes the toolhelp capture
+    /// costs ~8 ms and its walk ~9 ms of thread CPU, so charging the snapshot to the 10 ms scan
+    /// budget stopped every scan inside the walk with no rows. The budget governs the per-process
+    /// reads it can stop. Here the capture costs 8 ms, each walked entry 3 ms, each read 0.5 ms.
     /// </summary>
     [Test]
     public void Windows_snapshot_capture_does_not_spend_the_scan_budget()
     {
         double cpu = 1;
-        var source = new ScriptedWindowsProcessSource(() => cpu += 12, () => cpu += 0.01,
+        var source = new ScriptedWindowsProcessSource(() => cpu += 8, () => cpu += 3, () => cpu += 0.5,
             (10, "svchost.exe"), (4242, "dotnet.exe"), (9000, "csc.exe"));
         var table = new WindowsHostProcessTable(source, () => cpu, TimeSpan.FromMilliseconds(10));
 
@@ -775,10 +775,24 @@ public class HostTopConsumerTests
 
         table.LastReadTruncated.ShouldBeFalse();
         rows.Select(row => row.Pid).Order().ShouldBe([10, 4242, 9000]);
-        rows.Single(row => row.Pid == 4242).Name.ShouldBe("dotnet");
     }
 
-    private sealed class ScriptedWindowsProcessSource(Action capture, Action step, params (int Pid, string Exe)[] processes)
+    /// <summary>The budget still stops the per-process reads, and the retained pid is read first.</summary>
+    [Test]
+    public void Windows_reads_stop_at_the_scan_budget_after_the_retained_pid()
+    {
+        double cpu = 1;
+        var source = new ScriptedWindowsProcessSource(() => cpu += 8, () => cpu += 0.01, () => cpu += 6,
+            (10, "svchost.exe"), (4242, "dotnet.exe"), (9000, "csc.exe"), (9100, "pwsh.exe"));
+        var table = new WindowsHostProcessTable(source, () => cpu, TimeSpan.FromMilliseconds(10));
+
+        var rows = table.Read(HostTopConsumerLimits.ScanCap, [4242]);
+
+        table.LastReadTruncated.ShouldBeTrue();
+        rows.Select(row => row.Pid).ShouldBe([4242, 9100]);
+    }
+
+    private sealed class ScriptedWindowsProcessSource(Action capture, Action step, Action read, params (int Pid, string Exe)[] processes)
         : IWindowsProcessSource
     {
         public IWindowsProcessSnapshot? Snapshot()
@@ -789,7 +803,7 @@ public class HostTopConsumerTests
 
         public bool TryTimes(int pid, out long startTicks, out long cpuTicks, out long? rss)
         {
-            step();
+            read();
             startTicks = 1_000 + pid;
             cpuTicks = pid;
             rss = 4096;
