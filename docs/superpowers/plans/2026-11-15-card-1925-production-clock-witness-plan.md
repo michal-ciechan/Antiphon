@@ -16,6 +16,7 @@ V-4: execute OutboundConversionTaskRunner.CreateAsync through its real validatio
 a nonexistent delivery deliberately loses its fence. Assert two executed UPDATE commands,
 one compilation, database now(), and no DateTime parameter. No synthetic LINQ is used.
 R-1: neighbouring EfLambdaClockGuardTests and EfCompiledQueryCacheTests.
+R-3: ReleaseImpactEnvelopeTests, selected by the regenerated index for the full task diff.
 R-2: the brief's entire guard union. Matching impacted-classes glob is test-lane-category,
 covered here. No BeginPhase calls, limiter, production, configuration or shared harness edits.
 
@@ -48,6 +49,7 @@ No full Unit/assembly run: this task has bounded test-only impact.
 | CP-3 | S1 | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all passed | 5 | 2 |
 | CP-4 | S1 | CP-1 | contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-2 | all passed; layering VIOLATIONS 0 LISTED 162 | 5 | 2 |
 | CP-5 | S1 | CP-1 | derived-guard | `/*/*/DerivedImpactIndexTests*/*` | R-2 | all passed | 1 | 2 |
+| CP-6 | S1 | CP-1 | impacted-envelope | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-3 | all passed | 1 | 2 |
 
 ## Manual acceptance
 
