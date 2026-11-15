@@ -1646,6 +1646,13 @@
         },
         {
           "suite": "antiphon",
+          "class": "RunnerLinuxCompilerPolicyTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: deployment grammar and Compose rendering use bash and POSIX fixture paths; the native PTY inheritance witness requires Linux. No daemon is contacted.",
+          "owner": "CARD-1906"
+        },
+        {
+          "suite": "antiphon",
           "class": "RcBridgeProbePlatformTests",
           "methods": [
             "Linux_probe_does_not_report_a_measured_zero"
