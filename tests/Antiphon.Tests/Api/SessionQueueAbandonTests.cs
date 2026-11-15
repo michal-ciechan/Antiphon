@@ -252,53 +252,57 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            db.SessionQueuedMessages.AddRange(rows);
+            db.SessionQueuedMessages.AddRange(rows.AsEnumerable().Reverse());
             await db.SaveChangesAsync();
         }
         try
         {
-        using var client = factory.CreateClient();
-        if (!attentionOnly)
-        {
-        var queueIds = new List<Guid>();
-        long since = 0;
-        do
-        {
-            var page = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{first.AgentSessionId}/messages?since={since}&limit=10000");
-            var messages = page.GetProperty("messages").EnumerateArray().ToList();
-            messages.Count.ShouldBeInRange(1, 100);
-            messages.Sum(m => System.Text.Encoding.UTF8.GetByteCount(m.GetProperty("body").GetString()!))
-                .ShouldBeLessThanOrEqualTo(256 * 1024);
-            var sequence = messages.Select(m => m.GetProperty("sequence").GetInt64()).ToArray();
-            sequence.ShouldBe(sequence.Order().ToArray());
-            sequence[0].ShouldBeGreaterThan(since);
-            queueIds.AddRange(messages.Select(m => m.GetProperty("id").GetGuid()));
-            since = page.GetProperty("nextSince").GetInt64();
-            if (!page.GetProperty("truncated").GetBoolean()) break;
-        } while (queueIds.Count < 1100);
-        queueIds.ShouldBe(new[] { first.Id }.Concat(rows.Select(r => r.Id)).ToArray());
-        }
-        else
-        {
-        var attentionIds = new List<Guid>();
-        var skip = 0;
-        do
-        {
-            var page = await client.GetFromJsonAsync<JsonElement>($"/api/attention?parkedSkip={skip}&parkedLimit=10000");
-            var parked = page.GetProperty("items").EnumerateArray()
-                .Where(i => i.GetProperty("kind").GetString() == "ParkedMessage").ToList();
-            parked.Count.ShouldBeLessThanOrEqualTo(100);
-            attentionIds.AddRange(parked.Where(i => i.GetProperty("sessionId").GetGuid() == first.AgentSessionId)
-                .Select(i => i.GetProperty("messageId").GetGuid()));
-            if (!page.GetProperty("parkedMessagesTruncated").GetBoolean()) break;
-            var next = page.GetProperty("parkedMessagesNextSkip").GetInt32();
-            next.ShouldBeGreaterThan(skip);
-            skip = next;
-        } while (skip < 2000);
-        attentionIds.Distinct().Count().ShouldBe(1003);
-        attentionIds.Count.ShouldBe(1003);
-        }
-        _adapters[first.AgentSessionId].Inputs.ShouldBeEmpty();
+            using var client = factory.CreateClient();
+            if (!attentionOnly)
+            {
+                var queueIds = new List<Guid>();
+                long since = 0;
+                do
+                {
+                    var page = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{first.AgentSessionId}/messages?since={since}&limit=10000");
+                    var messages = page.GetProperty("messages").EnumerateArray().ToList();
+                    messages.Count.ShouldBeInRange(1, 100);
+                    messages.Sum(m => System.Text.Encoding.UTF8.GetByteCount(m.GetProperty("body").GetString()!))
+                        .ShouldBeLessThanOrEqualTo(256 * 1024);
+                    var sequence = messages.Select(m => m.GetProperty("sequence").GetInt64()).ToArray();
+                    sequence.ShouldBe(sequence.Order().ToArray());
+                    sequence[0].ShouldBeGreaterThan(since);
+                    queueIds.AddRange(messages.Select(m => m.GetProperty("id").GetGuid()));
+                    since = page.GetProperty("nextSince").GetInt64();
+                    if (!page.GetProperty("truncated").GetBoolean()) break;
+                } while (queueIds.Count < 1100);
+                queueIds.ShouldBe(new[] { first.Id }.Concat(rows.Select(r => r.Id)).ToArray());
+            }
+            else
+            {
+                var attentionIds = new List<Guid>();
+                var skip = 0;
+                do
+                {
+                    var page = await client.GetFromJsonAsync<JsonElement>($"/api/attention?parkedSkip={skip}&parkedLimit=10000");
+                    page.GetProperty("kindCounts").EnumerateArray()
+                        .Single(i => i.GetProperty("kind").GetString() == "ParkedMessage")
+                        .GetProperty("count").GetInt32().ShouldBeGreaterThanOrEqualTo(1003);
+                    var parked = page.GetProperty("items").EnumerateArray()
+                        .Where(i => i.GetProperty("kind").GetString() == "ParkedMessage").ToList();
+                    parked.Count.ShouldBeLessThanOrEqualTo(100);
+                    attentionIds.AddRange(parked.Where(i => i.GetProperty("sessionId").GetGuid() == first.AgentSessionId)
+                        .Select(i => i.GetProperty("messageId").GetGuid()));
+                    if (!page.GetProperty("parkedMessagesTruncated").GetBoolean()) break;
+                    var next = page.GetProperty("parkedMessagesNextSkip").GetInt32();
+                    next.ShouldBeGreaterThan(skip);
+                    skip = next;
+                } while (skip < 2000);
+                attentionIds.Distinct().Count().ShouldBe(1003);
+                attentionIds.Count.ShouldBe(1003);
+                attentionIds.ShouldBe(new[] { first.Id }.Concat(rows.Select(r => r.Id)).ToArray());
+            }
+            _adapters[first.AgentSessionId].Inputs.ShouldBeEmpty();
         }
         finally
         {
@@ -325,7 +329,11 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         session.GrokRulesState.ShouldBe(GrokRulesState.Pending);
         item.Evidence.ShouldContain(session.GrokRulesGeneration!.Value.ToString("N"));
         item.Headline.ShouldContain("fresh=true");
-        (await ReloadAsync(row)).Status.ShouldBe(QueuedMessageStatus.Canceled);
+        var abandoned = await ReloadAsync(row);
+        abandoned.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        abandoned.DeliveryVerdict.ShouldBeNull();
+        abandoned.RulesAcknowledgedAt.ShouldBeNull();
+        abandoned.DeliveryAttempts.ShouldBe(1);
         (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == row.AgentSessionId)).ShouldBe(1);
         session.GrokRulesGeneration = Guid.NewGuid();
         var receipt = GrokRulesRefreshService.Receipt(session)! with { Generation = session.GrokRulesGeneration.Value };

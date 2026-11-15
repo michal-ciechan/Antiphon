@@ -319,6 +319,8 @@ export interface AttentionDto {
    * floor hid are still visible as counts.
    */
   kindCounts?: AttentionKindCountDto[]
+  parkedMessagesTruncated?: boolean
+  parkedMessagesNextSkip?: number
 }
 
 export interface AttentionSummaryDto {
@@ -338,10 +340,10 @@ export const attentionKeys = {
  * connection. CARD-0035 §D5 rules out a new SignalR event for this view — the conditions are
  * derived from state that already broadcasts.
  */
-export function useAttention(enabled = true) {
+export function useAttention(enabled = true, parkedSkip = 0) {
   return useQuery({
-    queryKey: attentionKeys.all,
-    queryFn: () => apiGet<AttentionDto>('/attention'),
+    queryKey: parkedSkip === 0 ? attentionKeys.all : [...attentionKeys.all, 'parked', parkedSkip],
+    queryFn: () => apiGet<AttentionDto>(parkedSkip > 0 ? `/attention?parkedSkip=${parkedSkip}` : '/attention'),
     refetchInterval: 15_000,
     enabled,
   })

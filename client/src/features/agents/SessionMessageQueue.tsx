@@ -119,6 +119,16 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
 
       <SmartComposer sessionId={sessionId} variant="messages" />
 
+      {(queue.truncated || (queue.since ?? 0) > 0) && (
+        <Group gap="xs">
+          <Text size="xs" c="dimmed">Showing one page of messages.</Text>
+          {(queue.since ?? 0) > 0 && <Button size="compact-xs" variant="subtle" disabled={busy}
+            onClick={() => void run(() => getSessionQueue(sessionId), 'Could not load the first messages')}>First messages</Button>}
+          {queue.truncated && <Button size="compact-xs" variant="subtle" disabled={busy}
+            onClick={() => void run(() => getSessionQueue(sessionId, queue.nextSince), 'Could not load the next messages')}>Next messages</Button>}
+        </Group>
+      )}
+
       {messages.length > 0 && (
         <Stack gap={6}>
           {messages.map((m, i) => (

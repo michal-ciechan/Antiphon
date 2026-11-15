@@ -25,6 +25,16 @@ commit together under the queue lock. This sends no input and makes no claim tha
 delivery failed: the message may already have reached the agent. It is never
 automatic. A later prompt remains in the transcript and is ignored for the
 Canceled row; it does not resurrect or re-deliver that message.
+Queue snapshots page pending and unconfirmed rows by `since`/`limit` (50 by
+default, at most 100), with `nextSince` and `truncated`; the pending-note body-byte
+convention also applies. Attention pages its parked/unconfirmed rows using
+`parkedSkip`/`parkedLimit` and returns `parkedMessagesNextSkip` and
+`parkedMessagesTruncated`, while preserving the full kind census. The panels
+offer next and first page navigation. An abandoned current Grok rules read also
+retains explicit attention naming a fresh start (`fresh=true`); that generation
+stays closed. A late prompt or rules refresh does not reopen the canceled read.
+A new rules generation removes that notice. This is an operator decision, and
+listing or abandoning never sends input.
 Input and ConditionalInput use the runtime's per-session gate, independently of
 the workspace mutation gate. Retention remains serialized with Launch/Mirror and
 keeps its live/recent-use and holder checks. Slow workspace gate owners log their

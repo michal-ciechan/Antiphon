@@ -85,7 +85,10 @@ public sealed record SessionQueueDto(
     bool Working,
     DeliveryReceiptDto? LastDelivery = null,
     bool ModalBlocked = false,
-    string? ModalBlockedReason = null);
+    string? ModalBlockedReason = null,
+    long Since = 0,
+    long NextSince = 0,
+    bool Truncated = false);
 
 /// <summary>
 /// CARD-0747. One page of aged queue rows just canceled. <see cref="CanceledIds"/> is that page

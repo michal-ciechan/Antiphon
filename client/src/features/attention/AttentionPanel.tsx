@@ -71,7 +71,8 @@ import {
  * server named per row, all of which already existed as endpoints.</p>
  */
 export function AttentionPanel() {
-  const attention = useAttention()
+  const [parkedSkip, setParkedSkip] = useState(0)
+  const attention = useAttention(true, parkedSkip)
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState<Set<AttentionGroupKey>>(
     () => new Set(ATTENTION_GROUPS.filter((g) => g.collapsed).map((g) => g.key)),
@@ -151,7 +152,16 @@ export function AttentionPanel() {
         </Tooltip>
       </Group>
 
-      {openCount === 0 && <NothingIsStuck />}
+      {(attention.data?.parkedMessagesTruncated || parkedSkip > 0) && (
+        <Group gap="xs">
+          <Text size="xs" c="dimmed">Showing one page of parked and unconfirmed messages.</Text>
+          {parkedSkip > 0 && <Button size="compact-xs" variant="subtle" onClick={() => setParkedSkip(0)}>First parked messages</Button>}
+          {attention.data?.parkedMessagesTruncated && <Button size="compact-xs" variant="subtle"
+            onClick={() => setParkedSkip(attention.data?.parkedMessagesNextSkip ?? 0)}>Next parked messages</Button>}
+        </Group>
+      )}
+
+      {openCount === 0 && !attention.data?.parkedMessagesTruncated && <NothingIsStuck />}
 
       {ATTENTION_GROUPS.map((group) => {
         const rows = grouped.get(group.key) ?? []

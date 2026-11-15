@@ -525,7 +525,9 @@ public sealed record AttentionDto(
     bool RunnerConsulted,
     IReadOnlyList<AttentionItemDto> Items,
     // CARD-1085: unfiltered census. A minSeverity read still reports every kind that was built.
-    IReadOnlyList<AttentionKindCountDto>? KindCounts = null);
+    IReadOnlyList<AttentionKindCountDto>? KindCounts = null,
+    bool ParkedMessagesTruncated = false,
+    int ParkedMessagesNextSkip = 0);
 
 /// <summary>How many rows of one kind the sweep built, before a severity floor hid any.</summary>
 public sealed record AttentionKindCountDto(AttentionKind Kind, int Count);
@@ -537,7 +539,10 @@ public sealed record AttentionSummaryDto(
     DateTime GeneratedAt)
 {
     public static AttentionSummaryDto From(AttentionDto attention) => new(
-        attention.Items.Count(item => item.Kind != AttentionKind.RecentFailure && item.Kind != AttentionKind.LandLegacyUnverified),
-        attention.Items.Count(item => item.Kind == AttentionKind.CardNeedsDecision),
+        attention.KindCounts?.Where(item => item.Kind != AttentionKind.RecentFailure && item.Kind != AttentionKind.LandLegacyUnverified)
+            .Sum(item => item.Count)
+            ?? attention.Items.Count(item => item.Kind != AttentionKind.RecentFailure && item.Kind != AttentionKind.LandLegacyUnverified),
+        attention.KindCounts?.Where(item => item.Kind == AttentionKind.CardNeedsDecision).Sum(item => item.Count)
+            ?? attention.Items.Count(item => item.Kind == AttentionKind.CardNeedsDecision),
         attention.GeneratedAt);
 }

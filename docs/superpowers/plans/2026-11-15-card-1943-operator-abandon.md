@@ -50,6 +50,11 @@ task-owned ignored link was replaced with identical bytes and mode in a new inod
 That build refusal executed zero tests and is not red proof. Client paging tests
 independently failed on both missing navigation buttons.
 
+The split backend red at 9bde41c68a9b25dd77cc5cf422893dcb830af864 executed
+5 cases: 2 contract passes, 3 intended failures (queue 1003 rows, attention 1005
+rows, absent rules follow-up). The bulk fixtures now insert in reverse sequence
+and require deterministic sequence ordering and the complete attention census.
+
 ## Performance budget
 
 Serial rows, one shared isolated server build per red/green group. Existing cold
@@ -74,6 +79,6 @@ native outputs. No unchanged proof repetitions after green.
 | CP-5 | green | CP-2 | impacted | `/*/*/(AgentTaskMidTurnRefineTests*)\|(CodexCliObservationGapTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)/*` | R-2 | all listed, 0 failed | 5 | 5 |
 | CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3,V-4 | all listed, 0 failed | 11 | 5 |
 | CP-7 | red-client | n/a | paging-ui-red | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel -t pages` | V-4 | 2 intended missing-navigation failures | n/a | 3 |
-| CP-8 | client | n/a | paging-ui | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel` | V-4 | both whole client files, 0 failed | n/a | 3 |
+| CP-8 | client | n/a | paging-ui | `pwsh -NoProfile -File scripts/test-client.ps1 -JsonResultPath .antiphon/c1943-client.json SessionMessageQueue AttentionPanel` | V-4 | both whole client files, 0 failed | n/a | 3 |
 | CP-9 | client | n/a | client-bundle | `npm --prefix client run build` | V-4 | production build exit 0 | n/a | 3 |
 | CP-10 | contracts | tests/Antiphon.E2E -> bin-c1943-contract/ | api-contracts | `/*/*/ContractSnapshotTests/*` | R-2,V-4 | all listed, 0 failed | 5 | 6 |

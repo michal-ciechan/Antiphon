@@ -19,6 +19,8 @@ public static class AttentionEndpoints
         attention.MapGet("/", async (
             AttentionService service,
             string? minSeverity,
+            int? parkedSkip,
+            int? parkedLimit,
             CancellationToken ct) =>
         {
             // CARD-1085. Omission keeps the unfiltered feed. A present value must be one of the
@@ -32,7 +34,9 @@ public static class AttentionEndpoints
                 floor = Enum.Parse<AlertSeverity>(minSeverity, ignoreCase: true);
             }
 
-            return Results.Ok(await service.GetAsync(ct, minSeverity: floor));
+            return Results.Ok(await service.GetAsync(ct, minSeverity: floor,
+                parkedSkip: parkedSkip ?? 0,
+                parkedLimit: parkedLimit ?? SessionMessageQueueService.PendingNotePageDefault));
         });
 
         attention.MapGet("/summary", async (
