@@ -9,6 +9,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -36,7 +37,10 @@ public class EfCompiledQueryCacheTests
             || text.Contains("identity.RunnerStoreId", StringComparison.Ordinal)
             || text.Contains("unnest(", StringComparison.Ordinal)
             || text.Contains("HostLoadSampleIdentities", StringComparison.Ordinal));
-        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString, probe);
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var options = new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(schema.ConnectionString, probe))
+            .UseMemoryCache(cache).Options;
         await using var db = new AppDbContext(options);
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 14, 0, 0, 0, TimeSpan.Zero));
         var service = new HostLoadIngestService(db, Options.Create(new HostLoadHistorySettings()),
@@ -193,7 +197,11 @@ public class EfCompiledQueryCacheTests
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString, npgsql => npgsql.SetPostgresVersion(16, 0))
+        // Database isolation does not isolate EF's process-wide compiled-query cache.
+        // Own one cache per fixture, retaining it across all scopes/ticks in that fixture.
+        services.AddMemoryCache();
+        services.AddDbContext<AppDbContext>((sp, o) => o.UseNpgsql(connectionString, npgsql => npgsql.SetPostgresVersion(16, 0))
+            .UseMemoryCache(sp.GetRequiredService<IMemoryCache>())
             .AddInterceptors(probe)
             .LogTo(Console.WriteLine, [RelationalEventId.CommandExecuted]));
         services.AddSingleton<IEventBus, MockEventBus>();
