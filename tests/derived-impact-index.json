@@ -79,16 +79,16 @@
     },
     {
       "path": ".gitignore",
-      "classes": 150,
+      "classes": 152,
       "reason": "cap",
-      "owed": 125,
+      "owed": 127,
       "first": [
+        "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "ReportBudgetWorkspacePortabilityTests",
-        "VolumeRetirementContentTests",
         "WorkspaceParkPublicationTests",
         "BlockedParkWireTests"
       ]
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 323,
+      "classes": 324,
       "reason": "allowlist"
     },
     {
@@ -2034,9 +2034,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 128,
+      "classes": 129,
       "reason": "cap",
-      "owed": 103,
+      "owed": 104,
       "first": [
         "LinuxServerRestartGateTests",
         "PerTaskFinalUnitLaneWitnessTests",
@@ -2505,7 +2505,6 @@
         "CardFilePrivacySyncAcceptanceTests",
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
-        "CheckpointConfinementLedgerTests",
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
@@ -2517,6 +2516,7 @@
         "ProjectSetupServiceTests",
         "QualificationCheckoutSourceTests",
         "ReleaseImpactEvaluationTests",
+        "VolumeRetirementContentTests",
         "WorktreeDefaultCallerTests"
       ]
     },
@@ -3438,6 +3438,14 @@
       ]
     },
     {
+      "path": "scripts/c1008-content-audit.sh",
+      "classes": [
+        "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
+        "VolumeRetirementPublicationTests"
+      ]
+    },
+    {
       "path": "scripts/c1008-host-proof.ps1",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -3455,6 +3463,7 @@
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3465,6 +3474,7 @@
         "DockerStackDocumentationTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3498,6 +3508,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3517,6 +3528,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -3540,6 +3552,8 @@
         "SeedSmokeTargetingPackContractTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
       ]
@@ -23977,7 +23991,8 @@
         "C0824BranchDeletionRecycleAuditTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
-        "RollingVolumeRecycleScriptTests"
+        "RollingVolumeRecycleScriptTests",
+        "VolumeRetirementPublicationTests"
       ]
     },
     {
@@ -24294,8 +24309,17 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/VolumeRetirementPublicationFixture.cs",
+      "classes": [
+        "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
+        "VolumeRetirementPublicationTests"
       ]
     },
     {
@@ -25578,7 +25602,9 @@
         "RollingVolumeRecycleDockerTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementDockerTests",
+        "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
+        "VolumeRetirementWrapperTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
     },
