@@ -96,7 +96,7 @@ The permitted read-only `ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o Co
 | `/api/hosts/server2/load` | HTTP 200, physicalHostKey/current null, coverage 0, sample_stale, shadow true, unknown command/dispatch pressure |
 | Durable raw history, 04:30–04:50Z, limit 720 | HTTP 200, items [], nextCursor null, complete false, gaps [`binding-unknown`] |
 
-The unscoped null-project pipeline default reports maxParallel 6; that is not the Antiphon project's overridden 12. Neither proves a server2 `MaxConcurrentTasks=6` ceiling. Runner-bound tasks use runner/host capacity, not the desktop global cap: [AgentTaskDispatcher.cs:525](../../server/Application/Services/AgentTaskDispatcher.cs#L525), [line 1439](../../server/Application/Services/AgentTaskDispatcher.cs#L1439), [AgentTaskService.cs:2020](../../server/Application/Services/AgentTaskService.cs#L2020). Persisted capacity precedence and operator-only host budgets are documented in [docker-stack.md:1560](../docker-stack.md#L1560) and [ops-http.md:172](../ops-http.md#L172). The operator's approximately seven-task target is a dispatch direction, not a measured seven-seat runtime setting.
+The unscoped null-project pipeline default reports maxParallel 6; that is not the Antiphon project's overridden 12. Neither proves a server2 `MaxConcurrentTasks=6` ceiling. Runner-bound tasks use runner/host capacity, not the desktop global cap: [AgentTaskDispatcher.cs:525](../../server/Application/Services/AgentTaskDispatcher.cs#L525), [line 1439](../../server/Application/Services/AgentTaskDispatcher.cs#L1439), [AgentTaskService.cs:2020](../../server/Application/Services/AgentTaskService.cs#L2020). Persisted capacity precedence and operator-only host budgets are documented in [docker-stack.md:1560](../docker-stack.md#L1560) and [ops-http.md:140](../ops-http.md#L140). The operator's approximately seven-task target is a dispatch direction, not a measured seven-seat runtime setting.
 
 The **shared** broker is `http://build-slots:8080/build-slots`, inherited through `ANTIPHON_BUILD_SLOTS_URL`. The runner's own broker count is not the host admission count. The shared compose settings are [docker-compose.server2-runner.yml:167](../../docker-compose.server2-runner.yml#L167): four drivers, six nodes, 16384 MiB, renew liveness. The broker grants based on FIFO slots and available memory, with no CPU/load test in [BuildSlotBroker.cs:103](../../src/Antiphon.SessionRunner/BuildSlotBroker.cs#L103). At most four conforming driver invocations are admitted; four grants times six is nominally 24 MSBuild nodes, **not a hard host CPU quota**. Test hosts and nested children can create their own threads/processes. There was no broker wait or memory pressure in the sampled windows; historical waits cannot be measured from today's unavailable metrics.
 
@@ -121,7 +121,7 @@ This is an investigation, not a new fix design or an enablement recommendation. 
 
 | Evidence order | Existing control / location | Measured reduction evidence and risk boundary | Decision ownership |
 |---|---|---|---|
-| 1: shared compiler | CARD-1885 opt-in in `scripts/lib/BuildDriverEnvironment.cs`; preparation/affinity at lines 329/358 | Largest identified burst: 8.868 cores today, 13.00-core historical minute. Today's interval contains 177.446 CPU-seconds above a hypothetical six-core-minute allowance; this is displaced work, not proven saved CPU. Only one compiler exists in the sampled namespace, so “reduce compiler instances” has no observed duplicate-instance target. Full-solution/concurrent acceptance remains incomplete; build delay is an explicit risk. | Operator activation; separate Plan/Code if design changes |
+| 1: shared compiler | CARD-1885 opt-in in `scripts/lib/BuildDriverEnvironment.cs`; preparation/affinity at lines 329/358 | Largest identified burst: 8.868 cores today, 13.00-core historical minute. Today's interval contains 177.446 CPU-seconds above a hypothetical six-core allowance over that interval; this is displaced work, not proven saved CPU. Only one compiler exists in the sampled namespace, so “reduce compiler instances” has no observed duplicate-instance target. Full-solution/concurrent acceptance remains incomplete; build delay is an explicit risk. | Operator activation; separate Plan/Code if design changes |
 | 2: build/test admission and MSBuild | Shared compose `SessionRunner__BuildSlots__MaxConcurrent`/`MaxCpuCount`; server host budget and runner capacity | Supplementary workers + build-driver work used about 4.10 cores. Four six-node grants reserve no nominal margin. Broker admission is a real workload-count control, but no paired 4/3-driver or 7/5-task experiment establishes the reduction, throughput cost or safe limit. | Host budgets/capacity are operator-only; Docker settings operator-only |
 | 3: test/script subprocesses | Test-row selection/parallelism; wrapper only leases drivers | pwsh group used 2.224 cores in C versus runner 0.132. Reducing standing seats need not remove these descendants or the shared compiler. No stable cores-per-seat estimate exists. | Operator task target; separate test-owner work for any behavioral change |
 | Unranked: runtime GC/PGO/server reuse | Existing Windows-only override keys at BuildDriverEnvironment lines 378–393; no Linux TieredPGO control in that policy | No current GC/JIT CPU profile. CARD-1885's stored evidence reports prior `UseSharedCompilation=false` serial builds 278 versus 153 s, 81.7% slower. That is evidence of a real risk, not proof every runtime variant has that cost. | Separate measured decision; no Linux setting change authorized here |
@@ -181,7 +181,42 @@ Only this Markdown report is a deliverable. No card, product/test source, config
 
 At baseline, the stored nightly `policyHash` is `b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d`; the newline-normalized protected-input digest was independently reconstructed as `26d90df028d4e2358ed43b02aa7ef4ad688224c5470aba371d2fd566ff4a663e`; `NativeLinuxPolicyWitness.LegacyExclusionDigest` is `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`. No input requiring a repin changed.
 
-The brief's required guard union will be built/run through separate host build-slot leases after this evidence slice is committed. Actual outcomes will be appended before settlement; no test pass is claimed by this initial report.
+All verification below used source commit `98b1dbfe330fbb0ac91b5cb80cf4a5ba90f4fe81` (only this report differs from baseline), SDK 10.0.404 / test runtime .NET 9.0.23, native default output, `UseAppHost=false`. Each command took a separate six-node host build-slot lease; all reported `waited=0s`. Rows ran serially and each was under ten minutes.
+
+| Row | UTC interval | Wall / lease-held seconds | Actual result | Loadavg start → end |
+|---|---|---:|---|---|
+| Antiphon.Tests build | 04:59:58.041–05:03:36.418 | 218.377 / 216 | exit 0, 0 errors, 2092 warnings | 7.12 11.17 16.33 → 16.83 16.02 17.36 |
+| Required guard union | 05:03:49.838–05:09:24.039 | 334.200 / 332 | exit 2, total 115: 113 passed, 1 failed, 1 skipped | 20.00 16.71 17.57 → 10.83 15.96 17.32 |
+| Standalone driver prerequisite build | 05:09:40.379–05:09:46.136 | 5.757 / 5 | exit 0, 0 warnings/errors | 9.79 15.47 17.14 → 9.57 15.33 17.08 |
+| Exact failed-method follow-up | 05:10:01.017–05:10:19.730 | 18.712 / 17 | exit 0, 1 passed, 0 failed/skipped | 8.34 14.77 16.87 → 9.29 14.56 16.76 |
+
+The original union receipt remains **failed**. Its one failure was my omitted build prerequisite, not an inherited product defect or CPU-timeout witness: `DerivedImpactIndexTests.regenerate_script_reports_changed_then_unchanged` invokes the standalone driver with `-NoBuild`; `scripts/regenerate-derived-impact-index/bin/Debug/net9.0/Antiphon.DerivedImpactIndex.dll` did not exist. The Antiphon.Tests build does not produce it. A separately leased build supplied that ignored binary; the exact method then passed, exercising both its first `changed` and second `unchanged` scratch-fixture runs. No source/test assertion or committed index was changed. Combined distinct coverage is **114 passed, 1 Windows-only skip, no unresolved failed case**. This does not rewrite the first receipt into a successful full-union run.
+
+The skip was `C1210_Windows_linux_only_outcomes_are_exact`, requiring native Windows placement. Layering's unedited TRX stdout:
+
+```text
+VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3
+```
+
+Reproduction commands (each build/run is separately leased):
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -SlotWaitMinutes 5 -Label c1906-guard-build -- dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -SlotWaitMinutes 5 -Label c1906-guard-union -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(WindowsUnitPlatformAdmissionTests*)/*'
+pwsh -NoProfile -File scripts/build-slot.ps1 -SlotWaitMinutes 5 -Label c1906-driver-prerequisite -- dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo
+pwsh -NoProfile -File scripts/build-slot.ps1 -SlotWaitMinutes 5 -Label c1906-driver-exact -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/DerivedImpactIndexTests*/regenerate_script_reports_changed_then_unchanged'
+```
+
+The actual test invocations additionally requested TRX in the ignored evidence root. MTP durations: union 324.267 s; follow-up 12.803 s. A repetition should build the standalone prerequisite before the union. No actual-checkout index regeneration was necessary or performed. A preliminary `/usr/bin/time` wrapper attempt exited 127 before launching a build because that utility is absent; the local foreground timing wrapper replaced it. A one-off policy read initially omitted `nightly-common.ps1` and failed on missing canonicalization/hash functions; with both documented libraries imported it computed the exact pinned hash above, with no policy edit.
+
+| Retained verification evidence, under the ignored root | SHA-256 |
+|---|---|
+| guard-build.log | 0345a563120342dbd916469a33067e8c59c0f31e0f3b4bb59b4588b9b6503acc |
+| guard-results/c1906-guards.trx | ae1efb7a700236fb6a168d13675effcc2f37f700159f9d4d755de50f25cf60e2 |
+| driver-build.log | b25501cecfe835e341b43426e87d0f22db5f2829c5ba1818cb401e4f8ae09390 |
+| driver-followup-results/c1906-driver-followup.trx | 06273200a759e64d8882405aa047d631fe9dd05edd29b597f502a72979cb69c9 |
+
+The passive evidence slice was committed and pushed before these checks. The later validation addendum changes only this report. The three nightly pins and committed derived-index bytes remain unchanged; no repin or source repair was made.
 
 ## Remaining uncertainty
 
