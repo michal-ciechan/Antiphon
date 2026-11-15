@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "declarations": [
+    {
+      "id": "grok-startup-fixture",
+      "kind": "fixture",
+      "consumerProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "scope": "assembly",
+      "consumerClass": "",
+      "sourcePaths": [
+        "tests/Antiphon.Tests/Agents/GrokStartupReadinessTests.cs"
+      ],
+      "inputs": [
+        "tests/Antiphon.Tests/Agents/Fixtures/card0778/**"
+      ],
+      "environmentNames": [],
+      "rationale": "GrokStartupFixture reads captured frames through a shared helper; changes conservatively affect the whole test assembly, including indirect consumers.",
+      "witness": {
+        "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeTests.cs",
+        "method": "AppsettingsAndContentExpand"
+      }
+    },
+    {
+      "id": "server-host",
+      "kind": "host",
+      "consumerProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "scope": "assembly",
+      "consumerClass": "",
+      "sourcePaths": [
+        "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs"
+      ],
+      "inputs": [
+        "server/**"
+      ],
+      "environmentNames": [],
+      "rationale": "The shared WebApplicationFactory boots the real server; bound server source, configuration and content affect the consumer assembly. External host inputs remain unresolved.",
+      "witness": {
+        "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeTests.cs",
+        "method": "AppsettingsAndContentExpand"
+      }
+    }
+  ]
+}
