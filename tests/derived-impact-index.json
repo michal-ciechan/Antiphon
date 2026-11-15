@@ -1793,14 +1793,14 @@
       "reason": "cap",
       "owed": 79,
       "first": [
+        "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
         "C1677RetentionServerTests",
         "PhoneHomeImmediateSendTests",
         "PhoneHomeRecoveryEligibilityTests",
         "C0824DesktopLegacyReleaseSwitchTests",
-        "CodexProviderAuthRoutingTests",
-        "CompletedCardWorkspaceContractTests"
+        "CodexProviderAuthRoutingTests"
       ]
     },
     {
@@ -1809,14 +1809,14 @@
       "reason": "cap",
       "owed": 53,
       "first": [
+        "PhoneHomeReadAdmissionTests",
         "PhoneHomeSessionRoutingTests",
         "PtyConditionalReadClientTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "DelegateBranchDeliveryTests",
         "HostTopConsumerIngestTests",
         "PhoneHomeCompletedCardTransportTests",
-        "PhoneHomeStrandedQueueTests",
-        "C0824DesktopLegacyReleaseSwitchTests"
+        "PhoneHomeStrandedQueueTests"
       ]
     },
     {
@@ -18005,6 +18005,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionDispatchTests",
+        "C1677TempSweepDispatchTests",
         "ClaudeCredentialProbeDispatcherTests",
         "CodexPhoneHomeCreateTests",
         "DefaultRunnerPinTests",
@@ -18013,7 +18014,6 @@
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
         "PhoneHomeConnectionTests",
-        "PhoneHomeDirectoryTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeStrandedQueueTests",
         "PhoneHomeTaskDispatchProjectionTests",
@@ -18037,6 +18037,7 @@
         "C1514HostLoadHistoryTests",
         "C1514HostLoadWireTests",
         "C1677RetentionDispatchTests",
+        "C1677TempSweepDispatchTests",
         "CardWorktreeMirrorCleanupTests",
         "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
@@ -18049,7 +18050,6 @@
         "PhoneHomeConnectionServiceTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeLaunchTransportTests",
-        "PhoneHomeReadAdmissionTests",
         "PhoneHomeRollingRunnerTests",
         "RemoteWorkspacePreparerTests",
         "RunnerCapacityEndpointTests",
@@ -20643,6 +20643,7 @@
         "C1677RetentionEngineTests",
         "C1677RetentionInventoryTests",
         "C1677RetentionNativeProcessTests",
+        "C1677TempSweepDispatchTests",
         "C1677TempSweepTests"
       ]
     },
