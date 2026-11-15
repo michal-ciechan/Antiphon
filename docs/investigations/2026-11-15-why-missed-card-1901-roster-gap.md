@@ -37,3 +37,21 @@ Native Windows execution remains separately owed. Mutation is waived by the
 operator (2026-11-12). The four known master composition conflicts belong to Merge.
 
 Verification after the repair is recorded below when complete.
+
+The first repaired-source closure run (`f300cf5ace78bc0515e15d2ab0e2cad52120132f`)
+still failed 0/1: its next missing identity was
+`C1364BoundLandWaitProofTests.C1364_Host_recycle_post_removal_reports_waited_resume`.
+A read-only Roslyn scan found 31 additional unrostered direct gate callers:
+three split C1364 methods and 28 native-gate methods/helpers in the wrapper,
+content, receipt and publication fixtures. The original closure assertion stops
+at the first missing call. The repair therefore includes all these source-only
+entries: the three C1008 helper callers belong in `Existing`; the other 28 use
+`NativeLinuxGate.Require` and belong in `NativeSourceOnly`, with their existing
+literal native-platform reasons. Neither collection changes the frozen Windows
+child selection. Runtime test code and publication fixture behavior stay unchanged.
+
+The first evidence wrapper was stopped before launching a test when PowerShell
+expanded the filter as a filesystem glob. It produced no test result. The
+replacement uses a literal ProcessStartInfo argument list; each row takes its own
+build-slot lease and a nine-minute execution bound, and retains load/SHA/filter,
+TRX and opt-in phase records under `.antiphon/c1901-r3-*`.
