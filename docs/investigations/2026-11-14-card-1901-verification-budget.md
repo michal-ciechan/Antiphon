@@ -302,3 +302,22 @@ partitions through one unchanged shared body; original9min whole-method ceiling
 and all14 argument/assertion literals remain. Do not widen/rerun the category
 selector. Correct native Windows roster12 to actual4+5+5=14 and refresh its
 policy pins and witness key; no extra production behavior or bypass.
+
+CP-41 measured correction: clean62b0 run20261115-024719-95b7 executed16,
+passed15, failed1 in293.6176s, slot waited60s. The connected drain case hit
+its existing30s child deadline; this is not an assertion-red control. The
+exact method at clean task base b559 passed1/1 in71.9623s, slot waited0s,
+held139s, load36.78/34.15/27.09 before and29.27/32.31/27.46 after. The native
+base DLL embeds b559 and retained the same SHA-256 before/after. Do not label
+the failure inherited from that passing base observation; p95 remains unknown.
+
+The test's clockStepMs=25 state setting has no reader. Use the existing
+C727_TEST_POLL_MS=25 control for that connected case so its100ms simulated
+deadline requires four polls rather than twenty. Keep the30s child cap and
+all95/105ms boundary, refusal and no-effect assertions. CP-41 remains the same
+closed full-class row with16 actual methods and the unchanged9min cap.
+Stop/join the failed group after CP-46, then run the failed row, four affected
+batched guards and30 unfinished rows with one fresh Main build plus the two
+still-pending mirror builds. The remaining35-row group uses a shorter90min
+aggregate cap; no per-row/child timeout or assertion is loosened. Retain every
+earlier outcome, cost, source SHA and unedited CHECKPOINT line.

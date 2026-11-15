@@ -767,7 +767,7 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-40.10 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C1609_Cleanup_does_not_require_historical_image*)\|(C1609_Audit_uses_current_image*)` | M-adjacent RetiredTempContainerHostTests slice 10 | every intended method; 0 failed/skipped | 2 | 3 | true |
 | CP-40.11 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C994_Cleanup_receipts_redact_unapproved_fields*)\|(C994_Fixture_custody_is_bounded*)` | M-adjacent RetiredTempContainerHostTests slice 11 | every intended method; 0 failed/skipped | 2 | 3 | true |
 | CP-40.12 | S4 | CP-7 | linux-r2-final | `/*/*/RetiredTempContainerHostTests/(C1105_Temp_cleanup_uses_previous_generation*)` | M-adjacent RetiredTempContainerHostTests slice 12 | every intended method; 0 failed/skipped | 1 | 3 | true |
-| CP-41 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/RetiredTempContainerScriptTests/*` | M-adjacent RetiredTempContainerScriptTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
+| CP-41 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/RetiredTempContainerScriptTests/*` | M-adjacent RetiredTempContainerScriptTests | all 16 declared methods; 0 failed/skipped | 16 | 3 | true |
 | CP-42 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/RetireTempRunnerTimestampTests/*` | M-adjacent RetireTempRunnerTimestampTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-43 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/RollingProductionMountTests/*` | M-adjacent RollingProductionMountTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
 | CP-44 | S4 | CP-7 | linux-adjacent-measurement | `/*/*/RollingVolumeRecycleCensusChurnTests/*` | M-adjacent RollingVolumeRecycleCensusChurnTests | every selected native method; report skips; 0 failed | 1 | 3 | true |
@@ -1118,3 +1118,27 @@ and rerun the changed-input guards/mirrors already listed for CP138..147.
 Each new partition keeps the original whole-method9min ceiling, not a widened
 single-category timeout. Exact result floors4/5/5 and fresh argument identities
 are mandatory. CP162..168 still cover all16 adjacent argument results.
+
+CP-41 clock-fixture correction: the clean-source62b0 run completed16 methods,
+15 passed and C994_Drain_uses_one_deadline canceled its third owned child at
+the unchanged30s limit. Its first95/105ms boundary cases had completed. The
+exact method at task base b559 passed1/1 in71.9623s (slot waited0s, held139s),
+so an inherited failure is not established. Preserve both outcomes.
+
+The connected case set clockStepMs=25, but neither the production clock seam
+nor the fake HTTP script reads that state field. The existing supported
+C727_TEST_POLL_MS control advances the fixture clock; its default5ms required
+twenty expensive polls. Set that control to25ms for this case, keeping the
+100ms deadline,30s child cap,95/105ms vectors and every assertion unchanged.
+This is a fixture input correction; production source is unchanged. Tighten
+CP-41's floor to its actual16-method roster, retaining its existing9min cap.
+
+Stop/join the failed62b0 group after CP-46 closes. Its44 green rows retain their
+actual SHA and unedited receipts; CP-47 setup and29 queued rows are canceled,
+never passed. After the committed fixture correction, run CP-41, the four
+batched guard rows CP-10a..d and those30 unfinished rows serially through the
+checkpoint tool, using fresh isolated outputs and the committed expected SHA.
+The two pending mirror builds still run; the completed PtyHost native factory
+and unaffected green proofs need no repetition. Regenerate the impact index
+twice, repin separately only if computed inputs change, and inspect complete
+source/TRX method rosters. All48 Mutation variants remain pending.

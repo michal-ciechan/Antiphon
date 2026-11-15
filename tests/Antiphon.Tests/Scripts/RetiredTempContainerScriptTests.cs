@@ -41,7 +41,9 @@ public sealed class RetiredTempContainerScriptTests
             if(elapsed==105)run.Output.ShouldContain("TempContainerExitTimeout");
         }
         using var connected=new C1008WrapperFixture();connected.State["statuses"]!["server2-temp"]!["available"]=true;
-        connected.State["clockStepMs"]=25;
+        // The supported poll control also advances the fixture clock. The unused
+        // clockStepMs state field left this case doing twenty expensive polls.
+        connected.Environment["C727_TEST_POLL_MS"]="25";
         var timed=await connected.Run("drain-temp");timed.Exit.ShouldBe(2,"c994-one-deadline: connected");timed.Output.ShouldContain("TempContainerExitTimeout");Cases(timed.Trace).ShouldBeEmpty();
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
