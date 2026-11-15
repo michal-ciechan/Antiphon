@@ -73,7 +73,15 @@ public sealed class ReleaseImpactRuntimeTests
         inputs["tests/Consumer/Consumer.csproj"] = "<Project><ItemGroup><Content Include=\"../../external/fixtures/**/*.json\" /><None Include=\"../../src/Host/appsettings*.json\" /></ItemGroup></Project>";
         Members(Build(inputs), "external/fixtures/nested/new.json").ShouldBe(ConsumerClasses);
         inputs["tests/Consumer/Read.cs"] = "namespace Example; class Reader { string Read() => System.IO.File.ReadAllText(\"external/fixtures/nested/new.json\"); }";
-        graphReason(Build(inputs), "external/fixtures/nested/new.json", "runtimeInput:literal");
+        AssertReason(Build(inputs), "external/fixtures/nested/new.json", "runtimeInput:literal");
+        // Class declarations preserve full names, even when another namespace uses the
+        // same short name. Shared helpers still require assembly scope.
+        inputs["tests/Consumer/Shadow.cs"] = "namespace Shadow; class AgentTaskPoolTests {}";
+        inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("one-class", "content",
+            ["src/Unrelated/Other.cs"], ["tests/Consumer/Pool.cs"], "class", "Example.AgentTaskPoolTests"));
+        Members(Build(inputs), "src/Unrelated/Other.cs").ShouldBe(
+            ["tests/Consumer/Consumer.csproj::Example.AgentTaskPoolTests"]);
+        AssertRepositoryDeclarations();
         AssertIncomplete(current);
     }
 
@@ -86,6 +94,8 @@ public sealed class ReleaseImpactRuntimeTests
             "System.IO.File.ReadAllText(name)", "System.IO.Directory.GetFiles(name)",
             "config.AddJsonFile(name)", "System.Diagnostics.Process.Start(name)",
             "System.Environment.GetEnvironmentVariable(name)",
+            "System.Environment.GetEnvironmentVariable(\"SELECTOR_RUNTIME_FIXTURE\")",
+            "ReadAllText(name)", "new System.IO.StreamReader(name)",
             "System.IO.File.ReadAllText(\"missing.json\")",
         })
         {
@@ -103,6 +113,8 @@ public sealed class ReleaseImpactRuntimeTests
             "{\"schema\":1,\"declarations\":[],\"ignoreUnknown\":true}",
             Manifest(Declaration("escape", "fixture", ["../outside/**"], ["tests/Consumer/Pool.cs"])),
             Manifest(Declaration("wrong-kind", "ignore", ["src/Host/**"], ["tests/Consumer/Pool.cs"])),
+            Manifest(Declaration("duplicate", "fixture", ["src/Host/**"], ["tests/Consumer/Pool.cs"]),
+                Declaration("duplicate", "fixture", ["src/Host/**"], ["tests/Consumer/Pool.cs"])),
         })
         {
             inputs["tests/selector-runtime-inputs.json"] = manifest;
@@ -111,17 +123,32 @@ public sealed class ReleaseImpactRuntimeTests
         inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("witness", "fixture", ["src/Host/**"], ["tests/Consumer/Pool.cs"]))
             .Replace("AppsettingsAndContentExpand", "MissingWitness", StringComparison.Ordinal);
         Build(inputs).IncompleteReasons.ShouldContain("runtime-declaration-witness-missing:witness");
+        inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("class", "content",
+            ["src/Host/**"], ["tests/Consumer/Pool.cs"], "class", "Missing.AgentTaskPoolTests"));
+        Build(inputs).IncompleteReasons.ShouldContain("runtime-declaration-consumer-missing:class");
+        inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("source", "content",
+            ["src/Host/**"], ["missing.cs"]));
+        Build(inputs).IncompleteReasons.ShouldContain("runtime-declaration-source-unresolved:source");
+        inputs["tests/Consumer/Helper.cs"] = "namespace Example; class Helper {}";
+        inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("helper", "fixture",
+            ["src/Host/**"], ["tests/Consumer/Helper.cs"], "class", "Example.AgentTaskPoolTests"));
+        Build(inputs).IncompleteReasons.ShouldContain("runtime-declaration-source-unresolved:helper");
+        inputs["tests/selector-runtime-inputs.json"] = Manifest(Declaration("environment", "environment",
+            ["src/Host/**"], ["tests/Consumer/Pool.cs"]));
+        Build(inputs).IncompleteReasons.ShouldContain("runtime-environment-identity-unavailable:environment");
         inputs.Remove("tests/selector-runtime-inputs.json");
         Build(inputs).IncompleteReasons.ShouldContain("runtime-declarations-missing");
     }
 
-    private static void graphReason(ReleaseImpactGraph graph, string path, string reason) =>
+    private static void AssertReason(ReleaseImpactGraph graph, string path, string reason) =>
         graph.Edges.Single(e => e.Path == path).Classes.All(c => c.Kinds.Contains(reason)).ShouldBeTrue();
 
     private static string[] ConsumerClasses => ["tests/Consumer/Consumer.csproj::Example.AgentTaskPoolTests", "tests/Consumer/Consumer.csproj::Example.SessionMessageQueueServiceTests"];
-    private static object Declaration(string id, string kind, string[] paths, string[] sources) => new
+    private static object Declaration(string id, string kind, string[] paths, string[] sources,
+        string scope = "assembly", string consumerClass = "") => new
     {
-        id, kind, consumerProject = "tests/Consumer/Consumer.csproj", scope = "assembly", consumerClass = "",
+        id, kind, consumerProject = "tests/Consumer/Consumer.csproj", scope, consumerClass,
+        environmentNames = kind == "environment" ? new[] { "SELECTOR_RUNTIME_FIXTURE" } : Array.Empty<string>(),
         sourcePaths = sources, inputs = paths, rationale = "Owned fixture inputs for the consumer assembly.",
         witness = new { path = "tests/Witness/Witness.cs", method = "AppsettingsAndContentExpand" },
     };
@@ -150,9 +177,56 @@ public sealed class ReleaseImpactRuntimeTests
     private static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs)
     {
         var timer = Stopwatch.StartNew();
-        // Red-first adapter: the landed relation omits the runtime/assembly closure.
-        var result = ReleaseImpactGraphBuilder.Build(inputs);
+        var result = ReleaseImpactRuntimeInputs.Build(inputs);
         Console.WriteLine($"C1820 phase=runtime-inputs elapsedMs={timer.ElapsedMilliseconds}");
         return result;
+    }
+
+    private static void AssertRepositoryDeclarations()
+    {
+        var timer = Stopwatch.StartNew();
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Antiphon.sln")))
+            directory = directory.Parent;
+        var root = directory?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln");
+        // Real declaration/readers, isolated source inventory: never start the declared host.
+        var paths = new[]
+        {
+            "tests/selector-runtime-inputs.json", "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+            "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
+            "tests/Antiphon.Tests/Agents/GrokStartupReadinessTests.cs",
+            "tests/Antiphon.Tests/Agents/Fixtures/card0778/startup-frames.json",
+            "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeTests.cs",
+            "server/Antiphon.Server.csproj", "server/Program.cs", "server/appsettings.json",
+        };
+        var inputs = paths.ToDictionary(p => p, p => File.ReadAllText(Path.Combine(root, p)), StringComparer.Ordinal);
+        Console.WriteLine($"C1820 phase=declaration-fixture-io elapsedMs={timer.ElapsedMilliseconds}");
+        using var manifest = JsonDocument.Parse(inputs["tests/selector-runtime-inputs.json"]);
+        manifest.RootElement.GetProperty("declarations").EnumerateArray().Select(d => d.GetProperty("id").GetString())
+            .Order(StringComparer.Ordinal).ShouldBe(["grok-startup-fixture", "server-host"]);
+        var graph = Build(inputs);
+        graph.IncompleteReasons.Where(r => r.StartsWith("runtime-declaration", StringComparison.Ordinal)).ShouldBeEmpty();
+        string[] expected =
+        [
+            "tests/Antiphon.Tests/Antiphon.Tests.csproj::Antiphon.Tests.Agents.GrokStartupReadinessTests",
+            "tests/Antiphon.Tests/Antiphon.Tests.csproj::Antiphon.Tests.Scripts.ReleaseImpactRuntimeTests",
+        ];
+        foreach (var path in new[] { "server/Program.cs", "server/appsettings.json" })
+        {
+            Members(graph, path).ShouldBe(expected);
+            AssertReason(graph, path, "runtimeInput:server-host");
+        }
+        var fixture = "tests/Antiphon.Tests/Agents/Fixtures/card0778/startup-frames.json";
+        Members(graph, fixture).ShouldBe(expected);
+        AssertReason(graph, fixture, "runtimeInput:grok-startup-fixture");
+        // A stale witness must refuse that declaration; existing project/type positives survive.
+        inputs["tests/selector-runtime-inputs.json"] = inputs["tests/selector-runtime-inputs.json"]
+            .Replace("AppsettingsAndContentExpand", "AbsentMethod", StringComparison.Ordinal);
+        var missingWitness = Build(inputs);
+        missingWitness.IncompleteReasons.ShouldContain("runtime-declaration-witness-missing:server-host");
+        missingWitness.IncompleteReasons.ShouldContain("runtime-declaration-witness-missing:grok-startup-fixture");
+        missingWitness.Edges.SelectMany(e => e.Classes).SelectMany(c => c.Kinds)
+            .ShouldNotContain("runtimeInput:server-host");
+        AssertIncomplete(graph);
     }
 }
