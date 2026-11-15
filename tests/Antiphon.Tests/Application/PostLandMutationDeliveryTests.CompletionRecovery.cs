@@ -8,6 +8,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -45,12 +46,13 @@ public sealed partial class PostLandMutationDeliveryTests
         await using (var db = settled.World.Host.CreateContext())
             await db.SessionQueuedMessages.Where(m => m.SourceTaskId == settled.World.TaskId).ExecuteDeleteAsync();
         var clock = new RecoveryClock();
-        using var worker = RecoveryWorker(settled.Bridge, clock);
+        var recoveryLog = new RecordingLogger<CompletionNoteWorkHostedService>();
+        var missed = Guid.NewGuid();
+        using var worker = RecoveryWorker(settled.Bridge, clock, logger: recoveryLog);
         await worker.StartAsync(default);
         try
         {
             await clock.TimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var missed = Guid.NewGuid();
             await using (var db = settled.World.Host.CreateContext())
             {
                 await db.AgentTasks.Where(t => t.Id == settled.World.TaskId).ExecuteUpdateAsync(s => s
@@ -66,6 +68,7 @@ public sealed partial class PostLandMutationDeliveryTests
                 await db.SaveChangesAsync();
             }
             commands.FailNextRecoveryRead = true;
+            commands.Sql.Clear();
             settled.Bridge.Provider.GetRequiredService<CompletionNoteFlushQueue>().Recovery.Check(settled.World.TaskId);
             await UntilAsync(async () =>
             {
@@ -78,7 +81,25 @@ public sealed partial class PostLandMutationDeliveryTests
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == missed)).ShouldBe(1);
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
         }
-        finally { await worker.StopAsync(default); }
+        finally
+        {
+            await worker.StopAsync(default);
+            Console.WriteLine($"C1935 faultHits={commands.Failures} armed={commands.FailNextRecoveryRead} "
+                + $"timers={string.Join(',', clock.DueTimes)}");
+            await using var state = settled.World.Host.CreateContext();
+            foreach (var id in new[] { settled.World.TaskId, missed })
+            {
+                var task = await state.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id);
+                Console.WriteLine($"C1935 task={(id == missed ? "missed" : "requested")} "
+                    + $"status={task?.Status} stamped={task?.CompletionNoteQueuedAt is not null} "
+                    + $"rows={await state.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == id)} "
+                    + $"completionObligations={await state.AgentTaskLandNotifications.CountAsync(n => n.TaskId == id && n.Kind == LandNotificationKind.TaskCompletion)}");
+            }
+            foreach (var entry in recoveryLog.Entries)
+                Console.WriteLine($"C1935 worker={entry.Message} exception={entry.Exception?.Message}");
+            foreach (var sql in commands.Sql.Where(s => s.Contains("\"SourceLandingOperationId\" IS NOT NULL", StringComparison.Ordinal)))
+                Console.WriteLine($"C1935 recoverySql={sql}");
+        }
     }
 
     [Test]
@@ -236,10 +257,10 @@ public sealed partial class PostLandMutationDeliveryTests
     }
 
     private static CompletionNoteWorkHostedService RecoveryWorker(BridgeQueueHarness h, TimeProvider clock,
-        CompletionNoteFlushQueue? flushes = null) => new(
+        CompletionNoteFlushQueue? flushes = null, ILogger<CompletionNoteWorkHostedService>? logger = null) => new(
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
         flushes ?? h.Provider.GetRequiredService<CompletionNoteFlushQueue>(), new SpecialistFailureQueue(), clock,
-        NullLogger<CompletionNoteWorkHostedService>.Instance);
+        logger ?? NullLogger<CompletionNoteWorkHostedService>.Instance);
 
     private sealed class SettlementPublicationCut : LandDeliveryBoundary
     {
