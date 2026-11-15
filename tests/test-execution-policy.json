@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d",
+  "policyHash": "16917233483bf9f13534d8d5f86a1bdbdfabe4a4981153127287537c25bb5179",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1632,6 +1632,13 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
           "owner": "CARD-1777"
+        },
+        {
+          "suite": "antiphon",
+          "class": "RunnerLinuxCompilerPolicyTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: deployment grammar and Compose rendering use bash and POSIX fixture paths; the native PTY inheritance witness requires Linux. No daemon is contacted.",
+          "owner": "CARD-1906"
         },
         {
           "suite": "antiphon",
