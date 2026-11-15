@@ -39,6 +39,13 @@ function Get-RcReleaseBaseline {
     $result=@{format='antiphon-rc-baseline-proposal-v1';candidateSha=$CandidateSha;selected=$null;
         reason='baseline-absent';reasons=@();fullAnchor=$null;failures=@();historyDigest=$HistoryDigest;
         forceFull=$true;executionEvidence=$false;gateCredit=$false}
+    # Like Get-TestSelection: a proposal only reads objects and refs, none of which can change the filter/textconv
+    # driver settings the runner asks git for before each command, so that answer is reused for this proposal
+    # (60 s per directory) and the caller's setting is restored after it. On Windows the second process per git
+    # call cost about 15 of 58 s of one proposal case (CARD-1947).
+    if (-not ('Antiphon.Checkpoints.CheckpointProcessRunner' -as [type])) { . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1') }
+    $savedDriverCache=[Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds
+    [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=60000
     try {
         if ($CandidateSha -cnotmatch '\A[0-9a-f]{40}\z' -or
             (Resolve-RcBaselineCommit $RepositoryRoot $CandidateSha) -cne $CandidateSha) { throw 'baseline-candidate-invalid' }
@@ -116,6 +123,6 @@ function Get-RcReleaseBaseline {
     } catch {
         $result.selected=$null; $result.fullAnchor=$null; $result.forceFull=$true
         $result.reason=$_.Exception.Message; $result.reasons=@($_.Exception.Message)
-    }
+    } finally { [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsCacheMilliseconds=$savedDriverCache }
     return $result
 }
