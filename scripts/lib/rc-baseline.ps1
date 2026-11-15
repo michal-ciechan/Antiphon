@@ -97,11 +97,11 @@ function Get-RcReleaseBaseline {
                     ($entry.timestamp -eq $chosen.timestamp -and [string]::CompareOrdinal($entry.pointer.refName,$chosen.pointer.refName) -lt 0)))) { $chosen=$entry }
         }
         if ($null -eq $chosen) { throw 'baseline-absent' }
-        # Bind reads again immediately before returning; no fetch, ref write or repair.
-        if ((Resolve-RcBaselineCommit $RepositoryRoot $chosen.pointer.refName) -cne $chosen.pointer.sourceSha -or
-            (Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$chosen.pointer.sourceSha,$CandidateSha) @(0,1)).Exit -ne 0) { throw 'baseline-ref-moved' }
+        # Bind bytes again, then the ref immediately before returning; no writes.
         $read=Read-RcBaselinePointer $RepositoryRoot $chosen.pointer $CurrentContext $UtcNow
         [void](Read-RcAdmissionJson $HistoryPath $HistoryDigest)
+        if ((Resolve-RcBaselineCommit $RepositoryRoot $chosen.pointer.refName) -cne $chosen.pointer.sourceSha -or
+            (Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$chosen.pointer.sourceSha,$CandidateSha) @(0,1)).Exit -ne 0) { throw 'baseline-ref-moved' }
         $forced=Get-RcForcedFullDecision $CurrentContext.contract $read.envelope.contract $read.envelope.history $read.envelope.fullAnchor -UtcNow $UtcNow
         $reasons=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
         foreach ($reason in (@($read.admission.reasons)+@($forced.reasons))) { [void]$reasons.Add($reason) }
