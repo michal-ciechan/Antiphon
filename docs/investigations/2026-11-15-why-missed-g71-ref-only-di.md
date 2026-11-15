@@ -113,11 +113,22 @@ edge and the production-composition/helper witnesses; do not expand the Unit lan
 
 ## Repair and verification
 
-Pending at this red-first record. Keep the rolling fixture on the shared graph,
-replace its removed progress seam with the existing in-memory fake seeded from
-the same synthetic commit as `PushGit`, and retain every assertion and timeout.
-Verify production resolution with both provider validation options enabled,
-without changing production registrations. Mutation is operator-waived.
+The rolling fixture remains on the shared graph and replaces its removed progress
+seam with the existing in-memory fake seeded from the same synthetic commit as
+`PushGit`. At candidate `5b657e19a0a54ef41329604b502dc7a10cb4d7ae`, the new
+production-host witness passed: `ValidateOnBuild=true` and `ValidateScopes=true`,
+production `TaskProgressGit`, scoped provisioner and dispatcher resolution, and
+root-scope rejection all succeeded (1/1, host 29.237s). No production registration
+changed. There was no previous equivalent production-composition witness.
+
+The first rolling-launch group then passed 2/3 and failed the late-drain case:
+its hand-seeded Code task had no `RepoPath`, and enabling progress capture made
+that fixture fail `repair_source_identity_unavailable` before remote preparation.
+The repair gives `SeedQueuedAsync` the same repository path as its working
+directory. This is fixture data, with every assertion and timeout preserved.
+The original DI red and this subsequent assertion red remain separate evidence.
+The repaired source requires the full bounded verification recorded below.
+Mutation is operator-waived.
 
 ## Exemption
 
