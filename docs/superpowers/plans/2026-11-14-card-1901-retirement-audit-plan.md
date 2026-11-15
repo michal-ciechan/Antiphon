@@ -902,6 +902,13 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-169 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work` | R-CP39.18 explicit census partition 1/3 | all preserved argument identities; 0 failed/skipped | 4 | 3 | true |
 | CP-170 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work_binding` | R-CP39.18 explicit census partition 2/3 | all preserved argument identities; 0 failed/skipped | 5 | 4 | true |
 | CP-171 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Resume_post_removal_census_tracks_open_work_landing` | R-CP39.18 explicit census partition 3/3 | all preserved argument identities; 0 failed/skipped | 5 | 4 | true |
+| CP-172 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementApplyGateTests/Manual_apply_refuses_until_the_operation_token_matches` | R-CP59 full13-method split 1/4 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
+| CP-173 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementApplyGateTests/Scripted_apply_refuses_until_the_operation_token_matches` | R-CP59 full13-method split 2/4 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
+| CP-174 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementApplyGateTests/Resume_refuses_until_the_operation_token_matches` | R-CP59 full13-method split 3/4 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
+| CP-175 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementApplyGateTests/(Apply_gate_is_checked_before_every_volume_removal*)\|(Apply_gate_crlf_copy_of_the_expected_block_matches_the_lf_script*)\|(Crlf_copy_of_an_already_crlf_literal_matches_the_lf_copy*)\|(Multiline_raw_source_needles_are_newline_normalised*)\|(Refused_apply_keeps_the_ready_preview*)\|(State_volume_named_in_the_plan_is_refused_before_delete*)\|(Valid_token_refuses_protected_names_and_keeps_host_state*)\|(Recheck_target_refuses_a_changed_fingerprint*)\|(Redeploy_old_without_switch_skips_recycle*)\|(Redeploy_old_with_switch_requests_recycle*)` | R-CP59 full13-method split 4/4 | exactly 10 intended results; 0 failed/skipped | 10 | 3 | true |
+| CP-176 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementReceiptTests/Journal_intents_and_partial_resume_are_exact` | R-CP79 all adapter/cut/Close scenarios split 1/3 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
+| CP-177 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementReceiptTests/Journal_intents_and_partial_resume_are_exact_replacement` | R-CP79 all adapter/cut/Close scenarios split 2/3 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
+| CP-178 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementReceiptTests/Journal_intents_and_partial_resume_are_exact_close` | R-CP79 all adapter/cut/Close scenarios split 3/3 | exactly 1 intended result; 0 failed/skipped | 1 | 3 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -1142,3 +1149,47 @@ The two pending mirror builds still run; the completed PtyHost native factory
 and unaffected green proofs need no repetition. Regenerate the impact index
 twice, repin separately only if computed inputs change, and inspect complete
 source/TRX method rosters. All48 Mutation variants remain pending.
+
+
+CP-59/CP-79 final sizing repair after source5dcc9f27dae665162797a186f3503ac33285e2ed:
+run20261115-044119-43ae completed28 green rows, four red rows, two9min
+timeouts and one aggregate-budget refusal. Both mirror builds passed; CP-122
+passed3/3, CP-123 did not execute before the90min cap and remains pending.
+The aggregate is not SOURCE VALID. Keep every actual SHA/outcome/unedited line.
+
+CP-59 completed12 passing case events but no qualifying whole-row TRX before
+its9min deadline. CP-172/173/174 select its existing manual, scripted and
+resume token methods individually; CP-175 selects all other10 original
+methods. All13 names, source bodies and assertions are unchanged. The old
+CP-59 deadline is historical/unqualified, never passed.
+
+CP-79's existing1120s method includes two-project adapters, five independent
+cut/resume cases and a150s public Close driver, exceeding one9min row. Keep
+its original name for adapters plus before-intent/before-rm/after-rm, move
+replacement/unattributed-absence to the suffixed replacement method, and
+move the original two-Preview/Close block to the suffixed close method.
+The shared cut loop and every assertion remain verbatim; all five cut labels
+remain. CP-176/177/178 select those three exact methods. Original timeout
+attribute1120000ms is unchanged; new methods inherit the existing600000ms
+class limit, and all three rows retain the original9min ceiling. Native gates
+are the first statement in every wrapper. Add only the two same-reason
+Windows skip-roster identities; the whole-class Linux exclusion is unchanged.
+The old CP-79 whole-method timeout is unqualified, never passed.
+
+CP-50 (two methods), CP-73, CP-74 and CP-77 canceled existing30/120s children.
+The exact b559 native base checks all passed (63.4928s/15.1706s,53.4873s,
+144.5714s and166.7704s respectively), so no inherited failure is established.
+Retain their source/binary/load receipts. Their same-row failure-driven rerun
+is explicit, once, with no known-flaky flag or widened assertion/child/row cap.
+Failure-only fixture diagnostics report booleans, trace byte count and a
+whitelisted Docker verb; no raw output, arguments or token values are logged.
+
+After committing/pushing these repairs, regenerate the native impact index
+twice and compare pins; commit changed index/pins separately if needed. Run
+CP-172..178, the four red rows CP-50/73/74/77, pending CP-123, CP-10a..d and
+CP-13 serially through the checkpoint tool at the committed expected SHA,
+with fresh isolated project outputs and a90min aggregate cap. Each row remains
+at most9min and every child cap is unchanged. Retain unaffected green proofs,
+including the actual native PtyHost factory at62b; no retesting by a new SHA
+claim. Inspect current-source declarations and each fresh complete TRX.
+All48 PC variants stay pending for method-scoped SourceLanding Mutation.
