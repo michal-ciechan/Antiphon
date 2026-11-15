@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "bd6689bbc7ea752f13a69f872ea86a171fc8afc94e90ef9ed0c8d53aab00fbaa",
+  "policyHash": "b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1680,6 +1680,17 @@
           "platform": "linux",
           "reason": "CARD-0824 actual Windows path, registration and restart witnesses; all three remain required on Windows.",
           "owner": "CARD-0824"
+        },
+        {
+          "suite": "antiphon",
+          "class": "PtyDeliveryCeilingsTests",
+          "methods": [
+            "A_silent_runner_leaves_this_processes_own_decision_standing",
+            "An_inbox_server_is_not_raised_by_a_modern_runner"
+          ],
+          "platform": "linux",
+          "reason": "Windows ConPTY inbox delivery profile: PtyBackendPolicy resolves UnixPty off Windows and Windows backend selectors do not apply. These two methods assert InboxConhost and remain required on Windows. The other PtyDeliveryCeilingsTests methods stay required on both platforms.",
+          "owner": "CARD-1938"
         }
       ]
     }

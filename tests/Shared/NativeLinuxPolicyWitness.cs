@@ -47,8 +47,9 @@ public static class NativeLinuxPolicyWitness
     // CARD-1811 one-record addition (Linux CapabilityScriptTests DPAPI row): docs/investigations/2026-11-09-why-missed-capability-script-dpapi-linux.md.
     // CARD-1814 one-record addition (Linux DelegateScriptCapabilityTests DPAPI methods): same note.
     // CARD-0824 exact one-record addition: the three producer Windows witnesses are excluded on Linux only.
+    // CARD-1938 exact one-record addition: two PtyDeliveryCeilingsTests inbox-conhost methods are excluded on Linux only.
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
-    public const string LegacyExclusionDigest = "e377b73a3c681e2beef6a56d12a0b8fd7215ec4f5e41810e95a225ecdde75a3c";
+    public const string LegacyExclusionDigest = "6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
