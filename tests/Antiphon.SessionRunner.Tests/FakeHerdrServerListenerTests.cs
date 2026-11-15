@@ -282,23 +282,8 @@ public class FakeHerdrServerListenerTests
         await using var owner = new FakeHerdrServer();
         owner.Start(); await owner.WaitUntilListeningAsync();
         var assembly = typeof(FakeHerdrEndpoint).Assembly.Location;
-        var script = "param([string]$AssemblyPath)\n$a=[Reflection.Assembly]::LoadFrom($AssemblyPath)\n$a.GetType('Antiphon.SessionRunner.Tests.FakeHerdrEndpoint',$true).GetMethod('ReclaimDeadLeases').Invoke($null,@())";
-        var scriptPath = Path.Combine(Path.GetTempPath(), $"c801-reclaim-{Guid.NewGuid():N}.ps1");
-        await File.WriteAllTextAsync(scriptPath, script);
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-NonInteractive");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(scriptPath);
-        start.ArgumentList.Add(assembly);
-        try
-        {
-            using var child = Process.Start(start)!;
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await child.WaitForExitAsync(deadline.Token);
-            child.ExitCode.ShouldBe(0, await child.StandardError.ReadToEndAsync());
-        }
-        finally { File.Delete(scriptPath); }
+        var child = await HerdrTestProcess.ReclaimDeadLeasesInOwnedProcessAsync(assembly);
+        child.ExitCode.ShouldBe(0, child.StandardError);
         NativeFileIdentity.TryRead(owner.EndpointPath, out _).ShouldBeTrue("C801_OTHER_PROCESS_LIVE_LEASE_PRESERVED");
         (await Client(owner).ConnectAndValidateAsync(CancellationToken.None)).Protocol.ShouldBe(20);
     }
