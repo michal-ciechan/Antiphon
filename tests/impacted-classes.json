@@ -5,6 +5,17 @@
   "maximumStaleness": 0,
   "kinds": [
     {
+      "id": "native-linux-gate-roster",
+      "globs": [
+        "tests/Antiphon.Tests/Scripts/RemoteScriptContractTests.cs",
+        "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
+        "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs"
+      ],
+      "classes": [
+        "WindowsUnitPlatformAdmissionTests"
+      ]
+    },
+    {
       "id": "migrations",
       "globs": [
         "server/Migrations/**",

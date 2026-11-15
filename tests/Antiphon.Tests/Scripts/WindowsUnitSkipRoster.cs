@@ -235,6 +235,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Resume_post_removal_census_tracks_open_work", 4, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Resume_post_removal_census_tracks_open_work_binding", 5, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Resume_post_removal_census_tracks_open_work_landing", 5, ExistingReason),
+        new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105ResumePostRemovalCensusCaseAsync", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C849_Deploy_prepares_and_verifies_before_acceptance", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_recovery_tips", 10, ExistingReason, true),
         new("Antiphon.Tests.Scripts", "RemoteScriptContractTests", "C1105_Git_audit_seed_content", 11, ExistingReason, true),
