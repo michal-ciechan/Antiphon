@@ -103,3 +103,77 @@ inherited failure. Extend the exact expected kind list and require the label
 witness alongside the existing remote-script witnesses. Strict equality remains.
 The initial failed TRX and its 265.596-second leased wall time remain in
 `selectors/`; the corrected full-class rerun uses `selectors-green/`.
+
+## Final verification
+
+All final rows ran serially at clean committed code source
+`ef372e7b2b8d30602801a68eab4ebe853606af52`, with `dirty=0` in each row record.
+No source changed during the runs. Every build and test driver took its own
+granted build-slot lease; all admission waits were zero. Native-default output
+and default apphosts were used for Antiphon.Tests builds and `--no-build` runs.
+The C519 class compiled as part of that complete test-project build; its
+container-backed runtime was not commissioned.
+
+| Final row | Total / passed / failed / skipped | Leased wrapper wall seconds |
+|---|---|---:|
+| TestTimingOperationLabelTests | 2 / 2 / 0 / 0 | 9.394 |
+| ImpactedClassesSelectorTests | 50 / 50 / 0 / 0 | 244.162 |
+| RunnerLinuxCompilerPolicyTests | 35 / 35 / 0 / 0 | 31.254 |
+| Required eleven-class guard union | 115 / 114 / 0 / 1 | 200.841 |
+| c346 Compose fixture | 120 refusals, 16 matrices, missing-file and base-equivalence passed | 9.721 |
+| CARD-1953 cleanup witness | 8 / 8 / 0 / 0; checkout roots 0 | 3.370 |
+
+The final TUnit total is **202 results: 201 passed, 0 failed, 1 skipped**.
+The skip is the explicitly Windows-only
+`WindowsUnitPlatformAdmissionTests.C1210_Windows_linux_only_outcomes_are_exact`;
+this Linux run does not discharge its Windows execution. All eleven guard
+classes have nonzero TRX counts. Their counts are respectively: classification
+policy 42, classification guard 1, slow registry 5, slow tripwire 2, native
+Linux policy 3, derived index 27, mechanical contract 11, platform guidance 5,
+layering 11, lane category 1, Windows admission 7. The guard TRX contains:
+
+```text
+VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3
+```
+
+The compiler-policy fixture's actual phase JSONL contains **37** preserved
+`compose-fixture-delete` spans and **zero** omitted operation spans. This
+verifies the real cleanup instrumentation as well as the strict call-site
+allowlist witness.
+
+The final apphost build passed with **0 errors, 2,135 warnings, 188.21 seconds**
+MSBuild elapsed (189-second lease). The first repaired-source build at
+`03fff6f44ef180eb0e0d628891a2d59235f68a00` also passed: 0 errors,
+2,135 warnings, 293.26 seconds (294-second lease). Its original label class
+passed 2/2 in 8.885 seconds before the selector expectation was extended.
+These historical outcomes and the original 49/50 selector red are retained,
+not replaced by the final green.
+
+The derived-index driver was built first in its own lease: **0 errors,
+0 warnings, 8.04 seconds**. Its inputs did not subsequently change. Both initial
+regenerations and both final regenerations reported
+`derived-impact-index unchanged` (28, 28, 30, and 29-second leases). No index
+bytes changed, so no generated-index commit was made. All three policy pins
+remain exactly as recorded above; the native-policy guard validated the legacy
+seal. No timeout or assertion was loosened.
+
+All rows and builds were below ten minutes. Final test load samples ranged
+from `14.15 14.40 11.48` before the label row to `2.95 5.39 8.09` after the
+guards; the first repaired build also observed `37.22 19.07 8.95`. TRX retains
+per-test durations, and each C# row has opt-in phase JSONL. Node phase costs
+not separately instrumented remain unknown rather than zero.
+
+Source slices, each pushed to `feat/card-task-22ee1e10`:
+
+- `03fff6f44ef180eb0e0d628891a2d59235f68a00`: exact label admission, one-row
+  selector extension, and initial why-missed note.
+- `4a63fd494a2bd4d088fa1acb5a52490b3adb14b8`: strict historical kind-list
+  extension and explicit label-witness expectation.
+- `ef372e7b2b8d30602801a68eab4ebe853606af52`: correct the historical fixture
+  name in the comment and explanation; final verified code tip.
+
+This final evidence appendix changes only this investigation document. The
+caller report records the final pushed tip, evidence-history check and fresh
+conflict-free merge-tree result. Work proceeds under the supplied standing
+authority without another approval request. Mutation checks are waived and
+the test-only handoff is **next: merge**.
