@@ -72,8 +72,8 @@ public sealed class RunnerLinuxCompilerPolicyTests
         var policy = model.RootElement.GetProperty("services").GetProperty("session-runner")
             .GetProperty("environment").GetProperty("ANTIPHON_LINUX_COMPILER_POLICY").GetString();
         policy.ShouldBe(saved);
-        var root = Path.Combine(DelegateScriptRunner.RepoRoot, ".antiphon", "c1906", "runtime-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
+        using var fixture = new ComposeFixtureRoot("c1906-runtime-");
+        var root = fixture.Root;
         var probe = Path.Combine(root, "probe.ps1");
         var observation = Path.Combine(root, "observed.txt");
         await File.WriteAllTextAsync(probe,
@@ -106,6 +106,7 @@ public sealed class RunnerLinuxCompilerPolicyTests
 
     private static async Task<string> Run(string selection)
     {
+        using var fixture = new ComposeFixtureRoot("c1906-compose-");
         var start = new ProcessStartInfo("node")
         {
             WorkingDirectory = DelegateScriptRunner.RepoRoot,
@@ -114,6 +115,7 @@ public sealed class RunnerLinuxCompilerPolicyTests
         start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1906-compiler-policy-compose.mjs"));
         start.ArgumentList.Add(selection);
+        fixture.Bind(start);
         using var child = Process.Start(start)!;
         var stdout = child.StandardOutput.ReadToEndAsync();
         var stderr = child.StandardError.ReadToEndAsync();
