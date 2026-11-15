@@ -238,7 +238,8 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
     }
 
     [Test]
-    public async Task Current_unconfirmed_listings_are_bounded_and_every_row_is_reachable()
+    [Arguments(false)] [Arguments(true)]
+    public async Task Current_unconfirmed_listings_are_bounded_and_every_row_is_reachable(bool attentionOnly)
     {
         var first = await SeedAsync();
         var rows = Enumerable.Range(2, 1002).Select(n => new SessionQueuedMessage
@@ -257,6 +258,8 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         try
         {
         using var client = factory.CreateClient();
+        if (!attentionOnly)
+        {
         var queueIds = new List<Guid>();
         long since = 0;
         do
@@ -264,6 +267,8 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
             var page = await client.GetFromJsonAsync<JsonElement>($"/api/sessions/{first.AgentSessionId}/messages?since={since}&limit=10000");
             var messages = page.GetProperty("messages").EnumerateArray().ToList();
             messages.Count.ShouldBeInRange(1, 100);
+            messages.Sum(m => System.Text.Encoding.UTF8.GetByteCount(m.GetProperty("body").GetString()!))
+                .ShouldBeLessThanOrEqualTo(256 * 1024);
             var sequence = messages.Select(m => m.GetProperty("sequence").GetInt64()).ToArray();
             sequence.ShouldBe(sequence.Order().ToArray());
             sequence[0].ShouldBeGreaterThan(since);
@@ -272,6 +277,9 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
             if (!page.GetProperty("truncated").GetBoolean()) break;
         } while (queueIds.Count < 1100);
         queueIds.ShouldBe(new[] { first.Id }.Concat(rows.Select(r => r.Id)).ToArray());
+        }
+        else
+        {
         var attentionIds = new List<Guid>();
         var skip = 0;
         do
@@ -289,6 +297,7 @@ public sealed class SessionQueueAbandonTests(AbandonWebAppFactory factory)
         } while (skip < 2000);
         attentionIds.Distinct().Count().ShouldBe(1003);
         attentionIds.Count.ShouldBe(1003);
+        }
         _adapters[first.AgentSessionId].Inputs.ShouldBeEmpty();
         }
         finally
