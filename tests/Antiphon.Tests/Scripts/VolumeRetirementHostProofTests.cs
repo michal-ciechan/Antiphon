@@ -17,6 +17,35 @@ public sealed class VolumeRetirementHostProofTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Publication_fixture_disposal_leaves_no_checkout_or_temp_residue()
+    {
+        var evidence = Path.Combine(DelegateScriptRunner.RepoRoot, ".antiphon/evidence/card-1901");
+        foreach (var outcome in new[] { "success", "assertion", "cancellation" })
+        {
+            var fixture = await VolumeRetirementPublicationFixture.Create();
+            var root = fixture.Root;
+            try
+            {
+                // The nullable cast lets this regression compile against the leaking base.
+                using ((object)fixture as IDisposable)
+                {
+                    File.Exists(Path.Combine(root, "origin.git", "HEAD")).ShouldBeTrue();
+                    if (outcome == "assertion") false.ShouldBeTrue("fixture body failure");
+                    if (outcome == "cancellation") throw new OperationCanceledException();
+                }
+            }
+            catch (ShouldAssertException exception) when (outcome == "assertion" && exception.Message.Contains("fixture body failure", StringComparison.Ordinal)) { }
+            catch (OperationCanceledException) when (outcome == "cancellation") { }
+
+            Directory.Exists(root).ShouldBeFalse("fixture disposal must remove its exact root after " + outcome);
+            Path.GetDirectoryName(root).ShouldBe(Path.GetFullPath(OperatingSystem.IsWindows() ? Path.GetTempPath() : "/var/tmp").TrimEnd(Path.DirectorySeparatorChar));
+            if (Directory.Exists(evidence))
+                Directory.EnumerateFileSystemEntries(evidence, "*", SearchOption.AllDirectories).ShouldBeEmpty("publication fixtures must leave nothing under checkout evidence");
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Fresh_graph_renewal_fetches_again_for_unchanged_advertisement()
     {
         var f = await VolumeRetirementPublicationFixture.Create();
