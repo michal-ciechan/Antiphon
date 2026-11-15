@@ -17,7 +17,7 @@ public sealed class VolumeRetirementPublicationTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_origin_salvage_proves_exact_required_objects()
     {
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         var refused = await f.WriteProof([(f.U, "commit")]);
         refused.Exit.ShouldBe(2, "H1 before exact publication; " + refused.Output);
         await f.Publish(f.U);
@@ -41,7 +41,7 @@ public sealed class VolumeRetirementPublicationTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_salvage_namespace_and_types_are_closed()
     {
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         await f.Protect(f.U, VolumeRetirementPublicationFixture.Canonical(f.U));
         (await f.WriteProof([(f.U, "commit")])).Exit.ShouldBe(2, "H2 local canonical preservation grants no authority");
         foreach (var reference in new[] { "refs/salvage/legacy", "refs/antiphon/other", "refs/antiphon/salvage-lookalike/unique" })
@@ -82,7 +82,7 @@ public sealed class VolumeRetirementPublicationTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_salvage_snapshot_prunes_and_renews_exact_objects()
     {
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         await f.Publish(f.U);
         var first = await f.WriteProof([(f.U, "commit")]);
         first.Exit.ShouldBe(0, first.Output);
@@ -176,7 +176,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Origin_salvage_graph_passes_the_full_offline_audit()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var tip = await f.Commit("retained child", f.U, "retained child bytes");
         await f.Protect(tip, VolumeRetirementPublicationFixture.Canonical(tip));
         await File.WriteAllTextAsync(Path.Combine(f.Root, "helper-auth-128"), "1\n");
@@ -214,7 +214,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Local_salvage_refs_are_protected_roots()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var y = await f.Commit("canonical loose", f.A, "canonical loose bytes");
         var z = await f.Commit("canonical packed", f.A, "canonical packed bytes");
         var proof = await f.WriteProof(baselineWriter: true);
@@ -251,7 +251,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Reflog_patch_equivalence_never_proves_publication()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var originals = new List<string>(); var twins = new List<string>();
         var original = f.A; var twin = f.A;
         for (var i = 0; i < 16; i++)
@@ -300,7 +300,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Other_remote_tracking_refs_do_not_prove_publication()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Git(f.Repo, "remote", "add", "backup", f.Backup);
         await f.Git(f.Repo, "push", "-q", f.Backup, f.U + ":refs/heads/copy");
         await f.Protect(f.U, "refs/remotes/backup/loose");
@@ -329,7 +329,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Detached_linked_heads_and_logs_require_exact_publication()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var linked = Path.Combine(f.Work, "worktrees/linked");
         await f.Git(f.Repo, "worktree", "add", "-q", "--detach", linked, f.U);
         (await f.Git(linked, "rev-parse", "HEAD")).ShouldBe(f.U);
@@ -361,7 +361,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Tags_preserve_object_and_ancestry_requirements()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Protect(f.U, "refs/tags/lightweight");
         await f.Publish(f.U, "refs/tags/lightweight");
         var light = await f.WriteProof(baselineWriter: true);
@@ -409,7 +409,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task V2_invalid_bundle_cannot_use_present_head_fallback()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         var valid = await f.Preview(proof);
@@ -480,7 +480,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Salvage_deleted_after_sealing_refuses_ready()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
@@ -496,7 +496,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Head_rolled_back_after_sealing_refuses_ready()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, "refs/heads/published-original");
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
@@ -512,7 +512,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Salvage_replaced_after_sealing_refuses_ready()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         const string beforeRepair = "137fde4adc58f98b4d59b5d945b3380e9b1a5749";
@@ -535,7 +535,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Origin_unreachable_at_final_check_refuses_ready()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
@@ -551,7 +551,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Origin_rebound_at_final_check_refuses_ready()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
@@ -573,7 +573,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Unchanged_objects_renew_at_each_ready_gate()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof();
@@ -589,7 +589,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Offline_scan_requires_live_completion()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         await f.Publish(f.U);
         await f.Protect(f.U, "refs/recovery/original");
         var proof = await f.WriteProof();
@@ -644,7 +644,7 @@ public sealed class VolumeRetirementPublicationTests
     private static async Task RenewalCorpus(int seed, int firstShape = 0)
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         var random = new Random(seed);
         var objects = new List<string>(); var parents = new List<int[]>();
         for (var i = 0; i < 40; i++)
@@ -689,7 +689,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Salvage_withdrawn_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
@@ -707,7 +707,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Head_rolled_back_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, "refs/heads/published-original");
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
@@ -725,7 +725,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Origin_unreachable_after_staging_refuses_control()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
@@ -743,7 +743,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Final_origin_binding_refresh_is_inside_effect_window()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Publish(f.U);
         await f.Protect(f.U, "refs/heads/recovery");
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
@@ -781,7 +781,7 @@ public sealed class VolumeRetirementPublicationTests
     public async Task Binding_clock_precedes_fresh_origin_url_observation()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
         const string rebound = "https://fixture.invalid/card-1901/rebound.git";
         var moveAtClock = $$"""
@@ -932,7 +932,7 @@ public sealed class VolumeRetirementPublicationTests
 
     private static async Task SelectorVector(bool symlink)
     {
-        var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var nested = Path.Combine(f.Repo, ".antiphon/selector-evidence/x/fixtures/y");
         await f.Git(f.Root, "init", "-q", "-b", "main", nested);
         await f.Git(nested, "commit", "-qm", "independent fixture", "--allow-empty");
