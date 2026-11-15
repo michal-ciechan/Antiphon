@@ -52,11 +52,18 @@ project censuses <=2m each. Run rows serially below ten minutes, one build at a
 time. Retain per-method/TRX, build/slot/host timings; unobserved IO subphases unknown.
 No full assembly or Unit lane run: those remain nightly/rc-owned.
 
+First checkpoint attempt at 624901925f55626968ddc9043b88b68c902583a3:
+CP-7 executed 3, failed 3 solely because the adapter omitted the shared completion
+footer; all three script outcome contracts passed. Stopped before the other rows
+ran. Fix 647e2ea3a7 uses Complete-C487Harness without changing assertions/deadlines.
+Retain that red receipt and its 397.490s isolated-build cost. The retry uses a fresh
+build root because the stopped run retained its output. No inherited-red claim.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-7 | S7a | `tests/Antiphon.Tests -> bin-c1836-s7a/` | baseline | `/*/*/RcReleaseBaselineTests/*` | V-7 | all 3 named methods, no failures/skips | 3 | 6 |
+| CP-7 | S7a | `tests/Antiphon.Tests -> bin-c1836-s7a-r2/` | baseline | `/*/*/RcReleaseBaselineTests/*` | V-7 | all 3 named methods, no failures/skips | 3 | 6 |
 | CP-90 | S7a | CP-7 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(ProcessSpawnLimitTests*)/*` | policy, layering, categories, spawn | every named class, no failures/skips | 79 | 4 |
 | CP-93 | S7a | CP-7 | index | `/*/*/DerivedImpactIndexTests/*` | derived guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S7a | CP-7 | envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | adjacent envelope guard | all methods, no failures/skips | 4 | 1 |
