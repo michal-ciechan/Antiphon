@@ -13,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
 
@@ -73,6 +74,7 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
 
     private void Configure(IServiceCollection services)
     {
+        services.AddLogging(b => b.AddProvider(new C1940ReportLog()));
         // The production canonical report store (repo-local .antiphon/reports), for report regeneration rows.
         // A private gate registers one observing store around production defaults. Later registrations win.
         if (ReportWatch is not null)
@@ -264,6 +266,25 @@ internal sealed class C544DeliveryRig : IAsyncDisposable
         await World.DisposeAsync();
         await Caller.DisposeAsync();
         if (Reports is not null) await Reports.DisposeAsync();
+    }
+}
+
+internal sealed class C1940ReportLog : ILoggerProvider
+{
+    public ILogger CreateLogger(string categoryName) => categoryName == typeof(AgentReportStore).FullName
+        ? new Sink() : NullLogger.Instance;
+    public void Dispose() { }
+    private sealed class Sink : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (state is IEnumerable<KeyValuePair<string, object?>> fields)
+                Console.WriteLine("C1940_STORE " + string.Join(" ", fields.Where(x => x.Key != "{OriginalFormat}")
+                    .Select(x => $"{x.Key}={x.Value}")));
+        }
     }
 }
 
