@@ -986,8 +986,8 @@
         "TranscriptPromptSpanTests",
         "ImpactedClassesSelectorTests",
         "GrokRulesReadyOrderingTests",
-        "GrokRulesCompactionRecoveryTests",
         "SessionQueueAbandonTests",
+        "GrokRulesCompactionRecoveryTests",
         "CodexCliObservationGapTests"
       ]
     },
