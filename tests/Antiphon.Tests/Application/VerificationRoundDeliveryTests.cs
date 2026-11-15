@@ -826,6 +826,8 @@ public sealed class VerificationRoundDeliveryTests
         await rig.ScanAsync();
         await rig.FlushAsync();
         await rig.ScanAsync();
+        var diagnostic = (await rig.NotificationAsync(taskId))!;
+        Console.WriteLine($"C1940_NOTE state={diagnostic.State} error={diagnostic.LastErrorCode} attempts={diagnostic.EnqueueAttempts} next={diagnostic.NextAttemptAt:O} now={rig.World.Clock.GetUtcNow():O} rendering={diagnostic.CompletionDeliveryJson is not null}");
         await AssertReceivedOnceAsync(rig, taskId, "regenerated", FinalHeaderBits, expectKind: null, expectSpill: null);
         File.Exists(report).ShouldBeTrue("regenerated");
         (await AgentTaskLandNotificationService.FileHasSha256Async(report, snapshot.RawSha256, CancellationToken.None))
