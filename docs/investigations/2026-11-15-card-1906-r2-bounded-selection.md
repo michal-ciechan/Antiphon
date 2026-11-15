@@ -1,10 +1,10 @@
 # CARD-1906 R-2 bounded selection
 
-Status: INCOMPLETE; 57/68 final R-2 rows have fresh passing TRX. Unique requested cases: 557; executed 521, passed 521, failed 0, skipped 4; pending 32.
+Status: COMPLETE; 68/68 final R-2 rows have fresh passing TRX. Unique requested cases: 557; executed 553, passed 553, failed 0, skipped 4; pending 0.
 
-Assigned branch: `feat/card-task-c2489e73`. Code base: `1ca3d5a961b78089fe24fdc09a3597c886d4f528`. Native test/build source: `6ea5fffd11404d8226b8e5ac9857b1a5702f6468`. Latest measurement publication base: `5d2d4409d7f14011a65cf6582b0aa2c155b10f3e`. Final publication changes this manifest only; results are never relabeled to that later publication.
+Assigned branch: `feat/card-task-c2489e73`. Code base: `1ca3d5a961b78089fe24fdc09a3597c886d4f528`. Native test/build source: `6ea5fffd11404d8226b8e5ac9857b1a5702f6468`. Latest measurement publication base: `67cc1a914d9b078de2f4dc06367ca1ac9305ab65`. Final publication changes this manifest only; results are never relabeled to that later publication.
 
-Every receipt checkout source observed: `6ea5fffd11404d8226b8e5ac9857b1a5702f6468`, `5d2d4409d7f14011a65cf6582b0aa2c155b10f3e`, `10f6e8bc297e6c1caad746a335cf918ed06edee0`. The assigned fast-forward-only Code-base contract governs; master is used only for pin checks, failure attribution and a read-only merge-tree check.
+Every receipt checkout source observed: `6ea5fffd11404d8226b8e5ac9857b1a5702f6468`, `5d2d4409d7f14011a65cf6582b0aa2c155b10f3e`, `10f6e8bc297e6c1caad746a335cf918ed06edee0`, `67cc1a914d9b078de2f4dc06367ca1ac9305ab65`. The assigned fast-forward-only Code-base contract governs; master is used only for pin checks, failure attribution and a read-only merge-tree check.
 
 No product/test source, policy input or derived-index input was changed. Continuation receipts explicitly record buildSourceSha and verify that the checkout differs from the original build source only in this manifest; documentation publication commits do not relabel the original builds. No live deployment, retirement, restart, runner drain, Docker volume or rc ref was touched. Mutation checks were operator-waived.
 
@@ -72,7 +72,7 @@ Heaviest observed methods below show summed TRX case seconds (top three), not ro
 | D32 | tests/Antiphon.Tests | TimeoutAuditTests | 7 / 7 | 10.903 class wall | `Check_rejects_excess_without_exact_justification_measurement_and_card` 0.256; `Comparable_samples_use_nearest_rank_p95_and_exclude_duplicates_failures_and_load_mixing` 0.240; `Windows_row_override_is_inventoried_and_only_compared_to_Windows_history` 0.240 |
 | D33 | tests/Antiphon.Tests | VerifyDindRunnerScriptTests | 9 / 9 | 20.576 class wall | `Fast_http_500_does_not_grade_launch_true` 2.038; `Image_is_required` 1.575; `Production_port_is_refused` 1.055 |
 | D34 | tests/Antiphon.Tests | VolumeRetirementApplyGateTests | 13 / 13 | 374.971 class wall | `Scripted_apply_refuses_until_the_operation_token_matches` 96.635; `Manual_apply_refuses_until_the_operation_token_matches` 96.118; `Resume_refuses_until_the_operation_token_matches` 81.258 |
-| D35 | tests/Antiphon.Tests | VolumeRetirementContentTests | 41 / 9 | 660.218 bounded probes | `Claude_session_keys_are_disposable_state_bound_into_the_inventory` 226.327; `Claude_bash_edit_diff_snapshots_are_disposable_tool_scratch` 118.256; `Private_origin_advanced_head_uses_real_host_proof` 100.571 |
+| D35 | tests/Antiphon.Tests | VolumeRetirementContentTests | 41 / 41 | 1283.769 bounded probes | `Claude_session_keys_are_disposable_state_bound_into_the_inventory` 226.327; `Pristine_inner_docker_layout_is_disposable_and_bound_into_the_inventory` 207.291; `Claude_bash_edit_diff_snapshots_are_disposable_tool_scratch` 118.256 |
 | D36 | tests/Antiphon.Tests | VolumeRetirementReceiptTests | 11 / 11 | budget stop 543.782; 1151.414 bounded probes | `Journal_intents_and_partial_resume_are_exact` 428.154; `Manual_attestation_is_exact_and_cannot_waive_findings` 320.093; `Changed_content_and_remote_proof_refuse` 131.377 |
 | D37 | tests/Antiphon.Tests | VolumeRetirementWrapperTests | 6 / 6 | 330.025 class wall | `Retire_temp_uses_current_proof_protocol` 206.605; `Retained_volumes_block_deploy_and_completion` 90.100; `Main_recycle_and_existing_deploy_contracts_are_preserved` 9.225 |
 | D38 | tests/Antiphon.Tests | ZombieCensusPlatformTests | 9 / 9 | 8.978 class wall | `Omission_snapshot_throws_and_is_not_empty` 0.051; `Forced_windows_branch_registers_the_wmi_type` 0.035; `Linux_registration_is_not_the_wmi_census` 0.035 |
@@ -83,7 +83,7 @@ Heaviest observed methods below show summed TRX case seconds (top three), not ro
 
 The overall selection is the caller-commissioned performance Debug for CARD-1906. Every final row must execute in less than 600 seconds; the normal driver limit remains nine minutes. Near the 150-minute task boundary it is tightened to the remaining execution window ending 15:25:30 UTC, with at least two minutes required to admit a row; invocation arguments retain that administrative cap. The caller subsequently authorized a further 150 minutes to complete the 31 pending rows. Continuation execution closes at 17:59:00 UTC on 2026-11-15, with the same nine-minute row ceiling, load checks, and publication reserve. Future rerun commands use the original nine-minute ceiling. Existing method timeouts/assertions/retry rules were unchanged. Initial forecasts are provisional (not measured p95); Review/Merge reruns provide the bounded next collection samples. Queue admission is reported separately and never credited as execution. Fresh host roots are necessary where startup, topology, publication or refusal is the test subject. Compose seed/setup is shared through the existing fixture; isolated PostgreSQL is initialized once for its run.
 
-TRX retains per-case duration and stdout. Opt-in phase journals retain instrumented fixture/process spans under `.antiphon/c2489e73/timing`; unavailable DB/container/readiness/IO subphases remain unknown rather than zero. `/proc/loadavg` was recorded before every row, including retries, in each `invocation.json`/`receipt.json`. One driver/lease ran at a time. No same-source passing row is owed another repeat solely for this report.
+TRX retains per-case duration and stdout. Opt-in phase journals retain instrumented fixture/process spans under `.antiphon/c2489e73/timing`; unavailable DB/container/readiness/IO subphases remain unknown rather than zero. `/proc/loadavg` was recorded before every row, including retries, in each `invocation.json`/`receipt.json`. One driver/lease ran at a time. Initial ordinary Review remains required; these receipts preserve measured verification rather than authorizing a land.
 
 ### Checkpoints
 
@@ -147,22 +147,22 @@ The table is the reusable closed selection. Inventory probes are excluded from f
 | CP-54 | D35P03 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Audit_identity_and_namespace_are_stable*)\|(Claude_bash_edit_diff_snapshots_are_disposable_tool_scratch*)` | 360 | 140.000 / 0.000 | 2 | 2 | 0 | 0 |
 | CP-55 | D35P04 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Claude_session_keys_are_disposable_state_bound_into_the_inventory*)\|(Current_tooling_and_missing_history_do_not_block*)` | 360 | 307.000 / 0.000 | 2 | 2 | 0 | 0 |
 | CP-56 | D35P05 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Every_ref_recovery_tip_and_tag_object_requires_publication*)\|(Evidence_names_and_filesystem_shapes_fail_closed*)` | 360 | 59.000 / 0.000 | 2 | 2 | 0 | 0 |
-| CP-57 | D35P06 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Exchange_exports_only_this_projects_registered_origins*)\|(Exchange_inventory_diagnosis_skips_git_error_lines*)\|(Exchange_inventory_refusal_names_its_check_and_detail_file*)\|(Exchange_malformed_private_origin_lines_are_never_approved*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-58 | D35P07 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Exchange_proof_failure_names_its_stage*)\|(Exchange_registry_refusals_name_the_registry_cause*)\|(Exchange_registry_with_a_wrong_shape_is_invalid_before_the_exchange*)\|(Fetch_head_requires_proven_objects_not_fresh_names*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-59 | D35P08 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Fixture_setup_runs_once_across_audit_traps*)\|(Gone_tracking_retains_original_commit_protection*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-60 | D35P09 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Hold_lift_clear_after_deploy_is_not_refused_for_its_own_volumes*)\|(Hold_lift_clear_refuses_a_retired_or_other_build_runner*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-61 | D35P10 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(No_content_or_credentials_are_executed_or_exported*)\|(Only_exact_known_seed_fixtures_are_disposable*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-62 | D35P11 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Preview_lists_every_offender_without_effects*)\|(Pristine_inner_docker_layout_is_disposable_and_bound_into_the_inventory*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-63 | D35P12 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Read_failures_and_incomplete_inventory_refuse*)\|(Real_census_read_returns_only_the_census_text*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-64 | D35P13 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof*)\|(Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-65 | D35P14 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(State_credentials_refuse_before_removal*)\|(Temp_recycle_generation_binding_refuses_a_present_owned_container_alone*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-66 | D35P15 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Temp_recycle_refuses_a_present_owned_container_before_any_audit*)\|(Temp_recycle_topology_layer_refuses_a_present_owned_container_alone*)` | 360 | NOT COMPLETE | - | - | - | - |
-| CP-67 | D35P16 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/Worktree_content_and_admin_closure_are_complete` | 360 | NOT COMPLETE | - | - | - | - |
+| CP-57 | D35P06 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Exchange_exports_only_this_projects_registered_origins*)\|(Exchange_inventory_diagnosis_skips_git_error_lines*)\|(Exchange_inventory_refusal_names_its_check_and_detail_file*)\|(Exchange_malformed_private_origin_lines_are_never_approved*)` | 360 | 9.000 / 0.000 | 4 | 4 | 0 | 0 |
+| CP-58 | D35P07 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Exchange_proof_failure_names_its_stage*)\|(Exchange_registry_refusals_name_the_registry_cause*)\|(Exchange_registry_with_a_wrong_shape_is_invalid_before_the_exchange*)\|(Fetch_head_requires_proven_objects_not_fresh_names*)` | 360 | 38.000 / 0.000 | 4 | 4 | 0 | 0 |
+| CP-59 | D35P08 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Fixture_setup_runs_once_across_audit_traps*)\|(Gone_tracking_retains_original_commit_protection*)` | 360 | 51.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-60 | D35P09 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Hold_lift_clear_after_deploy_is_not_refused_for_its_own_volumes*)\|(Hold_lift_clear_refuses_a_retired_or_other_build_runner*)` | 360 | 13.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-61 | D35P10 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(No_content_or_credentials_are_executed_or_exported*)\|(Only_exact_known_seed_fixtures_are_disposable*)` | 360 | 57.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-62 | D35P11 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Preview_lists_every_offender_without_effects*)\|(Pristine_inner_docker_layout_is_disposable_and_bound_into_the_inventory*)` | 360 | 223.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-63 | D35P12 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Read_failures_and_incomplete_inventory_refuse*)\|(Real_census_read_returns_only_the_census_text*)` | 360 | 16.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-64 | D35P13 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Selector_fixture_cannot_use_disposable_seed_parent_as_publication_proof*)\|(Selector_fixture_requires_ignored_scratch_no_remote_and_safe_parent*)` | 360 | 81.000 / 0.000 | 9 | 9 | 0 | 0 |
+| CP-65 | D35P14 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(State_credentials_refuse_before_removal*)\|(Temp_recycle_generation_binding_refuses_a_present_owned_container_alone*)` | 360 | 42.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-66 | D35P15 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/(Temp_recycle_refuses_a_present_owned_container_before_any_audit*)\|(Temp_recycle_topology_layer_refuses_a_present_owned_container_alone*)` | 360 | 45.000 / 0.000 | 2 | 2 | 0 | 0 |
+| CP-67 | D35P16 | tests/Antiphon.Tests | D35 | --treenode-filter | `/*/*/VolumeRetirementContentTests/Worktree_content_and_admin_closure_are_complete` | 360 | 36.000 / 0.000 | 1 | 1 | 0 | 0 |
 | CP-68 | I37 | tests/Antiphon.Tests | D37 | --treenode-filter | `/*/*/VolumeRetirementWrapperTests/*` | 450 | 329.000 / 0.000 | 6 | 6 | 0 | 0 |
 
-Final-row totals: executed **521**, passed **521**, failed **0**, skipped **4**. Pending native identities: 32. Identity audit errors: 0.
+Final-row totals: executed **553**, passed **553**, failed **0**, skipped **4**. Pending native identities: 0. Identity audit errors: 0.
 
-Completed row execution sum: 7663.000 seconds; admission sum: 0.000 seconds; longest completed row: D36P04 436.000 seconds.
+Completed row execution sum: 8274.000 seconds; admission sum: 0.000 seconds; longest completed row: D36P04 436.000 seconds.
 
 ## Historical outcomes and attribution
 
@@ -186,7 +186,7 @@ Guard union after the single affected-method rerun: 114 executed, 114 passed, 0 
 
 Fresh C1729 stdout: `VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`.
 
-Master pins were independently checked (initial d100f8fa2c679a5c74b6b235087308776a8f5d50 and baseline 8ca2ca57fca282be239a6d4326499b8106eba514): policyHash `b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d`, PinnedInputDigest `26d90df028d4e2358ed43b02aa7ef4ad688224c5470aba371d2fd566ff4a663e`, LegacyExclusionDigest `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`. Branch policyHash remains `16917233483bf9f13534d8d5f86a1bdbdfabe4a4981153127287537c25bb5179`; branch PinnedInputDigest remains `0a6eaab72768e0e3f65c1a0cf15ef47c4471f913397389ca6900b9538b44fe00`. No inputs were repinned.
+Master pins were independently checked (initial d100f8fa2c679a5c74b6b235087308776a8f5d50, baseline 8ca2ca57fca282be239a6d4326499b8106eba514, and final refreshed master 5bb8cf05b2899073808f943f0b8ddfa028fc2ce3): policyHash `b610138753e25545cda6f208abe19ebd507cdc77afc288c9888b778ad1ff6b9d`, PinnedInputDigest `26d90df028d4e2358ed43b02aa7ef4ad688224c5470aba371d2fd566ff4a663e`, LegacyExclusionDigest `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`. Branch policyHash remains `16917233483bf9f13534d8d5f86a1bdbdfabe4a4981153127287537c25bb5179`; branch PinnedInputDigest remains `0a6eaab72768e0e3f65c1a0cf15ef47c4471f913397389ca6900b9538b44fe00`. No inputs were repinned.
 
 ## Provenance and retained evidence
 
@@ -200,7 +200,5 @@ Native Windows skips in the final R-2 selection:
 - `Antiphon.Tests.Scripts.C1008PlatformContractTests.C1050_Windows_rolling_outcomes_are_exact`.
 - `Antiphon.Tests.Scripts.C1008PlatformContractTests.C1050_Windows_remote_outcomes_are_exact`.
 - `Antiphon.Tests.Infrastructure.ZombieCensusPlatformTests.Windows_registration_uses_the_wmi_census`.
-
-Pending final rows: `D35P06`, `D35P07`, `D35P08`, `D35P09`, `D35P10`, `D35P11`, `D35P12`, `D35P13`, `D35P14`, `D35P15`, `D35P16`.
 
 Publication checks and exact final SHA are in the task report; this document retains actual tested-source provenance.
