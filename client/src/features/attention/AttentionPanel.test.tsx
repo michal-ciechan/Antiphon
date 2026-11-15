@@ -38,6 +38,24 @@ function serve(payload: Partial<AttentionDto> & { items: AttentionItemDto[] }) {
 }
 
 describe('AttentionPanel', () => {
+  it('pages through truncated parked messages and can return to the first page', async () => {
+    server.use(http.get('/api/attention', ({ request }) => {
+      const next = new URL(request.url).searchParams.get('parkedSkip') === '1'
+      return HttpResponse.json({ generatedAt: '2026-11-15T00:00:00Z', runnerConsulted: true,
+        items: [item({ kind: 'ParkedMessage', sessionId: 's1', messageId: next ? 'm2' : 'm1',
+          headline: next ? 'second unresolved input' : 'first unresolved input' })],
+        parkedMessagesTruncated: !next, parkedMessagesNextSkip: next ? 2 : 1 })
+    }))
+    renderWithProviders(<AttentionPanel />)
+    expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next parked messages' }))
+    expect(await screen.findByText('second unresolved input')).toBeInTheDocument()
+    expect(screen.queryByText('first unresolved input')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next parked messages' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'First parked messages' }))
+    expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
+  })
+
   beforeEach(() => {
     window.history.replaceState(null, '', '/attention')
     HTMLElement.prototype.scrollTo = vi.fn()

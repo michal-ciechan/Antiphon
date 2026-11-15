@@ -62,6 +62,23 @@ function serve(messages: unknown[], extras: Record<string, unknown> = {}) {
 }
 
 describe('SessionMessageQueue', () => {
+  it('pages through truncated unresolved input and can return to the first page', async () => {
+    server.use(http.get('/api/sessions/s1/messages', ({ request }) => {
+      const next = new URL(request.url).searchParams.get('since') === '1'
+      return HttpResponse.json({ sessionId: 's1', working: false,
+        messages: [message({ id: next ? 'm2' : 'm1', body: next ? 'second unresolved input' : 'first unresolved input' })],
+        since: next ? 1 : 0, nextSince: next ? 2 : 1, truncated: !next })
+    }))
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+    expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Next messages' }))
+    expect(await screen.findByText('second unresolved input')).toBeInTheDocument()
+    expect(screen.queryByText('first unresolved input')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Next messages' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'First messages' }))
+    expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
+  })
+
   it('shows unconfirmed Sent input with an explicit operator abandon dialog and no resend control', async () => {
     serve([message({ status: 'Sent', deliveryUnconfirmed: true, deliveryAttempts: 1,
       lastDeliveryStartedAt: '2026-11-14T10:00:00Z' })])

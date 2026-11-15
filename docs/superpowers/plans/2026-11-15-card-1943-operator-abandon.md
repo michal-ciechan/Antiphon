@@ -3,7 +3,8 @@
 Original Code / landing owner: 73e7dfdd-5bff-4cef-b23f-42dee4f7113c.
 Base: 64e3d78c487d51570f708492ab67b5db6d0de9a9 (current origin/master at start).
 The named g90 Review file is absent at base and at its cited reviewed tip;
-the card and brief supply the three accepted follow-ups.
+the card and brief supply the three accepted follow-ups. Full Review recovered
+from cb2210e934b040a69ed4563a4ffa40f4f1b0d91c on the Review task ref and read.
 
 Keep the existing queue and attention envelopes. Add bounded paging metadata and
 HTTP parameters. Queue uses the pending-note convention: sequence cursor, default
@@ -60,9 +61,14 @@ native outputs. No unchanged proof repetitions after green.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | red | tests/Antiphon.Tests -> bin-c1943-red/ | regression-red | `/*/*/SessionQueueAbandonTests/(Abandon_reason_problem_details*)\|(Current_unconfirmed_listings*)\|(Abandoned_current_rules*)` | V-1,V-2,V-3 | 2 contract passes, 2 intended failures | 4 | 9 |
+| CP-1 | red | tests/Antiphon.Tests -> bin-c1943-red2/ | regression-red | `/*/*/SessionQueueAbandonTests/(Abandon_reason_problem_details*)\|(Current_unconfirmed_listings*)\|(Abandoned_current_rules*)` | V-1,V-2,V-3 | 2 contract passes, 3 intended failures | 5 | 9 |
 | CP-2 | green | tests/Antiphon.Tests -> bin-c1943-green/ | abandon-queue | `/*/*/(SessionQueueAbandonTests*)\|(SessionMessageQueueServiceTests*)\|(StandingSessionSwitchConcurrencyTests*)\|(StandingSessionQueueSwitchTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 4 | 9 |
 | CP-3 | green | CP-2 | attention | `/*/*/(AttentionServiceTests*)\|(AttentionFeedNoiseTests*)/*` | R-1 | all listed, 0 failed | 2 | 5 |
-| CP-4 | green | CP-2 | grok-rules | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 5 |
+| CP-4 | green | CP-2 | grok-rules | `/*/*/(GrokRulesInitializationTests*)\|(GrokRulesFailureTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(GrokRulesQueueBarrierTests*)\|(GrokRulesReceiptTests*)\|(GrokRulesTransactionTests*)\|(GrokRulesCompactionTests*)/*` | R-1,R-2 | all listed, 0 failed | 5 | 5 |
 | CP-5 | green | CP-2 | impacted | `/*/*/(AgentTaskMidTurnRefineTests*)\|(CodexCliObservationGapTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)/*` | R-2 | all listed, 0 failed | 5 | 5 |
 | CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3,V-4 | all listed, 0 failed | 11 | 5 |
+
+| CP-7 | red-client | n/a | paging-ui-red | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel -t pages` | V-4 | 2 intended missing-navigation failures | n/a | 3 |
+| CP-8 | client | n/a | paging-ui | `pwsh -NoProfile -File scripts/test-client.ps1 SessionMessageQueue AttentionPanel` | V-4 | both whole client files, 0 failed | n/a | 3 |
+| CP-9 | client | n/a | client-bundle | `npm --prefix client run build` | V-4 | production build exit 0 | n/a | 3 |
+| CP-10 | contracts | tests/Antiphon.E2E -> bin-c1943-contract/ | api-contracts | `/*/*/ContractSnapshotTests/*` | R-2,V-4 | all listed, 0 failed | 5 | 6 |
