@@ -8,7 +8,6 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -45,14 +44,16 @@ public sealed partial class PostLandMutationDeliveryTests
         });
         await using (var db = settled.World.Host.CreateContext())
             await db.SessionQueuedMessages.Where(m => m.SourceTaskId == settled.World.TaskId).ExecuteDeleteAsync();
+        // This witnesses recovery and stamping. An idle delivery can hold the queue lock,
+        // leaving the second task for a five-second busy retry on this frozen clock.
+        await SetWorkingAsync(settled.Bridge, settled.World.Host.Schema.ConnectionString, settled.Bridge.SessionId, true);
         var clock = new RecoveryClock();
-        var recoveryLog = new RecordingLogger<CompletionNoteWorkHostedService>();
-        var missed = Guid.NewGuid();
-        using var worker = RecoveryWorker(settled.Bridge, clock, logger: recoveryLog);
+        using var worker = RecoveryWorker(settled.Bridge, clock);
         await worker.StartAsync(default);
         try
         {
             await clock.TimerCreated.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var missed = Guid.NewGuid();
             await using (var db = settled.World.Host.CreateContext())
             {
                 await db.AgentTasks.Where(t => t.Id == settled.World.TaskId).ExecuteUpdateAsync(s => s
@@ -68,38 +69,22 @@ public sealed partial class PostLandMutationDeliveryTests
                 await db.SaveChangesAsync();
             }
             commands.FailNextRecoveryRead = true;
-            commands.Sql.Clear();
             settled.Bridge.Provider.GetRequiredService<CompletionNoteFlushQueue>().Recovery.Check(settled.World.TaskId);
             await UntilAsync(async () =>
             {
                 await using var db = settled.World.Host.CreateContext();
                 return await db.AgentTasks.CountAsync(t => (t.Id == missed || t.Id == settled.World.TaskId)
-                    && t.CompletionNoteQueuedAt != null) == 2;
+                    && t.CompletionNoteQueuedAt != null) == 2
+                    && commands.Failures == 1
+                    && await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == missed) == 1
+                    && await db.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId) == 1;
             }, "one targeted failure must sweep both the requested task and an unrelated missed event", 10);
             commands.Failures.ShouldBe(1);
             await using var verify = settled.World.Host.CreateContext();
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == missed)).ShouldBe(1);
             (await verify.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == settled.World.TaskId)).ShouldBe(1);
         }
-        finally
-        {
-            await worker.StopAsync(default);
-            Console.WriteLine($"C1935 faultHits={commands.Failures} armed={commands.FailNextRecoveryRead} "
-                + $"timers={string.Join(',', clock.DueTimes)}");
-            await using var state = settled.World.Host.CreateContext();
-            foreach (var id in new[] { settled.World.TaskId, missed })
-            {
-                var task = await state.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id);
-                Console.WriteLine($"C1935 task={(id == missed ? "missed" : "requested")} "
-                    + $"status={task?.Status} stamped={task?.CompletionNoteQueuedAt is not null} "
-                    + $"rows={await state.SessionQueuedMessages.CountAsync(m => m.SourceTaskId == id)} "
-                    + $"completionObligations={await state.AgentTaskLandNotifications.CountAsync(n => n.TaskId == id && n.Kind == LandNotificationKind.TaskCompletion)}");
-            }
-            foreach (var entry in recoveryLog.Entries)
-                Console.WriteLine($"C1935 worker={entry.Message} exception={entry.Exception?.Message}");
-            foreach (var sql in commands.Sql.Where(s => s.Contains("\"SourceLandingOperationId\" IS NOT NULL", StringComparison.Ordinal)))
-                Console.WriteLine($"C1935 recoverySql={sql}");
-        }
+        finally { await worker.StopAsync(default); }
     }
 
     [Test]
@@ -257,10 +242,10 @@ public sealed partial class PostLandMutationDeliveryTests
     }
 
     private static CompletionNoteWorkHostedService RecoveryWorker(BridgeQueueHarness h, TimeProvider clock,
-        CompletionNoteFlushQueue? flushes = null, ILogger<CompletionNoteWorkHostedService>? logger = null) => new(
+        CompletionNoteFlushQueue? flushes = null) => new(
         h.Provider.GetRequiredService<IServiceScopeFactory>(),
         flushes ?? h.Provider.GetRequiredService<CompletionNoteFlushQueue>(), new SpecialistFailureQueue(), clock,
-        logger ?? NullLogger<CompletionNoteWorkHostedService>.Instance);
+        NullLogger<CompletionNoteWorkHostedService>.Instance);
 
     private sealed class SettlementPublicationCut : LandDeliveryBoundary
     {
