@@ -3243,7 +3243,17 @@ internal sealed class C1008WrapperFixture : IDisposable
         var stderr = proc.StandardError.ReadToEndAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try { await proc.WaitForExitAsync(deadline.Token); }
-        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
+        catch
+        {
+            try
+            {
+                var traceBytes = File.Exists(TracePath) ? new FileInfo(TracePath).Length : 0;
+                Console.Error.WriteLine($"C1008_FIXTURE_CHILD_LIMIT kind=wrapper canceled={deadline.IsCancellationRequested} childExited={proc.HasExited} stdoutDone={stdout.IsCompleted} stderrDone={stderr.IsCompleted} traceBytes={traceBytes}");
+            }
+            catch { /* Diagnostics must not replace the original failure. */ }
+            if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); }
+            throw;
+        }
         var output = await stdout + await stderr;
         var trace = File.Exists(TracePath) ? File.ReadAllLines(TracePath).Select(x => JsonNode.Parse(x)!.AsObject()).ToArray() : [];
         return (proc.ExitCode, output, trace);
@@ -3515,7 +3525,20 @@ internal sealed class C1008HostFixture : IDisposable
         }
         var stdout = Pump(); var stderr = proc.StandardError.ReadToEndAsync(deadline.Token);
         try { await Task.WhenAll(proc.WaitForExitAsync(deadline.Token), stdout); }
-        catch { if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); } throw; }
+        catch
+        {
+            try
+            {
+                var command = Trace.LastOrDefault()?.FirstOrDefault();
+                var safeCommand = command is "info" or "version" or "volume" or "run" or "ps" or "inspect" or "image" or "container" or "create" or "start" or "stop" or "rm" or "exec" or "logs" or "cp" or "build" or "pull" or "tag" ? command : "other";
+                var previewAudit = File.Exists(Path.Combine(Root, "evidence", hostCase, "preview-audit.out"));
+                var applyAudit = File.Exists(Path.Combine(Root, "evidence", hostCase, "apply-audit.out"));
+                Console.Error.WriteLine($"C1008_FIXTURE_CHILD_LIMIT kind=host canceled={deadline.IsCancellationRequested} childExited={proc.HasExited} stdoutDone={stdout.IsCompleted} stderrDone={stderr.IsCompleted} lastDocker={safeCommand} previewAudit={previewAudit} applyAudit={applyAudit}");
+            }
+            catch { /* Diagnostics must not replace the original failure. */ }
+            if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); }
+            throw;
+        }
         return (proc.ExitCode, await stdout + await stderr);
     }
 

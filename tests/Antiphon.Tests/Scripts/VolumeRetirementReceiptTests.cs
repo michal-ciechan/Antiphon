@@ -642,8 +642,35 @@ public sealed class VolumeRetirementReceiptTests
                 "J8 temp resume must execute fresh role proof; main keeps its v1 adapter; " + checkedAudit.Output);
             checkedAudit.Output.ShouldContain(project == "antiphon-runner-temp" ? "reason=role-unknown" : "RESULT=old-audit");
         }
+        await JournalCuts(["before-intent", "before-rm", "after-rm"]);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Journal_intents_and_partial_resume_are_exact_replacement()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        await JournalCuts(["replacement", "unattributed-absence"]);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Journal_intents_and_partial_resume_are_exact_close()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var closeFixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(closeFixture,
+            "C1008_OPERATION=c100800000000000000000000000000000002");
+        await VolumeRetirementFixture.ReadyPreview(closeFixture);
+        var close = await RunCloseCases(closeFixture.Root);
+        close.Exit.ShouldBe(0, "J8 actual public Close, same host locks and complete census: " + close.Output);
+        close.Output.ShouldContain("C1609_CLOSE passed");
+    }
+
+    private static async Task JournalCuts(string[] cuts)
+    {
         var failures = new List<string>();
-        foreach (var cut in new[] { "before-intent", "before-rm", "after-rm", "replacement", "unattributed-absence" })
+        foreach (var cut in cuts)
         {
             using var fixture = new C1008HostFixture(main: false);
             await VolumeRetirementFixture.ReadyPreview(fixture);
@@ -694,13 +721,6 @@ public sealed class VolumeRetirementReceiptTests
             fixture.Removed.Length.ShouldBe(4);
         }
         failures.ShouldBeEmpty("J8 crash/resume safety; " + string.Join(" | ", failures));
-        using var closeFixture = new C1008HostFixture(main: false);
-        await VolumeRetirementFixture.ReadyPreview(closeFixture,
-            "C1008_OPERATION=c100800000000000000000000000000000002");
-        await VolumeRetirementFixture.ReadyPreview(closeFixture);
-        var close = await RunCloseCases(closeFixture.Root);
-        close.Exit.ShouldBe(0, "J8 actual public Close, same host locks and complete census: " + close.Output);
-        close.Output.ShouldContain("C1609_CLOSE passed");
     }
 
     // Official run 20261031-173834-a268 cancelled this child at 120s. The loaded

@@ -321,3 +321,30 @@ batched guards and30 unfinished rows with one fresh Main build plus the two
 still-pending mirror builds. The remaining35-row group uses a shorter90min
 aggregate cap; no per-row/child timeout or assertion is loosened. Retain every
 earlier outcome, cost, source SHA and unedited CHECKPOINT line.
+
+
+Final sizing evidence at5dcc9f27dae665162797a186f3503ac33285e2ed:
+CP-59 exhausted9min after12 passing phase cases, without complete TRX.
+Partition its existing13 methods into1+1+1+10 exact methods (CP-172..175),
+retaining each original9min ceiling and every source/assertion. CP-79 also
+exhausted9min; its pre-existing1120s method and150s Close driver already
+document longer aggregate work. Partition adapters+first3 cuts, last2 cuts
+and Close asCP-176..178, preserving all body assertions/labels and the
+existing30/120/150s child caps. New methods inherit the600s class timeout;
+no existing method timeout grows. Native skip identities increase by exactly2
+inside the existing Linux-only class, with no exclusion widening.
+
+The four red rows were existing-child cancellations, not assertion reds.
+Exact base b559 checks passed for all five failing methods: CP-50 host63.4928s
+and wrapper15.1706s, CP-73 53.4873s, CP-74 144.5714s, CP-77 166.7704s.
+Do not call them inherited or manufacture a Review flake exception. Preserve
+load/admission/held/source/binary receipts and run the same red rows once
+after diagnosis. Failure diagnostics add only bounded safe metadata and leave
+normal execution and all limits/assertions unchanged. Comparable p95 remains
+unknown; these different-load/source samples are not a speedup benchmark.
+
+One new isolated Main build plus the still-required SessionRunner build covers
+17 final rows: seven replacements, four red rows, pending CP-123, four batched
+guards and CP-13. Serial90min aggregate, every row at most9min; source expected
+SHA is the final committed repair/index/pin tip. Keep prior valid method
+coverage with its actual tested SHA; do not repeat unaffected green proofs.
