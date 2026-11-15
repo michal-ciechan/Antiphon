@@ -9,9 +9,9 @@ using Shouldly;
 
 namespace Antiphon.Tests.Scripts;
 
-// Each method owns mutable origins. Keep its real Git objects, manifests, command
-// observations and audit output in ignored evidence, including on assertion failure.
-internal sealed class VolumeRetirementPublicationFixture
+// Each method owns mutable origins outside the audited checkout and runner-tmp
+// volume. Its using scope removes them on success, assertion failure or cancellation.
+internal sealed class VolumeRetirementPublicationFixture : IDisposable
 {
     internal const string Origin = VolumeRetirementFixture.OriginUrl;
     internal const string Scope = "19010000-0000-0000-0000-000000000001";
@@ -30,6 +30,10 @@ internal sealed class VolumeRetirementPublicationFixture
     internal string Tree { get; private set; } = "";
     internal C1008HostFixture? Host { get; private set; }
     private int sequence;
+    private string? ownedBase;
+    private string? ownershipToken;
+    private bool markerWritten;
+    private bool disposed;
 
     private VolumeRetirementPublicationFixture(string root, string work, string relative = RepoRelative)
     {
@@ -40,38 +44,80 @@ internal sealed class VolumeRetirementPublicationFixture
     internal static async Task<VolumeRetirementPublicationFixture> Create(bool preview = false)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "shape-git");
-        // Native preview needs owned mount paths outside /tmp (the runner-tmp role).
-        var root = preview ? Path.Combine("/var/tmp", "c1008-host-c1901-" + Guid.NewGuid().ToString("N")) :
-            Path.Combine(DelegateScriptRunner.RepoRoot, ".antiphon/evidence/card-1901/fixtures", Guid.NewGuid().ToString("N"));
+        var basePath = FixtureRootBase();
+        var token = Guid.NewGuid().ToString("N");
+        var root = Path.Combine(basePath, "c1008-host-c1901-" + token);
+        Directory.Exists(root).ShouldBeFalse("a fixture may only own a fresh unique root");
         Directory.CreateDirectory(root);
-        C1008HostFixture? host = preview ? new C1008HostFixture(main: false, root) : null;
-        var f = new VolumeRetirementPublicationFixture(root, host is null ? Path.Combine(root, "work") : VolumeRetirementFixture.WorkMount(host));
-        f.Host = host;
-        Directory.CreateDirectory(f.Work);
-        if (host is not null)
+        var f = new VolumeRetirementPublicationFixture(root, preview
+            ? Path.Combine(root, "volumes", "antiphon-runner-temp_work", "_data") : Path.Combine(root, "work"))
+            { ownedBase = basePath, ownershipToken = token };
+        try
         {
-            var seed = await VolumeRetirementFixture.SeedPublishedOuter(host);
-            f.Bare = seed.Bare; seed.Outer.ShouldBe(f.Repo);
+            File.WriteAllText(Path.Combine(root, ".c1901-owner"), token);
+            f.markerWritten = true;
+            C1008HostFixture? host = preview ? new C1008HostFixture(main: false, root) : null;
+            f.Host = host;
+            if (host is not null) f.Work.ShouldBe(VolumeRetirementFixture.WorkMount(host));
+            Directory.CreateDirectory(f.Work);
+            if (host is not null)
+            {
+                var seed = await VolumeRetirementFixture.SeedPublishedOuter(host);
+                f.Bare = seed.Bare; seed.Outer.ShouldBe(f.Repo);
+            }
+            else
+            {
+                await f.Git(root, "init", "-q", "--bare", f.Bare);
+                await f.Git(root, "init", "-q", "-b", "main", f.Repo);
+                await File.WriteAllTextAsync(Path.Combine(f.Repo, ".gitignore"), ".antiphon/\n");
+                await File.WriteAllTextAsync(Path.Combine(f.Repo, "readme.txt"), "published\n");
+                await f.Git(f.Repo, "add", ".gitignore", "readme.txt");
+                await f.Git(f.Repo, "commit", "-qm", "A");
+                await f.Git(f.Repo, "remote", "add", "origin", Origin);
+                await f.Git(f.Repo, "push", "-q", f.Bare, "HEAD:refs/heads/main");
+            }
+            await f.Git(f.Repo, "remote", "set-url", "origin", Origin);
+            await f.Git(root, "init", "-q", "--bare", f.Backup);
+            f.A = await f.Git(f.Repo, "rev-parse", "HEAD");
+            f.Tree = await f.Git(f.Repo, "rev-parse", "HEAD^{tree}");
+            f.U = await f.Commit("original", f.A, "unique original bytes");
+            f.X = await f.Commit("sibling", f.A, "unique sibling bytes");
+            await File.WriteAllTextAsync(Path.Combine(root, "source-sha"), await f.Git(DelegateScriptRunner.RepoRoot, "rev-parse", "HEAD"));
+            return f;
         }
-        else
+        catch
         {
-            await f.Git(root, "init", "-q", "--bare", f.Bare);
-            await f.Git(root, "init", "-q", "-b", "main", f.Repo);
-            await File.WriteAllTextAsync(Path.Combine(f.Repo, ".gitignore"), ".antiphon/\n");
-            await File.WriteAllTextAsync(Path.Combine(f.Repo, "readme.txt"), "published\n");
-            await f.Git(f.Repo, "add", ".gitignore", "readme.txt");
-            await f.Git(f.Repo, "commit", "-qm", "A");
-            await f.Git(f.Repo, "remote", "add", "origin", Origin);
-            await f.Git(f.Repo, "push", "-q", f.Bare, "HEAD:refs/heads/main");
+            f.Dispose();
+            throw;
         }
-        await f.Git(f.Repo, "remote", "set-url", "origin", Origin);
-        await f.Git(root, "init", "-q", "--bare", f.Backup);
-        f.A = await f.Git(f.Repo, "rev-parse", "HEAD");
-        f.Tree = await f.Git(f.Repo, "rev-parse", "HEAD^{tree}");
-        f.U = await f.Commit("original", f.A, "unique original bytes");
-        f.X = await f.Commit("sibling", f.A, "unique sibling bytes");
-        await File.WriteAllTextAsync(Path.Combine(root, "source-sha"), await f.Git(DelegateScriptRunner.RepoRoot, "rev-parse", "HEAD"));
-        return f;
+    }
+
+    private static string FixtureRootBase() => Path.GetFullPath(
+        OperatingSystem.IsWindows() ? Path.GetTempPath() : "/var/tmp").TrimEnd(Path.DirectorySeparatorChar);
+
+    public void Dispose()
+    {
+        // Attach borrows a caller-owned host; it must never delete that host's root.
+        if (ownedBase is null || disposed) return;
+        using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "delete-tree");
+        var root = Path.GetFullPath(Root);
+        Path.GetDirectoryName(root).ShouldBe(ownedBase, "cleanup stays directly under the chosen fixture base");
+        Path.GetFileName(root).ShouldBe("c1008-host-c1901-" + ownershipToken, "cleanup only owns the exact root created by this fixture");
+        if (!Directory.Exists(root)) { disposed = true; return; }
+        (File.GetAttributes(root) & FileAttributes.ReparsePoint).ShouldBe((FileAttributes)0, "cleanup must not follow a replaced root");
+        if (markerWritten)
+        {
+            var marker = Path.Combine(root, ".c1901-owner");
+            (File.GetAttributes(marker) & FileAttributes.ReparsePoint).ShouldBe((FileAttributes)0);
+            File.ReadAllText(marker).ShouldBe(ownershipToken, "cleanup requires this fixture's ownership marker");
+            // Git marks object files read-only on Windows. Never walk linked directories.
+            foreach (var file in Directory.EnumerateFiles(root, "*", new EnumerationOptions
+                { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                File.SetAttributes(file, FileAttributes.Normal);
+        }
+        // A failed marker write can only remove an empty newly-created directory.
+        Directory.Delete(root, recursive: markerWritten);
+        disposed = true;
     }
 
     internal static VolumeRetirementPublicationFixture Attach(C1008HostFixture host, string relative, string bare) =>

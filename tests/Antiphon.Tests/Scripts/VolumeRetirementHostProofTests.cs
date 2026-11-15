@@ -26,8 +26,7 @@ public sealed class VolumeRetirementHostProofTests
             var root = fixture.Root;
             try
             {
-                // The nullable cast lets this regression compile against the leaking base.
-                using ((object)fixture as IDisposable)
+                using (fixture)
                 {
                     File.Exists(Path.Combine(root, "origin.git", "HEAD")).ShouldBeTrue();
                     if (outcome == "assertion") false.ShouldBeTrue("fixture body failure");
@@ -48,7 +47,7 @@ public sealed class VolumeRetirementHostProofTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Fresh_graph_renewal_fetches_again_for_unchanged_advertisement()
     {
-        var f = await VolumeRetirementPublicationFixture.Create();
+        using var f = await VolumeRetirementPublicationFixture.Create();
         var trace = Path.Combine(f.Root, "actual-fetches.txt");
         var observeFetch = "if($GitArgs -contains 'fetch'){[IO.File]::AppendAllText(" +
             VolumeRetirementPublicationFixture.Ps(trace) + ", 'fetch'+[char]10)}; ";
