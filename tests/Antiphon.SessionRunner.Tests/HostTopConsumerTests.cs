@@ -757,6 +757,63 @@ public class HostTopConsumerTests
         }
     }
 
+    /// <summary>
+    /// rc b7812833 sr-profile-199. On a Windows desktop with ~500 processes the single toolhelp
+    /// capture costs ~8 ms of thread CPU and cannot be interrupted, so charging it to the 10 ms
+    /// scan budget left nothing for enumeration and every read returned no rows. The budget must
+    /// govern the work it can stop: enumeration and per-process reads, retained pids first.
+    /// </summary>
+    [Test]
+    public void Windows_snapshot_capture_does_not_spend_the_scan_budget()
+    {
+        double cpu = 1;
+        var source = new ScriptedWindowsProcessSource(() => cpu += 12, () => cpu += 0.01,
+            (10, "svchost.exe"), (4242, "dotnet.exe"), (9000, "csc.exe"));
+        var table = new WindowsHostProcessTable(source, () => cpu, TimeSpan.FromMilliseconds(10));
+
+        var rows = table.Read(HostTopConsumerLimits.ScanCap, [4242]);
+
+        table.LastReadTruncated.ShouldBeFalse();
+        rows.Select(row => row.Pid).Order().ShouldBe([10, 4242, 9000]);
+        rows.Single(row => row.Pid == 4242).Name.ShouldBe("dotnet");
+    }
+
+    private sealed class ScriptedWindowsProcessSource(Action capture, Action step, params (int Pid, string Exe)[] processes)
+        : IWindowsProcessSource
+    {
+        public IWindowsProcessSnapshot? Snapshot()
+        {
+            capture();
+            return new Snapshotted(processes, step);
+        }
+
+        public bool TryTimes(int pid, out long startTicks, out long cpuTicks, out long? rss)
+        {
+            step();
+            startTicks = 1_000 + pid;
+            cpuTicks = pid;
+            rss = 4096;
+            return true;
+        }
+
+        private sealed class Snapshotted((int Pid, string Exe)[] processes, Action step) : IWindowsProcessSnapshot
+        {
+            private int _next;
+
+            public bool Next(out int pid, out string exe)
+            {
+                step();
+                var more = _next < processes.Length;
+                (pid, exe) = more ? processes[_next++] : (0, "");
+                return more;
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+    }
+
     [Test]
     public void Cached_scan_is_stale_after_twice_the_cadence()
     {
