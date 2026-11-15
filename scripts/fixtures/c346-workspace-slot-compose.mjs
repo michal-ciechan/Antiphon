@@ -18,7 +18,7 @@ function extract(name) {
   assert.ok(end > start);
   return source.slice(start + 1, end + 2);
 }
-const functions = ['stack_env_value', 'runner_workspace_slots_enabled', 'deployed_sha12',
+const functions = ['stack_env_value', 'runner_workspace_slots_enabled', 'runner_linux_compiler_policy', 'deployed_sha12',
   'broker_sha12', 'compose_host', 'compose_temp', 'case_deploy_parent', 'case_deploy_temp_runner']
   .map(extract).join('\n');
 const env = { ...process.env, CHECKOUT: repo, CASE_DIR: root, SERVER2_ENV: root + '/stack.env',
@@ -220,6 +220,9 @@ const base = JSON.parse(bash('C1008_COMPOSE_DIR="$FIXTURE_ROOT" compose_host con
 assert.equal(current.services['session-runner'].environment[key], 'false');
 assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), false);
 delete current.services['session-runner'].environment[key];
+// CARD-1906 adds a separately verified OFF setting; retain the historical slot-only comparison.
+assert.equal(current.services['session-runner'].environment.ANTIPHON_LINUX_COMPILER_POLICY, '0');
+delete current.services['session-runner'].environment.ANTIPHON_LINUX_COMPILER_POLICY;
 assert.deepEqual(current, base, 'default render changed outside the new false flag');
 assert.equal(matrices, 16);
 console.log(`PASS matrices=16 refusals=${refusals} missing-file=1 base-equivalence=1`);

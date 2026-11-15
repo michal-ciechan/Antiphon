@@ -9411,10 +9411,11 @@ public sealed class RemoteScriptContractTests
 
     private static string EnsureDirsBody(string text) => Block(text, "ensure_dirs");
 
-    // case_deploy_parent and case_deploy_temp_runner read the saved slot flag
-    // before any side effect. Extracted harnesses must include that function.
+    // Both deploy phases read saved settings before side effects. Extracted harnesses
+    // include both production readers, without replacing their validation.
     private static string WorkspaceSlotsReader(string remote) =>
-        Block(remote, "runner_workspace_slots_enabled") + "\n";
+        Block(remote, "runner_workspace_slots_enabled") + "\n" +
+        Block(remote, "runner_linux_compiler_policy") + "\n";
 
     // Production copies c1008-retirement.sh beside the remote script. Extracted
     // harnesses must source that same file; clearable refuses until the loader

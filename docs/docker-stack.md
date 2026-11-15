@@ -815,6 +815,53 @@ A hot reload works only for the desktop AppHost's `appsettings.Development.json`
 `Delegation__WorkspaceSlotRoles` environment variable shadows it. Confirm a rollback from the next task's
 `WorkspaceSlotDecision` event (`reason=roles_none`).
 
+### Runner Linux compiler policy (CARD-1885/CARD-1906)
+
+The runner passes `ANTIPHON_LINUX_COMPILER_POLICY` from its container environment
+to future task sessions and build-driver children. Exact `1` opts Linux builds into
+the existing CARD-1885 compiler-only CPU/heap/idle policy; exact `0` rolls back to
+stock compilation. Windows ignores this setting. Preparation failure preserves
+the stock compiler. This plumbing ships **default OFF** and merging activates nothing.
+
+Set the exact line `ANTIPHON_LINUX_COMPILER_POLICY=1` in
+`/home/mc/antiphon-server2/secrets/stack.env` before the next `redeploy-old` named
+phase. Temp canaries use their own `secrets/stack.temp.env` before `deploy-temp`;
+the base Compose environment entry is inherited by the temp overlay. Both wrappers
+supply their own saved value and both phase rewrites preserve it independently.
+A missing file or key means `0`. Saved assignments accept only exact
+`ANTIPHON_LINUX_COMPILER_POLICY=0` or `ANTIPHON_LINUX_COMPILER_POLICY=1`, LF,
+at most once. Empty values, whitespace, CRLF, casing changes, export prefixes,
+quotes, inline comments and duplicates refuse `RunnerLinuxCompilerPolicySettingInvalid`
+(exit 2) before deployment effects. Whole-line comments are ignored; the file is
+never sourced. `docker/stack.env.example` shows the OFF assignment.
+
+After the named phase recreates the container, inspect its environment:
+
+```sh
+docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' <runner-container-id> | grep '^ANTIPHON_LINUX_COMPILER_POLICY='
+```
+
+Only the non-secret policy line is printed. Confirm `ANTIPHON_LINUX_COMPILER_POLICY=1`;
+then confirm future build-driver `LINUX COMPILER policy=c1885-v1` diagnostics and
+record runtime/source SHAs. Editing the file alone does not update a running
+container or an existing task process. Existing compiler processes drain naturally;
+never shut them down. Roll back with saved `ANTIPHON_LINUX_COMPILER_POLICY=0` and
+recreate through the same named phase; this applies to future builds.
+
+Operator activation was authorized on **2026-11-15** for a measured **24-hour trial**.
+Record three matched measurements: (1) host CPU, run queue and compiler minute-cores;
+(2) completed matched build+test rows per hour with sample counts and p50/p95 wall,
+separating admission wait from execution; (3) timeout and rerun counts. Keep workload,
+concurrency and original failures visible when comparing the trial with baseline.
+Activation belongs to that rollout, not this implementation task.
+
+If the trial succeeds, the operator wants default ON with exact `0` as the opt-out.
+That flip is a later, separately verified change: Compose's one named default is
+`&RunnerLinuxCompilerPolicyDefault` on its interpolation, and the saved-setting
+reader's one named constant is `RUNNER_LINUX_COMPILER_POLICY_DEFAULT`. Both are
+currently `0`; absent/empty Compose interpolation and missing saved input are test-pinned.
+Existing explicit assignments continue to win after a future flip.
+
 ### Runner worktree retention (CARD-1677)
 
 The server job `antiphon:runner-worktree-retention` retires the `/work/worktrees/task-<8hex>` mirrors of

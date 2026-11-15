@@ -950,6 +950,9 @@ compose_host() {
     local sha12 PhoneHome__WorkspaceSlots__Enabled
     PhoneHome__WorkspaceSlots__Enabled="$(runner_workspace_slots_enabled "$SERVER2_ENV")" \
         || write_result false RunnerWorkspaceSlotsSettingInvalid 2
+    local ANTIPHON_LINUX_COMPILER_POLICY
+    ANTIPHON_LINUX_COMPILER_POLICY="$(runner_linux_compiler_policy "$SERVER2_ENV")" \
+        || write_result false RunnerLinuxCompilerPolicySettingInvalid 2
     sha12="$(deployed_sha12)"
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
@@ -959,6 +962,7 @@ compose_host() {
     RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     PhoneHome__WorkspaceSlots__Enabled="$PhoneHome__WorkspaceSlots__Enabled" \
+    ANTIPHON_LINUX_COMPILER_POLICY="$ANTIPHON_LINUX_COMPILER_POLICY" \
     SOURCE_SHA12="$sha12" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
     SOURCE_REVISION="$SHA" \
@@ -978,6 +982,9 @@ compose_temp() {
     local PhoneHome__WorkspaceSlots__Enabled
     PhoneHome__WorkspaceSlots__Enabled="$(runner_workspace_slots_enabled "$SERVER2_TEMP_ENV")" \
         || write_result false RunnerWorkspaceSlotsSettingInvalid 2
+    local ANTIPHON_LINUX_COMPILER_POLICY
+    ANTIPHON_LINUX_COMPILER_POLICY="$(runner_linux_compiler_policy "$SERVER2_TEMP_ENV")" \
+        || write_result false RunnerLinuxCompilerPolicySettingInvalid 2
     ANTIPHON_DEPLOY_KEY_FILE="$DEPLOY_KEY" \
     PHONE_HOME_SECRET_FILE="$PHONE_HOME_SECRET" \
     CLAUDE_OAUTH_TOKEN_FILE="$CLAUDE_OAUTH_TOKEN_PATH" \
@@ -986,6 +993,7 @@ compose_temp() {
     RUNNER_GITHUB_TOKEN_DIR="$GITHUB_TOKEN_DIR_PATH" \
     PHONE_HOME_SERVER_ORIGIN="${C604_SERVER_ORIGIN:?}" \
     PhoneHome__WorkspaceSlots__Enabled="$PhoneHome__WorkspaceSlots__Enabled" \
+    ANTIPHON_LINUX_COMPILER_POLICY="$ANTIPHON_LINUX_COMPILER_POLICY" \
     SOURCE_SHA12="${SHA:0:12}" \
     SOURCE_REVISION="$SHA" \
     BUILD_SLOTS_SHA12="$(broker_sha12)" \
@@ -1112,6 +1120,32 @@ runner_workspace_slots_enabled() {
         END {
             if (invalid || count > 1) exit 2
             print count == 0 ? "false" : value
+        }
+    ' "$1"
+}
+
+# CARD-1906: exact opt-in for future Linux builds; missing saved intent uses one named default.
+runner_linux_compiler_policy() {
+    local -r RUNNER_LINUX_COMPILER_POLICY_DEFAULT=0
+    if [ ! -e "$1" ]; then printf '%s\n' "$RUNNER_LINUX_COMPILER_POLICY_DEFAULT"; return 0; fi
+    awk -v default_value="$RUNNER_LINUX_COMPILER_POLICY_DEFAULT" '
+        BEGIN { key="ANTIPHON_LINUX_COMPILER_POLICY" }
+        {
+            candidate=$0
+            sub(/^[[:space:]]*/, "", candidate)
+            if (candidate ~ /^#/) next
+            sub(/^export[[:space:]]+/, "", candidate)
+            lhs=candidate
+            sub(/=.*/, "", lhs)
+            gsub(/[[:space:]]/, "", lhs)
+            if (tolower(lhs) != tolower(key)) next
+            count++
+            if ($0 != key "=1" && $0 != key "=0") invalid=1
+            else value=substr($0, length(key) + 2)
+        }
+        END {
+            if (invalid || count > 1) exit 2
+            print count == 0 ? default_value : value
         }
     ' "$1"
 }
@@ -9615,6 +9649,9 @@ case_deploy_parent() {
     local workspace_slots_enabled
     workspace_slots_enabled="$(runner_workspace_slots_enabled "$SERVER2_ENV")" \
         || write_result false RunnerWorkspaceSlotsSettingInvalid 2
+    local linux_compiler_policy
+    linux_compiler_policy="$(runner_linux_compiler_policy "$SERVER2_ENV")" \
+        || write_result false RunnerLinuxCompilerPolicySettingInvalid 2
     ensure_checkout
     ensure_runner_boot_files
     if [ "${C1008_CONTEXT:-}" = default ]; then
@@ -9633,6 +9670,7 @@ SOURCE_REVISION=$SHA
 SOURCE_SHA12=${SHA:0:12}
 PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
 PhoneHome__WorkspaceSlots__Enabled=$workspace_slots_enabled
+ANTIPHON_LINUX_COMPILER_POLICY=$linux_compiler_policy
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH
@@ -9870,6 +9908,9 @@ case_deploy_temp_runner() {
     local workspace_slots_enabled
     workspace_slots_enabled="$(runner_workspace_slots_enabled "$SERVER2_TEMP_ENV")" \
         || write_result false RunnerWorkspaceSlotsSettingInvalid 2
+    local linux_compiler_policy
+    linux_compiler_policy="$(runner_linux_compiler_policy "$SERVER2_TEMP_ENV")" \
+        || write_result false RunnerLinuxCompilerPolicySettingInvalid 2
     c1008_rollout_lock
     # Never replace an unverified leftover, including a stopped project container.
     c849_no_temp_containers
@@ -9904,6 +9945,7 @@ SOURCE_REVISION=$SHA
 SOURCE_SHA12=${SHA:0:12}
 PHONE_HOME_SERVER_ORIGIN=${C604_SERVER_ORIGIN:?}
 PhoneHome__WorkspaceSlots__Enabled=$workspace_slots_enabled
+ANTIPHON_LINUX_COMPILER_POLICY=$linux_compiler_policy
 ANTIPHON_DEPLOY_KEY_FILE=$DEPLOY_KEY
 PHONE_HOME_SECRET_FILE=$PHONE_HOME_SECRET
 CLAUDE_OAUTH_TOKEN_FILE=$CLAUDE_OAUTH_TOKEN_PATH

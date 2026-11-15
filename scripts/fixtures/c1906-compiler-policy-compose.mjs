@@ -19,7 +19,7 @@ function extract(name) {
   return source.slice(start + 1, end + 2);
 }
 const functions = ['stack_env_value', 'runner_workspace_slots_enabled',
-  ...(source.includes('\nrunner_linux_compiler_policy() {') ? ['runner_linux_compiler_policy'] : []), 'deployed_sha12',
+  'runner_linux_compiler_policy', 'deployed_sha12',
   'broker_sha12', 'compose_host', 'compose_temp', 'case_deploy_parent', 'case_deploy_temp_runner']
   .map(extract).join('\n');
 const env = { ...process.env, CHECKOUT: repo, CASE_DIR: root, SERVER2_ENV: root + '/stack.env',
@@ -83,6 +83,15 @@ sudo() {
   printf 'Filesystem blocks used available capacity mount\\nfixture 99999999 0 99999999 0%% /\\n'
 }
 `;
+// A rendered value supplies the native PTY -> build-wrapper witness.
+const modelValue = process.argv.find(arg => arg.startsWith('--model-value='))?.slice('--model-value='.length);
+if (modelValue !== undefined) {
+  assert.ok(['0', '1'].includes(modelValue));
+  save(env.SERVER2_ENV, modelValue);
+  save(env.SERVER2_TEMP_ENV, modelValue === '1' ? '0' : '1');
+  console.log('MODEL ' + bash('compose_host config --format json\n').trim());
+  process.exit(0);
+}
 // Refusals exercise the complete production phases and wrappers. Every boundary that could
 // start/change anything leaves a marker and exits; checking the fixture tree catches writes too.
 const malformed = [
@@ -212,7 +221,13 @@ for (const temp of [false, true]) {
     }
   }
 }
-// Missing file also defaults false; no env file is sourced.
+// Direct Compose absent/empty interpolation must keep its named default OFF.
+for (const mode of ['absent', 'empty']) {
+  const direct = JSON.parse(bash('docker() { env ' + (mode === 'absent' ? '-u ' + key : key + '=') +
+    ' COMPOSE_DISABLE_ENV_FILE=1 docker "$@"; }\ncompose_host config --format json\n'));
+  assert.equal(direct.services['session-runner'].environment[key], '0', 'direct Compose ' + mode + ' default');
+}
+// Missing file also defaults zero; no env file is sourced.
 assert.equal(bash('runner_linux_compiler_policy "$FIXTURE_ROOT/nonexistent.env"\n').trim(), '0');
 save(env.SERVER2_ENV, undefined);
 save(env.SERVER2_TEMP_ENV, undefined);
