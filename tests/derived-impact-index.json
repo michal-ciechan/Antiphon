@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 151,
+      "classes": 152,
       "reason": "cap",
-      "owed": 126,
+      "owed": 127,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -3422,6 +3422,7 @@
       "path": "scripts/c1008-content-audit.sh",
       "classes": [
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests"
       ]
     },
@@ -3532,6 +3533,7 @@
         "SeedSmokeTargetingPackContractTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
@@ -24128,6 +24130,7 @@
       "path": "tests/Antiphon.Tests/Scripts/VolumeRetirementPublicationFixture.cs",
       "classes": [
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests"
       ]
     },
