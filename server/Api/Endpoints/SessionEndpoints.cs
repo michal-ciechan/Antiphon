@@ -86,10 +86,13 @@ public static class SessionEndpoints
 
         sessions.MapGet("/{id:guid}/messages", async (
             Guid id,
+            long? since,
+            int? limit,
             SessionMessageQueueService queue,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await queue.GetQueueAsync(id, cancellationToken));
+            return Results.Ok(await queue.GetQueueAsync(id, since ?? 0,
+                limit ?? SessionMessageQueueService.PendingNotePageDefault, cancellationToken));
         });
 
         sessions.MapGet("/{id:guid}/pending-notes", async (

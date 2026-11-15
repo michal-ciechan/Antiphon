@@ -110,6 +110,9 @@ export interface SessionQueueDto {
   /** CARD-0514: an open remote-control menu is withholding automated delivery. */
   modalBlocked?: boolean
   modalBlockedReason?: string | null
+  since?: number
+  nextSince?: number
+  truncated?: boolean
 }
 
 /** Global SignalR `SessionFinished` payload — broadcast when an agent finishes with an empty queue. */
@@ -121,8 +124,9 @@ export interface SessionFinishedPayload {
   label: string
 }
 
-export async function getSessionQueue(sessionId: string) {
-  return apiGet<SessionQueueDto>(`/sessions/${sessionId}/messages`)
+export async function getSessionQueue(sessionId: string, since = 0) {
+  const page = since > 0 ? `?since=${since}` : ''
+  return apiGet<SessionQueueDto>(`/sessions/${sessionId}/messages${page}`)
 }
 
 export interface PendingNoteDto {

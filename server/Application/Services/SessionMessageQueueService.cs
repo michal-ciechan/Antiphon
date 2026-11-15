@@ -1254,11 +1254,14 @@ public sealed partial class SessionMessageQueueService
     }
 
     /// <summary>Pending and unconfirmed Sent messages, plus whether the agent is currently working.</summary>
-    public async Task<SessionQueueDto> GetQueueAsync(Guid sessionId, CancellationToken ct)
+    public Task<SessionQueueDto> GetQueueAsync(Guid sessionId, CancellationToken ct) =>
+        GetQueueAsync(sessionId, 0, PendingNotePageDefault, ct);
+
+    public async Task<SessionQueueDto> GetQueueAsync(Guid sessionId, long since, int limit, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await BuildQueueDtoAsync(db, sessionId, Math.Max(1, _verification.MaxDeliveryAttempts), ct);
+        return await BuildQueueDtoAsync(db, sessionId, Math.Max(1, _verification.MaxDeliveryAttempts), since, limit, ct);
     }
 
     /// <summary>Remove a pending message before it is delivered.</summary>
@@ -6019,14 +6022,21 @@ public sealed partial class SessionMessageQueueService
     /// message is Pending like any other, and a queue that could not say so showed CARD-0055's
     /// parked messages as ordinary pending ones — visible, and silently never going anywhere.
     /// </param>
+    private Task<SessionQueueDto> BuildQueueDtoAsync(
+        AppDbContext db, Guid sessionId, int maxAttempts, CancellationToken ct) =>
+        BuildQueueDtoAsync(db, sessionId, maxAttempts, 0, PendingNotePageDefault, ct);
+
     private async Task<SessionQueueDto> BuildQueueDtoAsync(
-        AppDbContext db, Guid sessionId, int maxAttempts, CancellationToken ct)
+        AppDbContext db, Guid sessionId, int maxAttempts, long since, int limit, CancellationToken ct)
     {
-        var messages = await db.SessionQueuedMessages
+        since = Math.Max(0, since);
+        limit = Math.Clamp(limit <= 0 ? PendingNotePageDefault : limit, 1, PendingNotePageMax);
+        var candidates = await db.SessionQueuedMessages
             .AsNoTracking()
-            .Where(m => m.AgentSessionId == sessionId && (m.Status == QueuedMessageStatus.Pending
+            .Where(m => m.AgentSessionId == sessionId && m.Sequence > since && (m.Status == QueuedMessageStatus.Pending
                 || m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null && m.DeliveryAttempts > 0))
             .OrderBy(m => m.Sequence)
+            .Take(limit + 1)
             .Select(m => new QueuedMessageDto(
                 m.Id,
                 m.Sequence,
@@ -6042,6 +6052,18 @@ public sealed partial class SessionMessageQueueService
                 m.Status == QueuedMessageStatus.Sent,
                 m.LastDeliveryStartedAt))
             .ToListAsync(ct);
+        // Match pending-note paging: always return the first row so a large body cannot
+        // prevent progress, then bound both row count and subsequent UTF-8 body bytes.
+        var messages = new List<QueuedMessageDto>();
+        var bytes = 0;
+        foreach (var message in candidates)
+        {
+            var size = System.Text.Encoding.UTF8.GetByteCount(message.Body);
+            if (messages.Count == limit || messages.Count > 0 && (long)bytes + size > PendingNotePageMaxBytes)
+                break;
+            messages.Add(message);
+            bytes += size;
+        }
         var working = await ReadWorkingAsync(db, sessionId, ct);
         var reason = await ModalBlockReasonAsync(db, sessionId, ct);
         var modalBlocked = reason is not null;
@@ -6054,7 +6076,10 @@ public sealed partial class SessionMessageQueueService
             dtos,
             working,
             ModalBlocked: modalBlocked,
-            ModalBlockedReason: reason);
+            ModalBlockedReason: reason,
+            Since: since,
+            NextSince: messages.Count == 0 ? since : messages[^1].Sequence,
+            Truncated: candidates.Count > messages.Count);
     }
 
     internal async Task<bool> IsModalBlockedAsync(Guid sessionId, CancellationToken ct)

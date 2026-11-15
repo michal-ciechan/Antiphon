@@ -212,7 +212,8 @@ public sealed partial class AttentionService
     }
 
     public async Task<AttentionDto> GetAsync(
-        CancellationToken ct, bool includeProgressProbe = true, AlertSeverity? minSeverity = null)
+        CancellationToken ct, bool includeProgressProbe = true, AlertSeverity? minSeverity = null,
+        int parkedSkip = 0, int parkedLimit = SessionMessageQueueService.PendingNotePageDefault)
     {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var since = now - RecencyWindow;
@@ -265,7 +266,8 @@ public sealed partial class AttentionService
             open, now, costs, checkDigests, attachedIncidents, includeProgressProbe, ct);
         items.AddRange(openItems);
         items.AddRange(await BuildTaskInputUnreadableItemsAsync(open.Concat(blocked).ToList(), ct));
-        items.AddRange(await BuildParkedMessageItemsAsync(ct));
+        var parkedPage = await BuildParkedMessageItemsAsync(parkedSkip, parkedLimit, ct);
+        items.AddRange(parkedPage.Items);
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
         items.AddRange(await BuildSupervisionNoticeItemsAsync(ct));
         items.AddRange(await BuildPendingNotesAgedItemsAsync(now, ct));
@@ -366,12 +368,18 @@ public sealed partial class AttentionService
             .OrderByDescending(c => c.Count)
             .ThenBy(c => c.Kind)
             .ToList();
+        // Paging limits bodies, while badges and the census retain the complete count.
+        kindCounts.RemoveAll(c => c.Kind == AttentionKind.ParkedMessage);
+        if (parkedPage.Total > 0)
+            kindCounts.Add(new AttentionKindCountDto(AttentionKind.ParkedMessage, parkedPage.Total));
+        kindCounts = kindCounts.OrderByDescending(c => c.Count).ThenBy(c => c.Kind).ToList();
         // The census is the sweep. The floor only chooses which rows this response carries.
         var visible = minSeverity is { } floor
             ? ordered.Where(i => i.Severity >= floor).ToList()
             : ordered;
 
-        return new AttentionDto(now, runnerSessions is not null, visible, kindCounts);
+        return new AttentionDto(now, runnerSessions is not null, visible, kindCounts,
+            parkedPage.Truncated, parkedPage.NextSkip);
     }
 
     /// <summary>
@@ -1841,26 +1849,46 @@ public sealed partial class AttentionService
         return rest;
     }
 
-    private async Task<List<AttentionItemDto>> BuildParkedMessageItemsAsync(CancellationToken ct)
+    private async Task<(List<AttentionItemDto> Items, int Total, bool Truncated, int NextSkip)> BuildParkedMessageItemsAsync(
+        int skip, int limit, CancellationToken ct)
     {
         var items = new List<AttentionItemDto>();
+        skip = Math.Max(0, skip);
+        limit = Math.Clamp(limit <= 0 ? SessionMessageQueueService.PendingNotePageDefault : limit,
+            1, SessionMessageQueueService.PendingNotePageMax);
 
         // Parking is NOT a status (CARD-0055): a message is parked when it is still Pending and has
         // spent its attempts. The cap is READ from supervision settings — this feature adds nothing
         // to that file — so the view and the queue can never disagree about what parked means.
         var maxAttempts = Math.Max(1, _supervision.DeliveryVerification.MaxDeliveryAttempts);
-        var parked = await _db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => (m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts && m.SourceLandNotificationId == null)
-                || (m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null && m.DeliveryAttempts > 0))
-            .Select(m => new
+        var eligible = from m in _db.SessionQueuedMessages.AsNoTracking()
+            join session in _db.AgentSessions.AsNoTracking() on m.AgentSessionId equals session.Id
+            where (m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts >= maxAttempts && m.SourceLandNotificationId == null)
+                || (m.Status == QueuedMessageStatus.Sent && m.DeliveryVerdict == null && m.DeliveryAttempts > 0)
+                // A canceled rules read closes its key permanently. Keep an actionable notice
+                // for its current generation rather than silently leaving ordinary input held.
+                || (m.Status == QueuedMessageStatus.Canceled && m.RulesRefreshKey != null
+                    && m.RulesAcknowledgedAt == null && m.RulesCoveredByMessageId == null
+                    && session.AgentKind == AgentKind.Grok && session.GrokRulesGeneration != null
+                    && (session.GrokRulesState == GrokRulesState.Pending || session.GrokRulesState == GrokRulesState.Failed)
+                    && m.RulesReceiptJson != null
+                    && EF.Functions.JsonContains(m.RulesReceiptJson,
+                        "{\"Generation\":\"" + session.GrokRulesGeneration.Value.ToString() + "\"}"))
+            select new { Message = m, Generation = session.GrokRulesGeneration };
+        var total = await eligible.CountAsync(ct);
+        var parked = await eligible
+            .OrderBy(m => m.Message.AgentSessionId).ThenBy(m => m.Message.Sequence).ThenBy(m => m.Message.Id)
+            .Skip(skip).Take(limit)
+            .Select(row => new
             {
-                m.Id, m.AgentSessionId, m.Body, m.Origin, m.CreatedAt,
-                m.DeliveryAttempts, m.LastDeliveryStartedAt,
-                Unconfirmed = m.Status == QueuedMessageStatus.Sent,
+                row.Message.Id, row.Message.AgentSessionId, row.Message.Body, row.Message.Origin, row.Message.CreatedAt,
+                row.Message.DeliveryAttempts, row.Message.LastDeliveryStartedAt, row.Generation,
+                AbandonedRules = row.Message.Status == QueuedMessageStatus.Canceled,
+                Unconfirmed = row.Message.Status == QueuedMessageStatus.Sent,
             })
             .ToListAsync(ct);
         if (parked.Count == 0)
-            return items;
+            return (items, total, false, skip);
 
         var sessionIds = parked.Select(m => m.AgentSessionId).Distinct().ToList();
         var owners = await ResolveSessionOwnersAsync(sessionIds, ct);
@@ -1881,6 +1909,17 @@ public sealed partial class AttentionService
             // Critical when the agent is channel-bound: a parked channel reply is not a stalled
             // delivery, it is a person on the other end of a line that has gone dead.
             var bound = agentId is Guid id && channelBound.Contains(id);
+            if (message.AbandonedRules)
+            {
+                items.Add(new AttentionItemDto(
+                    AttentionKind.ParkedMessage, AlertSeverity.Error, null, message.AgentSessionId,
+                    agentId, message.Id, $"Abandoned Grok rules for {agentName ?? $"session {message.AgentSessionId:N}"}",
+                    "This rules generation remains closed. Use a fresh start: POST /api/agents/{id}/start with fresh=true. "
+                        + "A rules refresh or late prompt does not reopen this abandoned read. No input was sent.",
+                    $"generation={message.Generation:N}; message={message.Id:D}\n{Excerpt(message.Body)}",
+                    message.LastDeliveryStartedAt ?? message.CreatedAt, null, [AttentionAction.OpenAgent]));
+                continue;
+            }
             items.Add(new AttentionItemDto(
                 AttentionKind.ParkedMessage,
                 bound ? AlertSeverity.Critical : AlertSeverity.Error,
@@ -1902,7 +1941,8 @@ public sealed partial class AttentionService
                     : [AttentionAction.SendNow, AttentionAction.CancelMessage]));
         }
 
-        return items;
+        var next = skip + parked.Count;
+        return (items, total, next < total, next);
     }
 
     private async Task<List<AttentionItemDto>> BuildPendingNotesAgedItemsAsync(DateTime now, CancellationToken ct)
