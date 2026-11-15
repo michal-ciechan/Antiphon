@@ -44,6 +44,15 @@
       ]
     },
     {
+      "id": "attention-action-contract",
+      "globs": [
+        "server/Application/Dtos/AttentionDtos.cs"
+      ],
+      "classes": [
+        "UnmarkedWaitingContractTests"
+      ]
+    },
+    {
       "id": "timing-labels",
       "globs": [
         "tests/Shared/TestTiming.cs",
