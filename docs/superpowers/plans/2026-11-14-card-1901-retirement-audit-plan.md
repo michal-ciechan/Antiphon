@@ -420,6 +420,9 @@ may modify the golden expectations or test inputs. Retain each PC's evidence.
 | PC-31/durable | Persist a duplicate artifact in memory validation mode. | `/*/*/VolumeRetirementContentTests/Exchange_exports_only_this_projects_registered_origins` | pending |
 | PC-32 | Omit Ready payload file fsync. | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | pending |
 | PC-33 | Omit directory fsync after Ready publication. | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | pending |
+| PC-34 | Ignore FreshGraph and reuse an unchanged previous bundle. | `/*/*/VolumeRetirementHostProofTests/Fresh_graph_renewal_fetches_again_for_unchanged_advertisement` | pending |
+
+| PC-35 | Restore sealed-proof-only Ready authority without same-invocation live renewal. | `/*/*/RollingVolumeRecycleScriptTests/C1008_Host_proof_admits_only_an_authenticated_private_origin` | pending |
 
 ### Checkpoint execution and lanes
 
@@ -601,8 +604,15 @@ split by method; earlier CP-6 and CP-9 methods are credited from their exact
 rows rather than repeated. These are named shared retirement-audit callers and
 contract readers, not an assembly or Unit-lane selection. A timeout or native
 skip remains explicit incomplete evidence, never a passed measurement.
-The current assigned base declares 13 host-proof methods, so CP-5/12 now name
-13; the earlier S3 TRX executed all 13 (12 passed, one seam failure).
+Historical S4 prose claimed 13 base host-proof methods. Inspection of task base
+b559bfba2e9a420495122d27171352fe9b7e1ba4, original tip 89f64a6b and the Round-2
+pre-repair source finds 12 declared methods, without argument expansion. The
+Round-2 CP-5 run executed/passed all 12 but correctly reported roster-miss against
+Min=13. Keep that failed gate. Code adds a thirteenth direct real-writer method,
+Fresh_graph_renewal_fetches_again_for_unchanged_advertisement, requiring another
+actual Git fetch with FreshGraph and the same prior advertisement/objects. CP-5/12
+retain Min=13 and the complete class filter; native Windows CP-12 remains owed.
+PC-34 covers ignoring FreshGraph and remains pending Mutation.
 
 
 Code refinement (0a2ad036): CP-0 is declared preparation: gated native build
@@ -849,6 +859,15 @@ Native Windows CP-11/12 and root-capable CP-26 remain incomplete until executed.
 | CP-126 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_record_requires_current_kernel_and_call` | R2-16 | exactly 1 passed; all 9 real clock-record variants discriminated | 1 | 2 | true |
 | CP-127 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementPublicationTests/Binding_clock_precedes_fresh_origin_url_observation` | R2-17 | exactly 1 passed; actual URL changes at clock and is read afterward | 1 | 2 | true |
 | CP-128 | R2Final | CP-101 | linux-r2-final | `/*/*/VolumeRetirementReceiptTests/Ready_publication_requires_file_and_directory_durability` | R2-18 | exactly 1 passed; file-sync refusal, directory-sync refusal and real durable positive | 1 | 2 | true |
+| CP-129 | R2Final | tests/Antiphon.PtyHost.Tests -> bin-c1901-ptyhost/ | linux-native-build | `/*/*/LinuxPtyHostLauncherTests/*` | R-native owned apphost factory after child-build confinement repair | all 6 intended methods; 0 failed/skipped | 6 | 2 | true |
+| CP-130 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_refuses_references_and_unknown_census` | R-CP39.13 complete split 1/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-131 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_audits_work_as_1654` | R-CP39.13 complete split 2/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-132 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_refuses_unpublished_and_dirty_work` | R-CP39.13 complete split 3/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-133 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_refuses_uninspectable_git` | R-CP39.13 complete split 4/8 | all intended method arguments; 0 failed/skipped | 1 | 5 | true |
+| CP-134 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_reaps_dirty_scratch` | R-CP39.13 complete split 5/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-135 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1008_Recycle_audits_promisor_checkout` | R-CP39.13 complete split 6/8 | all intended method arguments; 0 failed/skipped | 1 | 3 | true |
+| CP-136 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Git_audit_recovery_tips` | R-CP39.13 complete split 7/8 | all intended method arguments; 0 failed/skipped | 10 | 1 | true |
+| CP-137 | R2Final | CP-101 | linux-r2-final | `/*/*/RemoteScriptContractTests/C1105_Git_audit_seed_content` | R-CP39.13 complete split 8/8 | all intended method arguments; 0 failed/skipped | 11 | 1 | true |
 
 Every OR operand has parentheses and a trailing `*`; Markdown escapes its pipes.
 New method names are deliberately distinct. Confirm source declarations and the
@@ -963,3 +982,42 @@ all new payloads, publish authority receipt last and flush the directory before
 acknowledgment. No schemas, approval predicates, assertions or deadlines change.
 CP128 has a new provisional3min cap for three owned fixture variants; existing
 row caps are unchanged. All46 PC variants throughPC33 remain pending Mutation.
+
+Round-2 fixture/build evidence repair: V8/V9 originally appended a stale
+preview-audit.out when a new initial inventory refused before full audit. Preserve
+all old bytes, collect only a freshly written audit and new per-invocation inventory
+outputs, and retain every classifier/census/refusal assertion. Rerun V8/V9 and the
+adjacent V1 positive/negative path; rerun CP-10a and CP-10c after the new test declaration and derived-index update. Other unrelated green rows need no repetition.
+PtyHost CP-124's cold child build correctly triggered BuildConfinement because
+OutDir alone left native intermediates in default obj. Propagate isolated
+UseArtifactsOutput/ArtifactsPath only for checkpoint builds. Native default
+builds keep SDK output behavior; no guard, native apphost, assertion or timeout is
+bypassed. CP-124 plus new CP-129 use one new isolated PtyHost build, serial 2/4 min
+row caps; no Antiphon.Tests process overlaps them.
+
+CP-9 acceptance repair: the historical private-origin integration expected Ready
+and Apply from a sealed v2 proof even when origin returned 404, DNS failure or
+timeout. That is the Round-2 fail-open invariant. Its committed f399989c run
+correctly refused Unknown/proof-stale but failed the old Ready expectation.
+Retain every invalid-header/binding/dirty/unpublished and read-only Docker bind
+assertion; independently require C1609_PROVED_OBJECT for the actual protected tip
+from the real offline scanner, then strict parent Unknown/proof-stale, no Ready,
+and no effects. Apply without a live Ready preview must refuse preview-required.
+CP-98.native retains the real live public Preview/Apply acceptance. PC-35 is
+pending Mutation. This is an intentional acceptance change, not an increased
+clock window or a bypass. Rerun the complete CP-9 exact selection.
+
+CP-39.13 sizing repair: at f399989c97a198a22cdf52196958056b22915b51,
+run 20261114-214944-5565, the original eight-method batch reached its unchanged
+9-minute cap after540.8974s, slot=granted waited=0s, with no complete TRX.
+Retain that timeout; phase-completed cases do not pass the row. Real method
+samples include280.450s for uninspectable Git and107.276s for promisor checkout.
+CP-130..137 replace execution of this historical aggregate with its exact eight
+methods, preserving all assertions/internal vectors and all10 recovery-tip plus
+11 seed-content argument cases (27 result executions in total). Do not run the
+old aggregate again or credit it green. Each of the first six rows retains the
+same9min ceiling (provisional n=0 for unmeasured individual selections); the two
+small static-argument rosters use2min. No timeout is widened and no case is
+removed. Other green or unfailed groups are not split speculatively.
+
+Current unbound Mutation roster: PC-1..35, 48 variant rows, all pending.

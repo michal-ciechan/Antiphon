@@ -17,6 +17,26 @@ public sealed class VolumeRetirementHostProofTests
 
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Fresh_graph_renewal_fetches_again_for_unchanged_advertisement()
+    {
+        var f = await VolumeRetirementPublicationFixture.Create();
+        var trace = Path.Combine(f.Root, "actual-fetches.txt");
+        var observeFetch = "if($GitArgs -contains 'fetch'){[IO.File]::AppendAllText(" +
+            VolumeRetirementPublicationFixture.Ps(trace) + ", 'fetch'+[char]10)}; ";
+        var initial = await f.WriteProof([(f.A, "commit")], extraShim: observeFetch);
+        initial.Exit.ShouldBe(0, initial.Output);
+        File.Exists(trace).ShouldBeTrue("the first real writer fetched the origin");
+        var initialFetches = (await File.ReadAllLinesAsync(trace)).Length;
+        initialFetches.ShouldBeGreaterThan(0);
+        var renewed = await f.WriteProof([(f.A, "commit")], previous: initial.File,
+            freshGraph: true, extraShim: observeFetch);
+        renewed.Exit.ShouldBe(0, renewed.Output);
+        (await File.ReadAllLinesAsync(trace)).Length.ShouldBeGreaterThan(initialFetches,
+            "FreshGraph must fetch again even while the prior advertisement and required objects are unchanged");
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_proves_complete_origin_ancestry()
     {
         var root = Directory.CreateTempSubdirectory("c1609-h1-").FullName;
