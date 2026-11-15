@@ -188,7 +188,7 @@ The official validator returned `CHECKPOINT SOURCE VALID source=e2d3d6643c52d9a1
 | V-3 | PASS: 16 real Compose/persistence matrices, direct absent/empty fallback assertions, baseline-equivalence assertion and temp inheritance. |
 | V-4 | PASS: real rendered 0 and 1 reach the production native PtyAgentRunner and real build-wrapper child without the key in the session override map; no launch allowlist exists. |
 | R-1 | PASS: existing slot assertions, deployment contracts and all seven adjacent remote methods. |
-| R-2 | PARTIAL/INCOMPLETE: guard union, explicit impacted rows and new nightly-live-lane row all run; 38 derived whole-class selections NOT RUN pending bounded Debug. Native Windows-only guard remains skipped, not passed. |
+| R-2 | commissioned to Debug c2489e73, manifest pending. PARTIAL/INCOMPLETE: guard union, explicit impacted rows and new nightly-live-lane row all run; 38 derived whole-class selections NOT RUN by this Code task. Native Windows-only guard remains skipped, not passed. |
 | R-3 | PASS for the tested source: full-base evidence history, OS inventory lint and conflict-free merge-tree; all three policy pins independently checked as described above. Final publication receives an additional full-range history/merge-tree check. |
 
 Production activation/inspect and the measured 24-hour trial remain future rollout work under the already granted operator authority. No approval was requested for that authority, no live activation was performed, and no trial metrics are invented. Restart in this task: none. Future activation target: runner recreation through the named phase.
@@ -230,9 +230,9 @@ The red-first run, stopped setup run and first failed core receipt remain histor
 
 ### Pending expanded Final selection and cost stop gate
 
-The actual base..tested-source selector matched `linux-only-policy`, `nightly-live-lane`, `remote-scripts`, `spawn-limit-rosters` and `test-lane-category`. Its full file-read-derived filters also include the following 38 whole classes, all **NOT RUN**, not passed or silently dropped. The two explicit method filters were completed. A bounded inventory is still required from caller-commissioned Debug.
+The actual base..tested-source selector matched `linux-only-policy`, `nightly-live-lane`, `remote-scripts`, `spawn-limit-rosters` and `test-lane-category`. Its full file-read-derived filters also include the following 38 whole classes, all **NOT RUN by this Code task**, not passed or silently dropped. The two explicit method filters were completed. R-2 is **commissioned to Debug c2489e73, manifest pending** at `docs/investigations/2026-11-15-card-1906-r2-bounded-selection.md`.
 
-The prior Debug report `docs/investigations/2026-11-13-selector-fixture-retirement-checkpoints.md` (task 49ae044d) records a stopped over-30-minute selection, 252 complete-roster child invocations in the aggregate rollout case, 765 seconds for 22 container-host cases, 224 seconds for 16 script cases, and a 248-second private-origin case. Its superseding 25/24/15-minute rows do not fit this brief's under-ten-minute rows. Launching that unchanged broad sweep would violate the mandatory performance gate. An asynchronous request for the bounded Debug inventory was made while independent core work continued; none was supplied. A Code delegate cannot sub-delegate. This is missing required execution, not an advisory waiver or a product regression.
+The prior Debug report `docs/investigations/2026-11-13-selector-fixture-retirement-checkpoints.md` (task 49ae044d) records a stopped over-30-minute selection, 252 complete-roster child invocations in the aggregate rollout case, 765 seconds for 22 container-host cases, 224 seconds for 16 script cases, and a 248-second private-origin case. Its superseding 25/24/15-minute rows do not fit this brief's under-ten-minute rows. Launching that unchanged broad sweep would violate the mandatory performance gate. An asynchronous request for the bounded Debug inventory was made while independent core work continued; no inventory was supplied before the initial report. The caller subsequently commissioned Debug c2489e73, based on published tip `1ca3d5a961b78089fe24fdc09a3597c886d4f528`, to inventory and run these 38 classes in partitions each under ten minutes. Its manifest and clean results remain pending. This is missing required execution, not an advisory waiver or a product regression.
 
 | Pending ID | Project | Class | Outcome |
 |---|---|---|---|
@@ -275,7 +275,7 @@ The prior Debug report `docs/investigations/2026-11-13-selector-fixture-retireme
 | R-2/D37 | tests/Antiphon.Tests | VolumeRetirementWrapperTests | NOT RUN |
 | R-2/D38 | tests/Antiphon.Tests | ZombieCensusPlatformTests | NOT RUN |
 
-Regenerate the full selector with `pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range d100f8fa2c679a5c74b6b235087308776a8f5d50..HEAD -Json`; do not run its aggregate filter until Debug binds bounded rows/cases. No item above is marked passed. Complete R-2, then ordinary Final Review; never land from this report.
+Regenerate the full selector with `pwsh -NoProfile -File scripts/impacted-classes.ps1 -Range d100f8fa2c679a5c74b6b235087308776a8f5d50..HEAD -Json`; do not run its aggregate filter until Debug binds bounded rows/cases. No item above is marked passed. The caller instructed this Code task to finish with current results and `next: code`, naming Debug c2489e73. Final Review follows only after that Debug reports clean and publishes its manifest; never land from this report.
 
 ### OS inventory and controls
 
@@ -328,3 +328,7 @@ e2d3d6643c52d9a1873b462fd4a058434656c945 docs(card-1906): preserve source-bound 
 ```
 
 The settlement progress marker gives the later report-only publication SHA; actual test results remain bound to `e2d3d6643c52d9a1873b462fd4a058434656c945`.
+
+### Reopened-task handoff audit
+
+Caller steering: finish this Code task now; R-2 is **commissioned to Debug c2489e73, manifest pending** at `docs/investigations/2026-11-15-card-1906-r2-bounded-selection.md`. No new build or test was run for this report-only update. All historical outcomes, costs, source identities and unedited receipt lines remain retained. Every PC and variant above remains pending for Mutation. Both named defaults remain OFF: Compose `RunnerLinuxCompilerPolicyDefault` uses fallback `0`; shell `RUNNER_LINUX_COMPILER_POLICY_DEFAULT=0`. Restart: none. The next stage remains Code for the commissioned Debug's results, followed by Final Review only after clean completion.
