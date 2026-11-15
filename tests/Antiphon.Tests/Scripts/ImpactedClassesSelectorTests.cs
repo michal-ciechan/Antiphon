@@ -241,6 +241,7 @@ public sealed partial class ImpactedClassesSelectorTests
         // CARD-1801: dcb973d8 also edits the policy file and c6eee1a0 the C1514 host-load fixture.
         // CARD-1807: c6eee1a0 adds a ParallelLimiter< class and ceda26b3 edits tests/Antiphon.Tests/Checkpoints.
         // CARD-1819: an Antiphon.Tests source edit selects the lane guard, and the policy file selects the nightly lane.
+        // g139: the remote-script range also edits C1008ComposeSeed, which selects the label witness.
         await AssertKinds(
             root, "dcb973d896f1d12776a796b71466977b22737b79",
             ["linux-only-policy", "nightly-live-lane", "test-lane-category", "timing-labels"],
@@ -250,7 +251,8 @@ public sealed partial class ImpactedClassesSelectorTests
         await AssertKinds(
             root,
             "a54a6d4f755fa139b41fd7dc8aef456d3d2c0975",
-            ["remote-scripts", "test-lane-category"],
+            ["remote-scripts", "test-lane-category", "timing-labels"],
+            "TestTimingOperationLabelTests",
             "C849_Deploy_temp_names_saved_import_when_seed_is_missing",
             "C0995_Deploy_temp_checks_host_absence_before_checkout",
             "C1105_Deploy_parent_orders_checkout_and_boot_files_before_recycle",
