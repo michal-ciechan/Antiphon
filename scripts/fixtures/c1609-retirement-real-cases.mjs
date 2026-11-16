@@ -273,7 +273,7 @@ function shell(f, body, suffix='run') {
       'eval "$(declare -f c1609_publication_gate | sed \'1s/c1609_publication_gate/c1955_native_gate/\')"',
       'c1609_publication_gate() { local start=$(c1609_monotonic_ms) rc=0; c1955_native_gate "$@" || rc=$?; printf "NATIVE_GATE purpose=%s totalMs=%s proofStage=%s exit=%s\\n" "$1" "$(( $(c1609_monotonic_ms)-start ))" "${C1609_PROOF_STAGE:-complete}" "$rc" >&2; return "$rc"; }',
       'eval "$(declare -f c1609_effect_publication_fresh | sed \'1s/c1609_effect_publication_fresh/c1955_native_fresh/\')"',
-      'c1609_effect_publication_fresh() { local rc=0; c1955_native_fresh "$@" || rc=$?; printf "NATIVE_FENCE stage=%s elapsedMs=%s limitMs=5000 exit=%s\\n" "${1:-effect}" "$(( $(c1609_monotonic_ms)-C1609_CONTROL_STARTED ))" "$rc" >&2; return "$rc"; }'
+      'c1609_effect_publication_fresh() { local rc=0; c1955_native_fresh "$@" || rc=$?; printf "NATIVE_FENCE stage=%s elapsedMs=%s limitMs=11000 exit=%s\\n" "${1:-effect}" "$(( $(c1609_monotonic_ms)-C1609_CONTROL_STARTED ))" "$rc" >&2; return "$rc"; }'
     ].join('\n');
     assert(/^c1008_lock[;\n]/.test(body),'native live invocation acquires the real lock first');
     body=body.replace(/^c1008_lock[;\n]/,'c1008_lock\n'+setup+'\n');
@@ -282,7 +282,7 @@ function shell(f, body, suffix='run') {
       if(f.large){
         before='awk \'BEGIN {for(i=0;i<10417;i++){if(i%100==0) print "{\\"kind\\":\\"fixture\\",\\"path\\":\\"retained-evidence\\",\\"commit\\":null}"; else {printf "fixture-audit-row=%05d ",i; for(j=0;j<100;j++) printf "x"; print ""}}}\' >> "$CASE_DIR/preview-audit.out"\n'+
           'eval "$(declare -f c1609_copy_preview_rows | sed \'1s/c1609_copy_preview_rows/c1955_native_render/\')"\n'+
-          'c1609_copy_preview_rows() { local start=$(c1609_monotonic_ms); sleep 6; c1955_native_render "$@" || return 1; printf "NATIVE_RENDER elapsedMs=%s bindingClockStarted=%s\\n" "$(( $(c1609_monotonic_ms)-start ))" "${C1609_CONTROL_STARTED:-unstarted}" >&2; }\n';
+          'c1609_copy_preview_rows() { local start=$(c1609_monotonic_ms); sleep 12; c1955_native_render "$@" || return 1; printf "NATIVE_RENDER elapsedMs=%s bindingClockStarted=%s\\n" "$(( $(c1609_monotonic_ms)-start ))" "${C1609_CONTROL_STARTED:-unstarted}" >&2; }\n';
       }
       body=body.replace('c1609_write_ready_receipt || exit 2',before+'c1609_publication_gate ready || exit 2\nc1609_write_ready_receipt || exit 2\nc1609_effect_publication_fresh ready-published || exit 2');
     }
@@ -393,8 +393,8 @@ async function ready(f) {
     assert(Number(rootRun('wc -l < '+q(directory+'/findings.jsonl')).stdout)>=105);
     assert.match(rootRead(directory+'/proof.md'),/state: Ready/);
     const render=r.stderr.match(/NATIVE_RENDER elapsedMs=([0-9]+) bindingClockStarted=unstarted/);
-    assert(render&&Number(render[1])>=6000,'loaded rendering completes before the binding clock starts');
-    assert.match(r.stderr,/NATIVE_FENCE stage=ready-published elapsedMs=[0-9]+ limitMs=5000 exit=0/);
+    assert(render&&Number(render[1])>=12000,'loaded rendering completes before the binding clock starts');
+    assert.match(r.stderr,/NATIVE_FENCE stage=ready-published elapsedMs=[0-9]+ limitMs=11000 exit=0/);
   }
 }
 function preserve(f) {
