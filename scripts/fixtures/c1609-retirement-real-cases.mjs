@@ -267,6 +267,7 @@ function shell(f, body, suffix='run') {
       'C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
       'C1609_PHASE_NONCE='+q(phase),'C1609_EXCHANGE=1','C1008_HOST_PROOF=',
       'C1609_EXCHANGE_PROOF_ROOT='+q(control),'mkdir -m 0700 '+q(control),
+      'mkdir -p -m 0700 "$(c1609_retirement_root)"',
       'c1609_prepare_exchange || exit 2',
       suffix==='preview'?'C1008_DRY_RUN=1':'c1008_audit_readonly > "$CASE_DIR/apply-audit.out" || exit 2',
       'eval "$(declare -f c1609_effect_publication_fresh | sed \'1s/c1609_effect_publication_fresh/c1955_native_fresh/\')"',
