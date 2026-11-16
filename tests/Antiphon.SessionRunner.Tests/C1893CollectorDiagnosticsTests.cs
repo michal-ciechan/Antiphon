@@ -118,7 +118,7 @@ public class C1893CollectorDiagnosticsTests(C1514HostLoadFixture fixture)
         try
         {
             var sample = new ScriptedHostStatsProbe().Read()!.Value with { At = clock.GetUtcNow() };
-            capture.TryCapture(sample with { CpuPercent = double.NaN }).ShouldBeTrue();
+            capture.TryCapture(sample with { TopConsumersAgeSeconds = double.NaN }).ShouldBeTrue();
             await C1514HostLoadFixture.EventuallyAsync(() => capture.DroppedSamples == 1);
             Diagnostics(capture).GetProperty("droppedByReason").GetProperty("append-validation-serialization").GetInt64().ShouldBe(1);
             await C1514HostLoadFixture.EventuallyAsync(() => Diagnostics(capture).GetProperty("failures").GetInt64() == 1);
