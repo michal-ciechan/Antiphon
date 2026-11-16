@@ -146,8 +146,9 @@ function Get-RcPartitionStatus {
     $origins=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($row in $Partition.carried) {
         $origin=Copy-RcPlanOrigin $row.origin $row.suite
-        $key=ConvertTo-Json -InputObject @($origin.envelopeDigest,$origin.runId,$origin.sourceSha,$origin.suite,$origin.chunkId) -Compress
+        $key=ConvertTo-Json -InputObject @($origin.runId,$origin.sourceSha,$origin.suite,$origin.chunkId) -Compress
         if ($origins.ContainsKey($key) -and $origins[$key].wallSeconds -ne $origin.wallSeconds) { throw 'origin-wall-conflict' }
+        if ($origins.ContainsKey($key) -and $origins[$key].envelopeDigest -cne $origin.envelopeDigest) { throw 'origin-envelope-conflict' }
         $origins[$key]=$origin
     }
     $wall=0.0
@@ -206,6 +207,14 @@ function New-RcIncrementalPlan {
         } catch { [void]$reasons.Add('baseline-unproven') }
     }
     $effective=New-RcExactPartition $Request.suites -ForceExecution
+    # Revalidate the candidate at publication as well as admission. These receipts
+    # are diagnostic inputs, never retroactive build/output provenance.
+    if ((Invoke-TestSelectionGit $RepositoryRoot @('rev-parse','HEAD')).Stdout.Trim() -cne $ExpectedSha -or
+        (Invoke-TestSelectionGit $RepositoryRoot @('status','--porcelain=v1','--untracked-files=no')).Stdout.Trim()) { throw 'candidate-binding-mismatch' }
+    foreach ($kind in @('input','output')) {
+        try { [void](Read-RcAdmissionJson $Request.bindings[$kind].path $Request.bindings[$kind].digest) }
+        catch { [void]$reasons.Add('receipt-unproven:'+ $kind) }
+    }
     $plan=@{format='antiphon-rc-incremental-plan-v1';candidateSha=$ExpectedSha;treeId=$Request.treeId;platform=$Request.platform;
         rcLine=$Request.rcLine;request=$Request;proposalPartition=$proposal;partition=$effective;forcedReasons=@($reasons);
         effectiveMode='Full';coverageScope=$(if ($Request.platform -ceq 'linux') {'PlatformDiagnostic'} else {'IncrementalDiagnostic'});
@@ -291,6 +300,13 @@ function Write-RcPlanRevision {
         if ([IO.File]::Exists((Join-Path $root 'index.json'))) {
             # Validate the previous revision, not only the index, before extending it.
             $previous=Read-RcPlanStatus $root $ExpectedPlanDigest
+            # Results are cumulative immutable facts. A later revision can add
+            # observations, but cannot erase or retry a failure into a pass.
+            $next=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+            foreach ($result in $Results) { $next.Add($result.key,$result.outcome) }
+            foreach ($result in $previous.results) {
+                if (-not $next.ContainsKey($result.key) -or $next[$result.key] -cne $result.outcome) { throw 'revision-result-history' }
+            }
             $sequence=$previous.sequence+1L
         }
         $relative='revisions/'+$sequence+'/revision.json'
@@ -323,6 +339,7 @@ function Read-RcPlanStatus {
     $status.candidateSha=$plan.candidateSha; $status.platform=$plan.platform; $status.effectiveMode=$plan.effectiveMode
     $status.coverageScope=$plan.coverageScope; $status.coverageComplete=$false; $status.gateCredit=$false
     $status.forcedReasons=$plan.forcedReasons; $status.proposed=Get-RcPartitionStatus $plan.proposalPartition @()
+    $status.results=$revision.results
     $reasonCounts=@{}
     foreach ($row in $plan.partition.required) { foreach ($reason in $row.reasons) { if (-not $reasonCounts.ContainsKey($reason)) { $reasonCounts[$reason]=0 }; $reasonCounts[$reason]++ } }
     $status.reasonCounts=$reasonCounts
