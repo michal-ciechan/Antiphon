@@ -125,6 +125,9 @@ public sealed class TestTimingChokePointTests
     }
 
     [Test]
+    // TotalProcessorTime includes unrelated tests in this process. The class's
+    // named constraint only excludes its own group; this method must run alone.
+    [NotInParallel]
     [Timeout(300_000)]
     public async Task C1514T_Overhead(CancellationToken cancellationToken)
     {
