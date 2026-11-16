@@ -230,3 +230,95 @@ Product witnesses pass; verification completeness is blocked by inherited N3 red
 missing execution and the legacy row conflict. This is neither Clean/Full nor
 Interim. Continue the exact missing execution and inherited fixture repair under
 Code, then obtain the requested full ordinary Review before land/activation.
+
+## Reopened Debug: native N3 answer and bounded verification
+
+This section supersedes the earlier settlement's current-status conclusions; the
+older outcomes, costs and missing rows above remain historical facts.
+
+N3 is an **expected-success native end-to-end witness**, not a test whose desired
+outcome is proof-stale. Its old form exercised real Docker deletion/crash-resume
+but neither supplied the required live bidirectional proof exchange nor included
+the large rendering workload. Therefore the identical base/candidate refusal was
+an inherited fixture defect, not evidence that the production repair had cured
+the real path and not an unavailable Docker/host prerequisite. N1/N2 had already
+proved those native prerequisites. The original failing run predated diagnostic
+instrumentation and persisted no elapsed timing.
+
+The instrumented old N3 failed before the final binding clock even started:
+`stage=exchange-required`, `elapsedMs=null`, `limitMs=5000`; stderr explicitly says
+`elapsed_ms=unstarted`. No numeric zero or invented elapsed is attributed to that
+failure. The bounded scrubbed case/host diagnostic now supports this pre-clock
+refusal alongside control, Ready and per-effect timing. No audit, token, URL or
+raw control response is persisted there.
+
+N3 now drives the real live protocol: fresh origin proof production and validation,
+renewal/control over owned docker exec pipes, current object sets, UID/custody and
+fresh approval/advertisement checks. The first successful preview also renders at
+least 1,131,573 bytes / 10,417 lines and 105 findings with a deterministic six-second
+render delay. Both file flushes and staging-directory fsync finish before binding.
+At source `771876d2858903f7646ab3313c606e6ff7b551da`, persisted native observations are:
+
+| Stage | Elapsed ms | Clock/result |
+|---|---:|---|
+| Full render and staged durability | 6260 | final binding clock unstarted |
+| Final live control | 1240 | passed; limit 5000 |
+| Ready publication including remaining durable writes | 1360 | passed; limit 5000 |
+| Four exact deletion effects | 1560 / 1880 / 3050 / 2300 | each passed; limit 5000 |
+| Crash-path effect before intentional stop | 2120 | passed; limit 5000 |
+| Three resume effects | 2290 / 1670 / 2180 | each passed; limit 5000 |
+
+`NATIVE_GATE totalMs=19090` includes render/renewal work before the final binding
+clock; it is not the five-second elapsed. No remaining audit/file/directory render
+work consumed that final window. The separate focused late-refusal witness still
+proves canonical Ready revocation and actual public read-packet Apply refusal.
+
+The original combined N3 exceeded its existing 360-second child deadline after
+its live fences passed. It is now two exact-method pieces, retaining all four
+original scenarios: large preview/exact deletion and after-rm crash/resume in
+`Exact_deletion_and_crash_resume_preserve_other_volumes`; replacement and
+unattributed absence refusals in `Replacement_and_unattributed_absence_refuse_resume`.
+Both passed (1 test each), gated wall times 254.705 and 179.409 seconds, with owned
+cleanup checked absent. Intentional crash exit 137 and resume refusal exit 2 are
+asserted subcall outcomes, not failed tests. Intermediate fixture integration and
+deadline failures remain in their original TRX; they are not the rendering red
+witnesses and are not relabelled green.
+
+Legacy native comparison rows are now closed serial shards, not revised or
+omitted coverage. RollingVolumeRecycleDockerTests has four pieces: the original
+`C1008_Real_docker_comparison` name selects part 1; suffixes `_part_2` through
+`_part_4` select the rest. Their exact native case counts are 12/8/7/7, union 34
+(base 5, changed 29), with 1 passed TUnit test per piece. Gated wall times were
+252.967/189.590/222.994/232.496 seconds. Part 1 source was
+`9acb89cc4a81eb791572a9423e4457d8ae5ff67b`; parts 2-4 source was
+`135c40fbdcf0f1e86725f6d883a17101b7f6d9d0`. The later first-method rename only
+preserves the frozen baseline identity; the executable shard body is unchanged.
+Native evidence JSON was copied byte-for-byte into retained ignored evidence and
+hash-checked, including source SHA, exact roster and failure=null. Checked cleanup
+was absent on every successful piece.
+
+RetiredTempContainerDockerTests similarly retains its original
+`C994_Real_retired_temp_lifecycle` name for part 1 (RD-1..4), with `_part_2` for
+RD-5..10. Stateful sequences remain together. Children retain an eight-minute
+deadline plus at most one minute owned cleanup; TUnit invocations remain below ten
+minutes. No production resource-name firewall, identity assertion, crash assertion,
+refusal branch or cleanup check was removed. Legacy fixture setup was updated for
+current module paths, audit descriptors, actual fresh Preview before Apply and
+actual public read-packet handling. Its first attempted part-1 runs found missing
+current proof-producer/reader files in the fixture export; those failures remain
+recorded.
+
+The required guard union at `b68748d40918fbc9f2c5eed50aaae9c584b185d2` reported
+113 passed, 1 failed, 1 Windows-only skip in 214.301 seconds. The introduced failure
+was NativeLinuxPolicyWitnessTests.Policy_rows_require_pinned_attribute: the first
+shards had renamed the two frozen baseline method identities. The fix restores
+those original method names for part 1 and keeps the other explicit shard names.
+No policy/baseline exclusion or marker is loosened. Only that failed guard needs a
+narrow green rerun; the passing union members are not rerun merely to aggregate.
+
+No TestTiming span or selector-policy row was added. The original 50 passing
+ImpactedClassesSelectorTests remain credited; they are not redundantly rerun.
+Optional unrelated derived-impact support closure rows are excluded from this
+Debug task's explicit retirement/guard acceptance scope under the caller's minimal
+testing instruction. Actual retirement classes, all eight corpus tests and the
+required guard union remain required. Source inventory helpers are not tests.
