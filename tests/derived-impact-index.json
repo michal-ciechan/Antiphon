@@ -3534,6 +3534,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
