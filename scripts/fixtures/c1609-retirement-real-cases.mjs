@@ -193,7 +193,7 @@ async function prepare() {
 }
 function fixture(id) {
   const stem=scope.prefix+'-'+id.toLowerCase()+'-'+crypto.randomBytes(4).toString('hex');
-  const f={stem,project:stem+'temp',main:stem+'main',op:'c1008'+crypto.randomBytes(16).toString('hex'),host:scope.hostRoot+'/'+stem,ids:[]};
+  const f={stem,live:id.startsWith('N3'),large:id==='N3',project:stem+'temp',main:stem+'main',op:'c1008'+crypto.randomBytes(16).toString('hex'),host:scope.hostRoot+'/'+stem,ids:[]};
   f.roles=['runner-state','dind-data','runner-tmp','work'];
   f.targets=f.roles.map(r=>f.project+'_'+r);
   f.kept=['work','runner-tmp','dind-data','runner-state'].map(r=>f.main+'_'+r)
@@ -258,6 +258,33 @@ function shell(f, body, suffix='run') {
   let src=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
   const marker="\ntrap 'ec=$?; if [ \"$WROTE\" != 1 ]";
   assert.equal(src.split(marker).length,2,'unique real entrypoint injection');
+  if(f.live){
+    const phase=crypto.randomBytes(16).toString('hex');
+    const control=f.host+'/control-'+suffix;
+    const registry=JSON.stringify({schema:1,projects:{'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1':{origins:[originURL]}}});
+    rootRun('printf %s '+q(registry)+' | jq -cS . > '+q(f.host+'/server/retirement-origins.json')+'; chown '+applyUid+':'+applyGid+' '+q(f.host+'/server/retirement-origins.json')+'; chmod 0600 '+q(f.host+'/server/retirement-origins.json'));
+    const setup=[
+      'C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
+      'C1609_PHASE_NONCE='+q(phase),'C1609_EXCHANGE=1','C1008_HOST_PROOF=',
+      'C1609_EXCHANGE_PROOF_ROOT='+q(control),'mkdir -m 0700 '+q(control),
+      'c1609_prepare_exchange || exit 2',
+      suffix==='preview'?'C1008_DRY_RUN=1':'c1008_audit_readonly > "$CASE_DIR/apply-audit.out" || exit 2',
+      'eval "$(declare -f c1609_effect_publication_fresh | sed \'1s/c1609_effect_publication_fresh/c1955_native_fresh/\')"',
+      'c1609_effect_publication_fresh() { local rc=0; c1955_native_fresh "$@" || rc=$?; printf "NATIVE_FENCE stage=%s elapsedMs=%s limitMs=5000 exit=%s\\n" "${1:-effect}" "$(( $(c1609_monotonic_ms)-C1609_CONTROL_STARTED ))" "$rc" >&2; return "$rc"; }'
+    ].join('\n');
+    assert(/^c1008_lock[;\n]/.test(body),'native live invocation acquires the real lock first');
+    body=body.replace(/^c1008_lock[;\n]/,'c1008_lock\n'+setup+'\n');
+    if(suffix==='preview'){
+      let before='';
+      if(f.large){
+        before='awk \'BEGIN {for(i=0;i<10417;i++){if(i%100==0) print "{\\"kind\\":\\"fixture\\",\\"path\\":\\"retained-evidence\\",\\"commit\\":null}"; else {printf "fixture-audit-row=%05d ",i; for(j=0;j<100;j++) printf "x"; print ""}}}\' >> "$CASE_DIR/preview-audit.out"\n'+
+          'eval "$(declare -f c1609_copy_preview_rows | sed \'1s/c1609_copy_preview_rows/c1955_native_render/\')"\n'+
+          'c1609_copy_preview_rows() { local start=$(c1609_monotonic_ms); sleep 6; c1955_native_render "$@" || return 1; printf "NATIVE_RENDER elapsedMs=%s bindingClockStarted=%s\\n" "$(( $(c1609_monotonic_ms)-start ))" "${C1609_CONTROL_STARTED:-unstarted}" >&2; }\n';
+      }
+      body=body.replace('c1609_write_ready_receipt || exit 2',before+'c1609_publication_gate ready || exit 2\nc1609_write_ready_receipt || exit 2\nc1609_effect_publication_fresh ready-published || exit 2');
+    }
+    f.liveCall={phase,control,suffix};
+  }
   const lines=[
     'LANE=host','HOST_PROJECT='+q(f.main),'TEMP_PROJECT='+q(f.project),'C1008_PROJECT='+q(f.project),
     'SERVER2_ROOT='+q(f.host+'/server'),'CASE_DIR='+q(f.host+'/evidence'),
@@ -286,9 +313,60 @@ function shell(f, body, suffix='run') {
   // The helper image's HOME is /root. After the uid drop, docker warns on
   // stdout-merged inspect and jq rejects the warning. Production's home is
   // the applying account's own directory.
-  return boundedChild(cli,['exec',scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--',
+  const args=['exec',...(f.live?['-i']:[]),scope.helper,'nsenter','-t','1','-m','-u','-r','-w','--',
     'setpriv','--reuid='+applyUid,'--regid='+applyGid,'--groups',applyGroups,'--inh-caps=-all','--',
-    'env','HOME='+f.host,'bash',filename],{},180000);
+    'env','HOME='+f.host,'bash',filename];
+  return f.live?liveChild(f,args):boundedChild(cli,args,{},180000);
+}
+
+// The native deletion witness used to feed only a sealed proof to an effect
+// gate. Drive the real bidirectional protocol, real writer and live assertion.
+async function liveChild(f,args){
+  const config=f.liveCall;
+  const local=fs.mkdtempSync(scope.root+'/live-proof-');
+  const bin=local+'/bin';fs.mkdirSync(bin);
+  fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git -c protocol.file.allow=always "$'+'{args[@]}"\n',{mode:0o755});
+  let previous='',pending='',stdout='',stderr='',failure,proofs=0,controls=0;
+  const host=(command)=>call('pwsh',['-NoProfile','-NonInteractive','-Command',
+    '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+'; '+command],true,60000);
+  const respond=line=>{
+    if(line.startsWith('C1609_PROOF_REQUEST ')){
+      const fields=line.split(' ');assert.equal(fields.length,6);assert.equal(fields[2],config.phase);
+      const required=fields[3]==='renew'?rootRead(f.host+'/server/retirement/'+f.op+'/inventory-'+config.phase+'/published-objects.txt').trim().split('\n').filter(Boolean).map(l=>{
+        const match=l.match(/^C1609_PROVED_OBJECT repo=repos\/outer object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$/);assert(match);return '[pscustomobject]@{objectId='+q(match[1])+';type='+q(match[2])+'}';
+      }):[];
+      const nonce=crypto.randomBytes(16).toString('hex'),started=Math.floor(Date.now()/1000),directory=local+'/proof-'+proofs++;
+      const r=host('Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+' -ProofVersion 2 -PhaseNonce '+q(nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(directory)+' -CreatedUnix '+started+' -LogPath '+q(local+'/proof.log')+' -RequiredObjects @('+required.join(',')+')'+(previous?' -PreviousProofFile '+q(previous)+' -FreshGraph':''));
+      assert.equal(r.code,0,'native real proof writer: '+r.stdout+r.stderr);
+      const name='c1008-proof-'+f.op+'-'+started+'-'+nonce,destination=config.control+'/'+name;
+      const files=fs.readdirSync(directory).sort();assert.equal(files.length,2);
+      rootRun('mkdir -m 0700 '+q(destination)+'; cp '+files.map(n=>q(directory+'/'+n)).join(' ')+' '+q(destination)+'/; chown -R '+applyUid+':'+applyGid+' '+q(destination)+'; chmod 0644 '+q(destination)+'/*');
+      const digest=hash(files.map(n=>n+' '+hash(fs.readFileSync(directory+'/'+n))+'\n').join(''));
+      previous=directory+'/'+files.find(n=>!n.endsWith('.bundle'));
+      return 'C1609_PROOF_RESPONSE '+fields[1]+' '+name+' '+started+' '+nonce+' '+f.inventory+' '+digest+' '+fields[4]+' '+fields[5];
+    }
+    if(line.startsWith('C1609_CONTROL_REQUEST ')){
+      assert(previous);const r=host('Assert-C1609LiveOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+' -ProofFile '+q(previous)+' -ApprovedOrigins '+q(originURL)+' -NetworkBudgetMs 5000');
+      assert.equal(r.code,0,'native real live control: '+r.stdout+r.stderr);controls++;
+      return line.replace('C1609_CONTROL_REQUEST ','C1609_CONTROL_RESPONSE ');
+    }
+  };
+  const child=cp.spawn(cli,args,{stdio:['pipe','pipe','pipe'],detached:true});
+  child.stdin.on('error',()=>{});
+  child.stdout.on('data',chunk=>{
+    stdout+=chunk;pending+=chunk;
+    while(pending.includes('\n')){const at=pending.indexOf('\n'),line=pending.slice(0,at);pending=pending.slice(at+1);
+      try{const response=respond(line);if(response)child.stdin.write(response+'\n');}catch(e){failure=e;child.stdin.write('C1609_REFUSED\n');}
+    }
+  });
+  child.stderr.on('data',chunk=>stderr+=chunk);
+  const timer=setTimeout(()=>{failure=Error('Native live child deadline');try{process.kill(-child.pid,'SIGKILL');}catch(e){if(e.code!=='ESRCH')throw e;}},180000);
+  try{const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
+    if(failure)stderr+='\n'+failure.stack;
+    stdout+='\nNATIVE_PROTOCOL proofs='+proofs+' controls='+controls+'\n';
+    console.log(stdout.split('\n').filter(l=>l.startsWith('NATIVE_')).join('\n')+'\n'+stderr);
+    return {code:failure?2:code,stdout,stderr};
+  }finally{clearTimeout(timer);child.stdin.destroy();}
 }
 function receipt(f) {return JSON.parse(rootRead(f.host+'/server/retirement/'+f.op+'/receipt.json'));}
 const auditReady=[
@@ -298,7 +376,19 @@ const auditReady=[
   'c1008_audit_readonly > "$CASE_DIR/preview-audit.out" || { cat "$CASE_DIR/preview-audit.out"; exit 2; }',
   'c1609_write_ready_receipt || exit 2'
 ].join('\n');
-async function ready(f) {const r=await shell(f,auditReady,'preview');assert.equal(r.code,0,'real preview: '+r.stdout+r.stderr);}
+async function ready(f) {
+  const r=await shell(f,auditReady,'preview');assert.equal(r.code,0,'real preview: '+r.stdout+r.stderr);
+  if(f.live){assert.match(r.stdout,/NATIVE_PROTOCOL proofs=[2-9][0-9]* controls=1/,'fresh graph renewal and real live-origin control precede Ready');}
+  if(f.large){
+    const directory=f.host+'/server/retirement/'+f.op;
+    assert(Number(rootRun('stat -c %s '+q(directory+'/audit.txt')).stdout)>1131573);
+    assert(Number(rootRun('wc -l < '+q(directory+'/audit.txt')).stdout)>=10417);
+    assert(Number(rootRun('wc -l < '+q(directory+'/findings.jsonl')).stdout)>=105);
+    assert.match(rootRead(directory+'/proof.md'),/state: Ready/);
+    assert.match(r.stderr,/NATIVE_RENDER elapsedMs=[6-9][0-9]{3,} bindingClockStarted=unstarted/);
+    assert.match(r.stderr,/NATIVE_FENCE stage=ready-published elapsedMs=[0-9]+ limitMs=5000 exit=0/);
+  }
+}
 function preserve(f) {
   for (const name of f.kept) assert.deepEqual(ownedVolume(name),f.before[name],'preserved incarnation '+name);
   const out=d('run','--rm','--network','none','--user','1654:1654','--label',label+'='+scope.prefix,
