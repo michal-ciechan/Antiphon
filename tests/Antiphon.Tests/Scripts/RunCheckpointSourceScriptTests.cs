@@ -395,7 +395,7 @@ public sealed class RunCheckpointSourceScriptTests
         var method = variant is "unlisted-skip" or "uncommitted-roster" ? "Unlisted_test" : rosterMethod;
         var outcome = variant == "rostered-pass" ? "Passed" : "NotExecuted";
         var skipped = outcome == "NotExecuted" ? 1 : 0;
-        var executed = outcome == "Passed" ? 2 : 1;
+        var executed = outcome == "Passed" ? 2 : variant == "rostered-skip" ? 0 : 1;
         var passed = executed;
         if (variant == "failed-result") passed--;
         if (variant == "mixed-skips") skipped++;
@@ -405,10 +405,12 @@ public sealed class RunCheckpointSourceScriptTests
         var definition = $"<UnitTest id=\"placement\"><TestMethod className=\"Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests\" name=\"{method}\" /></UnitTest>";
         var definitions = variant == "missing-definition" ? "" : definition;
         if (variant == "duplicate-definition") definitions += definition;
+        var controlResult = executed == 0 ? "" :
+            $"<UnitTestResult testId=\"control\" outcome=\"{(variant == "failed-result" ? "Failed" : "Passed")}\" />";
         await File.WriteAllTextAsync(trxPath, $"""
             <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
               <Results>
-                <UnitTestResult testId="control" outcome="{(variant == "failed-result" ? "Failed" : "Passed")}" />
+                {controlResult}
                 <UnitTestResult testId="placement" testName="untrusted display name" outcome="{outcome}" />
                 {extraResult}
               </Results>

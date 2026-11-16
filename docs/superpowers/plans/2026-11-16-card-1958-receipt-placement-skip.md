@@ -50,7 +50,9 @@ Deliberate mutants belong to SourceLanding Mutation; operator waived execution.
 ### Checkpoints
 
 All rows serial. Final run CP-1..CP-6; red-first selection CP-1 before repair.
-Use CLI `--row-timeout 9 --parallel 1` (minutes); TUnit receives `--timeout 570s`.
+Use CLI `--row-timeout 9m --parallel 1`; the public tool invocation also carries
+`--timeout 570s` as required by the brief. The existing tool constructs its child
+argv itself; the nine-minute row cap bounds those inherited children.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
