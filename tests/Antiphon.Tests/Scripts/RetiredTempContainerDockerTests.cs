@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RetiredTempContainerDockerTests
 {
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C994_Real_retired_temp_lifecycle_part_1() => RunShard(1);
+    public Task C994_Real_retired_temp_lifecycle() => RunShard(1);
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Real_retired_temp_lifecycle_part_2() => RunShard(2);

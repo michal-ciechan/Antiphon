@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RollingVolumeRecycleDockerTests
 {
     [Test, ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1008_Real_docker_comparison_part_1() => RunShard(1);
+    public Task C1008_Real_docker_comparison() => RunShard(1);
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C1008_Real_docker_comparison_part_2() => RunShard(2);
