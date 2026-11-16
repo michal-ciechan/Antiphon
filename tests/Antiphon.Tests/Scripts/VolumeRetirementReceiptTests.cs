@@ -1061,6 +1061,72 @@ public sealed class VolumeRetirementReceiptTests
         f.Host!.Removed.ShouldBeEmpty();
     }
 
+    [Test]
+    [Timeout(100_000)] // CARD-1955 provisional: same fence body as the successful revocation witness.
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Failed_refused_persist_refuses_active_lifecycle_apply()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var hooks = """
+            eval "$(declare -f c1609_write_ready_receipt | sed '1s/c1609_write_ready_receipt/c1955_original_writer/')"
+            c1609_write_ready_receipt() {
+                c1955_original_writer "$@" || return 1
+                printf 'C1955_READY_INSTALLED\n'
+                sleep 6
+            }
+            eval "$(declare -f c1609_persist | sed '1s/c1609_persist/c1955_original_persist/')"
+            c1609_persist() {
+                local payload
+                payload="$(cat)"
+                if printf '%s\n' "$payload" | jq -e 'type=="object" and .schema==2 and .state=="Refused" and .consumed==true' >/dev/null 2>&1; then
+                    printf 'C1955_REFUSED_PERSIST_FAILED\n'
+                    return 1
+                fi
+                printf '%s\n' "$payload" | c1955_original_persist "$@"
+            }
+            """;
+        var module = await WriteFenceModule(f, hooks);
+        var run = await f.Preview(proof, extra: "export C1609_RETIREMENT_FILE=" + VolumeRetirementFixture.Quote(module));
+        run.Exit.ShouldBe(2, run.Output);
+        run.Output.ShouldContain("C1955_READY_INSTALLED");
+        run.Output.ShouldContain("C1955_REFUSED_PERSIST_FAILED");
+        run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        f.ControlRequests.ShouldBe(1);
+        var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
+        var receiptPath = Path.Combine(root, "receipt.json");
+        var lifecyclePath = Path.Combine(root, "lifecycle.json");
+        var receiptBytes = await File.ReadAllBytesAsync(receiptPath);
+        var lifecycleBytes = await File.ReadAllBytesAsync(lifecyclePath);
+        var receipt = JsonNode.Parse(receiptBytes)!;
+        receipt["state"]!.GetValue<string>().ShouldBe("Ready", "a failed revocation persist leaves the mutable receipt Ready");
+        receipt["consumed"]!.GetValue<bool>().ShouldBeFalse();
+        var nonce = receipt["phaseNonce"]!.GetValue<string>();
+        var preview = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "preview-" + nonce + ".json")))!;
+        preview["state"]!.GetValue<string>().ShouldBe("Ready", "immutable preview evidence remains intact");
+        preview["consumed"]!.GetValue<bool>().ShouldBeFalse();
+        var lifecycle = JsonNode.Parse(lifecycleBytes)!;
+        lifecycle["active"]!.GetValue<bool>().ShouldBeTrue("phase_end must not clear a phase whose revocation persist failed");
+        var admission = await CheckPreview(f.Host!);
+        var restart = await BeginPhase(f.Host!);
+        (admission.Exit != 0 && restart.Exit != 0).ShouldBeTrue(
+            "later host admission and phase_begin must both refuse; admission=" + admission.Exit +
+            " phase=" + restart.Exit + " admission-out=" + VolumeRetirementFixture.Truncate(admission.Output) +
+            " phase-out=" + VolumeRetirementFixture.Truncate(restart.Output));
+        admission.Output.ShouldContain("reason=lifecycle-active recovery=new-operation");
+        restart.Output.ShouldContain("reason=lifecycle-active recovery=new-operation");
+        (await File.ReadAllBytesAsync(receiptPath)).ShouldBe(receiptBytes, "refused admission must not consume Ready");
+        (await File.ReadAllBytesAsync(lifecyclePath)).ShouldBe(lifecycleBytes, "refused phase_begin must not replace the active lifecycle");
+        var recycle = await f.Host!.Run("retire-temp-runner");
+        recycle.Exit.ShouldBe(2, "c1008_recycle must refuse the same operation; " + VolumeRetirementFixture.Truncate(recycle.Output));
+        recycle.Output.ShouldContain("reason=lifecycle-active recovery=new-operation");
+        recycle.Output.ShouldContain("DIAGNOSIS=RecycleReceiptUnavailable");
+        f.Host.Removed.ShouldBeEmpty();
+        (await File.ReadAllBytesAsync(receiptPath)).ShouldBe(receiptBytes, "refused recycle must leave the Ready receipt unconsumed");
+        (await File.ReadAllBytesAsync(lifecyclePath)).ShouldBe(lifecycleBytes);
+    }
+
     private static async Task<string> WriteFenceModule(VolumeRetirementPublicationFixture f, string hooks)
     {
         var module = Path.Combine(f.Root, "fence-module.sh");
@@ -1096,6 +1162,25 @@ public sealed class VolumeRetirementReceiptTests
             root="$SERVER2_ROOT/retirement/$C1008_OPERATION"; file="$root/receipt.json"
             {{mutation}}
             c1609_require_ready_preview
+            """);
+    }
+
+    private static async Task<(int Exit, string Output)> BeginPhase(C1008HostFixture fixture)
+    {
+        return await VolumeRetirementFixture.Bash($$"""
+            set -euo pipefail
+            C1008_FIXTURE_ROOT={{VolumeRetirementFixture.Quote(fixture.Root)}}; export C1008_FIXTURE_ROOT
+            SERVER2_ROOT="$C1008_FIXTURE_ROOT/server"
+            C1008_OPERATION={{VolumeRetirementFixture.Operation}}
+            C1008_PROJECT=antiphon-runner-temp
+            C1008_RETIRED_AT=2026-10-03T09:30:00Z
+            C1008_TARGETS=(antiphon-runner-temp_work antiphon-runner-temp_runner-tmp antiphon-runner-temp_dind-data antiphon-runner-temp_runner-state)
+            CASE_DIR="$C1008_FIXTURE_ROOT/evidence/retire-temp-runner"
+            docker() { bash {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh"))}} "$@"; }
+            sudo() { [ "$1" = -n ] && shift; "$@"; }
+            c1008_volume() { docker volume inspect "$1" | jq -c '.[0]'; }
+            source {{VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh"))}}
+            c1609_phase_begin
             """);
     }
 }
