@@ -384,6 +384,8 @@ public sealed class RunCheckpointSourceScriptTests
     [Arguments("linux", "duplicate-definition", 2)]
     [Arguments("linux", "duplicate-result", 2)]
     [Arguments("linux", "failed-result", 2)]
+    [Arguments("linux", "missing-skipped", 2)]
+    [Arguments("linux", "receipt-trx", 2)]
     public async Task C1958_Receipt_skip_allowance_is_closed(string platform, string variant, int expected)
     {
         using var fixture = new Fixture();
@@ -436,6 +438,8 @@ public sealed class RunCheckpointSourceScriptTests
             ["trx"] = trxPath, ["line"] = line, ["source"] = source.DeepClone(),
         };
         if (variant == "wrong-sha") row["source"]!["start"]!["commit"] = new string('f', 40);
+        if (variant == "missing-skipped") row["skipped"] = null;
+        if (variant == "receipt-trx") row["line"] = line.Replace(trxPath, "other.trx", StringComparison.Ordinal);
         var report = new JsonObject
         {
             ["schemaVersion"] = 2, ["exitCode"] = 0, ["verdict"] = "GREEN", ["cleanupRefusals"] = new JsonArray(),

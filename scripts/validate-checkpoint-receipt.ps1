@@ -160,10 +160,9 @@ try {
         if ($selected.Count -eq 0) { throw 'selected_rows_missing' }
         foreach ($row in $selected) {
             $command = -not [string]::IsNullOrWhiteSpace([string]$row.command)
-            if ($row.exitCode -ne 0 -or $row.state -cne 'green' -or
-                (-not $command -and ($row.executed -lt 0 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or
-                    $row.skipped -lt 0 -or ($row.executed -eq 0 -and $row.skipped -eq 0)))) { throw 'row_failed' }
-            if (-not $command -and $row.skipped -gt 0) {
+            if ($row.exitCode -ne 0 -or $row.state -cne 'green') { throw 'row_failed' }
+            if (-not $command -and ($row.executed -lt 1 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or $row.skipped -ne 0)) {
+                if ($row.executed -lt 0 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or $row.skipped -le 0) { throw 'row_failed' }
                 Assert-WindowsPlacementSkips -HostOs ([string]$data.host.os) -TrxPath ([string]$row.trx) `
                     -Executed $row.executed -Passed $row.passed -Skipped $row.skipped
             }
@@ -179,7 +178,7 @@ try {
                 foreach ($key in @('executed', 'passed', 'failed', 'skipped')) {
                     if ($fields[$key] -cne [string]$row.$key) { throw 'receipt_counts' }
                 }
-                if ($row.skipped -gt 0 -and $fields.trx -cne [string]$row.trx) { throw 'receipt_trx_disagreement' }
+                if ($row.skipped -gt 0 -and $row.line -cnotmatch (' trx=' + [regex]::Escape([string]$row.trx) + ' slot=')) { throw 'receipt_trx_disagreement' }
                 Assert-RepeatReceipt -Repeat $row.repeat -Fields $fields -TrxPath ([string]$row.trx) `
                     -Executed $row.executed -Passed $row.passed -Failed $row.failed -Skipped $row.skipped
             }
