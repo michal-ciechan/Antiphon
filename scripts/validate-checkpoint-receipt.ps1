@@ -34,6 +34,75 @@ function Get-ReceiptFields {
     return $fields
 }
 
+function Assert-WindowsPlacementSkips {
+    param([string]$HostOs, [string]$TrxPath, [int]$Executed, [int]$Passed, [int]$Skipped)
+    # Judge the recorded execution host, never the machine qualifying the receipt.
+    # These are the OSDescription forms emitted by the supported non-Windows hosts.
+    if ($HostOs -cnotmatch '^(Linux(?: |$)|[^\r\n]+ GNU/Linux(?: |$)|Darwin(?: |$))') { throw 'skip_host_ineligible' }
+    if ($ExpectedRepeat -ne 1) { throw 'skip_repeat_ineligible' }
+    if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'skip_trx_missing' }
+
+    # The roster is authority only at the receipt's exact source commit. Never
+    # evaluate C# or consult mutable checkout bytes. Unsupported syntax refuses.
+    $rosterBytes = Get-CheckpointGitBytes (Get-Location).Path @('show', ($ExpectedSourceSha + ':tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs'))
+    $roster = [Text.UTF8Encoding]::new($false, $true).GetString($rosterBytes)
+    $arrays = [regex]::Matches($roster, '(?s)internal static readonly Entry\[\] WindowsOnly\s*=\s*\[(.*?)\];')
+    if ($arrays.Count -ne 1) { throw 'skip_roster_invalid' }
+    $remaining = $arrays[0].Groups[1].Value
+    $allowed = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    $entryPattern = '^\s*new\("([A-Za-z_][A-Za-z0-9_.]*)",\s*"([A-Za-z_][A-Za-z0-9_]*)",\s*"([A-Za-z_][A-Za-z0-9_]*)",\s*([1-9][0-9]*),\s*(?:"(?:[^"\\]|\\.)*"|[A-Za-z_][A-Za-z0-9_]*)\),'
+    while (-not [string]::IsNullOrWhiteSpace($remaining)) {
+        $entry = [regex]::Match($remaining, $entryPattern)
+        if (-not $entry.Success) { throw 'skip_roster_invalid' }
+        $identity = $entry.Groups[1].Value + '.' + $entry.Groups[2].Value + '.' + $entry.Groups[3].Value
+        if ($allowed.ContainsKey($identity)) { throw 'skip_roster_invalid' }
+        $allowed.Add($identity, [int]$entry.Groups[4].Value)
+        $remaining = $remaining.Substring($entry.Length)
+    }
+
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.CheckCharacters = $true
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $reader = [Xml.XmlReader]::Create([IO.StringReader]::new((Read-CheckpointStrictText $TrxPath)), $settings)
+    $trx = [Xml.XmlDocument]::new()
+    $trx.XmlResolver = $null
+    try { $trx.Load($reader) } finally { $reader.Dispose() }
+    $ns = [Xml.XmlNamespaceManager]::new($trx.NameTable)
+    $ns.AddNamespace('t', 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010')
+    $definitions = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    foreach ($unit in $trx.SelectNodes('/t:TestRun/t:TestDefinitions/t:UnitTest', $ns)) {
+        $methods = @($unit.SelectNodes('t:TestMethod', $ns))
+        $id = $unit.GetAttribute('id')
+        if (-not $id -or $methods.Count -ne 1 -or $definitions.ContainsKey($id)) { throw 'skip_trx_identity' }
+        $definitions.Add($id, ($methods[0].GetAttribute('className') + '.' + $methods[0].GetAttribute('name')))
+    }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $actualPassed = 0
+    $actualSkipped = 0
+    foreach ($result in $trx.SelectNodes('/t:TestRun/t:Results/t:UnitTestResult', $ns)) {
+        $id = $result.GetAttribute('testId')
+        if (-not $id -or -not $seen.Add($id) -or -not $definitions.ContainsKey($id)) { throw 'skip_trx_identity' }
+        switch -CaseSensitive ($result.GetAttribute('outcome')) {
+            'Passed' { $actualPassed++ }
+            'NotExecuted' {
+                $identity = $definitions[$id]
+                if (-not $allowed.ContainsKey($identity) -or $allowed[$identity] -lt 1) { throw 'skip_identity_unlisted' }
+                $allowed[$identity]--
+                $actualSkipped++
+            }
+            default { throw 'skip_trx_outcome' }
+        }
+    }
+    if ($actualPassed -ne $Passed -or $actualPassed -ne $Executed -or $actualSkipped -ne $Skipped) { throw 'skip_trx_counts' }
+    $counters = @($trx.SelectNodes('/t:TestRun/t:ResultSummary/t:Counters', $ns))
+    if ($counters.Count -ne 1) { throw 'skip_trx_counts' }
+    $expected = @{ total = ($Executed + $Skipped); executed = $Executed; passed = $Passed; failed = 0; notExecuted = $Skipped }
+    foreach ($key in $expected.Keys) {
+        if ($counters[0].GetAttribute($key) -cne [string]$expected[$key]) { throw 'skip_trx_counts' }
+    }
+}
+
 function Assert-RepeatReceipt {
     param($Repeat, $Fields, [string]$TrxPath, [int]$Executed, [int]$Passed, [int]$Failed, [int]$Skipped)
     if ($ExpectedRepeat -eq 1) {
@@ -92,7 +161,12 @@ try {
         foreach ($row in $selected) {
             $command = -not [string]::IsNullOrWhiteSpace([string]$row.command)
             if ($row.exitCode -ne 0 -or $row.state -cne 'green' -or
-                (-not $command -and ($row.executed -lt 1 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or $row.skipped -ne 0))) { throw 'row_failed' }
+                (-not $command -and ($row.executed -lt 0 -or $row.passed -ne $row.executed -or $row.failed -ne 0 -or
+                    $row.skipped -lt 0 -or ($row.executed -eq 0 -and $row.skipped -eq 0)))) { throw 'row_failed' }
+            if (-not $command -and $row.skipped -gt 0) {
+                Assert-WindowsPlacementSkips -HostOs ([string]$data.host.os) -TrxPath ([string]$row.trx) `
+                    -Executed $row.executed -Passed $row.passed -Skipped $row.skipped
+            }
             if (-not (Test-CheckpointSourceEvidence $row.source $ExpectedSourceSha -AllowCommand:$command)) { throw 'row_source_ineligible' }
             if ($row.source.start.commit -cne $data.source.start.commit -or $row.source.start.fingerprint -cne $data.source.start.fingerprint -or
                 ($command -and $row.source.buildSource -cne 'notApplicable') -or
@@ -105,6 +179,7 @@ try {
                 foreach ($key in @('executed', 'passed', 'failed', 'skipped')) {
                     if ($fields[$key] -cne [string]$row.$key) { throw 'receipt_counts' }
                 }
+                if ($row.skipped -gt 0 -and $fields.trx -cne [string]$row.trx) { throw 'receipt_trx_disagreement' }
                 Assert-RepeatReceipt -Repeat $row.repeat -Fields $fields -TrxPath ([string]$row.trx) `
                     -Executed $row.executed -Passed $row.passed -Failed $row.failed -Skipped $row.skipped
             }
