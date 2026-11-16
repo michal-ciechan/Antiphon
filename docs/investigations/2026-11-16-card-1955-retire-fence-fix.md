@@ -149,3 +149,84 @@ A refused operation must never be used as the Apply proof.
 
 Standing caller authority already commissions this repair; no additional go-ahead
 was requested. Review and host activation remain separate caller work.
+
+## Verification settlement: incomplete gate
+
+The final production/test candidate is
+`b7bd91d4f73146ca61f53f04b271701e2232c456`; the subsequent commit only records this
+settlement. Latest distinct TUnit outcomes across the recorded source revisions
+are **297 passed, 1 failed, 1 skipped**, not a single-tip whole-suite run. All
+foreground drivers and owned children were joined before this amendment.
+
+| Selection | Latest outcome |
+|---|---|
+| Required guard union plus ImpactedClassesSelectorTests | 164 passed, 1 Windows-only skip |
+| VolumeRetirementApplyGateTests | 13 passed, whole class |
+| VolumeRetirementContentTests | 41 passed, whole class |
+| VolumeRetirementReceiptTests | 17 passed, whole class, including both new witnesses |
+| VolumeRetirementHostProofTests | 14 passed, whole class |
+| VolumeRetirementWrapperTests | 7 passed, whole class, including real Preview/Apply renewal |
+| VolumeRetirementPublicationTests | 25 passed; eight graph-corpus tests not run |
+| VolumeRetirementDockerTests | N1 and N2 passed; N3 failed |
+| PTY ProcessSpawnLimitTests | 2 passed |
+| SessionRunner ProcessSpawnLimitTests and C1818GcOwnerRobustnessTests | 12 passed |
+
+The guard union originally reported 163 passed, 1 failed, 1 skipped at
+`bc205d20edfdac55b81aacaa9d63787b359a99eb`: the introduced failure was missing
+source-only admission entries for the two new native tests. Commit `b7bd91d4f`
+adds those entries; the affected whole WindowsUnitPlatformAdmissionTests class
+then reported 6 passed, 1 Windows-only skip. Preserve the original failure.
+The layering receipt is `VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`.
+
+Native N3 (`Exact_deletion_and_crash_resume_preserve_other_volumes`) failed its
+first exact-delete assertion: expected exit 0, observed exit 2 with
+`RecycleGitAuditUnknown reason=proof-stale`, removed=0. The unchanged native N3
+fixture was rerun against a complete `git archive` of base
+`52a90a3935f1f8ed4198200ce3a5e21ca8dab370`, with a local detached provenance HEAD
+and shared read-only object lookup. It failed the same assertion/refusal at
+`c1609-retirement-real-cases.mjs:455`. This is confirmed inherited red, not a green
+acceptance result. Both candidate and baseline reported
+`C1609_NATIVE session cleanup=absent`. No assertion, deadline or refusal was
+loosened. The baseline fixture driver took 41.13 seconds, plus slot overhead.
+
+The longest test driver was 461.878 seconds; rows remained below ten minutes.
+Final load sample was `1.65 1.48 1.47`. Build drivers completed with zero errors;
+warnings are not claimed absent. The derived-index driver was built first and
+regeneration twice returned changed/unchanged. Protected policy inputs did not
+change; the policy, protected-input and legacy-exclusion pins remain those in the
+brief. Mutation checks remain explicitly waived.
+
+Required execution remains absent for the eight
+`VolumeRetirementPublicationTests.Origin_graph_corpus_seed_190[1-4]` methods
+(including each `_second_half`), and these whole classes:
+RollingVolumeRecycleScriptTests, RollingVolumeRecycleCensusChurnTests,
+RetiredTempContainerHostTests, RetiredTempContainerScriptTests,
+RetireTempRunnerTimestampTests, C1008PlatformContractTests,
+C1008HostFixtureSetupInsertionTests, RemoteScriptContractTests,
+C0824BranchDeletionRecycleAuditTests, C1364BoundLandWaitProofTests,
+RollingVolumeRecycleDockerTests and RetiredTempContainerDockerTests.
+Additional derived-impact closure support selections also remain unrun; the
+retained manifest records them. Source-inventory helper names in that manifest
+are not executable tests and must not be credited as coverage or run as zero-test
+rows. Use actual discovered test methods for bounded continuation.
+
+There is a concrete row-contract conflict: legacy
+`RollingVolumeRecycleDockerTests.C1008_Real_docker_comparison` documents measured
+618/709/827-second runs and a 20-minute timeout, while this brief requires every
+row under ten minutes. Its fixture has no case selector. Bounded sharding or an
+explicitly revised row contract is needed; a nine-minute cancellation is not a
+passing run. The caller was asked whether to commission that separately or
+extend this task; no extension was received. The 150-minute budget was exhausted
+at the end of joined verification; only settlement checks/reporting followed.
+
+Retained evidence is under `/work/worktrees/ws-01/.antiphon/c1955/`: per-row TRX,
+`executed.jsonl`, `summary.json`, `deferred.jsonl`, `rows.json`, phase logs and
+`base-native.log`/`base-native.json`. These are ignored generated evidence.
+The evidence-diff guard over the seven implementation commits reported zero
+violations; the final report amendment is checked separately. No live host,
+qualification run, deployment, restart or server2 volume was touched.
+
+Product witnesses pass; verification completeness is blocked by inherited N3 red,
+missing execution and the legacy row conflict. This is neither Clean/Full nor
+Interim. Continue the exact missing execution and inherited fixture repair under
+Code, then obtain the requested full ordinary Review before land/activation.
