@@ -93,6 +93,33 @@ public sealed class VolumeRetirementHostProofTests
         Directory.Exists(used).ShouldBeFalse("the live check removes its own scratch working directory");
     }
 
+    // Operator decision 2026-11-16 widened only the host freshness fence to a provisional
+    // 11,000 ms. The desktop live check keeps its five-second control and Git budget.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Final_live_check_keeps_the_five_second_desktop_budget()
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        var initial = await f.WriteProof([(f.A, "commit")]);
+        initial.Exit.ShouldBe(0, initial.Output);
+        var trace = Path.Combine(f.Root, "live-check-budget.txt");
+        var observeGit = "[IO.File]::AppendAllText(" + VolumeRetirementPublicationFixture.Ps(trace) + ", 'git'+[char]10); ";
+
+        var admitted = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: 5000, extraShim: observeGit);
+        admitted.Exit.ShouldBe(0, "5,000 ms stays the admitted maximum: " + admitted.Output);
+        File.Exists(trace).ShouldBeTrue("the admitted live check reads the origin through the observed Git runner");
+        foreach (var budget in new[] { 5001, 11000 })
+        {
+            if (File.Exists(trace)) File.Delete(trace);
+            var refused = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: budget, extraShim: observeGit);
+            refused.Exit.ShouldBe(2, budget + ": " + refused.Output);
+            File.Exists(trace).ShouldBeFalse(budget + " ms must be refused before Git starts");
+        }
+        var coordinator = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
+        coordinator.ShouldContain("$remaining=[Math]::Min(5000-[int]$controlWatch.ElapsedMilliseconds,", Case.Sensitive);
+        coordinator.ShouldContain("if($controlWatch.ElapsedMilliseconds -gt 5000){throw 'control-deadline'}", Case.Sensitive);
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_proves_complete_origin_ancestry()
