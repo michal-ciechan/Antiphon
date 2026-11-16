@@ -991,8 +991,10 @@ c1609_lifecycle_valid() {
     local file="$1"
     c1609_read_canonical "$file" >/dev/null || return 1
     jq -e --arg op "$C1008_OPERATION" '
-      keys==["active","children","complete","daemon","nonce","operationId","owner","readyPublished","schema"] and
-      .schema==1 and .operationId==$op and (.active|type)=="boolean" and (.complete|type)=="boolean" and (.readyPublished|type)=="boolean" and
+      ((.schema==1 and keys==["active","children","complete","daemon","nonce","operationId","owner","readyPublished","schema"]) or
+       (.schema==2 and keys==["active","children","complete","daemon","nonce","operationId","owner","phase","readyPublished","schema"] and
+        (.phase=="Preview" or .phase=="Apply"))) and
+      .operationId==$op and (.active|type)=="boolean" and (.complete|type)=="boolean" and (.readyPublished|type)=="boolean" and
       (.daemon|type)=="string" and .daemon!="" and (.nonce|test("^[0-9a-f]{32}$")) and
       (.owner|keys)==["pid","startTicks"] and (.owner.pid|type)=="number" and
       .owner.pid>0 and .owner.pid==(.owner.pid|floor) and (.owner.startTicks|type)=="string" and
@@ -1003,6 +1005,50 @@ c1609_lifecycle_valid() {
       ' "$file" >/dev/null
 }
 
+c1609_phase_refusal() {
+    local reason="${1:-lifecycle-active}" recovery=new-operation file
+    file="$(c1609_retirement_root)/receipt.json"
+    if c1609_read_canonical "$file" >/dev/null 2>&1 &&
+        jq -e --arg op "$C1008_OPERATION" '.operationId==$op and .consumed==true and
+          (.state=="Applying" or .state=="PartialRefused")' "$file" >/dev/null; then
+        recovery=-Close
+    fi
+    printf 'reason=%s recovery=%s\n' "$reason" "$recovery"
+}
+
+# A consumed receipt proves Apply started, but cannot identify the lifecycle
+# that started it. New records name their phase. Legacy records must have the
+# protected Apply admission bound to that exact lifecycle nonce and Preview.
+# This is admission only; prepare_resume still validates the full receipt and
+# every original volume incarnation before any effect is allowed.
+c1609_require_resume_phase() {
+    local root file phase nonce admission preview digest
+    [ "${C1008_RESUME:-0}" = 1 ] && [ "${C1008_DRY_RUN:-0}" != 1 ] || return 1
+    root="$(c1609_retirement_root)"; file="$root/receipt.json"; phase="$root/lifecycle.json"
+    c1609_read_canonical "$file" >/dev/null || return 1
+    jq -e --arg op "$C1008_OPERATION" --arg project "$C1008_PROJECT" --slurpfile phase "$phase" '
+      .schema==2 and .policyVersion==1 and .operationId==$op and .project==$project and
+      .consumed==true and .owner==null and
+      (.state=="Applying" or .state=="PartialRefused" or .state=="Refused" or .state=="Completed") and
+      .daemon==$phase[0].daemon and $phase[0].readyPublished==true' "$file" >/dev/null || return 1
+    if jq -e '.schema==2' "$phase" >/dev/null; then
+        jq -e '.phase=="Apply"' "$phase" >/dev/null
+        return $?
+    fi
+    nonce="$(jq -r .nonce "$phase")"
+    admission="$root/admission-$nonce.json"
+    c1609_read_canonical "$admission" >/dev/null || return 1
+    nonce="$(jq -er '.phaseNonce|select(type=="string" and test("^[0-9a-f]{32}$"))' "$file")" || return 1
+    preview="$root/preview-$nonce.json"
+    c1609_read_canonical "$preview" >/dev/null || return 1
+    digest="$(sha256sum "$preview" | cut -d' ' -f1)" || return 1
+    jq -e --arg op "$C1008_OPERATION" --arg digest "$digest" --slurpfile phase "$phase" '
+      keys==["admittedMonotonicMs","admittedUnix","operationId","phase","phaseNonce","previewDigest","schema"] and
+      .schema==1 and .phase=="Apply" and .operationId==$op and .phaseNonce==$phase[0].nonce and
+      .previewDigest==$digest and (.admittedUnix|type)=="number" and
+      (.admittedMonotonicMs|type)=="number"' "$admission" >/dev/null
+}
+
 # Direct admission sees the publisher's lifecycle. Apply's own phase_begin is
 # active, so it is admitted only when this process archived an inactive predecessor.
 c1609_require_finished_phase() {
@@ -1010,7 +1056,7 @@ c1609_require_finished_phase() {
     root="$(c1609_retirement_root)"
     file="$root/lifecycle.json"
     if [ ! -e "$file" ] && [ ! -L "$file" ]; then
-        printf 'reason=lifecycle-active recovery=new-operation\n'
+        c1609_phase_refusal lifecycle-missing
         return 1
     fi
     c1609_lifecycle_valid "$file" || return 1
@@ -1027,7 +1073,7 @@ c1609_require_finished_phase() {
 }
 
 c1609_phase_begin() {
-    local root daemon nonce pid ticks previous_pid previous_ticks prior_nonce issued=false
+    local root daemon nonce pid ticks previous_pid previous_ticks observed prior_nonce phase=Apply issued=false
     root="$(c1609_retirement_root)"
     # Drop any earlier authorization. A refusal below must not leave it set.
     C1609_PHASE_PRIOR_NONCE=
@@ -1038,19 +1084,19 @@ c1609_phase_begin() {
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
         [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
     if [ -e "$root/lifecycle.json" ] || [ -L "$root/lifecycle.json" ]; then
-        c1609_lifecycle_valid "$root/lifecycle.json" || return 1
-        # complete=true is written at phase start. An active lifecycle means
-        # phase_end never ran, including after a dead owner. Recovery is a new
-        # operation id and preview; the Ready receipt must not be reused.
-        if jq -e '.active==true' "$root/lifecycle.json" >/dev/null; then
-            printf 'reason=lifecycle-active recovery=new-operation\n'
-            return 1
+        c1609_lifecycle_valid "$root/lifecycle.json" || { c1609_phase_refusal lifecycle-invalid; return 1; }
+        # An unfinished Preview or unconsumed Ready is never reusable, even
+        # after its owner dies. Only explicit Resume of an already-started Apply
+        # may pass an active predecessor. Inactive Resume keeps the same guard.
+        if jq -e '.active==true' "$root/lifecycle.json" >/dev/null || [ "${C1008_RESUME:-0}" = 1 ]; then
+            c1609_require_resume_phase || { c1609_phase_refusal; return 1; }
         fi
-        jq -e '.complete==true and all(.children[];.joined==true)' "$root/lifecycle.json" >/dev/null || return 1
+        jq -e '.complete==true and all(.children[];.joined==true)' "$root/lifecycle.json" >/dev/null || { c1609_phase_refusal; return 1; }
         previous_pid="$(jq -r .owner.pid "$root/lifecycle.json")"
         previous_ticks="$(jq -r .owner.startTicks "$root/lifecycle.json")"
         if [ -e "/proc/$previous_pid" ]; then
-            [ "$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$previous_pid/stat")" != "$previous_ticks" ] || return 1
+            observed="$(awk '{sub(/^.*\) /, ""); print $20}' "/proc/$previous_pid/stat")" || return 1
+            [[ "$observed" =~ ^[0-9]+$ ]] && [ "$observed" != "$previous_ticks" ] || { c1609_phase_refusal; return 1; }
         fi
         issued="$(jq -r .readyPublished "$root/lifecycle.json")"
         prior_nonce="$(jq -r .nonce "$root/lifecycle.json")"
@@ -1058,6 +1104,9 @@ c1609_phase_begin() {
             cat -- "$root/lifecycle.json" | c1609_persist "$root/lifecycle-$prior_nonce.json" || return 1
         fi
         C1609_PHASE_PRIOR_NONCE="$prior_nonce"
+    elif [ "${C1008_RESUME:-0}" = 1 ] || [ -e "$root/receipt.json" ] || [ -L "$root/receipt.json" ]; then
+        c1609_phase_refusal lifecycle-missing
+        return 1
     fi
     [ ! -e "$root/receipt.json" ] && [ ! -L "$root/receipt.json" ] || issued=true
     daemon="$(docker info --format '{{.ID}}')" || return 1
@@ -1067,8 +1116,9 @@ c1609_phase_begin() {
     [[ "$ticks" =~ ^[0-9]+$ ]] || return 1
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
     [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || return 1
-    jq -cnS --arg op "$C1008_OPERATION" --arg daemon "$daemon" --arg ticks "$ticks" --arg nonce "$nonce" --argjson pid "$pid" --argjson issued "$issued" \
-      '{schema:1,operationId:$op,daemon:$daemon,nonce:$nonce,owner:{pid:$pid,startTicks:$ticks},active:true,complete:true,readyPublished:$issued,children:[]}' |
+    [ "${C1008_DRY_RUN:-0}" != 1 ] || phase=Preview
+    jq -cnS --arg op "$C1008_OPERATION" --arg phase "$phase" --arg daemon "$daemon" --arg ticks "$ticks" --arg nonce "$nonce" --argjson pid "$pid" --argjson issued "$issued" \
+      '{schema:2,phase:$phase,operationId:$op,daemon:$daemon,nonce:$nonce,owner:{pid:$pid,startTicks:$ticks},active:true,complete:true,readyPublished:$issued,children:[]}' |
       c1609_persist "$root/lifecycle.json" || return 1
     C1609_PHASE_ROOT="$root"
     C1609_PHASE_PID="$pid"
