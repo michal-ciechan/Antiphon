@@ -965,7 +965,8 @@ public sealed class VolumeRetirementReceiptTests
         var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
         var padding = Path.Combine(f.Root, "large-audit.txt");
         // The reported audit had 10,417 lines / 1,131,573 bytes. Keep at least
-        // that workload, including findings, and model a loaded renderer at 6s.
+        // that workload, including findings, and model a loaded renderer at 12s,
+        // beyond the provisional 11,000 ms host fence (CARD-1955).
         var rows = Enumerable.Range(0, 10417).Select(i =>
             i % 100 == 0 ? "{\"kind\":\"fixture\",\"path\":\"retained-evidence\",\"commit\":null}" :
             "fixture-audit-row=" + i.ToString("D5") + " " + new string('x', 100));
@@ -981,7 +982,7 @@ public sealed class VolumeRetirementReceiptTests
             eval "$(declare -f c1609_copy_preview_rows | sed '1s/c1609_copy_preview_rows/c1955_original_render/')"
             c1609_copy_preview_rows() {
                 printf 'start %s\n' "$(c1609_monotonic_ms)" >> {{VolumeRetirementFixture.Quote(trace)}}
-                sleep 6
+                sleep 12
                 c1955_original_render "$@" || return 1
                 printf 'done %s\n' "$(c1609_monotonic_ms)" >> {{VolumeRetirementFixture.Quote(trace)}}
             }
@@ -1002,7 +1003,7 @@ public sealed class VolumeRetirementReceiptTests
         renderedBeforeControl.ShouldBeTrue();
         var events = await File.ReadAllLinesAsync(trace);
         events.Length.ShouldBe(2, "the complete audit is rendered exactly once");
-        (long.Parse(events[1].Split(' ')[1]) - long.Parse(events[0].Split(' ')[1])).ShouldBeGreaterThanOrEqualTo(6000);
+        (long.Parse(events[1].Split(' ')[1]) - long.Parse(events[0].Split(' ')[1])).ShouldBeGreaterThanOrEqualTo(12000);
         var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
         (await File.ReadAllTextAsync(Path.Combine(root, "audit.txt"))).ShouldEndWith(await File.ReadAllTextAsync(padding));
         File.ReadAllLines(Path.Combine(root, "findings.jsonl")).Length.ShouldBeGreaterThanOrEqualTo(105);
@@ -1023,7 +1024,7 @@ public sealed class VolumeRetirementReceiptTests
             c1609_write_ready_receipt() {
                 c1955_original_writer "$@" || return 1
                 printf 'C1955_READY_INSTALLED\n'
-                sleep 6
+                sleep 12
             }
             """;
         var module = await WriteFenceModule(f, hooks);
@@ -1055,8 +1056,8 @@ public sealed class VolumeRetirementReceiptTests
         diagnostics.Length.ShouldBeGreaterThan(0);
         diagnostics.All(line => line.Length < 512).ShouldBeTrue("fixed fields only; no raw stderr/origins/audit payload");
         var diagnostic = diagnostics.Select(line => JsonNode.Parse(line)!).Last(row => row["stage"]!.GetValue<string>() == "ready-published");
-        diagnostic["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThan(5000);
-        diagnostic["limitMs"]!.GetValue<int>().ShouldBe(5000);
+        diagnostic["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThan(11000);
+        diagnostic["limitMs"]!.GetValue<int>().ShouldBe(11000);
         (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready", customMessage: "refusal must preserve rendered preview evidence");
         f.Host!.Removed.ShouldBeEmpty();
     }
@@ -1074,7 +1075,7 @@ public sealed class VolumeRetirementReceiptTests
             c1609_write_ready_receipt() {
                 c1955_original_writer "$@" || return 1
                 printf 'C1955_READY_INSTALLED\n'
-                sleep 6
+                sleep 12
             }
             eval "$(declare -f c1609_persist | sed '1s/c1609_persist/c1955_original_persist/')"
             c1609_persist() {

@@ -2,6 +2,16 @@
 # A Ready receipt is review material plus the host record apply consumes.
 # proof.md is rendered from the audit rows and is never parsed to authorize a delete.
 
+# Host freshness fence: the final binding observation, control exchange, custody
+# writes and each effect must fit this many monotonic milliseconds. PROVISIONAL
+# (operator decision 2026-11-16, CARD-1955): the native one-repository control
+# measured 5,070 and 5,050 ms against the former 5,000 ms; twice the worst sample,
+# rounded up, is 11,000 ms. The desktop 5-second control/Git budget, the 10-second
+# response read and the 900-second proof lifetime are unchanged. Revisit: if a
+# measured exchange exceeds 8 s, or after the first 5 native applies, re-measure
+# and tighten. See docs/investigations/2026-11-16-retire-temp-fence-11s.md.
+C1609_EFFECT_WINDOW_MS=11000
+
 c1609_retirement_root() {
     printf '%s/retirement/%s' "$SERVER2_ROOT" "$C1008_OPERATION"
 }
@@ -506,7 +516,7 @@ c1609_publication_gate() {
         # Empty/no-Git inventories need no origin; supplied proofs need the host.
         if [ -n "${C1008_HOST_PROOF:-}" ]; then
             c1609_publication_diagnostic exchange-required null || return 1
-            printf 'C1609_PUBLICATION_REFUSAL stage=exchange-required elapsed_ms=unstarted limit_ms=5000\n' >&2
+            printf 'C1609_PUBLICATION_REFUSAL stage=exchange-required elapsed_ms=unstarted limit_ms=%s\n' "$C1609_EFFECT_WINDOW_MS" >&2
             return 1
         fi
         c1609_publication_fresh; return
@@ -569,23 +579,25 @@ c1609_publication_diagnostic() {
     if [ -e "$file" ] || [ -L "$file" ]; then
         c1609_custody "$file" file && [ "$(stat -c %s -- "$file")" -le 7680 ] || return 1
     fi
-    record="$(jq -cnS --arg stage "$stage" --arg phase "${C1609_PHASE_NONCE:-}" --argjson elapsed "$elapsed" \
-      '{schema:1,phaseNonce:$phase,stage:$stage,elapsedMs:$elapsed,limitMs:5000}')" || return 1
+    record="$(jq -cnS --arg stage "$stage" --arg phase "${C1609_PHASE_NONCE:-}" --argjson elapsed "$elapsed" --argjson limit "$C1609_EFFECT_WINDOW_MS" \
+      '{schema:1,phaseNonce:$phase,stage:$stage,elapsedMs:$elapsed,limitMs:$limit}')" || return 1
     { if [ -f "$file" ]; then cat -- "$file"; fi; printf '%s\n' "$record"; } | c1609_persist "$file" || return 1
     printf '%s\n' "$record" | c1609_persist "$CASE_DIR/c1609-publication-diagnostic.json"
 }
 
-# Final host advertisement/response, local custody and the effect share a five
-# second window. A later remote ref move is intrinsically unobservable; the next
-# effect always repeats the live writer and this check instead of reusing Ready.
+# Final host advertisement/response, local custody and the effect share the
+# C1609_EFFECT_WINDOW_MS window. A later remote ref move is intrinsically
+# unobservable; the next effect always repeats the live writer and this check
+# instead of reusing Ready.
 c1609_effect_publication_fresh() {
     [ -n "${C1008_HOST_PROOF:-}" ] || return 0
     local now elapsed stage="${1:-effect}"
     [[ "${C1609_CONTROL_STARTED:-}" =~ ^[0-9]+$ ]] || return 1
+    [[ "${C1609_EFFECT_WINDOW_MS:-}" =~ ^[1-9][0-9]{0,5}$ ]] || return 1
     now="$(c1609_monotonic_ms)" || return 1
     elapsed=$((now-C1609_CONTROL_STARTED))
-    if [ "$elapsed" -lt 0 ] || [ "$elapsed" -gt 5000 ]; then
-        printf 'C1609_EFFECT_WINDOW stage=%s elapsed_ms=%s limit_ms=5000\n' "$stage" "$elapsed" >&2
+    if [ "$elapsed" -lt 0 ] || [ "$elapsed" -gt "$C1609_EFFECT_WINDOW_MS" ]; then
+        printf 'C1609_EFFECT_WINDOW stage=%s elapsed_ms=%s limit_ms=%s\n' "$stage" "$elapsed" "$C1609_EFFECT_WINDOW_MS" >&2
         c1609_publication_diagnostic "$stage" "$elapsed" || return 1
         return 1
     fi

@@ -756,7 +756,7 @@ public sealed class VolumeRetirementPublicationTests
                 C1901_BINDING_CHECKS=$((C1901_BINDING_CHECKS+1))
                 c1901_original_origin_binding_check "$@" || return 1
                 if [ "$C1901_BINDING_CHECKS" = 2 ]; then
-                    sleep 6
+                    sleep 12
                     printf 'C1901_FINAL_BINDING_DELAYED\n'
                 fi
             }
