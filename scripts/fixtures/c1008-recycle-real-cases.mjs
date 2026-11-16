@@ -316,7 +316,7 @@ build_server2_images() {
 }
 `;
   // CARD-1189 put an earlier trap inside c849_fixture. The main exit trap is the injection point.
-  const anchor="trap 'ec=$?; if [ \"$WROTE\" != 1 ]";
+  const anchor="\ntrap 'ec=$?; if [ \"$WROTE\" != 1 ]";
   const hits=transformed.split(anchor).length-1;
   if(hits!==1)throw Error('RecycleTrapAnchorMissing:'+hits);
   const script=f.root+'/'+name+'.sh'; fs.writeFileSync(script,transformed.replace(anchor,injected+'\n'+anchor));
