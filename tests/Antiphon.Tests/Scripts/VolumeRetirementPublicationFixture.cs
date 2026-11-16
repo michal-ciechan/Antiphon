@@ -164,7 +164,7 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
     internal sealed record Proof(int Exit, string Output, string Directory, string File);
 
     internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, int version = 2,
-        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false, string? writerRevision = null)
+        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false, string? writerRevision = null, int networkBudgetMs = 5000)
     {
         var directory = Path.Combine(Root, "proof-" + ++sequence);
         Directory.CreateDirectory(directory);
@@ -185,7 +185,7 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
             "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
             "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
                 " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile " + Ps(previous) +
-                " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000" :
+                " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs " + networkBudgetMs :
             "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(Relative) +
             " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofVersion " + version +
             " -PhaseNonce " + Ps(phaseNonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +

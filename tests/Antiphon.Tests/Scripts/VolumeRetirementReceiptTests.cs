@@ -1127,6 +1127,86 @@ public sealed class VolumeRetirementReceiptTests
         (await File.ReadAllBytesAsync(lifecyclePath)).ShouldBe(lifecycleBytes);
     }
 
+    // Debug 2b159393: the native final control on one repository (repos/antiphon) measured
+    // 5,070 and 5,050 ms. One 1.5 s origin query plus scheduling, transport and host
+    // persistence brings the host guard sample to about 5,170 ms.
+    private const int OneRepositoryControlMs = 5_170;
+
+    [Test]
+    [Timeout(100_000)] // CARD-1955 provisional: one preview with a 5.2 s control, same body shape as the fence witnesses above.
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task One_repository_measured_control_fits_the_host_fence()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var (run, observed) = await PreviewAgedControl(f, proof, OneRepositoryControlMs);
+        var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
+        var diagnostics = Path.Combine(root, "publication-diagnostics.jsonl");
+        var recorded = File.Exists(diagnostics) ? await File.ReadAllTextAsync(diagnostics) : "";
+        f.ControlRequests.ShouldBe(1);
+        (await File.ReadAllTextAsync(Path.Combine(f.Root, "coordinator.log"))).ShouldContain("C1609_CONTROL_REQUEST ",
+            customMessage: "the real live check answered the single control request");
+        observed.ShouldBeGreaterThanOrEqualTo(OneRepositoryControlMs);
+        run.Exit.ShouldBe(0, "a measured one-repository control of " + observed + " ms must fit the host fence; diagnostics=" +
+            recorded + " " + VolumeRetirementFixture.Truncate(run.Output));
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+        recorded.ShouldBeEmpty("an admitted control records no fence refusal");
+        (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready");
+    }
+
+    [Test]
+    [Timeout(100_000)] // CARD-1955 provisional: the admitted witness body plus about 11 s of aging.
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Control_observation_older_than_the_host_fence_refuses()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        // The same one-repository control, then the observation ages 11,250 ms more after the reply.
+        var (run, observed) = await PreviewAgedControl(f, proof, 15_820);
+        observed.ShouldBeGreaterThan(11_000);
+        run.Exit.ShouldBe(2, run.Output);
+        run.Output.ShouldContain("reason=proof-stale");
+        run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        f.ControlRequests.ShouldBe(1, "the live check succeeded; only the fence refuses the aged observation");
+        var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
+        File.Exists(Path.Combine(root, "receipt.json")).ShouldBeFalse("a refused control never installs Ready");
+        var diagnostic = File.ReadAllLines(Path.Combine(root, "publication-diagnostics.jsonl"))
+            .Select(line => JsonNode.Parse(line)!).Last(row => row["stage"]!.GetValue<string>() == "control");
+        diagnostic["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThanOrEqualTo(15_820);
+        diagnostic["limitMs"]!.GetValue<int>().ShouldBe(11_000);
+        f.Host!.Removed.ShouldBeEmpty();
+    }
+
+    // The coordinator spends 1.5 s on its one origin query; the host then holds its first
+    // control guard until the binding observation is ageMs old. Production code is unchanged.
+    private static async Task<((int Exit, string Output) Run, long Observed)> PreviewAgedControl(
+        VolumeRetirementPublicationFixture f, VolumeRetirementPublicationFixture.Proof proof, int ageMs)
+    {
+        var trace = Path.Combine(f.Root, "control-age.trace");
+        var hooks = $$"""
+            eval "$(declare -f c1609_effect_publication_fresh | sed '1s/c1609_effect_publication_fresh/c1955_original_fresh/')"
+            C1955_CONTROL_AGED=0
+            c1609_effect_publication_fresh() {
+                local now target
+                if [ "${1:-effect}" = control ] && [ "$C1955_CONTROL_AGED" = 0 ]; then
+                    C1955_CONTROL_AGED=1
+                    target=$((C1609_CONTROL_STARTED + {{ageMs}}))
+                    now="$(c1609_monotonic_ms)" || return 1
+                    while [ "$now" -lt "$target" ]; do sleep 0.02; now="$(c1609_monotonic_ms)" || return 1; done
+                    printf '%s\n' "$((now - C1609_CONTROL_STARTED))" > {{VolumeRetirementFixture.Quote(trace)}}
+                fi
+                c1955_original_fresh "$@"
+            }
+            """;
+        var module = await WriteFenceModule(f, hooks);
+        var run = await f.Preview(proof, extra: "export C1609_RETIREMENT_FILE=" + VolumeRetirementFixture.Quote(module),
+            beforeControl: () => Task.Delay(1_500));
+        File.Exists(trace).ShouldBeTrue("the control guard was reached; " + VolumeRetirementFixture.Truncate(run.Output));
+        return (run, long.Parse((await File.ReadAllTextAsync(trace)).Trim()));
+    }
+
     private static async Task<string> WriteFenceModule(VolumeRetirementPublicationFixture f, string hooks)
     {
         var module = Path.Combine(f.Root, "fence-module.sh");
