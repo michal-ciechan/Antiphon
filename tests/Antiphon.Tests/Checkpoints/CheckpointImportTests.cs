@@ -421,7 +421,7 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         census.Group.ShouldBe("wrapper-census");
         rest.Group.ShouldBe("wrapper-census-rest");
         census.MinExecuted.ShouldBe(4);
-        rest.MinExecuted.ShouldBe(16);
+        rest.MinExecuted.ShouldBe(19);
         (census.EstimatedMinutes + rest.EstimatedMinutes).ShouldBe(14);
         census.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
         rest.EstimatedMinutes!.Value.ShouldBeLessThanOrEqualTo(15);
@@ -434,12 +434,12 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         var censusMethods = FilterMethods(census.Filter);
         var restMethods = FilterMethods(rest.Filter);
         censusMethods.Length.ShouldBe(4);
-        restMethods.Length.ShouldBe(16);
+        restMethods.Length.ShouldBe(19);
         censusMethods.ShouldAllBe(name => name.StartsWith("C1087_", StringComparison.Ordinal));
         restMethods.ShouldAllBe(name => name.StartsWith("C1008_", StringComparison.Ordinal));
         var selected = censusMethods.Concat(restMethods).Order(StringComparer.Ordinal).ToArray();
         var declared = DeclaredWrapperCensusMethods();
-        declared.Length.ShouldBe(20);
+        declared.Length.ShouldBe(23);
         selected.ShouldBe(declared);
         censusMethods.Intersect(restMethods, StringComparer.Ordinal).ShouldBeEmpty();
 
@@ -700,11 +700,15 @@ public sealed class CheckpointImportTests : CheckpointTestBase
 
     private static string[] DeclaredWrapperCensusMethods()
     {
-        var source = File.ReadAllText(Path.Combine(
-            CheckpointFixtures.RepoRoot,
-            "tests", "Antiphon.Tests", "Scripts", "RollingVolumeRecycleScriptTests.cs"));
-        return System.Text.RegularExpressions.Regex.Matches(source, @"public (?:async Task|void) ((?:C1087|C1008)_\w+)\(")
-            .Select(match => match.Groups[1].Value)
+        // CARD-1901 split the parameterized legacy roster into four Task-returning
+        // tests. Count test declarations regardless of async syntax, and expose the
+        // type dependency to the derived impacted-class selector.
+        return typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(method => method.IsDefined(typeof(TestAttribute), inherit: false))
+            .Select(method => method.Name)
+            .Where(name => name.StartsWith("C1087_", StringComparison.Ordinal)
+                || name.StartsWith("C1008_", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
             .ToArray();
     }
