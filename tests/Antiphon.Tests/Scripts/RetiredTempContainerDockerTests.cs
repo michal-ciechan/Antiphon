@@ -14,9 +14,13 @@ namespace Antiphon.Tests.Scripts;
 [Category("Slow")]
 public sealed class RetiredTempContainerDockerTests
 {
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C994_Real_retired_temp_lifecycle()
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C994_Real_retired_temp_lifecycle_part_1() => RunShard(1);
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public Task C994_Real_retired_temp_lifecycle_part_2() => RunShard(2);
+
+    private static async Task RunShard(int shard)
     {
         NativeLinuxGate.Require("C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups).");
         var psi = new ProcessStartInfo("node") {
@@ -24,9 +28,11 @@ public sealed class RetiredTempContainerDockerTests
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
         };
         psi.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c994-retired-temp-real-cases.mjs"));
+        psi.ArgumentList.Add("--shard");
+        psi.ArgumentList.Add(shard.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var child = Process.Start(psi)!;
         var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(8));
         try { await child.WaitForExitAsync(deadline.Token); }
         catch {
             if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); }
@@ -49,15 +55,16 @@ public sealed class RetiredTempContainerDockerTests
         }
         var output = await stdout + await stderr;
         child.ExitCode.ShouldBe(0, "c994-real-effects: real Docker/Git outcomes; " + output);
-        var match = Regex.Match(output, @"C994_REAL cases=10 base=1 changed=9 failures=0 cleanup=absent evidence=(.+)");
-        match.Success.ShouldBeTrue("c994-real-effects: 10 outcomes and checked cleanup; " + output);
+        var total = shard == 1 ? 4 : 6; var baseline = shard == 1 ? 1 : 0;
+        var match = Regex.Match(output, $@"C994_REAL cases={total} base={baseline} changed={total-baseline} failures=0 cleanup=absent evidence=(.+)");
+        match.Success.ShouldBeTrue("c994-real-effects: exact shard outcomes and checked cleanup; " + output);
         var evidence = JsonNode.Parse(File.ReadAllText(match.Groups[1].Value.Trim()))!;
         var rows = evidence["results"]!.AsArray();
-        rows.Count.ShouldBe(10);
-        rows.Select(x => x!["name"]!.GetValue<string>()).Distinct().Count().ShouldBe(10);
-        rows.Count(x => x!["version"]!.GetValue<string>() == "B").ShouldBe(1);
-        rows.Count(x => x!["version"]!.GetValue<string>() == "C").ShouldBe(9);
-        rows.Select(x => x!["name"]!.GetValue<string>()).ShouldBe(Enumerable.Range(1,10).Select(i=>"RD-"+i), "c994-real-effects: exact RD roster");
+        rows.Count.ShouldBe(total);
+        rows.Select(x => x!["name"]!.GetValue<string>()).Distinct().Count().ShouldBe(total);
+        rows.Count(x => x!["version"]!.GetValue<string>() == "B").ShouldBe(baseline);
+        rows.Count(x => x!["version"]!.GetValue<string>() == "C").ShouldBe(total-baseline);
+        rows.Select(x => x!["name"]!.GetValue<string>()).ShouldBe(Enumerable.Range(shard == 1 ? 1 : 5, total).Select(i=>"RD-"+i), "c994-real-effects: exact RD roster");
         evidence["failure"].ShouldBeNull();
         evidence["realDf"]!.GetValue<string>().ShouldContain("Filesystem");
         Console.WriteLine(output);
