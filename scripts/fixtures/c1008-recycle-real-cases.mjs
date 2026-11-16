@@ -402,10 +402,16 @@ if($Case -eq 'retire-temp-containers'){
  $file='${f.root}/wrapper-recycle.sh';Set-Content -NoNewline -Encoding ascii $file $text
  & bash $file
  $code=$LASTEXITCODE
-}elseif($Case -eq 'retirement-proof-read'){
+}elseif($Case -in @('retirement-proof-read','temp-retirement-clearable')){
  . '${process.cwd()}/scripts/c1609-read-packet.ps1'
- $packet=New-C1609RetirementReadPacket -Operation $m.operationId
- & bash -c ($packet.Replace('/home/mc/antiphon-server2','${f.root}/server'))
+ $packet=New-C1609RetirementReadPacket -Operation $m.operationId -Clearable:($Case -eq 'temp-retirement-clearable')
+ $encoded=[regex]::Matches($packet,'[A-Za-z0-9+/]{512,}={0,2}')
+ if($encoded.Count -ne 1){throw 'Fixture read packet changed'}
+ $payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded[0].Value))
+ $payload=$payload.Replace('antiphon-runner-temp','${f.temp}').Replace('antiphon-runner-cache-','${f.prefix}cache-').Replace('antiphon-runner','${f.main}')
+ $packet=$packet.Replace($encoded[0].Value,[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
+ $packet=$packet.Replace('/home/mc/antiphon-server2','${f.root}/server').Replace('C1008_PROJECT=antiphon-runner-temp','C1008_PROJECT=${f.temp}')
+ & bash -c $packet
  $code=$LASTEXITCODE
 }elseif($Case -eq 'deploy-temp-runner'){
  & docker compose -p '${f.temp}' -f '${f.root}/${f.temp}.json' up -d
@@ -502,7 +508,7 @@ async function c994Cases() {
 }
 
 try {
-  fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nLABEL '+label+'='+prefix+'\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates jq && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\n');
+  fs.writeFileSync(root+'/Dockerfile','FROM debian:trixie-slim\nRUN apt-get update && apt-get install -y --no-install-recommends bash git coreutils findutils util-linux ca-certificates jq && rm -r /var/lib/apt/lists/* && mkdir -p /tmp/antiphon-pty-hosts && chmod 1777 /tmp && printf image-asset > /tmp/antiphon-pty-hosts/fixture\nLABEL '+label+'='+prefix+'\n');
   objects.images.add(serverImage); objects.images.add(image); runDocker('build','-t',image,root);
   fs.writeFileSync(root+'/Dockerfile.server','FROM '+image+'\nLABEL '+label+'='+prefix+'\nLABEL io.antiphon.role=server\n');
   runDocker('build','-f',root+'/Dockerfile.server','-t',serverImage,root);
