@@ -1127,7 +1127,7 @@ public sealed class VolumeRetirementReceiptTests
         (await File.ReadAllBytesAsync(lifecyclePath)).ShouldBe(lifecycleBytes);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Sigkill_apply_resumes_through_public_entry()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1156,7 +1156,7 @@ public sealed class VolumeRetirementReceiptTests
             JsonNode.DeepEquals(fixture.Docker["volumes"]![name], before).ShouldBeTrue("preserved volume " + name);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Sigkill_legacy_apply_resumes_from_its_bound_admission()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1169,7 +1169,7 @@ public sealed class VolumeRetirementReceiptTests
         JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!["state"]!.GetValue<string>().ShouldBe("Completed");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Resume_refuses_an_unconsumed_ready_receipt()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1179,7 +1179,7 @@ public sealed class VolumeRetirementReceiptTests
         await AssertResumeRefused(fixture);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Resume_refuses_a_preview_lifecycle_even_with_a_consumed_receipt()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1196,7 +1196,7 @@ public sealed class VolumeRetirementReceiptTests
         await AssertResumeRefused(fixture);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Resume_refuses_a_live_apply_owner()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1209,7 +1209,7 @@ public sealed class VolumeRetirementReceiptTests
         await AssertResumeRefused(fixture);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Resume_refuses_a_different_operation_lifecycle()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1219,7 +1219,7 @@ public sealed class VolumeRetirementReceiptTests
         await AssertResumeRefused(fixture);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, Timeout(120_000), ParallelLimiter<ProcessSpawnLimit>]
     public async Task Missing_lifecycle_has_a_distinct_refusal()
     {
         NativeLinuxGate.Require(NativeLinuxReason);

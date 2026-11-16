@@ -589,6 +589,16 @@ audit and original/recreated generations. It never deletes a replacement
 generation. Same-SHA retries refuse an unfinished journal until explicitly resumed.
 Recovery never commits, publishes, resets or salvages suspicious work.
 
+For temp retirement, a SIGKILL, OOM or reboot during Apply can resume the same
+operation only with explicit `-ResumeRecycle`, its already-consumed receipt,
+an Apply lifecycle, a dead owner (PID and start ticks), and joined helpers.
+The original volume incarnations, publication proof and live guards are checked
+again. An unfinished Preview or unconsumed Ready receipt cannot authorize Resume.
+New lifecycle records name Preview or Apply; a legacy lifecycle needs its protected
+Apply admission record bound to that lifecycle nonce. Missing lifecycle evidence
+refuses as `lifecycle-missing`. A refused Applying operation names `-Close` as
+the recovery; Close still requires the absence and custody proofs above.
+
 #### Exact origin salvage recovery (CARD-1901)
 
 Publication is a separately authorized action. Preserve the original commit object
