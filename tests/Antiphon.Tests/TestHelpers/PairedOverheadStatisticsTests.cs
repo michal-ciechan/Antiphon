@@ -1,3 +1,4 @@
+using System.Reflection;
 using Shouldly;
 using TUnit.Core;
 
@@ -6,6 +7,19 @@ namespace Antiphon.Tests.TestHelpers;
 [Category("Unit")]
 public sealed class PairedOverheadStatisticsTests
 {
+    [Test]
+    public void Process_cpu_benchmark_cannot_overlap_unrelated_tests()
+    {
+        var type = typeof(TestTimingChokePointTests);
+        var method = type.GetMethod(nameof(TestTimingChokePointTests.C1514T_Overhead))!;
+        // TUnit's method constraint overrides the class constraint. A named key
+        // only excludes peers with that key; process CPU includes every peer.
+        var constraint = method.GetCustomAttribute<NotInParallelAttribute>()
+            ?? type.GetCustomAttribute<NotInParallelAttribute>();
+        constraint.ShouldNotBeNull();
+        constraint.ConstraintKeys.ShouldBeEmpty("the CPU timer charges all threads in this test process");
+    }
+
     [Test]
     public void Five_pairs_cannot_support_the_noise_robust_bound()
     {
