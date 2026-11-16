@@ -63,6 +63,36 @@ public sealed class VolumeRetirementHostProofTests
             "FreshGraph must fetch again even while the prior advertisement and required objects are unchanged");
     }
 
+    // 2026-11-16 live preview c1008d39: the CARD-1955 script-only export nests the desktop
+    // evidence root 70 characters deeper, so the renewed proof directory became 264 characters.
+    // Windows cannot start a process whose current directory is MAX_PATH (260) or longer, and the
+    // final live control refused before any network read. The shim emulates that limit here.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Final_live_check_runs_git_outside_a_long_desktop_proof_directory()
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        var initial = await f.WriteProof([(f.A, "commit")]);
+        initial.Exit.ShouldBe(0, initial.Output);
+        var deep = Path.Combine(f.Root, "retirement-tooling", new string('d', 40), ".antiphon", "rolling-server2",
+            "exchange-" + new string('e', 32), "c1008-proof-" + Operation + "-1794832100-" + new string('f', 32));
+        deep.Length.ShouldBeGreaterThanOrEqualTo(264, "the witness must exceed the observed desktop proof directory");
+        Directory.CreateDirectory(deep);
+        var copied = Path.Combine(deep, Path.GetFileName(initial.File));
+        File.Copy(initial.File, copied);
+        File.Copy(initial.File + ".bundle", copied + ".bundle");
+        var trace = Path.Combine(f.Root, "live-check-cwd.txt");
+        var windowsCwdLimit = "[IO.File]::AppendAllText(" + VolumeRetirementPublicationFixture.Ps(trace) +
+            ", $WorkingDirectory+[char]10); if($WorkingDirectory.Length -ge 260){throw 'cwd-max-path'}; ";
+
+        var final = await f.WriteProof(previous: copied, finalCheck: true, extraShim: windowsCwdLimit);
+
+        final.Exit.ShouldBe(0, "the final live control must not start Git inside the long proof directory: " + final.Output);
+        var used = (await File.ReadAllLinesAsync(trace)).ShouldHaveSingleItem();
+        used.ShouldNotBe(deep);
+        Directory.Exists(used).ShouldBeFalse("the live check removes its own scratch working directory");
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Host_proves_complete_origin_ancestry()
