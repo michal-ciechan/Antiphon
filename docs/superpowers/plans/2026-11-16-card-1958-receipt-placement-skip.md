@@ -49,19 +49,28 @@ Deliberate mutants belong to SourceLanding Mutation; operator waived execution.
 
 ### Checkpoints
 
-All rows serial. Final run CP-1..CP-6; red-first selection CP-1 before repair.
+All rows serial. Final run CP-1..CP-7; red-first selection CP-1 before repair.
 Use CLI `--row-timeout 9m --parallel 1`; the public tool invocation also carries
 `--timeout 570s` as required by the brief. The existing tool constructs its child
 argv itself; the nine-minute row cap bounds those inherited children.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
-| CP-1 | all | tests/Antiphon.Tests -> bin-c1958-red/ | source-script | `/*/*/RunCheckpointSourceScriptTests*/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 21 | 3 | true |
+| CP-1 | all | tests/Antiphon.Tests -> bin-c1958-final/ | source-script | `/*/*/RunCheckpointSourceScriptTests*/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 21 | 3 | true |
 | CP-2 | all | CP-1 | repeat-script | `/*/*/RunCheckpointRepeatScriptTests*/*` | R-3 | all listed, 0 failed | 1 | 3 | true |
 | CP-3 | all | CP-1 | checkpoint-source | `/*/*/CheckpointSourceExecutionTests*/*` | R-3 | all listed, 0 failed | 1 | 4 | true |
 | CP-4 | all | CP-1 | checkpoint-terminal | `/*/*/(CheckpointTerminalReceiptTests*)\|(CheckpointStatePublicationTests*)/*` | R-3 | all listed, 0 failed | 2 | 4 | true |
 | CP-5 | all | CP-1 | checkpoint-shape | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/*` | R-3 | all listed, 0 failed | 2 | 3 | true |
 | CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-4 | all listed, 0 failed; C1210 placement skip allowed only with recorded non-Windows host | 114 | 3 | true |
+| CP-7 | all | CP-1 | roster-callers | `/*/*/(CardFilePrivacyGitTests*)\|(CardFilePrivacyPathTests*)/*` | R-3 | all listed, 0 failed; six Windows junction variants skip on Linux | 1 | 3 | true |
+
+The derived reverse edges for WindowsUnitSkipRoster select CP-7. The hand
+native-linux-skip-roster row selects C1210_Roster_closure_matches_source_gates,
+already included whole in CP-6. After the pre-fix cold build hit its unchanged
+nine-minute cap with no tests, a direct five-case PowerShell validator fixture
+provided the behavioral red witness (Linux skip expected VALID, actual row_failed;
+the other four controls passed). This unlisted manual acceptance run is diagnostic,
+does not replace the class rows, and is retained under .antiphon/c1958-manual-red.
 
 No full Unit lane: nightly/rc owns it. No spans or selector rows change, so the
 conditional TestTimingOperationLabelTests/ImpactedClassesSelectorTests obligation

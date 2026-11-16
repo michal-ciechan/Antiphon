@@ -517,7 +517,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1210_Windows_linux_only_outcomes_are_exact(CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows()) throw new SkipTestException("CARD-1210: the child skip-roster audit requires Windows placement.");
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(WindowsUnitPlatformAdmissionTests), nameof(C1210_Windows_linux_only_outcomes_are_exact));
         var assembly = typeof(WindowsUnitPlatformAdmissionTests).Assembly;
         var executable = Path.Combine(Path.GetDirectoryName(assembly.Location)!, "Antiphon.Tests.exe");
         var source = new Antiphon.Checkpoints.SourceSnapshot().Capture(DelegateScriptRunner.RepoRoot);
