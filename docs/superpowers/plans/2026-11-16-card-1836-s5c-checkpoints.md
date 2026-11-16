@@ -7,11 +7,11 @@ S5c is an inert diagnostic library and two opt-in entrypoints. Full and incomple
 
 ## Verification design
 
-V-9: all four RcLedgerStatusTests methods: PartialDecisionsCannotCloseUniverse; ParameterizedMethodsAndNonTunitStayRequired; StatusCountsOriginsWithoutDoubleCharging; CrashRevisionCannotPublishClosure. Production partition/planner/revision/status functions and actual command entrypoints are exercised. Matrices cover missing/duplicate/extra cases, all/zero carried, method/chunk expansion, fresh suite obligations, ambiguous discovery, cross-suite identity, unique origin wall cost, actual results, write-once publication, torn revisions, contention, read-only status and tamper. Test-first CP-9 proves missing-feature red; final rows prove green with fresh TRX. No deliberate mutants in Code under the operator waiver.
+V-9: all four RcLedgerStatusTests methods: PartialDecisionsCannotCloseUniverse; ParameterizedMethodsAndNonTunitStayRequired; StatusCountsOriginsWithoutDoubleCharging; CrashRevisionCannotPublishClosure. Production partition/planner/revision/status functions and actual command entrypoints are exercised. Matrices cover missing/duplicate/extra cases, all/zero carried, method/chunk expansion, fresh suite obligations, ambiguous discovery, cross-suite identity, unique origin wall cost, actual results, write-once publication, torn revisions, cumulative immutable outcomes, contention, read-only status and tamper. Test-first CP-9 proves missing-feature red; final rows prove green with fresh TRX. No deliberate mutants in Code under the operator waiver.
 
 R-1 and unchanged adjacent admission/baseline contracts: CP-95. R-2..7 and V-1..8/V-10..18 belong to other slices, never credited here. No migrations, operation labels, selector rows, public HTTP or runtime integration changes. Native S7d remains pending. Restart none; scripts/lib is in the startup census but has no startup caller.
 
-PC-V9-partition, PC-V9-method-suite, PC-V9-origin-wall, PC-V9-revision and all variants remain pending for caller-commissioned SourceLanding Mutation; the waiver does not mark any PC passed. Candidate inventory is recorded separately.
+PC-V9-partition, PC-V9-method-suite, PC-V9-origin-wall, PC-V9-revision and all variants remain pending for caller-commissioned SourceLanding Mutation; the waiver does not mark any PC passed. Candidate inventory: [S5c candidates](../mutations/2026-11-16-card-1836-s5c-candidates.md).
 
 ## Performance budget
 
@@ -21,7 +21,7 @@ Provisional method 60s, child 45s plus 10s joined cleanup, as in the activation 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-9 | S5c | `tests/Antiphon.Tests -> bin-c1836-s5c-red/` | linux-plan-status | `/*/*/RcLedgerStatusTests/*` | V-9 | all four named methods, no failures/skips | 4 | 4 |
+| CP-9 | S5c | `tests/Antiphon.Tests -> bin-c1836-s5c-green/` | linux-plan-status | `/*/*/RcLedgerStatusTests/*` | V-9 | all four named methods, no failures/skips | 4 | 4 |
 | CP-90 | S5c | CP-9 | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | policy, categories, layering, spawn census, platform admission | all named classes, no failures/skips | 79 | 4 |
 | CP-93 | S5c | CP-9 | linux-index | `/*/*/DerivedImpactIndexTests/*` | index guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S5c | CP-9 | linux-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | envelope guard | all methods, no failures/skips | 4 | 1 |
