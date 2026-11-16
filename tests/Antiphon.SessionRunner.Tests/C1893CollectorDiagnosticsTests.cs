@@ -98,7 +98,7 @@ public class C1893CollectorDiagnosticsTests(C1514HostLoadFixture fixture)
         await capture.StartAsync(CancellationToken.None);
         try
         {
-            capture.TryCapture(new ScriptedHostStatsProbe().Read()! with { At = clock.GetUtcNow() }).ShouldBeTrue();
+            capture.TryCapture(new ScriptedHostStatsProbe().Read()!.Value with { At = clock.GetUtcNow() }).ShouldBeTrue();
             await C1514HostLoadFixture.EventuallyAsync(() => capture.LastAppendedAt is not null);
             var first = capture.ReadHistory(null, 1); first.Samples.Count.ShouldBe(1);
             var cursorPayload = JsonDocument.Parse(Convert.FromBase64String(first.NextCursor!.Split('.')[0]));
@@ -121,8 +121,8 @@ public class C1893CollectorDiagnosticsTests(C1514HostLoadFixture fixture)
     {
         var settings = C1514HostLoadFixture.Config(fixture.PrivatePath()); settings.AppendQueueCapacity = 1;
         using var capture = Capture(settings, Clock(), new CollectorLog());
-        capture.TryCapture(new ScriptedHostStatsProbe().Read()!).ShouldBeTrue();
-        capture.TryCapture(new ScriptedHostStatsProbe().Read()!).ShouldBeFalse();
+        capture.TryCapture(new ScriptedHostStatsProbe().Read()!.Value).ShouldBeTrue();
+        capture.TryCapture(new ScriptedHostStatsProbe().Read()!.Value).ShouldBeFalse();
         var json = Diagnostics(capture);
         json.GetProperty("accepted").GetInt64().ShouldBe(1);
         json.GetProperty("dropped").GetInt64().ShouldBe(1);
