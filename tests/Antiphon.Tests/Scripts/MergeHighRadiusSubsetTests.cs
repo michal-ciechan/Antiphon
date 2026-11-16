@@ -40,6 +40,7 @@ public sealed class MergeHighRadiusSubsetTests
         + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
 
     // CARD-1819: a54a6d4f edits Antiphon.Tests sources, so the remote range adds the lane guard.
+    // Its c346 Compose fixture also selects timing-labels; the fixed subset already runs that class.
     private const string RemoteTestsFilter =
         "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
@@ -408,7 +409,7 @@ public sealed class MergeHighRadiusSubsetTests
 
     private static void AssertImpactedMethods(JsonElement root)
     {
-        Names(root, "kinds").ShouldBe(["remote-scripts", "test-lane-category"], ignoreOrder: false);
+        Names(root, "kinds").ShouldBe(["remote-scripts", "test-lane-category", "timing-labels"], ignoreOrder: false);
         Filter(root, "CP-merge-subset-tests").ShouldBe(RemoteTestsFilter);
         var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
         methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
