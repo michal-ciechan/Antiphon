@@ -385,7 +385,8 @@ async function ready(f) {
     assert(Number(rootRun('wc -l < '+q(directory+'/audit.txt')).stdout)>=10417);
     assert(Number(rootRun('wc -l < '+q(directory+'/findings.jsonl')).stdout)>=105);
     assert.match(rootRead(directory+'/proof.md'),/state: Ready/);
-    assert.match(r.stderr,/NATIVE_RENDER elapsedMs=[6-9][0-9]{3,} bindingClockStarted=unstarted/);
+    const render=r.stderr.match(/NATIVE_RENDER elapsedMs=([0-9]+) bindingClockStarted=unstarted/);
+    assert(render&&Number(render[1])>=6000,'loaded rendering completes before the binding clock starts');
     assert.match(r.stderr,/NATIVE_FENCE stage=ready-published elapsedMs=[0-9]+ limitMs=5000 exit=0/);
   }
 }
