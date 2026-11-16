@@ -369,7 +369,7 @@ async function c994Wrapper(f,phase) {
   const cleanupScript=await host(f,phase+'-cleanup-template','C',{hostCase:'retire-temp-containers',prepareOnly:true});
   const recycleScript=await host(f,phase+'-recycle-template','C',{prepareOnly:true});
   const dir=f.root+'/wrapper/scripts';fs.mkdirSync(dir+'/lib',{recursive:true});
-  for(const name of ['deploy-server2.ps1','c590-real.ps1']) {
+  for(const name of ['deploy-server2.ps1','c590-real.ps1','c1008-host-proof.ps1','c1609-host-proof.ps1']) {
     const original=fs.readFileSync('scripts/'+name,'utf8');
     const transformed=original.replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner',f.main);
     fs.writeFileSync(dir+'/'+name,transformed);
