@@ -637,9 +637,18 @@ git archive --format=tar --output=$archive $toolingSha
 if ($LASTEXITCODE -ne 0) { throw 'Tooling export failed' }
 tar -xf $archive -C $toolingRoot
 if ($LASTEXITCODE -ne 0) { throw 'Tooling extraction failed' }
-& pwsh -NoProfile -File (Join-Path $toolingRoot 'scripts\deploy-server2.ps1') -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun
+& pwsh -NoProfile -File (Join-Path $toolingRoot 'scripts\deploy-server2.ps1') -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f
 if ($LASTEXITCODE -ne 0) { throw 'Preview refused; preserve evidence and retain volumes' }
 ```
+
+Pass `-ProjectId` explicitly (the Antiphon project id above). The export has no Git
+origin and is not the project's registered path, so URL and path matching both miss and
+the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it. The export also
+nests the evidence root 70 characters deeper: the desktop proof directory reaches 264
+characters, past Windows MAX_PATH. Only tooling that starts the final live `ls-remote` in
+its own short scratch directory works from this path (the 2026-11-16 preview `c1008d39`
+refused `proof-stale` at that check; see
+[the investigation](investigations/2026-11-16-retire-temp-live-binding-refusal.md)).
 
 Do not use that export for another rolling phase. Verify the operation-owned
 `tooling.sha256` against the exported four shell files and record the exported
