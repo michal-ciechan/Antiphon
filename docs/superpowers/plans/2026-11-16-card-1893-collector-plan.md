@@ -59,6 +59,6 @@ Every variant pending Mutation; no deliberate mutants run by Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | red | tests/Antiphon.SessionRunner.Tests -> bin-c1893-red/ | collector-red | `/*/*/C1893CollectorDiagnosticsTests/*` | V-1,V-2,V-3,V-4 | intended assertion failures before implementation | 5 | 5 |
+| CP-1 | red | tests/Antiphon.SessionRunner.Tests -> bin-c1893-red2/ | collector-red | `/*/*/C1893CollectorDiagnosticsTests/*` | V-1,V-2,V-3,V-4 | intended assertion failures before implementation | 5 | 5 |
 | CP-2 | green | tests/Antiphon.SessionRunner.Tests -> bin-c1893-green/ | collector-and-stats | `/*/*/(C1893CollectorDiagnosticsTests*)\|(C1514HostLoadSpoolTests*)\|(C1514HostLoadWireTests*)\|(C1514HostLoadSampleTests*)\|(C1514HostLoadAuthorityTests*)\|(HostStatsEndpointTests*)\|(HostStatsSamplerTests*)\|(HostStatsStoreTests*)\|(RunnerCapabilitiesTests*)/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 9 | 7 |
 | CP-3 | green | tests/Antiphon.Tests -> bin-c1893-guards/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3 | all listed, 0 failed | 11 | 9 |
