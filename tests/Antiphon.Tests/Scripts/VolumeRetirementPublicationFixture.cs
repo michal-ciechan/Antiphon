@@ -262,7 +262,7 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
         Host.ShouldNotBeNull();
         var controlRoot = Path.Combine(Root, "control-" + ++sequence);
         // Production c590-real.ps1 already runs in a warm PowerShell controller.
-        // Keep module startup outside the five-second effect window here too;
+        // Keep module startup outside the host effect window here too;
         // each request still invokes the real helper and reads the origin again.
         await using var liveHost = await StartLiveControlHost();
         var callback = await Coordinator(proof, controlRoot, beforeControl, liveHost.Check);
