@@ -137,3 +137,18 @@ reason token to `remote-output.txt`, so that `failure-line` cannot be ambiguous.
 The landed fix needs a fresh export of the new tooling commit, invoked with
 `-ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f` as `docs/docker-stack.md` now
 shows. Do not apply operation `c1008d39`: it never reached Ready.
+
+## Verification at `70313d942` (scripts) / `e1a8e696c` (docs)
+
+All runs were gated, on Linux server2, with `--timeout 570s`.
+
+- VolumeRetirementReceiptTests: 18/18 passed in five exact-method shards. The
+  whole-class run aborted at the 570 s cap after 10 passed and 0 failed.
+- VolumeRetirementApplyGateTests: 13/13 passed.
+- VolumeRetirementHostProofTests: 15/15 passed.
+- The guard union, ImpactedClassesSelectorTests*, TestTimingOperationLabelTests* and
+  DockerStackDocumentationTests*: 185 passed, 1 expected platform skip
+  (`C1210_Windows_linux_only_outcomes_are_exact`).
+- `bash -n` is clean on the two host shell scripts. They are unchanged.
+- check-evidence-diff: 0 violations. `merge-tree` against origin/master is clean.
+- The policy and pinned inputs are unchanged.
