@@ -606,6 +606,51 @@ master publication does not prove script activation. The separately authorized
 first live check is a read-only preview using fresh proofs and the protected
 current runtime descriptor. A script-only activation needs no application restart.
 
+##### Script-only retirement activation while the desktop stays on rc (CARD-1955)
+
+The invoking `scripts/c590-real.ps1` reads its sibling shell files at preview time;
+they are not taken from the runner image or selected by `-Sha`. A master land alone
+does not update a desktop checkout detached at an rc commit. Keep that checkout and
+the running hosts on their existing rc tip. After full ordinary Review and land,
+export the exact reviewed/landed tooling commit into a fresh directory with
+`git archive`, and invoke the exported wrapper with the existing runtime SHA.
+Export the complete tree so that the producer, both consumers and supporting files
+remain together. This is retirement tooling installation, not a product rollout.
+
+For the CARD-1955 recovery, run on the desktop with its existing operator-token
+file and `ANTIPHON_API` setting. Replace `<landed-tooling-sha>` with the confirmed
+40-hex publication SHA carrying the reviewed repair:
+
+```powershell
+Set-Location C:\src\Antiphon
+$toolingSha = '<landed-tooling-sha>'
+if ($toolingSha -cnotmatch '^[0-9a-f]{40}$') { throw 'Exact tooling SHA required' }
+git fetch origin master
+if ($LASTEXITCODE -ne 0) { throw 'Tooling fetch failed' }
+git merge-base --is-ancestor $toolingSha origin/master
+if ($LASTEXITCODE -ne 0) { throw 'Tooling publication not confirmed' }
+$toolingRoot = Join-Path $PWD ('.antiphon\retirement-tooling\' + $toolingSha)
+if (Test-Path -LiteralPath $toolingRoot) { throw 'Use a fresh tooling directory' }
+New-Item -ItemType Directory -Path $toolingRoot | Out-Null
+$archive = Join-Path $toolingRoot 'source.tar'
+git archive --format=tar --output=$archive $toolingSha
+if ($LASTEXITCODE -ne 0) { throw 'Tooling export failed' }
+tar -xf $archive -C $toolingRoot
+if ($LASTEXITCODE -ne 0) { throw 'Tooling extraction failed' }
+& pwsh -NoProfile -File (Join-Path $toolingRoot 'scripts\deploy-server2.ps1') -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun
+if ($LASTEXITCODE -ne 0) { throw 'Preview refused; preserve evidence and retain volumes' }
+```
+
+Do not use that export for another rolling phase. Verify the operation-owned
+`tooling.sha256` against the exported four shell files and record the exported
+producer's file hash. Retain the export SHA and preview exit/result together.
+Its evidence lives below the export's `.antiphon/rolling-server2/` directory.
+The preview still resolves the protected current runtime descriptor and obtains
+fresh origin proofs and live control. Any later authorized Apply uses this same
+exported wrapper and only its newly successful Ready operation within 900 seconds.
+The rc commit, runner images and host tracking do not change; no new rc or restart
+is required. Never Apply a refused preview's operation.
+
 #### Temp retirement trusted origins (CARD-1689)
 
 Gate 9 has a one-time host prerequisite that no script installs: the trust registry

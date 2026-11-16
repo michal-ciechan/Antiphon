@@ -956,6 +956,7 @@ public sealed class VolumeRetirementReceiptTests
     }
 
     [Test]
+    [Timeout(100_000)] // CARD-1955 provisional n=2: body 41-43s, about 2x rounded up.
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Large_ready_rendering_precedes_the_unchanged_final_fence()
     {
@@ -1010,6 +1011,7 @@ public sealed class VolumeRetirementReceiptTests
     }
 
     [Test]
+    [Timeout(100_000)] // CARD-1955 provisional n=2: body 41-43s, about 2x rounded up.
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Late_ready_fence_refusal_invalidates_apply_admission()
     {
