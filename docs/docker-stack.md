@@ -712,12 +712,12 @@ never infer a successful Apply from its presence.
 #### Crash resume after SIGKILL (CARD-1956)
 
 CARD-1956 landed on master during this documentation task (repair commit
-`6905ae9c5a`; Merge 253). Export tooling that includes that repair before using
+`6905ae9c5dbb46d7412d57323e37e19eddcd9c10`; Merge 253). Export tooling that includes that repair before using
 this recovery: older tooling refuses an active lifecycle even when its owner is
 dead. The guards are `c1609_require_resume_phase` and `c1609_phase_begin` in
-[the landed c1008-retirement.sh](https://github.com/michal-ciechan/Antiphon/blob/6905ae9c5/scripts/c1008-retirement.sh),
+[the landed c1008-retirement.sh](https://github.com/michal-ciechan/Antiphon/blob/6905ae9c5dbb46d7412d57323e37e19eddcd9c10/scripts/c1008-retirement.sh),
 with source-bound verification in
-[the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/a0b34d1a0/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
+[the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/a0b34d1a0856bc39e29563c169e171f0c0b305d5/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
 
 Resume of an `Applying` temp operation requires explicit `C1008_RESUME=1` (the
 wrapper's `-ResumeRecycle <operation-id>`), an already-consumed same-operation
