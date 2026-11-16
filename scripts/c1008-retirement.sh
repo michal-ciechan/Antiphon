@@ -504,7 +504,11 @@ c1609_publication_gate() {
     if [ "${C1609_EXCHANGE:-0}" != 1 ]; then
         # A sealed proof is an offline observation, never a live-origin grant.
         # Empty/no-Git inventories need no origin; supplied proofs need the host.
-        [ -z "${C1008_HOST_PROOF:-}" ] || return 1
+        if [ -n "${C1008_HOST_PROOF:-}" ]; then
+            c1609_publication_diagnostic exchange-required null || return 1
+            printf 'C1609_PUBLICATION_REFUSAL stage=exchange-required elapsed_ms=unstarted limit_ms=5000\n' >&2
+            return 1
+        fi
         c1609_publication_fresh; return
     fi
     directory="${C1609_EXCHANGE_DIRECTORY:?}"
@@ -558,14 +562,14 @@ c1609_publication_gate() {
 # case copy travels through the bridge's existing evidence scp even on refusal.
 c1609_publication_diagnostic() {
     local stage="$1" elapsed="$2" root file record
-    case "$stage" in control|ready-published|effect) ;; *) return 1 ;; esac
-    [[ "$elapsed" =~ ^-?[0-9]{1,16}$ ]] || return 1
+    case "$stage" in control|ready-published|effect|exchange-required) ;; *) return 1 ;; esac
+    [[ "$elapsed" =~ ^-?[0-9]{1,16}$ || "$elapsed" = null ]] || return 1
     root="$(c1609_retirement_root)"; file="$root/publication-diagnostics.jsonl"
     c1609_custody "$root" dir || return 1
     if [ -e "$file" ] || [ -L "$file" ]; then
         c1609_custody "$file" file && [ "$(stat -c %s -- "$file")" -le 7680 ] || return 1
     fi
-    record="$(jq -cnS --arg stage "$stage" --arg phase "$C1609_PHASE_NONCE" --argjson elapsed "$elapsed" \
+    record="$(jq -cnS --arg stage "$stage" --arg phase "${C1609_PHASE_NONCE:-}" --argjson elapsed "$elapsed" \
       '{schema:1,phaseNonce:$phase,stage:$stage,elapsedMs:$elapsed,limitMs:5000}')" || return 1
     { if [ -f "$file" ]; then cat -- "$file"; fi; printf '%s\n' "$record"; } | c1609_persist "$file" || return 1
     printf '%s\n' "$record" | c1609_persist "$CASE_DIR/c1609-publication-diagnostic.json"

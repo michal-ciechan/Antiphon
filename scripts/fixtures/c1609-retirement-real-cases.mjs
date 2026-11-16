@@ -269,7 +269,7 @@ function shell(f, body, suffix='run') {
     'source '+q(retirement),
     process.env.C1609_NATIVE_PC==='N3-no-intent' && suffix==='apply' ? 'c1609_target_intent() { :; }' : '',
     'sudo() { [ "$1" = -n ] && shift; if [ "$1" = install ]; then for last; do :; done; mkdir -p -- "$last"; chmod 0700 "$last"; else docker exec ' + q(scope.helper) + ' nsenter -t 1 -m -u -r -w -- "$@"; fi; }',
-    'write_result() { WROTE=1; printf "NATIVE_RESULT %s %s %s\\n" "$1" "$2" "$3"; exit "$3"; }',
+    'write_result() { WROTE=1; if [ -f "$CASE_DIR/c1609-publication-diagnostic.json" ]; then printf "NATIVE_PUBLICATION_DIAGNOSTIC "; cat "$CASE_DIR/c1609-publication-diagnostic.json"; fi; printf "NATIVE_RESULT %s %s %s\\n" "$1" "$2" "$3"; exit "$3"; }',
     'c1008_status_proof() { C1008_CENSUS="$(c1008_container_census)" || c1008_refuse RecycleVolumeCensusUnknown; }',
     'export PATH='+q(scope.root+'/bin')+':"$PATH"',
     'export C1609_CUT_PID=$$',
