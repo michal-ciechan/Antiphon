@@ -50,16 +50,16 @@ Deliberate mutants belong to SourceLanding Mutation; operator waived execution.
 ### Checkpoints
 
 All rows serial. Final run CP-1..CP-6; red-first selection CP-1 before repair.
-Use CLI `--row-timeout 9.5 --parallel 1` (minutes); TUnit receives `--timeout 570s`.
+Use CLI `--row-timeout 9 --parallel 1` (minutes); TUnit receives `--timeout 570s`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | all | tests/Antiphon.Tests -> bin-c1958/ | source-script | `/*/*/RunCheckpointSourceScriptTests*/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 21 | 3 | true |
 | CP-2 | all | CP-1 | repeat-script | `/*/*/RunCheckpointRepeatScriptTests*/*` | R-3 | all listed, 0 failed | 1 | 3 | true |
 | CP-3 | all | CP-1 | checkpoint-source | `/*/*/CheckpointSourceExecutionTests*/*` | R-3 | all listed, 0 failed | 1 | 4 | true |
-| CP-4 | all | CP-1 | checkpoint-terminal | `/*/*/(CheckpointTerminalReceiptTests*)|(CheckpointStatePublicationTests*)/*` | R-3 | all listed, 0 failed | 2 | 4 | true |
-| CP-5 | all | CP-1 | checkpoint-shape | `/*/*/(CheckpointShapeConflictTests*)|(CheckpointTrackedBaselineTests*)/*` | R-3 | all listed, 0 failed | 2 | 3 | true |
-| CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(WindowsUnitPlatformAdmissionTests*)/*` | R-4 | all listed, 0 failed; C1210 placement skip allowed only with recorded non-Windows host | 114 | 3 | true |
+| CP-4 | all | CP-1 | checkpoint-terminal | `/*/*/(CheckpointTerminalReceiptTests*)\|(CheckpointStatePublicationTests*)/*` | R-3 | all listed, 0 failed | 2 | 4 | true |
+| CP-5 | all | CP-1 | checkpoint-shape | `/*/*/(CheckpointShapeConflictTests*)\|(CheckpointTrackedBaselineTests*)/*` | R-3 | all listed, 0 failed | 2 | 3 | true |
+| CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-4 | all listed, 0 failed; C1210 placement skip allowed only with recorded non-Windows host | 114 | 3 | true |
 
 No full Unit lane: nightly/rc owns it. No spans or selector rows change, so the
 conditional TestTimingOperationLabelTests/ImpactedClassesSelectorTests obligation
