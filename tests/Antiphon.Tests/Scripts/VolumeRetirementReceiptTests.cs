@@ -1055,7 +1055,7 @@ public sealed class VolumeRetirementReceiptTests
         var diagnostic = diagnostics.Select(line => JsonNode.Parse(line)!).Last(row => row["stage"]!.GetValue<string>() == "ready-published");
         diagnostic["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThan(5000);
         diagnostic["limitMs"]!.GetValue<int>().ShouldBe(5000);
-        (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready", "refusal must preserve rendered preview evidence");
+        (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready", customMessage: "refusal must preserve rendered preview evidence");
         f.Host!.Removed.ShouldBeEmpty();
     }
 
