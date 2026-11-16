@@ -1288,6 +1288,37 @@ and mean delta `0.633` percentage points (24 cores; `on-samples=15`, disabled ro
 | server | `HostStats:Enabled`, `HostStats:PollIntervalMs`, `HostStats:StaleAfterMs` | `true`, `5000`, `15000` |
 | server | `HostStats:RequestTimeoutMs`, `HostStats:SeriesTimeoutMs` | `3000`, `5000`; single-attempt reads |
 
+CARD-1893: durable collection uses `SessionRunner:HostStats:HistoryPath` when
+configured; it must be an absolute directory. Absence resolves local application
+data with `SpecialFolderOption.DoNotVerify` (the directory need not exist yet),
+then absolute user-profile `.local/share/antiphon/host-load` if local data is
+unavailable. It never falls back to the application directory or a temporary
+store. A failed configured store is never silently replaced. Provision private,
+writable persistent storage separately; this default does not activate a volume
+or repair physical-host binding or the shared admission broker.
+
+The existing runner `/host-stats` and `/host-stats/history` responses carry
+`collector` process-local metadata (also on history's unavailable 503 problem).
+Phone-home host stats/history use the same objects. `accepted` counts successful
+queue admissions, `dropped` and `droppedByReason` count queue overflow and failed
+sample processing, `appended` counts completed durable appends, and
+`cursorAdvances` counts successfully persisted acknowledgement advances in this
+collector process, once per advancing request, never on duplicate replay.
+`authorityUnknown` counts observations without known authority; it does not imply
+sample loss. Disabled collection does not admit or count samples. Retention loss
+continues to be represented by the existing spool gaps.
+
+`lastAppendErrorClass`, `lastAppendErrorAt` and at most eight `recent` records
+distinguish resolve/open/loss-ledger/authority/append/storage-stats stages. Records
+contain only fixed path classes, error classes, actions, timestamps and writable
+state (false on failed open/permission, otherwise unknown). Check the configured
+history directory's access for `check-history-directory-access`; use an absolute
+private persistent path for `configure-absolute-history-directory`. Warnings
+coalesce globally to one per minute per collector while `failures` keeps counting.
+Neither the records nor warning lines include raw paths, exception text, sample
+payload, cursor or ledger secrets. Diagnostic state is available without opening
+the spool, so an operator can inspect a startup failure while live sampling runs.
+
 ### Build slots (CARD-0589)
 
 CARD-1506: Windows build/test children use the single policy in

@@ -71,7 +71,20 @@ public sealed record HostLoadSample
 public sealed record HostLoadGap(Guid RunnerStoreId, Guid BootId, long FromSequence, long ToSequence, string Reason);
 public sealed record HostLoadHistoryPage(int SchemaVersion, HostLoadSource Source,
     IReadOnlyList<HostLoadSample> Samples, IReadOnlyList<HostLoadGap> Gaps,
-    string? NextCursor, bool More, bool Complete);
+    string? NextCursor, bool More, bool Complete)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HostLoadCollectorDiagnostics? Collector { get; init; }
+}
+
+/// <summary>Bounded process-local metadata. No path, exception text, sample or cursor payload.</summary>
+public sealed record HostLoadCollectorDiagnostic(DateTimeOffset At, string Stage, string PathClass,
+    string ErrorClass, bool? Writable, string Action);
+public sealed record HostLoadCollectorDiagnostics(long Accepted, long Dropped,
+    IReadOnlyDictionary<string, long> DroppedByReason, long Appended, long CursorAdvances,
+    long AuthorityUnknown, long Failures, DateTimeOffset? LastAppendedAt,
+    string? LastAppendErrorClass, DateTimeOffset? LastAppendErrorAt,
+    IReadOnlyList<HostLoadCollectorDiagnostic> Recent);
 public sealed record PhoneHomeHostLoadHistoryRequest(string? After = null, int Limit = 120);
 public sealed record RunnerLoadShadowDto(DateTimeOffset ObservedAt, bool Shadow, double? CommandPressure,
     double? DispatchPressure, string Command, string Dispatch, int RecommendedAdditionalTasks);

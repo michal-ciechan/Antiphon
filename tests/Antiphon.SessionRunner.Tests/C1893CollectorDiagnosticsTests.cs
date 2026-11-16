@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.Json;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
@@ -70,9 +72,7 @@ public class C1893CollectorDiagnosticsTests(C1514HostLoadFixture fixture)
             for (var i = 1; i <= 20; i++)
             {
                 var expected = i;
-                await C1514HostLoadFixture.EventuallyAsync(() => Volatile.Read(ref attempts) >= expected);
-                // Ensure the error was recorded and the next retry timer registered.
-                await Task.Delay(10);
+                await C1514HostLoadFixture.EventuallyAsync(() => Diagnostics(capture).GetProperty("failures").GetInt64() >= expected);
                 clock.Advance(TimeSpan.FromSeconds(5));
             }
             var json = Diagnostics(capture);
@@ -86,6 +86,50 @@ public class C1893CollectorDiagnosticsTests(C1514HostLoadFixture fixture)
             var text = json.GetRawText() + string.Join("", log.Lines);
             text.ShouldNotContain("DO_NOT_LEAK"); text.ShouldNotContain("/private/");
             text.Length.ShouldBeLessThan(6000);
+        }
+        finally { await capture.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
+    public void Production_factory_keeps_absent_path_optional_and_resolves_absolute_profile_data()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build();
+        configuration["SessionRunner:HostStats:HistoryPath"].ShouldBeNull();
+        var services = new ServiceCollection(); services.AddLogging();
+        services.AddHostStats(configuration, startSampler: false);
+        using var provider = services.BuildServiceProvider();
+        var settings = provider.GetRequiredService<IOptions<HostStatsSettings>>().Value;
+        settings.HistoryPath.ShouldBeNull("absence must not be replaced by a cwd-relative path during options binding");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify);
+        var resolver = typeof(HostLoadCaptureService).Assembly.GetType("Antiphon.SessionRunner.HostLoadStoragePath")!;
+        var resolved = (string)resolver.GetMethod("Resolve")!.Invoke(null, [null, local, profile])!;
+        Path.IsPathFullyQualified(resolved).ShouldBeTrue();
+        resolved.ShouldNotStartWith(AppContext.BaseDirectory);
+        provider.GetRequiredService<HostLoadCaptureService>().ShouldNotBeNull();
+    }
+
+    [Test]
+    public async Task Invalid_sample_is_dropped_with_serialization_reason_and_next_valid_sample_advances()
+    {
+        var settings = C1514HostLoadFixture.Config(fixture.PrivatePath()); var clock = Clock();
+        using var capture = Capture(settings, clock, new CollectorLog());
+        await capture.StartAsync(CancellationToken.None);
+        try
+        {
+            var sample = new ScriptedHostStatsProbe().Read()!.Value with { At = clock.GetUtcNow() };
+            capture.TryCapture(sample with { CpuPercent = double.NaN }).ShouldBeTrue();
+            await C1514HostLoadFixture.EventuallyAsync(() => capture.DroppedSamples == 1);
+            Diagnostics(capture).GetProperty("droppedByReason").GetProperty("append-validation-serialization").GetInt64().ShouldBe(1);
+            await C1514HostLoadFixture.EventuallyAsync(() => Diagnostics(capture).GetProperty("failures").GetInt64() == 1);
+            capture.TryCapture(sample).ShouldBeTrue(); clock.Advance(TimeSpan.FromSeconds(5));
+            await C1514HostLoadFixture.EventuallyAsync(() => capture.LastAppendedAt is not null);
+            var page = capture.ReadHistory(null, 120);
+            page.Samples.Single().Source.Sequence.ShouldBe(2);
+            page.Gaps.ShouldContain(g => g.FromSequence == 1);
+            var json = Diagnostics(capture);
+            json.GetProperty("appended").GetInt64().ShouldBe(1);
+            json.GetProperty("authorityUnknown").GetInt64().ShouldBe(2);
         }
         finally { await capture.StopAsync(CancellationToken.None); }
     }

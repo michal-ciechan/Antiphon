@@ -26,8 +26,6 @@ public static class HostStatsRoutes
                         : [Directory.GetCurrentDirectory(), log];
                 }
 
-                settings.HistoryPath ??= Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "antiphon", "host-load");
                 if (settings.AuthorityEndpoint is null && configuration["ANTIPHON_BUILD_SLOTS_URL"] is { } brokerUrl)
                     settings.AuthorityEndpoint = brokerUrl.TrimEnd('/') + "/host-load";
                 settings.RunnerId = configuration["PhoneHome:RunnerId"] ?? settings.RunnerId;
@@ -45,7 +43,8 @@ public static class HostStatsRoutes
         services.AddSingleton(sp => new HostStatsStore(
             sp.GetRequiredService<IOptions<HostStatsSettings>>().Value,
             sp.GetRequiredService<TimeProvider>(),
-            sp.GetService<BuildSlotBroker>()));
+            sp.GetService<BuildSlotBroker>(),
+            () => sp.GetRequiredService<HostLoadCaptureService>().Diagnostics));
         services.AddSingleton<IHostStatsSource>(sp => sp.GetRequiredService<HostStatsStore>());
         services.AddHttpClient("HostLoad.Authority", client => client.Timeout = Timeout.InfiniteTimeSpan);
         services.TryAddSingleton<IHostAdmissionSnapshotReader>(sp => new HostAdmissionSnapshotClient(
@@ -80,12 +79,16 @@ public static class HostStatsRoutes
     public static IEndpointRouteBuilder MapHostStatsRoutes(this IEndpointRouteBuilder app)
     {
         app.MapGet("/host-stats/history", (string? after, int? limit, IHostLoadHistorySource history,
-            IOptions<HostStatsSettings> options) =>
+            IOptions<HostStatsSettings> options, HostLoadCaptureService capture) =>
         {
             if (!options.Value.Enabled || !options.Value.HistoryEnabled) return Results.NotFound();
             try { return Results.Ok(history.ReadHistory(after, limit ?? 120)); }
             catch (ArgumentException) { return Results.Problem(title: "invalid_host_load_query", statusCode: 400); }
-            catch (IOException) { return Results.Problem(title: "host_load_history_unavailable", statusCode: 503); }
+            catch (IOException)
+            {
+                return Results.Problem(title: "host_load_history_unavailable", statusCode: 503,
+                    extensions: new Dictionary<string, object?> { ["collector"] = capture.Diagnostics });
+            }
         });
         app.MapGet("/host-stats", (HostStatsStore store, IOptions<HostStatsSettings> options, TimeProvider time) =>
         {

@@ -23,10 +23,12 @@ public sealed class HostStatsStore : IHostStatsSource
     private readonly int _retentionMinutes;
     private readonly TimeProvider _time;
     private readonly BuildSlotBroker? _broker;
+    private readonly Func<HostLoadCollectorDiagnostics>? _collector;
     private int _next;
     private int _count;
 
-    public HostStatsStore(HostStatsSettings settings, TimeProvider time, BuildSlotBroker? broker = null)
+    public HostStatsStore(HostStatsSettings settings, TimeProvider time, BuildSlotBroker? broker = null,
+        Func<HostLoadCollectorDiagnostics>? collector = null)
     {
         if (settings.IntervalMs < 1000)
             throw new ArgumentOutOfRangeException(nameof(settings), "IntervalMs must be at least 1000.");
@@ -38,6 +40,7 @@ public sealed class HostStatsStore : IHostStatsSource
         _slots = new HostSample[_capacity];
         _time = time;
         _broker = broker;
+        _collector = collector;
     }
 
     /// <summary>The same object <see cref="Add"/> and the reads lock, so a test can hold it.</summary>
@@ -108,7 +111,7 @@ public sealed class HostStatsStore : IHostStatsSource
                 latest?.Cores,
                 latest is { } value ? ToCurrent(value) : null,
                 RollupsOf(samples, now),
-                slots);
+                slots) { Collector = _collector?.Invoke() };
         }
     }
 
