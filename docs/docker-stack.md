@@ -485,12 +485,21 @@ invocation before Ready or any volume removal. It rechecks repository/origin
 bindings and the approved-origin registry, fetches a fresh graph and requires
 every previously advertised ref to remain at its exact OID. A final live
 advertisement after staging closes the transfer/census interval. The final
-helper observation phase, control request, custody writes and effect have a
-five-second monotonic bound. The inventory start record must match the host's
+helper observation phase, control request, custody writes and effect have an
+11-second monotonic bound on the host (`C1609_EFFECT_WINDOW_MS` in
+`scripts/c1008-retirement.sh`). The inventory start record must match the host's
 kernel boot and time namespace and this invocation's start/end bracket. Setup
 before any repository observation is excluded; a slow observation phase refuses.
 When both time-namespace interfaces are absent, the explicit global clock domain
 is used; present but unreadable interfaces still refuse.
+The 11-second host fence is provisional (operator decision 2026-11-16, CARD-1955).
+It was 5 seconds until the native one-repository control measured 5,070 and 5,050 ms;
+twice the worst sample, rounded up, is 11 seconds. Only the host fence changed: the
+desktop keeps its 5-second control and Git limits (`NetworkBudgetMs` 1..5000), the
+host keeps its 10-second response read, and the proof lifetime stays 900 seconds.
+The change widens the origin-withdrawal race by at most six seconds. Re-measure and
+tighten if a measured exchange exceeds 8 seconds, or after the first five native
+applies; see [the decision note](investigations/2026-11-16-retire-temp-fence-11s.md).
 An origin move after the final observation cannot be detected atomically across
 hosts; each later effect repeats the full gate. A sealed proof alone, unchanged
 object digest, or the 900-second receipt lifetime grants no exemption.
