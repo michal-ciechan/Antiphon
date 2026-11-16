@@ -714,6 +714,9 @@ c1609_require_ready_preview() {
     local action="${1:-consume}" root file tmp canonical now ready age daemon current digest nonce manual
     local observed monotonic elapsed admission_time=''
     case "$action" in admit|consume) ;; *) return 1 ;; esac
+    # Fail closed even when phase_begin did not run. A Ready receipt whose
+    # revocation persist failed stays Ready while its lifecycle is still active.
+    c1609_require_finished_phase || return 1
     root="$(c1609_retirement_root)"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
       [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
@@ -988,9 +991,34 @@ c1609_lifecycle_valid() {
       ' "$file" >/dev/null
 }
 
+# Direct admission sees the publisher's lifecycle. Apply's own phase_begin is
+# active, so it is admitted only when this process archived an inactive predecessor.
+c1609_require_finished_phase() {
+    local root file prior
+    root="$(c1609_retirement_root)"
+    file="$root/lifecycle.json"
+    if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+        printf 'reason=lifecycle-active recovery=new-operation\n'
+        return 1
+    fi
+    c1609_lifecycle_valid "$file" || return 1
+    if jq -e '.active==false and .complete==true and all(.children[];.joined==true)' "$file" >/dev/null; then
+        return 0
+    fi
+    [ "${C1609_PHASE_PID:-}" = "$BASHPID" ] || { printf 'reason=lifecycle-active recovery=new-operation\n'; return 1; }
+    [ "$(jq -r .nonce "$file")" = "${C1609_PHASE_NONCE:-}" ] || { printf 'reason=lifecycle-active recovery=new-operation\n'; return 1; }
+    prior="${C1609_PHASE_PRIOR_NONCE:-}"
+    [[ "$prior" =~ ^[0-9a-f]{32}$ ]] || { printf 'reason=lifecycle-active recovery=new-operation\n'; return 1; }
+    c1609_lifecycle_valid "$root/lifecycle-$prior.json" || return 1
+    jq -e '.active==false and .complete==true and all(.children[];.joined==true)' \
+        "$root/lifecycle-$prior.json" >/dev/null || { printf 'reason=lifecycle-active recovery=new-operation\n'; return 1; }
+}
+
 c1609_phase_begin() {
     local root daemon nonce pid ticks previous_pid previous_ticks prior_nonce issued=false
     root="$(c1609_retirement_root)"
+    # Drop any earlier authorization. A refusal below must not leave it set.
+    C1609_PHASE_PRIOR_NONCE=
     c1609_custody "$SERVER2_ROOT" dir || return 1
     [ ! -L "$SERVER2_ROOT/retirement" ] && [ ! -L "$root" ] || return 1
     (umask 077; mkdir -p -- "$root") || return 1
@@ -999,6 +1027,13 @@ c1609_phase_begin() {
         [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
     if [ -e "$root/lifecycle.json" ] || [ -L "$root/lifecycle.json" ]; then
         c1609_lifecycle_valid "$root/lifecycle.json" || return 1
+        # complete=true is written at phase start. An active lifecycle means
+        # phase_end never ran, including after a dead owner. Recovery is a new
+        # operation id and preview; the Ready receipt must not be reused.
+        if jq -e '.active==true' "$root/lifecycle.json" >/dev/null; then
+            printf 'reason=lifecycle-active recovery=new-operation\n'
+            return 1
+        fi
         jq -e '.complete==true and all(.children[];.joined==true)' "$root/lifecycle.json" >/dev/null || return 1
         previous_pid="$(jq -r .owner.pid "$root/lifecycle.json")"
         previous_ticks="$(jq -r .owner.startTicks "$root/lifecycle.json")"
@@ -1010,6 +1045,7 @@ c1609_phase_begin() {
         if [ ! -e "$root/lifecycle-$prior_nonce.json" ]; then
             cat -- "$root/lifecycle.json" | c1609_persist "$root/lifecycle-$prior_nonce.json" || return 1
         fi
+        C1609_PHASE_PRIOR_NONCE="$prior_nonce"
     fi
     [ ! -e "$root/receipt.json" ] && [ ! -L "$root/receipt.json" ] || issued=true
     daemon="$(docker info --format '{{.ID}}')" || return 1
