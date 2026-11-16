@@ -818,3 +818,57 @@ mutated. Standing authority already commissioned the work; no further permission
 or budget request is pending. The caller explicitly directs **next: review**, Full
 ordinary Review by another company, no Interim and no land. The missing list and
 inherited failure remain visible; the handoff is not a Clean/Full assertion.
+
+## Repair round 1: an active lifecycle is not applicable
+
+Review round 1, on `f1251c5cc19b524ef81ddef30f96d9e3f52e209b`, blocked land because
+a failed Refused persist left `receipt.json` Ready and unconsumed while
+`lifecycle.json` stayed `active==true`. Host `c1609_require_ready_preview` admitted
+that receipt. `c1609_phase_begin` treated `complete==true` plus a dead owner as
+permission to overwrite the lifecycle. `complete==true` is written at phase start.
+
+`a13a18616879d2f9130875f6a5c2ea3ecb67fad3` adds
+`Failed_refused_persist_refuses_active_lifecycle_apply` and is red on the unfixed
+script: 1 failed, exit 2. Direct consume returned 0 and rewrote the receipt to
+Applying. `c1609_phase_begin` returned 0.
+
+`a0c9cc99f7fef604a3cf39baa2d9ae85a416f342` refuses `active==true` in
+`c1609_phase_begin` before any archive, including a dead owner, and prints
+`reason=lifecycle-active recovery=new-operation`. `c1609_require_finished_phase`
+runs at the start of `c1609_require_ready_preview`. A same-shell Apply is admitted
+only when this process archived an inactive, complete, children-joined predecessor.
+The 5000 ms and 900 s bounds are unchanged. `bash -n` passed. The same witness is
+then green: 1 passed, 46s. Later consume and `c1609_phase_begin` both return
+non-zero with that reason. Host `retire-temp-runner` exits 2 with
+`DIAGNOSIS=RecycleReceiptUnavailable` and removes nothing. The receipt stays Ready
+and unconsumed, the immutable preview stays Ready, and the lifecycle stays active.
+
+At that tip the other 17 `VolumeRetirementReceiptTests` passed in shards, including
+`Late_ready_fence_refusal_invalidates_apply_admission`.
+`VolumeRetirementApplyGateTests` passed 13/13, including a matching-token apply
+that deletes the four temp volumes after a finished preview.
+
+The guard union passed 114, skipped 1 (`C1210_Windows_linux_only_outcomes_are_exact`),
+failed 0. Inside it, TestClassificationPolicyTests 42, TestClassificationGuardTests 1,
+SlowTestRegistryMergeTests 5, SlowTestTripwireTests 2 and NativeLinuxPolicyWitnessTests 3
+are 53 passed. TestLaneCategoryGuardTests adds 1 passed. C1729 printed
+`VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`. The impact driver was built first.
+Two regenerations printed `derived-impact-index unchanged` (`windowsOnly=31`,
+`linuxOnly=1`). No index commit.
+
+`scripts/c590-remote.sh` is unchanged. RemoteScriptContract methods that name
+`c1008_recycle` assert source order in that file, so they were not rerun. Native
+Docker shards were not rerun. Pins are unchanged: policyHash
+`c2e3939821a8fef911600c44be767b951c8212bcb62824cb746e48c5aaba6909`,
+PinnedInputDigest
+`2f48120a65280582b586f9369e2eaf6b1bdc464a2362c8e49d434bd852479f60`,
+LegacyExclusionDigest
+`6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`.
+The protected-input printer matched that digest. Evidence-diff over
+`f1251c5cc19b524ef81ddef30f96d9e3f52e209b..a0c9cc99f7fef604a3cf39baa2d9ae85a416f342`
+was `commits=2 entries=0 violations=0`. `git merge-tree --write-tree origin/master`
+against `9b98828eb34eb552ce62bcde5a64dd045a872a88` wrote
+`dc58164d005a0bc23492ceffed545772334b90b2` with no conflicts.
+
+Activation stays the documented script-only `retire-temp -DryRun` after Full Review
+and land. This round does not activate, and it does not push `rc/*` or master.
