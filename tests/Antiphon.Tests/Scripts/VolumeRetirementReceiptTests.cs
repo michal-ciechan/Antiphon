@@ -1208,6 +1208,158 @@ public sealed class VolumeRetirementReceiptTests
         return (run, long.Parse((await File.ReadAllTextAsync(trace)).Trim()));
     }
 
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Sigkill_apply_resumes_through_public_entry()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        var preserved = fixture.Docker["volumes"]!.AsObject()
+            .Where(pair => !pair.Key.StartsWith("antiphon-runner-temp_", StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => pair.Value!.DeepClone());
+        await KillApplyingShell(fixture);
+        var receiptBytes = await File.ReadAllBytesAsync(ReceiptPath(fixture));
+        var lifecycleBytes = await File.ReadAllBytesAsync(LifecyclePath(fixture));
+        var ordinary = await fixture.Run("retire-temp-runner");
+        ordinary.Exit.ShouldBe(2, ordinary.Output);
+        (await File.ReadAllBytesAsync(ReceiptPath(fixture))).ShouldBe(receiptBytes);
+        (await File.ReadAllBytesAsync(LifecyclePath(fixture))).ShouldBe(lifecycleBytes);
+        var resumed = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+        resumed.Exit.ShouldBe(0, "same-operation SIGKILL resume through c1008_recycle: " + resumed.Output);
+        ordinary.Output.ShouldContain("reason=lifecycle-active recovery=-Close");
+        fixture.Removed.ShouldBe(new[] { "antiphon-runner-temp_runner-state", "antiphon-runner-temp_dind-data",
+            "antiphon-runner-temp_runner-tmp", "antiphon-runner-temp_work" });
+        var receipt = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!;
+        receipt["state"]!.GetValue<string>().ShouldBe("Completed");
+        receipt["effects"]!.AsArray().Single(row => row!["name"]!.GetValue<string>() == "antiphon-runner-temp_runner-state")!
+            ["result"]!.GetValue<string>().ShouldBe("removed-observed");
+        fixture.ReloadDocker();
+        foreach (var (name, before) in preserved)
+            JsonNode.DeepEquals(fixture.Docker["volumes"]![name], before).ShouldBeTrue("preserved volume " + name);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Sigkill_legacy_apply_resumes_from_its_bound_admission()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await KillApplyingShell(fixture);
+        await EditLifecycle(fixture, "del(.phase) | .schema=1");
+        var resumed = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+        resumed.Exit.ShouldBe(0, "legacy Apply lifecycle has a durable phase-bound admission: " + resumed.Output);
+        fixture.Removed.Length.ShouldBe(4);
+        JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!["state"]!.GetValue<string>().ShouldBe("Completed");
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Resume_refuses_an_unconsumed_ready_receipt()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        await EditLifecycle(fixture, ".active=true");
+        await AssertResumeRefused(fixture);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Resume_refuses_a_preview_lifecycle_even_with_a_consumed_receipt()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        await EditLifecycle(fixture, ".active=true");
+        // Consumption alone cannot turn an unfinished Preview into an Apply.
+        var file = ReceiptPath(fixture);
+        var edit = await VolumeRetirementFixture.Bash("jq -cS '.state=\"Applying\" | .consumed=true | .owner=null' " +
+            VolumeRetirementFixture.Quote(file) + " > " + VolumeRetirementFixture.Quote(file + ".next") +
+            " && chmod 0600 " + VolumeRetirementFixture.Quote(file + ".next") + " && mv -T " +
+            VolumeRetirementFixture.Quote(file + ".next") + " " + VolumeRetirementFixture.Quote(file));
+        edit.Exit.ShouldBe(0, edit.Output);
+        await AssertResumeRefused(fixture);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Resume_refuses_a_live_apply_owner()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await KillApplyingShell(fixture);
+        var pid = Environment.ProcessId;
+        var stat = await File.ReadAllTextAsync("/proc/" + pid + "/stat");
+        var ticks = stat[(stat.LastIndexOf(')') + 2)..].Split(' ')[19];
+        await EditLifecycle(fixture, ".owner={pid:" + pid + ",startTicks:\"" + ticks + "\"}");
+        await AssertResumeRefused(fixture);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Resume_refuses_a_different_operation_lifecycle()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await KillApplyingShell(fixture);
+        await EditLifecycle(fixture, ".operationId=\"c100800000000000000000000000000000099\"");
+        await AssertResumeRefused(fixture);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Missing_lifecycle_has_a_distinct_refusal()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var fixture = new C1008HostFixture(main: false);
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        File.Move(LifecyclePath(fixture), LifecyclePath(fixture) + ".saved");
+        var direct = await CheckPreview(fixture);
+        direct.Exit.ShouldNotBe(0, direct.Output);
+        direct.Output.ShouldContain("reason=lifecycle-missing");
+        var resume = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+        resume.Exit.ShouldBe(2, resume.Output);
+        resume.Output.ShouldContain("reason=lifecycle-missing");
+        File.Exists(LifecyclePath(fixture)).ShouldBeFalse("missing custody cannot be silently recreated for Resume");
+        fixture.Removed.ShouldBeEmpty();
+    }
+
+    private static string LifecyclePath(C1008HostFixture fixture) =>
+        Path.Combine(Path.GetDirectoryName(ReceiptPath(fixture))!, "lifecycle.json");
+
+    private static async Task EditLifecycle(C1008HostFixture fixture, string expression)
+    {
+        var file = VolumeRetirementFixture.Quote(LifecyclePath(fixture));
+        var next = VolumeRetirementFixture.Quote(LifecyclePath(fixture) + ".next");
+        var result = await VolumeRetirementFixture.Bash("jq -cS " + VolumeRetirementFixture.Quote(expression) +
+            " " + file + " > " + next + " && chmod 0600 " + next + " && mv -T " + next + " " + file);
+        result.Exit.ShouldBe(0, result.Output);
+    }
+
+    private static async Task KillApplyingShell(C1008HostFixture fixture)
+    {
+        await VolumeRetirementFixture.ReadyPreview(fixture);
+        // The production shell owns this exact PID. The cut follows the first
+        // entry-point removal, before its durable result is acknowledged.
+        var killed = await fixture.Run("retire-temp-runner", """
+            c1609_load_retirement
+            c1609_target_result() { kill -KILL "$$"; }
+            """);
+        killed.Exit.ShouldBe(137, "owned applying shell was SIGKILLed: " + killed.Output);
+        fixture.Removed.ShouldBe(new[] { "antiphon-runner-temp_runner-state" });
+        var receipt = JsonNode.Parse(await File.ReadAllTextAsync(ReceiptPath(fixture)))!;
+        receipt["state"]!.GetValue<string>().ShouldBe("Applying");
+        receipt["consumed"]!.GetValue<bool>().ShouldBeTrue();
+        receipt["intents"]![0]!["result"]!.GetValue<string>().ShouldBe("pending");
+        JsonNode.Parse(await File.ReadAllTextAsync(LifecyclePath(fixture)))!["active"]!.GetValue<bool>().ShouldBeTrue();
+        fixture.ReloadDocker();
+    }
+
+    private static async Task AssertResumeRefused(C1008HostFixture fixture)
+    {
+        var receipt = await File.ReadAllBytesAsync(ReceiptPath(fixture));
+        var lifecycle = await File.ReadAllBytesAsync(LifecyclePath(fixture));
+        var removed = fixture.Removed;
+        var result = await fixture.Run("retire-temp-runner", "C1008_RESUME=1");
+        result.Exit.ShouldBe(2, result.Output);
+        (await File.ReadAllBytesAsync(ReceiptPath(fixture))).ShouldBe(receipt, "refusal preserves the receipt");
+        (await File.ReadAllBytesAsync(LifecyclePath(fixture))).ShouldBe(lifecycle, "refusal preserves lifecycle custody");
+        fixture.Removed.ShouldBe(removed, "refusal cannot delete another volume");
+    }
+
     private static async Task<string> WriteFenceModule(VolumeRetirementPublicationFixture f, string hooks)
     {
         var module = Path.Combine(f.Root, "fence-module.sh");
