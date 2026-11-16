@@ -369,6 +369,87 @@ public sealed class RunCheckpointSourceScriptTests
         helperVerdict.Exit.ShouldBe(1, "source-helper-expected-sha-shape: " + helperVerdict.Output);
     }
 
+    [Test]
+    [Arguments("linux", "rostered-skip", 0)]
+    [Arguments("linux", "unlisted-skip", 2)]
+    [Arguments("windows", "rostered-skip", 2)]
+    [Arguments("linux", "rostered-pass", 0)]
+    [Arguments("unknown", "rostered-skip", 2)]
+    [Arguments("linux", "missing-trx", 2)]
+    [Arguments("linux", "wrong-count", 2)]
+    [Arguments("linux", "mixed-skips", 2)]
+    [Arguments("linux", "wrong-sha", 2)]
+    [Arguments("linux", "uncommitted-roster", 2)]
+    [Arguments("linux", "missing-definition", 2)]
+    [Arguments("linux", "duplicate-definition", 2)]
+    [Arguments("linux", "duplicate-result", 2)]
+    [Arguments("linux", "failed-result", 2)]
+    public async Task C1958_Receipt_skip_allowance_is_closed(string platform, string variant, int expected)
+    {
+        using var fixture = new Fixture();
+        var clean = await fixture.RunAsync(expectedSha: fixture.Head);
+        clean.Exit.ShouldBe(0, clean.Output);
+        var source = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
+        var trxPath = Path.Combine(fixture.External, "placement.trx");
+        const string rosterMethod = "C1210_Windows_linux_only_outcomes_are_exact";
+        var method = variant is "unlisted-skip" or "uncommitted-roster" ? "Unlisted_test" : rosterMethod;
+        var outcome = variant == "rostered-pass" ? "Passed" : "NotExecuted";
+        var skipped = outcome == "NotExecuted" ? 1 : 0;
+        var executed = outcome == "Passed" ? 2 : 1;
+        var passed = executed;
+        if (variant == "failed-result") passed--;
+        if (variant == "mixed-skips") skipped++;
+        var extraResult = variant == "mixed-skips"
+            ? "<UnitTestResult testId=\"other\" outcome=\"NotExecuted\" />" : "";
+        if (variant == "duplicate-result") extraResult = "<UnitTestResult testId=\"placement\" outcome=\"NotExecuted\" />";
+        var definition = $"<UnitTest id=\"placement\"><TestMethod className=\"Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests\" name=\"{method}\" /></UnitTest>";
+        var definitions = variant == "missing-definition" ? "" : definition;
+        if (variant == "duplicate-definition") definitions += definition;
+        await File.WriteAllTextAsync(trxPath, $"""
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="control" outcome="{(variant == "failed-result" ? "Failed" : "Passed")}" />
+                <UnitTestResult testId="placement" testName="untrusted display name" outcome="{outcome}" />
+                {extraResult}
+              </Results>
+              <TestDefinitions>
+                <UnitTest id="control"><TestMethod className="Antiphon.Tests.Scripts.Control" name="Pass" /></UnitTest>
+                {definitions}
+                <UnitTest id="other"><TestMethod className="Antiphon.Tests.Scripts.Other" name="Skip" /></UnitTest>
+              </TestDefinitions>
+              <ResultSummary><Counters total="{executed + skipped}" executed="{executed}" passed="{passed}" failed="{(variant == "failed-result" ? 1 : 0)}" notExecuted="{skipped}" /></ResultSummary>
+            </TestRun>
+            """);
+        if (variant == "missing-trx") File.Delete(trxPath);
+        if (variant == "uncommitted-roster") fixture.Write("tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs",
+            File.ReadAllText(Path.Combine(fixture.Repo, "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs"))
+                .Replace(rosterMethod, "Unlisted_test", StringComparison.Ordinal));
+        var line = clean.Line[..clean.Line.IndexOf(" executed=", StringComparison.Ordinal)] +
+            $" executed={executed} passed={passed} failed={(variant == "failed-result" ? 1 : 0)} skipped={skipped} trx={trxPath} slot=granted waited=0s dirty=0 source={fixture.Head} sourceState=clean buildSource=verified";
+        var row = new JsonObject
+        {
+            ["id"] = "CP-2", ["state"] = "green", ["exitCode"] = 0, ["executed"] = executed,
+            ["passed"] = passed, ["failed"] = variant == "failed-result" ? 1 : 0,
+            ["skipped"] = variant == "wrong-count" ? skipped + 1 : skipped,
+            ["trx"] = trxPath, ["line"] = line, ["source"] = source.DeepClone(),
+        };
+        if (variant == "wrong-sha") row["source"]!["start"]!["commit"] = new string('f', 40);
+        var report = new JsonObject
+        {
+            ["schemaVersion"] = 2, ["exitCode"] = 0, ["verdict"] = "GREEN", ["cleanupRefusals"] = new JsonArray(),
+            ["source"] = source, ["rows"] = new JsonArray(row),
+            ["host"] = new JsonObject { ["os"] = platform switch
+            {
+                "linux" => "Debian GNU/Linux 12 (bookworm)", "windows" => "Microsoft Windows 10.0.26100", _ => "unexpected",
+            } },
+        };
+        var evidence = Path.Combine(fixture.External, "placement.json");
+        await File.WriteAllTextAsync(evidence, report.ToJsonString());
+        var result = await fixture.ValidateAsync(evidence);
+        result.Exit.ShouldBe(expected, variant + ": " + result.Output);
+        result.Output.ShouldContain(expected == 0 ? "CHECKPOINT SOURCE VALID" : "CHECKPOINT SOURCE INVALID");
+    }
+
     private sealed class Fixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "c835-script-" + Guid.NewGuid().ToString("N"));
@@ -396,6 +477,8 @@ public sealed class RunCheckpointSourceScriptTests
             Run("git", Repo, ["config", "core.autocrlf", "false"]);
             Write(".gitignore", "bin-*/\nobj/\n.antiphon/\n");
             Write("tracked.txt", seed);
+            Write("tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs",
+                File.ReadAllText(Path.Combine(ProjectRoot, "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs")));
             Write("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             Run("git", Repo, ["add", "."]);
             Run("git", Repo, ["commit", "-qm", "seed"]);
