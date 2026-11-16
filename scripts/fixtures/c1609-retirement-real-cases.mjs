@@ -270,6 +270,8 @@ function shell(f, body, suffix='run') {
       'mkdir -p -m 0700 "$(c1609_retirement_root)"',
       'c1609_prepare_exchange || exit 2',
       suffix==='preview'?'C1008_DRY_RUN=1':'c1008_audit_readonly > "$CASE_DIR/apply-audit.out" || exit 2',
+      'eval "$(declare -f c1609_publication_gate | sed \'1s/c1609_publication_gate/c1955_native_gate/\')"',
+      'c1609_publication_gate() { local start=$(c1609_monotonic_ms) rc=0; c1955_native_gate "$@" || rc=$?; printf "NATIVE_GATE purpose=%s totalMs=%s proofStage=%s exit=%s\\n" "$1" "$(( $(c1609_monotonic_ms)-start ))" "${C1609_PROOF_STAGE:-complete}" "$rc" >&2; return "$rc"; }',
       'eval "$(declare -f c1609_effect_publication_fresh | sed \'1s/c1609_effect_publication_fresh/c1955_native_fresh/\')"',
       'c1609_effect_publication_fresh() { local rc=0; c1955_native_fresh "$@" || rc=$?; printf "NATIVE_FENCE stage=%s elapsedMs=%s limitMs=5000 exit=%s\\n" "${1:-effect}" "$(( $(c1609_monotonic_ms)-C1609_CONTROL_STARTED ))" "$rc" >&2; return "$rc"; }'
     ].join('\n');
@@ -367,7 +369,7 @@ async function liveChild(f,args){
     if(failure)stderr+='\n'+failure.stack;
     stdout+='\nNATIVE_PROTOCOL proofs='+proofs+' controls='+controls+'\n';
     if(process.env.ANTIPHON_TEST_PHASE_ROOT){
-      fs.appendFileSync(process.env.ANTIPHON_TEST_PHASE_ROOT+'/native-stages.jsonl',JSON.stringify({source:scope.source,case:'N3',operation:f.op,call:config.suffix,exit:failure?2:code,proofs,controls,stages:stderr.split('\n').filter(l=>/^NATIVE_(FENCE|RENDER) /.test(l))})+'\n');
+      fs.appendFileSync(process.env.ANTIPHON_TEST_PHASE_ROOT+'/native-stages.jsonl',JSON.stringify({source:scope.source,case:'N3',operation:f.op,call:config.suffix,exit:failure?2:code,proofs,controls,stages:stderr.split('\n').filter(l=>/^NATIVE_(FENCE|RENDER|GATE) /.test(l))})+'\n');
     }
     console.log(stdout.split('\n').filter(l=>l.startsWith('NATIVE_')).join('\n')+'\n'+stderr);
     return {code:failure?2:code,stdout,stderr};
@@ -539,7 +541,7 @@ const legacySeed=[
   'mkdir -p "$SERVER2_ROOT/recycle"',
   'C1008_JOURNAL="$SERVER2_ROOT/recycle/$C1008_OPERATION.json"',
   'volumes="{}"; for name in "$'+'{C1008_TARGETS[@]}"; do facts="$(c1008_volume "$name")"; volumes="$(printf "%s" "$volumes" | jq -c --arg name "$name" --argjson facts "$facts" \'.[$name]={original:$facts,outcome:"pending"}\')"; done',
-  'C1008_RECORD="$(jq -cn --arg project "$C1008_PROJECT" --argjson volumes "$volumes" \'{schema:1,project:$project,phase:"removing",volumes:$volumes}\')"',
+  'C1008_RECORD="$(jq -cn --argjson context "$C1008_RECORD" --arg project "$C1008_PROJECT" --argjson volumes "$volumes" \'$context+{schema:1,project:$project,phase:"removing",volumes:$volumes}\')"',
   'C1008_ACTIVE=1; C1609_APPLY_ACTIVE=1; c1008_save'
 ].join('\n');
 async function n3(f) {
