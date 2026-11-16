@@ -26,6 +26,9 @@ if ($Case -ceq 'admission') {
     foreach ($row in $cuts) {
         $source = Read-Source ('tests/Antiphon.Tests/Scripts/' + $row.Class + '.cs')
         $method = [regex]::Match($source, ('public (?:async )?Task ' + $row.Method + '\(\)\s*\{'))
+        if (-not $method.Success -and $row.Class -in @('RetiredTempContainerDockerTests','RollingVolumeRecycleDockerTests')) {
+            $method = [regex]::Match($source, 'private static async Task RunShard\(int shard\)\s*\{')
+        }
         Require $method.Success ('Method missing: ' + $row.Method)
         $start = $method.Index + $method.Length
         $end = $source.IndexOf($row.Cut, $start)
