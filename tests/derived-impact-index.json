@@ -26457,6 +26457,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/TestTimingChokePointTests.cs",
+      "classes": [
+        "PairedOverheadStatisticsTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/TestWorkerModes.cs",
       "classes": [
         "AgentTaskLandReceiptWatermarkSafetyTests",
