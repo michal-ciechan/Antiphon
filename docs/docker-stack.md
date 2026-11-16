@@ -638,7 +638,7 @@ git fetch origin master
 if ($LASTEXITCODE -ne 0) { throw 'Tooling fetch failed' }
 git merge-base --is-ancestor $toolingSha origin/master
 if ($LASTEXITCODE -ne 0) { throw 'Tooling publication not confirmed' }
-$toolingRoot = Join-Path $PWD ('.antiphon\retirement-tooling\' + $toolingSha)
+$toolingRoot = Join-Path 'C:\rt' ([guid]::NewGuid().ToString('N').Substring(0, 8))
 if (Test-Path -LiteralPath $toolingRoot) { throw 'Use a fresh tooling directory' }
 New-Item -ItemType Directory -Path $toolingRoot | Out-Null
 $archive = Join-Path $toolingRoot 'source.tar'
@@ -652,12 +652,14 @@ if ($LASTEXITCODE -ne 0) { throw 'Preview refused; preserve evidence and retain 
 
 Pass `-ProjectId` explicitly (the Antiphon project id above). The export has no Git
 origin and is not the project's registered path, so URL and path matching both miss and
-the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it. The export also
-nests the evidence root 70 characters deeper: the desktop proof directory reaches 264
-characters, past Windows MAX_PATH. Only tooling that starts the final live `ls-remote` in
-its own short scratch directory works from this path (the 2026-11-16 preview `c1008d39`
-refused `proof-stale` at that check; see
-[the investigation](investigations/2026-11-16-retire-temp-live-binding-refusal.md)).
+the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it. Use a short
+export root such as `C:\rt\<8 hex>` as above. A full-SHA export nested beneath the
+checkout made the desktop proof directory reach 264 characters, past the Windows
+260-character limit; the 2026-11-16 preview `c1008d39` refused `proof-stale` at the
+final live `ls-remote`. The short root leaves room for the wrapper's
+`.antiphon/rolling-server2/<run-id>/exchange-*` proof paths. See
+[the investigation](investigations/2026-11-16-retire-temp-live-binding-refusal.md)
+and the evidence-path construction in [c590-real.ps1](../scripts/c590-real.ps1).
 
 Do not use that export for another rolling phase. Verify the operation-owned
 `tooling.sha256` against the exported four shell files and record the exported
@@ -668,6 +670,68 @@ fresh origin proofs and live control. Any later authorized Apply uses this same
 exported wrapper and only its newly successful Ready operation within 900 seconds.
 The rc commit, runner images and host tracking do not change; no new rc or restart
 is required. Never Apply a refused preview's operation.
+
+###### Host freshness fence and diagnostics (2026-11-16)
+
+The host fence is provisionally **11,000 ms**, `C1609_EFFECT_WINDOW_MS` in
+[c1008-retirement.sh](../scripts/c1008-retirement.sh). It bounds the final binding
+observation, control exchange, custody writes and each effect. Native one-repository
+samples were 5,070 and 5,050 ms against the previous 5,000 ms fence. Re-measure and
+tighten if a measured exchange exceeds 8 seconds, or after the first five native
+applies. This does not extend the desktop budgets: control and Git remain 5,000 ms,
+the host response uses `read -t 10`, and proof lifetime remains 900 seconds. The
+constant's comment records the provisional decision and its revisit trigger;
+[c590-real.ps1](../scripts/c590-real.ps1) owns the desktop control deadline.
+
+On a host fence refusal, `c1609_publication_diagnostic` appends fixed-field records to
+`/home/mc/antiphon-server2/retirement/<operation-id>/publication-diagnostics.jsonl`.
+Read `stage`, `elapsedMs` and `limitMs` to distinguish `control`, `ready-published`,
+`effect` and `exchange-required`; `phaseNonce` identifies the phase. For example,
+on server2 as `mc`:
+
+```bash
+jq -c '{phaseNonce,stage,elapsedMs,limitMs}' /home/mc/antiphon-server2/retirement/<operation-id>/publication-diagnostics.jsonl
+```
+
+An `exchange-required` record can have `elapsedMs: null`: no exchange began. These
+are refusal diagnostics, not a log of every successful exchange. The latest record
+is also copied to the case's `c1609-publication-diagnostic.json` and returned through
+the bridge's existing evidence copy. Preserve it with the desktop exchange evidence;
+never infer a successful Apply from its presence.
+
+#### Crash resume after SIGKILL (lands with CARD-1956)
+
+CARD-1956 is not yet on `origin/master` at this documentation task's source base.
+Until it lands and the exported tooling includes it, an active lifecycle refuses
+reuse even when its owner is dead. The following recovery lands with CARD-1956;
+its code and witnesses are on `origin/feat/card-task-55d5be7a` in
+`scripts/c1008-retirement.sh` (`c1609_require_resume_phase`, `c1609_phase_begin`),
+with the source-bound report in
+[the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/feat/card-task-55d5be7a/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
+
+Resume of an `Applying` temp operation requires explicit `C1008_RESUME=1` (the
+wrapper's `-ResumeRecycle <operation-id>`), an already-consumed same-operation
+receipt bound to the project and Docker daemon, an **Apply** lifecycle, a dead owner
+proved by PID/startTicks, complete lifecycle evidence and joined helpers. Schema-2
+lifecycles name Preview or Apply; an active legacy schema-1 Apply also needs its
+protected admission record bound to the lifecycle nonce and immutable preview digest.
+Missing or unreadable evidence refuses. Resume retains the original operation,
+incarnation, intent, publication, live-state, custody, closure and apply-token guards.
+It does not consume a new preview in place of the old operation.
+
+A SIGKILLed **Preview** is never resumed: start a new operation and preview. An
+unconsumed Ready receipt is not an Apply recovery. A refused or stuck Applying
+operation must be resolved with audited `-Close`, once Close's existing absence,
+census and custody checks pass:
+
+```powershell
+pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <operation-id> -ExpectedJournalDigest <current-receipt-sha256> -ReasonFile <reason-file>
+```
+
+[retire-runner-volumes.ps1](../scripts/retire-runner-volumes.ps1) and
+`c1609_close_host` own Close. It records an audited journal transition after all
+four targets are absent; it neither removes a volume nor bypasses a live owner.
+Do not edit the receipt or lifecycle to make it resumable or clearable.
 
 #### Temp retirement trusted origins (CARD-1689)
 
@@ -816,6 +880,64 @@ accounted for 100.7 GiB), runner-tmp 38.6 GB and dind-data 17 GB; retired temp v
 occupied another 76 GB + 7.3 GB. Cleanup and temp-volume reclaim increased free space
 from 17.6 GiB to 272 GiB (60% used).
 
+#### Audited manual removal FALLBACK (2026-11-16)
+
+This fallback was used twice on 2026-11-16 when gate 9 could not pass, under the
+operator's standing permission for **retired temp** volumes. Prefer the sanctioned
+preview/Apply above; this fallback does not count as a successful gate-9 Apply and
+does not extend authority to main, shared caches or other volumes. Preserve the
+refusal and audit evidence outside the four targets. All retirement, drain,
+zero-work, routing and land preconditions still apply.
+
+Before touching any target, record and check all of the following:
+
+1. No container in **any state**, including exited and created, references any of
+   `antiphon-runner-temp_runner-state`, `antiphon-runner-temp_dind-data`,
+   `antiphon-runner-temp_runner-tmp`, `antiphon-runner-temp_work`. Inspect the
+   complete `docker ps -aq` inventory and mounts, not only running containers.
+2. Inventory every repository and registered worktree in the temp work volume,
+   including quarantined directories and audit findings. Refresh origin refs;
+   require each worktree's tracked/untracked status to be clean and
+   `git rev-list --count HEAD --not --remotes=origin` to be zero. Unknown or missing
+   worktree evidence stops removal.
+3. Check **every commit named by the audit findings**, including branch/reflog
+   findings, against the freshly fetched origin branches. Use
+   `git for-each-ref --contains <full-sha> refs/remotes/origin/` and require an
+   actual origin branch, not just a remote HEAD alias. Checking current HEAD alone
+   does not prove these commits published. Require `git stash list` to be empty
+   in every repository. Unpublished commits, dirt or stashes stop removal.
+4. Make a tar copy of the shared repository in that work volume (normally
+   `/work/repos/antiphon`, including its Git metadata) to a protected host path
+   **outside** the volumes. Check tar exit status and list the archive to verify
+   it is readable; retain its path with the audit. A tar is recovery evidence,
+   not permission to discard unpublished work or secrets.
+
+Repeat the all-state container-reference check immediately before removal. Remove
+only these four literal names, stopping on any failure:
+
+```bash
+docker volume rm -- antiphon-runner-temp_runner-state
+docker volume rm -- antiphon-runner-temp_dind-data
+docker volume rm -- antiphon-runner-temp_runner-tmp
+docker volume rm -- antiphon-runner-temp_work
+```
+
+Verify that inspection of each exact name reports absent and that all four names
+are absent from `docker volume ls`. Retain the archive, audits and removal outcomes;
+never use `down -v`, prune or a name-pattern sweep. Confirm the protected
+`retirement/<operation-id>/receipt.json` is `Refused` or `Completed` with zero
+effects (and zero intents for a Refused receipt). If it remains `Applying`, `Partial`
+or `PartialRefused`, use audited `-Close` after absence is proved, rather than
+rewriting it. The fallback itself does not mark a sanctioned Apply Completed.
+
+The next `deploy-temp` still runs its admission gate:
+`c1609_temp_retirement_clearable` in [c590-remote.sh](../scripts/c590-remote.sh)
+requires all four volumes absent, valid lifecycle/owner evidence and no unresolved
+operation (or a valid audited closure). A Refused zero-effects/zero-intents receipt
+can pass those checks; receipt state alone cannot clear retained volumes or a live
+owner. [c1008-retirement.sh](../scripts/c1008-retirement.sh) owns receipt validation
+and Close. Keep the original failure visible even after redeployment is admitted.
+
 ### Mount generations and the rolling proofs (CARD-1105)
 
 `redeploy-old` proves the containers it stops against their creating generation,
@@ -932,6 +1054,38 @@ which is not reloaded, so its soft rollback is a server restart with `Delegation
 A hot reload works only for the desktop AppHost's `appsettings.Development.json`, and only while no
 `Delegation__WorkspaceSlotRoles` environment variable shadows it. Confirm a rollback from the next task's
 `WorkspaceSlotDecision` event (`reason=roles_none`).
+
+#### Workspace-slot activation and retained directories (2026-11-16)
+
+The desktop AppHost's local `server/appsettings.Development.json` now has
+`Delegation:WorkspaceSlotRoles` set to `*`: every role except Mutation; SourceLanding
+never leases. The standing server2 runner has
+`PhoneHome__WorkspaceSlots__Enabled=true`. Temp reads **its own**
+`secrets/stack.temp.env`, which now also contains that assignment; it takes effect
+at the next `deploy-temp`, not when standing server2 is recreated. These are the
+2026-11-16 operational settings, not new repository defaults. The local development
+JSON and secret stack files are not committed. The parsing/exclusion contract is
+[WorkspaceSlotRoles.cs](../server/Application/Settings/WorkspaceSlotRoles.cs);
+`runner_workspace_slots_enabled`, `case_deploy_temp_runner` and `case_deploy_parent`
+in [c590-remote.sh](../scripts/c590-remote.sh) read each stack file independently.
+
+On 2026-11-16, `ws-01` and `ws-04` re-homed to `ws-01-d2` and `ws-04-d2`.
+The old directories remain on disk by design. To see both the current paths and
+retained directories, read only the ledger fields below inside the owning runner:
+
+```bash
+jq '{slots:[.slots[]|{id,path,state}],quarantinedDirectories,attention}' /work/workspace-slots/ledger.json
+```
+
+The `attention` rows record slot id, original path, reason and time;
+`quarantinedDirectories` records the retained path and whether it is still open
+(`closedAt: null`). [RunnerWorkspaceSlotPool.cs](../src/Antiphon.SessionRunner/RunnerWorkspaceSlotPool.cs)
+(`QuarantineDirectoryAsync`, `QuarantineAndRehomeAsync`) writes these rows and locks
+the old registration before creating a replacement. Nothing automatically cleans
+these old directories yet. `ReleaseQuarantineAsync` is the existing explicit audited
+release operation described above, not a periodic sweeper; warm/cold resets of the
+replacement do not remove the quarantined original. Account for retained disk use
+and inspect the ledger before drain or volume retirement.
 
 ### Runner Linux compiler policy (CARD-1885/CARD-1906)
 
@@ -1732,6 +1886,28 @@ not a durable history. On Linux these are the worktree and state volume views, e
 share one underlying filesystem.
 
 The same compose file sets the server2 **host build budget** (CARD-0589): `SessionRunner__BuildSlots__MaxConcurrent: "4"`, `SessionRunner__BuildSlots__MaxCpuCount: "6"`, `SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"`. Ten seats share four concurrent build/test driver leases at `-maxcpucount:6` each, and no lease is granted below 16 GB available (24 cores, no cgroup memory cap, other services on the host). Seats are counted first, then slots, then the memory floor: a free seat can still queue its builds, and a free slot never admits a session. To change the budget, edit those values and redeploy the runner; `SessionRunner__BuildSlots__Enabled: "false"` makes every acquire answer unlimited. Check it after a deploy with `docker exec antiphon-runner-session-runner-1 curl -fsS http://127.0.0.1:8080/build-slots` (200, `budget` equal to the configured value). Delegates in the container reach it at that address, the default of `scripts/lib/build-slot.ps1` on Linux (`ANTIPHON_BUILD_SLOTS_URL` overrides it). Contract, wait lines and exit codes: [testing-and-build.md](testing-and-build.md), Build slots (CARD-0589).
+
+### Server2 load before builds (2026-11-16)
+
+On the 24-core host, seven tasks with several concurrent builders drove load from
+39 to 63; cold builds then exceeded the 600-second driver deadline. Keep seven
+tasks in flight under the operator's 2026-11-16 direction, but cap **heavy builders**
+(Code/Debug/Merge) at about three or four and fill remaining seats with plans,
+investigations, docs and reviews that are not building. Task occupancy and build
+occupancy are separate limits; a docs/review task that builds also consumes build
+capacity.
+
+**Read `/proc/loadavg` before each build, start under 16, never stop a started row
+for load.** Use the first (one-minute) load value. At 16 or above, defer the build
+and recheck before starting it; do not cancel a row merely because load rises
+after admission. Record the starting load with its source SHA and build receipt.
+The load rule is an operator admission check, not a claimed automatic broker
+feature. Every driver still goes through
+[scripts/build-slot.ps1](../scripts/build-slot.ps1); the four-slot/six-node budget
+above is a ceiling, not a reason to start at high load. Do not widen the deadline
+or bypass the slot gate to hide overload. See
+[test performance standards](test-performance-standards.md) for timing and overrun
+reporting.
 
 ### Chromium runtime witness (CARD-1323)
 
