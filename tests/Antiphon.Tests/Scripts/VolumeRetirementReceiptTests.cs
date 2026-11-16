@@ -955,6 +955,118 @@ public sealed class VolumeRetirementReceiptTests
         }
     }
 
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Large_ready_rendering_precedes_the_unchanged_final_fence()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var padding = Path.Combine(f.Root, "large-audit.txt");
+        // The reported audit had 10,417 lines / 1,131,573 bytes. Keep at least
+        // that workload, including findings, and model a loaded renderer at 6s.
+        var rows = Enumerable.Range(0, 10417).Select(i =>
+            i % 100 == 0 ? "{\"kind\":\"fixture\",\"path\":\"retained-evidence\",\"commit\":null}" :
+            "fixture-audit-row=" + i.ToString("D5") + " " + new string('x', 100));
+        await File.WriteAllTextAsync(padding, string.Join('\n', rows) + "\n");
+        new FileInfo(padding).Length.ShouldBeGreaterThan(1_131_573);
+        var trace = Path.Combine(f.Root, "render.trace");
+        var hooks = $$"""
+            eval "$(declare -f c1609_publication_gate | sed '1s/c1609_publication_gate/c1955_original_gate/')"
+            c1609_publication_gate() {
+                cat -- {{VolumeRetirementFixture.Quote(padding)}} >> "$CASE_DIR/preview-audit.out" || return 1
+                c1955_original_gate "$@"
+            }
+            eval "$(declare -f c1609_copy_preview_rows | sed '1s/c1609_copy_preview_rows/c1955_original_render/')"
+            c1609_copy_preview_rows() {
+                printf 'start %s\n' "$(c1609_monotonic_ms)" >> {{VolumeRetirementFixture.Quote(trace)}}
+                sleep 6
+                c1955_original_render "$@" || return 1
+                printf 'done %s\n' "$(c1609_monotonic_ms)" >> {{VolumeRetirementFixture.Quote(trace)}}
+            }
+            """;
+        var module = await WriteFenceModule(f, hooks);
+        var renderedBeforeControl = false;
+        var run = await f.Preview(proof, extra: "export C1609_RETIREMENT_FILE=" + VolumeRetirementFixture.Quote(module),
+            beforeControl: () =>
+            {
+                renderedBeforeControl = File.Exists(trace) && File.ReadAllLines(trace).Last().StartsWith("done ", StringComparison.Ordinal);
+                File.Exists(Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation, "receipt.json"))
+                    .ShouldBeFalse("staging never installs Ready before fresh live control");
+                return Task.CompletedTask;
+            });
+        f.ControlRequests.ShouldBe(1, "real live-origin control must succeed for this witness");
+        (await File.ReadAllTextAsync(Path.Combine(f.Root, "coordinator.log"))).ShouldContain("C1609_CONTROL_REQUEST ");
+        run.Exit.ShouldBe(0, "the same full render workload must fit by preceding the final binding clock; " + VolumeRetirementFixture.Truncate(run.Output));
+        renderedBeforeControl.ShouldBeTrue();
+        var events = await File.ReadAllLinesAsync(trace);
+        events.Length.ShouldBe(2, "the complete audit is rendered exactly once");
+        (long.Parse(events[1].Split(' ')[1]) - long.Parse(events[0].Split(' ')[1])).ShouldBeGreaterThanOrEqualTo(6000);
+        var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
+        (await File.ReadAllTextAsync(Path.Combine(root, "audit.txt"))).ShouldEndWith(await File.ReadAllTextAsync(padding));
+        File.ReadAllLines(Path.Combine(root, "findings.jsonl")).Length.ShouldBeGreaterThanOrEqualTo(105);
+        (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready");
+        run.Output.ShouldContain(VolumeRetirementFixture.ReadyMarker);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Late_ready_fence_refusal_invalidates_apply_admission()
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
+        var proof = await f.WriteProof(); proof.Exit.ShouldBe(0, proof.Output);
+        var hooks = """
+            eval "$(declare -f c1609_write_ready_receipt | sed '1s/c1609_write_ready_receipt/c1955_original_writer/')"
+            c1609_write_ready_receipt() {
+                c1955_original_writer "$@" || return 1
+                printf 'C1955_READY_INSTALLED\n'
+                sleep 6
+            }
+            """;
+        var module = await WriteFenceModule(f, hooks);
+        var run = await f.Preview(proof, extra: "export C1609_RETIREMENT_FILE=" + VolumeRetirementFixture.Quote(module));
+        run.Exit.ShouldBe(2, run.Output);
+        run.Output.ShouldContain("C1955_READY_INSTALLED");
+        run.Output.ShouldContain("reason=proof-stale");
+        run.Output.ShouldNotContain(VolumeRetirementFixture.ReadyMarker);
+        f.ControlRequests.ShouldBe(1);
+        var root = Path.Combine(f.Root, "server/retirement", VolumeRetirementFixture.Operation);
+        var receipt = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "receipt.json")))!;
+        receipt["state"]!.GetValue<string>().ShouldBe("Refused", "a refused enclosing preview cannot leave Apply authority");
+        var nonce = receipt["phaseNonce"]!.GetValue<string>();
+        var preview = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(root, "preview-" + nonce + ".json")))!;
+        preview["state"]!.GetValue<string>().ShouldBe("Ready", "immutable preview evidence remains intact");
+        preview["consumed"]!.GetValue<bool>().ShouldBeFalse();
+        (await CheckPreview(f.Host!)).Exit.ShouldNotBe(0, "low-level Apply admission refuses the invalidated receipt");
+        var packet = Path.Combine(f.Root, "read-packet.sh");
+        var makePacket = await f.Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command",
+            ". " + VolumeRetirementPublicationFixture.Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1609-read-packet.ps1")) +
+            "; $packet=New-C1609RetirementReadPacket -Operation '" + VolumeRetirementFixture.Operation +
+            "'; [IO.File]::WriteAllText(" + VolumeRetirementPublicationFixture.Ps(packet) +
+            ", $packet.Replace('/home/mc/antiphon-server2'," + VolumeRetirementPublicationFixture.Ps(Path.Combine(f.Root, "server")) + "))"]);
+        makePacket.Exit.ShouldBe(0, makePacket.Output);
+        var readPacket = await f.Run("bash", [packet]);
+        readPacket.Exit.ShouldNotBe(0, "the public wrapper must also refuse admission; " + readPacket.Output);
+        readPacket.Output.ShouldNotContain("\"state\":\"Ready\"");
+        var diagnostics = File.ReadAllLines(Path.Combine(root, "publication-diagnostics.jsonl"));
+        diagnostics.Length.ShouldBeGreaterThan(0);
+        diagnostics.All(line => line.Length < 512).ShouldBeTrue("fixed fields only; no raw stderr/origins/audit payload");
+        var diagnostic = diagnostics.Select(line => JsonNode.Parse(line)!).Last(row => row["stage"]!.GetValue<string>() == "ready-published");
+        diagnostic["elapsedMs"]!.GetValue<long>().ShouldBeGreaterThan(5000);
+        diagnostic["limitMs"]!.GetValue<int>().ShouldBe(5000);
+        (await File.ReadAllTextAsync(Path.Combine(root, "proof.md"))).ShouldContain("state: Ready", "refusal must preserve rendered preview evidence");
+        f.Host!.Removed.ShouldBeEmpty();
+    }
+
+    private static async Task<string> WriteFenceModule(VolumeRetirementPublicationFixture f, string hooks)
+    {
+        var module = Path.Combine(f.Root, "fence-module.sh");
+        await File.WriteAllTextAsync(module,
+            await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")) + "\n" + hooks + "\n");
+        return module;
+    }
+
     private static async Task WaitForBarrier(string path, Task<(int Exit, string Output)> run)
     {
         var deadline = System.Diagnostics.Stopwatch.StartNew();
