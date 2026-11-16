@@ -40,6 +40,13 @@ public sealed class VolumeRetirementDockerTests(VolumeRetirementDockerEnvironmen
         NativeLinuxGate.Require(NativeLinuxReason);
         await environment.RunAsync("N3", cancellationToken);
     }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task Replacement_and_unattributed_absence_refuse_resume(CancellationToken cancellationToken)
+    {
+        NativeLinuxGate.Require(NativeLinuxReason);
+        await environment.RunAsync("N3refusals", cancellationToken);
+    }
 }
 
 // Construction does no IO: Windows reaches the first-statement gate before work.

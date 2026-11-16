@@ -544,8 +544,9 @@ const legacySeed=[
   'C1008_RECORD="$(jq -cn --argjson context "$C1008_RECORD" --arg project "$C1008_PROJECT" --argjson volumes "$volumes" \'$context+{schema:1,project:$project,phase:"removing",volumes:$volumes}\')"',
   'C1008_ACTIVE=1; C1609_APPLY_ACTIVE=1; c1008_save'
 ].join('\n');
-async function n3(f) {
+async function n3(f, refusalsOnly=false) {
   const callOffset=fs.statSync(scope.root+'/docker-calls.jsonl').size;
+  if(!refusalsOnly){
   proof(f);await ready(f);
   const applied=await shell(f,'c1008_lock; c1609_require_ready_preview || exit 2\n'+legacySeed+'\n'+effectBody(),'apply');
   const firstCalls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').slice(callOffset).trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
@@ -553,8 +554,9 @@ async function n3(f) {
   assert.equal(applied.code,0,'N3 exact real delete loop: '+applied.stdout+applied.stderr);
   assert.equal(receipt(f).state,'Completed');for(const n of f.targets)assert.equal(call(cli,['volume','inspect',n],true).code,1);
   preserve(f);
-  for(const cut of ['after-rm','replacement','no-intent']){
-    const g=fixture('N3'+cut.replaceAll('-',''));proof(g);await ready(g);
+  }
+  for(const cut of refusalsOnly?['replacement','no-intent']:['after-rm']){
+    const g=refusalsOnly&&cut==='replacement'?f:fixture('N3'+cut.replaceAll('-',''));proof(g);await ready(g);
     try {
       const fault={operation:g.op,name:g.targets[0],cut:cut==='no-intent'?'none':'kill-after-rm'};
       fs.writeFileSync(scope.root+'/fault.json',JSON.stringify(fault));
@@ -580,7 +582,7 @@ async function n3(f) {
   }
   const calls=fs.readFileSync(scope.root+'/docker-calls.jsonl','utf8').slice(callOffset).trim().split('\n').filter(Boolean).map(l=>JSON.parse(l));
   const removes=calls.filter(c=>c.args[0]==='volume'&&c.args[1]==='rm');
-  assert(removes.length>=4);assert(removes.every(c=>c.args.length===4&&c.args[2]==='--'),'N3 only exact non-force deletion');
+  assert(removes.length>=(refusalsOnly?1:4));assert(removes.every(c=>c.args.length===4&&c.args[2]==='--'),'N3 only exact non-force deletion');
   assert(removes.every(c=>c.intentBeforeRm),'N3 every real delete has a durable intent');
 }
 async function shim() {
@@ -644,12 +646,12 @@ else {
     assert.equal(d('volume','ls','-q','--filter','label='+label+'='+scope.prefix),'');
     scope.cleaned=true;save();console.log('C1609_NATIVE session cleanup=absent root='+scope.root);
   } else {
-    assert.equal(argv[0],'--case');const id=argv[1];assert(['N1','N2','N3'].includes(id));
+    assert.equal(argv[0],'--case');const id=argv[1];assert(['N1','N2','N3','N3refusals'].includes(id));
     scope.imageSource=scope.imageSource || scope.source;
     scope.source=call('git',['rev-parse','HEAD']).stdout.trim();scope.phase='case';save();
     const f=fixture(id);let failure;
     // Update the shim's operation binding for every exact real source invocation.
-    try {await ({N1:n1,N2:n2,N3:n3}[id])(f);}
+    try {await (id==='N3refusals'?n3(f,true):({N1:n1,N2:n2,N3:n3}[id])(f));}
     catch(e){failure=e;console.error(e.stack);}
     finally {
       const leftovers=d('ps','-aq','--no-trunc','--filter','label='+label+'='+scope.prefix,'--filter','name=c1008-preview-'+f.op).split('\n').filter(Boolean);
