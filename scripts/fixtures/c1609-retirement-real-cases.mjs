@@ -337,6 +337,7 @@ async function liveChild(f,args){
         const match=l.match(/^C1609_PROVED_OBJECT repo=repos\/outer object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$/);assert(match);return '[pscustomobject]@{objectId='+q(match[1])+';type='+q(match[2])+'}';
       }):[];
       const nonce=crypto.randomBytes(16).toString('hex'),started=Math.floor(Date.now()/1000),directory=local+'/proof-'+proofs++;
+      fs.mkdirSync(directory);
       const r=host('Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+' -ProofVersion 2 -PhaseNonce '+q(nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(directory)+' -CreatedUnix '+started+' -LogPath '+q(local+'/proof.log')+' -RequiredObjects @('+required.join(',')+')'+(previous?' -PreviousProofFile '+q(previous)+' -FreshGraph':''));
       assert.equal(r.code,0,'native real proof writer: '+r.stdout+r.stderr);
       const name='c1008-proof-'+f.op+'-'+started+'-'+nonce,destination=config.control+'/'+name;
@@ -365,6 +366,9 @@ async function liveChild(f,args){
   try{const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
     if(failure)stderr+='\n'+failure.stack;
     stdout+='\nNATIVE_PROTOCOL proofs='+proofs+' controls='+controls+'\n';
+    if(process.env.ANTIPHON_TEST_PHASE_ROOT){
+      fs.appendFileSync(process.env.ANTIPHON_TEST_PHASE_ROOT+'/native-stages.jsonl',JSON.stringify({source:scope.source,case:'N3',operation:f.op,call:config.suffix,exit:failure?2:code,proofs,controls,stages:stderr.split('\n').filter(l=>/^NATIVE_(FENCE|RENDER) /.test(l))})+'\n');
+    }
     console.log(stdout.split('\n').filter(l=>l.startsWith('NATIVE_')).join('\n')+'\n'+stderr);
     return {code:failure?2:code,stdout,stderr};
   }finally{clearTimeout(timer);child.stdin.destroy();}
