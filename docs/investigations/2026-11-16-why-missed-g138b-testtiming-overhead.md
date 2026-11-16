@@ -2,6 +2,12 @@
 
 Task cc5b4299; Linux Debug started from current origin/master cd4165b16280e2a781acaa527b059c9c9cb71c75. The reported native Windows failure was cpuMedian 0.08846153846153847 against the unchanged strict 0.05 bound, body duration 64.57 seconds, run 160200cb on rc/2026-11-22 a71c45ab4d5703d480f4eee4c4e30adab45bc4f9. This task did not access or change either live qualification, restart services, or write rc/master.
 
+## Accepted disposition (2026-11-16)
+
+The orchestrator accepted the reduced sampling and retained the 75-minute time box: **10 of the originally requested 60 baseline measurements are sufficient for this task; do not run the remaining 50**. The earlier sampling gate is closed by that explicit decision, not by claiming a completed distribution. The test-only repair is ready for **next: merge**. No additional measurements or test runs were performed for this report-only update.
+
+The cause is a nonexclusive benchmark: unrelated tests contributed to process CPU, allowing the median to jump on the loaded Windows host. The scheduling defect is proven by the red metadata witness; attribution of the particular Windows sample to a particular peer was not reproduced. The **0.05 CPU bar is unchanged**. The original Windows failure was **not reproduced** on Linux; the Windows rerun in the next qualification run is the confirmation and remains an open risk.
+
 ## Diagnosis and scope
 
 (A) measurement sensitivity is the supported explanation; a Windows causal reproduction remains outstanding. The benchmark's Process.TotalProcessorTime includes all managed and native threads in the test process, including other TUnit tests. Its class-level NotInParallel("C1514Choke") serializes only peers with that key, while the rc chunk contained 362 tests. The test already alternates OFF/ON repetitions and pair order, uses nine pairs, includes database/Git/filesystem work and ON serialization/flush, and measures process CPU. Those features do not exclude unrelated in-process CPU. External CPU hogs are a different load source: their CPU is not directly charged by this process clock.
@@ -20,9 +26,17 @@ The b7812833 final report at origin/feat/card-task-3820a5f1 (4e16fc96cea6d89ff86
 
 ## Repair
 
-Give C1514T_Overhead a method-level unkeyed NotInParallel constraint. TUnit 1.44 explicitly gives method constraints precedence over class constraints and documents an unkeyed constraint as exclusive against every other test. Keep the keyed class constraint and process-spawn limiter for the other methods. Keep the nine-pair estimator, equal-work checks, finite-ratio checks, dropped-span and record assertions, serialization/flush CPU charge, 5% CPU bound, 10% wall bound, and slow-recorder rejection control unchanged. No production code, threshold, timeout, policy input, or exclusion changes.
+Give C1514T_Overhead a method-level unkeyed NotInParallel constraint. TUnit 1.44 explicitly gives method constraints precedence over class constraints and documents an unkeyed constraint as exclusive against every other test. Keep the keyed class constraint and process-spawn limiter for the other methods. Every other test class retains its existing parallel scheduling: those classes still run in parallel with one another outside this one exclusive method. The scheduling cost is that other tests in the same assembly/process wait for this benchmark interval (roughly one to two minutes in these observations; the loaded fixed test body took 107.23 seconds). This constraint does not reserve the host or exclude other processes. Keep the nine-pair estimator, equal-work checks, finite-ratio checks, dropped-span and record assertions, serialization/flush CPU charge, 5% CPU bound, 10% wall bound, and slow-recorder rejection control unchanged. No production code, threshold, timeout, policy input, or exclusion changes.
 
 PairedOverheadStatisticsTests.Process_cpu_benchmark_cannot_overlap_unrelated_tests is the cheap pre-land scheduling witness. The full overhead method took 94 seconds ambient and 113 seconds with 24 hogs before repair, including setup, so it is not a cheap always-on guard addition. Retain the full benchmark as an explicit timing-family verification row; do not infer performance from the metadata guard. Global test-process isolation does not reserve the physical host or prove the unchanged wall bound robust on every saturated Windows desktop.
+
+Cheapest pre-land row, after a native build with matching properties:
+
+```sh
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1514-isolation -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -p:BuildProjectReferences=false -- --treenode-filter '/*/*/PairedOverheadStatisticsTests/Process_cpu_benchmark_cannot_overlap_unrelated_tests'
+```
+
+The red witness body took 70 ms (5.104 seconds framework time); its green execution is included in the 19-test named row below. This metadata row checks the scheduling guarantee; the full overhead method remains the performance confirmation.
 
 ## Measurement protocol and retained limits
 
@@ -85,7 +99,7 @@ Every loaded row has a retained `hogs-joined.txt`; all 24 task-owned busy-loop p
 | rc22 ambient | 2 / 10 | 8 |
 | rc22 loaded | 2 / 10 | 8 |
 
-Baseline rows with a CPU median: **10 / 60**. Remaining requested standalone measurements: **50**. Rows without a usable CPU median, if any, are not credited in this count. The two repaired-source observations above are separate controls and do not substitute for baseline rows. The 75-minute time box was retained; no extension or waiver of the ten-per-cell request was received. This is incomplete historical sampling, not a completed distribution or a measured p95. The original Windows 8.85% event was not causally reproduced, so Windows confirmation remains owed on a later authorized cut. The live pinned Windows runs were untouched.
+Baseline rows with a CPU median: **10 / 60**. Remaining originally requested standalone measurements: **50**. Rows without a usable CPU median, if any, are not credited in this count. The two repaired-source observations above are separate controls and do not substitute for baseline rows. At the initial report, the 75-minute time box was retained and no waiver had yet been received, so the task reported an incomplete sampling gate. The reopened-task instruction explicitly accepted these 10 baseline rows and waived the remaining 50; that gate is now closed. This remains reduced historical sampling, not a completed distribution or a measured p95. The original Windows 8.85% event was not causally reproduced, so Windows confirmation remains owed on a later authorized cut. The live pinned Windows runs were untouched.
 
 The supported diagnosis remains (A): an inherited measurement/scheduling flaw, with no evidence of a recent recorder hot-path regression (B). The source change removes TUnit peers from the process CPU interval while preserving the workload, flush CPU, all nine pairs, strict 5% CPU and 10% wall medians, finite-ratio guards, and existing rejection controls. External-only saturation did not reproduce the native failure in the observed Linux rows; this distinction is part of the result, not hidden as a production-overhead fix.
 
@@ -94,6 +108,6 @@ Cold historical build results (slot wait recorded separately in each log):
 - rc21: elapsed 00:07:13.10, errors 0; /proc/loadavg before 3.43 5.18 7.62 2/2984 32633, after 4.79 8.89 8.86 4/2971 12551. Log: `/tmp/cc5b4299-evidence/rc21-build.log`.
 - rc22: elapsed 00:06:07.69, errors 0; /proc/loadavg before 23.06 16.30 12.02 5/2955 22314, after 6.44 10.59 10.98 2/2878 23378. Log: `/tmp/cc5b4299-evidence/rc22-build.log`.
 
-Reproduction uses the frozen SHA, an independent native build through the host gate, and one exact filter per fresh results root: `/*/*/TestTimingChokePointTests/C1514T_Overhead`. The retained helper `/tmp/cc5b4299-evidence/run-one.ps1 -Root <frozen-checkout> -Label <fresh-unique-label> -Mode ambient|loaded` wraps `dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false` through `scripts/build-slot.ps1`, records the raw JSON/TRX/CPU ratios and load, and joins owned hogs. Do not reuse an existing label. Completing the missing matrix needs a new time budget; it does not require changing the CPU threshold or the estimator. Once the commissioner resolves that incomplete sampling gate, the repair is test-only and follows the brief's Merge path.
+Reproduction uses the frozen SHA, an independent native build through the host gate, and one exact filter per fresh results root: `/*/*/TestTimingChokePointTests/C1514T_Overhead`. The retained helper `/tmp/cc5b4299-evidence/run-one.ps1 -Root <frozen-checkout> -Label <fresh-unique-label> -Mode ambient|loaded` wraps `dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false` through `scripts/build-slot.ps1`, records the raw JSON/TRX/CPU ratios and load, and joins owned hogs. Do not reuse an existing label. The commissioner has accepted the reduced matrix and instructed that the remaining 50 rows must not run. No new time budget or threshold change is needed. The repair is test-only and follows the brief's Merge path; Windows confirmation belongs to the next qualification run.
 
 Evidence retained in `/tmp/cc5b4299-evidence`: full build logs, fresh per-row TRX and raw nine-pair JSON, per-row receipts with SHA and load, PID custody/join records, deterministic regeneration outputs, and guard/selector results. Essential observations and costs are preserved here; generated payloads were not added to Git.
