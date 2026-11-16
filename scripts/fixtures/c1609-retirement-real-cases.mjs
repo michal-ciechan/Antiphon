@@ -258,14 +258,18 @@ function shell(f, body, suffix='run') {
   let src=fs.readFileSync(repo+'/scripts/c590-remote.sh','utf8');
   const marker="\ntrap 'ec=$?; if [ \"$WROTE\" != 1 ]";
   assert.equal(src.split(marker).length,2,'unique real entrypoint injection');
+  const lifecycle=['preview','apply','crash','resume'].includes(suffix);
+  const begin=lifecycle
+    ? 'C1008_DRY_RUN='+(suffix==='preview'?'1':'0')+'; C1008_RESUME='+(suffix==='resume'?'1':'0')+'\nc1609_phase_begin || exit 2\n'
+    : '';
   if(f.live){
-    const phase=crypto.randomBytes(16).toString('hex');
     const control=f.host+'/control-'+suffix;
     const registry=JSON.stringify({schema:1,projects:{'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1':{origins:[originURL]}}});
     rootRun('printf %s '+q(registry)+' | jq -cS . > '+q(f.host+'/server/retirement-origins.json')+'; chown '+applyUid+':'+applyGid+' '+q(f.host+'/server/retirement-origins.json')+'; chmod 0600 '+q(f.host+'/server/retirement-origins.json'));
     const setup=[
+      begin,
       'C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
-      'C1609_PHASE_NONCE='+q(phase),'C1609_EXCHANGE=1','C1008_HOST_PROOF=',
+      'C1609_EXCHANGE=1','C1008_HOST_PROOF=',
       'C1609_EXCHANGE_PROOF_ROOT='+q(control),'mkdir -m 0700 '+q(control),
       'mkdir -p -m 0700 "$(c1609_retirement_root)"',
       'c1609_prepare_exchange || exit 2',
@@ -286,8 +290,9 @@ function shell(f, body, suffix='run') {
       }
       body=body.replace('c1609_write_ready_receipt || exit 2',before+'c1609_publication_gate ready || exit 2\nc1609_write_ready_receipt || exit 2\nc1609_effect_publication_fresh ready-published || exit 2');
     }
-    f.liveCall={phase,control,suffix};
-  }
+    f.liveCall={phase:null,control,suffix};
+  } else if(lifecycle) body=body.replace(/^c1008_lock[;\n]/,'c1008_lock\n'+begin);
+  if(lifecycle) body+='\nc1609_phase_end || exit 2';
   const lines=[
     'LANE=host','HOST_PROJECT='+q(f.main),'TEMP_PROJECT='+q(f.project),'C1008_PROJECT='+q(f.project),
     'SERVER2_ROOT='+q(f.host+'/server'),'CASE_DIR='+q(f.host+'/evidence'),
@@ -334,7 +339,8 @@ async function liveChild(f,args){
     '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+'; '+command],true,60000);
   const respond=line=>{
     if(line.startsWith('C1609_PROOF_REQUEST ')){
-      const fields=line.split(' ');assert.equal(fields.length,6);assert.equal(fields[2],config.phase);
+      const fields=line.split(' ');assert.equal(fields.length,6);assert.match(fields[2],/^[0-9a-f]{32}$/);
+      config.phase ??= fields[2];assert.equal(fields[2],config.phase);
       const required=fields[3]==='renew'?rootRead(f.host+'/server/retirement/'+f.op+'/inventory-'+config.phase+'/published-objects.txt').trim().split('\n').filter(Boolean).map(l=>{
         const match=l.match(/^C1609_PROVED_OBJECT repo=repos\/outer object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$/);assert(match);return '[pscustomobject]@{objectId='+q(match[1])+';type='+q(match[2])+'}';
       }):[];
