@@ -2,6 +2,7 @@
 param([string]$Case,[string]$ResultsDirectory)
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/lib/c487-harness.ps1"
+. "$PSScriptRoot/lib/test-selection.ps1"
 $library=Join-Path $PSScriptRoot 'lib/rc-incremental-plan.ps1'
 if (Test-Path -LiteralPath $library) { . $library }
 $errors=[Collections.Generic.List[string]]::new()
@@ -16,7 +17,7 @@ function Obligation([string]$method,[string]$caseKey='one',[string]$chunk='chunk
 }
 function Decision($row,[string]$kind='Carry',[string]$chunk='historical-one',[double]$wall=12) {
     @{suite=$row.suite;className=$row.className;method=$row.method;caseKey=$row.caseKey;disposition=$kind;reasons=@('fixture');
-        origin=@{suite='server';envelopeDigest=('a'*64);runId='old-run';sourceSha=('b'*40);chunkId=$chunk;wallSeconds=$wall}}
+        origin=@{suite=$row.suite;envelopeDigest=('a'*64);runId='old-run';sourceSha=('b'*40);chunkId=$chunk;wallSeconds=$wall}}
 }
 function Suites($rows) { ,@(@{suite='server';adapter='tunit';cases=@($rows)}) }
 if (-not $ResultsDirectory) { $ResultsDirectory=Join-Path ([IO.Path]::GetTempPath()) ('rs-'+[guid]::NewGuid().ToString('N')) }
