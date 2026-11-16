@@ -342,7 +342,7 @@ async function liveChild(f,args){
       assert.equal(r.code,0,'native real proof writer: '+r.stdout+r.stderr);
       const name='c1008-proof-'+f.op+'-'+started+'-'+nonce,destination=config.control+'/'+name;
       const files=fs.readdirSync(directory).sort();assert.equal(files.length,2);
-      rootRun('mkdir -m 0700 '+q(destination)+'; cp '+files.map(n=>q(directory+'/'+n)).join(' ')+' '+q(destination)+'/; chown -R '+applyUid+':'+applyGid+' '+q(destination)+'; chmod 0644 '+q(destination)+'/*');
+      rootRun('mkdir -m 0755 '+q(destination)+'; cp '+files.map(n=>q(directory+'/'+n)).join(' ')+' '+q(destination)+'/; chown -R '+applyUid+':'+applyGid+' '+q(destination)+'; chmod 0644 '+q(destination)+'/*');
       const digest=hash(files.map(n=>n+' '+hash(fs.readFileSync(directory+'/'+n))+'\n').join(''));
       previous=directory+'/'+files.find(n=>!n.endsWith('.bundle'));
       return 'C1609_PROOF_RESPONSE '+fields[1]+' '+name+' '+started+' '+nonce+' '+f.inventory+' '+digest+' '+fields[4]+' '+fields[5];
