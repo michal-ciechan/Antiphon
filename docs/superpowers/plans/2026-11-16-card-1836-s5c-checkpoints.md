@@ -21,7 +21,7 @@ Provisional method 60s, child 45s plus 10s joined cleanup, as in the activation 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-9 | S5c | `tests/Antiphon.Tests -> bin-c1836-s5c-green/` | linux-plan-status | `/*/*/RcLedgerStatusTests/*` | V-9 | all four named methods, no failures/skips | 4 | 4 |
+| CP-9 | S5c | `tests/Antiphon.Tests -> bin-c1836-s5c-green2/` | linux-plan-status | `/*/*/RcLedgerStatusTests/*` | V-9 | all four named methods, no failures/skips | 4 | 4 |
 | CP-90 | S5c | CP-9 | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | policy, categories, layering, spawn census, platform admission | all named classes, no failures/skips | 79 | 4 |
 | CP-93 | S5c | CP-9 | linux-index | `/*/*/DerivedImpactIndexTests/*` | index guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S5c | CP-9 | linux-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | envelope guard | all methods, no failures/skips | 4 | 1 |
@@ -36,3 +36,7 @@ Provisional method 60s, child 45s plus 10s joined cleanup, as in the activation 
 `Write-RcPlanRevision <external-root> <plan-path> <plan-digest> <cumulative-results>` appends open immutable revisions under an exclusive writer lock, reads every seal back, then atomically publishes the index. Recorded outcomes cannot be removed or replaced. An orphan next revision refuses extension rather than being adopted. `rc-ledger-status.ps1 -EvidenceRoot <root> -ExpectedPlanDigest <digest> [-Json]` reads the published revision without Git/process/HTTP calls. Even all Passed results do not close qualification; S6d owns that authority.
 
 Restart target for this task: none, because no runtime caller imports the new library. The broad OS-witness startup-path census nevertheless includes scripts/lib/rc-incremental-plan.ps1. Its exact-candidate native Windows build-driver probe and restart rehearsal remain pending under docs/release-gates.md#startup-path-rc-picks before any later rc publication/activation. This task cannot run them on the occupied desktop. S7d native launch/closure/historical admission remains separately pending, never passed here. Current production Full/Shadow/ChangeAware execution stays unchanged; this slice supplies exact diagnostic accounting, not cross-candidate pass reuse.
+
+### Retained first Final attempt
+
+At c891dcd3fc0192022c8f959b0f370f7e3015eae6, run 20261116-182746-5ed6 exceeded the isolated build deadline: CP-9/90/93/94/95 all executed zero tests and have no TRX, so none is credited. Source remained clean. Build admission waited 30s, run wall 704.324s; observed load peaked at 62.69. The requested row timeout was 570s; the current checkpoint importer rounds this to 10 whole minutes for its driver deadline. No timeout/assertion is widened. Retain this cost and failure; rerun the same missing main selection once in fresh green2 output after the smaller census rows. This is an infrastructure-driven rerun, not repeated green proof.
