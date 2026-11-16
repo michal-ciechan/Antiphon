@@ -541,3 +541,235 @@ Remove-ReleaseCheckout -Path 'C:\Antiphon\releases\checkout-ff89ca56' -Id 'ff89c
 
 ```
 
+
+## Results (executed 2026-11-16 14:20-15:05Z)
+
+| Measure | Value |
+|---|---|
+| Free on C: at task start | 235258888192 bytes (219.1 GiB) |
+| Free on C: just before deletion | 236447428608 bytes (220.2 GiB) |
+| Free on C: after | 377904029696 bytes (352.0 GiB) |
+| Logical bytes of removed trees | 131283899373 (122.3 GiB) |
+| Worktrees removed / skipped | 174 / 7 (directory already absent at removal time; removed meanwhile by another actor, most likely the hourly CARD-0824 S4a desktop release) |
+| Release checkouts removed | 18 |
+| Local branches deleted (origin at same commit) | 129; kept 40 where origin moved ahead or the branch is gone from origin (HEAD contained elsewhere) |
+| Failures / refusals at removal time | 0 |
+| Registered worktrees now | 35 |
+| `git worktree prune` | dry run and run: nothing to prune |
+
+Live run 053aa2ea supervisor heartbeat was current (hangSuspected=false) after the removals; `checkout-053aa2ea`, `task-053aa2ea`, `state-053aa2ea` and its candidate were not touched.
+
+### KEEP rows holding commits not reachable from origin
+
+| Path | HEAD | Now |
+|---|---|---|
+| `C:/Antiphon/scratch/78334d64-rc` | 5a690f98544f0fefc1dde7c27135f076f440288f | not on any origin branch |
+| `C:/Antiphon/worktrees/card-task-016fd320` | 39a1852f39858c10fec038a90c9d0a47ca70f74e | not on any origin branch |
+| `C:/Antiphon/worktrees/card-task-ebcd3b04` | 5fe59dfd926d47e4439ce885cfafd003aed662ca | not on any origin branch |
+
+The canonical stash list has 3 entries (2026-08-16..21; one names feat/card-task-c6bc61f7, which has no worktree). Untouched.
+
+### Removal log
+
+| UTC | Kind | Path | Size GB | Task | Result | Local branch deleted | Detail |
+|---|---|---|---|---|---|---|---|
+| 2026-11-16T14:24:45 | wt | `C:/Antiphon/scratch/a37ceaf1-rc` | 1.61 | a37ceaf1 | REMOVED | no |  |
+| 2026-11-16T14:24:51 | wt | `C:/Antiphon/scratch/ae4df578-baseline` | 0.17 | ae4df578 | REMOVED | no |  |
+| 2026-11-16T14:25:06 | wt | `C:/Antiphon/scratch/ae4df578-rc` | 0.32 | ae4df578 | REMOVED | no |  |
+| 2026-11-16T14:25:18 | wt | `C:/Antiphon/scratch/089ef857-master` | 0.33 | 089ef857 | REMOVED | no |  |
+| 2026-11-16T14:25:25 | wt | `C:/temp/antiphon-add64715-base` | 0.19 | add64715 | REMOVED | no |  |
+| 2026-11-16T14:25:35 | wt | `C:/Antiphon/worktrees/card-task-29664acc` | 0.20 | 29664acc | REMOVED | yes |  |
+| 2026-11-16T14:25:43 | wt | `C:/Antiphon/worktrees/card-task-e5258e8c` | 0.20 | e5258e8c | REMOVED | kept(origin=2b137d81d) |  |
+| 2026-11-16T14:25:53 | wt | `C:/Antiphon/worktrees/card-task-dd35b058` | 0.20 | dd35b058 | REMOVED | yes |  |
+| 2026-11-16T14:26:01 | wt | `C:/Antiphon/worktrees/card-task-314297be` | 0.20 | 314297be | REMOVED | yes |  |
+| 2026-11-16T14:26:10 | wt | `C:/Antiphon/worktrees/card-task-f303b3ec` | 0.20 | f303b3ec | REMOVED | kept(origin=c3118c9db) |  |
+| 2026-11-16T14:26:19 | wt | `C:/Antiphon/worktrees/card-task-56bf971d` | 0.20 | 56bf971d | REMOVED | kept(origin=7948e04a0) |  |
+| 2026-11-16T14:26:27 | wt | `C:/Antiphon/worktrees/card-task-a41890aa` | 0.20 | a41890aa | REMOVED | kept(origin=3b5001ee5) |  |
+| 2026-11-16T14:26:35 | wt | `C:/Antiphon/worktrees/card-task-801ad6c3` | 0.20 | 801ad6c3 | REMOVED | kept(origin=a3cd0fe6b) |  |
+| 2026-11-16T14:26:43 | wt | `C:/Antiphon/worktrees/card-task-f2976027` | 0.20 | f2976027 | REMOVED | kept(origin=422c6f0b9) |  |
+| 2026-11-16T14:26:49 | wt | `C:/Antiphon/worktrees/card-task-d2564da4` | 0.20 | d2564da4 | REMOVED | kept(origin=92a576d31) |  |
+| 2026-11-16T14:26:58 | wt | `C:/Antiphon/worktrees/card-task-e24018e3` | 0.20 | e24018e3 | REMOVED | kept(origin=38726af4e) |  |
+| 2026-11-16T14:27:05 | wt | `C:/Antiphon/worktrees/card-task-3fd6747e` | 0.20 | 3fd6747e | REMOVED | yes |  |
+| 2026-11-16T14:27:14 | wt | `C:/Antiphon/worktrees/card-task-7c7132b3` | 0.20 | 7c7132b3 | REMOVED | yes |  |
+| 2026-11-16T14:27:21 | wt | `C:/Antiphon/worktrees/card-task-613f2230` | 0.20 | 613f2230 | REMOVED | kept(origin=1dcad366c) |  |
+| 2026-11-16T14:27:31 | wt | `C:/Antiphon/worktrees/card-task-605c6f4e` | 0.20 | 605c6f4e | REMOVED | kept(origin=24f1ea0ab) |  |
+| 2026-11-16T14:27:39 | wt | `C:/Antiphon/worktrees/card-task-b5b7324a` | 0.20 | b5b7324a | REMOVED | kept(origin=841898902) |  |
+| 2026-11-16T14:27:46 | wt | `C:/Antiphon/worktrees/card-task-1edbc845` | 0.20 | 1edbc845 | REMOVED | kept(origin=f47be567b) |  |
+| 2026-11-16T14:27:53 | wt | `C:/Antiphon/worktrees/card-task-8592d536` | 0.20 | 8592d536 | REMOVED | yes |  |
+| 2026-11-16T14:28:00 | wt | `C:/Antiphon/worktrees/card-task-64fb3f5d` | 0.20 | 64fb3f5d | REMOVED | kept(origin=fbbb00882) |  |
+| 2026-11-16T14:28:09 | wt | `C:/Antiphon/worktrees/card-task-f674c79a` | 0.20 | f674c79a | REMOVED | kept(origin=cde2e9127) |  |
+| 2026-11-16T14:28:19 | wt | `C:/Antiphon/worktrees/card-task-cfccf493` | 0.20 | cfccf493 | REMOVED | kept(origin=) |  |
+| 2026-11-16T14:28:26 | wt | `C:/Antiphon/worktrees/card-task-3b906877` | 0.20 | 3b906877 | REMOVED | yes |  |
+| 2026-11-16T14:28:34 | wt | `C:/Antiphon/worktrees/card-task-1e279cab` | 0.20 | 1e279cab | REMOVED | yes |  |
+| 2026-11-16T14:28:40 | wt | `C:/Antiphon/worktrees/card-task-a9b46304` | 0.20 | a9b46304 | REMOVED | yes |  |
+| 2026-11-16T14:28:50 | wt | `C:/Antiphon/worktrees/card-task-b7c4a9b7` | 0.20 | b7c4a9b7 | REMOVED | kept(origin=e04e2efa8) |  |
+| 2026-11-16T14:28:59 | wt | `C:/Antiphon/worktrees/card-task-50e9a890` | 0.20 | 50e9a890 | REMOVED | yes |  |
+| 2026-11-16T14:29:07 | wt | `C:/Antiphon/worktrees/card-task-555ce937` | 0.20 | 555ce937 | REMOVED | yes |  |
+| 2026-11-16T14:29:17 | wt | `C:/Antiphon/worktrees/card-task-02f02e8a` | 0.20 | 02f02e8a | REMOVED | yes |  |
+| 2026-11-16T14:29:25 | wt | `C:/Antiphon/worktrees/card-task-642a3764` | 0.21 | 642a3764 | REMOVED | yes |  |
+| 2026-11-16T14:29:32 | wt | `C:/Antiphon/worktrees/card-task-20805524` | 0.21 | 20805524 | REMOVED | kept(origin=c7216a06f) |  |
+| 2026-11-16T14:29:40 | wt | `C:/Antiphon/worktrees/card-task-e7d7d78b` | 0.21 | e7d7d78b | REMOVED | kept(origin=a06d96a50) |  |
+| 2026-11-16T14:29:47 | wt | `C:/Antiphon/worktrees/card-task-5a2fffb9` | 0.21 | 5a2fffb9 | REMOVED | yes |  |
+| 2026-11-16T14:29:53 | wt | `C:/Antiphon/worktrees/card-task-bc7a9fdd` | 0.21 | bc7a9fdd | REMOVED | kept(origin=6fb21150e) |  |
+| 2026-11-16T14:29:59 | wt | `C:/Antiphon/worktrees/card-task-4f5166ec` | 0.21 | 4f5166ec | REMOVED | kept(origin=b6052173f) |  |
+| 2026-11-16T14:30:06 | wt | `C:/Antiphon/worktrees/card-task-f442a78f` | 0.21 | f442a78f | REMOVED | kept(origin=171182056) |  |
+| 2026-11-16T14:30:13 | wt | `C:/Antiphon/worktrees/card-task-c7a30141` | 0.21 | c7a30141 | REMOVED | kept(origin=436e0d359) |  |
+| 2026-11-16T14:30:20 | wt | `C:/Antiphon/worktrees/card-task-f87fdda9` | 0.21 | f87fdda9 | REMOVED | kept(origin=3364197bf) |  |
+| 2026-11-16T14:30:29 | wt | `C:/Antiphon/worktrees/card-task-5b1ea772` | 0.21 | 5b1ea772 | REMOVED | kept(origin=ed63b5861) |  |
+| 2026-11-16T14:30:36 | wt | `C:/Antiphon/worktrees/card-task-ec9dfd70` | 0.21 | ec9dfd70 | REMOVED | kept(origin=d18822e62) |  |
+| 2026-11-16T14:30:43 | wt | `C:/Antiphon/worktrees/card-task-4292c713` | 0.21 | 4292c713 | REMOVED | kept(origin=13ed70c73) |  |
+| 2026-11-16T14:30:50 | wt | `C:/Antiphon/worktrees/card-task-a2845b6c` | 0.21 | a2845b6c | REMOVED | kept(origin=de40bdb3a) |  |
+| 2026-11-16T14:30:58 | wt | `C:/Antiphon/worktrees/card-task-18dd27d8` | 0.21 | 18dd27d8 | REMOVED | yes |  |
+| 2026-11-16T14:31:05 | wt | `C:/Antiphon/worktrees/card-task-ed0f7942` | 0.21 | ed0f7942 | REMOVED | kept(origin=a41e77962) |  |
+| 2026-11-16T14:31:11 | wt | `C:/Antiphon/worktrees/card-task-1af450d3` | 0.21 | 1af450d3 | REMOVED | yes |  |
+| 2026-11-16T14:31:18 | wt | `C:/Antiphon/worktrees/card-task-f1fde86b` | 0.21 | f1fde86b | REMOVED | yes |  |
+| 2026-11-16T14:31:25 | wt | `C:/Antiphon/worktrees/card-task-7555284f` | 0.21 | 7555284f | REMOVED | kept(origin=eaf879a9f) |  |
+| 2026-11-16T14:31:32 | wt | `C:/Antiphon/worktrees/card-task-da90742c` | 0.21 | da90742c | REMOVED | kept(origin=a4341ba53) |  |
+| 2026-11-16T14:31:39 | wt | `C:/Antiphon/worktrees/card-task-2abcd1c0` | 0.21 | 2abcd1c0 | REMOVED | kept(origin=9c096f32f) |  |
+| 2026-11-16T14:31:45 | wt | `C:/Antiphon/worktrees/card-task-bee64303` | 0.21 | bee64303 | REMOVED | kept(origin=57bbfc99d) |  |
+| 2026-11-16T14:31:52 | wt | `C:/Antiphon/worktrees/card-task-c6ca6929` | 0.21 | c6ca6929 | REMOVED | kept(origin=ea50afd90) |  |
+| 2026-11-16T14:31:58 | wt | `C:/Antiphon/worktrees/card-task-934cdb25` | 0.21 | 934cdb25 | REMOVED | kept(origin=f7001bbaa) |  |
+| 2026-11-16T14:32:05 | wt | `C:/Antiphon/worktrees/card-task-6155693e` | 0.21 | 6155693e | REMOVED | kept(origin=d608b09ba) |  |
+| 2026-11-16T14:32:11 | wt | `C:/Antiphon/worktrees/card-task-94b17435` | 0.21 | 94b17435 | REMOVED | kept(origin=f1a220891) |  |
+| 2026-11-16T14:32:17 | wt | `C:/Antiphon/worktrees/card-task-b0e54eca` | 0.21 | b0e54eca | REMOVED | kept(origin=214114346) |  |
+| 2026-11-16T14:32:25 | wt | `C:/Antiphon/worktrees/card-task-01f26ecf` | 0.21 | 01f26ecf | REMOVED | yes |  |
+| 2026-11-16T14:32:33 | wt | `C:/Antiphon/worktrees/card-task-9294312a` | 0.21 | 9294312a | REMOVED | yes |  |
+| 2026-11-16T14:32:41 | wt | `C:/Antiphon/worktrees/card-task-06aa57e7` | 0.21 | 06aa57e7 | REMOVED | yes |  |
+| 2026-11-16T14:32:51 | wt | `C:/Antiphon/worktrees/card-task-149cb7c3` | 0.21 | 149cb7c3 | REMOVED | yes |  |
+| 2026-11-16T14:33:02 | wt | `C:/Antiphon/worktrees/card-task-d989d9d8` | 0.21 | d989d9d8 | REMOVED | yes |  |
+| 2026-11-16T14:33:20 | wt | `C:/Antiphon/worktrees/card-task-87596cc5` | 0.21 | 87596cc5 | REMOVED | yes |  |
+| 2026-11-16T14:33:27 | wt | `C:/Antiphon/worktrees/card-task-25d9a69f` | 0.21 | 25d9a69f | REMOVED | yes |  |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-3199d57c` | 0.22 | 3199d57c | REMOVED | yes |  |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-dc70c718` | 0.22 | dc70c718 | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-f3a457ae` | 0.22 | f3a457ae | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-b4f39ca7` | 1.05 | b4f39ca7 | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-ec0488ff` | 0.22 | ec0488ff | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-31c683a8` | 2.28 | 31c683a8 | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-cbedf221` | 0.22 | cbedf221 | SKIP |  | directory already absent |
+| 2026-11-16T14:33:37 | wt | `C:/Antiphon/worktrees/card-task-ca8076ae` | 0.22 | ca8076ae | SKIP |  | directory already absent |
+| 2026-11-16T14:33:45 | wt | `C:/Antiphon/worktrees/card-task-ec4754a8` | 0.22 | ec4754a8 | REMOVED | yes |  |
+| 2026-11-16T14:33:53 | wt | `C:/Antiphon/worktrees/card-task-6f663ce6` | 0.22 | 6f663ce6 | REMOVED | yes |  |
+| 2026-11-16T14:34:05 | wt | `C:/Antiphon/worktrees/card-task-6eccb98b` | 0.22 | 6eccb98b | REMOVED | kept(origin=) |  |
+| 2026-11-16T14:34:17 | wt | `C:/Antiphon/worktrees/card-task-35eb006c` | 1.27 | 35eb006c | REMOVED | yes |  |
+| 2026-11-16T14:34:26 | wt | `C:/Antiphon/worktrees/card-task-8de3f823` | 0.22 | 8de3f823 | REMOVED | yes |  |
+| 2026-11-16T14:34:35 | wt | `C:/Antiphon/worktrees/card-task-29d177ef` | 0.22 | 29d177ef | REMOVED | yes |  |
+| 2026-11-16T14:34:46 | wt | `C:/Antiphon/worktrees/card-task-d684bc25` | 0.22 | d684bc25 | REMOVED | yes |  |
+| 2026-11-16T14:34:56 | wt | `C:/Antiphon/worktrees/card-task-ab7e65ba` | 0.22 | ab7e65ba | REMOVED | kept(origin=) |  |
+| 2026-11-16T14:35:04 | wt | `C:/Antiphon/worktrees/card-task-9325be95` | 0.22 | 9325be95 | REMOVED | yes |  |
+| 2026-11-16T14:35:12 | wt | `C:/Antiphon/worktrees/card-task-9c1feeba` | 0.22 | 9c1feeba | REMOVED | yes |  |
+| 2026-11-16T14:35:20 | wt | `C:/Antiphon/worktrees/card-task-3c766de7` | 0.22 | 3c766de7 | REMOVED | yes |  |
+| 2026-11-16T14:35:32 | wt | `C:/Antiphon/worktrees/card-task-8998668f` | 2.28 | 8998668f | REMOVED | yes |  |
+| 2026-11-16T14:35:42 | wt | `C:/Antiphon/worktrees/card-task-28f886d2` | 2.28 | 28f886d2 | REMOVED | yes |  |
+| 2026-11-16T14:35:49 | wt | `C:/Antiphon/worktrees/card-task-3afa3cfa` | 0.22 | 3afa3cfa | REMOVED | yes |  |
+| 2026-11-16T14:35:58 | wt | `C:/Antiphon/worktrees/card-task-5c3cf9f6` | 0.22 | 5c3cf9f6 | REMOVED | yes |  |
+| 2026-11-16T14:36:06 | wt | `C:/Antiphon/worktrees/card-task-fc30e791` | 0.22 | fc30e791 | REMOVED | yes |  |
+| 2026-11-16T14:36:13 | wt | `C:/Antiphon/worktrees/card-task-15406ecc` | 0.22 | 15406ecc | REMOVED | yes |  |
+| 2026-11-16T14:36:21 | wt | `C:/Antiphon/worktrees/card-task-abd9b404` | 0.22 | abd9b404 | REMOVED | yes |  |
+| 2026-11-16T14:36:30 | wt | `C:/Antiphon/worktrees/card-task-5675aac7` | 0.22 | 5675aac7 | REMOVED | yes |  |
+| 2026-11-16T14:36:37 | wt | `C:/Antiphon/worktrees/card-task-856fac4d` | 0.22 | 856fac4d | REMOVED | yes |  |
+| 2026-11-16T14:36:45 | wt | `C:/Antiphon/worktrees/card-task-66eb7e18` | 0.22 | 66eb7e18 | REMOVED | yes |  |
+| 2026-11-16T14:36:52 | wt | `C:/Antiphon/worktrees/card-task-f6d722a9` | 0.22 | f6d722a9 | REMOVED | yes |  |
+| 2026-11-16T14:37:01 | wt | `C:/Antiphon/worktrees/card-task-ac7f437c` | 0.22 | ac7f437c | REMOVED | yes |  |
+| 2026-11-16T14:37:10 | wt | `C:/Antiphon/worktrees/card-task-93af5925` | 0.22 | 93af5925 | REMOVED | yes |  |
+| 2026-11-16T14:37:17 | wt | `C:/Antiphon/worktrees/card-task-68b66c6d` | 0.22 | 68b66c6d | REMOVED | yes |  |
+| 2026-11-16T14:37:24 | wt | `C:/Antiphon/worktrees/card-task-882cae23` | 0.22 | 882cae23 | REMOVED | yes |  |
+| 2026-11-16T14:37:33 | wt | `C:/Antiphon/worktrees/card-task-0055a160` | 0.22 | 0055a160 | REMOVED | yes |  |
+| 2026-11-16T14:37:42 | wt | `C:/Antiphon/worktrees/card-task-1a125507` | 0.22 | 1a125507 | REMOVED | yes |  |
+| 2026-11-16T14:37:52 | wt | `C:/Antiphon/worktrees/card-task-18072e35` | 0.22 | 18072e35 | REMOVED | yes |  |
+| 2026-11-16T14:37:59 | wt | `C:/Antiphon/worktrees/card-task-b0ec9aab` | 0.22 | b0ec9aab | REMOVED | yes |  |
+| 2026-11-16T14:38:07 | wt | `C:/Antiphon/worktrees/card-task-1637311a` | 0.22 | 1637311a | REMOVED | yes |  |
+| 2026-11-16T14:38:14 | wt | `C:/Antiphon/worktrees/card-task-9aa09d20` | 0.22 | 9aa09d20 | REMOVED | yes |  |
+| 2026-11-16T14:38:22 | wt | `C:/Antiphon/worktrees/card-task-0704a004` | 0.22 | 0704a004 | REMOVED | yes |  |
+| 2026-11-16T14:38:36 | wt | `C:/Antiphon/worktrees/card-task-c51e92c8` | 2.61 | c51e92c8 | REMOVED | yes |  |
+| 2026-11-16T14:38:44 | wt | `C:/Antiphon/worktrees/card-task-ce8ef291` | 0.22 | ce8ef291 | REMOVED | yes |  |
+| 2026-11-16T14:38:52 | wt | `C:/Antiphon/worktrees/card-task-198a988b` | 0.22 | 198a988b | REMOVED | yes |  |
+| 2026-11-16T14:38:59 | wt | `C:/Antiphon/worktrees/card-task-24cf8f11` | 0.22 | 24cf8f11 | REMOVED | yes |  |
+| 2026-11-16T14:39:08 | wt | `C:/Antiphon/worktrees/card-task-593c280c` | 0.22 | 593c280c | REMOVED | yes |  |
+| 2026-11-16T14:39:15 | wt | `C:/Antiphon/worktrees/card-task-48728776` | 0.22 | 48728776 | REMOVED | yes |  |
+| 2026-11-16T14:39:23 | wt | `C:/Antiphon/worktrees/card-task-1ba18e23` | 0.22 | 1ba18e23 | REMOVED | yes |  |
+| 2026-11-16T14:39:29 | wt | `C:/Antiphon/worktrees/card-task-93f5087b` | 0.22 | 93f5087b | REMOVED | yes |  |
+| 2026-11-16T14:39:37 | wt | `C:/Antiphon/worktrees/card-task-2b6dde13` | 0.22 | 2b6dde13 | REMOVED | yes |  |
+| 2026-11-16T14:39:43 | wt | `C:/Antiphon/worktrees/card-task-78d029fc` | 0.22 | 78d029fc | REMOVED | yes |  |
+| 2026-11-16T14:39:50 | wt | `C:/Antiphon/worktrees/card-task-1905deba` | 0.22 | 1905deba | REMOVED | yes |  |
+| 2026-11-16T14:39:57 | wt | `C:/Antiphon/worktrees/card-task-7342010d` | 0.22 | 7342010d | REMOVED | yes |  |
+| 2026-11-16T14:40:06 | wt | `C:/Antiphon/worktrees/card-task-24eb2f3d` | 0.22 | 24eb2f3d | REMOVED | yes |  |
+| 2026-11-16T14:40:13 | wt | `C:/Antiphon/worktrees/card-task-b1318d57` | 0.22 | b1318d57 | REMOVED | yes |  |
+| 2026-11-16T14:40:22 | wt | `C:/Antiphon/worktrees/card-task-8d8824ed` | 0.22 | 8d8824ed | REMOVED | yes |  |
+| 2026-11-16T14:40:30 | wt | `C:/Antiphon/worktrees/card-task-27128425` | 0.22 | 27128425 | REMOVED | yes |  |
+| 2026-11-16T14:40:39 | wt | `C:/Antiphon/worktrees/card-task-b2663606` | 0.22 | b2663606 | REMOVED | yes |  |
+| 2026-11-16T14:40:47 | wt | `C:/Antiphon/worktrees/card-task-8112d494` | 0.22 | 8112d494 | REMOVED | yes |  |
+| 2026-11-16T14:40:53 | wt | `C:/Antiphon/worktrees/card-task-cd9133eb` | 0.22 | cd9133eb | REMOVED | yes |  |
+| 2026-11-16T14:41:01 | wt | `C:/Antiphon/worktrees/card-task-5786ffb9` | 0.22 | 5786ffb9 | REMOVED | yes |  |
+| 2026-11-16T14:41:09 | wt | `C:/Antiphon/worktrees/card-task-33039320` | 0.22 | 33039320 | REMOVED | yes |  |
+| 2026-11-16T14:41:18 | wt | `C:/Antiphon/worktrees/card-task-4f8dc817` | 0.22 | 4f8dc817 | REMOVED | yes |  |
+| 2026-11-16T14:41:34 | wt | `C:/Antiphon/worktrees/card-task-12311088` | 0.22 | 12311088 | REMOVED | yes |  |
+| 2026-11-16T14:41:41 | wt | `C:/Antiphon/worktrees/card-task-d5ec6eff` | 0.22 | d5ec6eff | REMOVED | yes |  |
+| 2026-11-16T14:41:48 | wt | `C:/Antiphon/worktrees/card-task-bf127f48` | 0.22 | bf127f48 | REMOVED | yes |  |
+| 2026-11-16T14:41:55 | wt | `C:/Antiphon/worktrees/card-task-665816dd` | 0.22 | 665816dd | REMOVED | yes |  |
+| 2026-11-16T14:42:02 | wt | `C:/Antiphon/worktrees/card-task-00011235` | 0.22 | 00011235 | REMOVED | yes |  |
+| 2026-11-16T14:42:14 | wt | `C:/Antiphon/worktrees/card-task-7ac938e9` | 2.27 | 7ac938e9 | REMOVED | yes |  |
+| 2026-11-16T14:42:21 | wt | `C:/Antiphon/worktrees/card-task-c3d468f8` | 0.22 | c3d468f8 | REMOVED | yes |  |
+| 2026-11-16T14:42:28 | wt | `C:/Antiphon/worktrees/card-task-0bd83714` | 0.22 | 0bd83714 | REMOVED | yes |  |
+| 2026-11-16T14:42:36 | wt | `C:/Antiphon/worktrees/card-task-f1cf9f3c` | 0.22 | f1cf9f3c | REMOVED | yes |  |
+| 2026-11-16T14:42:43 | wt | `C:/Antiphon/worktrees/card-task-73e7dfdd` | 0.22 | 73e7dfdd | REMOVED | yes |  |
+| 2026-11-16T14:42:51 | wt | `C:/Antiphon/worktrees/card-task-7708d552` | 0.22 | 7708d552 | REMOVED | yes |  |
+| 2026-11-16T14:43:00 | wt | `C:/Antiphon/worktrees/card-task-bffbe413` | 0.36 | bffbe413 | REMOVED | yes |  |
+| 2026-11-16T14:43:08 | wt | `C:/Antiphon/worktrees/card-task-5c14b3c5` | 0.22 | 5c14b3c5 | REMOVED | yes |  |
+| 2026-11-16T14:43:15 | wt | `C:/Antiphon/worktrees/card-task-b440ac48` | 0.22 | b440ac48 | REMOVED | yes |  |
+| 2026-11-16T14:43:21 | wt | `C:/Antiphon/worktrees/card-task-f21bf3ba` | 0.22 | f21bf3ba | REMOVED | yes |  |
+| 2026-11-16T14:43:33 | wt | `C:/Antiphon/worktrees/card-task-f9e020bf` | 2.38 | f9e020bf | REMOVED | yes |  |
+| 2026-11-16T14:43:42 | wt | `C:/Antiphon/worktrees/card-task-daf2ea47` | 0.22 | daf2ea47 | REMOVED | yes |  |
+| 2026-11-16T14:43:49 | wt | `C:/Antiphon/worktrees/card-task-7bb75309` | 0.22 | 7bb75309 | REMOVED | yes |  |
+| 2026-11-16T14:43:55 | wt | `C:/Antiphon/worktrees/card-task-e594649c` | 0.22 | e594649c | REMOVED | yes |  |
+| 2026-11-16T14:44:03 | wt | `C:/Antiphon/worktrees/card-task-484dd12d` | 0.22 | 484dd12d | REMOVED | yes |  |
+| 2026-11-16T14:44:10 | wt | `C:/Antiphon/worktrees/card-task-cf50eda6` | 0.22 | cf50eda6 | REMOVED | yes |  |
+| 2026-11-16T14:44:19 | wt | `C:/Antiphon/worktrees/card-task-9248daa5` | 0.22 | 9248daa5 | REMOVED | yes |  |
+| 2026-11-16T14:44:29 | wt | `C:/Antiphon/worktrees/card-task-e479506f` | 0.22 | e479506f | REMOVED | yes |  |
+| 2026-11-16T14:44:38 | wt | `C:/Antiphon/worktrees/card-task-6430f6eb` | 0.22 | 6430f6eb | REMOVED | yes |  |
+| 2026-11-16T14:44:46 | wt | `C:/Antiphon/worktrees/card-task-3f159277` | 0.22 | 3f159277 | REMOVED | yes |  |
+| 2026-11-16T14:44:55 | wt | `C:/Antiphon/worktrees/card-task-7a422522` | 0.22 | 7a422522 | REMOVED | yes |  |
+| 2026-11-16T14:45:01 | wt | `C:/Antiphon/worktrees/card-task-1c76938a` | 0.22 | 1c76938a | REMOVED | yes |  |
+| 2026-11-16T14:45:12 | wt | `C:/Antiphon/worktrees/card-task-c6da537d` | 0.22 | c6da537d | REMOVED | yes |  |
+| 2026-11-16T14:45:18 | wt | `C:/Antiphon/worktrees/card-task-ac8b9d8e` | 0.22 | ac8b9d8e | REMOVED | yes |  |
+| 2026-11-16T14:45:27 | wt | `C:/Antiphon/worktrees/card-task-3ea0f6b5` | 0.22 | 3ea0f6b5 | REMOVED | yes |  |
+| 2026-11-16T14:45:33 | wt | `C:/Antiphon/worktrees/card-task-28eecdf5` | 0.22 | 28eecdf5 | REMOVED | yes |  |
+| 2026-11-16T14:45:42 | wt | `C:/Antiphon/worktrees/card-task-8f001b6d` | 0.22 | 8f001b6d | REMOVED | yes |  |
+| 2026-11-16T14:45:49 | wt | `C:/Antiphon/worktrees/card-task-4c25994e` | 0.22 | 4c25994e | REMOVED | yes |  |
+| 2026-11-16T14:45:57 | wt | `C:/Antiphon/worktrees/card-task-77ab4e11` | 0.22 | 77ab4e11 | REMOVED | yes |  |
+| 2026-11-16T14:46:04 | wt | `C:/Antiphon/worktrees/card-task-c2489e73` | 0.22 | c2489e73 | REMOVED | yes |  |
+| 2026-11-16T14:46:10 | wt | `C:/Antiphon/worktrees/card-task-baba7a4e` | 0.22 | baba7a4e | REMOVED | yes |  |
+| 2026-11-16T14:46:21 | wt | `C:/Antiphon/worktrees/card-task-d20d7003` | 0.22 | d20d7003 | REMOVED | yes |  |
+| 2026-11-16T14:46:29 | wt | `C:/Antiphon/worktrees/card-task-68f81b18` | 0.22 | 68f81b18 | REMOVED | yes |  |
+| 2026-11-16T14:46:42 | wt | `C:/Antiphon/worktrees/card-task-f38e63e0` | 0.22 | f38e63e0 | REMOVED | kept(origin=) |  |
+| 2026-11-16T14:46:50 | wt | `C:/Antiphon/worktrees/card-task-8d020b07` | 0.22 | 8d020b07 | REMOVED | yes |  |
+| 2026-11-16T14:46:59 | wt | `C:/Antiphon/worktrees/card-task-1d838cd1` | 0.22 | 1d838cd1 | REMOVED | yes |  |
+| 2026-11-16T14:47:07 | wt | `C:/Antiphon/worktrees/card-task-bd9e5cb5` | 0.22 | bd9e5cb5 | REMOVED | yes |  |
+| 2026-11-16T14:47:15 | wt | `C:/Antiphon/worktrees/card-task-3820a5f1` | 0.22 | 3820a5f1 | REMOVED | yes |  |
+| 2026-11-16T14:47:23 | wt | `C:/Antiphon/worktrees/card-task-5ca0e7b6` | 0.22 | 5ca0e7b6 | REMOVED | yes |  |
+| 2026-11-16T14:47:33 | wt | `C:/Antiphon/worktrees/card-task-870a2044` | 0.22 | 870a2044 | REMOVED | yes |  |
+| 2026-11-16T14:47:41 | wt | `C:/Antiphon/worktrees/card-task-dc726c22` | 0.22 | dc726c22 | REMOVED | yes |  |
+| 2026-11-16T14:47:48 | wt | `C:/Antiphon/worktrees/card-task-22ee1e10` | 0.22 | 22ee1e10 | REMOVED | yes |  |
+| 2026-11-16T14:47:55 | wt | `C:/Antiphon/worktrees/card-task-23686c59` | 0.22 | 23686c59 | REMOVED | yes |  |
+| 2026-11-16T14:48:05 | wt | `C:/Antiphon/worktrees/card-task-e5c123ad` | 0.22 | e5c123ad | REMOVED | yes |  |
+| 2026-11-16T14:48:14 | wt | `C:/Antiphon/worktrees/card-task-8ec395a1` | 0.22 | 8ec395a1 | REMOVED | yes |  |
+| 2026-11-16T14:48:21 | wt | `C:/Antiphon/worktrees/card-task-80c30683` | 0.22 | 80c30683 | REMOVED | yes |  |
+| 2026-11-16T14:48:29 | wt | `C:/Antiphon/worktrees/card-task-d8f79eb5` | 0.22 | d8f79eb5 | REMOVED | yes |  |
+| 2026-11-16T14:49:13 | co | `C:\Antiphon\releases\checkout-0297fa9c` | 4.07 | 0297fa9c | REMOVED |  |  |
+| 2026-11-16T14:49:59 | co | `C:\Antiphon\releases\checkout-0b36ae35` | 4.39 | 0b36ae35 | REMOVED |  |  |
+| 2026-11-16T14:50:47 | co | `C:\Antiphon\releases\checkout-136debc0` | 3.86 | 136debc0 | REMOVED |  |  |
+| 2026-11-16T14:51:44 | co | `C:\Antiphon\releases\checkout-1d7cc1fe` | 4.95 | 1d7cc1fe | REMOVED |  |  |
+| 2026-11-16T14:52:35 | co | `C:\Antiphon\releases\checkout-2271e6aa` | 3.93 | 2271e6aa | REMOVED |  |  |
+| 2026-11-16T14:52:41 | co | `C:\Antiphon\releases\checkout-250a07fb` | 0.29 | 250a07fb | REMOVED |  |  |
+| 2026-11-16T14:53:38 | co | `C:\Antiphon\releases\checkout-25e35cdf` | 5.28 | 25e35cdf | REMOVED |  |  |
+| 2026-11-16T14:54:33 | co | `C:\Antiphon\releases\checkout-36d12cfa` | 4.04 | 36d12cfa | REMOVED |  |  |
+| 2026-11-16T14:55:15 | co | `C:\Antiphon\releases\checkout-3ca79566` | 4.29 | 3ca79566 | REMOVED |  |  |
+| 2026-11-16T14:56:07 | co | `C:\Antiphon\releases\checkout-42be26dd` | 4.47 | 42be26dd | REMOVED |  |  |
+| 2026-11-16T14:56:15 | co | `C:\Antiphon\releases\checkout-44f789f3` | 0.32 | 44f789f3 | REMOVED |  |  |
+| 2026-11-16T14:57:10 | co | `C:\Antiphon\releases\checkout-4dd2a426` | 4.48 | 4dd2a426 | REMOVED |  |  |
+| 2026-11-16T14:58:05 | co | `C:\Antiphon\releases\checkout-59e9866b` | 4.08 | 59e9866b | REMOVED |  |  |
+| 2026-11-16T14:58:42 | co | `C:\Antiphon\releases\checkout-78b36185` | 3.76 | 78b36185 | REMOVED |  |  |
+| 2026-11-16T14:59:41 | co | `C:\Antiphon\releases\checkout-8e08368a` | 4.96 | 8e08368a | REMOVED |  |  |
+| 2026-11-16T15:00:39 | co | `C:\Antiphon\releases\checkout-964900d9` | 4.92 | 964900d9 | REMOVED |  |  |
+| 2026-11-16T15:01:40 | co | `C:\Antiphon\releases\checkout-c9cb914c` | 4.37 | c9cb914c | REMOVED |  |  |
+| 2026-11-16T15:02:45 | co | `C:\Antiphon\releases\checkout-ff89ca56` | 4.97 | ff89ca56 | REMOVED |  |  |
+
