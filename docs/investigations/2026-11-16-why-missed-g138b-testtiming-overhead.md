@@ -10,7 +10,7 @@ The keyed constraint was introduced with the original witness in 83128c416968fd6
 
 No (B) hot-path change was found across the requested cuts. TestTimingChokePointTests.cs is byte-identical at 64e3d78c487d51570f708492ab67b5db6d0de9a9, a71c45ab4d5703d480f4eee4c4e30adab45bc4f9, and cd4165b16280e2a781acaa527b059c9c9cb71c75. TestTiming.cs differs only by three c1934 operation-label entries between the rc cuts and compose-fixture-delete between rc22 and master. BoundOperation remains an ordinal HashSet.Contains; no extra traversal or per-span work was introduced. Recent fixture spans execute only in their own fixture workloads. They do not establish a global recorder regression.
 
-## Why ordinary selection missed it
+## Why prior verification did not establish isolation
 
 The timing-labels row in tests/impacted-classes.json names TestTimingOperationLabelTests. It checks literal label admission, not runtime overhead or scheduler isolation. Merges 244/245 addressed label/fixture coverage, following the g138/g139 label failure. Running that label witness cannot validate C1514T_Overhead. A cheap label-only green is not a benchmark result.
 
@@ -52,3 +52,48 @@ Initial observed medians (fractions, strict CPU limit 0.05; small samples, not a
 | fixed `529f35d85530` | 24 hogs | 1 | 0.0006092283124135197 | 0.03645731145631898 | 119.18 |
 
 External saturation alone did not reproduce the Windows failure in these observations. This supports isolating unrelated in-process work, but does not prove which peer caused the native 8.85% sample. The measured benchmark setup/body/flush sample data and TRX are retained; unavailable subphase breakdowns remain unknown, not zero. Physical-host exclusivity and the requested ten-per-cell historical matrix are not credited by these initial rows. No timeout, median rule or acceptance threshold was relaxed. Mutation was waived by the operator in the commission.
+
+## Historical Linux observations and final measurement limit
+
+The benchmark blob is exactly `2344edf1acfa87a01e62a13f9ede57fbf0c7c818` at all three baseline revisions. `PairedOverheadStatistics.cs` and `TestTrace.cs` also have no diff across those revisions. Historical builds and measurements used the unmodified detached checkouts `/tmp/cc5b4299-rc21` and `/tmp/cc5b4299-rc22`, with their own native bin/obj. The assigned branch remained on its authorized fast-forward line; no source was changed or committed in either historical checkout.
+
+Selection-audit clarification: the hand-maintained timing-labels row is only one part of selection. The generated reverse index already listed TestTimingChokePointTests for tests/Shared/TestTiming.cs at initial master cd4165b16280e2a781acaa527b059c9c9cb71c75. A read-only impacted-classes.ps1 -Path tests/Shared/TestTiming.cs -Json resolution also includes the choke-point class in its emitted Antiphon.Tests filter, with no cap exclusion. It would therefore be incorrect to blame a missing reverse edge. The retained g138 round-two and g139 compose-label investigation receipts list label, selector, host/fixture and guard rows, rather than an overhead row; the g139 note already identifies omitted impacted execution despite an applicable detector. The complete Merge 244/245 execution receipts were not retrieved here, so this report does not assert that every Merge execution omitted the benchmark. An isolated green would also not validate the old mixed-chunk CPU measurement. Execute the resolved rows with source-bound receipts and enforce process isolation, rather than adding a duplicate selector edge. The new index edge in this repair is only TestTimingChokePointTests.cs -> PairedOverheadStatisticsTests.
+
+All collected baseline observations, including negative ratios (fractions, CPU limit 0.05):
+
+| Row | Exact source SHA | cpuMedian | Wall median | Driver seconds | Exit | Load before / after |
+|---|---|---:|---:|---:|---:|---|
+| master-ambient-01 | cd4165b16280e2a781acaa527b059c9c9cb71c75 | -0.000997472366482533 | -0.00608458594719919 | 94.18 | 0 | 7.21 7.77 6.74 2/2979 22886 / 4.09 6.59 6.42 4/2991 4739 |
+| master-loaded-01 | cd4165b16280e2a781acaa527b059c9c9cb71c75 | 0.00010116055239444 | -0.00141123359667782 | 113.01 | 0 | 3.54 6.30 6.33 3/3026 8397 / 25.55 13.85 9.09 25/2937 18764 |
+| rc21-ambient-01 | 64e3d78c487d51570f708492ab67b5db6d0de9a9 | -0.000171151842547993 | 0.00385364973084531 | 89.54 | 0 | 4.95 8.99 8.89 4/2963 12483 / 4.04 7.61 8.40 5/2967 31270 |
+| rc21-ambient-02 | 64e3d78c487d51570f708492ab67b5db6d0de9a9 | -0.0121453737588508 | -0.00458036038215015 | 90.92 | 0 | 25.60 14.48 10.80 2/2979 8432 / 7.74 11.37 10.05 1/2982 14183 |
+| rc21-loaded-01 | 64e3d78c487d51570f708492ab67b5db6d0de9a9 | 0.00301195724379492 | -0.0112670545663833 | 115.38 | 0 | 3.88 7.46 8.34 3/2975 759 / 25.60 14.48 10.80 30/3004 8423 |
+| rc21-loaded-02 | 64e3d78c487d51570f708492ab67b5db6d0de9a9 | -0.00623064213908296 | 0.00681348633088086 | 111.43 | 0 | 7.74 11.37 10.05 1/2982 14183 / 24.97 16.56 12.08 28/2985 20854 |
+| rc22-ambient-01 | a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 | 0.00252293784838736 | -0.000325154075035012 | 90.4 | 0 | 6.44 10.59 10.98 3/2900 23422 / 2.56 8.15 10.07 1/2894 24705 |
+| rc22-ambient-02 | a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 | 0.00245113520556081 | -0.0034758238957094 | 96.96 | 0 | 23.66 14.23 12.07 1/2895 25792 / 5.77 10.70 11.02 1/2831 27027 |
+| rc22-loaded-01 | a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 | -0.00274522430225552 | -0.00381006103205438 | 113.41 | 0 | 2.56 8.15 10.07 1/2894 24705 / 23.66 14.23 12.07 27/2919 25792 |
+| rc22-loaded-02 | a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 | 0.00358509413108243 | 0.00216443512286797 | 118.78 | 0 | 5.77 10.70 11.02 1/2831 27027 / 24.75 16.23 13.00 27/2936 28304 |
+
+Every loaded row has a retained `hogs-joined.txt`; all 24 task-owned busy-loop processes were killed through their owned process handles and awaited before the next row. A high one-minute load average at the start of a subsequent ambient row is retained honestly: the hogs are gone, but the average decays slowly. Ambient is not proof of a physically idle host. No unrelated process or live qualification was stopped.
+
+| Baseline stratum | Collected / requested | Remaining |
+|---|---:|---:|
+| master ambient | 1 / 10 | 9 |
+| master loaded | 1 / 10 | 9 |
+| rc21 ambient | 2 / 10 | 8 |
+| rc21 loaded | 2 / 10 | 8 |
+| rc22 ambient | 2 / 10 | 8 |
+| rc22 loaded | 2 / 10 | 8 |
+
+Baseline rows with a CPU median: **10 / 60**. Remaining requested standalone measurements: **50**. Rows without a usable CPU median, if any, are not credited in this count. The two repaired-source observations above are separate controls and do not substitute for baseline rows. The 75-minute time box was retained; no extension or waiver of the ten-per-cell request was received. This is incomplete historical sampling, not a completed distribution or a measured p95. The original Windows 8.85% event was not causally reproduced, so Windows confirmation remains owed on a later authorized cut. The live pinned Windows runs were untouched.
+
+The supported diagnosis remains (A): an inherited measurement/scheduling flaw, with no evidence of a recent recorder hot-path regression (B). The source change removes TUnit peers from the process CPU interval while preserving the workload, flush CPU, all nine pairs, strict 5% CPU and 10% wall medians, finite-ratio guards, and existing rejection controls. External-only saturation did not reproduce the native failure in the observed Linux rows; this distinction is part of the result, not hidden as a production-overhead fix.
+
+Cold historical build results (slot wait recorded separately in each log):
+
+- rc21: elapsed 00:07:13.10, errors 0; /proc/loadavg before 3.43 5.18 7.62 2/2984 32633, after 4.79 8.89 8.86 4/2971 12551. Log: `/tmp/cc5b4299-evidence/rc21-build.log`.
+- rc22: elapsed 00:06:07.69, errors 0; /proc/loadavg before 23.06 16.30 12.02 5/2955 22314, after 6.44 10.59 10.98 2/2878 23378. Log: `/tmp/cc5b4299-evidence/rc22-build.log`.
+
+Reproduction uses the frozen SHA, an independent native build through the host gate, and one exact filter per fresh results root: `/*/*/TestTimingChokePointTests/C1514T_Overhead`. The retained helper `/tmp/cc5b4299-evidence/run-one.ps1 -Root <frozen-checkout> -Label <fresh-unique-label> -Mode ambient|loaded` wraps `dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false` through `scripts/build-slot.ps1`, records the raw JSON/TRX/CPU ratios and load, and joins owned hogs. Do not reuse an existing label. Completing the missing matrix needs a new time budget; it does not require changing the CPU threshold or the estimator. Once the commissioner resolves that incomplete sampling gate, the repair is test-only and follows the brief's Merge path.
+
+Evidence retained in `/tmp/cc5b4299-evidence`: full build logs, fresh per-row TRX and raw nine-pair JSON, per-row receipts with SHA and load, PID custody/join records, deterministic regeneration outputs, and guard/selector results. Essential observations and costs are preserved here; generated payloads were not added to Git.
