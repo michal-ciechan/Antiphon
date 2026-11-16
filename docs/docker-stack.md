@@ -709,15 +709,15 @@ is also copied to the case's `c1609-publication-diagnostic.json` and returned th
 the bridge's existing evidence copy. Preserve it with the desktop exchange evidence;
 never infer a successful Apply from its presence.
 
-#### Crash resume after SIGKILL (lands with CARD-1956)
+#### Crash resume after SIGKILL (CARD-1956)
 
-CARD-1956 is not yet on `origin/master` at this documentation task's source base.
-Until it lands and the exported tooling includes it, an active lifecycle refuses
-reuse even when its owner is dead. The following recovery lands with CARD-1956;
-its code and witnesses are on `origin/feat/card-task-55d5be7a` in
-`scripts/c1008-retirement.sh` (`c1609_require_resume_phase`, `c1609_phase_begin`),
-with the source-bound report in
-[the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/feat/card-task-55d5be7a/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
+CARD-1956 landed on master during this documentation task (repair commit
+`6905ae9c5a`; Merge 253). Export tooling that includes that repair before using
+this recovery: older tooling refuses an active lifecycle even when its owner is
+dead. The guards are `c1609_require_resume_phase` and `c1609_phase_begin` in
+[the landed c1008-retirement.sh](https://github.com/michal-ciechan/Antiphon/blob/6905ae9c5/scripts/c1008-retirement.sh),
+with source-bound verification in
+[the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/a0b34d1a0/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
 
 Resume of an `Applying` temp operation requires explicit `C1008_RESUME=1` (the
 wrapper's `-ResumeRecycle <operation-id>`), an already-consumed same-operation
