@@ -257,13 +257,17 @@ async function host(f,name,version='C',options={}) {
   }
   const dest=f.root+'/evidence/'+hostCase; fs.mkdirSync(dest,{recursive:true});
   const transformed=scripts[version].replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner-cache-',f.prefix+'cache-').replaceAll('antiphon-runner',f.main);
+  for(const file of ['c1008-retirement.sh','c1008-content-audit.sh','c1008-volume-metadata.sh']){
+    const module=fs.readFileSync('scripts/'+file,'utf8').replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner-cache-',f.prefix+'cache-').replaceAll('antiphon-runner',f.main);
+    fs.writeFileSync(f.root+'/'+file,module,{mode:0o600});
+  }
   const compose = (project, file) => `if [ -n "\${C1008_COMPOSE_DIR:-}" ]; then command docker compose -p '${project}' -f "\$C1008_COMPOSE_DIR/${file}" "\$@"; else command docker compose -p '${project}' -f '${f.root}/${project}.json' "\$@"; fi`;
   const injected=`
 SERVER2_ROOT='${f.root}/server'; ROOT='${f.root}'; EVIDENCE_ROOT='${f.root}/evidence'; CASE_DIR="$EVIDENCE_ROOT/$CASE"
 SERVER2_ENV='${f.root}/main.env'; SERVER2_TEMP_ENV='${f.root}/temp.env'; C849_READY="$SERVER2_ROOT/cache/seed-accepted"
 C1008_CONTEXT=${hostCase==='retire-temp-containers'?"''":'default'}; C1008_OPERATION="\${C1008_OPERATION:-${f.op}}"; C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C1008_RESUME=${options.resume?1:0}; C1008_DRY_RUN="\${C1008_DRY_RUN:-${options.dryRun&&hostCase!=='retire-temp-containers'?1:0}}"; C1008_CLEANUP_OPERATION='${options.cleanupOperation||''}'
 export ANTIPHON_VOLUME_RETIREMENT_APPLY="enabled-\${C1008_OPERATION}"
-C1609_RETIREMENT_FILE='${process.cwd()}/scripts/c1008-retirement.sh'; C1609_CONTENT_AUDIT_FILE='${process.cwd()}/scripts/c1008-content-audit.sh'; C1609_VOLUME_METADATA_FILE='${process.cwd()}/scripts/c1008-volume-metadata.sh'
+C1609_RETIREMENT_FILE='${f.root}/c1008-retirement.sh'; C1609_CONTENT_AUDIT_FILE='${f.root}/c1008-content-audit.sh'; C1609_VOLUME_METADATA_FILE='${f.root}/c1008-volume-metadata.sh'
 C994_VERSION=1; C994_OPERATION="\${C994_OPERATION:-${f.cleanupOp}}"; C994_PROJECT='${f.temp}'; C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1; C994_RETIRED_AT=2026-10-03T09:30:00Z; C994_DRY_RUN=${options.dryRun?1:0}
 DEPLOY_KEY='${f.root}/deploy-key'; PHONE_HOME_SECRET='${f.root}/phone-home'; CLAUDE_OAUTH_TOKEN_PATH='${f.root}/claude-token'; GIT_IDENTITY_PATH='${f.root}/gitconfig'; CODEX_HOME_PATH='${f.root}/codex'; RUNNER_GROK_STORE_DIR='${f.root}/grok'
 GITHUB_TOKEN_DIR_PATH='${f.root}/github-token'
