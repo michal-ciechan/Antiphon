@@ -345,3 +345,214 @@ five-second policy and commission a measured parallel implementation, or
 explicitly accept a documented provisional larger freshness policy. A production
 script change then needs the requested red/green and regression profile followed
 by ordinary Review.
+
+## Refinement: a passing preview and a later 5,050 ms Apply refusal
+
+The refinement arrived after the first report. It added a passing preview and
+a second near-limit failure, so the investigation tested the specific hypothesis
+that a process/pipe wait consumes the entire five-second allowance and returns
+success. No production limit or script was changed.
+
+New caller-supplied evidence:
+
+- Preview exited 0 and published Ready for
+  `c1008c1bdd626ffbf40bea419318bb2575d1a`, with a control record at 15:26:52 UTC.
+- A subsequent Apply refused with `stage=control elapsedMs=5050 limitMs=5000`.
+  Its last control record at 15:36:39.35 UTC is 322 bytes, compared with 294-byte
+  passing records. The receipt is consumed, and no volume was deleted.
+- The relevant host directory is
+  `/home/mc/antiphon-server2/retirement/c1008c1bdd626ffbf40bea419318bb2575d1a`.
+
+### The 28-byte difference identifies a different gate
+
+With the current schema, fixed-width nonces/digests and canonical compact JSON
+plus newline, record lengths are:
+
+| `purpose` | Bytes |
+| --- | ---: |
+| `ready` | 294 |
+| `apply` | 294 |
+| `audit` | 294 |
+| `antiphon-runner-temp_runner-state` | 322 |
+| `antiphon-runner-temp_dind-data` | 319 |
+| `antiphon-runner-temp_runner-tmp` | 320 |
+| `antiphon-runner-temp_work` | 314 |
+
+The 322-byte record is therefore exactly consistent with the **first per-volume
+runner-state gate**, rather than a larger timeout/error payload. Confirm its
+`purpose` in the actual JSON before treating this inference as native proof.
+The additional 28 bytes are fully explained by the longer purpose string.
+
+For a fresh Apply, production orders these steps:
+
+```text
+publication_gate apply
+require_ready_preview -> consumed=true, state=Applying
+APPLY_ACTIVE=1
+first existing volume: publication_gate antiphon-runner-temp_runner-state
+recheck_target -> target_intent -> effect_fresh -> docker volume rm
+```
+
+This ordering explains both a consumed receipt and zero deletions when the
+runner-state gate refuses. It also implies a successful general Apply gate if
+the supplied run was a fresh Apply on this code path. A 294-byte record alone
+cannot distinguish `ready`, `apply` and `audit`; request all JSON contents,
+not only lengths and mtimes. Do not reuse consumed Ready authority merely
+because no delete happened.
+
+The desktop handler uses the same live-check body for all these purposes;
+`purpose` changes binding/response data, not its timeout, repository loop or
+Git execution method. Host `ready` additionally prepares the rendered receipt
+before the binding stamp. Each per-volume gate independently renews proofs and
+reobserves bindings, so comparison must include proof/object digests, phase,
+inventory count and bundle sizes for that specific gate. A passing preview
+does not supply timing credit for a later per-volume gate.
+
+### No fixed five-second success wait found
+
+The inspected production path has the following behavior:
+
+- `WaitForExit(remaining)` returns when the process exits; it throws `deadline`
+  if the bounded wait reports false. There is no deliberate sleep for
+  `NetworkBudgetMs`.
+- While streams remain open, the process wrapper polls at 5 ms and throws at
+  `ElapsedMilliseconds >= TimeoutMs`. After observing the process exited,
+  still-open streams trigger `drain` after more than 2,000 ms. A descendant
+  holding a pipe can therefore cause a refusal, but that branch does not
+  return a successful proof at five seconds.
+- A failed/nonzero Git result becomes a host-ls-remote exception. The outer
+  coordinator does not construct the control response on this exception path.
+- Even if the inner process wrapper overshoots its last poll or exit check,
+  the coordinator checks its aggregate elapsed time again before constructing
+  `C1609_CONTROL_RESPONSE`; more than 5,000 ms throws `control-deadline`.
+- Response `WriteLineAsync().Wait(10000)` is a separate bounded wait, after
+  the last desktop elapsed check. A completed write returns early. Transit,
+  write/flush and host work after that check can still age the host fence.
+- Searches found no reachable `Sleep(5000)` / `Wait(5000)` or unconditional
+  `sleep 5` in this gate. Five-second sleeps elsewhere in `c590-remote.sh` are
+  deployment/readiness loops, not this retirement control path. The v1 Git
+  `--kill-after=5s` grace is not a normal five-second wait; temp inventory is
+  offline and bypasses that network branch.
+
+The existence of a persisted, nonce/digest-bound control record establishes
+that the host accepted a control response before failing its own fence. It is
+inconsistent with a desktop deadline/drain exception **before that response**
+on this source path. The failing Apply desktop `remote-output.txt` is still
+needed; a later desktop exception would be a separate event.
+
+### Direct production-function probes
+
+Source was committed `f23d3cc8d56fff4759094183902a6b0cd2c7261d`; its production
+scripts remain identical to the original base. Both probes ran under real
+build-slot leases, in this Linux mirror, with only local inherited children.
+All children were awaited/released. No real SSH connection, origin, Windows
+desktop, Docker or volume was used. These timings do not exclude a Windows-only
+runtime/transport problem; native stage telemetry remains required.
+
+**Actual `Invoke-C1609BoundedProcess`: seven expectations matched.** The child
+is an owned Node fixture, and the actual PowerShell process wrapper is used
+without replacing its wait or stream code.
+
+| Case, with 5,000 ms allowance | Measured ms | Result |
+| --- | ---: | --- |
+| Immediate successful child, first call | 256 | Exit 0 |
+| Immediate successful child, warm call | 90 | Exit 0 |
+| Child closes both streams, remains alive 150 ms | 217 | Exit 0; `WaitForExit` returned early |
+| Child keeps streams open, exits after 700 ms | 792 | Exit 0 |
+| Child keeps streams open beyond deadline | 5,087 | `deadline` exception, no result object, child released |
+| Streams closed, process remains alive beyond deadline | 5,044 | `deadline` exception, no result object, child released |
+| Immediate nonzero child | 82 | Exit 7, which the Git wrapper would reject |
+
+The two actual expiry cases are themselves almost exactly limit plus tens of
+milliseconds, but both are **errors**, not successful control replies. Fast
+success does not wait out the budget.
+
+**Actual `Invoke-C1609RetirementCoordinator`: five expectations matched.** Its
+function and `Get-C1609ProofSetDigest` are loaded from the production AST. An
+owned local `ssh` executable shim connects it to a fixture protocol peer. Only
+network proof export and the live-origin check are supplied as fixture seams;
+the real stream loop, budget calculation, final deadline check, asynchronous
+response write, flush and transport receipt remain in use.
+
+| Purpose and fixture check | Host-peer control ms | Total coordinator ms | Outcome |
+| --- | ---: | ---: | --- |
+| `ready`, instant check | 146.46 | 616 | Response, exit 0, failure-line 0 |
+| runner-state, instant check | 13.42 | 94 | Response, exit 0, failure-line 0 |
+| `ready`, 700 ms check | 714.78 | 825 | Response, exit 0, failure-line 0 |
+| runner-state, 700 ms check | 743.28 | 831 | Response, exit 0, failure-line 0 |
+| runner-state, 5,200 ms check | No response | 5,373 | Exit 2, nonzero exception line |
+
+The first call includes warm-up cost. Purpose-specific fixed five-second waiting
+was not observed. The over-budget check intentionally ignores its supplied
+budget, testing the coordinator's independent final deadline guard. That guard
+refused it; it did not send a success response at budget expiry.
+
+Probe receipts and source provenance, all ignored under
+`/work/worktrees/ws-01/.antiphon/control-window-2b159393/`:
+
+```text
+waits-1794843701404/receipt.json
+  lease 79ffca11-fec0-4483-8d32-fa07b5c03c53; approximately 14 s
+  c1609-host-proof.ps1 SHA256 58fd576b66ef19bcc441b55f14d25166134191ba0e859d13224b8107b0433ce6
+  process-waits.ps1 SHA256 c794fb9f111903e31b19eeb94f9567f985f46568fbf0ff55f9a7d230e5494c90
+coordinator-1794843784952/receipt.json
+  lease 70a1a5a0-a56c-46df-9c4b-120813eb59ec; approximately 10 s
+  c590-real.ps1 SHA256 d8e3f58cd3ac62cec1b70b75735cda824ac5f03a42eb4c3ed2f0c86fe48bcdbb
+  coordinator-waits.ps1 SHA256 29f1630434aad90c034c7c31f8a10cf294a558f858fe7345b125a1b9f8cb0cb2
+```
+
+Rerun either script through `scripts/build-slot.ps1`, targeting the full path
+to `/usr/local/bin/pwsh -NoProfile -File` and the named probe. These are portable
+diagnostic witnesses, not replacements for the conditional production profile.
+No unexpected outcomes occurred in these twelve refinement cases.
+
+### Why two misses close to the limit do not establish a fixed wait
+
+There are two deadlines with different start/end points. Write `D` for desktop
+control work before the response write, and `H` for the rest of the host binding
+interval. A valid desktop response requires approximately `D <= 5000`, while
+host success requires `D + H <= 5000`.
+
+Conditioning on **a response that was valid locally but stale at the host**
+selects the narrow band `5000-H < D <= 5000`. For example, if `H` were 100 ms,
+such host failures would naturally cluster just above 5,000 ms even without
+any fixed wait. This is an explanation of selection bias, not a measurement
+that native `H` is 100 ms. The supplied 5,050 and 5,070 ms samples alone cannot
+distinguish that case from a near-deadline real external call.
+
+Both budgets being 5,000 ms does not reserve room for host work. Carrying the
+host's remaining budget to the desktop could improve deadline allocation and
+diagnosis, but cannot make more than five seconds of required work fit without
+reducing work. Do not move the host clock, accept stale Ready authority or raise
+the policy merely to make this symptom disappear.
+
+### Pending evidence and updated recommendation
+
+An asynchronous request was sent for the new operation's existing files. The
+reply had not arrived when this refinement report was prepared. Required next
+input, scrubbed and read-only:
+
+1. All `control-*.json` contents with exact mtimes, to identify passing `ready`,
+   passing general `apply` and failing runner-state controls by purpose/phase,
+   proof digest and object digest. Also return `publication-diagnostics.jsonl`.
+2. `lifecycle.json` fields `active`, `complete`, `readyPublished`, phase and
+   child join state, plus `receipt.json` fields `state`, `consumed`, intents and
+   effects. Exclude attestations, URLs and credentials.
+3. For the corresponding admitted and final live inventories, return repository
+   paths/row counts, distinct origin hashes, actual `C1609_BINDING_CLOCK` lines
+   and precise output/directory timestamps. Include proof/bundle sizes per row.
+4. Failing Apply desktop `remote-output.txt` and
+   `coordinator-exchanges.jsonl`; correlate exchange nonces to the controls.
+   Then add the previously specified per-stage timing if existing evidence
+   cannot locate the cost. Do not send raw ref advertisements or Git stderr.
+
+The new evidence narrows the likely failing call site and provides a concrete
+way to compare preview with per-volume Apply. It does **not** yet identify a
+fixed wait or prove that serial repository checks dominate. Keep 5,000 ms and
+defer both parallel implementation selection and any larger-policy decision
+until the native breakdown is available. The 11-second model above remains
+an explicit fallback proposal, not an accepted or newly justified change.
+
+Refinement handoff remains `next: decide`: supply the named evidence; choose a
+measured implementation after attribution. No real preview/apply or native
+desktop workload was run by this task.
