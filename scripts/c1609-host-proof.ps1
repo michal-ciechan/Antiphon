@@ -360,9 +360,13 @@ function Copy-C1609HostOriginProof {
 
 # Final control-stream read after the renewed graph has been staged. The helper
 # stays offline; only this credential-capable host contacts the approved origin.
+# Git starts in its own short scratch directory, never the proof directory: the
+# script-only export (CARD-1955) made that path 264 characters, and Windows cannot
+# start a process whose current directory reaches MAX_PATH (preview c1008d39).
 function Assert-C1609LiveOriginProof {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofFile,
         [string[]]$ApprovedOrigins,[int]$NetworkBudgetMs=5000)
+    $scratch=Join-Path ([IO.Path]::GetTempPath()) ('c1609-live-'+[guid]::NewGuid().ToString('N'))
     try {
         $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($origin in $ApprovedOrigins){[void]$allowed.Add($origin)}
@@ -381,10 +385,12 @@ function Assert-C1609LiveOriginProof {
         $expected=@(Read-C1609Advertisement (($old[11..($old.Length-1)] -join [char]10)+[char]10))
         if($old[8] -cne ('advertisement '+(Get-C1008Sha256 (($expected -join [char]10)+[char]10))) -or
             $old[9] -cne ('count '+$expected.Count)){throw 'proof'}
-        $advertisement=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -WorkingDirectory ([IO.Path]::GetDirectoryName($ProofFile)) `
+        [void][IO.Directory]::CreateDirectory($scratch)
+        $advertisement=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -WorkingDirectory $scratch `
             -GitArgs @('ls-remote',$OriginUrl,'refs/heads/*','refs/tags/*','refs/antiphon/salvage/*') -TimeoutMs $NetworkBudgetMs))
         $live=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($line in $advertisement){[void]$live.Add($line)}
         foreach($line in $expected){if(-not $live.Contains($line)){throw 'withdrawn-ref'}}
     } catch {throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)}
+    finally {if([IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}}
 }
