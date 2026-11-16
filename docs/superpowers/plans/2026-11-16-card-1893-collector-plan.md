@@ -36,8 +36,11 @@ override. An initial `9.5` was incorrectly interpreted as seconds and produced
 one-minute build deadlines, with zero test execution. Preserve that failed run;
 this corrects the invocation, without widening any test or acceptance timeout.
 Run 20261116-194047-0118 kept bin-c1893-guards2/ after build-deadline-exceeded
-at deadlineMinutes=9 (load 9.77 at start, 24.63 near the deadline). CP-3 uses
-bin-c1893-guards3/ so that failed output is not reused. The 540s deadline stays.
+at deadlineMinutes=9 (load 9.77 at start, 24.63 near the deadline).
+Run 20261116-195838-d7e6 was stopped at load 31.75 while bin-c1893-guards3/
+still had no Antiphon.Tests.dll (server dll at 20:03:19Z, start load 12.01).
+CP-3 uses bin-c1893-guards4/ so those failed outputs are not reused.
+The 540s test ceiling stays; do not pass 9m30s.
 Record loadavg, TRX case durations and checkpoint phase timings. No new timing
 spans or selector rows. No unchanged proof repetitions after green. Driver and
 checkpoint bootstrap builds are explicitly unlisted prerequisites, gated, native
@@ -72,5 +75,5 @@ Every variant pending Mutation; no deliberate mutants run by Code.
 |---|---|---|---|---|---|---|---|---|
 | CP-1 | red | tests/Antiphon.SessionRunner.Tests -> bin-c1893-red2/ | collector-red | `/*/*/C1893CollectorDiagnosticsTests/*` | V-1,V-2,V-3,V-4 | intended assertion failures before implementation | 5 | 5 |
 | CP-2 | green | tests/Antiphon.SessionRunner.Tests -> bin-c1893-green2/ | collector-and-stats | `/*/*/(C1893CollectorDiagnosticsTests*)\|(C1514HostLoadSpoolTests*)\|(C1514HostLoadWireTests*)\|(C1514HostLoadSampleTests*)\|(C1514HostLoadAuthorityTests*)\|(HostStatsEndpointTests*)\|(HostStatsSamplerTests*)\|(HostStatsStoreTests*)\|(RunnerCapabilitiesTests*)/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 9 | 7 |
-| CP-3 | green | tests/Antiphon.Tests -> bin-c1893-guards3/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3 | all listed, 0 failed | 11 | 9 |
+| CP-3 | green | tests/Antiphon.Tests -> bin-c1893-guards4/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-3 | all listed, 0 failed | 11 | 9 |
 | CP-4 | green | CP-3 | server-ingest-replay | `/*/*/(HostTopConsumerUpgradeReplayTests*)\|(C1514HostLoadHistoryTests*)/*` | V-3,R-1 | all listed, 0 failed | 5 | 5 |
