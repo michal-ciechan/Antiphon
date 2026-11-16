@@ -539,7 +539,8 @@ c1609_publication_gate() {
         [ "$attempt" != 2 ] || return 1
     done
     nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || return 1
-    # Prepare inputs in memory before the final observation; publish nothing Ready.
+    # Prepare inputs and render/flush the complete evidence before the final
+    # observation. Only a fixed number of payload writes/renames remain afterward.
     if [ "$purpose" = ready ]; then c1609_prepare_ready_receipt || return 1; fi
     C1609_CONTROL_STARTED="$(c1609_monotonic_ms)" || return 1
     c1609_recheck_origin_bindings effect || return 1
@@ -550,7 +551,24 @@ c1609_publication_gate() {
     jq -cnS --arg phase "$C1609_PHASE_NONCE" --arg nonce "$nonce" --arg purpose "$purpose" --arg proof "$returned_proof" --arg objects "$objects" \
       '{schema:1,phaseNonce:$phase,exchangeNonce:$nonce,purpose:$purpose,proofDigest:$proof,objectsDigest:$objects}' |
       c1609_persist "$(c1609_retirement_root)/control-$nonce.json" || return 1
-    c1609_publication_fresh && c1609_effect_publication_fresh
+    c1609_publication_fresh && c1609_effect_publication_fresh control
+}
+
+# Persist only fixed fields, never the control stream, URLs or raw stderr. The
+# case copy travels through the bridge's existing evidence scp even on refusal.
+c1609_publication_diagnostic() {
+    local stage="$1" elapsed="$2" root file record
+    case "$stage" in control|ready-published|effect) ;; *) return 1 ;; esac
+    [[ "$elapsed" =~ ^-?[0-9]{1,16}$ ]] || return 1
+    root="$(c1609_retirement_root)"; file="$root/publication-diagnostics.jsonl"
+    c1609_custody "$root" dir || return 1
+    if [ -e "$file" ] || [ -L "$file" ]; then
+        c1609_custody "$file" file && [ "$(stat -c %s -- "$file")" -le 7680 ] || return 1
+    fi
+    record="$(jq -cnS --arg stage "$stage" --arg phase "$C1609_PHASE_NONCE" --argjson elapsed "$elapsed" \
+      '{schema:1,phaseNonce:$phase,stage:$stage,elapsedMs:$elapsed,limitMs:5000}')" || return 1
+    { if [ -f "$file" ]; then cat -- "$file"; fi; printf '%s\n' "$record"; } | c1609_persist "$file" || return 1
+    printf '%s\n' "$record" | c1609_persist "$CASE_DIR/c1609-publication-diagnostic.json"
 }
 
 # Final host advertisement/response, local custody and the effect share a five
@@ -558,12 +576,13 @@ c1609_publication_gate() {
 # effect always repeats the live writer and this check instead of reusing Ready.
 c1609_effect_publication_fresh() {
     [ -n "${C1008_HOST_PROOF:-}" ] || return 0
-    local now elapsed
+    local now elapsed stage="${1:-effect}"
     [[ "${C1609_CONTROL_STARTED:-}" =~ ^[0-9]+$ ]] || return 1
     now="$(c1609_monotonic_ms)" || return 1
     elapsed=$((now-C1609_CONTROL_STARTED))
     if [ "$elapsed" -lt 0 ] || [ "$elapsed" -gt 5000 ]; then
-        printf 'C1609_EFFECT_WINDOW elapsed_ms=%s limit_ms=5000\n' "$elapsed" >&2
+        printf 'C1609_EFFECT_WINDOW stage=%s elapsed_ms=%s limit_ms=5000\n' "$stage" "$elapsed" >&2
+        c1609_publication_diagnostic "$stage" "$elapsed" || return 1
         return 1
     fi
 }
@@ -581,7 +600,7 @@ c1609_recheck_target() {
 
 c1609_prepare_ready_receipt() {
     C1609_READY_PREPARED_PID=
-    local root targets digest now daemon nonce snapshot manual admission_time='' monotonic elapsed
+    local root targets digest now daemon nonce snapshot manual admission_time='' monotonic elapsed rows
     root="$(c1609_retirement_root)"
     [ ! -e "$root/closure.json" ] && [ ! -L "$root/closure.json" ] &&
       [ ! -e "$root/close-pending.json" ] && [ ! -L "$root/close-pending.json" ] || return 1
@@ -616,21 +635,32 @@ c1609_prepare_ready_receipt() {
         '({schema:2,policyVersion:1,operationId:$op,project:$project,mode:$mode,state:"Ready",consumed:false,
           targets:$targets,image:$image,inventoryDigest:$digest,readyAt:$now,daemon:$daemon,
           retiredAt:$retiredAt,phaseNonce:$nonce,fingerprints:$fingerprints} + $manual)')" || return 1
+    # This work scales with the audit size. Keep the staged rendering private,
+    # durable and non-authorizing until fresh binding/approval/control succeeds.
+    rows="$(umask 077; mktemp -d "$root/render-$nonce.XXXXXXXX")" || return 1
+    c1609_copy_preview_rows "$rows" Ready || return 1
+    sync -- "$rows/audit.txt" "$rows/findings.jsonl" "$rows/proof.md" "$rows" || return 1
+    C1609_READY_PREPARED_ROWS="$rows"
     C1609_READY_PREPARED_PID="$BASHPID"
 }
 
 c1609_write_ready_receipt() {
-    local root nonce now prepared file nonce_tmp preview_tmp receipt_tmp
+    local root nonce now prepared file nonce_tmp preview_tmp receipt_tmp rows
     if [ "${C1609_READY_PREPARED_PID:-}" != "$BASHPID" ]; then
         c1609_prepare_ready_receipt || return 1
     fi
     root="$C1609_READY_PREPARED_ROOT"; nonce="$C1609_READY_PREPARED_NONCE"
+    rows="$C1609_READY_PREPARED_ROWS"
     prepared="$C1609_READY_PREPARED_JSON"
     C1609_READY_PREPARED_PID=; C1609_READY_PREPARED_JSON=
     c1609_custody "$root" dir || return 1
     [ ! -e "$root/preview-$nonce.json" ] && [ ! -L "$root/preview-$nonce.json" ] || return 1
     for file in "$root/preview.json" "$root/receipt.json"; do
         if [ -e "$file" ] || [ -L "$file" ]; then c1609_custody "$file" file || return 1; fi
+    done
+    for file in audit.txt findings.jsonl proof.md; do
+        c1609_custody "$rows/$file" file || return 1
+        if [ -e "$root/$file" ] || [ -L "$root/$file" ]; then c1609_custody "$root/$file" file || return 1; fi
     done
     nonce_tmp="$(umask 077; mktemp "$root/record.XXXXXXXX")" || return 1
     preview_tmp="$(umask 077; mktemp "$root/record.XXXXXXXX")" || return 1
@@ -644,9 +674,25 @@ c1609_write_ready_receipt() {
     c1609_phase_preview_issued || return 1
     mv -T -- "$nonce_tmp" "$root/preview-$nonce.json" || return 1
     mv -T -- "$preview_tmp" "$root/preview.json" || return 1
-    c1609_copy_preview_rows "$root" Ready || return 1
+    for file in audit.txt findings.jsonl proof.md; do
+        mv -T -- "$rows/$file" "$root/$file" || return 1
+    done
+    # Set before the authoritative rename: even a subsequent directory fsync
+    # refusal must revoke this invocation's Ready, never an earlier preview.
+    C1609_READY_INSTALLED_NONCE="$nonce"; C1609_READY_INSTALLED_PID="$BASHPID"
     mv -T -- "$receipt_tmp" "$root/receipt.json" || return 1
-    sync -- "$root"
+    sync -- "$rows" "$root"
+}
+
+c1609_invalidate_ready_receipt() {
+    [ "${C1609_READY_INSTALLED_PID:-}" = "$BASHPID" ] || return 0
+    local file="$(c1609_retirement_root)/receipt.json"
+    C1609_READY_INVALIDATION_FAILED=1
+    c1609_read_canonical "$file" >/dev/null || return 1
+    jq -e --arg nonce "$C1609_READY_INSTALLED_NONCE" --arg op "$C1008_OPERATION" \
+      '.phaseNonce==$nonce and .operationId==$op and (.state=="Ready" or .state=="Refused")' "$file" >/dev/null || return 1
+    jq '.state="Refused" | .consumed=true' "$file" | c1609_persist "$file" || return 1
+    C1609_READY_INVALIDATION_FAILED=0
 }
 
 c1609_write_refused_preview() {
@@ -998,6 +1044,8 @@ c1609_phase_helpers_joined() {
 
 c1609_phase_end() {
     [ -n "${C1609_PHASE_ROOT:-}" ] || return 0
+    # If durable revocation failed, never acknowledge a completed/inactive phase.
+    [ "${C1609_READY_INVALIDATION_FAILED:-0}" = 0 ] || return 1
     # A command-substitution child cannot publish its still-running parent's join.
     [ "$BASHPID" = "${C1609_PHASE_PID:-}" ] || return 1
     local file="$C1609_PHASE_ROOT/lifecycle.json" nonce

@@ -98,8 +98,12 @@ write_result() {
     if [ "$WROTE" = 1 ]; then
         exit "$code"
     fi
+    if [ "$accepted" != true ] && declare -F c1609_invalidate_ready_receipt >/dev/null; then
+        c1609_invalidate_ready_receipt || { diagnosis=RecycleReceiptUnavailable; code=2; }
+    fi
     if [ -n "${C1609_PHASE_ROOT:-}" ] && [ "$BASHPID" = "${C1609_PHASE_PID:-}" ] && ! c1609_phase_end; then
         accepted=false; diagnosis=RecycleReceiptUnavailable; code=2
+        c1609_invalidate_ready_receipt || true
     fi
     WROTE=1
     mkdir -p "$CASE_DIR"
@@ -9464,7 +9468,7 @@ c1008_recycle() {
             c1008_status_proof; c1008_references "$C1008_CENSUS" '[]'
             c1609_publication_gate ready || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable
-            c1609_effect_publication_fresh || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
+            c1609_effect_publication_fresh ready-published || c1008_refuse 'RecycleGitAuditUnknown reason=proof-stale'
             printf 'C1609_RETIREMENT state=Ready operation=%s\n' "$C1008_OPERATION"
             if [ -n "${C1008_HOST_PROOF:-}" ]; then
                 printf 'audit check=origin-present status=0\n'
