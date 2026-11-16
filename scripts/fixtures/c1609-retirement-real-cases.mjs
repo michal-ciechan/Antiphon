@@ -264,7 +264,7 @@ function shell(f, body, suffix='run') {
     const registry=JSON.stringify({schema:1,projects:{'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1':{origins:[originURL]}}});
     rootRun('printf %s '+q(registry)+' | jq -cS . > '+q(f.host+'/server/retirement-origins.json')+'; chown '+applyUid+':'+applyGid+' '+q(f.host+'/server/retirement-origins.json')+'; chmod 0600 '+q(f.host+'/server/retirement-origins.json'));
     const setup=[
-      'C994_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
+      'C1008_PROJECT_ID=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
       'C1609_PHASE_NONCE='+q(phase),'C1609_EXCHANGE=1','C1008_HOST_PROOF=',
       'C1609_EXCHANGE_PROOF_ROOT='+q(control),'mkdir -m 0700 '+q(control),
       'mkdir -p -m 0700 "$(c1609_retirement_root)"',
