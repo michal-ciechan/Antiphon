@@ -72,6 +72,8 @@ try {
             Note ($s.planned -eq 2 -and $s.carried -eq 0 -and $s.sampled -eq 1 -and $s.failed -eq 1 -and $s.executed -eq 1 -and $s.notRun -eq 1 -and $s.historicalPotentialWallSeconds -eq 0) 'actual-execution-separate-from-history'
             $bad=Copy-Rs $decisions; $bad[1].origin.wallSeconds=13
             Refuses { Get-RcPartitionStatus (New-RcExactPartition $suites $bad) @() } 'origin-wall-conflict'
+            $bad=Copy-Rs $decisions; $bad[1].origin.envelopeDigest='c'*64
+            Refuses { Get-RcPartitionStatus (New-RcExactPartition $suites $bad) @() } 'origin-envelope-conflict'
             Refuses { Get-RcPartitionStatus $p @(@{key='absent';outcome='Passed'}) } 'result-outside-launch'
             $r=@{key=$p.launch[0].key;outcome='Unproven'}
             $s=Get-RcPartitionStatus $p @($r)
@@ -102,6 +104,17 @@ try {
             Note ($LASTEXITCODE -eq 0) 'plan-command'
             $plan=Read-RcAdmissionJson $planPath (Get-RcAdmissionFileDigest $planPath)
             Note ($plan.effectiveMode -ceq 'Full' -and $plan.partition.carried.Count -eq 0 -and $plan.partition.launch.Count -eq 2 -and -not $plan.gateCredit -and -not $plan.coverageComplete -and $plan.forcedReasons -ccontains 'release-graph-incomplete') 'admission-stays-fail-closed'
+            $bad=Copy-Rs $request; $bad.bindings.input.digest='0'*64
+            $fallback=New-RcIncrementalPlan $bad $repo $sha
+            Note ($fallback.forcedReasons -ccontains 'receipt-unproven:input' -and $fallback.partition.launch.Count -eq 2) 'changed-receipt-full'
+            $bad=Copy-Rs $request; $bad.decisions=@($bad.decisions[0])
+            $fallback=New-RcIncrementalPlan $bad $repo $sha
+            Note ($fallback.forcedReasons -ccontains 'proposal-invalid:decision-universe-mismatch' -and $fallback.partition.launch.Count -eq 2) 'partial-public-proposal-full'
+            $bad=Copy-Rs $request; $bad.sampleSeed='different-seed'
+            Note ((New-RcIncrementalPlan $bad $repo $sha).digest -cne $plan.digest) 'plan-binds-sample-seed'
+            $bad=Copy-Rs $request; $bad.platform='windows'
+            $windows=New-RcIncrementalPlan $bad $repo $sha
+            Note ($plan.coverageScope -ceq 'PlatformDiagnostic' -and $windows.coverageScope -ceq 'IncrementalDiagnostic' -and -not $windows.coverageComplete -and -not $windows.gateCredit) 'platform-labels-grant-no-credit'
             Refuses { New-RcIncrementalPlan $request $repo ('1'*40) } 'candidate-binding-mismatch'
             Refuses { Write-RcIncrementalPlan $planPath $plan } 'write-once'
             $root=Join-Path $ResultsDirectory 'revisions'
