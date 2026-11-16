@@ -1,17 +1,19 @@
 # Retire-temp publication refusal, 2026-11-16
 
-The refused attempt reached the **final publication gate after a successful
-initial proof exchange, provisional content scan, and proof renewal**. The
-15-minute proof-file lifetime did not expire during this seven-minute attempt.
-The final gate also has a separate five-second fence. Its generic `proof-stale`
-diagnosis does not identify the failed predicate, and the coordinator discards
-the output that could distinguish those predicates. A five-second overrun is a
-credible explanation, not a demonstrated root cause.
+The refusal came from **the final five-second publication fence immediately
+after `c1609_write_ready_receipt`**, at `scripts/c590-remote.sh:9467`. The inner
+publication gate had succeeded, including final origin binding, live control,
+proof custody and its first fence check. The Ready writer then persisted the
+receipt and rendered the audit evidence before the second fence check refused.
+This is a host-side refusal reported by the desktop, not a desktop timestamp or
+nonce-binding failure. The 15-minute proof lifetime did not expire.
 
-The investigation is incomplete on that last distinction: the desktop receipts
-were retrieved, but direct host SSH failed host-key verification. The exact
-host-side reads needed to finish are below. Do not delete fixtures, edit a proof,
-relax a clock bound, or treat this refusal as evidence of unpublished work.
+The orchestrator's supplied read-only host evidence closes the gap recorded in
+the initial investigation commit `8ca032243508635cfad284191a5f12690a0ec8b1`.
+No further host access is needed for this attribution. The exact elapsed value
+was not retained; the coordinator discards the fence's stderr diagnostic.
+Use a new explicit `-DryRun` preview and require its successful exit before
+applying. Do not consume the refused attempt's residual Ready receipt.
 
 ## Attempt and evidence identity
 
@@ -48,6 +50,41 @@ Local uncommitted evidence copies and the read helper are outside the repository
 under `/work/evidence/d8f79eb5/`. The original desktop receipt root above is the
 durable reference for the caller. The retrieved text responses were not
 truncated. Generated receipts and source snapshots are not committed.
+
+## Host evidence supplied on reopening
+
+The caller retrieved the following through trusted SSH from
+`/home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321/`.
+These are caller-supplied host observations, not additional SSH reads by this
+delegate. All times below are UTC on 2026-11-16.
+
+| Record | Supplied observation |
+|---|---|
+| `control-9116f0bb96d552df90a07ea87fcd97dc.json` | Exists, mtime 00:10:43.552; purpose `ready`, phase nonce `36b15bbe91d8828f0f0a70c751359d5c`, proof digest `1da31aca7a4172410a8dc1bf393ad3277f33fedebcf95a72b6f9bee5ee3f5b4d`, object digest `6f4da91373db299044c55cd8b9af2608f44544d4e62858d29fa3255e7a595a6b`. |
+| `receipt.json` | Exists, 2,681 bytes, mtime 00:10:43.712; schema 2, policy 1, scripted, state `Ready`, `consumed=false`, `readyAt=2026-11-16T00:10:43Z`, preview nonce `5f734249b4841cbe3ebb3e42fd5b4cf4`. |
+| `preview.json`, `preview-5f734249b4841cbe3ebb3e42fd5b4cf4.json` | Exist, mtimes about 00:10:43.7. |
+| `audit.txt` | 1,131,573 bytes, mtime 00:10:43.864; size matches the retrieved complete desktop audit. |
+| `findings.jsonl` | mtime 00:10:43.868. |
+| `proof.md` | mtime 00:10:44.580, rendered state `Ready`. |
+| `lifecycle.json` | mtime 00:10:44.732; `active=false`, `complete=true`, `readyPublished=true`; all four helper children joined. Archived lifecycle mtime 00:10:44.672. |
+| Renewed exchange record | mtime 00:10:05.347. |
+| Initial exchange record | mtime 00:06:05.826. |
+
+The receipt's local-content inventory digest is
+`7d23f00e83ce2b6b0b74d003e0e5f4e560789de4e950fa838d9b56dc919ce1a6`.
+Its daemon is `5bd91f05-d2a2-4db8-bc1e-39f7288854d7`; the lifecycle owner is
+PID 22460, start ticks 2050905193. The origin-request inventory digest discussed
+below is a different digest with a different purpose; equality is not required.
+
+Two live-inventory outputs contain binding clocks with boot
+`ca135ff7-0d75-4067-a313-c623f0727498`, namespace `global`, and starts
+`20509326980` and `20509422190`. Units are **milliseconds since boot**, derived
+from `/proc/uptime` by `c1609_monotonic_ms`/`c1609_emit_binding_clock`. Their
+difference is 95,210 ms = 95.210 seconds. The first is the binding refresh before
+renewal; the later one supplies the effect-gate start after renewal, census and
+Ready-input preparation. The 95 seconds between observations is not charged to
+the final five-second fence. `global` is explicitly accepted when both time
+namespace interfaces are absent; it is not an invalid namespace label.
 
 ## Which proof and which clocks
 
@@ -168,6 +205,30 @@ terminal verdict: the same output contains publication proofs and
 `published-fetch-head`, and the parent proceeded to renewal. In particular,
 `proof-stale` is not permission to delete the paths mentioned by those rows.
 
+The `dirty` row explicitly names **`repos/antiphon`**, the mirror checkout,
+not `worktrees/task-8ec395a1`, the canary worktree. Its null `objectId` and
+`commitId` are deliberate arguments in `c1609_scan_git`
+(`scripts/c1008-content-audit.sh:370`): the preliminary enumerator emits this
+row for any nonempty ordinary Git porcelain status, without identifying a
+specific file or applying the full content classifier. Null is not an unknown
+canary commit or a missing publication proof.
+
+The authoritative `consider_dirty` classifier in `scripts/c590-remote.sh:7198`
+subsequently checks the worktree/index. For example, the empty no-index deploy
+seed can show HEAD deletions in ordinary status and still pass when its worktree
+contains nothing outside `.git` and it has no stash. Nested repositories are
+classified independently rather than refused as their parent's untracked
+directory. These explain why a preliminary dirty row and an accepted scan can
+coexist by design. Genuine modified/staged/protected untracked content still
+refuses `RecycleWorktreeDirty`. The precise porcelain entries behind this
+mirror row were not retained, so do not assert that one particular exception
+was exercised. No further porcelain evidence is needed to attribute this fence
+failure, and nothing here authorizes ignoring a future dirty refusal.
+
+The retrieved audit contains **11 JSON finding rows**: one dirty, one FETCH_HEAD,
+seven master-side reflog rows, and two canary-side reflog rows. The reopening
+message called them ten, but its listed categories also sum to eleven.
+
 **No demonstrated slot-ledger or retained-evidence cause.** The supplied
 standing-runner canaries (`80c30683`, `22ee1e10`) ran on main, whereas this
 operation audited temp's private volumes. The main ledger currently identifies
@@ -176,29 +237,71 @@ this Debug task in `ws-01`, prior task `80c30683`, and a free `ws-02` last used 
 volume inventory. No inspected refusal names `/work/workspace-slots/ledger.json`
 or `/work/retained/`. No deletion or repair of either location is justified.
 
-**Final live origin movement is not demonstrated.** A ref can move after a
-renewal. If the desktop final live-origin assertion had thrown, the coordinator
-would catch it and record a nonzero `failure-line`. Here it records zero. This
-rules out a caught final assertion failure in the inspected coordinator; it
-does not establish that the final control request was reached or succeeded.
+**Exact failed subcheck: post-Ready effect-window check.** The current
+operation/nonce's freshly written receipt, control and rendering records close
+the ambiguity left by the desktop evidence. The dry-run branch executes:
 
-**Confirmed diagnostic defect; unresolved underlying subcheck.** In the dry-run
-branch, `scripts/c590-remote.sh:9465` maps every failure of
-`c1609_publication_gate ready` to bare `reason=proof-stale`; line 9467 applies
-the same label to the post-Ready five-second check. The coordinator reads stdout
-and stderr but retains neither arbitrary stdout lines nor stderr text; its
-`remote-output.txt` is only transport exit/failure-line metadata. Successful
-control requests are not appended to `coordinator-exchanges.jsonl`, either.
-Consequently the five-second diagnostic can be emitted and discarded, and the
-desktop copy does not disambiguate the two call sites.
+```text
+c1609_publication_gate ready       -> failure label proof-stale (line 9465)
+c1609_write_ready_receipt          -> failure label RecycleReceiptUnavailable
+c1609_effect_publication_fresh     -> failure label proof-stale (line 9467)
+print successful Ready completion
+```
 
-The three copied host census attempts took 7,280 / 7,420 / 7,400 ms. Those are
-outside the final observation boundary and do not prove a five-second overrun.
-The CARD-1901 plan already records earlier positive-path failures at 5,360 and
-7,040 ms, making this a concrete performance candidate, not proof about this
-attempt. Classify the observed diagnostics as a script observability defect;
-leave tight-window versus other final-gate failure, and transient versus
-repeatable behavior, unresolved until the host evidence below is read.
+The new receipt could not have been written by this path if the first call had
+refused. A failure of the writer, including its final directory flush, would
+have produced `RecycleReceiptUnavailable`, which is not the recorded diagnosis.
+Therefore the failing call is the **third call, line 9467**, after a successful
+Ready write. The inner gate had already accepted the binding clock, current
+origin approval, live-origin control response, proof headers/custody, and its
+own first five-second check. The host's durable control file proves the response
+binding. The desktop merely relayed the resulting host refusal at 00:10:45.
+
+The failing function checks the existing monotonic start and elapsed window;
+it does not recompare the nonces, reopen proof custody, or run another control
+exchange. With the accepted clock domain/start, the fence aged across the Ready
+writer. The exact measured elapsed value is unavailable because the coordinator
+discards stderr, including `C1609_EFFECT_WINDOW`. Do not invent a numeric overrun
+or derive it by subtracting UTC file mtimes from monotonic uptime.
+
+**Receipt mtime is not its publication time.** The writer assigns `readyAt` and
+writes three temporary Ready payloads before flushing and renaming them. It
+then copies the full audit, loops through every audit line to render findings,
+writes `proof.md`, and only afterward renames the authoritative `receipt.json`
+and syncs its directory. Renaming preserves the payload's earlier mtime. Thus
+the 00:10:43.712 receipt mtime and `readyAt=00:10:43Z` do not prove publication
+completed at 00:10:43.712. On this code path canonical receipt installation
+follows the 00:10:44.580 proof rendering. This explains how the host can retain
+Ready bytes while the overall preview refuses immediately afterward.
+
+**Not structurally caused by seven minutes of scanning.** The timer starts at
+the last binding observation, after repository discovery, full content scanning,
+renewal and census. The copied census durations of 7,280 / 7,420 / 7,400 ms are
+outside that final observation boundary. The current implementation does,
+however, place work proportional to the audit's size/line count inside the
+remaining five-second budget: this audit is 1,131,573 bytes and 10,417 lines.
+The supplied audit/findings/proof mtimes show evidence rendering continuing
+after the successful control record. That avoidable work, receipt durability
+and the already-consumed control time are the performance repair target.
+
+A fresh preview starts a new late-bound clock and may pass with more execution
+headroom; there is no evidence-based guarantee that rerunning the same workload
+will fit. This one attempt proves a final-window failure, not deterministic
+failure of every long audit. Treat repeated refusal as a Code repair requirement,
+not a reason for unbounded retries or a larger deadline. The CARD-1901 plan's
+earlier 5,360/7,040 ms positive-path failures are historical supporting context,
+not measurements of this attempt.
+
+**The two nonce domains are intentional.**
+`C1609_PHASE_NONCE=36b15bbe91d8828f0f0a70c751359d5c` identifies this host
+invocation, its inventory, lifecycle and control/exchange records.
+`c1609_prepare_ready_receipt` generates a new random nonce
+`5f734249b4841cbe3ebb3e42fd5b4cf4` for the immutable preview receipt and stores it
+as the receipt's `phaseNonce`, matching `preview-<nonce>.json`.
+`c1609_require_ready_preview` reads that receipt nonce to select and compare
+the immutable preview. It does not require equality to the invocation nonce.
+The publication manifests also have their own proof-exchange nonce, already
+validated separately. None of these intended distinctions caused this refusal.
 
 The four relevant desktop script texts match this task's source after newline
 normalization; the coordinator and retirement module also match the requested
@@ -215,51 +318,68 @@ successful Ready preview, otherwise send the continuing refusal to Debug. This
 Debug commission expressly prohibits executing either step, and neither was run.
 No new approval is required for the caller's already-authorized normal recovery.
 
-First retain the existing receipt root. From a host with its existing trusted
-server2 SSH configuration, read these **without changing the host**:
+**A new preview is required; do not apply the old residual Ready.** The owner
+policy requires a successfully completed preview, not just Ready bytes on disk.
+This preview returned exit 2 after its final freshness check, so its receipt
+does not authorize the documented next step. Additionally its `readyAt` is
+00:10:43Z and the nominal 900-second admission lifetime reaches 00:25:43Z;
+that lifetime has expired by completion of this follow-up.
 
-```powershell
-ssh -o BatchMode=yes mc@server2 'ls -la /home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321'
-ssh -o BatchMode=yes mc@server2 'cat /home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321/lifecycle.json'
-ssh -o BatchMode=yes mc@server2 'cat /home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321/control-*.json'
-ssh -o BatchMode=yes mc@server2 'cat /home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321/receipt.json'
-ssh -o BatchMode=yes mc@server2 'rg -n "^C1609_BINDING_CLOCK|^audit check=" /home/mc/antiphon-server2/retirement/c100884ecc9a17ca049e4862f423ba2433321/inventory-36b15bbe91d8828f0f0a70c751359d5c/live-inventory-*.out'
-```
+There is a useful implementation distinction: while such a residual receipt is
+still within 900 seconds, `New-C1609RetirementReadPacket` checks Ready state,
+matching immutable preview, lifecycle completion/join, custody, daemon and age.
+It does not check the enclosing preview's exit/result. Therefore it can appear
+technically consumable even after this specific late refusal. That is not
+sanctioned recovery. Apply would still perform its own fresh content/publication
+gates; this observation is not proof of deletion without those gates. Preserve
+the refused evidence and include invalidation of residual Ready in the repair.
 
-Missing files are observations to preserve. Do not create them to make these
-commands succeed. A control record distinguishes a completed final response
-from an earlier host failure; receipt/lifecycle state distinguishes failure
-before Ready from a post-publication check. The binding record further narrows
-clock-domain/bracketing problems. These records may still lack a captured exact
-elapsed value, because the coordinator loses stderr.
+If the one fresh recovery attempt has not already been spent, use the sequence
+below from the canonical desktop checkout. It captures the operation only from
+a new preview with exit 0. The script's successful full-preview path has
+`auditPending=false`; a pending container-only preview yields no Ready operation
+and this sequence stops. If the one retry has already been used, commission the
+repair described below, activate the reviewed script bundle through the existing
+owner procedure, and then use this sequence for its new preview.
 
-If the one fresh recovery attempt has not already been spent, the normal command
-sequence from the canonical desktop checkout is:
+A plain `-Phase retire-temp` is not the explicit preview-only interface: the
+wrapper previews, then follows the apply path subject to its matching token.
+Use **`-DryRun`**. A fresh preview may succeed, but success inside the final fence
+cannot be promised from these records. Repeated refusal requires repair rather
+than repeated retries. Neither command in this sequence was executed here.
 
 ```powershell
 Set-Location C:\src\Antiphon
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun
-```
-
-Stop this sequence on refusal. A plain `-Phase retire-temp` is not the explicit
-preview-only interface: the wrapper previews, then follows the apply path;
-the matching token gates that path. Use `-DryRun` for an unambiguous preview.
-Only after exit 0, `auditPending=false`, and its fresh
-`C1609_RETIREMENT state=Ready operation=<operation-id>`, apply that exact operation
-at once, within its 900-second receipt lifetime:
-
-```powershell
-$operation = '<operation-id from the successful new Ready preview>'
+& pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun |
+    Tee-Object -Variable previewLines
+$previewExit = $LASTEXITCODE
+if ($previewExit -ne 0) {
+    throw "Preview refused (exit $previewExit); retain volumes and route the continuing failure to repair."
+}
+$readyOperations = @($previewLines | ForEach-Object {
+    if ([string]$_ -cmatch '^C1609_RETIREMENT state=Ready operation=(c1008[0-9a-f]{32})$') {
+        $Matches[1]
+    }
+} | Sort-Object -Unique)
+if ($readyOperations.Count -ne 1) {
+    throw 'No unique completed Ready preview; retain volumes.'
+}
+$operation = $readyOperations[0]
 try {
     $env:ANTIPHON_VOLUME_RETIREMENT_APPLY = "enabled-$operation"
-    pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -RetirementProof $operation
+    & pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -RetirementProof $operation
+    if ($LASTEXITCODE -ne 0) {
+        throw "Apply refused or failed (exit $LASTEXITCODE); retain its receipt for the owner recovery procedure."
+    }
 } finally {
     Remove-Item Env:\ANTIPHON_VOLUME_RETIREMENT_APPLY -ErrorAction SilentlyContinue
 }
 ```
 
-The previously refused operation is not the value to substitute. Do not use
-Resume or Close to manufacture a successful preview. Waiting does not refresh
+Run the apply immediately after the successful preview, within its 900-second
+admission lifetime. The old `c100884ecc9a17ca049e4862f423ba2433321` operation is
+not the value to substitute. Do not use Resume or Close to manufacture success.
+Waiting does not refresh
 publication; a new preview/coordinator exchange does. There is no documented
 standalone proof-refresh command that bypasses these gates.
 
@@ -270,35 +390,45 @@ expired monotonic fence. No current evidence selects a fixture for that remedy.
 
 ## Proposed follow-up card description; no code changed
 
-**Title:** Preserve retirement publication subgate refusal and timing evidence.
+**Title:** Move retirement evidence rendering outside the final publication
+window and invalidate refused Ready receipts.
 
 On rollout attempt `c72708e6bad9b7dc`, retirement operation
-`c100884ecc9a17ca049e4862f423ba2433321`, a 47-second-old renewed proof received
-bare `RecycleGitAuditUnknown reason=proof-stale`. The final publication gate
-maps custody, binding, digest, renewal, Ready preparation, clock-record, control
-and five-second failures to one label. The desktop coordinator drops detailed
-host output, including the existing effect-window diagnostic, and records no
-successful control exchange.
+`c100884ecc9a17ca049e4862f423ba2433321`, the inner publication gate completed
+with a valid 47-second-old renewed proof and a durable live control record.
+`c1609_write_ready_receipt` then rendered a 1,131,573-byte / 10,417-line audit
+inside the remaining five-second window. The following check at
+`c590-remote.sh:9467` refused `proof-stale`, leaving state Ready, unconsumed,
+and `readyPublished=true` although the enclosing preview failed.
 
-Persist a bounded, scrubbed typed failure stage and the relevant clock/elapsed
-facts in operation evidence; distinguish failure inside the Ready gate from the
-post-Ready check, and retain the final control outcome. Keep the five-second and
-900-second limits, custody/binding predicates, live-origin requirement, and
-deletion admission unchanged. Add focused witnesses showing fresh proofs with
-custody, binding and effect-window failures remain refused and produce distinct
-evidence with no destructive effect. Measure any subsequent normal-path timing
-repair separately; do not widen a bound or add a retry based on this diagnosis.
+Prepare/stage the full audit/findings/proof rendering before the final binding
+clock, leaving only required bounded publication work after live control. Do
+not omit evidence, reset the clock after observations, widen the five-second
+bound, or reuse the old live-origin result. Keep payload/directory durability,
+all custody/header/nonce checks, fresh origin approval, fresh advertisement,
+900-second receipt admission and per-effect gates. If a late final check
+refuses after Ready installation, invalidate the mutable receipt for admission
+while preserving the immutable preview and refusal evidence. Persist a bounded
+scrubbed stage/elapsed diagnostic, since the coordinator currently discards it.
 
-## Validation and outstanding requirement
+A separate Code task should add a red-first focused witness for rendering work
+consuming the remaining fence budget after successful control, then verify the
+same workload completes inside the unchanged fence after staging is moved.
+Also require late-failure residue to refuse Apply admission and retain existing
+file/directory fsync-refusal, live-origin withdrawal, clock-binding and dirty-work
+guards. No production or test code was changed in this Debug task.
+
+## Validation and completion
 
 No build, test suite, retirement invocation, token-bearing retirement command,
 server2 mutation, volume mutation, deletion, cleanup, or production restart ran.
 Evidence checks independently recalculated timestamps, the required-object
-digest, manifest identity, and desktop script equality. Direct SSH refused with
-exit 255, `Host key verification failed`; no trust check was bypassed.
-
-To finish exact root-cause attribution, the caller must supply the host records
-listed above or commission their read from a host that already has trusted SSH
-access. The limitation is missing evidence/access, not missing authorization for
-the standing rollout recovery. The diagnostic defect and the recovery sequence
-are established; a specific five-second overrun or other final predicate is not.
+digest, manifest identity, desktop script equality, the 95,210 ms clock delta,
+and eleven preliminary finding rows. The recommended PowerShell sequence passed
+a parser-only check with zero syntax errors; it was not executed. The initial
+direct SSH attempt refused
+with exit 255, `Host key verification failed`; no trust check was bypassed.
+This follow-up used the caller's supplied host records without further host
+access. The original blocked attribution is now resolved to the post-Ready
+fence; the elapsed value remains unrecorded, not a requirement for another
+host read. Repair and live recovery remain separate caller work.
