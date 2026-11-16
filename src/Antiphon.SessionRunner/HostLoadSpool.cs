@@ -28,6 +28,8 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
     private readonly List<(string Path, List<Entry> Entries)> _chunks = [];
     private Ledger _ledger;
     private long _sequence;
+    private long _cursorAdvances;
+    public long CursorAdvances => Interlocked.Read(ref _cursorAdvances);
     private readonly Guid _boot;
     private readonly Action<string, HostLoadSource>? _appendObservation;
     public Guid RunnerStoreId => _ledger.Store;
@@ -123,8 +125,11 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
                 if (cursor.Through > _ledger.Acknowledged)
                 {
                     // Ledger replacement must finish before any acknowledged chunk is removed.
+                    var previous = _ledger;
                     _ledger = _ledger with { Acknowledged = cursor.Through };
-                    Persist();
+                    try { Persist(); }
+                    catch { _ledger = previous; throw; }
+                    Interlocked.Increment(ref _cursorAdvances);
                     RemoveAcknowledged();
                 }
             }
@@ -136,7 +141,8 @@ public sealed class HostLoadSpool : IHostLoadHistorySource
                 selected.Add(entry);
                 var candidate = Encode(new(RunnerStoreId, _ledger.Acknowledged, entry.Ordinal));
                 var page = Page(selected, candidate, selected.Count < pending.Length);
-                if (JsonSerializer.SerializeToUtf8Bytes(page, PhoneHomeFraming.Json).Length > 1024 * 1024)
+                // Reserve space for the collector's bounded diagnostic metadata on this surface.
+                if (JsonSerializer.SerializeToUtf8Bytes(page, PhoneHomeFraming.Json).Length > 1016 * 1024)
                 { selected.RemoveAt(selected.Count - 1); break; }
                 next = candidate;
             }

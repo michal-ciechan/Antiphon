@@ -1164,7 +1164,11 @@ public sealed record RunnerHostStatsDto(
     int? Cores,
     RunnerHostCurrentDto? Current,
     IReadOnlyDictionary<string, RunnerHostWindowRollups> Rollups,
-    RunnerHostBuildSlotsDto? BuildSlots);
+    RunnerHostBuildSlotsDto? BuildSlots)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public HostLoadCollectorDiagnostics? Collector { get; init; }
+}
 
 /// <summary>CARD-0718. One series point. <paramref name="T"/> is the runner clock.</summary>
 public sealed record RunnerHostSeriesPoint(DateTimeOffset T, double V);
