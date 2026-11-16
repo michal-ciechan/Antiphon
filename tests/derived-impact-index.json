@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 152,
+      "classes": 153,
       "reason": "cap",
-      "owed": 127,
+      "owed": 128,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -3445,7 +3445,8 @@
       "classes": [
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
-        "VolumeRetirementPublicationTests"
+        "VolumeRetirementPublicationTests",
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -3498,7 +3499,8 @@
     {
       "path": "scripts/c1609-read-packet.ps1",
       "classes": [
-        "HostJqFixtureClosureTests"
+        "HostJqFixtureClosureTests",
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -24350,7 +24352,8 @@
       "classes": [
         "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
-        "VolumeRetirementPublicationTests"
+        "VolumeRetirementPublicationTests",
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
