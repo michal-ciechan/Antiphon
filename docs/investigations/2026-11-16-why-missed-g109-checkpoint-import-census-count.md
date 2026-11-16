@@ -3,8 +3,8 @@
 Debug `8b491f75`, Linux server2, fetched current master
 `52a90a3935f1f8ed4198200ce3a5e21ca8dab370`. Windows qualification
 `160200cb` on rc/2026-11-22 at
-`a71c45ab4d5703d480f4eee4c4e30adab45bc4f9` reported one failure among
-48 `CheckpointImportTests` results: C1098 expected 20 declarations and found 19.
+`a71c45ab4d5703d480f4eee4c4e30adab45bc4f9` reported one failure in the
+48-result qualification group: C1098 expected 20 declarations and found 19.
 The test, wrapper source and CARD-1087 plan have no differences between that
 rc cut and this master.
 
@@ -86,3 +86,67 @@ the required native-policy guard verifies its census. These edits touch none
 of those pin inputs. Mutation checks are waived by operator authority
 (2026-11-12). Work proceeds under the supplied standing authority without
 another approval request. This test-only repair hands off with `next: merge`.
+
+## Final verification
+
+Every final row ran at clean committed source
+`c5715e13c3512551b85572217893b3ce54bf9790`, using the native default output
+and default apphost. Each build and row held its own granted build-slot lease;
+all admission waits were zero. Source stayed frozen during all builds and rows.
+The repaired-source build passed with 0 errors and 2,138 warnings in 438.36
+seconds MSBuild time (441-second lease). The driver prerequisite build passed
+with 0 errors and 0 warnings in 6.25 seconds (9-second lease).
+
+| Final row | Total | Passed | Failed | Skipped | Framework time | Lease time |
+|---|---:|---:|---:|---:|---:|---:|
+| CheckpointImportTests, complete class | 34 | 34 | 0 | 0 | 6.423s | 11s |
+| ProcessSpawnLimitTests, complete class | 57 | 57 | 0 | 0 | 8.809s | 13s |
+| Required eleven-class guard union | 115 | 114 | 0 | 1 | 207.036s | 211s |
+
+The repaired C1098 method passed in 0.0918759 seconds. There are exactly 34
+`[Test]` declarations in `CheckpointImportTests.cs`, and all 34 appear in the
+class TRX. The commissioning qualification-group total of 48 is not this
+single-class census. Total final results: 206, with 205 passed, zero failed,
+one skipped. The skip is
+`WindowsUnitPlatformAdmissionTests.C1210_Windows_linux_only_outcomes_are_exact`:
+its child skip-roster audit requires Windows placement. No Windows execution
+credit is claimed.
+
+Every requested guard class has nonzero TRX results: classification policy 42,
+classification guard 1, slow registry 5, slow tripwire 2, native Linux policy 3,
+derived index 27, mechanical contract 11, platform guidance 5, layering 11,
+lane category 1, Windows admission 7. Layering reports:
+
+```text
+VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3
+```
+
+Driver regeneration first reported `derived-impact-index changed` (33-second
+lease), then `derived-impact-index unchanged` (31-second lease). The generated
+delta adds only `CheckpointImportTests` to twelve existing edges, including the
+wrapper source edge (now 15 classes). No hand-written selector row changes.
+All three policy pins remain unchanged; the native-policy guard passed 3/3.
+
+The final build began at load `12.59 11.81 6.72`, with a sample reaching
+`21.48 18.62 10.91`. Final rows began at `8.65 14.48 10.56`,
+`6.66 13.65 10.37`, and `5.63 12.86 10.19` respectively; the guard row ended
+at `5.31 9.23 9.27`. These sparse samples do not establish a p95. TRX retains
+individual durations and membership; opt-in phase JSONL and source/filter/load
+metadata live beside each row under the ignored evidence root above.
+Uninstrumented phase attribution remains unknown. All builds and rows finished
+below ten minutes, serially.
+
+Pushed source slices:
+
+- `5c50e70f556cee30237eddb07788e1cb031ae442`: census repair, exact plan update,
+  and initial why-missed investigation.
+- `c5715e13c3512551b85572217893b3ce54bf9790`: regenerated impact index, in its
+  own commit after the driver build and stable second regeneration.
+
+Before this evidence-only appendix, the evidence-history guard reported two
+commits, zero evidence entries and zero violations. A fresh master fetch still
+resolved to `52a90a3935f1f8ed4198200ce3a5e21ca8dab370`;
+`git merge-tree --write-tree origin/master HEAD` exited 0 with tree
+`360db2b81f3cd9ec427817e284190f3cf115d1bb`. The caller report records the final
+appendix commit and final checks. This appendix changes only this narrative;
+the verified code and generated index are unchanged.
