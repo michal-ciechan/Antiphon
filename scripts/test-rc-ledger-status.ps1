@@ -59,6 +59,8 @@ try {
             $other=Copy-Rs $a; $other.suite='other'
             $p=New-RcExactPartition @($suites[0],@{suite='other';adapter='tunit';cases=@($other)}) @($decisions+(Decision $other))
             Note ($p.required.Count -eq 3) 'same-method-cross-suite-distinct'
+            $mixed=Copy-Rs $a; $mixed.boundary='other'
+            Refuses { New-RcExactPartition (Suites @($a,$mixed)) $decisions } 'mixed-boundary-chunk'
         }
         'StatusCountsOriginsWithoutDoubleCharging' {
             $p=New-RcExactPartition $suites $decisions
@@ -106,12 +108,17 @@ try {
             $revision=Write-RcPlanRevision $root $planPath $plan.digest @()
             $status=Read-RcPlanStatus $root $plan.digest
             Note ($status.notRun -eq 2 -and -not $status.coverageComplete -and -not $status.gateCredit) 'initial-open'
+            $failed=@{key=$plan.partition.launch[0].key;outcome='Failed'}
+            $revision=Write-RcPlanRevision $root $planPath $plan.digest @($failed)
+            Refuses { Write-RcPlanRevision $root $planPath $plan.digest @() } 'revision-result-history'
+            $changed=Copy-Rs $failed; $changed.outcome='Passed'
+            Refuses { Write-RcPlanRevision $root $planPath $plan.digest @($changed) } 'revision-result-history'
             # Orphan durable revision after a crash cannot replace the published pointer.
-            [void][IO.Directory]::CreateDirectory((Join-Path $root 'revisions/2'))
-            [IO.File]::WriteAllText((Join-Path $root 'revisions/2/revision.json'),'{"state":"complete","results":["Passed"]}')
+            [void][IO.Directory]::CreateDirectory((Join-Path $root 'revisions/3'))
+            [IO.File]::WriteAllText((Join-Path $root 'revisions/3/revision.json'),'{"state":"complete","results":["Passed"]}')
             $again=Read-RcPlanStatus $root $plan.digest
-            Note ($again.sequence -eq 1 -and $again.notRun -eq 2) 'crash-keeps-previous-pointer'
-            Refuses { Write-RcPlanRevision $root $planPath $plan.digest @() } 'revision-already-exists'
+            Note ($again.sequence -eq 2 -and $again.failed -eq 1 -and $again.notRun -eq 1) 'crash-keeps-previous-pointer'
+            Refuses { Write-RcPlanRevision $root $planPath $plan.digest @($failed) } 'revision-already-exists'
             $lock=[IO.File]::Open((Join-Path $root '.writer.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
             try { Refuses { Write-RcPlanRevision $root $planPath $plan.digest @() } 'writer-busy' } finally { $lock.Dispose() }
             $before=Get-RcAdmissionFileDigest (Join-Path $root 'index.json')
@@ -119,6 +126,17 @@ try {
             Note ($LASTEXITCODE -eq 0 -and $before -ceq (Get-RcAdmissionFileDigest (Join-Path $root 'index.json'))) 'status-read-only'
             [IO.File]::AppendAllText((Join-Path $root $revision.path),' ')
             Refuses { Read-RcPlanStatus $root $plan.digest } 'admission-seal-mismatch'
+            $allPassed=@(foreach ($row in $plan.partition.launch) { @{key=$row.key;outcome='Passed'} })
+            $otherRoot=Join-Path $ResultsDirectory 'all-passed'
+            $pointer=Write-RcPlanRevision $otherRoot $planPath $plan.digest $allPassed
+            $status=Read-RcPlanStatus $otherRoot $plan.digest
+            Note ($status.executed -eq 2 -and $status.notRun -eq 0 -and -not $status.coverageComplete -and -not $status.gateCredit) 'ordinary-results-cannot-publish-closure'
+            $revisionPath=Join-Path $otherRoot $pointer.path
+            $terminal=Read-RcAdmissionJson $revisionPath $pointer.sha256; $terminal.state='complete'
+            [IO.File]::WriteAllText($revisionPath,($terminal | ConvertTo-Json -Depth 60))
+            $pointer.sha256=Get-RcAdmissionFileDigest $revisionPath
+            [IO.File]::WriteAllText((Join-Path $otherRoot 'index.json'),($pointer | ConvertTo-Json -Depth 10))
+            Refuses { Read-RcPlanStatus $otherRoot $plan.digest } 'revision-not-open-or-bound'
         }
         default { throw 'unknown-case' }
     }
