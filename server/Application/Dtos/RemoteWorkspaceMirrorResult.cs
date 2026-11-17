@@ -25,6 +25,14 @@ public sealed record MirrorBindingExpectation(
 public sealed record WorkspaceSlotColdResetRouteRequest(IReadOnlyList<string>? Slots, bool All, string Reason, string? Requester = null);
 
 /// <summary>
+/// CARD-1960. <c>POST /api/session-runners/{runnerId}/workspace-slots/quarantine/{dirId}/release</c>: an operator
+/// releases one open quarantined slot directory through the runner's <c>WorkspaceSlotQuarantineRelease</c>. The
+/// disposition is exactly <c>Pushed</c>, <c>AcceptLoss</c> or <c>Removed</c>; the optional requester (as for
+/// record-release, never a credential) is folded into the reason the runner records.
+/// </summary>
+public sealed record WorkspaceSlotQuarantineReleaseRouteRequest(string Disposition, string Reason, string? Requester = null);
+
+/// <summary>
 /// Review f4c293bc D-1. <c>POST /api/session-runners/{runnerId}/workspace-slots/{slotId}/record-release</c>: an operator
 /// records the release of a <c>workspace_slot_release_stuck</c> slot for this task and lease generation. CARD-1649 A-2:
 /// the optional requester (at most 64 UTF-16 code units, never a credential) goes into the audit event.
