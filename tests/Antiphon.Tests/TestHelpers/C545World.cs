@@ -350,7 +350,7 @@ internal sealed class FakeRecipientReader(FakeRecipientChat chat) : IRecipientRe
     }
 }
 
-internal sealed record ScriptedResponse(int Status, string? BodyJson = null, int DelayMs = 0);
+internal sealed record ScriptedResponse(int Status, string? BodyJson = null, int DelayMs = 0, bool Cancel = false);
 
 internal sealed class RecordingHttpHandler(IEnumerable<ScriptedResponse> responses) : HttpMessageHandler
 {
@@ -365,7 +365,10 @@ internal sealed class RecordingHttpHandler(IEnumerable<ScriptedResponse> respons
         var auth = request.Headers.TryGetValues("Authorization", out var values) ? values.ToList() : [];
         Requests.Add((request.Method, request.RequestUri!, body, auth.FirstOrDefault(), auth.Count));
         var next = _responses.Count > 0 ? _responses.Dequeue() : new ScriptedResponse(200, "{}");
-        if (next.DelayMs > 0) await Task.Delay(next.DelayMs, cancellationToken);
+        // A positive DelayMs used to sleep. That raced HttpClient.Timeout: when the delay
+        // finished first, the success body was accepted. Cancel is the same scripted timeout.
+        if (next.Cancel || next.DelayMs > 0)
+            throw new TaskCanceledException("scripted request timeout");
         return new HttpResponseMessage((HttpStatusCode)next.Status)
         {
             Content = new StringContent(next.BodyJson ?? "", Encoding.UTF8, "application/json"),
