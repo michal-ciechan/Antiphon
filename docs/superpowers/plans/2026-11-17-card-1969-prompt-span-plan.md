@@ -625,7 +625,12 @@ Read-only import (`ANTIPHON_LINUX_COMPILER_POLICY=0`), amendment 1:
 
 `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1969-s2-amend-import -- dotnet run --project tools/Antiphon.Checkpoints -p:UseAppHost=false -- import --plan docs/superpowers/plans/2026-11-17-card-1969-prompt-span-plan.md --out .antiphon/c1969-s2-amend-import.yaml`
 
-IMPORT_RESULT_PLACEHOLDER
+Run at `013148ac1` (slot waited 0 s, held 9 s). Exit 0, "imported 6 rows". 0 import warnings
+(the build's existing CS/CA compiler warnings in `Antiphon.HostCleanup` and `Antiphon.Checkpoints`
+name no row). The yaml has 3 builds (`bin-c1969-s2-red`, `bin-c1969-s2-stamp`,
+`bin-c1969-s2-green`); CP-4, CP-5 and CP-6 reuse `bin-c1969-s2-green`. `minExecuted`
+13/13/23/13/10/48; `timeoutMinutes` 45/45/45/24/45/45; filters copied verbatim (the `\|`
+escapes become `|`). `totalMinutes: 90` is the legacy default.
 
 Original import at `241f89463` (task 2048f2d0): exit 0, 4 rows, 0 warnings, `minExecuted`
 8/8/17/12, timeouts 45/45/45/24 min.
