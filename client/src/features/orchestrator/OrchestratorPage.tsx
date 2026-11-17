@@ -2,6 +2,7 @@ import { Badge, Stack, Tabs } from '@mantine/core'
 import { useSearchParams } from 'react-router'
 import { TbAlertHexagon, TbCards, TbHelpCircle, TbHistory, TbSitemap, TbTimeline } from 'react-icons/tb'
 import { useAttention } from '../../api/attention'
+import { openAttentionCount } from '../attention/attentionVisuals'
 import { AttentionPanel } from '../attention/AttentionPanel'
 import { DecisionsPanel } from '../attention/DecisionsPanel'
 import { DelegationsBoard } from '../delegations/DelegationsBoard'
@@ -30,9 +31,9 @@ export function OrchestratorPage() {
   const tab: TabValue = TABS.includes(requested as TabValue) ? (requested as TabValue) : 'cards'
   const attention = useAttention()
 
-  // Settled failures are carried as context and must not make a healthy fleet look busy — the badge
-  // counts only conditions that are still open, matching the panel's own header.
-  const openCount = (attention.data?.items ?? []).filter((item) => item.kind !== 'RecentFailure').length
+  // Settled failures and historical land receipts are context. The badge matches the panel
+  // header, including parked rows the loaded page does not carry.
+  const openCount = openAttentionCount(attention.data?.items ?? [], attention.data?.kindCounts)
   const decisionCount = (attention.data?.items ?? []).filter((item) => item.kind === 'CardNeedsDecision').length
 
   return (

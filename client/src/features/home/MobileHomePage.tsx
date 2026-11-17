@@ -49,13 +49,13 @@ import { citationHead, formatClockTime, workLineTarget } from './workLineFormat'
  *
  * <p>Band 1 is the three-badge glance (CARD-0300), not the expandable rows. Reply stays on
  * `/attention` — one extra tap on a phone, accepted so Home stays a glance. Counts come from
- * `groupOf` over the same feed; nothing here decides that something is stuck.</p>
+ * the attention census through the same buckets; nothing here decides that something is stuck.</p>
  */
 export function MobileHomePage() {
   const attention = useAttention()
   const tasks = useAgentTasks()
 
-  const glanceCounts = homeBucketCounts(attention.data?.items ?? [])
+  const glanceCounts = homeBucketCounts(attention.data?.items ?? [], attention.data?.kindCounts)
   const hasGlance = glanceCounts.blocked + glanceCounts.broken + glanceCounts.review > 0
 
   const inMotion = useMemo(

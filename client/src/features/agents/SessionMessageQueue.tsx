@@ -113,7 +113,9 @@ export function SessionMessageQueue({ sessionId }: SessionMessageQueueProps) {
           {statusBadge.label}
         </Badge>
         <Text size="xs" c="dimmed">
-          {messages.length} messages
+          {queue.truncated || (queue.since ?? 0) > 0
+            ? `${messages.length} messages on this page`
+            : `${messages.length} messages`}
         </Text>
       </Group>
 

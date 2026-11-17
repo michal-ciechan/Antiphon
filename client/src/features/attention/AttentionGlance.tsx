@@ -16,7 +16,7 @@ const GLANCE_BADGES = [
  */
 export function AttentionGlance() {
   const attention = useAttention()
-  const counts = homeBucketCounts(attention.data?.items ?? [])
+  const counts = homeBucketCounts(attention.data?.items ?? [], attention.data?.kindCounts)
   if (counts.blocked === 0 && counts.broken === 0 && counts.review === 0) return null
 
   return (
