@@ -86,9 +86,16 @@ namespace Antiphon.Nightly
                     foreach (var file in Directory.EnumerateFiles(dir, "*.cs"))
                     {
                         var text = NightlyTestSources.ReadText(file);
-                        foreach (Match match in ClassRx.Matches(text))
+                        // Kept with the text, as ImportFile's parse is.
+                        if (!ClassNamesByText.TryGetValue(text, out var names))
                         {
-                            var className = match.Groups[1].Value;
+                            var found = new List<string>();
+                            foreach (Match match in ClassRx.Matches(text)) found.Add(match.Groups[1].Value);
+                            names = found.ToArray();
+                            ClassNamesByText.AddOrUpdate(text, names);
+                        }
+                        foreach (var className in names)
+                        {
                             if (!_classFiles.TryGetValue(className, out var files))
                             {
                                 files = new List<string>();
@@ -310,6 +317,41 @@ namespace Antiphon.Nightly
             if (!_parsed.Add(path)) return;
             if (!System.IO.File.Exists(path)) return;
             var text = NightlyTestSources.ReadText(path);
+            // NightlyTestSources hands back the same string while the file is unchanged, so a file's parse is
+            // kept with its text and reused by every later index of this process (each nightly invocation
+            // builds its own); a changed or freshly written file reads as a new string and is parsed again.
+            if (!ParsedByText.TryGetValue(text, out var parsed) || !string.Equals(parsed.Path, path, StringComparison.Ordinal))
+            {
+                parsed = new ParsedFile { Path = path, Methods = ParseFile(path, text) };
+                ParsedByText.AddOrUpdate(text, parsed);
+            }
+            foreach (var record in parsed.Methods)
+            {
+                var key = record.Class + "." + record.Method;
+                if (!_methods.TryGetValue(key, out var list))
+                {
+                    list = new List<NightlyCsMethod>();
+                    _methods[key] = list;
+                }
+                list.Add(record);
+            }
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string, string[]> ClassNamesByText =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<string, string[]>();
+
+        private sealed class ParsedFile
+        {
+            public string Path;
+            public NightlyCsMethod[] Methods;
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string, ParsedFile> ParsedByText =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<string, ParsedFile>();
+
+        private static NightlyCsMethod[] ParseFile(string path, string text)
+        {
+            var records = new List<NightlyCsMethod>();
             var mask = Mask(text);
             var n = mask.Length;
             var namespaces = new List<NamespaceSpan>();
@@ -467,14 +509,9 @@ namespace Antiphon.Nightly
                     Body = text.Substring(bodyStart, sliceEnd - bodyStart),
                     BodyMask = mask.Substring(bodyStart, sliceEnd - bodyStart),
                 };
-                var key = record.Class + "." + record.Method;
-                if (!_methods.TryGetValue(key, out var list))
-                {
-                    list = new List<NightlyCsMethod>();
-                    _methods[key] = list;
-                }
-                list.Add(record);
+                records.Add(record);
             }
+            return records.ToArray();
         }
 
         /// <summary>Get-NightlyCsMethods.</summary>

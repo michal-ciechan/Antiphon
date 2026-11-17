@@ -133,6 +133,20 @@ namespace Antiphon.Nightly
             }
             return false;
         }
+
+        /// <summary>Resolve-NightlyPriorFailures' node index: <c>@($nodes)</c> grouped by the bare
+        /// <c>[string]$n.ClassName</c> (ordinal keys), each list in input order.</summary>
+        public static Dictionary<string, List<object>> IndexByBare(object nodes)
+        {
+            var index = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+            foreach (var node in PsValue.AsArray(nodes))
+            {
+                var bare = Bare(PsValue.Str(PsValue.Prop(node, "ClassName")));
+                if (!index.TryGetValue(bare, out var list)) index.Add(bare, list = new List<object>());
+                list.Add(node);
+            }
+            return index;
+        }
     }
 
     /// <summary>Test-NightlyClassAssigned for fixed required classes, asked once per (ClassName, TypeName).</summary>

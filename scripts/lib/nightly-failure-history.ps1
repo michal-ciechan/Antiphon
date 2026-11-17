@@ -808,12 +808,8 @@ function Resolve-NightlyPriorFailures {
     $bySuite=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($suite in $Suites) {
         if ($bySuite.ContainsKey([string]$suite.id)) { throw 'history-identity-conflict: current suite' }
-        $index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-        foreach ($n in @($suite.nodes)) {
-            $bare=Get-NightlyBareClassIdentity ([string]$n.ClassName)
-            if (-not $index.ContainsKey($bare)) { $index.Add($bare,[Collections.Generic.List[object]]::new()) }
-            $index[$bare].Add($n)
-        }
+        if (-not (Test-NightlyCoreAvailable)) { throw 'nightly-core-unavailable: Resolve-NightlyPriorFailures needs PowerShell 7 and the compiled core' }
+        $index=[Antiphon.Nightly.NightlyClassNames]::IndexByBare($suite.nodes)
         $chunkIndex=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         $allChunks=[Collections.Generic.List[object]]::new()
         foreach ($chunk in @($suite.chunks)) {

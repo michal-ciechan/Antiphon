@@ -265,6 +265,9 @@ function Read-TestPhaseTrxRows {
     try {
         $read = [Antiphon.TestPhase.TrxTimingScanner]::Read($opened.Stream, $Watch, $DeadlineMilliseconds, 262144, 16384)
         if ($null -eq $read -or -not $read.Complete) { return $none }
+        if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) {
+            return [pscustomobject]@{ Rows = [Antiphon.Nightly.NightlyTrx]::TimingRows($read, $Path); Complete = $true; Refused = $false }
+        }
         $rows = New-Object System.Collections.Generic.List[object]
         foreach ($row in $read.Rows) {
             $rows.Add([pscustomobject]@{

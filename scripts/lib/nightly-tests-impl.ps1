@@ -1369,8 +1369,10 @@ function Prepare-NightlySuiteExecution {
 
 function Invoke-NightlyScheduledChunk {
     param($ExecutionSuiteState, $ExecutionChunk)
+    # Set-Variable's local-scope set (the caller's scope: this runs dot-sourced) without the cmdlet's cost.
+    $executionVariableSet = $ExecutionContext.SessionState.PSVariable
     foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
-        Set-Variable -Name $executionName -Value $ExecutionSuiteState.Variables[$executionName]
+        $executionVariableSet.Set($executionName, $ExecutionSuiteState.Variables[$executionName])
     }
     $chunk = $ExecutionChunk
     $chunkTestsPassed=$true
