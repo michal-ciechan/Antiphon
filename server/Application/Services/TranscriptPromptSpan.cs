@@ -77,8 +77,12 @@ internal static class TranscriptPromptSpan
         IReadOnlyList<PromptRow> Notifications,
         IReadOnlyList<PromptRow> RawPrompts);
 
+    internal static Task<Result> LoadAsync(
+        AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct) =>
+        LoadAsync(db, sessionId, dispatchedAt, PromptCache.Shared, ct);
+
     internal static async Task<Result> LoadAsync(
-        AppDbContext db, Guid sessionId, DateTime? dispatchedAt, CancellationToken ct)
+        AppDbContext db, Guid sessionId, DateTime? dispatchedAt, PromptCache cache, CancellationToken ct)
     {
         var sessionKind = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
@@ -153,4 +157,25 @@ internal static class TranscriptPromptSpan
         || TranscriptKinds.IsCompactionContinuationPrompt(TranscriptKinds.UserPrompt, text)
         || TranscriptKinds.IsRawLocalCommandEcho(TranscriptKinds.UserPrompt, text, invokedCommands)
         || TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, text);
+
+    /// <summary>
+    /// CARD-1969 S2 seam. Inert in this commit: it stores nothing and changes no read, so the
+    /// witnesses compile and stay red for the right reason.
+    /// </summary>
+    internal sealed class PromptCache
+    {
+        internal static PromptCache Shared { get; } = new(
+            256, 4_000_000, 32_000_000, TimeSpan.FromSeconds(120), () => Environment.TickCount64);
+
+        internal PromptCache(
+            int maxEntries, long maxEntryChars, long maxTotalChars, TimeSpan idle, Func<long> nowMs)
+        {
+        }
+
+        internal void Forget(AppDbContext db, Guid sessionId)
+        {
+        }
+
+        internal (int Entries, long Chars) Snapshot() => (0, 0);
+    }
 }
