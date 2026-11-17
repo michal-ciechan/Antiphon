@@ -288,7 +288,8 @@ internal static class TranscriptPlanAssertions
     // used by no other branch). The plan-approved count must read the whole session for W-5 (a middle
     // UserPrompt deleted by another writer), so it is a range read of this session by design. On the
     // large fixture's session 0 (53% of the table) the planner correctly picks a parallel Seq Scan
-    // filtered to this session; measured 127-175 ms on a 54% session in a 1.3 M-row table, against
+    // filtered to this session; measured 127-175 ms on a 54% session in a 1.3 M-row table (31-72 ms
+    // for the Gather on this fixture at the round-1 review), against
     // 15 ms (vacuumed) to 94 ms (cold) index reads for a 75,000-row session. Scoping the no-Seq-Scan
     // guard to the UUID probe branches was approved by the orchestrator for this reason.
     private const string PrefixCountAlias = "n";
