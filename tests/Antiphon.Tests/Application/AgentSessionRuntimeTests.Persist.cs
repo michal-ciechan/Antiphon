@@ -488,6 +488,190 @@ public partial class AgentSessionRuntimeTests
         f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
     }
 
+    // CARD-1888 witnesses. Each snapshot is 1,200 distinct UUIDs (512 + 512 + 176 probe keys at base);
+    // every 100th entry from index 50 is a UserPrompt. The counter is reset immediately before the
+    // replay under test, so the cold persist of the snapshot is never counted.
+    private static SessionRunnerTranscriptEvent[] C1888Snapshot(Guid sessionId) =>
+        Enumerable.Range(0, 1200).Select(i => TranscriptEvent(sessionId, i + 1,
+            i % 100 == 50 ? TranscriptKinds.UserPrompt : i % 2 == 0 ? TranscriptKinds.AssistantText : TranscriptKinds.ToolCall,
+            $"c1888-{i}", $"entry {i}")).ToArray();
+
+    private static SessionRunnerTranscriptEvent[] C1888Tail(Guid sessionId, long firstSequence, int count, string name) =>
+        Enumerable.Range(0, count).Select(i => TranscriptEvent(sessionId, firstSequence + i,
+            TranscriptKinds.AssistantText, $"c1888-{name}-{i}", $"{name} {i}")).ToArray();
+
+    // Another writer (another server's retention, a manual delete) removes rows behind this
+    // process's back. SessionRuntimeActions.TranscriptEntryId restricts, so the actions go first.
+    private static async Task C1888DeleteAsync(PersistFixture f, Func<TranscriptEntry, bool> which)
+    {
+        await using var db = f.Db();
+        await using var tx = await db.Database.BeginTransactionAsync();
+        var ids = (await db.TranscriptEntries.Where(t => t.AgentSessionId == f.SessionId).ToListAsync())
+            .Where(which).Select(t => t.Id).ToArray();
+        ids.ShouldNotBeEmpty();
+        await db.SessionRuntimeActions.Where(a => a.TranscriptEntryId != null && ids.Contains(a.TranscriptEntryId.Value)).ExecuteDeleteAsync();
+        (await db.TranscriptEntries.Where(t => ids.Contains(t.Id)).ExecuteDeleteAsync()).ShouldBe(ids.Length);
+        await tx.CommitAsync();
+    }
+
+    [Test]
+    public async Task C1888_snapshot_replay_probes_only_the_new_tail()
+    {
+        var probes = new IdentityProbeCounter();
+        await using var f = await PersistFixture.CreateAsync(probes);
+        await f.Runtime.PersistTranscriptAsync(f.SessionId,
+            [TranscriptEvent(f.SessionId, 1, TranscriptKinds.AssistantText, "c1888-prior", "prior")]);
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1201);
+        var tail = C1888Tail(f.SessionId, 1201, 5, "tail");
+
+        probes.Reset();
+        var result = await f.Runtime.PersistTranscriptAsync(f.SessionId, [.. snapshot, .. tail]);
+        Console.WriteLine($"C1888 W-1 replay: {probes.Keys} probed key(s) in {probes.Commands} command(s)");
+        probes.Keys.ShouldBeLessThanOrEqualTo(5, "a snapshot replay must probe only its new tail");
+        probes.Commands.ShouldBe(1, "the prefix check rides in the one prelude command");
+
+        result.LastStoredSeq.ShouldBe(1206);
+        var rows = await f.RowsAsync();
+        rows.Count.ShouldBe(1 + 1200 + 5);
+        rows.Select(r => r.Uuid).ShouldBe(new string?[] { "c1888-prior" }.Concat(snapshot.Concat(tail).Select(e => e.Uuid)));
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C1888_live_entry_between_snapshots_keeps_the_prefix_memo()
+    {
+        var probes = new IdentityProbeCounter();
+        await using var f = await PersistFixture.CreateAsync(probes);
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1200);
+        var live = C1888Tail(f.SessionId, 1201, 1, "live").Single();
+        await f.Runtime.ObserveTranscriptAsync(live, default);
+        (await f.RowsAsync()).Count.ShouldBe(1201);
+        var tail = C1888Tail(f.SessionId, 1202, 4, "tail");
+
+        probes.Reset();
+        var result = await f.Runtime.PersistTranscriptAsync(f.SessionId, [.. snapshot, live, .. tail]);
+        Console.WriteLine($"C1888 W-2 replay: {probes.Keys} probed key(s) in {probes.Commands} command(s)");
+        probes.Keys.ShouldBeLessThanOrEqualTo(5, "a one-entry live batch must not replace the snapshot memo");
+        probes.Commands.ShouldBe(1);
+
+        result.LastStoredSeq.ShouldBe(1205);
+        var rows = await f.RowsAsync();
+        rows.Count.ShouldBe(1201 + 4);
+        rows.Count(r => r.Uuid == live.Uuid).ShouldBe(1);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C1888_rows_deleted_by_another_writer_are_reinserted_on_replay()
+    {
+        var probes = new IdentityProbeCounter();
+        await using var f = await PersistFixture.CreateAsync(probes);
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1200);
+        await C1888DeleteAsync(f, _ => true);
+        (await f.RowsAsync()).ShouldBeEmpty();
+
+        probes.Reset();
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot);
+        Console.WriteLine($"C1888 W-3 replay: {probes.Keys} probed key(s) in {probes.Commands} command(s)");
+        var rows = await f.RowsAsync();
+        rows.Count.ShouldBe(1200, "a whole-session delete by another writer must drop the prefix memo");
+        rows.Where(r => r.Kind == TranscriptKinds.UserPrompt).Select(r => r.Uuid).ShouldBe(
+            snapshot.Where(e => e.Kind == TranscriptKinds.UserPrompt).Select(e => e.Uuid));
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C1888_duplicates_in_and_across_batches_stay_deduplicated()
+    {
+        await using var f = await PersistFixture.CreateAsync();
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1200);
+        var newKind = snapshot[30] with { Sequence = 1204, Kind = TranscriptKinds.ToolResult, Text = "same uuid, new kind" };
+        var storedSequence = TranscriptEvent(f.SessionId, 5, TranscriptKinds.ToolResult, "unused", "stored sequence") with { Uuid = null };
+        var newSequence = TranscriptEvent(f.SessionId, 1300, TranscriptKinds.ToolResult, "unused", "new sequence") with { Uuid = null };
+        var batch = snapshot.Concat(new[]
+        {
+            snapshot[10] with { Sequence = 1201, Text = "prefix repeat" },
+            snapshot[20] with { Sequence = 1202, Text = "tail repeat one" },
+            snapshot[20] with { Sequence = 1203, Text = "tail repeat two" },
+            newKind, storedSequence, newSequence,
+        }).ToArray();
+
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldBe(1300);
+        var rows = await f.RowsAsync();
+        rows.Count.ShouldBe(1202);
+        var known = snapshot.Select(e => (e.Uuid, e.Kind)).ToHashSet();
+        rows.Where(r => !known.Contains((r.Uuid, r.Kind))).Select(r => (r.Uuid, r.Kind, r.Sequence, r.Text)).ShouldBe(new[]
+        {
+            ((string?)"c1888-30", TranscriptKinds.ToolResult, 1204L, (string?)"same uuid, new kind"),
+            ((string?)null, TranscriptKinds.ToolResult, 1300L, (string?)"new sequence"),
+        });
+
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, batch)).LastStoredSeq.ShouldBeNull("a replay adds nothing");
+        (await f.RowsAsync()).Count.ShouldBe(1202);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C1888_middle_user_prompt_deleted_by_another_writer_is_reinserted()
+    {
+        var probes = new IdentityProbeCounter();
+        await using var f = await PersistFixture.CreateAsync(probes);
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1200);
+        var prompt = snapshot[650];
+        prompt.Kind.ShouldBe(TranscriptKinds.UserPrompt);
+        await C1888DeleteAsync(f, t => t.Uuid == prompt.Uuid && t.Kind == prompt.Kind);
+        var left = await f.RowsAsync();
+        left.Count.ShouldBe(1199);
+        left[0].Uuid.ShouldBe("c1888-0");
+        left[^1].Uuid.ShouldBe("c1888-1199");
+
+        probes.Reset();
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot);
+        Console.WriteLine($"C1888 W-5 replay: {probes.Keys} probed key(s) in {probes.Commands} command(s)");
+        var rows = await f.RowsAsync();
+        rows.ShouldContain(r => r.Uuid == prompt.Uuid && r.Kind == TranscriptKinds.UserPrompt,
+            "a middle UserPrompt deleted by another writer must be stored again: it is delivery evidence");
+        rows.Count.ShouldBe(1200);
+        probes.Probed.ShouldContain(prompt.Uuid!);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
+    [Test]
+    public async Task C1888_top_row_deleted_and_refilled_at_its_sequence_is_reinserted()
+    {
+        await using var f = await PersistFixture.CreateAsync();
+        var snapshot = C1888Snapshot(f.SessionId);
+        (await f.Runtime.PersistTranscriptAsync(f.SessionId, snapshot)).LastStoredSeq.ShouldBe(1200);
+        var top = snapshot[^1];
+        await C1888DeleteAsync(f, t => t.Sequence == 1200);
+
+        // The refill is a product insert by another server on the same database: this process's
+        // cached snapshot is not reconciled, so only the stored-prefix check can see the change.
+        var refill = C1888Tail(f.SessionId, 1200, 1, "refill").Single();
+        await using (var other = f.NewServer())
+        {
+            var runtime = other.GetRequiredService<AgentSessionRuntime>();
+            await runtime.ObserveTranscriptAsync(refill, default);
+            await runtime.DisposeSessionAsync(f.SessionId);
+        }
+        var refilled = await f.RowsAsync();
+        refilled.Count.ShouldBe(1200);
+        refilled[^1].Sequence.ShouldBe(1200);
+        refilled[^1].Uuid.ShouldBe(refill.Uuid);
+
+        await f.Runtime.PersistTranscriptAsync(f.SessionId, [.. snapshot, refill]);
+        var rows = await f.RowsAsync();
+        rows.ShouldContain(r => r.Uuid == top.Uuid && r.Kind == top.Kind,
+            "a top row deleted and refilled at its sequence must be stored again");
+        rows.Count.ShouldBe(1201);
+        f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
+    }
+
     private sealed class PersistFixture(
         ServiceProvider provider,
         string logPath,
@@ -558,6 +742,9 @@ public partial class AgentSessionRuntimeTests
             return new PersistFixture(services.BuildServiceProvider(), logPath, sid, eventBus, logs,
                 connectionString, () => services.BuildServiceProvider());
         }
+
+        // CARD-1888: another server on the same database, with its own runtime and state store.
+        public ServiceProvider NewServer() => newContainer();
 
         public AppDbContext Db() => new(new DbContextOptionsBuilder<AppDbContext>().UseNpgsql(connectionString).Options);
         public Task DrainAsync() => Actions.DrainPageAsync(SessionId, default);
