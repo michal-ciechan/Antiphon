@@ -34,9 +34,13 @@ public class C1514HostLoadNativeTests(C1514HostLoadFixture fixture)
         var absent = new Dictionary<string, string?>(); absent.ContainsKey(historyKey).ShouldBeFalse();
         var absentServices = new ServiceCollection(); absentServices.AddLogging();
         absentServices.AddHostStats(new ConfigurationBuilder().AddInMemoryCollection(absent).Build(), startSampler: false);
+        // CARD-1893: binding keeps absence; the collector resolves the default from these inputs at its first append.
         using (var absentProvider = absentServices.BuildServiceProvider())
-            absentProvider.GetRequiredService<IOptions<HostStatsSettings>>().Value.HistoryPath.ShouldBe(Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "antiphon", "host-load"));
+            absentProvider.GetRequiredService<IOptions<HostStatsSettings>>().Value.HistoryPath.ShouldBeNull();
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify);
+        Path.IsPathFullyQualified(local).ShouldBeTrue();
+        HostLoadStoragePath.Resolve(null, local, profile).ShouldBe(Path.Combine(local, "antiphon", "host-load"));
         var empty = new Dictionary<string, string?> { [historyKey] = "" }; empty[historyKey].ShouldBe("");
         var emptyServices = new ServiceCollection(); emptyServices.AddLogging();
         emptyServices.AddHostStats(new ConfigurationBuilder().AddInMemoryCollection(empty).Build(), startSampler: false);
