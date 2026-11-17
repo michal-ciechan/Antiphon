@@ -71,6 +71,40 @@ public sealed class PhoneHomeRunnerSettings
     public int CatchUpRetrySeconds { get; set; } = 5;
 
     /// <summary>
+    /// CARD-1964 D-1: the recovery pump's budget for one List (catch-up and inventory refresh), on
+    /// the connection's clock. The reply timer is 60 s; the rest covers the send gate and the write,
+    /// which are outside it. <c>0</c> or less removes the bound (the rollback).
+    /// </summary>
+    public int CatchUpListTimeoutSeconds { get; set; } = 90;
+
+    /// <summary>
+    /// CARD-1964 D-3: one session's catch-up budget, shared by its owner lookup, transcript fetch
+    /// and persist. A session that runs out is skipped and counted unverified; it keeps its seat.
+    /// <c>0</c> or less removes the bound.
+    /// </summary>
+    public int CatchUpSessionTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// CARD-1964 D-3: the whole catch-up budget after any test hold. Once the List has completed,
+    /// running out skips the remaining sessions and eligibility rests on that List. <c>0</c> or
+    /// less removes the bound.
+    /// </summary>
+    public int CatchUpTimeoutSeconds { get; set; } = 300;
+
+    /// <summary>
+    /// CARD-1964 watchdog: a runner with no completed List for this many inventory refresh
+    /// intervals gets one Error and one restart of its recovery cycle. <c>0</c> or less turns the
+    /// watchdog off.
+    /// </summary>
+    public int RecoveryWatchdogIntervals { get; set; } = 6;
+
+    /// <summary>CARD-1964 watchdog: real seconds between polls. <c>0</c> or less leaves the watchdog loop stopped.</summary>
+    public int RecoveryWatchdogPollSeconds { get; set; } = 10;
+
+    /// <summary>CARD-1964 D-5: within one lease re-recovery refusal streak, at most one Warning per this many seconds.</summary>
+    public int RecoveryRefusalLogSeconds { get; set; } = 60;
+
+    /// <summary>
     /// CARD-0679 D-10: while a connection is recovered, the recovery pump re-reads the runner's
     /// List this often to refresh the cached inventory <c>ListLiveSessions</c> reads. Launch acks,
     /// exits and kills update it between refreshes. <c>0</c> or less disables the refresh.

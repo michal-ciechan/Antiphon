@@ -101,6 +101,14 @@ public sealed class PhoneHomeRecoveryPump : BackgroundService
     internal int LastCatchUpTranscriptFailures =>
         _transcriptFailures.Count == 0 ? 0 : _transcriptFailures.Values.Sum();
 
+    /// <summary>CARD-1964 red scaffold: sessions the last catch-up skipped on a budget.</summary>
+    internal int LastCatchUpUnverifiedSessions => 0;
+
+    /// <summary>CARD-1964 red scaffold: one watchdog poll.</summary>
+    internal void RunWatchdogOnce()
+    {
+    }
+
     /// <summary>
     /// One recovery step for the current live connection. Returns true when this cycle marked it
     /// dispatch-eligible.
