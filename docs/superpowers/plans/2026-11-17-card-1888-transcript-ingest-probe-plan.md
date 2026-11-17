@@ -338,6 +338,10 @@ Lane: Linux, server2 (default runner; omit `-Runner` and `-Platform`). One isola
 | CP-5 | all | CP-3 | retention-policy | `/*/*/(DataRetentionServiceTests*)\|(PolicyRefreshServiceTests*)/*` | retention invalidation; S4 if taken | >= 125 executed cases (`DataRetentionServiceTests` 101, `PolicyRefreshServiceTests` 24), 0 failed | 125 | 8 |
 
 Import (read-only, plan commit 7bd3255c3): `dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan <this file> --out .antiphon/c1888-plan-import.yaml` gave exit 0, "imported 5 rows", 0 warnings, 3 builds, and row timeouts of 45/45/45/24/24 min.
+Re-import after the round-1 amendment (plan commit 84d8ad1cd, task 4f546055, load 6.55,
+`ANTIPHON_LINUX_COMPILER_POLICY=0`, leased 9 s): `scripts/build-slot.ps1 -- dotnet run --project tools/Antiphon.Checkpoints -p:UseAppHost=false -- import --plan <this file> --out .antiphon/c1888-plan-amend-import.yaml`
+gave exit 0, "imported 5 rows", 0 import warnings, the same 3 builds and 45/45/45/24/24 min row
+timeouts, and `minExecuted` 6/6/8/124/125.
 
 Suffix-collision check at 300c8a99d: no test class name starts with any operand other than itself
 (`grep -rhoE "class <Name>[A-Za-z0-9_]*" tests`). `C1888_` is new, and `C1403_` matches exactly the
