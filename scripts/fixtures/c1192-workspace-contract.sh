@@ -677,8 +677,9 @@ simulate_restore() {
     fi
     mkdir -p "$data/race/$project"
     # CARD-1514. A slot granted after the other restore has already been waiting.
+    # Late-slot mode sets the slot deadline from this same delay.
     if [ "${C1192_SLOT_HELD_DELAY_FOR:-}" = "$project" ]; then
-        command sleep 8
+        command sleep "${C1192_SLOT_HELD_DELAY_SECONDS:-8}"
     fi
     printf '1\n' > "$data/race/$project/slot-held"
     [ -n "$deadline" ] || deadline=$(( $(date +%s) + 2700 ))
@@ -1114,8 +1115,10 @@ docker_run() {
     local acquired_name="$PARSED_NAME" auto=0 arg code=0
     for arg in "$@"; do [ "$arg" != --rm ] || auto=1; done
     docker_run_payload "$@" || code=$?
+    # --rm must not replace the payload status. A failed unlink after the
+    # late-slot delay is not a failed restore.
     if [ "$auto" = 1 ] && [ -n "$acquired_name" ]; then
-        rm -rf -- "$C1192_ROOT/containers/$acquired_name"
+        rm -rf -- "$C1192_ROOT/containers/$acquired_name" || true
     fi
     return "$code"
 }
@@ -2273,16 +2276,20 @@ mode_barriers() {
 # is still waiting when the second slot is granted late and the barrier writes go.
 mode_barrier_late_slot() {
     local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
-    local vol="$C1192_ROOT/volumes/$WORK/data" code=0 out
+    local vol="$C1192_ROOT/volumes/$WORK/data" code=0 out delay=8
     enable_synthetic_clock
     reset_runtime
     : > "$C1192_ROOT/scenario.err"
     require_init
     plant_cache "$packages" nuget-packages
     plant_cache "$scratch" nuget-scratch
+    # Deadlines are counted from container start, before this real delay.
+    # An inherited C589_SLOT_WAIT_SECONDS at or below the delay refuses first.
     C1192_SLOT_HELD_DELAY_FOR=p2
+    C1192_SLOT_HELD_DELAY_SECONDS=$delay
+    C589_SLOT_WAIT_SECONDS=$((delay + 120))
     out=$(c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err") || code=$?
-    unset C1192_SLOT_HELD_DELAY_FOR
+    unset C1192_SLOT_HELD_DELAY_FOR C1192_SLOT_HELD_DELAY_SECONDS C589_SLOT_WAIT_SECONDS
     refuse_unexpected
     emit late-slot-barrier-code "$code"
     emit late-slot-diagnosis "$(diagnosis_of "$out")"
