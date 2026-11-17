@@ -122,7 +122,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     {
         if (string.IsNullOrWhiteSpace(runnerId) || !_slots.TryGetValue(runnerId, out var slot))
             return null;
-        string? expired;
+        PhoneHomeLiveConnection? expired;
         Guid? storeId;
         lock (_gate)
         {
@@ -131,7 +131,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         }
 
         if (expired is not null)
-            Notify(expired);
+            ReportLeaseExpired(slot.Id, expired);
         return storeId;
     }
 
@@ -430,24 +430,52 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     }
 
     private bool CanRecoverLeaseUnderLock(PhoneHomeLiveConnection connection) =>
-        _slots.TryGetValue(connection.RunnerId, out var slot)
-        && ReferenceEquals(slot.Live, connection)
-        && slot.Epoch == connection.Epoch
-        && slot.Entry.Enabled
-        && connection.SocketOpen
-        && !connection.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds))
-        && connection.LastDisconnectReason is null
-        && connection.PendingEvents == 0
-        && slot.State is not { Draining: true }
-        && slot.State?.RetiredAt is null;
+        LeaseRecoveryRefusalUnderLock(connection) is null;
 
-    internal bool TryRecoverLease(PhoneHomeLiveConnection connection)
+    /// <summary>
+    /// CARD-1964 L4: why <see cref="CanRecoverLease"/> refuses <paramref name="connection"/> (the
+    /// first failing check, in its order), or null when it would not.
+    /// </summary>
+    internal string? LeaseRecoveryRefusal(PhoneHomeLiveConnection connection)
+    {
+        lock (_gate)
+            return LeaseRecoveryRefusalUnderLock(connection);
+    }
+
+    private string? LeaseRecoveryRefusalUnderLock(PhoneHomeLiveConnection connection)
+    {
+        if (!_slots.TryGetValue(connection.RunnerId, out var slot) || !ReferenceEquals(slot.Live, connection))
+            return "replaced";
+        if (slot.Epoch != connection.Epoch)
+            return "epoch_changed";
+        if (!slot.Entry.Enabled)
+            return "disabled";
+        if (!connection.SocketOpen)
+            return "socket_closed";
+        if (connection.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
+            return "lease_expired";
+        if (connection.LastDisconnectReason is not null)
+            return "disconnected";
+        if (connection.PendingEvents != 0)
+            return "pending_events";
+        if (slot.State is { Draining: true })
+            return "draining";
+        if (slot.State?.RetiredAt is not null)
+            return "retired";
+        return null;
+    }
+
+    internal bool TryRecoverLease(PhoneHomeLiveConnection connection) => TryRecoverLease(connection, out _);
+
+    /// <summary>CARD-1964 L4: <paramref name="refusal"/> names the check that refused, when one did.</summary>
+    internal bool TryRecoverLease(PhoneHomeLiveConnection connection, out string? refusal)
     {
         var flipped = false;
         lock (_gate)
         {
             // Registration, replacement, drain or lease expiry can race the awaited inventory.
-            if (!CanRecoverLeaseUnderLock(connection))
+            refusal = LeaseRecoveryRefusalUnderLock(connection);
+            if (refusal is not null)
                 return false;
             if (!connection.DispatchEligible)
             {
@@ -971,29 +999,41 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
     private PhoneHomeLiveConnection? SnapshotOf(RunnerSlot slot)
     {
-        string? expired;
+        PhoneHomeLiveConnection? expired;
         PhoneHomeLiveConnection? live;
         lock (_gate)
             live = ReadSnapshot(slot, out expired);
         if (expired is not null)
-            Notify(expired);
+            ReportLeaseExpired(slot.Id, expired);
         return live;
     }
 
     // Caller holds _gate. A lease that flips eligible to ineligible is reported after the lock.
-    private PhoneHomeLiveConnection? ReadSnapshot(RunnerSlot slot, out string? expiredRunnerId)
+    private PhoneHomeLiveConnection? ReadSnapshot(RunnerSlot slot, out PhoneHomeLiveConnection? expired)
     {
-        expiredRunnerId = null;
+        expired = null;
         if (slot.Live is null)
             return null;
         if (slot.Live.IsLeaseExpired(TimeSpan.FromSeconds(_settings.LeaseSeconds)))
         {
             if (slot.Live.DispatchEligible)
-                expiredRunnerId = slot.Id;
+                expired = slot.Live;
             slot.Live.DispatchEligible = false;
         }
 
         return slot.Live;
+    }
+
+    /// <summary>CARD-1964 L1: once per eligible-to-ineligible lease flip, after the lock.</summary>
+    private void ReportLeaseExpired(string runnerId, PhoneHomeLiveConnection expired)
+    {
+        _logger.LogWarning(
+            "Phone-home runner {RunnerId} epoch {Epoch} lease expired: no heartbeat for {SinceHeartbeatSeconds}s "
+            + "(lease {LeaseSeconds}s, socket {SocketState}, pendingEvents {PendingEvents}); dispatch-ineligible "
+            + "until lease re-recovery",
+            runnerId, expired.Epoch, (long)(expired.Clock.GetUtcNow() - expired.LastHeartbeatUtc).TotalSeconds,
+            _settings.LeaseSeconds, expired.SocketState, expired.PendingEvents);
+        Notify(runnerId);
     }
 
     /// <summary>CARD-1424 D-1: the desktop's last good capabilities and the current failure streak. Guarded by <c>_desktopGate</c>.</summary>
