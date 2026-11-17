@@ -76,6 +76,9 @@ services:
       # CARD-0718: indexed keys bind the two volumes the Hosts page stats.
       SessionRunner__HostStats__Volumes__0: /work
       SessionRunner__HostStats__Volumes__1: /state
+      # CARD-1893 S0 (plan section 7.0, Q-8): no host-stats history until S1 sets HistoryPath.
+      # The temp compose keeps no override and inherits this value.
+      SessionRunner__HostStats__HistoryEnabled: "false"
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
       # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's
