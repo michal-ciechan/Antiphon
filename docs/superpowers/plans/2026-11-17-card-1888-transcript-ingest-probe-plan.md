@@ -259,6 +259,8 @@ Lane: Linux, server2 (default runner; omit `-Runner` and `-Platform`). One isola
 | CP-4 | all | CP-3 | ingest-callers | `/*/*/(AgentSessionRuntimeTests*)\|(WorkingTranscriptRecoveryTests*)\|(StandingResumeReceiptReadinessTests*)\|(SessionStateCommitTests*)\|(SessionStateCacheReadTests*)/*` | existing tests affected | >= 68 executed (41 + 4 new + 7 + 6 + 8 + 2), 0 failed | 68 | 8 |
 | CP-5 | all | CP-3 | retention-policy | `/*/*/(DataRetentionServiceTests*)\|(PolicyRefreshServiceTests*)/*` | retention invalidation; S4 if taken | >= 85 executed, 0 failed | 85 | 8 |
 
+Import (read-only, plan commit 7bd3255c3): `dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan <this file> --out .antiphon/c1888-plan-import.yaml` gave exit 0, "imported 5 rows", 0 warnings, 3 builds, and row timeouts of 45/45/45/24/24 min.
+
 Suffix-collision check at 300c8a99d: no test class name starts with any operand other than itself
 (`grep -rhoE "class <Name>[A-Za-z0-9_]*" tests`). `C1888_` is new, and `C1403_` matches exactly the
 two methods in `AgentSessionRuntimeTests`. If F-2 is "no", CP-5 still runs: it is the retention
