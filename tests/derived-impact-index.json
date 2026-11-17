@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 153,
+      "classes": 154,
       "reason": "cap",
-      "owed": 128,
+      "owed": 129,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 326,
+      "classes": 327,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -1411,9 +1411,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 423,
+      "classes": 424,
       "reason": "cap",
-      "owed": 398,
+      "owed": 399,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -1790,9 +1790,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 105,
+      "classes": 106,
       "reason": "cap",
-      "owed": 80,
+      "owed": 81,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
@@ -1806,18 +1806,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 79,
+      "classes": 80,
       "reason": "cap",
-      "owed": 54,
+      "owed": 55,
       "first": [
+        "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeReadAdmissionTests",
         "PhoneHomeSessionRoutingTests",
         "PtyConditionalReadClientTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "DelegateBranchDeliveryTests",
         "HostTopConsumerIngestTests",
-        "PhoneHomeCompletedCardTransportTests",
-        "PhoneHomeStrandedQueueTests"
+        "PhoneHomeCompletedCardTransportTests"
       ]
     },
     {
@@ -1854,9 +1854,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 433,
+      "classes": 434,
       "reason": "cap",
-      "owed": 408,
+      "owed": 409,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2035,9 +2035,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2307,9 +2307,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 66,
+      "classes": 67,
       "reason": "cap",
-      "owed": 41,
+      "owed": 42,
       "first": [
         "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
@@ -11437,7 +11437,8 @@
         "ChannelOutboundRecoveryTests",
         "SiblingToolReportBoundaryTests",
         "TaskReportFloorIndexTests",
-        "TaskReportTurnSelectorTests"
+        "TaskReportTurnSelectorTests",
+        "TranscriptPromptSpanTests"
       ]
     },
     {
@@ -11735,7 +11736,8 @@
       "classes": [
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
-        "C1656RecordReleaseHardeningTests"
+        "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests"
       ]
     },
     {
@@ -14859,6 +14861,7 @@
         "AgentTaskInputFallbackTests",
         "BlockedTaskParkReclaimTests",
         "C0824WorkspaceSlotServerTests",
+        "C1960QuarantineReleaseRouteTests",
         "DelegateBranchDeliveryTests",
         "DesktopCapabilitiesSnapshotTests",
         "EffectiveSettingsPipelineTests",
@@ -15941,6 +15944,7 @@
         "C0747LandNoteExpireOffSwitchEndpointTests",
         "C0824WorkspaceSlotServerTests",
         "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests",
         "ExpectationHoldReleaseEndpointTests",
         "HangfireStartupSafetyTests",
         "LiveStartupIntegrationTests",
@@ -18134,13 +18138,13 @@
         "C1514HostLoadWireTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
+        "C1960QuarantineReleaseRouteTests",
         "CardWorktreeMirrorCleanupTests",
         "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesReadyOrderingTests",
         "HostTopConsumerTests",
-        "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
@@ -18416,6 +18420,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests",
         "PhoneHomeRollingRunnerTests"
       ]
     },
@@ -22323,6 +22328,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionServerTests",
+        "C1960QuarantineReleaseRouteTests",
         "ImpactedClassesSelectorTests"
       ]
     },
@@ -25111,6 +25117,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/EphemeralHttpListener.cs",
       "classes": [
+        "C1960WorkspaceSlotsScriptTests",
         "CapabilityScriptTests",
         "CardCloseDeploymentPromptScriptTests",
         "CardDiagnoseScriptTests",
@@ -25298,6 +25305,12 @@
       "classes": [
         "HerdrLabelFollowFlowTests",
         "HerdrLabelFollowWireTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/IdentityProbeCounter.cs",
+      "classes": [
+        "AgentSessionRuntimeTests"
       ]
     },
     {
@@ -26626,7 +26639,8 @@
       "classes": [
         "C0824TransportLimiterTests",
         "C0824WorkspaceSlotServerTests",
-        "C1677RetentionServerTests"
+        "C1677RetentionServerTests",
+        "C1960QuarantineReleaseRouteTests"
       ]
     },
     {
