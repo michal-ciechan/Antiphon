@@ -3,6 +3,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -204,6 +205,78 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     }
 
     [Test]
+    public void DelegateBoundAssemblyLoadLocalFailsClosed()
+    {
+        const string main = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(string name) { System.Func<string,Assembly> f = Assembly.Load; return f(name); } } }";
+        var graph = Build(ReflectionInput(main));
+        graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        graph.IncompleteReasons.Count(reason => reason == "reflection-target-unresolved:tests/Consumer/Reflection.cs").ShouldBe(1);
+        AssertIncomplete(graph);
+        graph.IncompleteReasons.ShouldContain("assembly-metadata-unavailable");
+        AssertLoadMethodGroup(main);
+
+        const string capture = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(string name) { System.Func<string,Assembly> f = Assembly.Load; return name; } } }";
+        Build(ReflectionInput(capture)).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string ordinary = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(string name) { System.Func<string,string> f = static n => n; return f(name); } } }";
+        Build(ReflectionInput(ordinary)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+    }
+
+    [Test]
+    public void DelegateBoundAssemblyLoadFieldFailsClosed()
+    {
+        const string main = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Func<string,Assembly> f = Assembly.Load; object Read(string name) => f(name); } }";
+        var graph = Build(ReflectionInput(main));
+        graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        graph.IncompleteReasons.Count(reason => reason == "reflection-target-unresolved:tests/Consumer/Reflection.cs").ShouldBe(1);
+        AssertIncomplete(graph);
+        graph.IncompleteReasons.ShouldContain("assembly-metadata-unavailable");
+        AssertLoadMethodGroup(main);
+
+        const string capture = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Func<string,Assembly> f = Assembly.Load; } }";
+        Build(ReflectionInput(capture)).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string ordinary = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Func<string,string> f = static n => n; object Read(string name) => f(name); } }";
+        Build(ReflectionInput(ordinary)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+    }
+
+    [Test]
+    public void DelegateBoundAssemblyLoadCastVarFailsClosed()
+    {
+        const string main = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(byte[] bytes) { var f = (System.Func<byte[],Assembly>)Assembly.Load; return f(bytes); } } }";
+        var graph = Build(ReflectionInput(main));
+        graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        graph.IncompleteReasons.Count(reason => reason == "reflection-target-unresolved:tests/Consumer/Reflection.cs").ShouldBe(1);
+        AssertIncomplete(graph);
+        graph.IncompleteReasons.ShouldContain("assembly-metadata-unavailable");
+        AssertLoadMethodGroup(main);
+
+        const string capture = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(byte[] bytes) { var f = (System.Func<byte[],Assembly>)Assembly.Load; return bytes; } } }";
+        Build(ReflectionInput(capture)).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string ordinary = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(byte[] bytes) { var f = (System.Func<byte[],byte[]>)(static b => b); return f(bytes); } } }";
+        Build(ReflectionInput(ordinary)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+    }
+
+    [Test]
+    public void BareStaticUsingGenericActivatorFailsClosed()
+    {
+        const string main = "using static System.Activator;\nnamespace Example { internal partial class ReflectionTests { object Read<T>() => CreateInstance<T>(); } }";
+        var graph = Build(ReflectionInput(main));
+        graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        graph.IncompleteReasons.Count(reason => reason == "reflection-target-unresolved:tests/Consumer/Reflection.cs").ShouldBe(1);
+        AssertIncomplete(graph);
+        graph.IncompleteReasons.ShouldContain("assembly-metadata-unavailable");
+        AssertBareCreateInstanceGeneric(main);
+
+        const string qualified = "namespace Example { internal partial class ReflectionTests { object Read<T>() => System.Activator.CreateInstance<T>(); } }";
+        Build(ReflectionInput(qualified)).IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string ordinary = "namespace Example { internal partial class ReflectionTests { object Read() => new object().GetType(); } }";
+        Build(ReflectionInput(ordinary)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+    }
+
+    [Test]
     public void GraphsUnionKeepsOneSidedEdges()
     {
         var left = GraphOf(["reason-only-old"],
@@ -241,6 +314,50 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     private static ReleaseImpactConsumer ConsumerOf(string project, string name, params string[] kinds) => new(project, name, kinds);
     private static string[] Members(ReleaseImpactGraph graph, string path) => graph.Edges.Where(e => e.Path == path)
         .SelectMany(e => e.Classes).Select(c => c.Project + "::" + c.FullName).Distinct().Order(StringComparer.Ordinal).ToArray();
+    private Dictionary<string, string> ReflectionInput(string source) => new(fixture.Sources)
+    {
+        ["tests/Consumer/Consumer.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
+        ["tests/Consumer/Reflection.cs"] = source,
+    };
+
+    private static void AssertLoadMethodGroup(string source)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        var groups = root.DescendantNodes().OfType<EqualsValueClauseSyntax>()
+            .Select(clause => PeelSyntax(clause.Value))
+            .OfType<MemberAccessExpressionSyntax>()
+            .Where(member => member.Name.Identifier.ValueText == "Load")
+            .ToArray();
+        groups.ShouldNotBeEmpty();
+        groups.All(member => member.Parent is not InvocationExpressionSyntax).ShouldBeTrue();
+    }
+
+    private static void AssertBareCreateInstanceGeneric(string source)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        root.DescendantNodes().OfType<GenericNameSyntax>()
+            .Any(name => name.Identifier.ValueText == "CreateInstance" && name.Parent is InvocationExpressionSyntax)
+            .ShouldBeTrue();
+    }
+
+    private static ExpressionSyntax PeelSyntax(ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            if (expression is ParenthesizedExpressionSyntax parenthesized)
+            {
+                expression = parenthesized.Expression;
+                continue;
+            }
+            if (expression is CastExpressionSyntax cast)
+            {
+                expression = cast.Expression;
+                continue;
+            }
+            return expression;
+        }
+    }
+
     private static void AssertReflectionUnresolved(Dictionary<string, string> sources, string source)
     {
         sources["tests/Consumer/Reflection.cs"] = source;
