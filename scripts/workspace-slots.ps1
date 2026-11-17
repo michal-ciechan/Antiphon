@@ -3,6 +3,7 @@
 #
 #   workspace-slots.ps1 cold-reset -Runner server2 [-Slot ws-03,ws-01] -Reason "why"
 #   workspace-slots.ps1 cold-reset -AllRunners -Reason "rc qualification rc/<date> <sha12>"
+#   workspace-slots.ps1 release -Runner server2 -DirId <12hex> -Disposition Pushed -Reason "why"
 #
 # cold-reset calls POST /api/session-runners/{runnerId}/workspace-slots/cold-reset with the
 # operator token from the owner-only file the server creates at startup (default
@@ -12,10 +13,18 @@
 # release, so the call never waits for leased slots. -AllRunners targets every runner whose
 # capabilities advertise workspaceSlotV1. The request id and each slot's outcome are printed.
 # Exit 0 when every runner answered, 1 when any call failed.
+#
+# release (CARD-1960) calls POST /api/session-runners/{runnerId}/workspace-slots/quarantine/{dirId}/release
+# with the same operator token. It releases one open quarantined directory: -DirId is the dirId of the
+# runner ledger's quarantinedDirectories entry. -Disposition Pushed rechecks that the work is published and
+# clean first; AcceptLoss retains the diff and untracked files under /work/retained/quarantine/<dirId>/;
+# Removed deletes with no check, so use Pushed for published residue and keep Removed for a fixed blocker.
+# It prints runner=<id> dir=<dirId> outcome=<outcome> [detail]. Exit 0 only when the runner removed the
+# directory, 1 when it refused, failed the removal or the call failed, 2 on a usage error.
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('cold-reset')]
+    [ValidateSet('cold-reset', 'release')]
     [string]$Verb,
 
     [string]$Runner,
@@ -23,6 +32,11 @@ param(
     [switch]$AllRunners,
 
     [string[]]$Slot,
+
+    [string]$DirId,
+
+    [ValidateSet('Pushed', 'AcceptLoss', 'Removed')]
+    [string]$Disposition,
 
     [Parameter(Mandatory = $true)]
     [string]$Reason,
@@ -36,6 +50,26 @@ $api = $env:ANTIPHON_API
 if ([string]::IsNullOrWhiteSpace($api)) { $api = 'http://localhost:17202' }
 $api = $api.TrimEnd('/')
 
+if ($Verb -eq 'release') {
+    if ($AllRunners -or $Slot -or [string]::IsNullOrWhiteSpace($Runner)) {
+        [Console]::Error.WriteLine('workspace_slots_target: release names one runner''s quarantined directory; use -Runner and -DirId, not -AllRunners or -Slot.')
+        exit 2
+    }
+    if ([string]::IsNullOrWhiteSpace($DirId) -or $DirId -cnotmatch '^[0-9a-f]{12}$') {
+        [Console]::Error.WriteLine('workspace_slots_target: release needs -DirId, the 12 lower-case hex digits of the ledger entry.')
+        exit 2
+    }
+    if ([string]::IsNullOrWhiteSpace($Disposition)) {
+        [Console]::Error.WriteLine('workspace_slots_target: release needs -Disposition Pushed, AcceptLoss or Removed.')
+        exit 2
+    }
+    # ValidateSet ignores case; the route compares ordinally, so send the canonical spelling.
+    $Disposition = @('Pushed', 'AcceptLoss', 'Removed') | Where-Object { $_ -eq $Disposition }
+}
+elseif (-not [string]::IsNullOrWhiteSpace($DirId) -or -not [string]::IsNullOrWhiteSpace($Disposition)) {
+    [Console]::Error.WriteLine('workspace_slots_target: -DirId and -Disposition belong to release.')
+    exit 2
+}
 if ($AllRunners -and -not [string]::IsNullOrWhiteSpace($Runner)) {
     Write-Error 'workspace_slots_target: give -Runner or -AllRunners, not both.'
     exit 2
@@ -71,6 +105,27 @@ $headers['X-Antiphon-Operator-Token'] = $token
 if ([string]::IsNullOrWhiteSpace($Requester)) {
     $Requester = 'workspace-slots.ps1'
     if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_ID)) { $Requester = 'task ' + $env:ANTIPHON_TASK_ID }
+}
+
+if ($Verb -eq 'release') {
+    $body = @{ disposition = $Disposition; reason = $Reason; requester = $Requester }
+    $uri = $api + '/api/session-runners/' + [uri]::EscapeDataString($Runner) + '/workspace-slots/quarantine/' +
+        [uri]::EscapeDataString($DirId) + '/release'
+    try {
+        $answer = Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -ContentType 'application/json' `
+            -Body ($body | ConvertTo-Json -Depth 4)
+    }
+    catch {
+        $detail = $_.Exception.Message
+        if ($null -ne $_.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($_.ErrorDetails.Message)) { $detail = $detail + ' ' + $_.ErrorDetails.Message }
+        Write-Output ("runner={0} dir={1} failed: {2}" -f $Runner, $DirId, $detail)
+        exit 1
+    }
+    $line = "runner={0} dir={1} outcome={2}" -f $Runner, $DirId, $answer.outcome
+    if (-not [string]::IsNullOrWhiteSpace([string]$answer.detail)) { $line = $line + ' ' + $answer.detail }
+    Write-Output $line
+    if ($answer.outcome -eq 'removed') { exit 0 }
+    exit 1
 }
 
 $runners = @()
