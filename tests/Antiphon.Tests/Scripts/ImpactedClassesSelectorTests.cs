@@ -472,7 +472,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreTests*)|(PendingSettlementDeliveryTests*)"
         + "|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
         + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
-        + "|(ReceiptScanDestinationIntegrationTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(ReleaseImpactScriptTests*)"
         + "|(RunnerStartupStaleObservationTests*)"
         + "|(RunnerTerminalSessionGenerationTests*)|(RunnerTerminalSessionInputEncodingTests*)"
         + "|(SelectorLineEndingAttributeTests*)|(ServerGitProcessTests*)"
