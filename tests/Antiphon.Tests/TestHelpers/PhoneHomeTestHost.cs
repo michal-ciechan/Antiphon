@@ -193,18 +193,25 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             ?? throw new InvalidOperationException("empty register");
     }
 
-    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(TimeSpan? timeout = null, string? runnerId = null)
+    /// <param name="epoch">CARD-1960 Debug: wait for the connection minted for this registration.
+    /// The server finishes the WebSocket handshake before <c>AcceptConnect</c> installs the new
+    /// connection, so a superseded one stays the snapshot for a moment after the client connects.</param>
+    public async Task<PhoneHomeLiveConnection> WaitLiveAsync(TimeSpan? timeout = null, string? runnerId = null, long? epoch = null)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
+        PhoneHomeLiveConnection? live = null;
         while (DateTime.UtcNow < deadline)
         {
-            var live = runnerId is null ? Directory.SnapshotLive() : Directory.SnapshotLive(runnerId);
-            if (live is not null)
+            live = runnerId is null ? Directory.SnapshotLive() : Directory.SnapshotLive(runnerId);
+            if (live is not null && (epoch is null || live.Epoch == epoch))
                 return live;
             await Task.Delay(20);
         }
 
-        throw new TimeoutException("Phone-home live connection was not accepted.");
+        throw new TimeoutException(epoch is null
+            ? "Phone-home live connection was not accepted."
+            : $"Phone-home live connection for epoch {epoch} was not accepted; the snapshot holds "
+                + (live is null ? "no connection." : $"epoch {live.Epoch}."));
     }
 
     public async Task<PhoneHomeScriptedPeer> ConnectPeerAsync(
@@ -220,7 +227,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             : new Uri($"ws://{Http.BaseAddress!.Authority}/api/session-runners/{Uri.EscapeDataString(id)}/connect");
         await peer.Socket.ConnectAsync(uri, CancellationToken.None);
         peer.Start();
-        var live = await WaitLiveAsync(runnerId: id);
+        var live = await WaitLiveAsync(runnerId: id, epoch: ticket.Epoch);
         peer.Epoch = live.Epoch;
         return peer;
     }
