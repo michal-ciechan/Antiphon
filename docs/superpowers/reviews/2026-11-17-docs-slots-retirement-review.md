@@ -1,0 +1,72 @@
+# CARD-1514 docs review, round 1: slots, retire-temp, resume, fallback
+
+Review task `5f0633e8`. Ordinary round 1, Final, full scope for this docs change. Blockers and regressions only. Documents only; `docs/docker-stack.md` was not edited.
+
+Subject task `d336fcc3-e8ba-4433-84b0-8f5e1dbffdcd` (Docs). Reviewed source `12105bfbc2e0f472614e51a96adc4240b2384a32` on `feat/card-task-5f0633e8`, fast-forward of `origin/feat/card-task-d336fcc3`. Three commits, `cf59510ca`, `65c66c590`, `12105bfbc`. The three-dot range from the merge-base `61259342c25c9960c12ac7171488e52b61dc03be` changes only `docs/docker-stack.md` (+183/−7). `docs/session-runtime-invariants.md` is unchanged.
+
+`origin/master` at review time is `321f98ec990a575f77e442ba3b1554f0fde33521`. The brief pin `870a93d21f2b18c85a8b0905ab689b28e3099813` ("batch 253 tree", CARD-1893 collector and CARD-1956 resume) is an ancestor of that tip. Code claims were read from `origin/master`. The worktree copy of `scripts/c1008-retirement.sh` is behind master; it was not used.
+
+CARD-1514 (`c92555be-65d0-45b6-a759-3d1ba5938bd2`) is the slow-test investigation (AgentTaskLandPersistenceFailureTests, CheckpointMatrix, Publication, plus the 2026-10-23 timing recorder). Its stored body does not describe this docker-stack change. The commissioned subject is the documentation on the named tip.
+
+## Verdict
+
+**One blocker. Not clean.** D-1 is a claim that contradicts the receipt validator. Advisories A1–A8 do not hold the land and do not require another Review.
+
+## D-1. Completed receipt described as zero effects
+
+| | |
+|---|---|
+| Where | `docs/docker-stack.md`, "Audited manual removal FALLBACK (2026-11-16)", the post-removal confirmation (lines 927–928 at `12105bfbc`). |
+| Failure | The sentence says confirm `retirement/<operation-id>/receipt.json` is `Refused` or `Completed` with zero effects (and zero intents for a Refused receipt). |
+| Why | On `origin/master`, `c1609_close_receipt_valid` in `scripts/c1008-retirement.sh` accepts `state=="Completed"` only when `consumed==true` and every target has an effect. `c1609_temp_retirement_clearable` in `scripts/c590-remote.sh` calls that validator before the state case, so a Completed receipt with zero effects fails and never reaches the `Completed)` arm. A valid Completed receipt records one effect for each of the four targets. |
+| Fix | Say Refused with zero effects and zero intents, or Completed with one recorded effect per target. Leave the later sentence as it stands: a Refused zero-effects/zero-intents receipt can pass clearable, and receipt state alone cannot clear retained volumes or a live owner. |
+
+`DockerStackDocumentationTests` does not pin this sentence, so the green class does not discharge D-1.
+
+## Claims that match the code
+
+Checked on `origin/master` unless noted. These are not findings.
+
+**Workspace slots.** `Delegation:WorkspaceSlotsEnabled` is a bool, default false (`DelegationSettings.cs`). `Delegation:WorkspaceSlotRoles` defaults to `*` (`WorkspaceSlotRoles.All`). `*` is every `AgentTaskRole` except Mutation; Mutation cannot be listed; `WorkspaceSlotRoleSet.Admits` refuses SourceLanding when a source-landing operation id is present. The standing and temp readers are `runner_workspace_slots_enabled`: exact `PhoneHome__WorkspaceSlots__Enabled=true|false`, invalid or duplicate exits 2. `case_deploy_parent` reads the standing stack file; `case_deploy_temp_runner` reads `secrets/stack.temp.env` (`SERVER2_TEMP_ENV`) and rewrites that file, so a temp assignment takes effect at the next `deploy-temp`. Compose sets `Git__WorktreeBasePath` to `/work/worktrees`; the ledger is the parent plus `workspace-slots/ledger.json`, which is `/work/workspace-slots/ledger.json`. Quarantine locks the directory in place (`git worktree lock`) and does not move or delete it. Re-home uses `ws-NN-dK`. `ReleaseQuarantineAsync` is the explicit release. Warm and cold reset of the replacement do not delete an already-quarantined original. The pre-existing slot section and `docs/session-runtime-invariants.md` agree. The 2026-11-16 `ws-01` / `ws-04` re-home is an operational claim in the naming scheme; this review did not read a live ledger.
+
+**Retire-temp activation.** Missing `-ProjectId` throws `RecycleProjectUnresolved` `cause=NoMatch` from `scripts/deploy-server2.ps1`. Evidence and `exchange-*` directories are rooted at the export (`deploy-server2.ps1` joins `.antiphon/rolling-server2/<run-id>` under the script parent), so `C:\rt\<8 hex>` shortens those paths. The investigation on master records preview `c1008d39c6761f7344685aa02e337e47998fa` refusing `RecycleGitAuditUnknown reason=proof-stale` at a 264-character proof directory, past the Windows 260 limit. `C1609_EFFECT_WINDOW_MS=11000` in `scripts/c1008-retirement.sh`, with the comment that names the 5,070 ms and 5,050 ms samples, the former 5,000 ms budget, and the revisit when a measured exchange exceeds 8 s or after the first five native applies. Desktop control and Git network budgets stay 5,000 ms (`scripts/c590-real.ps1`, `scripts/c1609-host-proof.ps1` `NetworkBudgetMs`). `c1609_publication_gate` uses `read -r -t 10`. Proof freshness windows in the retirement script are 900 seconds. Diagnostic stages are `control`, `ready-published`, `effect`, and `exchange-required`. Records are schema 1 with `phaseNonce`, `stage`, `elapsedMs`, `limitMs`, appended at `$SERVER2_ROOT/retirement/<operation-id>/publication-diagnostics.jsonl`. `exchange-required` is recorded with a null elapsed when no exchange began. The latest record is also written to the case file `c1609-publication-diagnostic.json`.
+
+**Crash resume (CARD-1956).** Repair `6905ae9c5dbb46d7412d57323e37e19eddcd9c10` and investigation `a0b34d1a0856bc39e29563c169e171f0c0b305d5` are ancestors of `origin/master`. `-ResumeRecycle` matches `^c1008[0-9a-f]{32}$` and the wrapper exports `C1008_RESUME=1`. `c1609_require_resume_phase` requires resume (not dry-run), schema 2, policy version 1, the same operation and project, `consumed==true`, `owner==null`, state Applying, PartialRefused, Refused, or Completed, matching daemon, and `readyPublished==true`. A schema-2 lifecycle must be phase Apply. A legacy lifecycle needs `admission-<nonce>.json` bound to the lifecycle nonce and the immutable preview digest. `c1609_phase_begin` treats a missing `/proc/<pid>` or a different `startTicks` as a dead owner, and requires `complete==true` with every child joined. The comment states that an unfinished Preview or an unconsumed Ready is never reused. Resume skips `c1609_require_ready_preview` and still runs `c1609_publication_gate` on the apply path. `c1609_prepare_resume` revalidates the existing receipt and sets state back to Applying; it does not create a new preview. Close parameters on `scripts/retire-runner-volumes.ps1` are `-Close`, `-OperationId`, `-ExpectedJournalDigest` (64 hex), and `-ReasonFile`. `c1609_close_host` requires all four volumes already absent, refuses a live owner (pid and startTicks), and writes `closure.json`. It does not remove a volume.
+
+**Manual removal fallback.** The section is labeled FALLBACK, says it is not a successful gate-9 Apply, and does not extend authority to main, shared caches, or other volumes. The four commands are `docker volume rm --` plus one exact name: `antiphon-runner-temp_runner-state`, `_dind-data`, `_runner-tmp`, `_work`. That set is the clearable and Close set; the order differs. The section forbids `down -v`, prune, and a name-pattern sweep. The pre-checks are read-only (`docker ps -aq`, `git status` / `rev-list` / `for-each-ref` / `stash list`, and a tar of `/work/repos/antiphon` outside the volumes). No new command prints a secret.
+
+**Load lesson.** `docker-compose.server2-runner.yml` sets `SessionRunner__BuildSlots__MaxConcurrent` `"4"` and `MaxCpuCount` `"6"`, with `MinAvailableMemoryMb` `"16384"`. The existing budget paragraph states 24 cores and no cgroup cap. "Four-slot/six-node" is that pair: four concurrent leases and `-maxcpucount:6`. The load rule is written as an operator admission check, not a broker feature, and it still requires `scripts/build-slot.ps1`. The 39-to-63 load and the 600-second driver deadline are operational notes; `build-slot.ps1` does not define them (slot timeout is exit 4, and `retryAfterMs` is capped at 60,000). The seven-task occupancy matches the operator direction of 2026-11-12 carried in this brief.
+
+## Advisories
+
+These do not force Code or another Review.
+
+- **A1.** The new ledger prose says `attention` rows record a reason. `WorkspaceSlotAttention` serializes `key`, `slotId`, `path`, `detail`, and `at`. The supplied `jq` prints the whole `attention` array, so the command still works. `detail` is the field an operator reads.
+- **A2.** The new activation section does not restate `Delegation:WorkspaceSlotsEnabled` (default false, restart to change). The section immediately above already says the server flag and the role gate must both permit leases. The role default is already `*`.
+- **A3.** The landed live `ls-remote` already runs in a short scratch `c1609-live-<guid>` under the temp path (`scripts/c1609-host-proof.ps1` line 369 on master). The new text presents `C:\rt\<8 hex>` as what leaves room under the 260-character limit. The historical 264-character `c1008d39` facts remain true, and a short export root still shortens proof paths because they hang off the export. The scratch is the mechanism already on master.
+- **A4.** "A refused or stuck Applying operation must be resolved with audited `-Close`" is stronger than admission. `c1609_require_resume_phase` also accepts a consumed Applying, PartialRefused, Refused, or Completed receipt when the Apply lifecycle, dead owner, and the other guards hold. `c1609_phase_refusal` sets `recovery=-Close` only when the receipt is consumed and the state is Applying or PartialRefused; otherwise `recovery=new-operation`. The CARD-1956 investigation uses the same recovery wording. Close remains the path the refusal prints for a consumed Applying or PartialRefused receipt.
+- **A5.** "Four-slot/six-node" is informal for MaxConcurrent 4 and MaxCpuCount 6. The load anecdote and the 600-second deadline are not broker constants. The seven-task / three-to-four heavy-builder split is the operator lesson this brief asked to check.
+- **A6.** A two-dot diff against `origin/master` is master drift (143 commits at the start of this review; master has since moved to batch 254). It is not the subject. `git merge-tree --write-tree origin/master HEAD` is clean: tree `6e88ba06ab1c92600384c680c9a0614a0b0565ee`. "Merge 253" is not a merge-commit subject. It matches the batch-253 index commit `870a93d21f2b18c85a8b0905ab689b28e3099813`. The repair SHA cited beside it is on master.
+- **A7.** CARD-1514's card body is the slow-test investigation. Scope here is the commissioned docker-stack documentation.
+- **A8.** Receipt validators and the clearable case list state `Partial`. No assignment of `state="Partial"` was found in `scripts/c1008-retirement.sh`. Listing it matches the clearable refusal set. `PartialRefused` is the state the script writes when mark-partial has intents.
+
+## Verification
+
+No product file was modified. `git diff --check` on `61259342c..12105bfbc` exited 0.
+
+`scripts/check-evidence-diff.ps1 -BaseRef 61259342c25c9960c12ac7171488e52b61dc03be -HeadRef 12105bfbc2e0f472614e51a96adc4240b2384a32`: `EVIDENCE result commits=3 entries=0 violations=0`.
+
+`scripts/impacted-classes.ps1 -MergeSubset -Range 61259342c25c9960c12ac7171488e52b61dc03be..12105bfbc2e0f472614e51a96adc4240b2384a32`: `mode=merge-subset`, `migrations=False`. The downgrade selector was not selected (0 migration rows). The printed fixed classes are the always-on merge-subset set. This docs review does not re-run them. No `server/Migrations`, `AppDbContext`, or `*Model.cs` row is in the subject diff.
+
+OS-branch witnesses: no OS-selected production behavior changed. `scripts/check-os-witnesses.ps1` was not owed. No new input wait was added. Parking stays dormant (CARD-1083). Positive controls stay pending under the operator waiver of 2026-11-12.
+
+Platform reads, both HTTP 200, with no fleet location recorded: `GET /api/runner-defaults` keys `revision`, `globalRunnerId`, `kindDefaults`, `updatedAt`, `lastReason`, `lastProvenance`, `lastCallerTaskId`, `supportedKinds`, `unresolvedReferences`; `GET /api/session-runners` returned an array of three runner objects. `-Runner` and `-Platform` are omitted. The change is portable documentation.
+
+Build and the named selection ran once each, leased, at `12105bfbc`, native default output, `UseAppHost=false`, `TEMP=/tmp`. One-minute load before the build was 8.12. After the build it was 17.49, so the test was deferred. After 90 seconds it was 15.67 and the test started. The test command then printed 16.01 because load moved during the grant; the slot was already granted (`waited=0s`) and the row was not cancelled.
+
+- Build: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1514-docs-review-build -- dotnet build tests/Antiphon.Tests -p:UseAppHost=false --nologo`. Exit 0. Lease `7f403c8d-929f-4328-9a69-6e43ecc3db07`, waited 0s, maxcpucount 6, held 423s. Elapsed 00:06:58.31. 0 errors, 2076 warnings.
+- Tests: `pwsh -NoProfile -File scripts/build-slot.ps1 -Label c1514-docs-review-guards -- dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --treenode-filter '/*/*/(TestClassificationPolicy*)|(TestClassificationGuard*)|(SlowTestRegistryMerge*)|(SlowTestTripwire*)|(NativeLinuxPolicyWitnessTests*)|(DockerStackDocumentationTests*)/*' --timeout 180s`. Exit 0. Lease `8b0fcff4-90eb-408d-92d1-e6791d2aa25b`, waited 0s, held 51s. TUnit total 72, failed 0, succeeded 72, skipped 0, duration 47s 230ms.
+
+`RemoteScriptContractTests` was not run. The brief waives that class under the standing minimal-testing rule after the author's 570-second abort. The author's other certifications (infrastructure consumers, script/application consumers, DockerStackContractTests, Hangfire consumers, VolumeRetirementApplyGateTests, the earlier guard union, the two runbook methods, the runner documentation consumer) were not re-run; this round's required selection is the leased guard batch plus `DockerStackDocumentationTests`.
+
+`reviewedSourceClean` is true: the tree at `12105bfbc` was clean, the build and the required tests passed at that SHA under the leases above, and this review commit adds only this file.
