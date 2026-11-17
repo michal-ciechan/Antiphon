@@ -529,15 +529,14 @@ public sealed class PolicyRefreshService
     private async Task<bool> HasBeenIdleLongEnoughAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var stamps = await db.TranscriptEntries.AsNoTracking()
+        // CARD-1888 S4: the aggregate runs in SQL instead of reading every row of the session.
+        var newest = await db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId)
-            .Select(t => new { t.Timestamp, t.CreatedAt })
-            .ToListAsync(ct);
-        if (stamps.Count == 0)
+            .MaxAsync(t => (DateTime?)(t.Timestamp ?? t.CreatedAt), ct);
+        if (newest is not DateTime stamp)
             return false;
 
-        var newest = stamps.Max(t => t.Timestamp ?? t.CreatedAt);
-        var idleFor = UtcNow() - newest;
+        var idleFor = UtcNow() - stamp;
         return idleFor >= TimeSpan.FromMinutes(Math.Max(1, _settings.IdleMinutes));
     }
 
