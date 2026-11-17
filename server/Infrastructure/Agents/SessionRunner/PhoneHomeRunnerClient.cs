@@ -539,6 +539,14 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
         return Read<PhoneHomeWorkspaceSlotColdResetResponse>(frame) ?? throw Missing("workspace-slot-cold-reset");
     }
 
+    /// <summary>CARD-1960. Releases one open quarantined slot directory (Pushed, AcceptLoss or Removed); the runner answers removed, refused or removal_failed.</summary>
+    public async Task<PhoneHomeWorkspaceSlotQuarantineReleaseResponse> ReleaseWorkspaceSlotQuarantineAsync(
+        PhoneHomeWorkspaceSlotQuarantineReleaseRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.WorkspaceSlotQuarantineRelease, request, ct);
+        return Read<PhoneHomeWorkspaceSlotQuarantineReleaseResponse>(frame) ?? throw Missing("workspace-slot-quarantine-release");
+    }
+
     /// <summary>CARD-1677 S1. Read-only listing of the runner's worktree and retiring roots.</summary>
     public async Task<PhoneHomeWorkspaceRetentionInventoryResponse> GetWorkspaceRetentionInventoryAsync(CancellationToken ct)
     {

@@ -173,6 +173,35 @@ public static class SessionRunnerEndpoints
             return Results.Ok(await runner.ColdResetWorkspaceSlotsAsync(request, ct));
         }).WithTags("SessionRunners");
 
+        // CARD-1960. The operator's exit from an open quarantined slot directory: forwards the runner's
+        // WorkspaceSlotQuarantineRelease (CARD-0824 S1 D-D). Everything the runner would refuse is refused here, before
+        // anything is sent; the runner's answer (removed, refused, removal_failed) is returned as 200. The runner request
+        // has no requester, so the requester is folded into the reason it records.
+        app.MapPost("/api/session-runners/{runnerId}/workspace-slots/quarantine/{dirId}/release", async (
+            HttpContext http,
+            string runnerId,
+            string dirId,
+            WorkspaceSlotQuarantineReleaseRouteRequest body,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            ILoggerFactory loggers,
+            CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Releasing a quarantined workspace slot directory requires the operator token.");
+            var reason = body.Reason?.Trim() ?? "";
+            var requester = string.IsNullOrWhiteSpace(body.Requester) ? "operator" : body.Requester.Trim();
+            var presented = http.Request.Headers[OperatorTokenFile.Header].ToString();
+            if (QuarantineReleaseRefusal(dirId, body.Disposition, reason, requester, presented) is { } refusal)
+                return Results.BadRequest(new { error = "workspace_slot_quarantine_release_invalid", detail = refusal });
+            var directory = http.RequestServices.GetRequiredService<ISessionRunnerDirectory>();
+            if (directory.Resolve(runnerId) is not PhoneHomeRunnerClient runner)
+                return Results.Conflict(new { error = "workspace_slot_runner_not_phone_home", detail = "Workspace slots are a phone-home runner feature." });
+            var request = new PhoneHomeWorkspaceSlotQuarantineReleaseRequest(dirId, body.Disposition, RecordedReason(reason, requester));
+            loggers.CreateLogger("WorkspaceSlotQuarantineRelease").LogWarning(
+                "Workspace slot quarantine {DirId} on runner {RunnerId} released {Disposition} by {Requester} ({Reason})",
+                dirId, runnerId, request.Disposition, requester, reason);
+            return Results.Ok(await runner.ReleaseWorkspaceSlotQuarantineAsync(request, ct));
+        }).WithTags("SessionRunners");
+
         // CARD-0824 review f4c293bc D-1. The operator's way out of workspace_slot_release_stuck: records the release
         // of the task's slot and generation on the runner it is bound to once the bounded slot_unknown attempts are
         // spent, so a held drain rebind (or the reconciler) can move on. Nothing is sent to the runner. CARD-1649: only the
@@ -523,5 +552,39 @@ public static class SessionRunnerEndpoints
             ExceptionDispatchInfo.Capture(failed!).Throw();
         var released = outcomes.Select(outcome => outcome.SessionId).ToArray();
         return Results.Ok(new RunnerSlotReleaseDto(released.Length, released, outcomes));
+    }
+    private static readonly string[] QuarantineDispositions = ["Pushed", "AcceptLoss", "Removed"];
+
+    /// <summary>
+    /// CARD-1960 D-2. Why a quarantine release is refused before anything is sent, or null. The dirId is the runner's
+    /// 12 lower-case hex digits; the disposition is one of the runner's three, compared ordinally; the reason is 1 to 200
+    /// characters and the requester passes the record-release rule. Neither may hold the presented operator token in any
+    /// letter case, and the reason has no control, format or separator character: both are logged and recorded.
+    /// </summary>
+    private static string? QuarantineReleaseRefusal(string dirId, string? disposition, string reason, string requester, string presented)
+    {
+        if (dirId.Length != 12 || !dirId.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f'))
+            return "The dirId is the 12 lower-case hex digits of the ledger's quarantinedDirectories entry.";
+        if (disposition is null || !QuarantineDispositions.Contains(disposition, StringComparer.Ordinal))
+            return "The disposition must be Pushed, AcceptLoss or Removed.";
+        if (reason.Length is < 1 or > RunnerStateService.MaxReasonLength
+            || reason.EnumerateRunes().Any(rune => System.Text.Rune.GetUnicodeCategory(rune) is System.Globalization.UnicodeCategory.Control
+                or System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator)
+            || (presented.Length > 0 && reason.Contains(presented, StringComparison.OrdinalIgnoreCase)))
+            return "Give a reason of 1 to 200 printable characters that holds no credential.";
+        if (!WorkspaceSlotReleaseService.IsAcceptableRequester(requester, presented))
+            return $"Give a requester of at most {WorkspaceSlotReleaseService.MaxRequesterLength} UTF-16 code units of printable characters that is not a credential.";
+        return null;
+    }
+
+    /// <summary>CARD-1960 D-1. The reason the runner records: the operator's reason, then who asked, within 200 characters.</summary>
+    private static string RecordedReason(string reason, string requester)
+    {
+        var suffix = " (by " + requester + ")";
+        var room = RunnerStateService.MaxReasonLength - suffix.Length;
+        if (reason.Length > room)
+            reason = reason[..(char.IsHighSurrogate(reason[room - 1]) ? room - 1 : room)].TrimEnd();
+        return reason + suffix;
     }
 }

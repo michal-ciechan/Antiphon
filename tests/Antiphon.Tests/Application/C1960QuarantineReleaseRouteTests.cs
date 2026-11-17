@@ -106,6 +106,7 @@ public sealed class C1960QuarantineReleaseRouteTests
     [Arguments("reason-201")]
     [Arguments("requester-token")]
     [Arguments("reason-token")]
+    [Arguments("reason-newline")]
     [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Route_refuses_invalid_input_before_sending(string shape)
     {
@@ -132,6 +133,7 @@ public sealed class C1960QuarantineReleaseRouteTests
         {
             "reason-201" => new string('r', 201),
             "reason-token" => "released with " + token,
+            "reason-newline" => "published\nforged log line",
             _ => "published",
         };
         var requester = shape == "requester-token" ? token : "orchestrator";
