@@ -988,7 +988,7 @@ function Invoke-FFActualLoop {
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
     $bySuite=@{}
     foreach($s in $Fixture.suites){$index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal);foreach($n in $s.nodes){$index.Add([string]$n.Uid,$n)};$bySuite[$s.id]=$index}
-    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Identities=[Collections.Generic.List[object]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false}
+    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Identities=[Collections.Generic.List[object]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false;Plans=@{}}
     $seams=Join-Path $dir 'seams.ps1'
     [IO.File]::WriteAllText($seams, @'
 $NightlySeams=@{
@@ -1012,7 +1012,10 @@ $NightlySeams=@{
             $global:FFLoopBoundaryState.Active++;$global:FFLoopBoundaryState.Max=[math]::Max($global:FFLoopBoundaryState.Max,$global:FFLoopBoundaryState.Active)
             $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
-            $plan=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
+            # One parse per written plan (it is rewritten once per suite, read by every launch).
+            $planInfo=[IO.FileInfo]::new($planPath);$planKey=$planPath+'|'+$planInfo.Length+'|'+$planInfo.LastWriteTimeUtc.Ticks
+            if(-not $global:FFLoopBoundaryState.Plans.ContainsKey($planKey)){$global:FFLoopBoundaryState.Plans[$planKey]=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json}
+            $plan=$global:FFLoopBoundaryState.Plans[$planKey]
             $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
             $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
