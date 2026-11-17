@@ -1182,12 +1182,13 @@ public sealed partial class AgentSessionRuntime
             && RunnerStoreId is null && RunnerCwd is null;
     }
 
-    // S2 is incomplete on purpose: a non-full observation compares MaxSequence and TopRowId only.
-    // Count, FirstRowId and tail equality are S3. S2 and S3 land together.
+    // A full observation is today's whole-array comparison. Otherwise the stamp
+    // (count, max sequence, first row, top row) and the tail must both match.
+    // S2 and S3 land together.
     private static bool RecoveryUnchanged(RecoveryObservation left, RecoveryObservation right) =>
         left.Full || right.Full
             ? left.Tail.SequenceEqual(right.Tail)
-            : left.Stamp.MaxSequence == right.Stamp.MaxSequence && left.Stamp.TopRowId == right.Stamp.TopRowId;
+            : left.Stamp == right.Stamp && left.Tail.SequenceEqual(right.Tail);
 
     private async Task<RecoveryObservation?> ReadRecoveryObservationAsync(
         Guid sessionId, CancellationToken ct, bool whole = false)
