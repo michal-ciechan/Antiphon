@@ -612,13 +612,20 @@ volume_data_for_target() {
     printf '%s' "$C1192_ROOT/volumes/$source/data"
 }
 
+# The waits model the probes' own wall-clock bounds: driver.sh waits for go until
+# its slot deadline epoch and lock-probe.ps1 waits 30 s for release. A fixed poll
+# count expired under load before the barrier wrote go (CARD-1514). A killed
+# container or c1192_kill_jobs' stop marker ends the wait: killing a job leaves
+# its launch subshell waiting.
 wait_for_volume_file() {
-    local path="$1" i
-    for i in $(seq 1 200); do
-        [ -f "$path" ] && return 0
+    local path="$1" deadline="$2"
+    while [ ! -f "$path" ]; do
+        c1192_slot_killed && return 1
+        c1192_slot_stop_requested && return 1
+        [ "$(date +%s)" -lt "$deadline" ] || return 1
         command sleep 0.02
     done
-    return 1
+    return 0
 }
 
 simulate_zip() {
@@ -638,7 +645,7 @@ plant_restored_package() {
 }
 
 simulate_restore() {
-    local n driver project data
+    local n driver project data deadline=""
     n=${#PARSED_CMD[@]}
     [ "$n" -ge 2 ] || return 97
     driver="${PARSED_CMD[$((n - 2))]}"
@@ -649,6 +656,7 @@ simulate_restore() {
         ''|*[!0-9]*) ;;
         *)
             [ "$n" -ge 3 ] || return 97
+            deadline="$project"
             driver="${PARSED_CMD[$((n - 3))]}"
             project="${PARSED_CMD[$((n - 2))]}"
             ;;
@@ -673,7 +681,8 @@ simulate_restore() {
         command sleep 8
     fi
     printf '1\n' > "$data/race/$project/slot-held"
-    wait_for_volume_file "$data/race/go" || return 1
+    [ -n "$deadline" ] || deadline=$(( $(date +%s) + 2700 ))
+    wait_for_volume_file "$data/race/go" "$deadline" || return 1
     printf '1\n' > "$data/race/$project/ready"
     if [ "${C1192_FAULT:-}" = "restore-$project" ]; then
         return 1
@@ -766,7 +775,7 @@ simulate_lock() {
     release="$data/race/${generation}-release"
     if [ "$mode" = holder ]; then
         printf '1\n' > "$entered"
-        wait_for_volume_file "$release"
+        wait_for_volume_file "$release" "$(( $(date +%s) + 30 ))"
         return
     fi
     case "$scratch" in
@@ -775,7 +784,7 @@ simulate_lock() {
             return 0
             ;;
     esac
-    wait_for_volume_file "$release" || return 1
+    wait_for_volume_file "$release" "$(( $(date +%s) + 30 ))" || return 1
     if [ "${C1192_FAULT:-}" = waiter-no-entry ]; then
         return 0
     fi
@@ -2209,7 +2218,12 @@ mode_barriers() {
     rm -f -- "$vol/race/shared-release" "$vol/race/shared-holder-entered" "$vol/race/shared-waiter-entered" \
         "$vol/race/private-holder-entered" "$vol/race/private-waiter-entered" "$vol/race/private-release"
     C1192_FAULT=touch-release
-    rel_out=$(c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err") || rel_code=$?
+    # The refusal exits this substitution with the holder and waiter still waiting
+    # for release. Stop them, as the refused fixture would, before they wait 30 s.
+    rel_out=$(
+        trap 'c1192_kill_jobs' EXIT
+        c849_fixture_race_lock_probe "$ADMITTED" "$scratch" "$private_scratch" 2>>"$C1192_ROOT/scenario.err"
+    ) || rel_code=$?
     C1192_FAULT=
     rel_diag=$(diagnosis_of "$rel_out")
     refuse_unexpected
