@@ -253,4 +253,65 @@ public sealed class C0824WorkspaceSlotResetTests
         slotRefused.Message.ShouldBe(WorkspaceSlotCodes.Disabled);
         Directory.Exists(scratch.Work + "/workspace-slots").ShouldBeFalse();
     }
+
+    [Test]
+    public async Task C1961_WarmReleaseClearsNestedKeepNamesUnderRejectedIgnoredParents(CancellationToken ct)
+    {
+        // W-B1. A warm release deletes an ignored parent whose only survivor was a nested keep-list name,
+        // and leaves native obj/bin byte- and mtime-identical. The keep-list itself is unchanged.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Plant(a.Path, "tests/X/bin-row/artifacts/obj/f.dll", "nested dll", OldMtime);
+        Plant(a.Path, ".antiphon/control-x/coordinator-y/bin/ssh", "ssh", OldMtime);
+        var kept = new[] { "src/P/obj/project.assets.json", "src/P/bin/Debug/a.dll" };
+        foreach (var path in kept)
+            Plant(a.Path, path, "native " + path, OldMtime);
+        var before = Tree(a.Path);
+        var response = await Release(pool, a, TaskA);
+        var ledger = pool.Ledger();
+        var quarantine = ledger.QuarantinedDirectories.SingleOrDefault();
+        response.Outcome.ShouldBe("released", quarantine is null
+            ? "slot=" + ledger.Slot("ws-01")?.Path
+            : quarantine.Class + "/" + quarantine.Reason + " " + quarantine.Error + " slot=" + ledger.Slot("ws-01")?.Path);
+        ledger.QuarantinedDirectories.ShouldBeEmpty();
+        ledger.Slot("ws-01")!.Path.ShouldBe(a.Path);
+        Path.Exists(Path.Combine(a.Path, "tests/X/bin-row")).ShouldBeFalse("tests/X/bin-row absent");
+        Path.Exists(Path.Combine(a.Path, ".antiphon/control-x")).ShouldBeFalse(".antiphon/control-x absent");
+        var after = Tree(a.Path);
+        foreach (var path in kept)
+            after.GetValueOrDefault(path).ShouldBe(before[path], path);
+        lock (scratch.Argv)
+        {
+            scratch.Argv.ShouldContain(argv => argv.Skip(1).SequenceEqual(
+                ["--literal-pathspecs", "clean", "-ffdx", "--", "tests/X/bin-row/"]));
+        }
+
+        WorkspaceSlotResetPolicy.KeepList.ShouldBe(["**/obj/", "**/bin/", "**/node_modules/", "/client/dist/"]);
+    }
+
+    [Test]
+    public async Task C1961_UntrackedFileBesideResidueStillQuarantinesUntouched(CancellationToken ct)
+    {
+        // W-B2. An untracked file is custody/dirty before any clean, and the residue bytes stay.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        var dll = Path.Combine(a.Path, "tests/X/bin-row/artifacts/obj/f.dll");
+        Plant(a.Path, "tests/X/bin-row/artifacts/obj/f.dll", "nested dll", OldMtime);
+        Plant(a.Path, ".antiphon/control-x/coordinator-y/bin/ssh", "ssh", OldMtime);
+        Plant(a.Path, "src/P/obj/project.assets.json", "native assets", OldMtime);
+        Plant(a.Path, "src/P/bin/Debug/a.dll", "native dll", OldMtime);
+        Plant(a.Path, "work.txt", "left by the task");
+        var dllBytes = File.ReadAllBytes(dll);
+        var workBytes = File.ReadAllBytes(Path.Combine(a.Path, "work.txt"));
+        var response = await Release(pool, a, TaskA);
+        response.Outcome.ShouldBe("quarantined");
+        var entry = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        entry.Class.ShouldBe("custody");
+        entry.Reason.ShouldBe("dirty");
+        entry.Path.ShouldBe(a.Path);
+        File.ReadAllBytes(dll).ShouldBe(dllBytes);
+        File.ReadAllBytes(Path.Combine(a.Path, "work.txt")).ShouldBe(workBytes);
+    }
 }
