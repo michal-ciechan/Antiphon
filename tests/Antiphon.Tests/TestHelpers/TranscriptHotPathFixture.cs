@@ -284,13 +284,40 @@ internal static class TranscriptPlanAssertions
     public static void NoTranscriptSequentialScan(JsonElement plan) => Nodes(plan).ShouldNotContain(n =>
         Property(n, "Relation Name") == "TranscriptEntries" && Property(n, "Node Type").Contains("Seq Scan"));
 
+    // CARD-1888: part 0 of a record or skip candidate's prelude counts the session's rows (alias "n",
+    // used by no other branch). The plan-approved count must read the whole session for W-5 (a middle
+    // UserPrompt deleted by another writer), so it is a range read of this session by design. On the
+    // large fixture's session 0 (53% of the table) the planner correctly picks a parallel Seq Scan
+    // filtered to this session; measured 127-175 ms on a 54% session in a 1.3 M-row table, against
+    // 15 ms (vacuumed) to 94 ms (cold) index reads for a 75,000-row session. Scoping the no-Seq-Scan
+    // guard to the UUID probe branches was approved by the orchestrator for this reason.
+    private const string PrefixCountAlias = "n";
+
+    public static IEnumerable<JsonElement> PrefixCountScans(JsonElement plan) => Nodes(plan).Where(n =>
+        Property(n, "Relation Name") == "TranscriptEntries" && Property(n, "Alias") == PrefixCountAlias);
+
     public static void UuidSeek(JsonElement plan)
     {
         Nodes(plan).ShouldContain(n =>
             Property(n, "Index Name") == "IX_TranscriptEntries_AgentSessionId_Uuid" &&
             Property(n, "Index Cond").Contains("AgentSessionId") && Property(n, "Index Cond").Contains("Uuid"),
             "UUID membership must seek by BOTH session and UUID, not scan a session's history");
-        NoTranscriptSequentialScan(plan);
+        Nodes(plan).ShouldNotContain(n => Property(n, "Relation Name") == "TranscriptEntries"
+            && Property(n, "Node Type").Contains("Seq Scan") && Property(n, "Alias") != PrefixCountAlias,
+            "only the part-0 prefix count may scan; the UUID probe branches must seek");
+    }
+
+    /// <summary>
+    /// The prefix count reads only <paramref name="sessionId"/>'s rows: every scan of it carries the
+    /// session predicate (the bound literal, or <c>$1</c> in a generic plan, which binds the session id).
+    /// </summary>
+    public static void PrefixCountReadsOnlySession(JsonElement plan, Guid sessionId)
+    {
+        var restricted = new Regex("\"AgentSessionId\" = ('" + sessionId.ToString("D") + "'::uuid|\\$1\\b)");
+        foreach (var scan in PrefixCountScans(plan))
+            restricted.IsMatch(Property(scan, "Filter") + " " + Property(scan, "Index Cond") + " " + Property(scan, "Recheck Cond"))
+                .ShouldBeTrue($"the prefix count must read only session {sessionId}: {Property(scan, "Node Type")} "
+                    + $"filter={Property(scan, "Filter")} cond={Property(scan, "Index Cond")}");
     }
 
     public static void WorkingSeeks(JsonElement plan)

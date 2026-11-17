@@ -22,8 +22,13 @@ public class TranscriptHotPathQueryTests
             foreach (var command in commands)
             {
                 var plan = await f.ExplainAsync(command);
-                f.Record($"uuid-{count}-{Array.IndexOf(commands.ToArray(), command)}", new { command = command.Evidence(), plan });
+                var index = Array.IndexOf(commands.ToArray(), command);
+                f.Record($"uuid-{count}-{index}", new { command = command.Evidence(), plan });
                 TranscriptPlanAssertions.UuidSeek(plan);
+                TranscriptPlanAssertions.PrefixCountReadsOnlySession(plan, f.SessionIds[0]);
+                // CARD-1888: a batch of 64 or more is a memo record candidate, so its prelude carries
+                // the prefix count; the scoped guard above must have something to scope.
+                TranscriptPlanAssertions.PrefixCountScans(plan).Any().ShouldBe(index == 0 && count >= 64);
             }
             commands.Count.ShouldBe((count + 511) / 512);
             commands.ShouldAllBe(c => c.Parameters.Where(p => p.Value is IEnumerable<string>)
@@ -59,6 +64,8 @@ public class TranscriptHotPathQueryTests
                     var plan = await f.ExplainAsync(command, generic);
                     f.Record($"prepared-uuid-{count}-{generic}-{index}", new { command = command.Evidence(), plan });
                     TranscriptPlanAssertions.UuidSeek(plan);
+                    TranscriptPlanAssertions.PrefixCountReadsOnlySession(plan, f.SessionIds[0]);
+                    TranscriptPlanAssertions.PrefixCountScans(plan).Any().ShouldBe(index == 0 && count >= 64);
                 }
             foreach (var count in new[] { 1, 32 })
             {
@@ -82,15 +89,25 @@ public class TranscriptHotPathQueryTests
         var working = (await f.WorkingAsync(32)).ShouldHaveSingleItem();
         var catchup = await f.MembershipAsync(1025);
         catchup.Count.ShouldBe(3);
+        // CARD-1888: the catch-up prelude (catchup[0]) also carries the plan-approved part-0 prefix
+        // count, which reads this whole session (a parallel Seq Scan on the fixture's 53%-of-table
+        // session). The zero-delta window covers the UUID probe branches only: the singleton probe,
+        // the working batch and the two pure membership chunks. The prelude's own probe branch keeps
+        // the scoped plan guard below, and its count must read only this session. Scoping approved
+        // by the orchestrator; see TranscriptPlanAssertions.PrefixCountScans.
+        var prelude = await f.ExplainAsync(catchup[0]);
+        TranscriptPlanAssertions.UuidSeek(prelude);
+        TranscriptPlanAssertions.PrefixCountScans(prelude).ShouldNotBeEmpty();
+        TranscriptPlanAssertions.PrefixCountReadsOnlySession(prelude, f.SessionIds[0]);
         var before = await CountersAsync(f.ConnectionString, connection);
         for (var i = 0; i < 100; i++)
         {
             await ExecuteAsync(connection, uuid);
             await ExecuteAsync(connection, working);
         }
-        foreach (var command in catchup) await ExecuteAsync(connection, command);
-        var after = await CountersAsync(f.ConnectionString, connection, before.Indexed + 203);
-        f.Record("scan-counters", new { before, after, delta = after.Sequential - before.Sequential, singletonProbes = 100, mixedBatches = 100, catchupKeys = 1025 });
+        foreach (var command in catchup.Skip(1)) await ExecuteAsync(connection, command);
+        var after = await CountersAsync(f.ConnectionString, connection, before.Indexed + 202);
+        f.Record("scan-counters", new { before, after, delta = after.Sequential - before.Sequential, singletonProbes = 100, mixedBatches = 100, catchupChunks = catchup.Count - 1, catchupKeys = 1025, prelude });
         (after.Sequential - before.Sequential).ShouldBe(0);
 
         // Destructive plan controls are confined to this disposable database.
