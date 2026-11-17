@@ -284,10 +284,10 @@ public sealed class C0824WorkspaceSlotResetTests
         lock (scratch.Argv)
         {
             scratch.Argv.ShouldContain(argv => argv.Skip(1).SequenceEqual(
-                ["--literal-pathspecs", "clean", "-ffdx", "--", "tests/X/bin-row/"]));
+                new[] { "--literal-pathspecs", "clean", "-ffdx", "--", "tests/X/bin-row/" }));
         }
 
-        WorkspaceSlotResetPolicy.KeepList.ShouldBe(["**/obj/", "**/bin/", "**/node_modules/", "/client/dist/"]);
+        WorkspaceSlotResetPolicy.KeepList.ShouldBe(new[] { "**/obj/", "**/bin/", "**/node_modules/", "/client/dist/" });
     }
 
     [Test]
