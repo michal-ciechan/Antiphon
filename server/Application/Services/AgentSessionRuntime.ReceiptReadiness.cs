@@ -78,7 +78,7 @@ public sealed partial class AgentSessionRuntime
                 PersistResult persisted;
                 try
                 {
-                    persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries,
+                    persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, lease,
                         expectedReceipt: before, ct: token);
                 }
                 catch (OperationCanceledException)

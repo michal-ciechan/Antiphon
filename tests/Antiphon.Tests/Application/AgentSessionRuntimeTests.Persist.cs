@@ -77,7 +77,9 @@ public partial class AgentSessionRuntimeTests
         result.LastStoredSeq.ShouldBe(1999 + expected.Count);
         capture.Clear();
         (await f.Runtime.PersistTranscriptAsync(f.SessionId, entries)).LastStoredSeq.ShouldBeNull();
-        capture.Membership.Count().ShouldBe(3);
+        // CARD-1888: the clean commit above recorded the prefix memo, so the identical replay
+        // probes no UUID at all (it used to repeat the three chunk commands).
+        capture.Membership.Count().ShouldBe(0);
         (await f.RowsAsync()).Count.ShouldBe(expected.Count);
         f.Logs.ShouldNotContain(l => l.Contains("Failed to persist"));
     }

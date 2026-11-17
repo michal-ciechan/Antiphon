@@ -132,7 +132,10 @@ public sealed class SessionStateStore : IDisposable
             foreach (var id in sessionIds.Distinct().Order())
             {
                 ct.ThrowIfCancellationRequested();
-                leases.Add(await AcquireAsync(id, ct));
+                var lease = await AcquireAsync(id, ct);
+                leases.Add(lease);
+                // CARD-1888 rule 5: an in-process bulk delete invalidates the ingest prefix memo.
+                lease._entry.IngestPrefix = null;
             }
 
             return new SessionStateMutation(this, leases);
@@ -200,6 +203,8 @@ public sealed class SessionStateStore : IDisposable
     {
         _misses.Add(1);
         Interlocked.Increment(ref _loadCount);
+        // CARD-1888 rule 5: every reconcile or reset starts the ingest prefix memo cold.
+        foreach (var entry in entries) entry.IngestPrefix = null;
         try
         {
             var loaded = await _loader.LoadAsync(entries.Select(e => e.Id).ToArray(), ct);
@@ -277,6 +282,8 @@ public sealed class SessionStateStore : IDisposable
         public DateTimeOffset LastUse = now, RetryAt;
         public SessionStateSnapshot? State;
         public ExceptionDispatchInfo? Fault;
+        // CARD-1888: process-local, under the session gate; never part of the snapshot.
+        public TranscriptIngestPrefix? IngestPrefix;
     }
 
     internal sealed class Lease(SessionStateStore owner, Entry entry) : IDisposable
@@ -302,6 +309,9 @@ public sealed class SessionStateStore : IDisposable
         }
 
         public Task ReconcileAsync(bool reset, CancellationToken ct) => owner.LoadAsync([entry], reset, ct);
+
+        /// <summary>CARD-1888: the session's ingest prefix memo, read and replaced only under this lease.</summary>
+        internal TranscriptIngestPrefix? IngestPrefix { get => entry.IngestPrefix; set => entry.IngestPrefix = value; }
         public void RecordIngest(long previousCount, bool duplicate) =>
             owner.RecordIngest(Math.Max(0, Snapshot.Count - previousCount), duplicate);
         public void Dispose()
