@@ -156,6 +156,8 @@ Receipt 27, Wrapper 7, RetiredTempHost 22, RetiredTempScript 16, C1364 9); CP-8 
 starts with that text (`grep -rhoE "class <Name>[A-Za-z0-9_]*"`, run 2026-11-17), except `ScriptModelSpawnLaneTests`, which does
 not exist yet. `ProcessSpawnLimitTests` also exists in SessionRunner.Tests and Pty.Tests; the build is `Antiphon.Tests` only.
 
+Import (read-only, 2026-11-17, plan at `aab198a012ea63bb50c13463fba9ad895dc2172f`): `dotnet run --project tools/Antiphon.Checkpoints -- import --plan <this file> --out .antiphon/c1984-plan-import.yaml` under a build slot with `ANTIPHON_LINUX_COMPILER_POLICY=0`: exit 0, **16 rows, 0 import warnings** (only unrelated compiler warnings). Row timeouts: 45 min for estimate 15, 15 min for the short rows; every row `serial: true`.
+
 ### Cost
 
 Ordinary floor (sum of EstimatedMinutes): S1 27, S2 18, S3 15, S4 95 (20 without the stress rows), S5 15. Total 170, of which
