@@ -12,6 +12,9 @@ $script:ReleaseImpactScriptExtensions = @('.ps1', '.psm1', '.psd1', '.sh', '.bas
 $script:ReleaseImpactScriptValueCap = 64
 $script:ReleaseImpactScriptDepthCap = 24
 $script:ReleaseImpactScriptDefaultVisits = 10000
+# A reason detail longer than the cap keeps a fixed prefix plus a digest of the whole detail.
+$script:ReleaseImpactScriptDetailCap = 160
+$script:ReleaseImpactScriptDetailPrefix = 128
 # Switch parameters of the commands read below; a switch never consumes the next element.
 $script:ReleaseImpactScriptSwitches = @('force', 'global', 'passthru', 'disablenamechecking', 'noclobber', 'ascustomobject',
     'skipeditioncheck', 'usewindowspowershell', 'ignorewarnings', 'noprofile', 'nologo', 'noninteractive', 'noexit',
@@ -409,6 +412,9 @@ function New-ReleaseImpactScriptGraph {
     $directories = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $projects = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $leaves = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+    # Case-folded views exist only to name a casing miss; they never resolve a target silently.
+    $foldedFiles = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::OrdinalIgnoreCase)
+    $foldedLeaves = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::OrdinalIgnoreCase)
     foreach ($path in $Files.Keys) {
         $directory = Get-ReleaseImpactScriptDirectory $path
         if ($path.EndsWith('.csproj')) { [void]$projects.Add($directory) }
@@ -419,9 +425,14 @@ function New-ReleaseImpactScriptGraph {
         $leaf = Get-ReleaseImpactScriptLeaf $path
         if (-not $leaves.ContainsKey($leaf)) { $leaves[$leaf] = New-Object System.Collections.Generic.List[string] }
         $leaves[$leaf].Add($path)
+        if (-not $foldedFiles.ContainsKey($path)) { $foldedFiles[$path] = New-Object System.Collections.Generic.List[string] }
+        $foldedFiles[$path].Add($path)
+        if (-not $foldedLeaves.ContainsKey($leaf)) { $foldedLeaves[$leaf] = New-Object System.Collections.Generic.List[string] }
+        $foldedLeaves[$leaf].Add($path)
     }
     return @{
         Files = $Files; Directories = $directories; Projects = $projects; Leaves = $leaves
+        FoldedFiles = $foldedFiles; FoldedLeaves = $foldedLeaves
         Reasons = (New-Object 'System.Collections.Generic.SortedSet[string]' ([StringComparer]::Ordinal))
         Dependencies = (New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal))
     }
@@ -429,6 +440,12 @@ function New-ReleaseImpactScriptGraph {
 
 function Add-ReleaseImpactScriptReason {
     param($Graph, [string]$Caller, [string]$Detail)
+    if ($Detail.Length -gt $script:ReleaseImpactScriptDetailCap) {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Detail)) } finally { $sha.Dispose() }
+        $hex = -join @($bytes | ForEach-Object { $_.ToString('x2') })
+        $Detail = $Detail.Substring(0, $script:ReleaseImpactScriptDetailPrefix) + '~' + $hex.Substring(0, 16)
+    }
     [void]$Graph.Reasons.Add('script-target-unresolved:' + $Caller + ':' + $Detail)
 }
 
@@ -632,6 +649,43 @@ function Get-ReleaseImpactScriptDependencies {
     return $ordered
 }
 
+# A path-shaped seed token: its leaf names a script, or it walks a '..' segment. A token with
+# whitespace is covered by its split pieces; prose, filters and bare words are not paths.
+function Test-ReleaseImpactScriptSeedShape {
+    param([string]$Token)
+    if ($Token -match '\s') { return $false }
+    if (Test-ReleaseImpactScriptExtension $Token) { return $true }
+    return ($Token.Contains('/') -and ('/' + $Token + '/').Contains('/../'))
+}
+
+# Classifies a path-shaped seed token that missed an exact inventory key; it never drops one.
+# C# seed literals are repository-relative (the exact-key convention), so '.' and '..' resolve
+# lexically against the repository root. Nothing is read, followed through a link or guessed.
+function Add-ReleaseImpactScriptSeedPath {
+    param($Graph, $Seeds, [string]$Caller, [string]$Token, [string]$Kind)
+    if ($Token -match '[*?$%{}]') { Add-ReleaseImpactScriptReason $Graph $Caller 'dynamic'; return }
+    if ($Token -match '^[A-Za-z][A-Za-z0-9+.-]*:') { Add-ReleaseImpactScriptReason $Graph $Caller 'outside'; return }
+    $raw = ConvertTo-ReleaseImpactScriptPath $Token
+    if ($raw.Kind -eq 'outside') { Add-ReleaseImpactScriptReason $Graph $Caller 'outside'; return }
+    if ($raw.Kind -ne 'relative') { Add-ReleaseImpactScriptReason $Graph $Caller 'dynamic'; return }
+    $normal = ConvertTo-ReleaseImpactScriptPath ($script:ReleaseImpactScriptAnchor + $raw.Path)
+    if ($normal.Kind -eq 'outside') { Add-ReleaseImpactScriptReason $Graph $Caller 'outside'; return }
+    if ($normal.Kind -ne 'anchored') { Add-ReleaseImpactScriptReason $Graph $Caller 'dynamic'; return }
+    $target = $normal.Path
+    if ($Graph.Files.ContainsKey($target)) {
+        if (-not $Seeds.ContainsKey($target)) { $Seeds[$target] = $Kind }
+        return
+    }
+    # An ordinal miss: a casing-only match is named, never silently picked; every match stays a positive.
+    $found = @()
+    if (-not $Token.Contains('/')) { if ($Graph.FoldedLeaves.ContainsKey($target)) { $found = @($Graph.FoldedLeaves[$target]) } }
+    elseif ($Graph.FoldedFiles.ContainsKey($target)) { $found = @($Graph.FoldedFiles[$target]) }
+    if ($found.Count -eq 0) { Add-ReleaseImpactScriptReason $Graph $Caller ('missing:' + $target); return }
+    if ($found.Count -gt 1) { Add-ReleaseImpactScriptReason $Graph $Caller ('ambiguous:' + $target) }
+    else { Add-ReleaseImpactScriptReason $Graph $Caller ('case:' + $target) }
+    foreach ($match in $found) { if (-not $Seeds.ContainsKey($match)) { $Seeds[$match] = $Kind } }
+}
+
 # Seeds from a consumer's C# declaration: whole-literal paths, quoted/embedded command paths, and
 # script basenames (the ScriptHarness convention) resolved against the supplied inventory only.
 function Get-ReleaseImpactScriptSeeds {
@@ -652,10 +706,17 @@ function Get-ReleaseImpactScriptSeeds {
                 }
                 continue
             }
-            if ($candidate.Contains('/') -or -not (Test-ReleaseImpactScriptExtension $candidate) -or -not $Graph.Leaves.ContainsKey($candidate)) { continue }
-            $found = @($Graph.Leaves[$candidate])
-            if ($found.Count -gt 1) { Add-ReleaseImpactScriptReason $Graph $DeclarationPath ('ambiguous:' + $candidate) }
-            foreach ($match in $found) { if (-not $seeds.ContainsKey($match)) { $seeds[$match] = 'script:basename' } }
+            $basename = -not $candidate.Contains('/')
+            if ($basename -and (Test-ReleaseImpactScriptExtension $candidate) -and $Graph.Leaves.ContainsKey($candidate)) {
+                $found = @($Graph.Leaves[$candidate])
+                if ($found.Count -gt 1) { Add-ReleaseImpactScriptReason $Graph $DeclarationPath ('ambiguous:' + $candidate) }
+                foreach ($match in $found) { if (-not $seeds.ContainsKey($match)) { $seeds[$match] = 'script:basename' } }
+                continue
+            }
+            if (-not (Test-ReleaseImpactScriptSeedShape $candidate)) { continue }
+            $kind = 'script:embedded'
+            if ($basename) { $kind = 'script:basename' } elseif ($token -eq $literal) { $kind = 'script:path' }
+            Add-ReleaseImpactScriptSeedPath $Graph $seeds $DeclarationPath $candidate $kind
         }
     }
     return $seeds
