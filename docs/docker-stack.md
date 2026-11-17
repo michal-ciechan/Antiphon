@@ -1054,7 +1054,9 @@ With `PhoneHome:WorkspaceSlots:Enabled=true` (default false) a runner keeps reus
 `git worktree lock`ed with the reason `antiphon quarantine <slot> <class> <reason>`; its exact path is in
 the ledger's `quarantinedDirectories`. Never remove one by hand: the phone-home operation
 `WorkspaceSlotQuarantineRelease` (`Pushed`, `AcceptLoss` with the diff retained under
-`/work/retained/quarantine/<dirId>/`, or `Removed` after fixing a blocker) is the exit. A custody
+`/work/retained/quarantine/<dirId>/`, or `Removed` after fixing a blocker) is the exit; its front door is
+`scripts/workspace-slots.ps1 release -Runner <id> -DirId <dirId> -Disposition Pushed -Reason "..."` (CARD-1960;
+`Removed` deletes with no check, so release published residue as `Pushed`). A custody
 quarantine with unpublished work still refuses a CARD-1008 recycle; a filesystem quarantine whose content
 is published passes it. The slot ledger and quarantined directories must be read before a temp-runner
 drain (CARD-0831).
