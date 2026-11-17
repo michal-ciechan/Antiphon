@@ -98,7 +98,7 @@ public class TranscriptHotPathQueryTests
         // only after the window closes, so its count never runs inside it.
         // CARD-1888 round 2: the setup above ran that count, so its scans must be published before
         // the window opens, or they land inside it (review d1a53b65: Sequential 2 -> 4).
-        await FlushIdleBackendsAsync(f.ConnectionString, connection);
+        var flushedBackends = await FlushIdleBackendsAsync(f.ConnectionString, connection);
         var before = await CountersAsync(f.ConnectionString, connection);
         for (var i = 0; i < 100; i++)
         {
@@ -107,7 +107,7 @@ public class TranscriptHotPathQueryTests
         }
         foreach (var command in catchup.Skip(1)) await ExecuteAsync(connection, command);
         var after = await CountersAsync(f.ConnectionString, connection, before.Indexed + 202);
-        f.Record("scan-counters", new { before, after, delta = after.Sequential - before.Sequential, singletonProbes = 100, mixedBatches = 100, catchupChunks = catchup.Count - 1, catchupKeys = 1025 });
+        f.Record("scan-counters", new { before, after, delta = after.Sequential - before.Sequential, flushedBackends, singletonProbes = 100, mixedBatches = 100, catchupChunks = catchup.Count - 1, catchupKeys = 1025 });
         (after.Sequential - before.Sequential).ShouldBe(0);
         var prelude = await f.ExplainAsync(catchup[0]);
         f.Record("catchup-prelude", new { command = catchup[0].Evidence(), prelude });
@@ -145,7 +145,7 @@ public class TranscriptHotPathQueryTests
     // pool hands out idle connectors before it opens a new one, so every idle backend of this
     // database is checked out and flushed. Parallel workers need nothing: each flushes on exit, and
     // the leader's Gather waits for that exit before its statement completes.
-    private static async Task FlushIdleBackendsAsync(string connectionString, NpgsqlConnection producer)
+    private static async Task<int> FlushIdleBackendsAsync(string connectionString, NpgsqlConnection producer)
     {
         var held = new List<NpgsqlConnection>();
         try
@@ -176,6 +176,7 @@ public class TranscriptHotPathQueryTests
             }
             census!.Except(flushed).ShouldBeEmpty(
                 "every backend that ran a setup statement must flush its scan counters before the window opens");
+            return flushed.Count - 1;
         }
         finally
         {
