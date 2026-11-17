@@ -8,7 +8,10 @@ The fix design stays the CLEAN activation plan
 `11fa40e13b766d8255634339f385cef0d3789361` was a blocker. Round-2 review
 `origin/feat/card-task-c3619b22` tip `3b349da49848998f526f4a993f702e74339a53a3`
 is CLEAN. This file binds the tests and the checkpoint rows. It does not rewrite
-D-1 through D-11.
+D-1 through D-11. Round-1 review `origin/feat/card-task-f29c3d90` tip
+`a1c94747a707fe98ec5ed739363e7cefa7bec2fc` blocked on B-1, B-2 and B-3.
+This amendment fixes those three. Sections that blocker did not touch stay
+as they were at `c88fc182d965b65a8154545f6431d5e7c5289430`.
 
 Files below were read at worktree `321f98ec990a575f77e442ba3b1554f0fde33521`.
 `origin/master` at design time is `c3cc0bb9b7b1d0c55464d07cd8e60a63b4239028`.
@@ -18,7 +21,9 @@ file:line proofs apply to both. `origin/rc/2026-11-24` is still
 9cf3e491705247bc03814e6afed77a6534805dfd origin/rc/2026-11-24` exits 0.
 `git grep` of `HistoryPath` and `HistoryEnabled` on that rc SHA in the two
 compose files prints nothing. The compose files and `docker/stack/init-state.sh`
-have an empty diff from `870a93d21` to this worktree.
+have an empty diff from `870a93d21` to this worktree. This amendment
+re-read `origin/master` on 2026-11-17; it is still
+`c3cc0bb9b7b1d0c55464d07cd8e60a63b4239028`.
 
 Load at the decision not to measure: `/proc/loadavg` was `5.11 5.96 7.55`, then
 later `37.83 18.23 11.80`. No Antiphon.Tests timing run was started. The split
@@ -89,7 +94,8 @@ pins extend `DockerStackContractTests`. The plan's whole-class
 No new asynchronous producer, queue, or session input. The hold check and
 `upgrade-broker` are synchronous script gates. The observable receipt is the
 process result: stdout exactly `HOLD`, `RELEASED`, or `NOT-AFFECTED` (hold
-script, exit 0), or the remote-script diagnosis `BrokerUpgradeBusy` (exit 2)
+script, exit 0), or empty stdout and a non-zero exit when either commit does
+not resolve, or the remote-script diagnosis `BrokerUpgradeBusy` (exit 2)
 versus a rewritten `BUILD_SLOTS_SHA12` line plus the recorded `docker tag` and
 `compose up` argv (upgrade). A docker ack, a Sent flag, or a queue insert is
 not the receipt. Parking does not apply. Tests that stop at an acknowledgement
@@ -102,10 +108,10 @@ are not accepted.
   `deploy-server2.ps1` case). A copy of the grep pasted into the test and
   asserted against today's rc is green once written and is forbidden.
 - Variants: hold fixtures are both lines, only the standing path, only the temp
-  disable, misspelled or unquoted lines, and a commit that is not a descendant
-  of `9cf3e491705247bc03814e6afed77a6534805dfd`. Upgrade fixtures are occupied,
-  waiters, failed GET, unparsable body, `unknown`, second read busy, success,
-  and verify failure.
+  disable, misspelled or unquoted lines, an unrelated commit whose ancestor
+  object is present, and an argument that does not resolve. Upgrade fixtures
+  are occupied, waiters, failed GET, unparsable body, `unknown`, second read
+  busy, success, and verify failure.
 - Case: one `[Test]` per method name below. No `[Arguments]`. One execution
   counts as 1 toward `Min`.
 - Oracle: the assertion named on that method. Setup failure, a missing file
@@ -125,7 +131,9 @@ are not accepted.
   identity; temp sets `HistoryEnabled` `"false"` and no path; init creates
   `/runner-state/host-load` and `chmod 0700`; the hold script prints `HOLD` for
   `870a93d21f2b18c85a8b0905ab689b28e3099813` and `RELEASED` only when both exact
-  lines are in that commit; S1 leaves build-slots without HostStats keys; docs
+  lines are in that commit; `NOT-AFFECTED` only when `is-ancestor` exits 1;
+  an unresolved argument exits non-zero with none of the three words; S1 leaves
+  build-slots without HostStats keys; docs
   name the hold. | contract + script | CP-1, CP-2, then CP-3 | first CP-1 and
   CP-2 run red at the assertions below; green rerun 0 failed; CP-3 0 failed.
 - V-2: `ensure_build_slots_broker` passes `--no-recreate` and still creates an
@@ -209,65 +217,111 @@ only when `HistoryEnabled` is false (`HostLoadCaptureService.cs:87`).
 mkdir list ends at `/runner-state/claude` (`:12`) and `own_tree` only chowns
 (`:77-104`).
 
-Hold script. S1 adds `scripts/c1893-runner-hold.sh`. It implements the
-activation plan's §7.0 check and nothing else. Usage:
-`scripts/c1893-runner-hold.sh <40-hex>`. It uses `git show "$X:<path>"` in the
-git directory it is run from, not the working tree. Stdout is exactly one of
-`HOLD`, `RELEASED`, or `NOT-AFFECTED`, and the exit is 0 for all three. The
-ancestor is `9cf3e491705247bc03814e6afed77a6534805dfd`. `RELEASED` only when
-that ancestor is contained and both greps match:
+Hold script. S1 adds `scripts/c1893-runner-hold.sh`. It is the activation
+plan's §7.0 check, except the snippet's bare `else echo NOT-AFFECTED` is not
+copied: that `else` treats every non-zero `git merge-base --is-ancestor`
+status, including 128, as `NOT-AFFECTED`. The script does not run `git fetch`.
+The caller runs `git fetch origin` in that checkout before the script.
+`docs/docker-stack.md` says so. Usage: `scripts/c1893-runner-hold.sh <40-hex>`.
+It uses `git cat-file`, `git merge-base`, and `git show "$X:<path>"` in the
+git directory it is run from, not the working tree. The ancestor is
+`9cf3e491705247bc03814e6afed77a6534805dfd`.
+
+Resolution, before the ancestor test. `git cat-file -e "$X^{commit}"` and
+`git cat-file -e "9cf3e491705247bc03814e6afed77a6534805dfd^{commit}"`. If
+either exits non-zero, the script exits non-zero and writes none of `HOLD`,
+`RELEASED`, or `NOT-AFFECTED`. Stdout is empty. Git's `fatal` stays on stderr.
+It does not run `is-ancestor`. Measured: `git cat-file -e` of
+`0000000000000000000000000000000000000000^{commit}` exits 128.
+
+Ancestor test, only after both resolve. `git merge-base --is-ancestor
+9cf3e491705247bc03814e6afed77a6534805dfd "$X"`. Exit 0 means the ancestor is
+contained: `RELEASED` only when both greps match, otherwise `HOLD`, and the
+script exits 0. Exit 1 exactly means `NOT-AFFECTED` and exit 0. Any other
+status, including 128, is the same error as a failed `cat-file`: non-zero,
+empty stdout, none of the three words. Measured: `is-ancestor` against the
+missing all-zero name exits 128.
 
 ```
 ^ +SessionRunner__HostStats__HistoryPath: /state/host-load$
 ^ +SessionRunner__HostStats__HistoryEnabled: "false"$
 ```
 
-Otherwise, when the ancestor is contained, `HOLD`. When it is not, `NOT-AFFECTED`.
 A missing script is non-zero and does not print those words. The tests invoke
-this file through `RemoteScriptContractSupport.LinuxShell` with
-`[ParallelLimiter<ProcessSpawnLimit>]`. They do not reimplement the grep.
+the file through `RemoteScriptContractSupport.LinuxShellResult`
+(`RemoteScriptContractSupport.cs:53` returns stdout only; stderr is not the
+receipt) with `[ParallelLimiter<ProcessSpawnLimit>]`. They do not reimplement
+the grep.
 
-Fixture rule for the five synthetic methods: a throwaway `git init` directory,
-then `git fetch --no-tags` of `9cf3e491705247bc03814e6afed77a6534805dfd` from
-this repo when the case needs a descendant, then one new commit that changes
-only the two compose files. After that commit, dirty the worktree so it
-disagrees with `git show`. Never commit the fixture on the task branch and
-never push it. The NOT-AFFECTED case is a `git init` repo whose only commit
-does not contain that ancestor object.
+Fixture rule. Do not `git fetch` a SHA without `--depth 1`. This worktree and
+`/work/repos/antiphon` are blob:none promisor clones
+(`remote.origin.promisor=true`, `partialclonefilter=blob:none`). A fetch of
+`9cf3e4917` without `--depth 1` aborts with `possible repository corruption
+on the remote side` after 19 to 47 s (round-1 review, measured). `--depth 1`
+works. Measured this session at loadavg `11.52 22.15 21.96`: `git fetch
+--no-tags --depth 1` of `9cf3e491705247bc03814e6afed77a6534805dfd` took 3.389 s
+from this worktree and 4.458 s from `/work/repos/antiphon`. The review measured
+8 s from a worktree and 3 s from the mirror. Budget each fixture method at
+one 8 s fetch plus local commits.
 
-`C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24`. Run the script in this
-checkout with `870a93d21f2b18c85a8b0905ab689b28e3099813`. Stdout `HOLD`, exit 0.
-Red today because `scripts/c1893-runner-hold.sh` does not exist. Confirmed at
-design time: that SHA is an ancestor of this worktree, it contains
-`9cf3e4917`, and neither grep matches.
+The six fixture methods each do one `git init`, then one `git fetch --no-tags
+--depth 1 <DelegateScriptRunner.RepoRoot>
+9cf3e491705247bc03814e6afed77a6534805dfd`, then only synthetic commits. Fetch
+from the repo root, not from GitHub. Never commit the fixture on the task
+branch and never push it. A descendant commit changes only the two compose
+files, then the worktree is dirtied so it disagrees with `git show`.
+`is-ancestor` on a child of that shallow root exits 0 (measured). The
+misspelled method fetches once and then builds its four trees as four
+synthetic commits in that same repo. It does not fetch four times.
 
-`C1893_S1_Hold_releases_when_both_exact_lines_are_present`. Descendant fixture
-with both exact lines, worktree then dirtied. Stdout `RELEASED`, exit 0.
-Red today because the script does not exist.
+`C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24`. No fixture fetch. Run the
+script in this checkout with `870a93d21f2b18c85a8b0905ab689b28e3099813`.
+Stdout `HOLD`, exit 0. Red today because `scripts/c1893-runner-hold.sh` does
+not exist. Confirmed at design time: that SHA is an ancestor of this worktree,
+it contains `9cf3e4917`, and neither grep matches. `git show` of its blobs
+works on a blob:none clone.
 
-`C1893_S1_Hold_stays_when_only_the_standing_path_is_present`. Only the
-HistoryPath line. Stdout `HOLD`, exit 0. Red today because the script does not
-exist.
+`C1893_S1_Hold_releases_when_both_exact_lines_are_present`. One depth-1 fetch,
+then one synthetic child with both exact lines, worktree then dirtied. Stdout
+`RELEASED`, exit 0. Red today because the script does not exist.
 
-`C1893_S1_Hold_stays_when_only_the_temp_disable_is_present`. Only
-`HistoryEnabled: "false"` on the temp file. Stdout `HOLD`, exit 0. Red today
-because the script does not exist.
+`C1893_S1_Hold_stays_when_only_the_standing_path_is_present`. One depth-1
+fetch, then one synthetic child with only the HistoryPath line. Stdout `HOLD`,
+exit 0. Red today because the script does not exist.
+
+`C1893_S1_Hold_stays_when_only_the_temp_disable_is_present`. One depth-1
+fetch, then one synthetic child with only `HistoryEnabled: "false"` on the
+temp file. Stdout `HOLD`, exit 0. Red today because the script does not exist.
 
 `C1893_S1_Hold_stays_when_the_lines_are_misspelled_or_unquoted`. One method,
-four trees, still one `[Test]`: unquoted `false`, `"False"`, a trailing slash
-on the path, and the two lines swapped across the files. Each stdout is `HOLD`.
-Red today because the script does not exist.
+four trees, still one `[Test]` and one depth-1 fetch: unquoted `false`,
+`"False"`, a trailing slash on the path, and the two lines swapped across the
+files. Each stdout is `HOLD`. Red today because the script does not exist.
 
-`C1893_S1_Hold_prints_NOT_AFFECTED_when_the_ancestor_is_absent`. The init-only
-repo. Stdout `NOT-AFFECTED`, exit 0. Red today because the script does not exist.
+`C1893_S1_Hold_prints_NOT_AFFECTED_when_the_ancestor_is_absent`. One depth-1
+fetch so the ancestor object is present, then `git checkout --orphan` and one
+empty commit. The argument is that orphan. Both `cat-file -e` calls exit 0.
+`is-ancestor` exits 1 (measured). Stdout `NOT-AFFECTED`, exit 0. Red today
+because the script does not exist. A `git init` repo whose only commit does
+not contain that ancestor object is not this fixture: `is-ancestor` there
+exits 128, and printing `NOT-AFFECTED` for that 128 is the fail-open defect.
+
+`C1893_S1_Hold_exits_nonzero_when_the_argument_does_not_resolve`. One depth-1
+fetch so the ancestor object resolves, then the argument
+`0000000000000000000000000000000000000000`. Exit non-zero. Stdout is empty, so
+it does not contain `HOLD`, `RELEASED`, or `NOT-AFFECTED`. Red today because
+the script does not exist. Mapping that 128 to `NOT-AFFECTED` fails this
+method. That mutant is PC-21.
 
 `C1893_S1_Docs_name_the_hold_and_the_durable_path` in
 `DockerStackDocumentationTests`. `docs/docker-stack.md` contains
 `/state/host-load`, the token `HOLD`, and the phase names `deploy-temp`,
-`redeploy-old`, and `all`. `docs/ops-http.md` says the temp runner sets
-`HistoryEnabled` false and sets no `HistoryPath`. Red today: neither file
-contains `/state/host-load`. Do not delete the sentences the existing 19 doc
-tests pin.
+`redeploy-old`, and `all`. The same file says the caller runs `git fetch
+origin` before `scripts/c1893-runner-hold.sh`, and that the script itself does
+not fetch. `docs/ops-http.md` says the temp runner sets `HistoryEnabled` false
+and sets no `HistoryPath`. Red today: neither file contains `/state/host-load`,
+and `docs/docker-stack.md` does not name `scripts/c1893-runner-hold.sh`. Do not
+delete the sentences the existing 19 doc tests pin.
 
 ### S2 methods
 
@@ -291,56 +345,117 @@ both files. No current test contains that operator sentence.
 New class `tests/Antiphon.Tests/Scripts/C1893BrokerUpgradeScriptTests.cs`.
 `[Category("Unit")]`. Copy the private `Block` extractor
 (`RemoteScriptContractTests.cs:9468`) into this class. Do not add methods to
-`RemoteScriptContractTests`. Behavioral methods use `LinuxShell` and
-`[ParallelLimiter<ProcessSpawnLimit>]`.
+`RemoteScriptContractTests`. The eight `C1893_Upgrade_*` methods and
+`C1893_Rollback_tag_is_outside_retire_superseded_server2_images` run the
+injected script below. They do not use `LinuxShell`. They take
+`[ParallelLimiter<ProcessSpawnLimit>]`. Do not call `C1008HostFixture.Run`:
+it sets `C590_SHA` to forty `a`s (`RollingVolumeRecycleScriptTests.cs:3501`)
+and its docker fake answers `exec` only for `stat` and `sh`
+(`scripts/fixtures/c1008-fake-docker.sh:552-563`), so `docker exec … curl`
+never returns a body.
 
-Harness, shared by the upgrade methods: copy `scripts/c590-remote.sh` into a
-temp directory; prepend stubs for `docker`, `curl`, `jq`, and `sleep`. `sleep`
-increments a counter and returns. Production calls `sleep`, not `command sleep`,
-so the stub applies. Record every docker argv. Seed the stack env file as
-exactly `BUILD_SLOTS_SHA12=oldoldoldold\nUNRELATED=keep\n`. Rollout SHA
-`abcdefabcdefabcdefabcdefabcdefabcdefabcd` (sha12 `abcdefabcdef`). Invoke
-`CASE=upgrade-broker` through the real case statement. At this base that case
-hits `*) write_result false "RealCasePending $CASE"` (`c590-remote.sh:10744-10745`).
-The assertion is the diagnosis and the env bytes, not "the function exists".
+Harness, shared by those nine methods. Read `scripts/c590-remote.sh` and pass
+it through `C1008HostFixture.InsertSetupAtEntry`
+(`RollingVolumeRecycleScriptTests.cs:3552`). That inserts at the one column-0
+`trap 'ec=$?;` (`c590-remote.sh:10654`), which is after the hard-coded
+assignments at `:18-21` and `:904-907`. The injection therefore replaces
+`SERVER2_ROOT`, `ROOT`, `EVIDENCE_ROOT`, `CASE_DIR`, `SERVER2_ENV`, and
+`SERVER2_TEMP_ENV`. A block prepended to a copy cannot: `:18-21` and `:906`
+run later and overwrite it. The injection stubs `ensure_checkout`,
+`ensure_dirs`, and `detect_lane` (`LANE=host`), replaces `compose_host` with
+`docker compose -p "$HOST_PROJECT" "$@"`, and defines `sleep` as a counter
+that returns. Production calls `sleep`, not `command sleep`, so the function
+applies. Leave `C1008_CONTEXT` unset. Do not stub `curl` or `jq`. Real `jq`
+parses the body the docker fake prints.
 
-`C1893_Upgrade_refuses_when_occupied_is_nonzero`. Body
-`{"occupied":1,"waiters":[]}`. Diagnosis `BrokerUpgradeBusy`, exit 2, env bytes
-unchanged, trace has no `up` and no `tag`. Red today: diagnosis is
-`RealCasePending`, not `BrokerUpgradeBusy`.
+Set the process environment before bash starts, because `:13-15` reads it
+before the trap: `C590_CASE=upgrade-broker`, `C590_RUN=c1893fixture`,
+`C590_SHA=abcdefabcdefabcdefabcdefabcdefabcdefabcd` (sha12 `abcdefabcdef`),
+`C590_REEXEC=1`. `C590_REEXEC=1` skips `:10696-10701`, so `ensure_checkout`
+(`:143-153`) does not fetch or `reset --hard` `/work/repos/antiphon`, and the
+script does not `exec` that mirror's copy (which would drop the injection).
+The docker fake is a shell script on `PATH` and the body of the `docker`
+function, the same two bindings as `:3434-3465`. Seed
+`$fixture/main.env`, which the injection assigns to `SERVER2_ENV`, as exactly
+`BUILD_SLOTS_SHA12=oldoldoldold\nUNRELATED=keep\n`.
 
-`C1893_Upgrade_refuses_when_waiters_are_nonempty`. `occupied` 0, `waiters`
-length 1. Same unchanged result. Red today the same way.
+Why this reaches the real case at this base. `upgrade-broker` matches none of
+`:10675-10692`, so `:10693` calls the stubbed `ensure_dirs` (no `chown` of
+`/work`). `:10703` has no `upgrade-broker)` arm, so `:10744-10745` runs
+`write_result false "RealCasePending upgrade-broker"`. `write_result`
+(`:109-117`) writes `$CASE_DIR/c590-result.json`. `CASE_DIR` is the fixture's
+`$EVIDENCE_ROOT/upgrade-broker`. Each method asserts that path is under the
+fixture root. That assertion passes at base with this harness. If it fails,
+the run did not reach `:10744` through the redirected script (a prepend, a
+missing `C590_REEXEC=1`, or an `exec` of the mirror) and the failure is not
+the named red.
 
-`C1893_Upgrade_treats_failed_get_as_busy`. `curl` exits non-zero and prints
-nothing. Must not treat the empty body as idle. Same unchanged result. Red
-today the same way. The census helper maps a failed GET to `unknown`
-(`c590-remote.sh:2771-2772`); this phase must not treat that as idle.
+The docker fake records every argv. `compose` with `ps` and `build-slots`
+prints `brokerfixture`. `exec` whose argv contains `curl` and
+`http://127.0.0.1:8080/build-slots/host-load` prints the verify body. That
+match wins, because the host-load URL also contains `/build-slots`. `exec`
+whose argv contains `curl` and `http://127.0.0.1:8080/build-slots` prints the
+next queued occupancy body and the sleep counter. `tag` and `compose` `up`
+are recorded and exit 0. `inspect` of health prints `healthy`. A `curl` on
+`PATH` is never the occupancy read: the census shape is `docker exec` then
+`curl` (`c590-remote.sh:2771-2772`), and D-6 uses that same shape. At base the
+pending arm returns before any docker call, so a trace assertion that requires
+`exec` plus `curl` is red, and the diagnosis in the fixture result file is
+`RealCasePending upgrade-broker`, not `BrokerUpgradeBusy`.
 
-`C1893_Upgrade_treats_unparsable_body_as_busy`. Body `not-json`. Same unchanged
-result. Red today the same way.
+`C1893_Upgrade_refuses_when_occupied_is_nonzero`. Queued body
+`{"occupied":1,"waiters":[]}`, exit 0. Diagnosis `BrokerUpgradeBusy`, exit 2,
+env bytes unchanged, trace has `exec` and `curl` and has no `up` and no `tag`.
+Red today through the harness: the fixture result says
+`RealCasePending upgrade-broker`, and the trace has no `exec`. Env unchanged
+and no `up` are true today and are not the red.
+
+`C1893_Upgrade_refuses_when_waiters_are_nonempty`. Body
+`{"occupied":0,"waiters":[{"pid":1}]}`, exit 0. Same unchanged result, and the
+trace has `exec` and `curl`. Red today the same way: diagnosis
+`RealCasePending upgrade-broker`, no `exec`.
+
+`C1893_Upgrade_treats_failed_get_as_busy`. The queued `docker exec` `curl`
+exits non-zero and prints nothing. Must not treat the empty body as idle.
+Same unchanged result, trace has `exec` and `curl`. Red today the same way.
+The census helper maps a failed GET to `unknown` (`c590-remote.sh:2771-2772`);
+this phase must not treat that as idle.
+
+`C1893_Upgrade_treats_unparsable_body_as_busy`. Body `not-json`, exit 0. Real
+`jq` fails. Same unchanged result, trace has `exec` and `curl`. Red today the
+same way.
 
 `C1893_Upgrade_treats_unknown_occupancy_as_busy`. Body
-`{"occupied":"unknown","waiters":[]}`. Same unchanged result. Red today the
-same way.
+`{"occupied":"unknown","waiters":[]}`, exit 0. Same unchanged result, trace
+has `exec` and `curl`. Red today the same way.
 
 `C1893_Upgrade_rechecks_immediately_and_stops_if_the_second_read_is_busy`.
 First body idle (`occupied` 0, `waiters` []), second body `occupied` 1. The
-second read happens before `sleep` increments. Diagnosis `BrokerUpgradeBusy`,
-no `up`, no `tag`, env unchanged. Red today the same way.
+fake records `sleep=<count>` on each occupancy response. The second response
+has `sleep=0`. Diagnosis `BrokerUpgradeBusy`, no `up`, no `tag`, env
+unchanged, trace has two `exec` `curl` occupancy reads. Red today the same
+way: diagnosis `RealCasePending upgrade-broker`, and the trace has no
+occupancy read.
 
-`C1893_Upgrade_success_moves_only_the_pin_line`. Both reads idle. Trace contains
-`docker tag` of `antiphon-server2/broker-rollback:oldoldoldold` and a compose
-up whose argv contains `--force-recreate`, `--no-build`, and `build-slots`.
-The env file is exactly `BUILD_SLOTS_SHA12=abcdefabcdef\nUNRELATED=keep\n`
-(no second pin line, `UNRELATED` still present). The verify stub returns 200
-with `state=known`, key `server2`, id `server2-build-slots`. Red today:
-`RealCasePending`, env unchanged, no tag.
+`C1893_Upgrade_success_moves_only_the_pin_line`. Both occupancy reads idle.
+Trace contains `docker tag` of `antiphon-server2/broker-rollback:oldoldoldold`
+and a compose up whose argv contains `--force-recreate`, `--no-build`, and
+`build-slots`. The env file is exactly
+`BUILD_SLOTS_SHA12=abcdefabcdef\nUNRELATED=keep\n` (no second pin line,
+`UNRELATED` still present). The host-load `docker exec` `curl` prints
+`{"id":"server2-build-slots","physicalHostKey":"server2","revision":1,"state":"known"}`
+and exits 0 (`HostAdmissionSnapshot`, `HostLoadContracts.cs:20-22`). Red
+today through the harness: diagnosis `RealCasePending upgrade-broker`, env
+still the seed, no `tag`.
 
-`C1893_Upgrade_restores_the_old_pin_when_verify_fails`. Both reads idle, up
-runs, then host-load verify is non-200 or `state` is not `known`. Env file
-returns to the seed bytes. A second up uses the rollback tag. `UNRELATED=keep`
-remains. Red today: no up and no restore, because the case never starts.
+`C1893_Upgrade_restores_the_old_pin_when_verify_fails`. Both occupancy reads
+idle, up runs, then the host-load `docker exec` `curl` exits non-zero and
+prints nothing (the non-200 side; a `state` other than `known` is the same
+restore branch and is not a second test). Env file returns to the seed bytes.
+A second up uses the rollback tag. `UNRELATED=keep` remains. Red today through
+the harness: diagnosis `RealCasePending upgrade-broker`, and the trace has no
+`tag` and no second `up`. The final env bytes match the seed today, so that
+half is not the red.
 
 `C1893_Ensure_broker_passes_no_recreate_and_creates_when_absent`. Extract the
 real `ensure_build_slots_broker` (it exists). Stub `compose_host` to record
@@ -366,13 +481,14 @@ plus the jq phases, and this phase is not one of them. Do not edit
 `scripts/test-deploy-server2.ps1`; its ValidateSet is the script's own `-Only`
 switch, not the deploy phases.
 
-`C1893_Rollback_tag_is_outside_retire_superseded_server2_images`. On the success
-path the tag argument is `antiphon-server2/broker-rollback:oldoldoldold`, and
+`C1893_Rollback_tag_is_outside_retire_superseded_server2_images`. Same harness
+as the success method, including the fixture result file. On that path the
+tag argument is `antiphon-server2/broker-rollback:oldoldoldold`, and
 `retire_superseded_server2_images` still greps only
 `^antiphon-server2/(server|session-testing):` (`c590-remote.sh:1082-1083`).
-That tag does not match the grep. Red today because the success path never
-tags (the case is `RealCasePending`). The grep half is true today and is not
-a standalone assertion.
+That tag does not match the grep. Red today through the harness: diagnosis
+`RealCasePending upgrade-broker`, and the trace has no `tag`. The grep half
+is true today and is not a standalone assertion.
 
 ### Guard inventory
 
@@ -394,8 +510,9 @@ a standalone assertion.
 - G-16: S1 does not put HostStats keys on build-slots (D-9) | PC-16
 - G-17: broker key, revision, and authority id are the runner literals and are not blank or interpolated (D-3) | PC-17
 - G-18: the rollback tag is `antiphon-server2/broker-rollback:`, which `retire_superseded_server2_images` does not select | PC-18
-- G-19: a SHA that does not contain `9cf3e4917` prints `NOT-AFFECTED`; inverting the ancestor test would print that for rc-24 and the phase would run | PC-19
+- G-19: `NOT-AFFECTED` only when both commits resolve and `is-ancestor` exits exactly 1; inverting that test would print `NOT-AFFECTED` for rc-24 and the phase would run | PC-19
 - G-20: an unquoted or differently spelled disable stays `HOLD` | PC-20
+- G-21: an unresolved argument or an unresolved ancestor object exits non-zero and prints none of `HOLD`, `RELEASED`, `NOT-AFFECTED`; mapping git exit 128 to `NOT-AFFECTED` would let an unfetched descendant pass the hold | PC-21
 
 ### Positive controls
 
@@ -459,8 +576,12 @@ Each filter is `/*/*/Class/ExactMethod`.
   This is a different mutant and a different actual from PC-2.
 - PC-20: loosen the HistoryEnabled grep so unquoted `false` matches. Expect
   `C1893_S1_Hold_stays_when_the_lines_are_misspelled_or_unquoted` red.
+- PC-21: when `git cat-file -e` or `is-ancestor` exits 128, echo `NOT-AFFECTED`
+  and exit 0. Expect
+  `C1893_S1_Hold_exits_nonzero_when_the_argument_does_not_resolve` red
+  (stdout `NOT-AFFECTED`, exit 0). This is a different mutant from PC-19.
 
-guards=20, mapped=20, missing=0, duplicate PC maps=0.
+guards=21, mapped=21, missing=0, duplicate PC maps=0.
 
 ### Out of scope
 
@@ -570,9 +691,14 @@ That is one sample, not 2× p95 (2× of 607.7 s is about 20 minutes, and 16
 already warns). Code records loadavg, slot id, and phase seconds. If a build
 row's wall time exceeds 14 minutes, do not raise the estimate to 16. Split
 the filter or record a measured p95 and keep the estimate at or under 15.
-Reused rows at 2 minutes are above 2× of the 11.56 s and 13.55 s samples and
-cover the hold script's local `git fetch` of one commit. If Code measures a
-reused row over 2 minutes, raise only that row, still at or under 15.
+Reused rows at 2 minutes stay above 2× of the 11.56 s and 13.55 s samples.
+CP-3 also reruns the six hold fixtures. Each does one `git fetch --no-tags
+--depth 1` and then local commits, budgeted at the review's 8 s high sample
+(this session measured 3.389 s and 4.458 s). Six fetches are 48 s. With the
+two class samples, CP-3 is about 73 s, inside the 2-minute row. A fetch
+without `--depth 1` is not the recipe. If Code measures CP-3 over 2 minutes,
+raise only that row, still at or under 15. No `EstimatedMinutes` changes, so
+derived row timeouts stay 42 for CP-1 and CP-4 and 15 for the others.
 
 Red-first is a diagnostic, not the green certificate. Commit the new tests
 before the production edit. Import this table to ignored YAML, keep the rows
@@ -588,20 +714,21 @@ directory.
 `Min` counts `[Test]` methods. The 117 and 19 figures are the current classes,
 and CARD-1901 executed every one of them with 0 skipped, so they are executed
 results, not assertion counts. New methods add one each. CP-3 is
-117 + 10 S1 contract methods + 19 + 1 S1 doc method = 147, at the S1 commit,
-before the S2 methods exist. CP-7 is 117 + 10 + 1 broker-identity method + 19
-+ 1 + 1 upgrade-doc method = 149, at the S2 commit. A `[Test]` that loops
-internally is still one result.
+117 + 11 S1 contract methods + 19 + 1 S1 doc method = 148, at the S1 commit,
+before the S2 methods exist. CP-7 is 117 + 11 + 1 broker-identity method + 19
++ 1 + 1 upgrade-doc method = 150, at the S2 commit. A `[Test]` that loops
+internally is still one result. The misspelled hold method is one result
+even though it builds four trees.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1893s1/` | s1-contract | `/*/*/DockerStackContractTests/(C1893_S1_Standing_runner_sets_absolute_history_path*)\|(C1893_S1_Standing_runner_identity_literals*)\|(C1893_S1_Temp_runner_disables_history*)\|(C1893_S1_Init_state_creates_host_load_and_chmod_0700*)\|(C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24*)\|(C1893_S1_Hold_releases_when_both_exact_lines_are_present*)\|(C1893_S1_Hold_stays_when_only_the_standing_path_is_present*)\|(C1893_S1_Hold_stays_when_only_the_temp_disable_is_present*)\|(C1893_S1_Hold_stays_when_the_lines_are_misspelled_or_unquoted*)\|(C1893_S1_Hold_prints_NOT_AFFECTED_when_the_ancestor_is_absent*)` | V-1 | all listed, 0 failed | 10 | 14 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1893s1/` | s1-contract | `/*/*/DockerStackContractTests/(C1893_S1_Standing_runner_sets_absolute_history_path*)\|(C1893_S1_Standing_runner_identity_literals*)\|(C1893_S1_Temp_runner_disables_history*)\|(C1893_S1_Init_state_creates_host_load_and_chmod_0700*)\|(C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24*)\|(C1893_S1_Hold_releases_when_both_exact_lines_are_present*)\|(C1893_S1_Hold_stays_when_only_the_standing_path_is_present*)\|(C1893_S1_Hold_stays_when_only_the_temp_disable_is_present*)\|(C1893_S1_Hold_stays_when_the_lines_are_misspelled_or_unquoted*)\|(C1893_S1_Hold_prints_NOT_AFFECTED_when_the_ancestor_is_absent*)\|(C1893_S1_Hold_exits_nonzero_when_the_argument_does_not_resolve*)` | V-1 | all listed, 0 failed | 11 | 14 |
 | CP-2 | S1 | CP-1 | s1-docs | `/*/*/DockerStackDocumentationTests/C1893_S1_Docs_name_the_hold_and_the_durable_path` | V-1 | all listed, 0 failed | 1 | 2 |
-| CP-3 | S1 | CP-1 | s1-green | `/*/*/(DockerStackContractTests*)\|(DockerStackDocumentationTests*)/*` | V-1, R-1 | all listed, 0 failed | 147 | 2 |
+| CP-3 | S1 | CP-1 | s1-green | `/*/*/(DockerStackContractTests*)\|(DockerStackDocumentationTests*)/*` | V-1, R-1 | all listed, 0 failed | 148 | 2 |
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c1893s2/` | s2-upgrade | `/*/*/C1893BrokerUpgradeScriptTests/*` | V-2, R-2 | all listed, 0 failed | 12 | 14 |
 | CP-5 | S2 | CP-4 | s2-identity | `/*/*/DockerStackContractTests/C1893_S2_Broker_identity_literals_match_the_runner` | V-2 | all listed, 0 failed | 1 | 2 |
 | CP-6 | S2 | CP-4 | s2-docs | `/*/*/DockerStackDocumentationTests/C1893_S2_Docs_name_upgrade_broker` | V-2 | all listed, 0 failed | 1 | 2 |
-| CP-7 | S2 | CP-4 | s2-green | `/*/*/(DockerStackContractTests*)\|(DockerStackDocumentationTests*)/*` | V-2, R-1 | all listed, 0 failed | 149 | 2 |
+| CP-7 | S2 | CP-4 | s2-green | `/*/*/(DockerStackContractTests*)\|(DockerStackDocumentationTests*)/*` | V-2, R-1 | all listed, 0 failed | 150 | 2 |
 
 ### What Code reports per CP-n
 
@@ -622,12 +749,12 @@ path. The first run is red by design. A leased run does not support
 Ordinary V/R floor is the sum of `EstimatedMinutes`: 14+2+2+14+2+2+2 = 38
 minutes. That sum is estimated, from the one 607.7 s cold-build sample and the
 CARD-1901 class timings, not a measured p95 of these rows. PC floor is
-Mutation after land: 20 method-scoped break/red/restore/green cycles, one
+Mutation after land: 21 method-scoped break/red/restore/green cycles, one
 leased build per mutation and per restore. Not run here. The waiver does not
 mark them done. No `RemoteScriptContractTests` class run is saved against; the
 row was removed because that class does not finish inside its own 600 s timeout.
 
 --- next stage ---
 next: review
-handoff: Opus plan-review of this S1/S2 test design. guards=20, mapped=20, missing=0, duplicate PC maps=0. Mutation waived and owed.
+handoff: Opus plan-review round 2, diff from c88fc182d965b65a8154545f6431d5e7c5289430. guards=21, mapped=21, missing=0, duplicate PC maps=0. Mutation waived and owed.
 artifact: docs/superpowers/plans/2026-11-17-card-1893-s1-s2-testdesign.md
