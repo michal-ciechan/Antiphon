@@ -23,9 +23,9 @@ public sealed class ReleaseImpactScriptTests
     private const string Publication = Project + "::Antiphon.Tests.Scripts.ReleaseGatePublicationAuthorityTests";
     private const string Contract = Project + "::Antiphon.Tests.Scripts.ReleaseGateAuthorityContractTests";
     private const string Parity = Project + "::Antiphon.Tests.Scripts.NativeLinuxPolicyMatcherParityTests";
-    private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessTextTests";
-    private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainTests";
-    private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicTests";
+    private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
+    private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
+    private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicProbe";
 
     // The real tree is immutable input: loaded and closed once per run in one bounded process.
     private static readonly Lazy<Task<JsonElement>> Shared = new(() => CloseAsync([RealCase()]));
@@ -62,10 +62,10 @@ public sealed class ReleaseImpactScriptTests
             "fixture/scripts/lib/release-authority.ps1",
         });
         Chain(result, "fixture/scripts/lib/release-authority.ps1", Looped).ShouldBe(
-            ["fixture/tests/Chain/ChainTests.cs", "fixture/scripts/chain-entry.ps1", "fixture/scripts/lib/hop-a.ps1",
+            ["fixture/tests/Chain/ChainProbe.cs", "fixture/scripts/chain-entry.ps1", "fixture/scripts/lib/hop-a.ps1",
              "fixture/scripts/lib/hop-c.ps1", "fixture/scripts/lib/release-authority.ps1"]);
         Chain(result, "fixture/scripts/lib/module-helper.ps1", Looped).ShouldBe(
-            ["fixture/tests/Chain/ChainTests.cs", "fixture/scripts/chain-entry.ps1", "fixture/scripts/lib/Mod.psm1",
+            ["fixture/tests/Chain/ChainProbe.cs", "fixture/scripts/chain-entry.ps1", "fixture/scripts/lib/Mod.psm1",
              "fixture/scripts/lib/module-helper.ps1"]);
         Reasons(result).ShouldNotContain(r => r.StartsWith("script-target-unresolved:fixture/", StringComparison.Ordinal));
         AssertIncomplete(result);
@@ -97,7 +97,7 @@ public sealed class ReleaseImpactScriptTests
             ("parse", ". \"$PSScriptRoot/lib/broken.ps1\"\n", new() { ["fixture/scripts/lib/broken.ps1"] = "function Broken {\n" }, 0,
                 "script-target-unresolved:fixture/scripts/lib/broken.ps1:parse"),
             ("ambiguous", "", new() { ["fixture/scripts/twin.ps1"] = "# one\n", ["fixture/tools/twin.ps1"] = "# two\n" }, 0,
-                "script-target-unresolved:fixture/tests/Dyn/DynamicTests.cs:ambiguous:twin.ps1"),
+                "script-target-unresolved:fixture/tests/Dyn/DynamicProbe.cs:ambiguous:twin.ps1"),
             ("outside", ". (Join-Path $PSScriptRoot '../../../outside.ps1')\n", new(), 0,
                 "script-target-unresolved:" + entry + ":outside"),
             ("budget", ". (Join-Path $PSScriptRoot 'hop1.ps1')\n", new()
@@ -162,8 +162,8 @@ public sealed class ReleaseImpactScriptTests
         foreach (var (path, text) in ChainFixture()) files[path] = text;
         var consumers = new List<object>
         {
-            Consumer(Harmless, "fixture/tests/Harmless/HarmlessTextTests.cs"),
-            Consumer(Looped, "fixture/tests/Chain/ChainTests.cs"),
+            Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),
+            Consumer(Looped, "fixture/tests/Chain/ChainProbe.cs"),
         };
         foreach (var name in new[] { "ReleaseSelectionCliTests", "TestSelectionTests", "ReleaseGatePublicationAuthorityTests", "ReleaseGateAuthorityContractTests", "NativeLinuxPolicyMatcherParityTests" })
             consumers.Add(Consumer(Project + "::Antiphon.Tests.Scripts." + name, Tests + name + ".cs"));
@@ -173,11 +173,11 @@ public sealed class ReleaseImpactScriptTests
     private static Dictionary<string, string> ChainFixture() => new(StringComparer.Ordinal)
     {
         ["fixture/tests/Harmless/Harmless.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
-        ["fixture/tests/Harmless/HarmlessTextTests.cs"] = """
+        ["fixture/tests/Harmless/HarmlessProbe.cs"] = """
             namespace Fixture;
-            public class HarmlessTextTests
+            internal class HarmlessProbe
             {
-                [Test] public void Runs()
+                public void Runs()
                 {
                     var prose = "the nightly-coverage report runs later";
                     var nearMiss = "scripts/lib/nightly-coverage.ps1.orig";
@@ -186,9 +186,9 @@ public sealed class ReleaseImpactScriptTests
             }
             """,
         ["fixture/tests/Chain/Chain.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
-        ["fixture/tests/Chain/ChainTests.cs"] = """
+        ["fixture/tests/Chain/ChainProbe.cs"] = """
             namespace Fixture;
-            public class ChainTests { [Test] public Task Runs() => Harness.RunAsync("chain-entry.ps1"); }
+            internal class ChainProbe { public Task Runs() => Harness.RunAsync("chain-entry.ps1"); }
             """,
         ["fixture/scripts/chain-entry.ps1"] = """
             foreach ($name in 'hop-a', 'hop-b') { . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1')) }
@@ -208,13 +208,13 @@ public sealed class ReleaseImpactScriptTests
         var files = new SortedDictionary<string, string?>(StringComparer.Ordinal)
         {
             ["fixture/tests/Dyn/Dyn.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
-            ["fixture/tests/Dyn/DynamicTests.cs"] =
-                $"namespace Fixture;\npublic class DynamicTests {{ [Test] public Task Runs() => Harness.RunAsync(\"{literal}\", \"entry.ps1\"); }}\n",
+            ["fixture/tests/Dyn/DynamicProbe.cs"] =
+                $"namespace Fixture;\ninternal class DynamicProbe {{ public Task Runs() => Harness.RunAsync(\"{literal}\", \"entry.ps1\"); }}\n",
             ["fixture/scripts/entry.ps1"] = ". (Join-Path $PSScriptRoot 'lib/const.ps1')\n" + body,
             ["fixture/scripts/lib/const.ps1"] = "function Get-FixtureConstant { 'constant' }\n",
         };
         foreach (var (path, text) in extra) files[path] = text;
-        return new { name, files, consumers = new[] { Consumer(Dynamic, "fixture/tests/Dyn/DynamicTests.cs") }, maxVisits = visits };
+        return new { name, files, consumers = new[] { Consumer(Dynamic, "fixture/tests/Dyn/DynamicProbe.cs") }, maxVisits = visits };
     }
 
     private static object Consumer(string identity, string declaration)
