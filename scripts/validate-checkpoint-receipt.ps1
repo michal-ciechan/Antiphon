@@ -38,7 +38,7 @@ function Assert-WindowsPlacementSkips {
     param([string]$HostOs, [string]$TrxPath, [int]$Executed, [int]$Passed, [int]$Skipped)
     # Judge the recorded execution host, never the machine qualifying the receipt.
     # These are the OSDescription forms emitted by the supported non-Windows hosts.
-    if ($HostOs -cnotmatch '^(Linux(?: |$)|[^\r\n]+ GNU/Linux(?: |$)|Darwin(?: |$))') { throw 'skip_host_ineligible' }
+    if ($HostOs -cnotmatch '^(?:Linux|Debian GNU/Linux|Ubuntu|Alpine Linux|Fedora Linux|Rocky Linux|AlmaLinux|CentOS Linux|CentOS Stream|Red Hat Enterprise Linux|Arch Linux|openSUSE Leap|openSUSE Tumbleweed|SUSE Linux Enterprise Server|Amazon Linux|Oracle Linux Server|NixOS|Gentoo Linux|Kali GNU/Linux|Darwin)(?: |$)') { throw 'skip_host_ineligible' }
     if ($ExpectedRepeat -ne 1) { throw 'skip_repeat_ineligible' }
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { throw 'skip_trx_missing' }
 
