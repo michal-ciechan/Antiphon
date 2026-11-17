@@ -261,8 +261,6 @@ public sealed class ReleaseImpactScriptTests
     private static async Task<JsonElement> CloseAsync(IReadOnlyList<object> cases)
     {
         var library = Path.Combine(RepoRoot(), "scripts", "lib", "release-impact-scripts.ps1");
-        // Red-first adapter: before S1R5 exists, the landed relation (no script closure) answers.
-        if (!File.Exists(library)) return RelationAdapter(cases);
         var directory = Directory.CreateTempSubdirectory("antiphon-script-closure-");
         var input = Path.Combine(directory.FullName, "input.json");
         var driver = Path.Combine(directory.FullName, "driver.ps1");
@@ -283,30 +281,6 @@ public sealed class ReleaseImpactScriptTests
             File.Delete(driver);
             directory.Delete();
         }
-    }
-
-    private static JsonElement RelationAdapter(IReadOnlyList<object> cases)
-    {
-        var results = new Dictionary<string, object>(StringComparer.Ordinal);
-        foreach (var value in cases)
-        {
-            using var json = JsonDocument.Parse(JsonSerializer.Serialize(value));
-            var inputs = json.RootElement.GetProperty("files").EnumerateObject()
-                .Where(p => p.Value.ValueKind == JsonValueKind.String)
-                .ToDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.Ordinal);
-            var graph = ReleaseImpactGraphBuilder.Build(inputs);
-            results[json.RootElement.GetProperty("name").GetString()!] = new
-            {
-                complete = graph.Complete, fallback = graph.Fallback, incompleteReasons = graph.IncompleteReasons,
-                edges = graph.Edges.Select(e => new
-                {
-                    path = e.Path,
-                    classes = e.Classes.Select(c => new { project = c.Project, fullName = c.FullName, kinds = c.Kinds, chain = Array.Empty<string>() }),
-                }),
-            };
-        }
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(new { cases = results }));
-        return document.RootElement.Clone();
     }
 
     private static async Task<(int Exit, string Stdout, string Text)> RunAsync(string[] arguments, int seconds)
