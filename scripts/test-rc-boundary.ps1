@@ -9,6 +9,25 @@ $lib = Join-Path $PSScriptRoot 'lib/rc-boundary.ps1'
 $script:errors = New-Object 'System.Collections.Generic.List[string]'
 function Note([bool]$Ok, [string]$Why) { if (-not $Ok) { $script:errors.Add($Why) } }
 function Refuses([scriptblock]$Action) { try { & $Action | Out-Null; return $false } catch { return $true } }
+function RefusalText([scriptblock]$Action) { try { & $Action | Out-Null; return '' } catch { return [string]$_.Exception.Message } }
+function Test-RcBoundaryOrdinalSortShape {
+    param($Command)
+    # Base witness: while-loops and the literal name Compare-RcBoundaryIdentity only.
+    # A scriptblock comparer, a quadratic for, and a renamed comparator still pass.
+    $sortAst = $Command.ScriptBlock.Ast
+    $pairLoops = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.WhileStatementAst] }, $true))
+    $pairCommands = @($sortAst.FindAll({
+        param($node)
+        ($node -is [System.Management.Automation.Language.CommandAst]) -and ($node.GetCommandName() -ceq 'Compare-RcBoundaryIdentity')
+    }, $true))
+    $nativeSorts = @($sortAst.FindAll({
+        param($node)
+        ($node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) -and
+        ($node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) -and
+        ($node.Member.Value -ceq 'Sort') -and $node.Static
+    }, $true))
+    return (($pairLoops.Count -eq 0) -and ($pairCommands.Count -eq 0) -and ($nativeSorts.Count -eq 1))
+}
 function Row([string]$Boundary, [string]$Key, [string]$Suite = 'antiphon') { return @{ boundary=$Boundary; suite=$Suite; identityKey=$Key } }
 if (-not (Test-Path -LiteralPath $lib)) {
     Note $false 'boundary library absent'
@@ -28,20 +47,52 @@ if (-not (Test-Path -LiteralPath $lib)) {
             # B-1: a 1s bound failed at 1.04s under ordinary load. The regression
             # witness is structural. The wall clock is a 5s safety bound after one
             # untimed warm-up. The insertion sort this replaced took 15-16s.
-            $sortAst = (Get-Command Sort-RcBoundaryIdentities).ScriptBlock.Ast
-            $pairLoops = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.WhileStatementAst] }, $true))
-            $pairCommands = @($sortAst.FindAll({
+            Note (Test-RcBoundaryOrdinalSortShape (Get-Command Sort-RcBoundaryIdentities)) 'real sort failed the structural witness'
+            function script:Sort-RcBoundaryScriptBlockComparer {
+                param([object[]]$Identities)
+                [object[]]$items = @($Identities)
+                [Array]::Sort($items, [Comparison[object]]{ param($Left, $Right) 0 })
+                return $items
+            }
+            function script:Sort-RcBoundaryQuadraticFor {
+                param([object[]]$Identities)
+                [object[]]$items = @($Identities)
+                for ($i = 1; $i -lt $items.Length; $i++) {
+                    $held = $items[$i]
+                    for ($j = $i; $j -gt 0; $j--) { $items[$j] = $items[$j - 1] }
+                    $items[0] = $held
+                }
+                [Array]::Sort([Array]@(), [Array]@())
+                return $items
+            }
+            function script:Sort-RcBoundaryRenamedComparator {
+                param([object[]]$Identities)
+                [object[]]$items = @($Identities)
+                for ($i = 1; $i -lt $items.Length; $i++) {
+                    for ($j = $i; $j -gt 0; $j--) {
+                        if ((Compare-RcBoundaryPair $items[$j] $items[$j - 1]) -lt 0) {
+                            $swap = $items[$j]
+                            $items[$j] = $items[$j - 1]
+                            $items[$j - 1] = $swap
+                        }
+                    }
+                }
+                [Array]::Sort([Array]@(), [Array]@())
+                return $items
+            }
+            Note (-not (Test-RcBoundaryOrdinalSortShape (Get-Command Sort-RcBoundaryScriptBlockComparer))) 'scriptblock comparer still passes the structural check'
+            Note (-not (Test-RcBoundaryOrdinalSortShape (Get-Command Sort-RcBoundaryQuadraticFor))) 'quadratic for loop still passes the structural check'
+            Note (-not (Test-RcBoundaryOrdinalSortShape (Get-Command Sort-RcBoundaryRenamedComparator))) 'renamed comparator still passes the structural check'
+            $harnessTokens = $null
+            $harnessParseErrors = $null
+            $harnessAst = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$harnessTokens, [ref]$harnessParseErrors)
+            $deadCounter = @($harnessAst.FindAll({
                 param($node)
-                ($node -is [System.Management.Automation.Language.CommandAst]) -and ($node.GetCommandName() -ceq 'Compare-RcBoundaryIdentity')
+                ($node -is [System.Management.Automation.Language.CommandAst]) -and
+                ($node.GetCommandName() -ceq 'Test-Path') -and
+                ($node.Extent.Text -like '*Compare-RcBoundaryIdentity*')
             }, $true))
-            $nativeSorts = @($sortAst.FindAll({
-                param($node)
-                ($node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) -and
-                ($node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) -and
-                ($node.Member.Value -ceq 'Sort') -and $node.Static
-            }, $true))
-            Note (($pairLoops.Count -eq 0) -and ($pairCommands.Count -eq 0) -and ($nativeSorts.Count -eq 1)) (
-                'per-pair PowerShell comparator remains in Sort-RcBoundaryIdentities loops=' + $pairLoops.Count + ' compares=' + $pairCommands.Count + ' sorts=' + $nativeSorts.Count)
+            Note ($deadCounter.Count -eq 0) 'comparator counter runs only when Compare-RcBoundaryIdentity exists'
             $script:realDigest = ${function:Get-RcBoundaryCanonicalDigest}
             $script:digestCalls = 0
             $script:pairCompares = 0
@@ -101,7 +152,8 @@ if (-not (Test-Path -LiteralPath $lib)) {
         'ExplicitCaseKeyCount' {
             Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M','BTests/M') -CaseKeys @('') }) 'single empty CaseKeys bypassed count'
             Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @() }) 'empty CaseKeys bypassed count'
-            Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys $null }) 'null CaseKeys bypassed count'
+            $nullCase = RefusalText { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys $null }
+            Note ($nullCase.StartsWith('boundary-chunk:', [StringComparison]::Ordinal)) ('null CaseKeys was not an explicit refusal: ' + $nullCase)
             $omitted = Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A')
             Note ($omitted -ceq 'b-core-eca0b76b8b1ed195') 'omitted CaseKeys changed default'
             Note ((Get-RcBoundaryChunkId antiphon core @('ZTests/B','ATests/A') -CaseKeys @('','')) -ceq $omitted) 'matching empty CaseKeys refused'
@@ -145,16 +197,36 @@ if (-not (Test-Path -LiteralPath $lib)) {
                 }
                 Note ($byId.Count -eq 2) 'dictionary overwrite erased colliding membership'
                 Note ((@($chunks | ForEach-Object { $_.caseKeys[0] }) -join ',') -ceq 'left,right') 'colliding cases lost'
+                $ordinaryId = 'b-core-eca0b76b8b1ed195'
+                $parsed = $false
+                $illegalCore = $true
+                try {
+                    $parsed = (Test-RcBoundaryChunkId ([string]$chunks[0].chunkId)) -and
+                        (Test-RcBoundaryChunkId $ordinaryId) -and
+                        (Test-RcBoundaryChunkId 'b-session-runner-0123456789abcdef') -and
+                        (Test-RcBoundaryChunkId 'b-unassigned-0123456789abcdef')
+                    $illegalCore = (Test-RcBoundaryChunkId ('b-core-' + [string]$chunks[0].fullDigest)) -or
+                        (Test-RcBoundaryChunkId ('b-unassigned-' + ('ab' * 16))) -or
+                        (Test-RcBoundaryChunkId 'b-not-a-boundary-0123456789abcdef')
+                } catch {
+                    $parsed = $false
+                    $illegalCore = $true
+                }
+                Note ($parsed -and ([string]$chunks[0].chunkId).Length -eq 77) 'id parser rejected a 16-hex id or a 77-character collision id'
+                Note (-not $illegalCore) 'id parser accepted a 64-hex core id or another illegal id'
             } finally { Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest }
         }
         'LoneSurrogatesFailClosed' {
             foreach ($code in @(0xd800, 0xdc00)) {
                 $bad = [string][char]$code
                 foreach ($key in @(($bad + 'Tests/M'), ('ATests/' + $bad))) {
-                    Note (Refuses { Get-RcBoundaryChunkId antiphon core @($key) }) 'lone surrogate identity accepted'
-                    Note (Refuses { New-RcBoundaryChunk -Identities @((Row core $key)) }) 'lone surrogate chunk accepted'
+                    $idText = RefusalText { Get-RcBoundaryChunkId antiphon core @($key) }
+                    $chunkText = RefusalText { New-RcBoundaryChunk -Identities @((Row core $key)) }
+                    Note ($idText.StartsWith('boundary-chunk:', [StringComparison]::Ordinal)) ('lone surrogate identity was not a prefixed refusal: ' + $idText)
+                    Note ($chunkText.StartsWith('boundary-chunk:', [StringComparison]::Ordinal)) ('lone surrogate chunk was not a prefixed refusal: ' + $chunkText)
                 }
-                Note (Refuses { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @($bad) }) 'lone surrogate case key accepted'
+                $caseText = RefusalText { Get-RcBoundaryChunkId antiphon core @('ATests/M') -CaseKeys @($bad) }
+                Note ($caseText.StartsWith('boundary-chunk:', [StringComparison]::Ordinal)) ('lone surrogate case key was not a prefixed refusal: ' + $caseText)
             }
             # A well-formed pair and the replacement character remain legal and distinct.
             $pair = [char]::ConvertFromUtf32(0x1f600)
