@@ -20,8 +20,23 @@ No server, runner, delivery, lease, persistence, migration or startup behavior c
 Provisional estimates, not measured p95: source script class 3 minutes, repeat
 script class 3 minutes, checkpoint classes 2-4 minutes per row, guards 3 minutes.
 Collect one red selection and one green selection, no green repetitions required.
-Use shared checkpoint output for the final rows. Bound every row to 570 seconds;
-retain existing nine-minute script build deadline. Build-slot admission is separate
+Use shared checkpoint output for the final rows. The tool deadline defaults are
+unchanged; the plan's own CP-1 budget is not (Debug 32f24400). The Final run's
+CP-1 cold build of tests/Antiphon.Tests was killed at 548.575 s (load 5.39 at
+start, still linking, run 20261117-014603-6dc5 in task 2e74cf4e) because that
+run passed `--row-timeout 9m`, which replaces the build deadline
+(RunScheduler.cs:375-378, `deadlineMinutes: 9`). Measured cold builds of that
+project on server2: 354 s (load 9-21), 548+ s killed, about 608 s (CARD-1958
+pre-fix), 1073 s (load 17-29), 1336 s (load 34-62, run 20261108-031828-f114),
+and host builds 15m19s (Merge 255) and 25m38s (Merge 254). The build deadline
+is the largest derived row deadline of the rows that use the build, at least 15
+minutes (RunScheduler.cs:375-384); a row's derived deadline is max(15, 3 x
+EstimatedMinutes) (RowTimeout.cs:10, PlanTableImporter.cs:166). CP-1, the
+cold-build row, therefore carries EstimatedMinutes 15: a 45-minute build deadline,
+2x the worst measured checkpoint cold build (1336 s) and 1.75x the worst host
+build (25m38s), at the 45-minute importer advisory threshold. The rows that reuse
+the build keep their small estimates (each derives the tool's 15-minute floor).
+Do not pass `--row-timeout`. Build-slot admission is separate
 (45-minute existing gate), read /proc/loadavg before each build/row, admit below 16.
 No new fixtures with database or service startup. Existing scratch Git/process
 fixtures isolate each receipt; TRX and checkpoint phase evidence retain cost.
@@ -59,13 +74,15 @@ build timed out before any TUnit discovery, so no prior TUnit result is credited
 ### Checkpoints
 
 All rows serial. Final run CP-1..CP-9; red-first selection CP-1 before repair.
-Use CLI `--row-timeout 9m --parallel 1`; the public tool invocation also carries
+Run CP-1..CP-9 as ONE run with `--serial` and no `--row-timeout`, so CP-2..CP-9
+reuse CP-1's kept build in plan order (a separate later run refuses the
+directory as `pre-existing-output`). The public tool invocation also carries
 `--timeout 570s` as required by the brief. The existing tool constructs its child
-argv itself; the nine-minute row cap bounds those inherited children.
+argv itself; the derived row and build deadlines bound those inherited children.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
-| CP-1 | all | tests/Antiphon.Tests -> bin-c1958-final-b/ | source-script | `/*/*/RunCheckpointSourceScriptTests*/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 25 | 3 | true |
+| CP-1 | all | tests/Antiphon.Tests -> bin-c1958-final-b/ | source-script | `/*/*/RunCheckpointSourceScriptTests*/*` | V-1,V-2,V-3,V-4,R-1,R-2 | all listed, 0 failed | 25 | 15 | true |
 | CP-2 | all | CP-1 | repeat-script | `/*/*/RunCheckpointRepeatScriptTests*/*` | R-3 | all listed, 0 failed | 1 | 3 | true |
 | CP-3 | all | CP-1 | checkpoint-source | `/*/*/CheckpointSourceExecutionTests*/*` | R-3 | all listed, 0 failed | 1 | 4 | true |
 | CP-4 | all | CP-1 | checkpoint-terminal | `/*/*/(CheckpointTerminalReceiptTests*)\|(CheckpointStatePublicationTests*)/*` | R-3 | all listed, 0 failed | 2 | 4 | true |
