@@ -424,6 +424,17 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   two (CARD-1670), none of them a control, format, line or paragraph separator
   character, and never the token in any letter case; CARD-1656 A-3, A-4) is recorded in the audit event (A-2).
   Nothing is sent to the runner; a held drain rebind moves on the next tick.
+- `POST /api/session-runners/{runnerId}/workspace-slots/quarantine/{dirId}/release` (operator token; CARD-1960) with
+  `{ "disposition": "Pushed", "reason": "...", "requester": "..." }` sends the runner's
+  `WorkspaceSlotQuarantineRelease` for one open quarantined directory (`dirId` from the ledger's
+  `quarantinedDirectories`) and returns its answer as 200: `{ "dirId", "outcome": "removed" | "refused" |
+  "removal_failed", "detail" }`. `Pushed` rechecks unpushed work (after a fetch) and dirt, `AcceptLoss` retains the
+  diff under `/work/retained/quarantine/<dirId>/`, and `Removed` deletes with no check, so use `Pushed` for published
+  residue. A dirId that is not 12 lower-case hex digits, a disposition other than exactly those three, a reason
+  outside 1 to 200 printable characters, a requester the record-release rule refuses, or the token in the reason or
+  requester is `400 workspace_slot_quarantine_release_invalid` and nothing is sent; a desktop runner is
+  `409 workspace_slot_runner_not_phone_home`. The requester (default `operator`) is folded into the recorded reason
+  as `<reason> (by <requester>)`. Front door: `scripts/workspace-slots.ps1 release`.
 - Runner phone-home operations (no HTTP route on the runner yet): `WorkspaceSlotRelease`
   (`{slotId, generation, taskId}`; `slot_generation_mismatch` and `slot_task_mismatch` refuse),
   `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`
