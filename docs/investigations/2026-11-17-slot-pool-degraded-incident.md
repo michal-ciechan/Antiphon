@@ -187,3 +187,30 @@ safest fix that removes the main recurrence. Add C for custody `lingering`.
 - 01:15-01:18 Origin and container checks.
 - 01:20 Release-caller search finishes: there is no route.
 - 01:21 The four tasks are confirmed Queued, with retries still refused.
+
+## Decision and verification (follow-up, 01:25-01:40Z)
+
+- **Decision.** The orchestrator chose option 1: at about 01:26Z it set `Delegation:WorkspaceSlotRoles`
+  to `"none"` in `C:\src\Antiphon\server\appsettings.Development.json`. That is the documented hot-reload
+  soft rollback. Nothing was released, copied or deleted. The five quarantined directories stay as they
+  are, including `.antiphon/c1956-review/` in ws-01-d2.
+- **All four tasks started on their next scheduled retry, with no restart.** Each mirrored into a
+  per-task tree, not a slot:
+
+  | task | role | started (UTC) | workspace |
+  |---|---|---|---|
+  | 83d30eec | Docs | 01:27:42 | `/work/worktrees/task-83d30eec`, named by the retention line "held task ... path /work/worktrees/task-83d30eec" |
+  | e7394f29 | TestDesign | 01:31:18 | `/work/worktrees/task-e7394f29` |
+  | e96c2ae3 | Code (CARD-1820) | 01:39:14 | `/work/worktrees/task-e96c2ae3` |
+  | 2e74cf4e | Debug (CARD-1958) | 01:39:26 | `/work/worktrees/task-2e74cf4e` |
+
+  The last three paths come from a container directory listing at 01:40Z.
+- **No new refusals.** The last `workspace_slot_pool_degraded` line in the server log is at 01:24:14Z (22 in
+  total). There have been none since the setting changed.
+- **Ledger at 01:40Z.** The same five quarantines are open (66ece2d86b23, c139d63622e5, 7ef5203b564f,
+  2d0ef6e62dae, 7b3f3b265073). Slots: ws-02 Leased (c6c85b5b), every other slot Free, and no new
+  quarantine.
+- **Commissioned as separate Code cards.** Fix A is the operator release route and a `release`
+  verb in `scripts/workspace-slots.ps1`. Fix B is the warm reset removing ignored directories that
+  are not on the keep-list. After they land, the five entries can be released as `Pushed`, and
+  `WorkspaceSlotRoles` can return to `*`.
