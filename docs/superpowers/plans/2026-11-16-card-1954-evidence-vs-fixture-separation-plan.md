@@ -178,13 +178,13 @@ Lanes: CP-1 to CP-8 run on the Linux lane (server2, the global default from `GET
 | CP-4 | S1 | CP-3 | s1-queue | `/*/*/AgentTaskLandNotificationRecoveryTests/(C467_V09*)\|(C488_ApprovalReceiptQueueKey*)\|(C488_ApprovalReceiptKeyCollision*)` | W-2, V-2 | 3 passed, 0 failed | 3 | 6 |
 | CP-5 | S1 | CP-3 | s1-worker-refusal | `/*/*/TestDbFixtureLazyInitializationTests/(A_*)\|(Mixed_*)` | W-3, V-3 | all listed, 0 failed, 0 skipped | 2 | 3 |
 | CP-6 | S1 | CP-3 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(TestTimingOperationLabelTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | V-5 | all listed, 0 failed; WindowsUnit platform skip allowed only as recorded by CARD-1953 | 10 | 8 |
-| CP-7 | S3 | CP-3 | source-pins | `/*/*/(NativeWindowsFixtureGateTests*)\|(LandDeliveryWaitRoutingTests*)\|(DispatchBaseWarningRosterTests*)\|(ImpactedClassesSelectorTests*)/*` | V-5 | all listed, 0 failed | 4 | 9 |
+| CP-7 | S3 | tests/Antiphon.Tests -> bin-c1954-s3/ | source-pins | `/*/*/(NativeWindowsFixtureGateTests*)\|(LandDeliveryWaitRoutingTests*)\|(DispatchBaseWarningRosterTests*)\|(ImpactedClassesSelectorTests*)/*` | V-5 | all listed, 0 failed | 4 | 9 |
 | CP-8 | S3-red | tests/Antiphon.E2E -> bin-c1954-e2e-red/ | s3-red-witness | `/*/*/LandDeliveryFixtureProbeTests/C1954_Probe_root_is_owned_outside_checkout` | W-5, V-1 | 1 intended assertion failure | 1 | 10 |
 | CP-9 | S4 | tests/Antiphon.E2E -> bin-c1954-e2e/ | e2e-green | `/*/*/(C1954FixtureLayoutTests*)\|(LandDeliveryFixtureProbeTests*)/*` | V-1, V-2, V-3, V-4 | all listed, 0 failed | 17 | 12 |
 
 Suffix check, done at `870a93d21`: `C467_V09*`, `C488_ApprovalReceiptQueueKey*` and `C488_ApprovalReceiptKeyCollision*` each match exactly one method across the three `AgentTaskLandNotificationRecoveryTests` partial files. No other class name begins with `C1954FixtureRootTests`, `C1954FixtureLayoutTests`, `LinuxOwnedGitProcessTests` or `LandDeliveryFixtureProbeTests`. Code re-checks this after adding methods. CP-3's `Min` assumes 35 + about 10; Code sets it to the counted cases.
 
-CP-7 builds `Antiphon.Tests` at the S3 tip; it reuses CP-3's build only if S3 changes no `Antiphon.Tests` source. Otherwise Code adds an isolated build for it. Per the checkpoint import rules, a build is never reused across `After` groups whose source differs.
+CP-7 has its own isolated build at the S3 tip. `import --plan` refuses a build reused across `After` groups, and the S3 source pins read the edited E2E fixture files.
 
 Manual opt-in row, not in the table (operator Q-3): CP-M1 `/*/*/ChannelOutboundIsolatedTests/Four_sources_convert_only_for_the_selected_conversation`. It reuses CP-9's build, with `ANTIPHON_HEADED_TESTS=1`, `ANTIPHON_BROKER_TESTS=1` and `ANTIPHON_CHANNEL_OUTBOUND_ISOLATED=1`, `client/dist` rebuilt first, on server2. Expect 1 passed with the W-4 census green. Estimate 20 min.
 
