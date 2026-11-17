@@ -350,6 +350,15 @@ T20 protects that age from keepalives, cache reads, queue attempts and another
 session's transcript activity. A successful checked Working observation refreshes
 the age; Unknown retains debt and retries no faster than the poll (T24).
 
+CARD-1969 reads each probe observation as one snapshot: a stamp of the session
+row count, maximum sequence, first row id and top row id, plus the newest 64
+full rows (`rt.recovery.observe`). The frontier is the newest activity row in
+that tail. When those 64 rows hold no activity and the session is longer, the
+probe reads the whole session, as before. An in-place update, or a replacement
+at the same sequence, below that tail is not observed; no production writer
+does either. The probe does not treat a `UserPrompt` as present or absent below
+the tail. Transcript-confirmed `UserPrompt` evidence remains the delivery verdict.
+
 The independent hosted driver reconstructs cold local Running Working sessions
 from durable rows (T26/T30). Discovery and reconciliation each read one bounded
 page; fair queued work is capped with the 1024-entry directory (T21/T23/T34).
