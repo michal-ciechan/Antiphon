@@ -424,10 +424,11 @@
     },
     {
       "path": "server/Application/Exceptions/ServiceUnavailableException.cs",
-      "classes": 26,
+      "classes": 27,
       "reason": "cap",
-      "owed": 1,
+      "owed": 2,
       "first": [
+        "PhoneHomePendingInventoryTests",
         "StandingSessionSelectionTests"
       ]
     },
@@ -1330,18 +1331,18 @@
     },
     {
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
-      "classes": 56,
+      "classes": 57,
       "reason": "cap",
-      "owed": 31,
+      "owed": 32,
       "first": [
+        "AdvisoryChangePolicyTests",
         "BlockedTaskParkReclaimTests",
         "C0824RefOnlyConsumerTests",
         "C1677RetentionServerTests",
         "ClaudeCredentialProbeDispatcherTests",
         "DefaultRunnerEligibilityTests",
         "DefaultRunnerPinTests",
-        "DesktopCapabilitiesSnapshotTests",
-        "DispatcherRemotePrepStarvationTests"
+        "DesktopCapabilitiesSnapshotTests"
       ]
     },
     {
@@ -1394,9 +1395,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 276,
+      "classes": 277,
       "reason": "cap",
-      "owed": 251,
+      "owed": 252,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1640,9 +1641,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 604,
+      "classes": 605,
       "reason": "cap",
-      "owed": 579,
+      "owed": 580,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1656,9 +1657,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 604,
+      "classes": 605,
       "reason": "cap",
-      "owed": 579,
+      "owed": 580,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1789,18 +1790,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 104,
+      "classes": 105,
       "reason": "cap",
-      "owed": 79,
+      "owed": 80,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
         "C1677RetentionServerTests",
+        "C1964RecoveryPumpStallTests",
         "PhoneHomeImmediateSendTests",
         "PhoneHomeRecoveryEligibilityTests",
-        "C0824DesktopLegacyReleaseSwitchTests",
-        "CodexProviderAuthRoutingTests"
+        "C0824DesktopLegacyReleaseSwitchTests"
       ]
     },
     {
@@ -1853,9 +1854,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 431,
+      "classes": 432,
       "reason": "cap",
-      "owed": 406,
+      "owed": 407,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2162,9 +2163,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 144,
+      "classes": 145,
       "reason": "cap",
-      "owed": 119,
+      "owed": 120,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
@@ -2226,9 +2227,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 570,
+      "classes": 571,
       "reason": "cap",
-      "owed": 545,
+      "owed": 546,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2306,18 +2307,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
+        "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeSpillTransportTests",
         "PhoneHomeTranscriptIncidentTests",
         "RunnerCapacityEndpointTests",
-        "C0824DesktopLegacyReleaseSwitchTests",
-        "DelegateBranchDeliveryTests"
+        "C0824DesktopLegacyReleaseSwitchTests"
       ]
     },
     {
@@ -2354,9 +2355,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 519,
+      "classes": 520,
       "reason": "cap",
-      "owed": 494,
+      "owed": 495,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -4443,6 +4444,7 @@
     {
       "path": "server/Application/Core/RunnerState.cs",
       "classes": [
+        "C1964RecoveryPumpStallTests",
         "HostStatsPollServiceTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeRecoveryEligibilityTests",
@@ -5658,6 +5660,7 @@
         "ApiKeyEnvResolverTests",
         "ApiKeyStoreTests",
         "C0824RefOnlyCleanupTests",
+        "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GatedCommitServiceTests",
@@ -5665,7 +5668,6 @@
         "PhoneHomeDeferredKillTests",
         "PhoneHomeDirectoryTests",
         "PhoneHomeImmediateSendTests",
-        "PhoneHomePendingInventoryTests",
         "PhoneHomeQueuedTurnTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeSessionRoutingTests",
@@ -9814,6 +9816,7 @@
     {
       "path": "server/Application/Services/PhoneHomeRecoveryPump.cs",
       "classes": [
+        "C1964RecoveryPumpStallTests",
         "Card1619ExitMigrationIdTests",
         "DefaultRunnerEligibilityTests",
         "KeepSixSettingsTests",
@@ -10938,6 +10941,7 @@
         "AgentTaskMidTurnRefineTests",
         "AgentTaskReplyOverlayTests",
         "AgentTaskStandingAgentDispatchTests",
+        "C1964RecoveryPumpStallTests",
         "ChannelBridgeTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundRetentionTests",
@@ -12288,7 +12292,7 @@
     {
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
       "classes": [
-        "AdvisoryChangePolicyTests",
+        "C1964RecoveryPumpStallTests",
         "CodexCliObservationTests",
         "CodexPhoneHomeCreateTests",
         "CodexPhoneHomeProjectionTests",
@@ -14757,6 +14761,7 @@
       "classes": [
         "AgentTaskInputFallbackTests",
         "C0824DesktopLegacyReleaseSwitchTests",
+        "C1964RecoveryPumpStallTests",
         "DelegateBranchDeliveryTests",
         "DispatcherRemotePrepStarvationTests",
         "GrokRulesReadyOrderingTests",
@@ -22288,7 +22293,8 @@
     {
       "path": "tests/Antiphon.Tests/Application/C1677RetentionServerTests.cs",
       "classes": [
-        "C0824TransportLimiterTests"
+        "C0824TransportLimiterTests",
+        "C1964RecoveryPumpStallTests"
       ]
     },
     {
@@ -25844,6 +25850,7 @@
         "AgentTaskLandSourcePersistenceTests",
         "AgentTaskPoolTests",
         "AgentTuiLaunchResolverTests",
+        "C1964RecoveryPumpStallTests",
         "LandRequestWriteDiagnosticTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
