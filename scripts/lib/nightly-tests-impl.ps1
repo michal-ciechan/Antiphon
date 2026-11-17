@@ -404,6 +404,7 @@ function Complete-NightlyBoundaryLaunchGroups {
     $resolved = @(Resolve-RcBoundaryChunks -Memberships $Memberships)
     for ($i = 0; $i -lt $Chunks.Count; $i++) {
         $chunk = $Chunks[$i]; $membership = $resolved[$i]
+        if (-not (Test-RcBoundaryChunkId ([string]$membership.chunkId))) { throw 'boundary-pack: chunk id length' }
         $chunk.id = $membership.chunkId
         foreach ($entry in @{
             suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$membership.fullDigest

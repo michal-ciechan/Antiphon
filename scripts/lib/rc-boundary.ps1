@@ -178,6 +178,14 @@ function Get-RcBoundaryCanonicalDigest {
         $sha = [Security.Cryptography.SHA256]::Create()
         try { return ([BitConverter]::ToString($sha.ComputeHash($buffer.ToArray())).Replace('-', '').ToLowerInvariant()) }
         finally { $sha.Dispose() }
+    } catch {
+        # A-1: abort the call. Do not emit an unassigned dirty chunk.
+        $message = [string]$_.Exception.Message
+        if ($message.StartsWith('boundary-chunk:', [StringComparison]::Ordinal)) { throw }
+        $inner = $_.Exception.InnerException
+        $encoding = ($inner -is [System.Text.EncoderFallbackException]) -or $message.Contains('Unable to translate Unicode character')
+        if (-not $encoding) { throw }
+        throw ('boundary-chunk: encoding ' + $message)
     } finally { $buffer.Dispose() }
 }
 
@@ -195,6 +203,8 @@ function New-RcBoundaryChunkData {
     if ($Suite -cnotmatch '^[a-z][a-z0-9-]*$' -or $Boundary -cnotin @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')) { throw 'boundary-chunk: invalid suite/boundary' }
     if (-not $IdentityKeys -or $IdentityKeys.Count -eq 0) { throw 'boundary-chunk: empty membership' }
     $hasCaseKeys = $PSBoundParameters.ContainsKey('CaseKeys')
+    # @($null).Count is 1, so a single identity would otherwise index a null array.
+    if ($hasCaseKeys -and $null -eq $CaseKeys) { throw 'boundary-chunk: case key count' }
     if ($hasCaseKeys -and @($CaseKeys).Count -ne @($IdentityKeys).Count) { throw 'boundary-chunk: case key count' }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
     $parsed = New-Object 'System.Collections.Generic.List[object]'
@@ -221,6 +231,17 @@ function New-RcBoundaryChunkData {
 function Get-RcBoundaryChunkId {
     param([string]$Suite, [string]$Boundary, [string[]]$IdentityKeys, [string[]]$CaseKeys)
     return (New-RcBoundaryChunkData @PSBoundParameters).chunkId
+}
+
+function Test-RcBoundaryChunkId {
+    param([string]$ChunkId)
+    # Ordinary: b-<boundary>-<16 hex>. Collision: b-unassigned-<64 hex> (77 chars).
+    if ([string]::IsNullOrEmpty($ChunkId)) { return $false }
+    if ($ChunkId -cmatch '^b-unassigned-[0-9a-f]{64}$') { return ($ChunkId.Length -eq 77) }
+    if ($ChunkId -cnotmatch '^b-([a-z][a-z0-9-]*)-([0-9a-f]{16})$') { return $false }
+    $boundary = $Matches[1]
+    $allowed = @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf','unassigned')
+    return ($boundary -cin $allowed)
 }
 
 function New-RcBoundaryChunk {
