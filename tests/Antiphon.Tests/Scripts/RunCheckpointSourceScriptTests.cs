@@ -371,6 +371,8 @@ public sealed class RunCheckpointSourceScriptTests
 
     [Test]
     [Arguments("linux", "rostered-skip", 0)]
+    [Arguments("ubuntu", "rostered-skip", 0)]
+    [Arguments("darwin", "rostered-skip", 0)]
     [Arguments("linux", "unlisted-skip", 2)]
     [Arguments("windows", "rostered-skip", 2)]
     [Arguments("linux", "rostered-pass", 0)]
@@ -446,7 +448,8 @@ public sealed class RunCheckpointSourceScriptTests
             ["source"] = source, ["rows"] = new JsonArray(row),
             ["host"] = new JsonObject { ["os"] = platform switch
             {
-                "linux" => "Debian GNU/Linux 12 (bookworm)", "windows" => "Microsoft Windows 10.0.26100", _ => "unexpected",
+                "linux" => "Debian GNU/Linux 12 (bookworm)", "ubuntu" => "Ubuntu 24.04.3 LTS",
+                "darwin" => "Darwin 24.6.0", "windows" => "Microsoft Windows 10.0.26100", _ => "unexpected",
             } },
         };
         var evidence = Path.Combine(fixture.External, "placement.json");
