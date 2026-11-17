@@ -18866,6 +18866,7 @@
     {
       "path": "src/Antiphon.SessionRunner/HostLoadStoragePath.cs",
       "classes": [
+        "C1514HostLoadNativeTests",
         "C1893CollectorDiagnosticsTests"
       ]
     },
