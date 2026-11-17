@@ -593,8 +593,10 @@ public class TranscriptPromptSpanTests
         public override InterceptionResult DataReaderDisposing(
             DbCommand command, DataReaderDisposingEventData eventData, InterceptionResult result)
         {
-            if (IsPromptTextRead(command.CommandText))
-                Interlocked.Add(ref _rows, eventData.ReadCount);
+            // ReadCount includes the final Read() that returned false; every matched read is a
+            // ToListAsync, so it always makes that call.
+            if (IsPromptTextRead(command.CommandText) && eventData.ReadCount > 0)
+                Interlocked.Add(ref _rows, eventData.ReadCount - 1);
             return result;
         }
     }
