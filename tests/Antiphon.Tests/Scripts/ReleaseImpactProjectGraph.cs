@@ -171,6 +171,9 @@ internal static class ReleaseImpactProjectGraph
                 }
                 foreach (var owner in targets) reverse[owner].UnionWith(callers);
             }
+
+            if (CapturesReflectiveCallable(root, bindings))
+                unknown.Add("reflection-target-unresolved:" + path);
         }
 
         var hits = relation.Edges.ToDictionary(e => e.Path, e => e.Classes.ToDictionary(
@@ -258,11 +261,81 @@ internal static class ReleaseImpactProjectGraph
                 receiverExpression = null;
                 receiver = null;
                 return true;
+            case GenericNameSyntax generic:
+                method = generic.Identifier.ValueText;
+                receiverExpression = null;
+                receiver = null;
+                return true;
             default:
                 method = "";
                 receiverExpression = null;
                 receiver = null;
                 return false;
+        }
+    }
+
+    // A reflective callable that escapes as a value is unresolved at the capture site.
+    // Direct invocations stay on the call walk above. Casts and parentheses peel to the method group.
+    private static bool CapturesReflectiveCallable(SyntaxNode root, ReflectionBindings bindings)
+    {
+        foreach (var node in root.DescendantNodes())
+        {
+            ExpressionSyntax? value = node switch
+            {
+                EqualsValueClauseSyntax equals => equals.Value,
+                AssignmentExpressionSyntax assignment when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) => assignment.Right,
+                ReturnStatementSyntax returned => returned.Expression,
+                ArrowExpressionClauseSyntax arrow => arrow.Expression,
+                ArgumentSyntax argument => argument.Expression,
+                _ => null,
+            };
+            if (value is not null && IsReflectiveMethodGroup(value, bindings)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsReflectiveMethodGroup(ExpressionSyntax expression, ReflectionBindings bindings)
+    {
+        expression = PeelCapture(expression);
+        if (expression is InvocationExpressionSyntax or AnonymousFunctionExpressionSyntax) return false;
+        switch (expression)
+        {
+            case MemberAccessExpressionSyntax member:
+            {
+                var method = member.Name.Identifier.ValueText;
+                var receiverExpression = Peel(member.Expression);
+                var expanded = ExpandReceiver(receiverExpression, receiverExpression.ToString(), bindings);
+                return expanded is not null && IsReflectiveType(expanded)
+                    && IsUnrecognisedReflection(method, 1, expanded, bareStaticReflective: false);
+            }
+            case MemberBindingExpressionSyntax binding:
+            {
+                var method = binding.Name.Identifier.ValueText;
+                var receiverExpression = expression.Parent is ConditionalAccessExpressionSyntax access ? Peel(access.Expression) : null;
+                var expanded = ExpandReceiver(receiverExpression, receiverExpression?.ToString(), bindings);
+                return expanded is not null && IsReflectiveType(expanded)
+                    && IsUnrecognisedReflection(method, 1, expanded, bareStaticReflective: false);
+            }
+            case IdentifierNameSyntax name when bindings.HasReflectiveStaticUsing:
+                return IsUnrecognisedReflection(name.Identifier.ValueText, 1, null, bareStaticReflective: false);
+            case GenericNameSyntax generic when bindings.HasReflectiveStaticUsing:
+                return IsUnrecognisedReflection(generic.Identifier.ValueText, 1, null, bareStaticReflective: false);
+            default:
+                return false;
+        }
+    }
+
+    private static ExpressionSyntax PeelCapture(ExpressionSyntax expression)
+    {
+        while (true)
+        {
+            expression = Peel(expression);
+            if (expression is CastExpressionSyntax cast)
+            {
+                expression = cast.Expression;
+                continue;
+            }
+            return expression;
         }
     }
 
