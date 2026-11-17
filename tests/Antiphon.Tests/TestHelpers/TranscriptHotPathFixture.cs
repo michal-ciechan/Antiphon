@@ -133,6 +133,9 @@ internal sealed class TranscriptHotPathFixture : IAsyncDisposable
 
     public async Task<IReadOnlyList<CapturedTranscriptCommand>> MembershipAsync(int keys)
     {
+        // CARD-1888: each measurement overlaps the previous batch's prefix. Start it with a cold
+        // prefix memo (the bulk-mutation lease clears it) so the full identity probe is measured.
+        await using (await _provider.GetRequiredService<SessionStateStore>().BeginMutationAsync([SessionIds[0]], default)) { }
         Capture.Clear();
         var entries = Enumerable.Range(0, keys).Select(n => new SessionRunnerTranscriptEvent(
             SessionIds[0], n + 1, TranscriptKinds.AssistantText, n % 97 == 0 ? $"missing-{n}" : $"uuid-{n}", null,

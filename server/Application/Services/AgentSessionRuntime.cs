@@ -1123,7 +1123,7 @@ public sealed partial class AgentSessionRuntime
                         ? Result(TranscriptRecoveryOutcome.Unknown, "persist_failure_retained")
                         : Result(TranscriptRecoveryOutcome.CheckedWorking, "runner_working");
 
-                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, before, ct: ct);
+                var persisted = await PersistTranscriptCoreAsync(sessionId, snapshot.Entries, lease, before, ct: ct);
                 if (persisted.RecoveryFenceRejection is { } rejection)
                 {
                     _logger.LogWarning("Checked transcript recovery fence rejected session {SessionId}, generation {Generation}, reason {Reason}",
@@ -1371,7 +1371,7 @@ public sealed partial class AgentSessionRuntime
         {
             using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
             PersistResult result;
-            try { result = await PersistTranscriptCoreAsync(sessionId, entries, ct: ct); }
+            try { result = await PersistTranscriptCoreAsync(sessionId, entries, lease, ct: ct); }
             catch (OperationCanceledException)
             {
                 // Cancellation after a database commit can obscure its outcome. Reload under
@@ -1416,14 +1416,14 @@ public sealed partial class AgentSessionRuntime
         var boundary = new SessionRunnerTranscriptEvent(sessionId, 0, TranscriptKinds.SessionRestartBoundary,
             Guid.NewGuid().ToString("D"), null, _timeProvider.GetUtcNow(), "system",
             "Session relaunched; the previous turn had been interrupted mid-flight.", null, null, null, null, null);
-        var result = await PersistTranscriptCoreAsync(sessionId, [boundary], ct: ct);
+        var result = await PersistTranscriptCoreAsync(sessionId, [boundary], lease, ct: ct);
         await PublishCommittedAsync(lease, result);
         Actions().Hint(sessionId);
         return result.LastStoredSeq is not null;
     }
 
     private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries,
-        RecoveryObservation? expectedRecovery = null, ReceiptLaunchStamp? expectedReceipt = null, CancellationToken ct = default)
+        SessionStateStore.Lease? lease, RecoveryObservation? expectedRecovery = null, ReceiptLaunchStamp? expectedReceipt = null, CancellationToken ct = default)
     {
         using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "transcript.persist");
         if (entries.Count == 0)
@@ -1446,7 +1446,15 @@ public sealed partial class AgentSessionRuntime
             // killed reply routing after a relaunch (2026-07-23). Uuids come from the transcript
             // lines themselves, so they survive re-numbering, and history re-emitted on adoption
             // dedups cleanly. Entries without a uuid keep the old sequence-dedup.
-            var incomingUuids = entries.Where(e => e.Uuid is not null).Select(e => e.Uuid!).ToHashSet();
+            // CARD-1888: a snapshot replay is the previous snapshot plus a new tail. When the batch's
+            // leading entries digest to the session's prefix memo, only the tail UUIDs are probed.
+            // Null-UUID entries keep the sequence probe (D-6). Batches under MinEntries never digest.
+            var memo = entries.Count >= TranscriptIngestPrefix.MinEntries ? lease?.IngestPrefix : null;
+            var digests = lease is not null && entries.Count >= TranscriptIngestPrefix.MinEntries
+                ? TranscriptIngestPrefix.Compute(entries, memo?.Count ?? -1) : null;
+            var prefixCount = memo is not null && digests is not null && memo.Covers(digests) ? memo.Count : 0;
+            var recordCandidate = digests is not null && (memo is null || entries.Count >= memo.Count);
+            var incomingUuids = entries.Skip(prefixCount).Where(e => e.Uuid is not null).Select(e => e.Uuid!).ToHashSet();
             var incomingSeqs = entries.Where(e => e.Uuid is null).Select(e => e.Sequence).ToHashSet();
             // A catch-up snapshot can contain the whole history. Bound each index probe without
             // changing the (UUID, kind) identity or event order; one DbContext is used serially.
@@ -1462,6 +1470,9 @@ public sealed partial class AgentSessionRuntime
                 return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
 
             var seenUuids = prelude.Identities;
+            // A covered prefix entry is skipped the way a found-stored entry is.
+            foreach (var e in entries.Take(prefixCount))
+                if (e.Uuid is not null) seenUuids.Add((e.Uuid, e.Kind));
             foreach (var uuidBatch in uuidBatches.Skip(1))
             {
                 var existing = await db.TranscriptEntries
@@ -1558,7 +1569,10 @@ public sealed partial class AgentSessionRuntime
             }
 
             if (pending.Count == 0)
+            {
+                RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, ct);
                 return PersistResult.Empty with { AcceptedGeneration = startedAt };
+            }
 
             // Closure rows only. Ordinary batches do not take the session row lock.
             // The lock is the same AgentSessions FOR UPDATE the overlay insert holds
@@ -1580,6 +1594,7 @@ public sealed partial class AgentSessionRuntime
 
             if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
             _persistFailures.TryRemove(sessionId, out _);
+            RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, ct);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
                 with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = startedAt };
         }
@@ -1589,6 +1604,15 @@ public sealed partial class AgentSessionRuntime
             _logger.LogWarning(ex, "Failed to persist transcript entries for session {SessionId}", sessionId);
             return PersistResult.Empty with { NeedsReload = true };
         }
+    }
+
+    // CARD-1888 rule 4: only the clean commit and the all-duplicates return record the memo. The
+    // individual-row fallback, a fence rejection, a reload and a cancellation never do.
+    private static void RecordIngestPrefix(SessionStateStore.Lease? lease, bool candidate, int count,
+        TranscriptIngestPrefix.Digests? digests, CancellationToken ct)
+    {
+        if (lease is null || !candidate || digests is null || ct.IsCancellationRequested) return;
+        lease.IngestPrefix = new TranscriptIngestPrefix(count, digests.Full);
     }
 
     private static async Task AdmitActionsAsync(AppDbContext db, Guid sessionId,
