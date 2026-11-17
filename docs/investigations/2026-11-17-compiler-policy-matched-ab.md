@@ -2,7 +2,7 @@
 
 Verdict: **(b) policy 1 is materially slower. Cold `tests/Antiphon.Tests` builds take 2.2x as long (median paired ratio; ratio of medians 2.68x; median paired difference +300 s). Policy 1 was slower in all four cold pairs.** Do not flip the default on. Set the standing runner back to `0` until two defects are fixed. Neither defect is the 6-core cap by itself:
 
-1. **The heap cap is 4 GiB, not 100 MB, and the shared server dies at it.** `DOTNET_GCHeapHardLimit` is parsed as hexadecimal, so `100000000` means 0x100000000 = 4,294,967,296 bytes (witness below). The `Antiphon.Tests` compile needs more than that: the stock server peaked at 5.8 GB RSS. Every policy server that reached 4.4–4.6 GB RSS **disappeared while still busy**, burning about 5 cores in its last 30 s. That happened 6 times in 2 hours. An idle exit needs 120 s with no work. The build then went on for minutes with no policy server.
+1. **The heap cap is 4 GiB, not 100 MB, and the shared server dies at it.** `DOTNET_GCHeapHardLimit` is parsed as hexadecimal, so `100000000` means 0x100000000 = 4,294,967,296 bytes (witness below). The `Antiphon.Tests` compile needs more than that: the stock server peaked at 5.8 GB RSS. Every policy server that reached 4.4–4.6 GB RSS **disappeared while still busy**, burning about 5 cores in its last 30 s. That happened 9 times between 04:16Z and 06:26Z. An idle exit needs 120 s with no work. The build then went on for minutes with no policy server.
 2. **Every capped compiler is pinned to the lowest-numbered CPUs.** `SelectCpus` returns the first *grant* CPUs of the allowed set. So identities with grant 1, 4 and 6 all stack on CPU 0..N-1. One `cpus=0` server held 50 runnable threads on CPU 0 while CPUs 6–23 were 4% busy and load1 was 53.
 
 Warm builds (touch one `Antiphon.Tests` source file; the same 3 obj assemblies are rewritten each time): policy 1 is 1.71x (median paired ratio, n=3 pairs, +140 s). One pair was even (1.03x).
@@ -45,7 +45,7 @@ Times are UTC on 2026-11-17. "Slot" is the build-slot wait. "Gate" is the load-g
 | W3-A | 1 | 05:56:21 | 341.7 | 16.47 30.56 28.55 | 37.31 31.25 28.83 | 24.1 / 44.1 | 0 | 120 | 13 | 48 | 75 / 48 |
 | W3-B | 0 | 06:04:07 | 199.9 | 13.67 23.73 26.33 | 22.90 24.46 26.07 | 21.4 / 32.7 | 0 | 120 | 13 | 52 | 80 / 50 |
 | W4-B | 0 | 06:11:28 | 141.3 | 14.55 23.49 25.80 | 22.73 23.80 25.58 | 20.1 / 29.6 | 0 | 240 | 13 | 35 | 71 / 59 |
-| W4-A | 1 | W4A_START | W4A_EL | W4A_LS | W4A_LE | W4A_ML | W4A_SLOT | W4A_GATE | W4A_OTH | W4A_IDLE | W4A_CPU |
+| W4-A (invalid, see below) | 1 | 06:15:52 | 849.5 | 9.57 18.60 23.46 | 42.79 55.62 43.78 | 52.1 / 88.0 | 0 | 120 | 9 | 51 | 70 / 38 |
 
 ## Per cell
 
@@ -53,7 +53,7 @@ Times are UTC on 2026-11-17. "Slot" is the build-slot wait. "Gate" is the load-g
 |---|---:|---:|---:|---:|
 | cold, policy 1 | 4 | 675.8 | 541.4 | 841.5 |
 | cold, policy 0 | 4 | 251.8 | 191.9 | 501.9 |
-| warm, policy 1 | WARM1_N | WARM1_MED | WARM1_MIN | WARM1_MAX |
+| warm, policy 1 (valid) | 3 | 310.8 | 154.3 | 341.7 |
 | warm, policy 0 | 4 | 160.8 | 141.3 | 199.9 |
 
 Paired difference (policy 1 minus policy 0):
@@ -68,10 +68,12 @@ Paired difference (policy 1 minus policy 0):
 | W1 | +3.8 | 1.03 | 13.1 / 14.6 |
 | W2 | +139.6 | 1.82 | 19.9 / 8.4 |
 | W3 | +141.8 | 1.71 | 16.5 / 13.7 |
-| W4 | W4_DIFF | W4_RATIO | W4_LOAD |
-| **warm median** | **WARM_MEDDIFF** | **WARM_MEDRATIO** (ratio of medians WARM_ROM) | |
+| W4 | (+708.2, invalid) | (6.01, invalid) | 9.6 / 14.6 |
+| **warm median, 3 valid pairs** | **+139.6** | **1.71** (ratio of medians 1.93) | |
 
 Every paired sign is positive: policy 1 was never faster.
+
+**W4-A is excluded.** My own commit of this note landed at 06:16Z, while W4-A was starting (06:15:52Z). `Directory.Build.props:32` (`SetSourceRevisionIdFromGit`) stamps the HEAD SHA into `AssemblyInformationalVersion`, so W4-A rewrote 40 obj assemblies instead of the 3 in every other warm build. It is a near-cold build, not a matched warm one. The time box did not allow a repeat. The warm decision rests on 3 valid pairs. W4-A still shows the mechanism: policy server 18230 vanished while busy at 4489 MB (06:18:54Z), there was no policy server for 06:19–06:22Z, the next server reached 4403 MB by 06:25:25Z and was gone by 06:25:55Z, and 41–56 runnable threads were pinned to CPU 0 at load1 64 while CPUs 6–23 were 16–26% busy.
 
 ## Load covariate
 
@@ -95,6 +97,8 @@ C3-B (policy 0, 502 s) is the slow stock outlier. During it the stock server `lr
 | 24601 | 05:25:18 | 05:30:18 | 4509 | 130 s | gone while busy, during C4-A |
 | 12681 | 05:31:18 | 05:42:20 | 4597 | 150 s | gone while busy, after 11 min oscillating 2.6–4.6 GB (GC at the limit) |
 | 4531 | 05:43:50 | 05:49:21 | 4560 | 152 s | gone while busy, during W2-A |
+| 18230 | 06:16:24 | 06:18:54 | 4489 | 122 s | gone while busy, during W4-A |
+| 19656 | 06:22:25 | 06:25:25 | 4403 | 103 s | gone while busy, during W4-A |
 
 For contrast, the stock servers (`lr8A_…`, affinity 0–23, no heap cap) peaked at **5849 MB** (pid 4395, C4-B, up to 858% CPU) and 5278 MB (pid 28759). Both ended idle, with no CPU in the last interval and RSS trimmed before exit.
 
@@ -128,7 +132,7 @@ The 6-core cap on one shared server does serialise. The worst part is that every
 
 ## Verdict and the change
 
-**(b) Materially slower: cold 2.2x (median paired, +300 s), warm WARM_MEDRATIO x.** Default-on is not supported on speed. Recommendation: **revert the standing runner to `0` now** (operator action: the saved `stack.env` value `ANTIPHON_LINUX_COMPILER_POLICY=0`, then a named-phase recreate). Leave the defaults as they are: `docker-compose.server2-runner.yml:67` `:-0` and `scripts/c590-remote.sh:1133` `RUNNER_LINUX_COMPILER_POLICY_DEFAULT=0`.
+**(b) Materially slower: cold 2.2x (median paired, +300 s), warm 1.71x (median paired, +140 s, 3 valid pairs).** Default-on is not supported on speed. Recommendation: **revert the standing runner to `0` now** (operator action: the saved `stack.env` value `ANTIPHON_LINUX_COMPILER_POLICY=0`, then a named-phase recreate). Leave the defaults as they are: `docker-compose.server2-runner.yml:67` `:-0` and `scripts/c590-remote.sh:1133` `RUNNER_LINUX_COMPILER_POLICY_DEFAULT=0`.
 
 Re-trial only after a tune. In order of value:
 
