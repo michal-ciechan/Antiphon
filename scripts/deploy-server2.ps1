@@ -68,6 +68,15 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $runId = 'c727' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $evidenceRoot = Join-Path $repoRoot ('.antiphon/rolling-server2/' + $runId)
 New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+if ($Phase -eq 'retire-temp') {
+    # Informational only. This line does not change a refusal. The longest derived
+    # path is the proof directory: evidence root, exchange-<32 hex>, then
+    # c1008-proof-<operation>-<10 unix digits>-<32 hex>.
+    $longestLeaf = 'c1008-proof-c1008' + ('f' * 32) + '-' + ('9' * 10) + '-' + ('f' * 32)
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $longestDerived = $repoRoot + $sep + '.antiphon' + $sep + 'rolling-server2' + $sep + ('c727' + ('f' * 12)) + $sep + ('exchange-' + ('f' * 32)) + $sep + $longestLeaf
+    Write-Output ('path-length export-root=' + $repoRoot.Length + ' longest-derived=' + $longestDerived.Length)
+}
 
 function Invoke-HostJq {
     param([ValidateSet('check', 'provision')][string]$Mode, [string]$ExecutingPhase)

@@ -369,10 +369,12 @@ function Invoke-C1609RetirementCoordinator {
     $psi=[Diagnostics.ProcessStartInfo]::new('ssh');$psi.UseShellExecute=$false
     $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
     foreach($arg in @('-o','BatchMode=yes','-o','ConnectTimeout=30','-o','ServerAliveInterval=30','-o','ServerAliveCountMax=240','mc@server2',$Remote)){[void]$psi.ArgumentList.Add($arg)}
+    $startDirectory=Get-C1609StartDirectory
+    if($startDirectory){$psi.WorkingDirectory=$startDirectory}
     $proc=[Diagnostics.Process]::new();$proc.StartInfo=$psi;$started=$false;$code=2
     $watch=[Diagnostics.Stopwatch]::StartNew();$networkMs=0L;$previousDirectory='';$previousDigest='none'
     $objectDigest=Get-C1008Sha256 ''; $nonces=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $lineBuffer='';$exitedAt=$null;$phaseBinding='';$failureLine=0
+    $lineBuffer='';$exitedAt=$null;$phaseBinding='';$failureLine=0;$failureScript='';$failureReason='';$script:C1609LiveProofReason=''
     try {
         [void]$proc.Start();$started=$true;$proc.StandardInput.NewLine="`n"
         $streams=@(@{reader=$proc.StandardOutput;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$true},
@@ -449,11 +451,18 @@ function Invoke-C1609RetirementCoordinator {
             [Threading.Thread]::Sleep(10)
         }
         if(-not $proc.WaitForExit(2000)){throw 'exit'};$code=$proc.ExitCode
-    } catch { $code=2;$failureLine=[int]$_.InvocationInfo.ScriptLineNumber }
+    } catch {
+        $code=2
+        $failureLine=[int]$_.InvocationInfo.ScriptLineNumber
+        $failureScript=[IO.Path]::GetFileName([string]$_.InvocationInfo.ScriptName)
+        $reason=[string]$_.Exception.Message
+        if($failureScript -ceq 'c1609-host-proof.ps1' -and $script:C1609LiveProofReason -cmatch '^[a-z][a-z-]{0,31}$'){$reason=$script:C1609LiveProofReason}
+        $failureReason=if($reason -cmatch '^RecycleGitAuditUnknown'){'git'}elseif($reason -cmatch '^[a-z][a-z-]{0,31}$'){$reason}else{'other'}
+    }
     finally {
         if($started){try{$proc.StandardInput.Close()}catch{};if(-not $proc.HasExited){$proc.Kill($true);[void]$proc.WaitForExit(2000)}}
         $proc.Dispose()
-        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"+'failure-line='+$failureLine+"`n"))
+        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"+'failure-line='+$failureLine+"`n"+'failure-script='+$failureScript+"`n"+'failure-reason='+$failureReason+"`n"))
     }
     return $code
 }
