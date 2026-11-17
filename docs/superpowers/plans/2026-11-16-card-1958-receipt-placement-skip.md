@@ -49,7 +49,7 @@ Deliberate mutants belong to SourceLanding Mutation; operator waived execution.
 
 ### Checkpoints
 
-All rows serial. Final run CP-1..CP-8; red-first selection CP-1 before repair.
+All rows serial. Final run CP-1..CP-9; red-first selection CP-1 before repair.
 Use CLI `--row-timeout 9m --parallel 1`; the public tool invocation also carries
 `--timeout 570s` as required by the brief. The existing tool constructs its child
 argv itself; the nine-minute row cap bounds those inherited children.
@@ -64,6 +64,12 @@ argv itself; the nine-minute row cap bounds those inherited children.
 | CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-4 | all listed, 0 failed; C1210 placement skip allowed only with recorded non-Windows host | 114 | 3 | true |
 | CP-7 | all | CP-1 | roster-callers | `/*/*/(CardFilePrivacyGitTests*)\|(CardFilePrivacyPathTests*)/*` | R-3 | all listed, 0 failed; six Windows junction variants skip on Linux | 1 | 3 | true |
 | CP-8 | all | n/a | placement-cli | `pwsh -NoProfile -File scripts/test-checkpoint-placement-skip.ps1 -Label checkpoint` | V-1,V-2,V-3,V-4,M-1 | five synthetic receipt cases, 0 assertion failures | n/a | 1 | true |
+| CP-9 | all | CP-1 | release-impact | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-4 | all listed, 0 failed | 1 | 2 | true |
+
+The full task-range selector additionally names ReleaseImpactEnvelopeTests for
+the regenerated index (CP-9), and test-lane-category (already whole in CP-6).
+It reports no capped/owed classes or Windows-only filter. No selector input or
+selection row is changed by this task.
 
 The derived reverse edges for WindowsUnitSkipRoster select CP-7. The hand
 native-linux-gate-roster row selects C1210_Roster_closure_matches_source_gates,
