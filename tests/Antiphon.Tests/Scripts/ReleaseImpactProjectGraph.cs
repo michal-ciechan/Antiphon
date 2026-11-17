@@ -275,21 +275,52 @@ internal static class ReleaseImpactProjectGraph
     }
 
     // A reflective callable that escapes as a value is unresolved at the capture site.
-    // Direct invocations stay on the call walk above. Casts and parentheses peel to the method group.
+    // Every method-group name that is not itself being invoked is classified, whatever
+    // syntax position holds it. Direct invocations stay on the call walk above.
     private static bool CapturesReflectiveCallable(SyntaxNode root, ReflectionBindings bindings)
     {
         foreach (var node in root.DescendantNodes())
         {
-            ExpressionSyntax? value = node switch
-            {
-                EqualsValueClauseSyntax equals => equals.Value,
-                AssignmentExpressionSyntax assignment when assignment.IsKind(SyntaxKind.SimpleAssignmentExpression) => assignment.Right,
-                ReturnStatementSyntax returned => returned.Expression,
-                ArrowExpressionClauseSyntax arrow => arrow.Expression,
-                ArgumentSyntax argument => argument.Expression,
-                _ => null,
-            };
-            if (value is not null && IsReflectiveMethodGroup(value, bindings)) return true;
+            if (!IsUninvokedCallableName(node) || IsNameofOperand(node)) continue;
+            if (node is ExpressionSyntax expression && IsReflectiveMethodGroup(expression, bindings)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsUninvokedCallableName(SyntaxNode node)
+    {
+        if (node is not (MemberAccessExpressionSyntax or MemberBindingExpressionSyntax or IdentifierNameSyntax or GenericNameSyntax))
+            return false;
+        if (node.Parent is InvocationExpressionSyntax invocation && invocation.Expression == node)
+            return false;
+        if (node.Parent is MemberAccessExpressionSyntax access && access.Name == node)
+            return false;
+        if (node.Parent is MemberBindingExpressionSyntax binding && binding.Name == node)
+            return false;
+        // The receiver of a longer member access is not itself a method group.
+        if (node.Parent is MemberAccessExpressionSyntax outer && outer.Expression == node)
+            return false;
+        if (node.Parent is ConditionalAccessExpressionSyntax conditional && conditional.Expression == node)
+            return false;
+        // A name being bound is not a method group: `with { Load = ... }`, `Load: value`.
+        if (node.Parent is AssignmentExpressionSyntax assignment && assignment.Left == node)
+            return false;
+        if (node.Parent is NameEqualsSyntax nameEquals && nameEquals.Name == node)
+            return false;
+        if (node.Parent is NameColonSyntax nameColon && nameColon.Name == node)
+            return false;
+        return true;
+    }
+
+    private static bool IsNameofOperand(SyntaxNode node)
+    {
+        for (SyntaxNode? current = node.Parent; current is not null; current = current.Parent)
+        {
+            if (current is InvocationExpressionSyntax invocation
+                && invocation.Expression is IdentifierNameSyntax name
+                && name.Identifier.ValueText == "nameof")
+                return invocation.Span.Contains(node.Span);
+            if (current is MemberDeclarationSyntax) break;
         }
         return false;
     }
@@ -305,21 +336,19 @@ internal static class ReleaseImpactProjectGraph
                 var method = member.Name.Identifier.ValueText;
                 var receiverExpression = Peel(member.Expression);
                 var expanded = ExpandReceiver(receiverExpression, receiverExpression.ToString(), bindings);
-                return expanded is not null && IsReflectiveType(expanded)
-                    && IsUnrecognisedReflection(method, 1, expanded, bareStaticReflective: false);
+                return IsUnrecognisedReflection(method, 1, expanded, bareStaticReflective: false);
             }
             case MemberBindingExpressionSyntax binding:
             {
                 var method = binding.Name.Identifier.ValueText;
                 var receiverExpression = expression.Parent is ConditionalAccessExpressionSyntax access ? Peel(access.Expression) : null;
                 var expanded = ExpandReceiver(receiverExpression, receiverExpression?.ToString(), bindings);
-                return expanded is not null && IsReflectiveType(expanded)
-                    && IsUnrecognisedReflection(method, 1, expanded, bareStaticReflective: false);
+                return IsUnrecognisedReflection(method, 1, expanded, bindings.HasReflectiveStaticUsing && receiverExpression is null);
             }
-            case IdentifierNameSyntax name when bindings.HasReflectiveStaticUsing:
-                return IsUnrecognisedReflection(name.Identifier.ValueText, 1, null, bareStaticReflective: false);
-            case GenericNameSyntax generic when bindings.HasReflectiveStaticUsing:
-                return IsUnrecognisedReflection(generic.Identifier.ValueText, 1, null, bareStaticReflective: false);
+            case IdentifierNameSyntax name:
+                return IsUnrecognisedReflection(name.Identifier.ValueText, 1, null, bindings.HasReflectiveStaticUsing);
+            case GenericNameSyntax generic:
+                return IsUnrecognisedReflection(generic.Identifier.ValueText, 1, null, bindings.HasReflectiveStaticUsing);
             default:
                 return false;
         }
