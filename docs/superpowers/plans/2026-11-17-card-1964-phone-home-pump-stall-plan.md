@@ -2,6 +2,14 @@
 
 Plan task 6652bca1 (Opus), 2026-11-17. This is a plan only. No code, setting, restart or host was touched.
 
+**Amendment 1** (plan task 2bef90c6, Opus, 2026-11-17) answers round-1 review 21daa066 (Grok,
+`f5ed3feabbc9e4d7ea10d80b9dac639e7249f3c4`, `docs/superpowers/reviews/2026-11-17-card-1964-plan-review.md`). It re-reads
+master `300c8a99d0d267a39791410b7540189ab702f251` (unchanged). B-1: the watchdog is now a state machine that cancels at
+most once per window, and every applied restart opens a new window (Watchdog, V-4, V-11). B-2: `catch_up_list_budget` is
+witnessed only on a stalled send gate (V-10). V-7 stays a plain eligibility guard, and V-4 asserts only what a silent
+List can show. B-3: every checkpoint Min is re-derived from the classes (CP-7 is 27). Four advisories are applied: the
+next-cycle gate sentence, the events-stopped boundary of D-2, the L2 cardinality wording and the CARD-1960 file list.
+
 - **Read at:** master `300c8a99d0d267a39791410b7540189ab702f251`. Every line citation below is at that SHA.
 - **rc line:** `origin/rc/2026-11-24` tip `870a93d21f2b18c85a8b0905ab689b28e3099813` is the running desktop server. The seven
   files this slice touches or reads are byte-identical there (`git diff --stat` is empty).
@@ -43,6 +51,13 @@ Plan task 6652bca1 (Opus), 2026-11-17. This is a plan only. No code, setting, re
     recorded disconnect. The connection's observer group never stopped (G-4), and the runner closes the socket on overflow
     (G-11). So every transcript frame the runner sent during the expiry was delivered in order to the running observers.
     Re-fetching duplicates the stream, and it is the path that reaches the session gate (G-3).
+  - *Boundary (amendment 1):* this argument covers frames the runner put on the socket. If the runner's events also
+    stopped during the expiry, List-only re-recovery does not fetch transcript frames the runner never sent. An event
+    queue overflow still closes the socket (G-11), so that case is a reconnect and runs the full catch-up. A quiet gap
+    on a live socket is left to the existing on-demand transcript pull (`AgentSessionRuntime.CatchUpTranscriptAsync`)
+    and receipt readiness (`AgentSessionRuntime.ReceiptReadiness.cs:85-96`). The pump does not run those for every
+    listed session. D-3 already accepts eligibility from the completed List, and each listed session's seat stays
+    occupied. F-3 ships List-only with no rollback setting.
   - *Rejected:* keeping the transcript pass with deadlines. Every expiry would pay N fetches plus persists under exactly
     the load that caused it.
 - **D-3 A session step that times out skips that session.** The step is owner lookup, transcript fetch or persist, on a
@@ -106,6 +121,24 @@ CTS, with no timer. `budgetToken` is `attemptToken` plus `CatchUpTimeoutSeconds`
 The pump records the current step in the attempt as one of `hold`, `list`, `owner`, `transcript.fetch`,
 `transcript.persist` or `refresh`. L6 and the tests read it.
 
+**Which List failure gets which code (amendment 1, B-2).** A List whose reply never comes ends at the connection's
+60 s reply timer, which `RequestAsync` arms right after the write (`PhoneHomeLiveConnection.cs:434-446`). Both timers
+run on `live.Clock`, so that 60 s timer always fires before the 90 s step budget. The Warning keeps its existing
+`RequestTimeout` code, unchanged. The step budget is what bounds a List that never reaches that timer: one stuck in
+`_send.WaitAsync(ct)` (`:410`), in `beforeWrite` (`:412-413`) or in the write itself (`:414`). Only such a List logs
+`catch_up_list_budget` (or `refresh_list_budget`). V-10 witnesses both codes with a stalled send gate. The pump's
+List catch must turn an `OperationCanceledException` from the step or budget token into the budget code while the
+stopping token is not cancelled. Today that filter (`:361`) rethrows every `OperationCanceledException`.
+
+**A later persist never joins an abandoned one (amendment 1).** The next connect catch-up's persist of the same
+session gets a new step token and its own `WaitAsync`. The observer's `ObserveTranscriptAsync` (`:449`) keeps its own
+token. Neither awaits the abandoned task. An abandoned persist is not retried on the lease-refusal
+turn. Lease re-recovery is List-only (D-2), so it never re-enters persist. The persist is also not started again on
+any watchdog poll, because the watchdog only cancels and flags (Watchdog). One limit remains. An abandoned persist that
+was cancelled after it acquired the gate keeps the gate until `lease.ReconcileAsync(false, CancellationToken.None)`
+(`AgentSessionRuntime.cs:1363`) returns. Until then, the observer that shares that gate can still wait on it. That
+wait lasts as long as the gate is held today by a persist in progress. Fix 4 (E-4) owns that bound.
+
 ### Fail-safe invariants
 
 The tests below pin each of these.
@@ -125,29 +158,100 @@ The tests below pin each of these.
 
 ### Watchdog
 
-- **Where it runs.** `PhoneHomeRecoveryPump.ExecuteAsync` starts `WatchdogLoopAsync(stoppingToken)` when
-  `RecoveryWatchdogIntervals > 0`. The loop runs `RunWatchdogOnce()` every `RecoveryWatchdogPollSeconds` of real time, and
-  the `finally` at `:79-89` joins it. Each decision reads the connection's own `live.Clock`, so tests call
-  `RunWatchdogOnce()` directly with a fake clock.
-- **Window.** `RecoveryWatchdogIntervals × (InventoryRefreshSeconds > 0 ? InventoryRefreshSeconds : 30)`. With the defaults
-  that is 6 × 30 = 180 s.
-- **Triggers.** These apply per runner, for a current, socket-open connection.
-  - `no_list`: no List completed on this connection (catch-up or refresh) within the window. The window counts from the
-    later of the last successful List and the time the pump first saw the connection. `ConnectionState.LastListAt` is set
-    in `ReadInventoryAsync` on success.
-  - `attempt_overrun`: an attempt has been in flight longer than `CatchUpTimeoutSeconds + CatchUpListTimeoutSeconds`
-    (390 s). Once the budgets are in place this happens only if something outside them parks the loop.
-- **Action.** "Restart the cycle without dropping the connection" means:
-  - log L6 (once per window);
-  - cancel the in-flight attempt's watchdog CTS (thread-safe);
-  - set `cycle.RestartRequested`.
+This section was rewritten by amendment 1 (B-1). The round-1 text cancelled the replacement attempt on every poll once
+`no_list` was true, because a restart did not move the window.
 
-  On its next turn for that runner, the loop then:
-  - clears `NextCatchUp`, so it re-attempts at once;
-  - detaches a `Refresh` task that has not completed, observing its fault at Debug, so a new refresh can start;
-  - resets the refusal log timer.
+- **Where it runs.** `PhoneHomeRecoveryPump.ExecuteAsync` starts `WatchdogLoopAsync(stoppingToken)` only when
+  `RecoveryWatchdogIntervals > 0` **and** `RecoveryWatchdogPollSeconds > 0`. The loop runs `RunWatchdogOnce()` every
+  `RecoveryWatchdogPollSeconds` of real time, and the `finally` at `:79-89` joins it.
+  - **`RecoveryWatchdogPollSeconds <= 0` leaves the watchdog loop stopped.** That is the documented off switch for the
+    loop. The recovery pump itself keeps running, with its step and catch-up budgets.
+  - `RecoveryWatchdogIntervals <= 0` also leaves the loop stopped, and makes `RunWatchdogOnce()` return at once.
+  - Each decision reads the connection's own `live.Clock`, so tests call `RunWatchdogOnce()` directly with a fake clock.
+- **Bounds used below.** Each bound uses its setting, or a stand-in when the setting is disabled:
 
-  It **never** touches `cycle.Pump`, `PumpStop` or `Recovered`, the socket, `Disconnect`, or `DispatchEligible`.
+  | Name | Value | Default |
+  |---|---|---|
+  | `RefreshBasis` | `InventoryRefreshSeconds`, or 30 when that is `<= 0` | 30 s |
+  | `ListBound` | `CatchUpListTimeoutSeconds`, or 60 (the List reply timer) when that is `<= 0` | 90 s |
+  | `CatchUpBound` | `CatchUpTimeoutSeconds`, or 300 when that is `<= 0` | 300 s |
+  | `WindowSeconds` | `max(RecoveryWatchdogIntervals × RefreshBasis, ListBound + CatchUpRetrySeconds + max(0, RecoveryWatchdogPollSeconds) + 30)` | `max(6 × 30, 90 + 5 + 10 + 30)` = `max(180, 135)` = 180 s |
+  | `OverrunLimit` | `CatchUpBound + ListBound` | 390 s |
+
+  The floor in `WindowSeconds` keeps a small `RecoveryWatchdogIntervals` from opening a window shorter than one List
+  attempt plus its retry. A disabled budget never yields a zero limit.
+- **State.** All watchdog state is per connection, in `ConnectionState`, so a new connection starts clean. The loop and
+  the watchdog task share it, so every field is read and written under the new `ConnectionState.WatchLock`.
+
+  | Field | Type | Written by | Meaning |
+  |---|---|---|---|
+  | `FirstSeenAt` | `DateTimeOffset` | `StateFor`, when it creates the state, from `live.Clock` | The pump's first sight of this connection. |
+  | `LastListAt` | `DateTimeOffset?` | `ReadInventoryAsync` on success (catch-up and refresh) | The last completed List. |
+  | `LastRestartAt` | `DateTimeOffset?` | The loop, when it applies a restart | The start of the window that restart opened. |
+  | `FiredWindowStart` | `DateTimeOffset?` | The watchdog, on a `no_list` fire | The window start that has already fired. |
+  | `RestartRequested` | `bool` | Set by the watchdog, cleared by the loop | A restart is pending. |
+  | `AttemptId` | `long` | The loop, +1 at each attempt start | The identity of the current attempt. |
+  | `AttemptStartedAt` | `DateTimeOffset?` | The loop; null when no catch-up attempt is in flight | |
+  | `AttemptStep` | `string` | The loop and the refresh | `none`, `hold`, `list`, `owner`, `transcript.fetch`, `transcript.persist` or `refresh`. |
+  | `AttemptCts` | `CancellationTokenSource?` | The loop, at attempt start; disposed and nulled at attempt end | The watchdog CTS linked into `attemptToken`. |
+  | `OverrunFiredAttemptId` | `long` | The watchdog, on an `attempt_overrun` fire | The attempt already cancelled for overrun. |
+
+  - `refresh` is reported while a refresh List is in flight and no catch-up attempt is. A refresh is not an attempt: it
+    has no `AttemptStartedAt` and no `AttemptCts`. Its own List budget bounds it, and an applied restart detaches it.
+  - The window start is `W = max(FirstSeenAt, LastListAt, LastRestartAt)`, where a null field does not count.
+- **States and what one poll does.** `RunWatchdogOnce()` takes each runner in `RemoteRunnerIds` with its current
+  `SnapshotLive` connection, and acts on at most one trigger per runner per poll.
+
+  | State | Condition | What the poll does |
+  |---|---|---|
+  | **Off** | `RecoveryWatchdogIntervals <= 0` | Returns at once. |
+  | **Skip** | No current connection, or the socket is not open. Or the runner is `DispatchEligible`, `InventoryRefreshSeconds <= 0` and no attempt is in flight. | Nothing. An eligible runner with refresh off is expected to make no List, so `no_list` there would be a false alarm (V-11). |
+  | **Watching** | `RestartRequested` is false | It checks two triggers in order and fires on the first that holds. **1. `attempt_overrun`:** `AttemptStartedAt` is set, `now − AttemptStartedAt > OverrunLimit`, and `OverrunFiredAttemptId ≠ AttemptId`. It sets `OverrunFiredAttemptId = AttemptId`. **2. `no_list`:** `now − W ≥ WindowSeconds` and `FiredWindowStart ≠ W`. It sets `FiredWindowStart = W`. If neither holds, it does nothing. |
+  | **Pending** | `RestartRequested` is true | Nothing. It writes no log line and cancels nothing. |
+
+  - **Fire** (Watching → Pending) does three things: log L6 once, cancel `AttemptCts` if it is not null, and set
+    `RestartRequested = true`.
+    - For L6, `{SinceListSeconds}` is `now − max(FirstSeenAt, LastListAt)`, the real time without a List.
+      `{LimitSeconds}` is `WindowSeconds` or `OverrunLimit`.
+    - The cancelled attempt returns through its `WaitAsync(attemptToken)` (D-1), so this runner's turn is no longer
+      blocked.
+  - **Apply** (Pending → Watching) happens in `RunOneAsync`, after the live and socket checks and before the
+    `recoveringLease` branch, so an eligible runner's stuck refresh is handled too. Under the lock, if
+    `RestartRequested` is set, the loop:
+    - sets `RestartRequested = false` and `LastRestartAt = now`;
+    - clears `NextCatchUp`, so it re-attempts at once, on this same turn;
+    - detaches a `Refresh` task that has not completed, observing its fault at Debug, so a new refresh can start;
+    - resets the refusal log timer.
+
+    Then `W = LastRestartAt = now`. That is later than the fired window start, because that fire needed
+    `now − W_old ≥ WindowSeconds > 0`. So a new window opens, and it can fire once.
+  - The loop and the watchdog **never** touch `cycle.Pump`, `PumpStop` or `Recovered`, the socket, `Disconnect`, or
+    `DispatchEligible`. Every eligibility change still goes through `MarkRecovered` or `TryRecoverLease` after a
+    completed List (I-1).
+- **P-1: a replacement attempt gets its full List budget.** The loop applies a restart and starts the replacement
+  attempt in the same `RunOneAsync` turn, at time `R`. From then on `W ≥ R`. `no_list` needs `now − W ≥ WindowSeconds`,
+  so its earliest cancel is at `R + WindowSeconds`. A later poll can only make it later. The replacement's List ends by
+  `R + ListBound`: it completes, or fails at the 60 s reply timer, or fails at its budget. `attempt_overrun` cannot
+  cancel it earlier either, since `OverrunLimit > ListBound`. The required inequality is therefore
+  `WindowSeconds > ListBound`. The floor guarantees more than that:
+  `WindowSeconds ≥ ListBound + CatchUpRetrySeconds + RecoveryWatchdogPollSeconds + 30`. With the defaults that is
+  `180 ≥ 90 + 5 + 10 + 30 = 135 > 90`, which leaves 90 s of margin. For a silent reply (60 s), a second attempt also fits
+  (`60 + 5 + 60 = 125 < 180`).
+- **P-2: a List that can never complete is retried at a bounded rate.**
+  - A `no_list` fire needs `FiredWindowStart ≠ W` and `now − W ≥ WindowSeconds`. Every applied restart sets
+    `W = R`. An `attempt_overrun` fire needs an attempt that started at or after `R` and ran past `OverrunLimit`. So two
+    watchdog cancels on one connection are at least `min(WindowSeconds, OverrunLimit)` apart: 180 s by default, and never
+    under 135 s, since `OverrunLimit ≥ 60 + 300`. That is at most one L6 Error and one cancel per window.
+  - `attempt_overrun` fires at most once per attempt. Pending suppresses both triggers until the loop applies the
+    restart, so a parked loop gets no repeated log or cancel either.
+  - Between fires, the existing pacing holds. Every failed attempt sets `NextCatchUp = now + CatchUpRetrySeconds`
+    (`:190-193`), and a silent List lasts until its 60 s reply timer or its 90 s budget. The watchdog adds at most one
+    immediate attempt, by clearing `NextCatchUp`, per window.
+  - There is no tight cancel loop. A runner whose List never completes logs one L6 Error and gets one watchdog
+    cancel every `WindowSeconds`, plus the existing per-attempt Warning about every 65 s.
+- **Pending while another runner holds the loop.** The loop is serial (G-1). Another runner's attempt can delay the
+  apply, but only by that attempt's own bounded time (at most `OverrunLimit`). During that delay this runner's poll is a
+  no-op. E-6 removes the cross-runner delay.
 
 ### Settings
 
@@ -159,8 +263,8 @@ and a value of zero or less disables it.
 | `CatchUpListTimeoutSeconds` | 90 | The List reply timer is 60 s. The extra 30 s covers the send-gate wait and the write, which are outside it. |
 | `CatchUpSessionTimeoutSeconds` | 30 | Observed slow phases under the incident load were 1.0-3.5 s (output.activity max 3.0 s, output.publish 3.5 s, transcript.persist 1.03 s). 30 s is about 8x the worst. Transcript fetch p95 is UNOBSERVED (F-1). |
 | `CatchUpTimeoutSeconds` | 300 | One List (90) plus about 7 slow sessions at 30 s. Capacity is 10. Most sessions take seconds. |
-| `RecoveryWatchdogIntervals` | 6 | 180 s with the 30 s refresh: two full List budgets plus retries before an Error. |
-| `RecoveryWatchdogPollSeconds` | 10 | Cheap in-memory checks. |
+| `RecoveryWatchdogIntervals` | 6 | 180 s with the 30 s refresh: two full List budgets plus retries before an Error. The effective window never drops below `ListBound + CatchUpRetrySeconds + RecoveryWatchdogPollSeconds + 30` (135 s with the defaults), so a replacement attempt always gets its full List budget (Watchdog, P-1). |
+| `RecoveryWatchdogPollSeconds` | 10 | Cheap in-memory checks. A value of zero or less leaves the watchdog loop stopped, and the pump keeps running. |
 | `RecoveryRefusalLogSeconds` | 60 | Matches `DesktopCapabilitiesFailureLogSeconds` (60). |
 
 The lease length (90 s) and the heartbeat interval (15 s) are **unchanged**.
@@ -168,8 +272,9 @@ The lease length (90 s) and the heartbeat interval (15 s) are **unchanged**.
 ### Log lines
 
 All lines are structured templates. Cardinality is bounded: `RunnerId` comes from configured runners, `Epoch` is an int,
-every `{Step}`/`{Reason}`/`{Stage}`/`{Trigger}`/`{Code}` is from a fixed set, and `SessionId` is at most the listed
-sessions (no more than capacity). The lines carry no payload, ticket, shared secret, transcript text or runner error
+every `{Step}`/`{Reason}`/`{Stage}`/`{Trigger}`/`{Code}` is from a fixed set, and `SessionId` is a session from the
+runner's List reply: at most one L2 line per listed session per catch-up. That List is not capped by the capacity setting
+(amendment 1). The lines carry no payload, ticket, shared secret, transcript text or runner error
 detail. Only `ProblemCode` codes appear, as today.
 
 - **L1** (Warning, `PhoneHomeRunnerDirectory`, after the lock in both `ReadSnapshot` callers, `SnapshotOf` and `GetLiveStoreId`, once per eligible-to-ineligible flip):
@@ -228,15 +333,17 @@ Every log assertion also checks that no captured message contains `host.Secret` 
 | V-1 | `Lease_rerecovery_requires_only_the_list_while_a_session_gate_is_held` | Setup: DB world. One owned session S is listed with a transcript. Initial cycle leaves the runner eligible. Then: hold S's gate, expire (advance 91 s), heartbeat. **Green:** the cycle returns true within 5 s, the runner is eligible, the Transcript request count is unchanged since the initial recovery, and there is one L5. | `recoveringLease` runs the full `CatchUpAsync` (G-4). The S fetch answers, then `:388` waits on S's gate with no token (G-3). `cycle.WaitAsync(5 s)` throws `TimeoutException`. This is the incident's likeliest mechanism. |
 | V-2 | `Connect_catch_up_skips_a_session_whose_gate_never_opens` | Setup: DB world, new connection. Sessions are listed B (gate held) then G. After `NextGateWait` fires for B, advance `CatchUpSessionTimeoutSeconds`+1. **Green:** cycle true, eligible, G's entry persisted, one L2 naming B with step `transcript.persist`, `LastCatchUpUnverifiedSessions == 1`, and B still in the connection's known-live inventory (I-4). | Same un-timed gate wait at `:388`. Moving the clock forward does not matter at base, so the cycle never completes and the test times out. |
 | V-3 | `Connect_catch_up_bounds_a_transcript_fetch_that_never_answers` | Setup: DB world. Sessions B (Transcript silent via `SilentWhen`) then G. After B's request arrives, advance 31 s. **Green:** cycle true, eligible, G persisted, one L2 naming B with step `transcript.fetch`. | At base the only bound on B's fetch is `RequestTimeoutFor(Transcript)` = 60 s (`PhoneHomeLiveConnection.cs:371`). At +31 s it has not fired, so G is never requested and the cycle does not complete within 5 s. |
-| V-4 | `Silent_list_trips_the_watchdog_once_and_recovery_follows_the_answer` | Setup: no DB, refresh 0, window 180 s. Expire, heartbeat, `SilentFor(List)`. One attempt times out (existing Warning). Advance the clock past 180 s since the last List, with a heartbeat to keep the lease fresh. Then call `RunWatchdogOnce` twice. **Green:** exactly one L6 with `no_list` and limit 180. Then `Speak(List)`, advance the retry, heartbeat; the cycle returns true, the runner is eligible, and there is one L5. | The red is the L6 assertion: the base seam is a no-op, and no such line exists anywhere. Eligibility after the answer is already green at base (G-2), and the test keeps it as a guard. |
+| V-4 | `Silent_list_trips_the_watchdog_once_per_window_and_recovery_follows_the_answer` (amendment 1, B-1 and B-2) | Setup: no DB, refresh 0, window 180 s. Every advance below is in steps under the 90 s lease with a heartbeat after each, except the expiry itself. T0 is the initial recovery List. (1) Expire (advance 91 s, `SnapshotLive`), heartbeat, `SilentFor(List)`. Run cycle 1, wait for the List and 100 ms, advance 61 s: cycle 1 returns false, and its catch-up List Warning has `{Code}` = `RequestTimeout` (the 60 s reply timer, not a budget code). (2) Advance to T0+181 s. Call `RunWatchdogOnce` twice: **exactly one** L6 with `no_list` and limit 180. The second poll is Pending and logs and cancels nothing. (3) Run cycle 2, which applies the restart at R and sends List 2 at once. Wait for it and 100 ms, advance 30 s, call `RunWatchdogOnce`: still one L6, and after 200 ms cycle 2 has **not** completed. Advance 31 s: cycle 2 returns false, and its Warning `{Code}` is `RequestTimeout`, not `watchdog_restart`, so the replacement kept its List budget (P-1). (4) Advance to R+181 s and call `RunWatchdogOnce` twice: **a second** L6 `no_list` (`{SinceListSeconds}` ≥ 361), two L6 in total, so one per window (P-2). (5) `Speak(List)`, run cycle 3: true, eligible, one L5, List count 3. | The red is step (2): the base seam is a no-op, and no L6 line exists anywhere. The round-1 defect (cancel on every poll) would also fail step (3): the +30 s poll would cancel cycle 2 early with `watchdog_restart`. A silent List cannot show `catch_up_list_budget` (B-2), so V-4 does not assert it. Eligibility after the answer is already green at base (G-2), and the test keeps it as a guard. |
 | V-5 | `Lease_expiry_logs_once_per_flip` | No DB. Recover, advance 91 s. Call `GetLiveStoreId` once, `SnapshotLive` 3 times and `Status` once. **Green:** exactly one L1, with `LeaseSeconds` 90, the runner and the epoch. Then heartbeat, recover, expire again: two L1 lines in total. | `SnapshotOf` (`:972-981`) and `GetLiveStoreId` (`:121-136`) call only `Notify` and have no logger call, so there are 0 lines. |
 | V-6 | `Lease_recovery_refusal_logs_its_reason` with `[Arguments("before")]` and `[Arguments("after")]` | **before:** `EndPumpForTest`, emit one event, and hold it (PendingEvents 1, as `Lease.cs:120-125` does). Run the cycle 3 times: one L4 (`before_catch_up`, `pending_events`, Refusals 3 at the next line). Advance 61 s with a heartbeat: a second L4. Release the event and run a cycle: one L5 with its refusal count. **after:** silent List, apply draining, reply. **Green:** one L4 (`after_catch_up`, `draining`). | The refusals return false at `:179-180` and `:196-197` with no log, so there are 0 lines. |
 | V-7 | `Timed_out_list_never_makes_the_runner_eligible` with `[Arguments("connect")]` and `[Arguments("lease")]` | Silent List. Advance past the List budget with a heartbeat. The cycle returns false. The peer then emits the late Result for that request id. **Assert:** `DispatchEligible` is false; `Directory.Resolve(id)` throws "has not completed recovery"; a cycle before the retry delay returns false; the List count is 1 (connect) or 2 (lease). | **Guard. Green at base and must stay green** (I-1, I-2, I-3). It kills the mutants "a step timeout counts as success" and "an abandoned attempt flips eligibility". It is the fail-safe negative. |
 | V-8 | `Catch_up_total_budget_skips_the_remaining_sessions` | Setup: DB world, `CatchUpTimeoutSeconds`=45. Sessions B1 and B2 are fetch-silent, then G. Advance 31 s (B1 gets L2), then 15 s. **Green:** cycle true, eligible, one L3 with "2 of 3 listed" and Unverified 3, and G is never requested. | At base B1 waits for the 60 s fetch timer. +46 s < 60 s, so the cycle does not complete. |
 | V-9 | `Watchdog_cancels_an_attempt_that_outlives_its_budgets` | No DB. `HoldCatchUp(runner, hold)`, then run a cycle. Advance 391 s with a heartbeat, then call `RunWatchdogOnce`. **Green:** one L6 with `attempt_overrun` and step `hold`, and the cycle returns false within 5 s with the runner ineligible. Release the hold, heartbeat, run a cycle: true. | The base seam is a no-op, and the hold waits on the stopping token (`:353`), so the cycle never returns and the L6 line is absent. |
+| V-10 | `Stalled_send_gate_ends_the_list_at_its_budget` with `[Arguments("catch_up")]` and `[Arguments("refresh")]` (amendment 1, B-2) | **How the fake stalls the send.** No DB. The test takes the live connection (`host.WaitLiveAsync()`). It calls the existing public overload `live.RequestAsync(PhoneHomeOperation.List, null, beforeWrite: _ => { entered.TrySetResult(); return new ValueTask<string?>(release.Task); }, CancellationToken.None)`. That holder takes `_send` (`PhoneHomeLiveConnection.cs:410`) and parks in `beforeWrite` (`:412-413`), inside the send gate. `_send` stays held and no frame is written. The test awaits `entered` before the step below. **catch_up:** new connection, refresh 0. Run a cycle, wait 100 ms, advance 91 s (45 s + 46 s, a heartbeat after each). **Green:** the cycle returns false within 5 s, the runner is ineligible, there is one catch-up List Warning with `{Code}` = `catch_up_list_budget`, and `peer.RequestCount(List)` is 0 (no List frame left: the stall was in the send). Then `release.SetResult("test release")`, so the holder throws `PhoneHomeRequestRefusedException` with nothing written. Advance `CatchUpRetrySeconds`, heartbeat, run a cycle: true, eligible, List count 1. **refresh:** refresh 30 s, initial recovery eligible (List count 1). Stall the send, advance 31 s with a heartbeat, run a cycle (it starts the refresh, which parks in `_send`). Advance 91 s as above. **Green:** within 5 s (polling the recording logger), one refresh List Warning with `{Code}` = `refresh_list_budget`. The runner stays eligible, and the List count is still 1. Both cases release the holder in `finally`. | The pump passes the stopping token to `ListAsync`, so `_send.WaitAsync(ct)` waits until the holder lets go. Moving the fake clock arms nothing, because the 60 s reply timer starts only after the write (`:434-436`). **catch_up:** `cycle.WaitAsync(5 s)` throws `TimeoutException`. **refresh:** no refresh Warning appears within 5 s. Both red. |
+| V-11 | `Watchdog_stays_quiet_for_an_eligible_runner_without_refresh` (amendment 1) | No DB, refresh 0. Recover, so the runner is eligible with List count 1. Advance 400 s in steps under the lease with a heartbeat after each, and call `RunWatchdogOnce` after each step. **Assert:** zero L6, the runner stays eligible, and the List count is still 1. | **Guard. Green at base and must stay green.** The base seam logs nothing. It kills the mutant "`no_list` ignores the Skip rule", which would raise an Error every window on a healthy runner. |
 
-That is 9 methods and 11 cases. At base, 9 cases are red: V-1, V-2, V-3, V-4, V-5, both V-6 cases, V-8 and V-9. The 2
-V-7 cases are green guards.
+That is 11 methods and 14 cases (amendment 1; round 1 had 9 methods and 11 cases). At base, 11 cases are red: V-1, V-2,
+V-3, V-4, V-5, both V-6 cases, V-8, V-9 and both V-10 cases. 3 cases are green guards: both V-7 cases and V-11.
 
 Each new log line has a witness:
 
@@ -247,8 +354,8 @@ Each new log line has a witness:
 | L3 | V-8 |
 | L4 | V-6 |
 | L5 | V-1, V-4, V-6 |
-| L6 | V-4 (`no_list`), V-9 (`attempt_overrun`) |
-| L-List codes | V-4 and V-7 assert `{Code}` = `catch_up_list_budget` when the clock passes 90 s before the 60 s reply timer is relevant. Code chooses the order in which the clock is advanced, so the budget fires first. |
+| L6 | V-4 (`no_list`, once per window, twice across two windows), V-9 (`attempt_overrun`), V-11 (no L6 on a healthy runner) |
+| L-List codes | V-10 `catch_up` asserts `catch_up_list_budget` and V-10 `refresh` asserts `refresh_list_budget`, both on a stalled send gate (amendment 1, B-2). A silent List reply always ends at the 60 s reply timer first, so V-4 asserts `RequestTimeout` there and V-7 asserts no code. `catch_up_budget` and `watchdog_restart` share the same exception-to-code mapping and have no dedicated assertion in slice 1. |
 
 ## Existing tests affected
 
@@ -276,15 +383,32 @@ lesson): the green group cannot reuse the red build.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
-| CP-1 | red | tests/Antiphon.Tests -> bin-c1964-red/ | stall-red | `/*/*/C1964RecoveryPumpStallTests/*` | V-1,V-2,V-3,V-4,V-5,V-6,V-7,V-8,V-9 | 9 intended failures (V-1,V-2,V-3,V-4,V-5,V-6 x2,V-8,V-9) and 2 passed (V-7 x2) before implementation | 11 | 15 |
-| CP-2 | green | tests/Antiphon.Tests -> bin-c1964-green/ | recovery | `/*/*/(C1964RecoveryPumpStallTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeEventPumpTests*)/*` | V-1..V-9,R-1 | all listed, 0 failed | 40 | 15 |
+| CP-1 | red | tests/Antiphon.Tests -> bin-c1964-red/ | stall-red | `/*/*/C1964RecoveryPumpStallTests/*` | V-1,V-2,V-3,V-4,V-5,V-6,V-7,V-8,V-9,V-10,V-11 | 11 intended failures (V-1,V-2,V-3,V-4,V-5,V-6 x2,V-8,V-9,V-10 x2) and 3 passed (V-7 x2,V-11) before implementation | 14 | 15 |
+| CP-2 | green | tests/Antiphon.Tests -> bin-c1964-green/ | recovery | `/*/*/(C1964RecoveryPumpStallTests*)\|(PhoneHomeRecoveryEligibilityTests*)\|(MultiRunnerRecoveryTests*)\|(PhoneHomeEventPumpTests*)/*` | V-1..V-11,R-1 | all listed, 0 failed | 43 | 15 |
 | CP-3 | green | CP-2 | recovery-adjacent | `/*/*/(PhoneHomeDeferredKillTests*)\|(PhoneHomeStrandedQueueTests*)\|(PhoneHomeTranscriptIncidentTests*)\|(DefaultRunnerEligibilityTests*)/*` | R-1 | all listed, 0 failed | 27 | 4 |
-| CP-4 | green | CP-2 | directory-lease | `/*/*/(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)\|(PhoneHomeRunnerRetirementCycleTests*)\|(PhoneHomeImmediateSendTests*)/*` | R-2 | all listed, 0 failed | 29 | 4 |
-| CP-5 | green | CP-2 | backpressure-rolling | `/*/*/(PhoneHomeBackpressureTests*)\|(PhoneHomeRollingRunnerTests*)/*` | R-1,R-2 | all listed, 0 failed | 42 | 6 |
-| CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 60 | 6 |
-| CP-7 | green | CP-2 | impact-index | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed, after the regenerate script ran and the index was committed | 42 | 12 |
+| CP-4 | green | CP-2 | directory-lease | `/*/*/(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)\|(PhoneHomeRunnerRetirementCycleTests*)\|(PhoneHomeImmediateSendTests*)/*` | R-2 | all listed, 0 failed | 31 | 4 |
+| CP-5 | green | CP-2 | backpressure-rolling | `/*/*/(PhoneHomeBackpressureTests*)\|(PhoneHomeRollingRunnerTests*)/*` | R-1,R-2 | all listed, 0 failed | 43 | 6 |
+| CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 85 | 6 |
+| CP-7 | green | CP-2 | impact-index | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed, after the regenerate script ran and the index was committed | 27 | 12 |
 
 **Import check (2026-11-17, plan task):** `dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan <this plan> --out .antiphon/c1964-plan/manifest-1.yaml` (ignored path). It printed `imported 7 rows`, exit 0, with **no warnings**. The row timeouts it derived are 45, 45, 15, 15, 18, 18 and 36 minutes.
+
+**Import check, amendment 1 (2026-11-17, plan task 2bef90c6):** the same command with `--out .antiphon/c1964-plan-amend1/manifest.yaml` (ignored path) printed `imported 7 rows`, exit 0, with **no warnings**. The manifest carries `minExecuted` 14, 43, 27, 31, 43, 85 and 27 and the same timeouts, 45, 45, 15, 15, 18, 18 and 36 minutes.
+
+**Min derivation (amendment 1, B-3).** Each Min is the exact case count at `300c8a99d`: class-level `[Test]` methods
+at member indentation, where a method with k `[Arguments]` counts k, fixture text inside string literals is excluded, and
+no class in the roster uses `MethodDataSource` or `Matrix` (three use a `ClassDataSource` fixture, which adds no cases).
+No roster method carries a skip attribute.
+
+| Row | Class: cases (methods) | Min |
+|---|---|---|
+| CP-1 | `C1964RecoveryPumpStallTests` 14 (11; V-6, V-7 and V-10 have 2 `[Arguments]` each) | 14 |
+| CP-2 | `C1964RecoveryPumpStallTests` 14; `PhoneHomeRecoveryEligibilityTests` 13 (7: `.Lease.cs` 4 methods with 10 cases, the main file 3); `MultiRunnerRecoveryTests` 8; `PhoneHomeEventPumpTests` 8 | 43 |
+| CP-3 | `PhoneHomeDeferredKillTests` 3; `PhoneHomeStrandedQueueTests` 16; `PhoneHomeTranscriptIncidentTests` 5; `DefaultRunnerEligibilityTests` 3 | 27 (unchanged) |
+| CP-4 | `PhoneHomeDirectoryTests` 8; `PhoneHomeRunnerRetirementIdentityTests` 9 (7); `PhoneHomeRunnerRetirementCycleTests` 1; `PhoneHomeImmediateSendTests` 13 | 31 (was 29) |
+| CP-5 | `PhoneHomeBackpressureTests` 9 (`.cs` 6, `.Bounds.cs` 3; `.Scheduling.cs` and `.Protocol.cs` hold no tests); `PhoneHomeRollingRunnerTests` 34 (`…DrainTests.cs` 23 from 22 methods, `…RetireTests.cs` 4, the main file 7) | 43 (was 42) |
+| CP-6 | `TestClassificationPolicyTests` 42 (28); `TestClassificationGuardTests` 1; `SlowTestRegistryMergeTests` 5 (3); `SlowTestTripwireTests` 2; `NativeLinuxPolicyWitnessTests` 3; `MechanicalPcContractTests` 11 (7); `TaskPlatformGuidanceTests` 9; `C1729LayeringGuardTests` 11; `TestLaneCategoryGuardTests` 1. The two `tests/Shared` classes are linked into `Antiphon.Tests` (`Antiphon.Tests.csproj:185`, `:209`). | 85 (was 60) |
+| CP-7 | `DerivedImpactIndexTests` 27 (`[Test]` at lines 134-877; the other `[Test]` tokens in the file are fixture text) | 27 (was 42) |
 
 Row meanings:
 
@@ -294,7 +418,8 @@ Row meanings:
 
 The roster has no suffix collisions. Each operand prefix matches exactly one class:
 
-- `PhoneHomeRollingRunnerTests*` covers its `…RetireTests.cs` partial file, and no other class starts with that name.
+- `PhoneHomeRollingRunnerTests*` covers its `…RetireTests.cs` and `…DrainTests.cs` partial files (both declare
+  `partial class PhoneHomeRollingRunnerTests`), and no other class starts with that name.
 - `PhoneHomeRecoveryEligibilityTests*` is one partial class.
 - `PhoneHomeRunnerRetirementIdentityTests` and `PhoneHomeRunnerRetirementCycleTests` are distinct full names.
 
@@ -335,8 +460,8 @@ Inherited reds are to be confirmed at base before anyone is blamed (git-common).
 **Files to change** (5 production/test files plus 1 new):
 
 - `server/Application/Services/PhoneHomeRecoveryPump.cs`: the attempt and step budgets, List-only lease re-recovery,
-  refusal streaks, L2-L6, the watchdog loop and `RunWatchdogOnce`, `LastCatchUpUnverifiedSessions`, and
-  `ConnectionState.LastListAt`.
+  refusal streaks, L2-L6, the watchdog loop and `RunWatchdogOnce`, `LastCatchUpUnverifiedSessions`, and the
+  `ConnectionState` watchdog fields and `WatchLock` (Watchdog, State; amendment 1).
 - `server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerDirectory.cs`: L1 in both `ReadSnapshot` callers, `LeaseRecoveryRefusal`,
   and the `TryRecoverLease(live, out refusal)` overload. `CanRecoverLease` keeps its signature.
 - `server/Application/Settings/PhoneHomeRunnerSettings.cs`: the 6 settings.
@@ -356,8 +481,14 @@ Inherited reds are to be confirmed at base before anyone is blamed (git-common).
 
 **Collisions:**
 
-- **CARD-1960** (InProgress, the quarantine release route) touches `SessionRunnerEndpoints.cs`, `scripts/workspace-slots.ps1`
-  and the docs. It may read the `WorkspaceSlotQuarantineRelease` arm of `RequestTimeoutFor` in `PhoneHomeLiveConnection.cs`.
+- **CARD-1960** (InProgress, the quarantine release route). Its code branch `origin/feat/card-task-aaabade9` at
+  `5d0ac1366096de492324e2bf57634f389c332409` changes, against its merge base with master (amendment 1, full list):
+  `server/Api/Endpoints/SessionRunnerEndpoints.cs`, `server/Infrastructure/Agents/SessionRunner/PhoneHomeRunnerClient.cs`,
+  `RemoteWorkspaceMirrorResult.cs` (the mirror DTO), `scripts/workspace-slots.ps1`, `docs/docker-stack.md`,
+  `docs/ops-http.md`, its plan checkpoint doc, and the tests `C1960QuarantineReleaseRouteTests.cs`,
+  `C1960WorkspaceSlotsScriptTests.cs`, `C0824SlotTransportWorld.cs` and `RemoteWorkspacePreparerTests.cs`. The pump calls
+  `PhoneHomeRunnerClient` but this slice does not edit it. CARD-1960 does not edit `PhoneHomeLiveConnection.cs`; it may
+  read the `WorkspaceSlotQuarantineRelease` arm of `RequestTimeoutFor` there.
   This slice edits **none** of those files, so there are **no shared files** and the two can land in either order.
   - If a later reviewer pushes fix 4 into this slice, `PhoneHomeLiveConnection.cs` becomes shared. Land CARD-1960 first and
     then rebase.
