@@ -277,6 +277,130 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
     }
 
     [Test]
+    public void CompoundAssignmentAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Func<string,Assembly> f; object Read(string name) { f += Assembly.Load; return name; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void CoalesceAssignmentAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Func<string,Assembly>? f; object Read(string name) { f ??= Assembly.Load; return name; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void ArrayInitializerAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => new System.Func<string,Assembly>[] { Assembly.Load }; } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void CollectionInitializerAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => new System.Collections.Generic.List<System.Func<string,Assembly>> { Assembly.Load }; } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void ConditionalAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(bool b) { System.Func<string,Assembly>? f = b ? Assembly.Load : null; return f; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void SwitchExpressionAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read(int k) => k switch { _ => Assembly.Load }; } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void YieldReturnAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { System.Collections.Generic.IEnumerable<System.Func<string,Assembly>> Read() { yield return Assembly.Load; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void LambdaBodyAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() { System.Func<System.Func<string,Assembly>> g = () => Assembly.Load; return g; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void AnonymousObjectAssemblyLoadFailsClosed()
+    {
+        const string source = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => new { F = (System.Func<string,Assembly>)Assembly.Load }; } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "Load");
+    }
+
+    [Test]
+    public void ImplicitSystemActivatorCreateInstanceCaptureFailsClosed()
+    {
+        const string source = "namespace Example { internal partial class ReflectionTests { object Read() { System.Func<System.Type, object?> f = Activator.CreateInstance; return f; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "CreateInstance");
+    }
+
+    [Test]
+    public void ImplicitSystemTypeGetTypeCaptureFailsClosed()
+    {
+        const string source = "namespace Example { internal partial class ReflectionTests { object Read() { System.Func<string, System.Type?> f = Type.GetType; return f; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "GetType");
+    }
+
+    [Test]
+    public void DottedLoadFromAssemblyPathCaptureFailsClosed()
+    {
+        const string source = "namespace Example { internal partial class ReflectionTests { object Read() { System.Func<string, System.Reflection.Assembly> f = AssemblyLoadContext.Default.LoadFromAssemblyPath; return f; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "LoadFromAssemblyPath");
+    }
+
+    [Test]
+    public void VarReceiverGetTypesCaptureFailsClosed()
+    {
+        const string source = "using System;\nnamespace Example { internal partial class ReflectionTests { object Read() { var asm = typeof(Example.ReflectionTests).Assembly; System.Func<System.Type[]> f = asm.GetTypes; return f; } } }";
+        AssertCallerUnresolved(source);
+        AssertNonInvokedName(source, "GetTypes");
+    }
+
+    [Test]
+    public void ReflectiveCaptureNegativeControlsStayClean()
+    {
+        const string text = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => \"Assembly.Load\"; } }";
+        Build(ReflectionInput(text)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string invoked = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => Assembly.Load(\"Fixture.Product\"); } }";
+        Build(ReflectionInput(invoked)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string local = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { string Load(string name) => name; object Read(string name) => name; } }";
+        Build(ReflectionInput(local)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+
+        const string named = "using System.Reflection;\nnamespace Example { internal partial class ReflectionTests { object Read() => nameof(Assembly.Load); } }";
+        var nameofRoot = CSharpSyntaxTree.ParseText(named).GetRoot();
+        nameofRoot.DescendantNodes().OfType<InvocationExpressionSyntax>()
+            .Any(call => call.Expression is IdentifierNameSyntax identifier && identifier.Identifier.ValueText == "nameof")
+            .ShouldBeTrue();
+        Build(ReflectionInput(named)).IncompleteReasons.ShouldNotContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+    }
+
+    [Test]
     public void GraphsUnionKeepsOneSidedEdges()
     {
         var left = GraphOf(["reason-only-old"],
@@ -319,6 +443,34 @@ public sealed class ReleaseImpactProjectTests(ReleaseImpactProjectFixture fixtur
         ["tests/Consumer/Consumer.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
         ["tests/Consumer/Reflection.cs"] = source,
     };
+
+    private void AssertCallerUnresolved(string source)
+    {
+        var graph = Build(ReflectionInput(source));
+        graph.IncompleteReasons.ShouldContain("reflection-target-unresolved:tests/Consumer/Reflection.cs");
+        graph.IncompleteReasons.Count(reason => reason == "reflection-target-unresolved:tests/Consumer/Reflection.cs").ShouldBe(1);
+        AssertIncomplete(graph);
+        graph.IncompleteReasons.ShouldContain("assembly-metadata-unavailable");
+    }
+
+    private static void AssertNonInvokedName(string source, string name)
+    {
+        var root = CSharpSyntaxTree.ParseText(source).GetRoot();
+        var hits = root.DescendantNodes().Where(node => node switch
+        {
+            MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText == name && member.Parent is not InvocationExpressionSyntax,
+            MemberBindingExpressionSyntax binding => binding.Name.Identifier.ValueText == name && binding.Parent is not InvocationExpressionSyntax,
+            IdentifierNameSyntax identifier => identifier.Identifier.ValueText == name
+                && identifier.Parent is not InvocationExpressionSyntax
+                && identifier.Parent is not MemberAccessExpressionSyntax
+                && identifier.Parent is not MemberBindingExpressionSyntax,
+            GenericNameSyntax generic => generic.Identifier.ValueText == name
+                && generic.Parent is not InvocationExpressionSyntax
+                && generic.Parent is not MemberAccessExpressionSyntax,
+            _ => false,
+        }).ToArray();
+        hits.ShouldNotBeEmpty(name);
+    }
 
     private static void AssertLoadMethodGroup(string source)
     {
