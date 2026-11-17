@@ -174,8 +174,8 @@ function Show-CutoverWhatIf {
     Write-Host '  EXIT CHECK 5: health is 200, the version SHA equals the rc tip and advertises land-v2, pool flags match, and server2 shows a desktop client.'
     Write-Host '  STOP GATE 5: a post-check fails. The operator runs phase 6. The script does not restart itself again.'
     Write-Host 'PHASE 6 Rollback'
-    Write-Host '  EXIT CHECK 6: desktop postgres is started again, row counts are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart.'
-    Write-Host '  STOP GATE 6: if the new database has rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. Neither data directory is removed.'
+    Write-Host '  EXIT CHECK 6: desktop postgres is started again, per-table high-water marks and content checksums are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart.'
+    Write-Host '  STOP GATE 6: if the new database has extra or changed rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. A failed read stops the rollback. Neither data directory is removed.'
     Write-Host 'WHATIF: does not POST, does not call docker, and does not call dotnet user-secrets set.'
     Write-Host 'REFUSE: without a verified snapshot reference and a passed drill record the window does not start.'
 }
@@ -580,14 +580,87 @@ function Invoke-CutoverPsql {
     }
 }
 
+function Get-CutoverSha256Text {
+    param([string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))
+    } finally {
+        $sha.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
+}
+
+function Split-CutoverLines {
+    param([string]$Text)
+    $rows = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($Text)) {
+        foreach ($line in ($Text -split "`n")) {
+            $item = $line.Trim().Trim("`r")
+            if (-not [string]::IsNullOrWhiteSpace($item)) { [void]$rows.Add($item) }
+        }
+    }
+    return @($rows.ToArray())
+}
+
+function Get-CutoverSequenceReadSql {
+    param([string]$Qualified)
+    if ($Qualified -notmatch '^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$') { return $null }
+    return 'SELECT COALESCE(last_value::text, '''') || '' '' || is_called::text FROM "' + $Matches[1] + '"."' + $Matches[2] + '"'
+}
+
 function Invoke-CutoverVerifySequences {
-    # PostgreSQL 16 pg_sequences has no is_called. This read still asks for it (CARD-1974).
-    $seq = "SELECT schemaname || '.' || sequencename || ' ' || COALESCE(last_value::text, '') || ' ' || is_called::text FROM pg_sequences ORDER BY 1"
-    Assert-CutoverEqual -Label 'sequences' -SourceText (Invoke-CutoverPsql -Target source -Sql $seq) -TargetText (Invoke-CutoverPsql -Target target -Sql $seq)
+    # PostgreSQL 16 pg_sequences has last_value and no is_called. Read both from the sequence relation (CARD-1974).
+    $listSql = "SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind = 'S' AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' AND n.nspname <> 'pg_toast' ORDER BY 1"
+    $sourceText = Invoke-CutoverPsql -Target source -Sql $listSql
+    $targetText = Invoke-CutoverPsql -Target target -Sql $listSql
+    if ($null -eq $sourceText -or $null -eq $targetText) {
+        Fail-Cutover 'REFUSED: phase 3 query failed for sequences. Row text was not printed.'
+    }
+    $sourceNames = @(Split-CutoverLines $sourceText)
+    $targetNames = @(Split-CutoverLines $targetText)
+    foreach ($name in $sourceNames) {
+        if (@($targetNames) -notcontains $name) {
+            Fail-Cutover ('REFUSED: phase 3 sequence missing for ' + $name + '. Row text was not printed.')
+        }
+    }
+    foreach ($name in $targetNames) {
+        if (@($sourceNames) -notcontains $name) {
+            Fail-Cutover ('REFUSED: phase 3 sequence missing for ' + $name + '. Row text was not printed.')
+        }
+    }
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $sourceNames) {
+        $readSql = Get-CutoverSequenceReadSql $name
+        if ($null -eq $readSql) {
+            Fail-Cutover ('REFUSED: phase 3 sequence read was not parseable for ' + $name + '. Row text was not printed.')
+        }
+        $sourceState = Invoke-CutoverPsql -Target source -Sql $readSql
+        $targetState = Invoke-CutoverPsql -Target target -Sql $readSql
+        if ($null -eq $sourceState -or $null -eq $targetState) {
+            Fail-Cutover ('REFUSED: phase 3 query failed for sequence ' + $name + '. Row text was not printed.')
+        }
+        $sourceState = $sourceState.Trim()
+        $targetState = $targetState.Trim()
+        if ($sourceState -notmatch '^[0-9]+ (true|false)$' -or $targetState -notmatch '^[0-9]+ (true|false)$') {
+            Fail-Cutover ('REFUSED: phase 3 sequence read was not parseable for ' + $name + '. Row text was not printed.')
+        }
+        if ($sourceState -ne $targetState) {
+            Fail-Cutover 'REFUSED: phase 3 mismatch for sequences. Row text was not printed. Do not repoint.'
+        }
+        [void]$lines.Add($name + ' ' + $sourceState)
+    }
+    $script:CutoverSequenceCanonical = [string]::Join("`n", [string[]]$lines.ToArray())
+    $script:CutoverSequenceReads = $lines.Count
+    Write-Host 'PHASE 3 match: sequences'
+    if ($script:CutoverProbeActive) {
+        Write-Host ('PHASE 3 sequence fingerprint: ' + (Get-CutoverSha256Text $script:CutoverSequenceCanonical))
+        Write-Host ('PHASE 3 sequence reads: ' + $script:CutoverSequenceReads)
+    }
 }
 
 function Assert-CutoverEqual {
-    param([string]$Label, [string]$SourceText, [string]$TargetText)
+    param([string]$Label, $SourceText, $TargetText)
     if ($null -eq $SourceText -or $null -eq $TargetText) {
         Fail-Cutover ('REFUSED: phase 3 query failed for ' + $Label + '. Row text was not printed.')
     }
@@ -626,33 +699,77 @@ function Invoke-CutoverVerify {
     }
 }
 
-function Get-CutoverCountMap {
-    param([string]$Target)
-    $tables = Invoke-CutoverPsql -Target $Target -Sql "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 1"
-    if ($null -eq $tables) { return $null }
-    $map = @{}
-    foreach ($name in @($tables -split "`n")) {
-        $ident = $name.Trim()
-        if ([string]::IsNullOrWhiteSpace($ident)) { continue }
-        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
-        $countText = Invoke-CutoverPsql -Target $Target -Sql ('SELECT count(*) FROM ' + $ident)
-        if ($null -eq $countText) { return $null }
-        $parsed = 0
-        if (-not [int]::TryParse($countText.Trim(), [ref]$parsed)) { return $null }
-        $map[$ident] = $parsed
+function Get-CutoverHighWaterSql {
+    param([string]$Ident, [switch]$Timestamp)
+    if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+    if ($Timestamp) {
+        return "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = '$Ident'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname IN ('UpdatedAt', 'CreatedAt', 'updated_at', 'created_at') ORDER BY CASE a.attname WHEN 'UpdatedAt' THEN 1 WHEN 'updated_at' THEN 2 WHEN 'CreatedAt' THEN 3 ELSE 4 END LIMIT 1"
     }
-    return $map
+    return "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = '$Ident'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum) LIMIT 1"
+}
+
+function Get-CutoverContentFingerprintSql {
+    param([string]$Ident, [string]$HighWater)
+    if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+    $hw = "''"
+    if (-not [string]::IsNullOrWhiteSpace($HighWater)) {
+        if ($HighWater -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { return $null }
+        $hw = 'COALESCE(max("' + $HighWater + '")::text, '''')'
+    }
+    return 'SELECT count(*)::text || '' '' || ' + $hw + ' || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
+}
+
+function Get-CutoverContentFingerprint {
+    param([string]$Target, [string]$Ident)
+    $keySql = Get-CutoverHighWaterSql $Ident
+    if ($null -eq $keySql) { return $null }
+    $keyText = Invoke-CutoverPsql -Target $Target -Sql $keySql
+    if ($null -eq $keyText) { return $null }
+    $key = ''
+    $keyLines = @(Split-CutoverLines $keyText)
+    if ($keyLines.Count -gt 0) { $key = [string]$keyLines[0] }
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        $timeSql = Get-CutoverHighWaterSql $Ident -Timestamp
+        if ($null -eq $timeSql) { return $null }
+        $timeText = Invoke-CutoverPsql -Target $Target -Sql $timeSql
+        if ($null -eq $timeText) { return $null }
+        $timeLines = @(Split-CutoverLines $timeText)
+        if ($timeLines.Count -gt 0) { $key = [string]$timeLines[0] }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($key) -and $key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { return $null }
+    $fpSql = Get-CutoverContentFingerprintSql -Ident $Ident -HighWater $key
+    if ($null -eq $fpSql) { return $null }
+    $fp = Invoke-CutoverPsql -Target $Target -Sql $fpSql
+    if ($null -eq $fp) { return $null }
+    return $fp.Trim()
 }
 
 function Test-CutoverNewHasExtraRows {
-    $source = Get-CutoverCountMap -Target 'source'
-    $target = Get-CutoverCountMap -Target 'target'
-    if ($null -eq $source -or $null -eq $target) { return $null }
-    foreach ($key in @($target.Keys)) {
-        $old = 0
-        if ($source.ContainsKey($key)) { $old = [int]$source[$key] }
-        if ([int]$target[$key] -gt $old) { return $true }
+    $script:CutoverContentCanonical = $null
+    $script:CutoverContentCompared = 0
+    $tableSql = "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 1"
+    $sourceText = Invoke-CutoverPsql -Target source -Sql $tableSql
+    $targetText = Invoke-CutoverPsql -Target target -Sql $tableSql
+    if ($null -eq $sourceText -or $null -eq $targetText) { return $null }
+    $sourceMap = @{}
+    foreach ($ident in @(Split-CutoverLines $sourceText)) {
+        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+        $fp = Get-CutoverContentFingerprint -Target source -Ident $ident
+        if ($null -eq $fp) { return $null }
+        $sourceMap[$ident] = $fp
     }
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($ident in @(Split-CutoverLines $targetText)) {
+        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+        $fp = Get-CutoverContentFingerprint -Target target -Ident $ident
+        if ($null -eq $fp) { return $null }
+        $old = $null
+        if ($sourceMap.ContainsKey($ident)) { $old = [string]$sourceMap[$ident] }
+        if ($null -eq $old -or $old -ne $fp) { return $true }
+        [void]$lines.Add($ident + ' ' + $fp)
+    }
+    $script:CutoverContentCanonical = [string]::Join("`n", [string[]]$lines.ToArray())
+    $script:CutoverContentCompared = $lines.Count
     return $false
 }
 
@@ -686,6 +803,11 @@ function Invoke-CutoverVerificationProbe {
         if ($extra) {
             Fail-Cutover 'REFUSED: stop gate 6: the new database has rows the old desktop volume lacks. Pass -AcceptDataLossRollback to roll back. Neither data directory is removed.'
         }
+        if ($null -eq $script:CutoverContentCanonical) {
+            Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
+        }
+        Write-Host ('ROLLBACK CONTENT fingerprint: ' + (Get-CutoverSha256Text $script:CutoverContentCanonical))
+        Write-Host ('ROLLBACK CONTENT compared: ' + $script:CutoverContentCompared)
         Write-Host 'ROLLBACK ROWS clean'
         exit 0
     } finally {

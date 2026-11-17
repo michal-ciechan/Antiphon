@@ -200,6 +200,8 @@ emit_sql() {
     else
       printf '%s\n' '0'
     fi
+  elif has_text "$sql" 'relkind' && has_text "$sql" "'S'"; then
+    printf '%s\n' 'public.sample_seq'
   elif has_text "$sql" 'pg_class'; then
     printf '%s\n' 'public.Sample'
   elif has_text "$sql" 'indisprimary'; then
@@ -208,6 +210,8 @@ emit_sql() {
     printf '%s\n' "$count 1 $count"
   elif has_text "$sql" 'count(*)'; then
     printf '%s\n' "$count"
+  elif has_text "$sql" 'last_value'; then
+    printf '%s\n' '1 true'
   elif has_text "$sql" 'pg_sequences'; then
     printf '%s\n' 'public.sample_seq 1 true'
   elif has_text "$sql" 'pg_extension'; then
