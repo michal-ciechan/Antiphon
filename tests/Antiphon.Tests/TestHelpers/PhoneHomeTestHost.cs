@@ -423,6 +423,18 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
         return this;
     }
 
+    /// <summary>
+    /// CARD-1964: never answer a request <paramref name="silent"/> matches (one session's Transcript,
+    /// say); every other request keeps its scripted or default reply.
+    /// </summary>
+    public PhoneHomeScriptedPeer SilentWhen(Func<PhoneHomeFrame, bool> silent)
+    {
+        _silentWhen = silent;
+        return this;
+    }
+
+    private volatile Func<PhoneHomeFrame, bool>? _silentWhen;
+
     /// <summary>Request frames of <paramref name="operation"/> received so far (thread-safe).</summary>
     public int RequestCount(PhoneHomeOperation operation) =>
         _requestCounts.TryGetValue(operation, out var count) ? count : 0;
@@ -492,7 +504,8 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                     Retires.Add(retirement.Deserialize<RunnerRetireRequest>(PhoneHomeFraming.Json)!);
                 if (frame.Operation is { } op)
                     _requestCounts.AddOrUpdate(op, 1, (_, n) => n + 1);
-                if (!AutoReply || (frame.Operation is { } silent && _silent.ContainsKey(silent)))
+                if (!AutoReply || (frame.Operation is { } silent && _silent.ContainsKey(silent))
+                    || _silentWhen?.Invoke(frame) == true)
                     continue;
                 if (frame.Operation is PhoneHomeOperation.Launch or PhoneHomeOperation.LaunchPlatformConstrained && HeldLaunches > 0)
                 {
