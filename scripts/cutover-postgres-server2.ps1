@@ -699,45 +699,16 @@ function Invoke-CutoverVerify {
     }
 }
 
-function Get-CutoverHighWaterSql {
-    param([string]$Ident, [switch]$Timestamp)
-    if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
-    if ($Timestamp) {
-        return "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = '$Ident'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname IN ('UpdatedAt', 'CreatedAt', 'updated_at', 'created_at') ORDER BY CASE a.attname WHEN 'UpdatedAt' THEN 1 WHEN 'updated_at' THEN 2 WHEN 'CreatedAt' THEN 3 ELSE 4 END LIMIT 1"
-    }
-    return "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = '$Ident'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum) LIMIT 1"
-}
-
 function Get-CutoverContentFingerprintSql {
-    param([string]$Ident, [string]$HighWater)
+    # Count plus an order-independent md5 over every row as JSON. No min/max on a key column: PostgreSQL 16 has none for uuid (CARD-1975 Review 4f199f91 B-1).
+    param([string]$Ident)
     if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
-    $hw = "''"
-    if (-not [string]::IsNullOrWhiteSpace($HighWater)) {
-        if ($HighWater -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { return $null }
-        $hw = 'COALESCE(max("' + $HighWater + '")::text, '''')'
-    }
-    return 'SELECT count(*)::text || '' '' || ' + $hw + ' || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
+    return 'SELECT count(*)::text || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
 }
 
 function Get-CutoverContentFingerprint {
     param([string]$Target, [string]$Ident)
-    $keySql = Get-CutoverHighWaterSql $Ident
-    if ($null -eq $keySql) { return $null }
-    $keyText = Invoke-CutoverPsql -Target $Target -Sql $keySql
-    if ($null -eq $keyText) { return $null }
-    $key = ''
-    $keyLines = @(Split-CutoverLines $keyText)
-    if ($keyLines.Count -gt 0) { $key = [string]$keyLines[0] }
-    if ([string]::IsNullOrWhiteSpace($key)) {
-        $timeSql = Get-CutoverHighWaterSql $Ident -Timestamp
-        if ($null -eq $timeSql) { return $null }
-        $timeText = Invoke-CutoverPsql -Target $Target -Sql $timeSql
-        if ($null -eq $timeText) { return $null }
-        $timeLines = @(Split-CutoverLines $timeText)
-        if ($timeLines.Count -gt 0) { $key = [string]$timeLines[0] }
-    }
-    if (-not [string]::IsNullOrWhiteSpace($key) -and $key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { return $null }
-    $fpSql = Get-CutoverContentFingerprintSql -Ident $Ident -HighWater $key
+    $fpSql = Get-CutoverContentFingerprintSql -Ident $Ident
     if ($null -eq $fpSql) { return $null }
     $fp = Invoke-CutoverPsql -Target $Target -Sql $fpSql
     if ($null -eq $fp) { return $null }
