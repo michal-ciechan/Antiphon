@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Infrastructure.Data;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -9,16 +10,32 @@ namespace Antiphon.Server.Application.Services;
 /// CARD-1888: the session's verified runner-prefix memo. After a clean commit a batch of at least
 /// <see cref="MinEntries"/> entries records how many leading entries are now stored, with a SHA-256
 /// digest of their identities. A later snapshot whose first <see cref="Count"/> entries digest the
-/// same sends only its tail UUIDs to the identity probe. Process-local on
-/// <see cref="SessionStateStore"/>'s entry; never persisted, never part of the snapshot.
+/// same sends only its tail UUIDs to the identity probe, but only while the stored prefix is
+/// unchanged (<see cref="StillStored"/>). Process-local on <see cref="SessionStateStore"/>'s entry;
+/// never persisted, never part of the snapshot.
 /// </summary>
-internal sealed record TranscriptIngestPrefix(int Count, byte[] Digest)
+/// <param name="FirstRowId">The session's lowest-sequence row when the memo was recorded.</param>
+/// <param name="PrefixStoredMaxSequence">S: the session's stored max once the batch committed.</param>
+/// <param name="TopRowId">The row stored at S.</param>
+/// <param name="PrefixStoredCount">C: the session's rows with a sequence at or below S.</param>
+internal sealed record TranscriptIngestPrefix(int Count, byte[] Digest, Guid FirstRowId,
+    long PrefixStoredMaxSequence, Guid TopRowId, long PrefixStoredCount)
 {
     /// <summary>A smaller batch is at most this many seeks today; it neither records nor skips (D-10).</summary>
     internal const int MinEntries = 64;
 
     internal bool Covers(Digests digests) =>
         digests.Prefix is { } prefix && CryptographicOperations.FixedTimeEquals(prefix, Digest);
+
+    /// <summary>
+    /// Rule 2, read in the prelude's snapshot. Product inserts go above the stored max and no product
+    /// path updates a row, so while the row recorded at S is still there nothing was inserted at or
+    /// below S; an equal count then means no backing row was deleted. A whole-session delete changes
+    /// all three, a middle delete the count, a top-row delete and refill the row at S. Any mismatch,
+    /// or a missing fact, is false and the caller probes the prefix as before (fail closed).
+    /// </summary>
+    internal bool StillStored(TranscriptIngestPrelude.Result prelude) =>
+        prelude.FirstRowId == FirstRowId && prelude.PrefixRowId == TopRowId && prelude.PrefixCount == PrefixStoredCount;
 
     /// <param name="Prefix">The digest of the first <c>prefixCount</c> entries, or null when the batch is shorter.</param>
     /// <param name="Full">The digest of every entry.</param>

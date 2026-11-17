@@ -1465,15 +1465,28 @@ public sealed partial class AgentSessionRuntime
             // DB actually knows about, which skips test/transient ids), the first UUID chunk, the
             // null-UUID sequences and the stored max. Each further UUID chunk is its own command.
             var prelude = await TranscriptIngestPrelude.ReadAsync(
-                db, sessionId, uuidBatches.FirstOrDefault() ?? [], incomingSeqs, ct);
+                db, sessionId, uuidBatches.FirstOrDefault() ?? [], incomingSeqs,
+                recordCandidate, prefixCount > 0 ? memo!.PrefixStoredMaxSequence : null, ct);
             if (prelude.StartedAt is not DateTime startedAt)
                 return PersistResult.Empty with { RecoveryFenceRejection = expectedRecovery is null ? null : "ownership_changed_at_commit" };
 
+            // CARD-1888 rule 2: a covered prefix counts as stored only while its first row, the row at
+            // its stored max and the count at or below that max are unchanged. Otherwise drop the memo
+            // and probe the prefix UUIDs exactly as before.
+            IEnumerable<string[]> laterBatches = uuidBatches.Skip(1);
+            if (prefixCount > 0 && !memo!.StillStored(prelude))
+            {
+                lease!.IngestPrefix = null;
+                laterBatches = laterBatches.Concat(entries.Take(prefixCount).Where(e => e.Uuid is not null)
+                    .Select(e => e.Uuid!).Except(incomingUuids).Chunk(512));
+                prefixCount = 0;
+            }
+
             var seenUuids = prelude.Identities;
-            // A covered prefix entry is skipped the way a found-stored entry is.
+            // A verified prefix entry is skipped the way a found-stored entry is.
             foreach (var e in entries.Take(prefixCount))
                 if (e.Uuid is not null) seenUuids.Add((e.Uuid, e.Kind));
-            foreach (var uuidBatch in uuidBatches.Skip(1))
+            foreach (var uuidBatch in laterBatches)
             {
                 var existing = await db.TranscriptEntries
                     .TagWith(TranscriptIngestPrelude.IdentityTag)
@@ -1570,7 +1583,7 @@ public sealed partial class AgentSessionRuntime
 
             if (pending.Count == 0)
             {
-                RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, ct);
+                RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, prelude, pending, ct);
                 return PersistResult.Empty with { AcceptedGeneration = startedAt };
             }
 
@@ -1594,7 +1607,7 @@ public sealed partial class AgentSessionRuntime
 
             if (recoveryTransaction is not null) await recoveryTransaction.CommitAsync(ct);
             _persistFailures.TryRemove(sessionId, out _);
-            RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, ct);
+            RecordIngestPrefix(lease, recordCandidate, entries.Count, digests, prelude, pending, ct);
             return ResultFrom(pending.Select(p => p.Source), pending.Max(p => p.Row.Sequence))
                 with { CommittedRows = pending.Select(p => p.Row).ToArray(), AcceptedGeneration = startedAt };
         }
@@ -1609,10 +1622,21 @@ public sealed partial class AgentSessionRuntime
     // CARD-1888 rule 4: only the clean commit and the all-duplicates return record the memo. The
     // individual-row fallback, a fence rejection, a reload and a cancellation never do.
     private static void RecordIngestPrefix(SessionStateStore.Lease? lease, bool candidate, int count,
-        TranscriptIngestPrefix.Digests? digests, CancellationToken ct)
+        TranscriptIngestPrefix.Digests? digests, TranscriptIngestPrelude.Result prelude,
+        List<(TranscriptEntry Row, SessionRunnerTranscriptEvent Source)> pending, CancellationToken ct)
     {
         if (lease is null || !candidate || digests is null || ct.IsCancellationRequested) return;
-        lease.IngestPrefix = new TranscriptIngestPrefix(count, digests.Full);
+        // Every insert went above the prelude's max in rising order, so S is the last inserted row
+        // (or the prelude's top row) and C is the prelude's count plus the rows inserted. A
+        // concurrent delete makes C too high and a concurrent insert at or below S too low: the next
+        // check then mismatches and falls back.
+        var first = prelude.FirstRowId ?? (pending.Count > 0 ? pending[0].Row.Id : (Guid?)null);
+        var top = pending.Count > 0 ? pending[^1].Row.Id : prelude.TopRowId;
+        var max = pending.Count > 0 ? pending[^1].Row.Sequence : prelude.MaxSequence;
+        if (first is not Guid firstId || top is not Guid topId || max is not long storedMax
+            || prelude.SessionCount is not long stored)
+            return;
+        lease.IngestPrefix = new TranscriptIngestPrefix(count, digests.Full, firstId, storedMax, topId, stored + pending.Count);
     }
 
     private static async Task AdmitActionsAsync(AppDbContext db, Guid sessionId,
