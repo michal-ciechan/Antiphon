@@ -25,7 +25,7 @@ function stuck(overrides: Partial<AttentionItemDto>): AttentionItemDto {
   }
 }
 
-function serve(items: AttentionItemDto[]) {
+function serve(items: AttentionItemDto[], extras: Partial<AttentionDto> = {}) {
   let agentTaskRequests = 0
   let orchestratorStateRequests = 0
   let cardsRequests = 0
@@ -35,6 +35,7 @@ function serve(items: AttentionItemDto[]) {
         generatedAt: '2026-08-17T10:00:00Z',
         runnerConsulted: true,
         items,
+        ...extras,
       }),
     ),
     http.get('/api/model-availability', () =>
@@ -130,6 +131,23 @@ describe('OrchestratorPage', () => {
 
     const tab = await screen.findByRole('tab', { name: /Needs attention/ })
     await waitFor(() => expect(tab).toHaveTextContent('2'))
+  })
+
+  it('CARD-1948 counts the parked census on the Needs attention tab', async () => {
+    serve([
+      stuck({ kind: 'ParkedMessage', severity: 'Error', taskId: null, sessionId: 's1', messageId: 'm1', title: 'Parked reply' }),
+      stuck({ kind: 'RecentFailure', severity: 'Warning', taskId: 't3', title: 'A task that died' }),
+      stuck({ kind: 'LandLegacyUnverified', severity: 'Info', taskId: 't4', title: 'Old land receipt' }),
+    ], {
+      kindCounts: [
+        { kind: 'ParkedMessage', count: 1003 },
+        { kind: 'RecentFailure', count: 4 },
+        { kind: 'LandLegacyUnverified', count: 2 },
+      ],
+    })
+    renderWithProviders(<OrchestratorPage />)
+    const tab = await screen.findByRole('tab', { name: /Needs attention/ })
+    await waitFor(() => expect(tab).toHaveTextContent('1003'))
   })
 
   it('shows no badge when nothing is stuck', async () => {
