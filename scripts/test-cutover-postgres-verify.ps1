@@ -161,24 +161,10 @@ function Get-SequenceReadSql {
     return 'SELECT COALESCE(last_value::text, '''') || '' '' || is_called::text FROM ' + $schema + '.' + $seq
 }
 
-function Get-HighWaterSql {
-    param([string]$Ident, [switch]$Timestamp)
-    if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
-    if ($Timestamp) {
-        return "SELECT a.attname FROM pg_attribute a WHERE a.attrelid = '$Ident'::regclass AND a.attnum > 0 AND NOT a.attisdropped AND a.attname IN ('UpdatedAt', 'CreatedAt', 'updated_at', 'created_at') ORDER BY CASE a.attname WHEN 'UpdatedAt' THEN 1 WHEN 'updated_at' THEN 2 WHEN 'CreatedAt' THEN 3 ELSE 4 END LIMIT 1"
-    }
-    return "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = '$Ident'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum) LIMIT 1"
-}
-
 function Get-ContentFingerprintSql {
-    param([string]$Ident, [string]$HighWater)
+    param([string]$Ident)
     if ($Ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
-    $hw = "''"
-    if (-not [string]::IsNullOrWhiteSpace($HighWater)) {
-        if ($HighWater -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { return $null }
-        $hw = 'COALESCE(max("' + $HighWater + '")::text, '''')'
-    }
-    return 'SELECT count(*)::text || '' '' || ' + $hw + ' || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
+    return 'SELECT count(*)::text || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
 }
 
 function Get-WitnessSequenceCanonical {
@@ -200,16 +186,7 @@ function Get-WitnessContentCanonical {
     $listed = Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $script:TableListSql
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($ident in @(Get-WitnessLines $listed)) {
-        $keySql = Get-HighWaterSql $ident
-        if ($null -eq $keySql) { throw 'table name was not a catalog identifier' }
-        $key = (Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $keySql)
-        $key = (($key -split "`n")[0]).Trim()
-        if ([string]::IsNullOrWhiteSpace($key)) {
-            $timeSql = Get-HighWaterSql $ident -Timestamp
-            $key = (Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $timeSql)
-            $key = (($key -split "`n")[0]).Trim()
-        }
-        $fpSql = Get-ContentFingerprintSql -Ident $ident -HighWater $key
+        $fpSql = Get-ContentFingerprintSql -Ident $ident
         if ($null -eq $fpSql) { throw 'content fingerprint sql was refused' }
         $fp = Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $fpSql
         [void]$lines.Add($ident + ' ' + $fp.Trim())
