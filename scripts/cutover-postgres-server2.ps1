@@ -64,7 +64,11 @@ param(
     [string]$HoldReason,
     [string]$HoldUntil,
     [string]$ApiBase = 'http://localhost:17202',
-    [string]$CommandHost = 'pwsh'
+    [string]$CommandHost = 'pwsh',
+    [ValidateSet('', 'sequences', 'rollback-rows')]
+    [string]$VerificationProbe = '',
+    [string]$ProbeSourceContainer = '',
+    [string]$ProbeTargetContainer = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -541,12 +545,29 @@ function Set-CutoverConnectionSecret {
     Write-Host 'ConnectionStrings:DefaultConnection is present. Value not displayed.'
 }
 
+function Test-CutoverProbeContainerName {
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name -notmatch '^c197[45]-[a-f0-9]{16}$') { return $false }
+    if ($Name.IndexOf('antiphon') -ge 0) { return $false }
+    return $true
+}
+
 function Invoke-CutoverPsql {
     param([string]$Target, [string]$Sql)
-    $file = Join-Path $DumpDirectory ('cutover-query-' + [guid]::NewGuid().ToString('N') + '.sql')
+    $dir = $DumpDirectory
+    if ($script:CutoverProbeActive) { $dir = $script:CutoverProbeDump }
+    if ([string]::IsNullOrWhiteSpace($dir)) { return $null }
+    $file = Join-Path $dir ('cutover-query-' + [guid]::NewGuid().ToString('N') + '.sql')
     Set-Content -LiteralPath $file -Value $Sql -Encoding ascii
     try {
-        if ($Target -eq 'source') {
+        if ($script:CutoverProbeActive) {
+            $container = ''
+            if ($Target -eq 'source') { $container = $script:CutoverProbeSource }
+            elseif ($Target -eq 'target') { $container = $script:CutoverProbeTarget }
+            if (-not (Test-CutoverProbeContainerName $container)) { return $null }
+            $raw = Get-Content -LiteralPath $file -Raw | & docker exec -i $container psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
+        } elseif ($Target -eq 'source') {
             $raw = Get-Content -LiteralPath $file -Raw | & docker exec -i antiphon-postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
         } else {
             $remote = "cd '$Server2ComposeDir' && docker compose -p antiphon-server2-postgres exec -T postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1"
@@ -557,6 +578,12 @@ function Invoke-CutoverPsql {
     } finally {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Invoke-CutoverVerifySequences {
+    # PostgreSQL 16 pg_sequences has no is_called. This read still asks for it (CARD-1974).
+    $seq = "SELECT schemaname || '.' || sequencename || ' ' || COALESCE(last_value::text, '') || ' ' || is_called::text FROM pg_sequences ORDER BY 1"
+    Assert-CutoverEqual -Label 'sequences' -SourceText (Invoke-CutoverPsql -Target source -Sql $seq) -TargetText (Invoke-CutoverPsql -Target target -Sql $seq)
 }
 
 function Assert-CutoverEqual {
@@ -583,8 +610,7 @@ function Invoke-CutoverVerify {
         $countSql = 'SELECT count(*) FROM ' + $ident
         Assert-CutoverEqual -Label ('count ' + $ident) -SourceText (Invoke-CutoverPsql -Target source -Sql $countSql) -TargetText (Invoke-CutoverPsql -Target target -Sql $countSql)
     }
-    $seq = "SELECT schemaname || '.' || sequencename || ' ' || COALESCE(last_value::text, '') || ' ' || is_called::text FROM pg_sequences ORDER BY 1"
-    Assert-CutoverEqual -Label 'sequences' -SourceText (Invoke-CutoverPsql -Target source -Sql $seq) -TargetText (Invoke-CutoverPsql -Target target -Sql $seq)
+    Invoke-CutoverVerifySequences
     $ext = "SELECT extname || ' ' || extversion FROM pg_extension ORDER BY 1"
     Assert-CutoverEqual -Label 'extensions' -SourceText (Invoke-CutoverPsql -Target source -Sql $ext) -TargetText (Invoke-CutoverPsql -Target target -Sql $ext)
     $mig = 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY 1'
@@ -628,6 +654,47 @@ function Test-CutoverNewHasExtraRows {
         if ([int]$target[$key] -gt $old) { return $true }
     }
     return $false
+}
+
+function Invoke-CutoverVerificationProbe {
+    if ($Execute -or $Rollback -or $ConfirmWindow) {
+        Fail-Cutover 'REFUSED: verification probe cannot run with -Execute, -Rollback or -ConfirmWindow.'
+    }
+    if ($VerificationProbe -ne 'sequences' -and $VerificationProbe -ne 'rollback-rows') {
+        Fail-Cutover 'REFUSED: verification probe must be sequences or rollback-rows.'
+    }
+    if (-not (Test-CutoverProbeContainerName $ProbeSourceContainer) -or -not (Test-CutoverProbeContainerName $ProbeTargetContainer)) {
+        Fail-Cutover 'REFUSED: verification probe container names are not throwaway witness names.'
+    }
+    if ($ProbeSourceContainer -eq $ProbeTargetContainer) {
+        Fail-Cutover 'REFUSED: verification probe source and target must be different containers.'
+    }
+    $script:CutoverProbeActive = $true
+    $script:CutoverProbeSource = $ProbeSourceContainer
+    $script:CutoverProbeTarget = $ProbeTargetContainer
+    $script:CutoverProbeDump = Join-Path ([System.IO.Path]::GetTempPath()) ('c1974-sql-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $script:CutoverProbeDump -Force | Out-Null
+    try {
+        if ($VerificationProbe -eq 'sequences') {
+            Invoke-CutoverVerifySequences
+            exit 0
+        }
+        $extra = Test-CutoverNewHasExtraRows
+        if ($null -eq $extra) {
+            Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
+        }
+        if ($extra) {
+            Fail-Cutover 'REFUSED: stop gate 6: the new database has rows the old desktop volume lacks. Pass -AcceptDataLossRollback to roll back. Neither data directory is removed.'
+        }
+        Write-Host 'ROLLBACK ROWS clean'
+        exit 0
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($script:CutoverProbeDump)) {
+            Remove-Item -LiteralPath $script:CutoverProbeDump -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        $script:CutoverProbeDump = $null
+        $script:CutoverProbeActive = $false
+    }
 }
 
 function Invoke-CutoverPipeDumpToAge {
@@ -919,6 +986,9 @@ function Invoke-CutoverWindow {
     }
 }
 
+if (-not [string]::IsNullOrWhiteSpace($VerificationProbe)) {
+    Invoke-CutoverVerificationProbe
+}
 if (-not $Execute) {
     Show-CutoverWhatIf
     Write-CutoverChallengeLine
