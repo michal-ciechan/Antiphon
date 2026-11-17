@@ -1050,7 +1050,7 @@ public sealed partial class AgentSessionRuntime
         DateTime? generation = null;
         long postSequence = 0, addedCount = 0;
         TranscriptRecoveryResult Result(TranscriptRecoveryOutcome outcome, string reason) => new(
-            outcome, reason, generation, before?.Rows.LastOrDefault()?.Sequence ?? 0,
+            outcome, reason, generation, before?.Stamp.MaxSequence ?? 0,
             postSequence, addedCount, _timeProvider.GetElapsedTime(started));
 
         if (_states is null) return Result(TranscriptRecoveryOutcome.Unknown, "store_absent");
@@ -1063,7 +1063,7 @@ public sealed partial class AgentSessionRuntime
                 if (before is null || !before.LocalRunning)
                     return Result(TranscriptRecoveryOutcome.Unknown, "ownership_unavailable");
                 generation = before.Generation;
-                postSequence = before.Rows.LastOrDefault()?.Sequence ?? 0;
+                postSequence = before.Stamp.MaxSequence ?? 0;
                 stamp = lease.Snapshot;
             }
 
@@ -1079,7 +1079,7 @@ public sealed partial class AgentSessionRuntime
 
             // T13 protects the whole revision, including annotations. T16 proves runner
             // coverage can omit those server-only annotation rows.
-            var frontier = before.Rows.LastOrDefault(row => RecoveryActivity(sessionId, row));
+            var frontier = before.Tail.LastOrDefault(row => RecoveryActivity(sessionId, row));
             if (frontier is not null && !snapshot.Entries.Any(e => RecoveryIdentityMatches(frontier, e)))
                 return Result(TranscriptRecoveryOutcome.Unknown, "frontier_missing");
             if (frontier is null)
@@ -1092,14 +1092,14 @@ public sealed partial class AgentSessionRuntime
 
             using (var lease = await _states.BeginWriteAsync(sessionId, ct))
             {
-                var current = await ReadRecoveryObservationAsync(sessionId, ct);
-                postSequence = current?.Rows.LastOrDefault()?.Sequence ?? postSequence;
+                var current = await ReadRecoveryObservationAsync(sessionId, ct, before.Full);
+                postSequence = current?.Stamp.MaxSequence ?? postSequence;
                 if (current is null || !current.LocalRunning || !SessionGeneration.Equal(current.Generation, generation)
                     || current.RunnerId != before.RunnerId || current.RunnerStoreId != before.RunnerStoreId
                     || current.RunnerCwd != before.RunnerCwd)
                     return Result(TranscriptRecoveryOutcome.Unknown, "ownership_changed");
                 if (lease.Snapshot.ServerEpoch != stamp.ServerEpoch || lease.Snapshot.Revision != stamp.Revision
-                    || lease.Snapshot.ResetEpoch != stamp.ResetEpoch || !current.Rows.SequenceEqual(before.Rows))
+                    || lease.Snapshot.ResetEpoch != stamp.ResetEpoch || !RecoveryUnchanged(current, before))
                     return Result(TranscriptRecoveryOutcome.Unknown, "frontier_changed");
                 ct.ThrowIfCancellationRequested();
                 if (runnerState.Working)
@@ -1121,12 +1121,11 @@ public sealed partial class AgentSessionRuntime
 
                 // T10 covers both cache modes; T11 faults the fresh SQL verdict. T15 checks
                 // publication under the same lease used for validation and persistence.
-                var after = await ReadRecoveryObservationAsync(sessionId, ct);
+                var after = await ReadAddedRecoveryAsync(sessionId, before.Stamp.MaxSequence ?? 0, ct);
                 if (after is not null)
                 {
-                    var previousIds = before.Rows.Select(row => row.Id).ToHashSet();
-                    addedCount = after.Rows.LongCount(row => !previousIds.Contains(row.Id));
-                    postSequence = after.Rows.LastOrDefault()?.Sequence ?? postSequence;
+                    addedCount = after.AddedCount;
+                    postSequence = after.Stamp.MaxSequence ?? postSequence;
                 }
                 if (persisted.NeedsReload || TryGetTranscriptPersistFailure(sessionId, out _))
                     return Result(TranscriptRecoveryOutcome.Unknown, "persist_uncertain");
@@ -1159,34 +1158,77 @@ public sealed partial class AgentSessionRuntime
         string? ApiErrorTimeZoneId, string? Model, int? ModelCalls, DateTime CreatedAt);
 
     private sealed record RecoveryObservation(DateTime Generation, SessionStatus Status, string? RunnerId,
-        Guid? RunnerStoreId, string? RunnerCwd, RecoveryRow[] Rows)
+        Guid? RunnerStoreId, string? RunnerCwd, TranscriptRecoveryRead.Stamp Stamp, RecoveryRow[] Tail, bool Full,
+        long AddedCount = 0)
     {
         public bool LocalRunning => Status == SessionStatus.Running && Generation != default
             && (string.IsNullOrWhiteSpace(RunnerId) || RunnerId == PhoneHomeProtocol.LocalRunnerId)
             && RunnerStoreId is null && RunnerCwd is null;
     }
 
-    private async Task<RecoveryObservation?> ReadRecoveryObservationAsync(Guid sessionId, CancellationToken ct)
+    // S2 is incomplete on purpose: a non-full observation compares MaxSequence and TopRowId only.
+    // Count, FirstRowId and tail equality are S3. S2 and S3 land together.
+    private static bool RecoveryUnchanged(RecoveryObservation left, RecoveryObservation right) =>
+        left.Full || right.Full
+            ? left.Tail.SequenceEqual(right.Tail)
+            : left.Stamp.MaxSequence == right.Stamp.MaxSequence && left.Stamp.TopRowId == right.Stamp.TopRowId;
+
+    private async Task<RecoveryObservation?> ReadRecoveryObservationAsync(
+        Guid sessionId, CancellationToken ct, bool whole = false)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return await ReadRecoveryObservationAsync(db, sessionId, ct);
+        return await ReadRecoveryObservationAsync(db, sessionId, ct, whole);
+    }
+
+    private async Task<RecoveryObservation?> ReadAddedRecoveryAsync(Guid sessionId, long beforeMax, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var session = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
+            .Select(s => new { s.StartedAt, s.Status, s.RunnerId, s.RunnerStoreId, s.RunnerCwd }).SingleOrDefaultAsync(ct);
+        if (session is null) return null;
+        var added = await TranscriptRecoveryRead.ReadAddedAsync(db, sessionId, beforeMax, ct);
+        return new(session.StartedAt, session.Status, session.RunnerId, session.RunnerStoreId, session.RunnerCwd,
+            added.Stamp, [], false, added.AddedCount);
     }
 
     private static async Task<RecoveryObservation?> ReadRecoveryObservationAsync(
-        AppDbContext db, Guid sessionId, CancellationToken ct)
+        AppDbContext db, Guid sessionId, CancellationToken ct, bool whole = false)
     {
         var session = await db.AgentSessions.AsNoTracking().Where(s => s.Id == sessionId)
             .Select(s => new { s.StartedAt, s.Status, s.RunnerId, s.RunnerStoreId, s.RunnerCwd }).SingleOrDefaultAsync(ct);
         if (session is null) return null;
+        if (!whole)
+        {
+            var (stamp, observed) = await TranscriptRecoveryRead.ReadTailAsync(db, sessionId, ct);
+            var tail = observed.Select(ToRecoveryRow).ToArray();
+            // No activity in the newest K rows of a longer session: today's whole read (W-7).
+            if (tail.Any(row => RecoveryActivity(sessionId, row)) || stamp.Count <= TranscriptRecoveryRead.TailRows)
+                return new(session.StartedAt, session.Status, session.RunnerId, session.RunnerStoreId, session.RunnerCwd,
+                    stamp, tail, false);
+        }
+
         var rows = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == sessionId)
             .OrderBy(t => t.Sequence).Select(t => new RecoveryRow(t.Id, t.Sequence, t.Kind, t.Uuid, t.ParentUuid,
                 t.Timestamp, t.Role, t.Text, t.ToolName, t.ToolInput, t.ToolUseId, t.ToolIsError, t.StopReason,
                 t.ApiCallId, t.InputTokens, t.OutputTokens, t.CacheReadTokens, t.CacheCreationTokens, t.IsApiError,
                 t.ApiErrorClass, t.ApiErrorStatus, t.ApiErrorTimeZoneId, t.Model, t.ModelCalls, t.CreatedAt))
             .ToArrayAsync(ct);
-        return new(session.StartedAt, session.Status, session.RunnerId, session.RunnerStoreId, session.RunnerCwd, rows);
+        var fullStamp = new TranscriptRecoveryRead.Stamp(
+            rows.Length,
+            rows.Length == 0 ? null : rows[^1].Sequence,
+            rows.Length == 0 ? null : rows[0].Id,
+            rows.Length == 0 ? null : rows[^1].Id);
+        return new(session.StartedAt, session.Status, session.RunnerId, session.RunnerStoreId, session.RunnerCwd,
+            fullStamp, rows, true);
     }
+
+    private static RecoveryRow ToRecoveryRow(TranscriptRecoveryRead.ObservedRow row) => new(
+        row.Id, row.Sequence, row.Kind, row.Uuid, row.ParentUuid, row.Timestamp, row.Role, row.Text,
+        row.ToolName, row.ToolInput, row.ToolUseId, row.ToolIsError, row.StopReason, row.ApiCallId,
+        row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreationTokens, row.IsApiError,
+        row.ApiErrorClass, row.ApiErrorStatus, row.ApiErrorTimeZoneId, row.Model, row.ModelCalls, row.CreatedAt);
 
     private static bool RecoveryActivity(Guid sessionId, RecoveryRow row) => new SessionStateSnapshot(sessionId)
         .Append([new TranscriptEntry { AgentSessionId = sessionId, Sequence = 1, Kind = row.Kind,
@@ -1555,13 +1597,13 @@ public sealed partial class AgentSessionRuntime
                 return PersistResult.Empty with { RecoveryFenceRejection = "ownership_changed_at_commit" };
             if (expectedRecovery is not null)
             {
-                var fenced = await ReadRecoveryObservationAsync(db, sessionId, CancellationToken.None);
+                var fenced = await ReadRecoveryObservationAsync(db, sessionId, CancellationToken.None, expectedRecovery.Full);
                 if (fenced is null || !fenced.LocalRunning
                     || !SessionGeneration.Equal(fenced.Generation, expectedRecovery.Generation)
                     || fenced.RunnerId != expectedRecovery.RunnerId || fenced.RunnerStoreId != expectedRecovery.RunnerStoreId
                     || fenced.RunnerCwd != expectedRecovery.RunnerCwd)
                     return PersistResult.Empty with { RecoveryFenceRejection = "ownership_changed_at_commit" };
-                if (!fenced.Rows.SequenceEqual(expectedRecovery.Rows))
+                if (!RecoveryUnchanged(fenced, expectedRecovery))
                     return PersistResult.Empty with { RecoveryFenceRejection = "frontier_changed_at_commit" };
             }
 
