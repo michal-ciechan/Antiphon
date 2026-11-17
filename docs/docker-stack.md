@@ -662,14 +662,28 @@ if ($LASTEXITCODE -ne 0) { throw 'Preview refused; preserve evidence and retain 
 
 Pass `-ProjectId` explicitly (the Antiphon project id above). The export has no Git
 origin and is not the project's registered path, so URL and path matching both miss and
-the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it. Use a short
-export root such as `C:\rt\<8 hex>` as above. A full-SHA export nested beneath the
-checkout made the desktop proof directory reach 264 characters, past the Windows
-260-character limit; the 2026-11-16 preview `c1008d39` refused `proof-stale` at the
-final live `ls-remote`. The short root leaves room for the wrapper's
-`.antiphon/rolling-server2/<run-id>/exchange-*` proof paths. See
+the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it.
+`Get-RecycleProjectId` matches the project record's canonical `gitRepositoryUrl`
+(`https://github.com/michal-ciechan/antiphon`) and its registered `localRepositoryPath`
+against this checkout. The exported tree's path is neither of those, so both matches
+miss and the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without
+`-ProjectId`. Use a short export root such as `C:\rt\<8 hex>` as above. A full-SHA
+export nested beneath the checkout made the desktop proof directory reach 264
+characters, past the Windows 260-character limit; the 2026-11-16 preview `c1008d39`
+refused `proof-stale` at the final live `ls-remote`. The short root leaves room for
+the wrapper's `.antiphon/rolling-server2/<run-id>/exchange-*` proof paths. The export
+also nests the evidence root 70 characters deeper: the desktop proof directory is 194
+characters on the rc checkout (`C:\src\Antiphon`) and 264 under
+`C:\src\Antiphon\.antiphon\retirement-tooling\<40 hex>`. A short export such as
+`C:\rt\<8 hex>` keeps that directory at 193 characters, under the 260-character
+process-start limit, while `<name>.bundle` is 265 and its `.lock` is 270, still past
+the 259-character file limit. `retire-temp` prints one line,
+`path-length export-root=<n> longest-derived=<n>`, after it creates the evidence root.
+Only tooling that starts the final live `ls-remote` in its own short scratch directory
+works from the 264-character path (the 2026-11-16 preview `c1008d39` refused
+`proof-stale` at that check; see
 [the investigation](investigations/2026-11-16-retire-temp-live-binding-refusal.md)
-and the evidence-path construction in [c590-real.ps1](../scripts/c590-real.ps1).
+and the evidence-path construction in [c590-real.ps1](../scripts/c590-real.ps1)).
 
 Do not use that export for another rolling phase. Verify the operation-owned
 `tooling.sha256` against the exported four shell files and record the exported
@@ -800,7 +814,7 @@ detail. The coordinator console shows only the `DIAGNOSIS=` line.
 | `RecycleGitAuditUnknown reason=registry-invalid detail=<registry>` | The registry failed custody, canonical bytes or shape. Check `ls -l` and rewrite it with `jq -ncS`. |
 | `RecycleGitAuditUnknown reason=registry-project detail=<registry>` | The registry has no entry for this retirement's project id. Compare it with the `RECYCLE_PROJECT id=` line. |
 | `RecycleGitAuditUnknown reason=unapproved-origin detail=<private-origins.txt>` | An inventory origin is not listed. `sed -n 's/^C1008_PRIVATE_ORIGIN .* origin=\([^ ]*\) .*/\1/p' <private-origins.txt> \| sort -u` lists the exact strings. Review each one before adding it. |
-| `RecycleGitAuditUnknown reason=proof-exchange stage=<stage>` | The registry passed and the desktop proof exchange failed. `request` means the host's proof-set check failed before it sent the request. `response` means no reply came within 600 s, or the desktop coordinator stopped. `binding` means the reply did not match the request or the inventory digest. `freshness` means the proof failed custody or age checks. `digest` means the proof set digest differed. `record` means the host could not persist the exchange. On the desktop, read `remote-output.txt` (`transport-exit`, `failure-line`), `coordinator-exchanges.jsonl` and the `exchange-*` directories under `.antiphon/rolling-server2/<run-id>/`. |
+| `RecycleGitAuditUnknown reason=proof-exchange stage=<stage>` | The registry passed and the desktop proof exchange failed. `request` means the host's proof-set check failed before it sent the request. `response` means no reply came within 600 s, or the desktop coordinator stopped. `binding` means the reply did not match the request or the inventory digest. `freshness` means the proof failed custody or age checks. `digest` means the proof set digest differed. `record` means the host could not persist the exchange. On the desktop, read `remote-output.txt` (`transport-exit`, `failure-line`, `failure-script`, `failure-reason`), `coordinator-exchanges.jsonl` and the `exchange-*` directories under `.antiphon/rolling-server2/<run-id>/`. `failure-script` is the throwing script's leaf name and `failure-reason` is the fixed token from that throw (`proof`, `protocol`, `git`, or `other`). |
 
 `RecycleUnpublishedWork` and `RecycleWorktreeDirty` from the inventory keep their bare form.
 A bare `RecycleGitAuditUnknown` from this step means the host could not create or record

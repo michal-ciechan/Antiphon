@@ -1,4 +1,15 @@
 # CARD-1609. Versioned origin-only proof writer. Dot-source only.
+# Windows cannot CreateProcess when the working directory is 260 characters or
+# more. A long export root still has to start ssh, scp and git, so those children
+# move to the temp path. An explicit shorter directory is left alone.
+function Get-C1609StartDirectory {
+    param([string]$Requested='')
+    $effective=if($Requested){$Requested}else{[IO.Directory]::GetCurrentDirectory()}
+    if($effective.Length -ge 260){return [IO.Path]::GetTempPath().TrimEnd('\','/')}
+    if($Requested){return $Requested}
+    return ''
+}
+
 function Invoke-C1609BoundedProcess {
     param([string]$FileName, [string[]]$Arguments, [int]$TimeoutMs=30000,
         [string]$WorkingDirectory='', [string]$InputText='', [string]$OutputFile='',
@@ -7,7 +18,8 @@ function Invoke-C1609BoundedProcess {
     $psi=[Diagnostics.ProcessStartInfo]::new()
     $psi.FileName=$FileName; $psi.UseShellExecute=$false; $psi.CreateNoWindow=$true
     $psi.RedirectStandardOutput=$true; $psi.RedirectStandardError=$true; $psi.RedirectStandardInput=$true
-    if ($WorkingDirectory) { $psi.WorkingDirectory=$WorkingDirectory }
+    $startDirectory=Get-C1609StartDirectory $WorkingDirectory
+    if($startDirectory){$psi.WorkingDirectory=$startDirectory}
     if($GitEnvironment){
         foreach($key in @('GIT_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG_PARAMETERS','GIT_CONFIG_COUNT')) {
             [void]$psi.Environment.Remove($key)
@@ -288,9 +300,13 @@ function Invoke-C1609HostOriginProofAttempt {
             $reuse=-not $FreshGraph -and $fresh -and ($oldAdvertisement -join [char]10) -ceq ($before -join [char]10)
         }
         $cap=[Math]::Min(300000,$NetworkBudgetMs-[int]$watch.ElapsedMilliseconds);if($cap -le 0){throw 'deadline'}
-        # CARD-1693: Git reads and writes a bundle only inside the short scratch directory. The desktop
-        # proof directory is 194 characters, so <name>.bundle is 266 and its .lock 271: past MAX_PATH for
-        # Git for Windows without core.longpaths. .NET moves the bytes and is long-path safe.
+        # CARD-1693: Git reads and writes a bundle only inside the short scratch directory. Measured
+        # proof directories: 194 characters on the rc checkout (C:\src\Antiphon), so <name>.bundle is
+        # 266 and its .lock 271; 264 under the long export
+        # (C:\src\Antiphon\.antiphon\retirement-tooling\<40 hex>), so the bundle is 336 and its .lock
+        # 341; 193 under a short export (C:\rt\<8 hex>), so the directory stays under 260 while the
+        # bundle is 265 and its .lock 270. Every lock is past MAX_PATH for Git for Windows without
+        # core.longpaths. .NET moves the bytes and is long-path safe.
         $staged=Join-Path $scratch 'c1609-proof.bundle'
         if($reuse){
             [IO.File]::Copy($PreviousProofFile+'.bundle',$staged,$false)
@@ -363,11 +379,20 @@ function Copy-C1609HostOriginProof {
 # Git starts in its own short scratch directory, never the proof directory: the
 # script-only export (CARD-1955) made that path 264 characters, and Windows cannot
 # start a process whose current directory reaches MAX_PATH (preview c1008d39).
+function Assert-C1609LiveScratchCustody {
+    param([string]$Scratch)
+    if([IO.Path]::GetFileName($Scratch) -cnotmatch '^c1609-live-[0-9a-f]{32}$'){throw 'custody'}
+    if([IO.Directory]::Exists($Scratch) -and
+        (([IO.DirectoryInfo]::new($Scratch).Attributes -band [IO.FileAttributes]::ReparsePoint))){throw 'custody'}
+}
+
 function Assert-C1609LiveOriginProof {
     param([string]$OriginUrl,[string]$RepoRelative,[string]$OperationId,[string]$ProofFile,
         [string[]]$ApprovedOrigins,[int]$NetworkBudgetMs=5000)
+    $script:C1609LiveProofReason=''
     $scratch=Join-Path ([IO.Path]::GetTempPath()) ('c1609-live-'+[guid]::NewGuid().ToString('N'))
     try {
+        Assert-C1609LiveScratchCustody $scratch
         $allowed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($origin in $ApprovedOrigins){[void]$allowed.Add($origin)}
         if(-not $allowed.Contains($OriginUrl) -or
@@ -386,11 +411,16 @@ function Assert-C1609LiveOriginProof {
         if($old[8] -cne ('advertisement '+(Get-C1008Sha256 (($expected -join [char]10)+[char]10))) -or
             $old[9] -cne ('count '+$expected.Count)){throw 'proof'}
         [void][IO.Directory]::CreateDirectory($scratch)
+        Assert-C1609LiveScratchCustody $scratch
         $advertisement=@(Read-C1609Advertisement (Invoke-C1609HostGit -Repo $RepoRelative -WorkingDirectory $scratch `
             -GitArgs @('ls-remote',$OriginUrl,'refs/heads/*','refs/tags/*','refs/antiphon/salvage/*') -TimeoutMs $NetworkBudgetMs))
         $live=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($line in $advertisement){[void]$live.Add($line)}
         foreach($line in $expected){if(-not $live.Contains($line)){throw 'withdrawn-ref'}}
-    } catch {throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)}
+    } catch {
+        $reason=[string]$_.Exception.Message
+        $script:C1609LiveProofReason=if($reason -cmatch '^RecycleGitAuditUnknown'){'git'}elseif($reason -cmatch '^[a-z][a-z-]{0,31}$'){$reason}else{'other'}
+        throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
+    }
     finally {if([IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}}
 }
