@@ -712,7 +712,7 @@ never infer a successful Apply from its presence.
 #### Crash resume after SIGKILL (CARD-1956)
 
 CARD-1956 landed on master during this documentation task (repair commit
-`6905ae9c5dbb46d7412d57323e37e19eddcd9c10`; Merge 253). Export tooling that includes that repair before using
+`6905ae9c5dbb46d7412d57323e37e19eddcd9c10`; batch 253). Export tooling that includes that repair before using
 this recovery: older tooling refuses an active lifecycle even when its owner is
 dead. The guards are `c1609_require_resume_phase` and `c1609_phase_begin` in
 [the landed c1008-retirement.sh](https://github.com/michal-ciechan/Antiphon/blob/6905ae9c5dbb46d7412d57323e37e19eddcd9c10/scripts/c1008-retirement.sh),
@@ -730,9 +730,10 @@ incarnation, intent, publication, live-state, custody, closure and apply-token g
 It does not consume a new preview in place of the old operation.
 
 A SIGKILLed **Preview** is never resumed: start a new operation and preview. An
-unconsumed Ready receipt is not an Apply recovery. A refused or stuck Applying
-operation must be resolved with audited `-Close`, once Close's existing absence,
-census and custody checks pass:
+unconsumed Ready receipt is not an Apply recovery. When resume refuses a consumed
+`Applying` or `PartialRefused` receipt it prints `recovery=-Close` (otherwise
+`recovery=new-operation`); resolve that operation with audited `-Close`, once Close's
+existing absence, census and custody checks pass:
 
 ```powershell
 pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <operation-id> -ExpectedJournalDigest <current-receipt-sha256> -ReasonFile <reason-file>
@@ -934,11 +935,12 @@ docker volume rm -- antiphon-runner-temp_work
 
 Verify that inspection of each exact name reports absent and that all four names
 are absent from `docker volume ls`. Retain the archive, audits and removal outcomes;
-never use `down -v`, prune or a name-pattern sweep. Confirm the protected
-`retirement/<operation-id>/receipt.json` is `Refused` or `Completed` with zero
-effects (and zero intents for a Refused receipt). If it remains `Applying`, `Partial`
-or `PartialRefused`, use audited `-Close` after absence is proved, rather than
-rewriting it. The fallback itself does not mark a sanctioned Apply Completed.
+never use `down -v`, prune or a name-pattern sweep. The fallback leaves the protected
+`retirement/<operation-id>/receipt.json` in the state the failed attempt wrote.
+Confirm it is `Refused` with zero effects and zero intents, or `Completed` with one
+recorded effect per target. If it remains `Applying`, `Partial`, `PartialRefused`,
+or `Refused` with any effect or intent, use audited `-Close` after absence is proved,
+rather than rewriting it. The fallback itself does not mark a sanctioned Apply Completed.
 
 The next `deploy-temp` still runs its admission gate:
 `c1609_temp_retirement_clearable` in [c590-remote.sh](../scripts/c590-remote.sh)
@@ -1087,7 +1089,7 @@ retained directories, read only the ledger fields below inside the owning runner
 jq '{slots:[.slots[]|{id,path,state}],quarantinedDirectories,attention}' /work/workspace-slots/ledger.json
 ```
 
-The `attention` rows record slot id, original path, reason and time;
+The `attention` rows record `key`, `slotId`, original `path`, `detail` and `at`;
 `quarantinedDirectories` records the retained path and whether it is still open
 (`closedAt: null`). [RunnerWorkspaceSlotPool.cs](../src/Antiphon.SessionRunner/RunnerWorkspaceSlotPool.cs)
 (`QuarantineDirectoryAsync`, `QuarantineAndRehomeAsync`) writes these rows and locks
