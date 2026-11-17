@@ -95,7 +95,10 @@ public class TranscriptHotPathQueryTests
         // the working batch and the two pure membership chunks. The prelude's own probe branch keeps
         // the scoped plan guard below, and its count must read only this session. Scoping approved
         // by the orchestrator; see TranscriptPlanAssertions.PrefixCountScans. The prelude is explained
-        // only after the window closes: its parallel workers publish their counters asynchronously.
+        // only after the window closes, so its count never runs inside it.
+        // CARD-1888 round 2: the setup above ran that count, so its scans must be published before
+        // the window opens, or they land inside it (review d1a53b65: Sequential 2 -> 4).
+        await FlushIdleBackendsAsync(f.ConnectionString, connection);
         var before = await CountersAsync(f.ConnectionString, connection);
         for (var i = 0; i < 100; i++)
         {
@@ -132,6 +135,52 @@ public class TranscriptHotPathQueryTests
         command.Parameters.AddRange(captured.Parameters.Select(p => p.Clone()).ToArray());
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) { }
+    }
+
+    // The setup statements ran on backends now idle in Npgsql's pool. PostgreSQL 16 publishes a
+    // backend's table counters when it goes idle, but only if it has not flushed within the last
+    // second (PGSTAT_MIN_INTERVAL); otherwise it defers them to a 10 s idle timer, which can fire inside
+    // the window. Polling until the counters look stable cannot tell a deferred flush from none.
+    // pg_stat_force_next_flush() makes its own backend flush before it reports ReadyForQuery, and the
+    // pool hands out idle connectors before it opens a new one, so every idle backend of this
+    // database is checked out and flushed. Parallel workers need nothing: each flushes on exit, and
+    // the leader's Gather waits for that exit before its statement completes.
+    private static async Task FlushIdleBackendsAsync(string connectionString, NpgsqlConnection producer)
+    {
+        var held = new List<NpgsqlConnection>();
+        try
+        {
+            var flushed = new HashSet<int> { producer.ProcessID };
+            HashSet<int>? census = null;
+            while (true)
+            {
+                var connection = new NpgsqlConnection(connectionString);
+                held.Add(connection);
+                await connection.OpenAsync();
+                if (census is null)
+                {
+                    census = [];
+                    await using var list = new NpgsqlCommand("""
+                        SELECT pid FROM pg_stat_activity
+                        WHERE datname = current_database() AND backend_type = 'client backend'
+                        """, connection);
+                    await using var reader = await list.ExecuteReaderAsync();
+                    while (await reader.ReadAsync()) census.Add(reader.GetInt32(0));
+                }
+                // A backend outside the census is a new connector: the pool has no idle one left.
+                if (!census.Contains(connection.ProcessID)) break;
+                await using (var flush = new NpgsqlCommand("SELECT pg_stat_force_next_flush()", connection))
+                    await flush.ExecuteNonQueryAsync();
+                flushed.Add(connection.ProcessID);
+                if (census.IsSubsetOf(flushed)) break;
+            }
+            census!.Except(flushed).ShouldBeEmpty(
+                "every backend that ran a setup statement must flush its scan counters before the window opens");
+        }
+        finally
+        {
+            foreach (var connection in held) await connection.DisposeAsync();
+        }
     }
 
     private sealed record Counters(long Sequential, long Indexed);
