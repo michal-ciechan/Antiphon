@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -139,6 +140,7 @@ public sealed class VolumeRetirementHostProofTests
     // both had a line 389, so the first live receipt could not name the failing script.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    [NativeLinuxOnly("Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.")]
     public async Task Coordinator_receipt_names_the_failing_script_and_reason()
     {
         var root = Directory.CreateTempSubdirectory("c1957-receipt-").FullName;
@@ -215,6 +217,7 @@ public sealed class VolumeRetirementHostProofTests
     // or more cannot start a process. Nothing here runs on native Windows.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
+    [NativeLinuxOnly("Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.")]
     public async Task Desktop_children_start_when_the_working_directory_is_264_characters()
     {
         var root = Directory.CreateTempSubdirectory("c1957-cwd-").FullName;
