@@ -23,11 +23,15 @@ public sealed class SessionRuntimeActionCoordinator(
     // a channel outage cannot hold settlement, refinement confirmation or catch-up.
     internal const string ChannelReplyDebt = "channel";
     private const string DeferredReason = "Deferred";
+    private const int RetryLogCapacity = 1024;
+    private static readonly TimeSpan RetryLogInterval = TimeSpan.FromMinutes(10);
     private readonly Channel<Guid> _hints = Channel.CreateBounded<Guid>(new BoundedChannelOptions(HintCapacity)
         { FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     // Contains active execution owners only, at most WorkerCount. Overflow lives in PostgreSQL.
     private readonly ConcurrentDictionary<Guid, byte> _owners = new();
     private readonly Channel<bool> _scan = Channel.CreateBounded<bool>(1);
+    private readonly ConcurrentDictionary<Guid, DateTime> _retryInformationAt = new();
+    private readonly object _retryLogGate = new();
     private int _running;
 
     internal bool Hint(Guid sessionId)
@@ -437,6 +441,7 @@ public sealed class SessionRuntimeActionCoordinator(
 
     private async Task ObserveDebtAsync(Guid sessionId, string transition, CancellationToken ct)
     {
+        if (!logger.IsEnabled(LogLevel.Debug)) return;
         try
         {
             await using var scope = scopes.CreateAsyncScope();
@@ -444,7 +449,7 @@ public sealed class SessionRuntimeActionCoordinator(
             var debt = await db.SessionRuntimeActions.Where(a => a.AgentSessionId == sessionId)
                 .GroupBy(a => a.AgentSessionId).Select(g => new { Count = g.Count(), Frontier = g.Max(a => a.Sequence) })
                 .SingleOrDefaultAsync(ct);
-            logger.LogInformation("Action worker {Transition} session {SessionId}; pending {PendingCount}, frontier {Frontier}",
+            logger.LogDebug("Action worker {Transition} session {SessionId}; pending {PendingCount}, frontier {Frontier}",
                 transition, sessionId, debt?.Count ?? 0, debt?.Frontier ?? 0L);
         }
         catch { /* Observability has no completion authority. */ }
@@ -452,9 +457,29 @@ public sealed class SessionRuntimeActionCoordinator(
 
     private void ObserveAction(SessionRuntimeAction action)
     {
-        try { logger.LogInformation("Action {ActionId} session {SessionId}; phase {Phase}, age {AgeSeconds}s, frontier {Frontier}, attempts {Attempts}",
-            action.Id, action.AgentSessionId, action.Phase, Math.Max(0, (clock.GetUtcNow().UtcDateTime - action.CreatedAt).TotalSeconds),
-            action.Sequence, action.Attempts); }
+        try
+        {
+            var level = action.Attempts > 0 && DueForRetryInformation(action.Id)
+                ? LogLevel.Information
+                : LogLevel.Debug;
+            logger.Log(level, "Action {ActionId} session {SessionId}; phase {Phase}, age {AgeSeconds}s, frontier {Frontier}, attempts {Attempts}",
+                action.Id, action.AgentSessionId, action.Phase, Math.Max(0, (clock.GetUtcNow().UtcDateTime - action.CreatedAt).TotalSeconds),
+                action.Sequence, action.Attempts);
+        }
         catch { }
+    }
+
+    private bool DueForRetryInformation(Guid actionId)
+    {
+        var now = clock.GetUtcNow().UtcDateTime;
+        lock (_retryLogGate)
+        {
+            if (_retryInformationAt.TryGetValue(actionId, out var last) && now - last < RetryLogInterval)
+                return false;
+            if (!_retryInformationAt.ContainsKey(actionId) && _retryInformationAt.Count >= RetryLogCapacity)
+                _retryInformationAt.Clear();
+            _retryInformationAt[actionId] = now;
+            return true;
+        }
     }
 }
