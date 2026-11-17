@@ -79,6 +79,18 @@ describe('SessionMessageQueue', () => {
     expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
   })
 
+  it('CARD-1948 labels the loaded page when the queue is truncated', async () => {
+    serve([message()], { truncated: true, since: 0, nextSince: 1 })
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+    expect(await screen.findByText('1 messages on this page')).toBeInTheDocument()
+  })
+
+  it('keeps the full queue count when the page is complete', async () => {
+    serve([message()])
+    renderWithProviders(<SessionMessageQueue sessionId="s1" />)
+    expect(await screen.findByText('1 messages')).toBeInTheDocument()
+  })
+
   it('shows unconfirmed Sent input with an explicit operator abandon dialog and no resend control', async () => {
     serve([message({ status: 'Sent', deliveryUnconfirmed: true, deliveryAttempts: 1,
       lastDeliveryStartedAt: '2026-11-14T10:00:00Z' })])

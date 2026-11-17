@@ -56,6 +56,28 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText('first unresolved input')).toBeInTheDocument()
   })
 
+  it('CARD-1948 counts the parked census in the open badge and the Broken group', async () => {
+    // One parked body is on this page. kindCounts is the fleet total. RecentFailure and
+    // LandLegacyUnverified stay out of the open total, matching AttentionSummaryDto.
+    serve({
+      items: [
+        item({ kind: 'ParkedMessage', severity: 'Error', sessionId: 's1', messageId: 'm1', title: 'Parked reply' }),
+        item({ kind: 'RecentFailure', severity: 'Warning', taskId: 't1', title: 'A task that died' }),
+        item({ kind: 'LandLegacyUnverified', severity: 'Info', taskId: 't2', title: 'Old land receipt' }),
+      ],
+      kindCounts: [
+        { kind: 'ParkedMessage', count: 1003 },
+        { kind: 'RecentFailure', count: 4 },
+        { kind: 'LandLegacyUnverified', count: 2 },
+      ],
+      parkedMessagesTruncated: true,
+    })
+    renderWithProviders(<AttentionPanel />)
+    expect(await screen.findByText('1003 open')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Broken/ })).toHaveTextContent('1003')
+    expect(screen.queryByText('Nothing is stuck.')).not.toBeInTheDocument()
+  })
+
   beforeEach(() => {
     window.history.replaceState(null, '', '/attention')
     HTMLElement.prototype.scrollTo = vi.fn()

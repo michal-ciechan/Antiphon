@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
-import type { AttentionItemDto } from '../../api/attention'
+import type { AttentionItemDto, AttentionKindCountDto } from '../../api/attention'
 import { agentTaskEnvelope } from '../../test/agentTaskEnvelope'
 import { renderWithProviders, screen, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
@@ -105,9 +105,16 @@ function card(overrides: Record<string, unknown> = {}) {
 
 function seed({
   attention = [] as AttentionItemDto[],
+  kindCounts,
   tasks = [] as unknown[],
   cards = [] as unknown[],
   plans = [] as unknown[],
+}: {
+  attention?: AttentionItemDto[]
+  kindCounts?: AttentionKindCountDto[]
+  tasks?: unknown[]
+  cards?: unknown[]
+  plans?: unknown[]
 } = {}) {
   server.use(
     http.get('/api/attention', () =>
@@ -115,6 +122,7 @@ function seed({
         generatedAt: '2026-08-17T10:00:00Z',
         runnerConsulted: true,
         items: attention,
+        kindCounts,
       }),
     ),
     http.get('/api/plans', () =>
@@ -421,6 +429,34 @@ describe('MobileHomePage', () => {
 
     const link = await screen.findByRole('link', { name: /by stage/ })
     expect(link).toHaveAttribute('href', '/orchestrator?tab=pipeline')
+  })
+
+  it('CARD-1948 counts parked rows past the page in the Broken glance', async () => {
+    // The loaded row is channel-bound Critical, so it stays Blocked. The rows this page
+    // does not carry are the parked census, and those count as Broken.
+    seed({
+      attention: [
+        attentionItem({
+          kind: 'ParkedMessage',
+          severity: 'Critical',
+          taskId: null,
+          sessionId: 's1',
+          messageId: 'm1',
+          title: 'Channel reply',
+          actions: [],
+        }),
+      ],
+      kindCounts: [
+        { kind: 'ParkedMessage', count: 1003 },
+        { kind: 'RecentFailure', count: 4 },
+        { kind: 'LandLegacyUnverified', count: 2 },
+      ],
+    })
+    renderWithProviders(<MobileHomePage />)
+    const glance = await screen.findByTestId('attention-glance')
+    expect(glance).toHaveTextContent('Blocked 1')
+    expect(glance).toHaveTextContent('Broken 1002')
+    expect(glance).not.toHaveTextContent('Review')
   })
 
   it('hides RecentFailure from the glance so a settled-failure day still reads as calm', async () => {
