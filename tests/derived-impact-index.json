@@ -408,9 +408,9 @@
     },
     {
       "path": "server/Application/Exceptions/ConflictException.cs",
-      "classes": 182,
+      "classes": 183,
       "reason": "cap",
-      "owed": 157,
+      "owed": 158,
       "first": [
         "StandingSessionSelectionTests",
         "WorktreeManagerGitIntegrationTests",
@@ -2023,13 +2023,13 @@
       "owed": 72,
       "first": [
         "AgentSessionBackendTests",
+        "AgentSessionRuntimeTests",
         "CheckNoteDeliveryHandoffTests",
         "HerdrAlwaysOnChannelParityTests",
         "SubscriptionUsageMonitorTests",
         "AgentStartRecoveryTests",
         "AgentSystemPromptLaunchTests",
-        "AgentTaskReplyIntegrationTests",
-        "BoardServiceIntegrationTests"
+        "AgentTaskReplyIntegrationTests"
       ]
     },
     {
@@ -21621,6 +21621,12 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/AgentSessionRuntimeTests.Persist.cs",
+      "classes": [
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/AgentSessionRuntimeTests.Register.cs",
       "classes": [
         "ProcessSpawnLimitTests"
       ]
