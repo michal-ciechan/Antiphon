@@ -277,8 +277,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             }
             catch (ConflictException)
             {
-                // A second attach of this same test adapter is rediscovery. Production Register
-                // stays strict; only the fake treats that re-attach as already registered.
+                // A different adapter is already registered. The same instance returns from
+                // Register without throwing, so this catch is only the other-adapter case.
             }
         }
         Emit(StartupOutput);
