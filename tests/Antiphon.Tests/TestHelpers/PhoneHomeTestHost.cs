@@ -22,6 +22,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using IHttpWebSocketFeature = Microsoft.AspNetCore.Http.Features.IHttpWebSocketFeature;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -50,6 +51,10 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
 
     /// <summary>When set, the next requests are seen as coming from this address.</summary>
     public IPAddress? ClientAddress { get; set; }
+
+    /// <summary>CARD-1960 Debug: when set, awaited after the server completes a WebSocket handshake
+    /// and before the endpoint installs the connection, holding open the window a replacement races through.</summary>
+    public Func<Task>? AfterHandshake { get; set; }
 
     public static async Task<PhoneHomeTestHost> StartAsync(
         TimeProvider? clock = null,
@@ -146,6 +151,8 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         {
             if (host.ClientAddress is { } address)
                 context.Connection.RemoteIpAddress = address;
+            if (host.AfterHandshake is { } hold && context.Features.Get<IHttpWebSocketFeature>() is { } webSockets)
+                context.Features.Set<IHttpWebSocketFeature>(new HeldWebSocketFeature(webSockets, hold));
             if (IsControlledConnect(context))
                 await receiveControl!.InvokeEndpointAsync(context, next, host.App.Lifetime.ApplicationStopping);
             else
@@ -257,6 +264,18 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+        }
+    }
+
+    private sealed class HeldWebSocketFeature(IHttpWebSocketFeature inner, Func<Task> hold) : IHttpWebSocketFeature
+    {
+        public bool IsWebSocketRequest => inner.IsWebSocketRequest;
+
+        public async Task<WebSocket> AcceptAsync(Microsoft.AspNetCore.Http.WebSocketAcceptContext context)
+        {
+            var socket = await inner.AcceptAsync(context);
+            await hold();
+            return socket;
         }
     }
 

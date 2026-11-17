@@ -145,6 +145,47 @@ public partial class PhoneHomeRecoveryEligibilityTests
         }
     }
 
+    // CARD-1960 Debug: the server completes the WebSocket handshake before AcceptConnect installs
+    // the replacement, so for a moment the snapshot still holds the superseded connection. A peer
+    // that connected must be handed the connection minted for its own registration, never that one.
+    [Test]
+    [Timeout(30_000)]
+    public async Task Replacement_connect_waits_for_the_connection_minted_for_its_registration()
+    {
+        await using var world = await LeaseWorld.StartAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handshakes = 0;
+        world.Host.AfterHandshake = () =>
+        {
+            Interlocked.Increment(ref handshakes);
+            return release.Task;
+        };
+        var connect = world.Host.ConnectPeerAsync();
+        PhoneHomeScriptedPeer? replacement = null;
+        try
+        {
+            await WaitAsync(() => Volatile.Read(ref handshakes) == 1 || connect.IsCompleted);
+            Volatile.Read(ref handshakes).ShouldBe(1);
+            (await Task.WhenAny(connect, Task.Delay(500)) == connect).ShouldBeFalse(
+                "the handshake is complete but the server has not installed the replacement yet");
+            world.Host.Directory.SnapshotLive().ShouldBeSameAs(world.Live);
+
+            release.SetResult();
+            replacement = await connect;
+            var live = world.Host.Directory.SnapshotLive();
+            live.ShouldNotBeSameAs(world.Live);
+            replacement.Epoch.ShouldBe(live!.Epoch);
+        }
+        finally
+        {
+            release.TrySetResult();
+            if (replacement is null && connect.IsCompletedSuccessfully)
+                replacement = connect.Result;
+            if (replacement is not null)
+                await replacement.DisposeAsync();
+        }
+    }
+
     private static async Task WaitAsync(Func<bool> done)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
