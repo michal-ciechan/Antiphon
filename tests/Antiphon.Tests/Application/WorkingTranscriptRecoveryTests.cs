@@ -441,8 +441,9 @@ public class WorkingTranscriptRecoveryTests
         finally { fault.Release.TrySetResult(); await probe; }
     }
 
-    // CARD-1969 W-1..W-7. The counter sees only the whole-row recovery projection
-    // (TranscriptEntries + ApiErrorTimeZoneId). 14 cases: W-1 4, W-2 2, W-3 2, W-4 1, W-5 2, W-6 2, W-7 1.
+    // CARD-1969 W-1..W-7. The counter sees only a SELECT of the whole-row recovery
+    // projection (TranscriptEntries + ApiErrorTimeZoneId), not INSERT ... RETURNING.
+    // 14 cases: W-1 4, W-2 2, W-3 2, W-4 1, W-5 2, W-6 2, W-7 1.
     [Test, Arguments(300, true), Arguments(1200, true), Arguments(300, false), Arguments(1200, false)]
     public async Task C1969_unchanged_working_probe_reads_a_bounded_tail(int n, bool cache)
     {
@@ -806,8 +807,13 @@ public class WorkingTranscriptRecoveryTests
 
         private DbDataReader Wrap(DbCommand command, DbDataReader result)
         {
-            if (!command.CommandText.Contains("TranscriptEntries", StringComparison.Ordinal)
-                || !command.CommandText.Contains("ApiErrorTimeZoneId", StringComparison.Ordinal))
+            // INSERT ... RETURNING names the same table and column. Wrapping that reader
+            // makes the seed's save fail and the probe see an empty transcript.
+            var text = command.CommandText;
+            if (!text.Contains("SELECT", StringComparison.Ordinal)
+                || !text.Contains("\"TranscriptEntries\"", StringComparison.Ordinal)
+                || !text.Contains("\"ApiErrorTimeZoneId\"", StringComparison.Ordinal)
+                || text.Contains("INSERT", StringComparison.Ordinal))
                 return result;
             Interlocked.Increment(ref _commands);
             return new CountingReader(result, CountRow);
