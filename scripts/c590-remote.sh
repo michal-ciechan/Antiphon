@@ -3322,7 +3322,7 @@ c849_fixture_launch() {
         c849_fixture_write "$file" create printf '%s\n' "$identity" || {
             kill "$docker_pid" 2>/dev/null || true
             wait "$docker_pid" 2>/dev/null || true
-            rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+            rm -f -- "$cid_dir/id" || true; rmdir -- "$cid_dir" || true
             return 2
         }
         if [ "${C849_PROBE_TRACK:-}" = 1 ]; then
@@ -3334,7 +3334,7 @@ c849_fixture_launch() {
         identity="$(cat -- "$cid_dir/id" 2>/dev/null || true)"
         if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
             c849_fixture_write "$file" create printf '%s\n' "$identity" || {
-                rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+                rm -f -- "$cid_dir/id" || true; rmdir -- "$cid_dir" || true
                 return 2
             }
             if [ "${C849_PROBE_TRACK:-}" = 1 ]; then
@@ -3342,7 +3342,8 @@ c849_fixture_launch() {
             fi
         fi
     fi
-    rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true
+    # set -e would abort a finished launch when only rmdir was protected.
+    rm -f -- "$cid_dir/id" || true; rmdir -- "$cid_dir" || true
     if [[ "$identity" =~ ^[0-9a-f]{64}$ ]]; then
         state=0
         c849_fixture_resource_state container "$identity" || state=$?
