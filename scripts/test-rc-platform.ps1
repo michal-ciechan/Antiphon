@@ -343,7 +343,13 @@ function Test-C1323_PlatformExecution {
     $summary = Get-Content $linux.SummaryPath -Raw | ConvertFrom-Json
     Assert-C1323 ($summary.testsPassed -and -not $summary.coverageComplete -and $summary.coverageScope -ceq 'PlatformDiagnostic' -and $summary.platform -ceq 'linux' -and $summary.reasons -contains 'windows-rc-obligations-outstanding') 'linux-summary-is-diagnostic'
     $census = @($summary.suites | Where-Object { $_.requiredUidCount -eq 2 -and $_.excludedUidCount -eq 70 })
-    Assert-C1323 ($census.Count -gt 0 -and @($census[0].exclusions | Where-Object owner -eq 'CARD-1323').Count -eq 69) 'linux-census-retains-exclusion-attribution'
+    # D-5: the suite's exclusion list is recorded once, in suiteExclusions, when every chunk row's list is the same.
+    $censusExclusions = @(); $rowKeepsList = $true
+    if ($census.Count -gt 0) {
+        $rowKeepsList = $census[0].PSObject.Properties.Name -contains 'exclusions'
+        if ($summary.suiteExclusions) { $censusExclusions = @($summary.suiteExclusions.([string]$census[0].id)) }
+    }
+    Assert-C1323 ($census.Count -gt 0 -and -not $rowKeepsList -and @($censusExclusions | Where-Object owner -eq 'CARD-1323').Count -eq 69) 'linux-census-retains-exclusion-attribution'
     Assert-C1323 ($launched -contains 'unclassified' -and $launched -contains 'legacy-sibling' -and $launched -notcontains 'legacy-live') 'optin-and-legacy-method-semantics'
 
     $windowsSeams = Write-C1323ExecutionSeams $fx 'windows'

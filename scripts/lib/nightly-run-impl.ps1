@@ -783,7 +783,7 @@ function Invoke-AntiphonNightlyRunCore {
         $summary = $null
         if (Test-Path -LiteralPath $summaryPath) {
             # The verdict fields only (Read-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB, nearly all suite rows.
-            try { $summary = Read-NightlyJsonFile -Path (Resolve-Path -LiteralPath $summaryPath).ProviderPath -Omit 'suites','dispatchProgress' } catch { $summary = $null }
+            try { $summary = Read-NightlyJsonFile -Path (Resolve-Path -LiteralPath $summaryPath).ProviderPath -Omit 'suites','dispatchProgress','suiteExclusions' } catch { $summary = $null }
         }
         if ($summary) {
             $coverageComplete = [bool]$summary.coverageComplete

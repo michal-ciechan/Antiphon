@@ -2264,6 +2264,30 @@ function Invoke-AntiphonNightlyTests {
         suites = $suiteResults
         invocationId = $invocationId
     }
+    # D-5: every chunk row records its suite's exclusions, and with one census per suite the lists are the
+    # same - most of a full run's summary. Each suite's list is kept once, in suiteExclusions[<suite id>], and
+    # dropped from its rows only when every row's list is identical; rows keep their counts and censusDigest.
+    $suiteExclusions=[ordered]@{}
+    foreach($exclusionGroup in @($suiteResults | Where-Object { $_.Contains('exclusions') } | Group-Object { [string]$_['id'] })){
+        $groupRows=@($exclusionGroup.Group)
+        $firstList=@($groupRows[0]['exclusions'])
+        $firstText=$null
+        $sameList=$true
+        foreach($groupRow in $groupRows){
+            $list=@($groupRow['exclusions'])
+            if($list.Count -ne $firstList.Count){ $sameList=$false; break }
+            $sameRefs=$true
+            for($i=0;$i -lt $list.Count;$i++){ if(-not [object]::ReferenceEquals($list[$i],$firstList[$i])){ $sameRefs=$false; break } }
+            if($sameRefs){ continue }
+            if($null -eq $firstText){ $firstText=ConvertTo-Json -InputObject $firstList -Depth 8 -Compress }
+            if((ConvertTo-Json -InputObject $list -Depth 8 -Compress) -cne $firstText){ $sameList=$false; break }
+        }
+        if($sameList){
+            $suiteExclusions[$exclusionGroup.Name]=$firstList
+            foreach($groupRow in $groupRows){ $groupRow.Remove('exclusions') }
+        }
+    }
+    if($suiteExclusions.Count -gt 0){ $summary.suiteExclusions=$suiteExclusions }
     # Bound by the exported summary digest. This diagnostic snapshot can order a
     # later complete attempt; it never supplies pass credit or skips a launch.
     if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
