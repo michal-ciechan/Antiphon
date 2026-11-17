@@ -25246,6 +25246,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/IdentityProbeCounter.cs",
+      "classes": [
+        "AgentSessionRuntimeTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/InterruptedWorktreeCreation.cs",
       "classes": [
         "DelegationWorktreeTests",
