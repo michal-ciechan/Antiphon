@@ -3487,7 +3487,8 @@
     {
       "path": "scripts/c1609-host-proof.ps1",
       "classes": [
-        "HostJqFixtureClosureTests"
+        "HostJqFixtureClosureTests",
+        "VolumeRetirementHostProofTests"
       ]
     },
     {
