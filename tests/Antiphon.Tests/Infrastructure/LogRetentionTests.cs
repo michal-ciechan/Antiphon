@@ -1,5 +1,10 @@
 using Antiphon.Server.Infrastructure.Logging;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;
@@ -158,6 +163,7 @@ public class LogRetentionTests
     [Arguments("Antiphon.Server.Infrastructure.Supervision.AlertDigestFlushHostedService")]
     [Arguments("Antiphon.Server.Infrastructure.Orchestration.OrchestratorHostedService")]
     [Arguments("Antiphon.Server.Infrastructure.Agents.SessionRunner.SessionRunnerEventPump")]
+    [Arguments("Antiphon.Server.Api.Middleware.CurrentUserMiddleware")]
     public async Task Shipped_config_keeps_delegation_session_and_supervision_at_Information(
         string source)
     {
@@ -200,6 +206,68 @@ public class LogRetentionTests
         // A real request failure from the same source still lands.
         log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Hosting.Diagnostics")
             .Warning("Request failed");
+        events.Count.ShouldBe(1);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Shipped_config_drops_per_request_framework_lines_but_keeps_their_warnings()
+    {
+        var events = new List<LogEvent>();
+        using var log = new LoggerConfiguration()
+            .ReadFrom.Configuration(ShippedServerConfiguration())
+            .WriteTo.Sink(new CollectingSink(events))
+            .CreateLogger();
+
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Routing.EndpointMiddleware")
+            .Information("Executing endpoint");
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Http.Result.OkObjectResult")
+            .Information("Setting HTTP status code {StatusCode}", 200);
+
+        events.ShouldBeEmpty();
+
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Routing.EndpointMiddleware")
+            .Warning("Endpoint failed");
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.AspNetCore.Http.Result.OkObjectResult")
+            .Warning("Result failed");
+        events.Count.ShouldBe(2);
+        await Task.CompletedTask;
+    }
+
+    [Test]
+    public async Task Shipped_config_request_pipeline_writes_no_framework_Information()
+    {
+        var events = new List<LogEvent>();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Host.UseSerilog((_, configuration) => configuration
+            .ReadFrom.Configuration(ShippedServerConfiguration())
+            .WriteTo.Sink(new CollectingSink(events)));
+        await using var app = builder.Build();
+        app.MapGet("/ok", () => TypedResults.Ok(new { ok = true }));
+        await app.StartAsync();
+        using var http = app.GetTestClient();
+        using var response = await http.GetAsync("/ok");
+        response.IsSuccessStatusCode.ShouldBeTrue();
+        await app.StopAsync();
+
+        events.Where(IsFrameworkRequestInformation).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Shipped_config_keeps_host_lifetime_at_Information()
+    {
+        // The real lifetime category is Microsoft.Hosting.Lifetime ("Now listening on",
+        // "Application started"). A blanket Microsoft.AspNetCore override would not name it.
+        var events = new List<LogEvent>();
+        using var log = new LoggerConfiguration()
+            .ReadFrom.Configuration(ShippedServerConfiguration())
+            .WriteTo.Sink(new CollectingSink(events))
+            .CreateLogger();
+
+        log.ForContext(Constants.SourceContextPropertyName, "Microsoft.Hosting.Lifetime")
+            .Information("Application started");
+
         events.Count.ShouldBe(1);
         await Task.CompletedTask;
     }
@@ -293,6 +361,16 @@ public class LogRetentionTests
                 ?? throw new DirectoryNotFoundException(
                     "Could not locate repo root (Antiphon.sln) from test base dir.");
         }
+    }
+
+    private static bool IsFrameworkRequestInformation(LogEvent evt)
+    {
+        if (evt.Level != LogEventLevel.Information) return false;
+        if (!evt.Properties.TryGetValue(Constants.SourceContextPropertyName, out var value)) return false;
+        var name = value is ScalarValue scalar ? scalar.Value as string : value.ToString().Trim('"');
+        return name is not null
+            && (name.StartsWith("Microsoft.AspNetCore.Routing", StringComparison.Ordinal)
+                || name.StartsWith("Microsoft.AspNetCore.Http", StringComparison.Ordinal));
     }
 
     private sealed class CollectingSink(List<LogEvent> events) : ILogEventSink
