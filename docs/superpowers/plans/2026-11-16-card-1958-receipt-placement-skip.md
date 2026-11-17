@@ -45,7 +45,16 @@ PC-1 (pending Mutation/operator waiver): remove the closed allowance; V-1 fails.
 PC-2 (pending): admit unlisted identities; V-2 fails.
 PC-3 (pending): bypass host admission; V-3 fails.
 PC-4 (pending): read working roster instead of committed roster; R-2 fails.
+PC-5 (pending): union the Native roster into WindowsOnly; the native-roster
+variant of C1958_Receipt_skip_allowance_is_closed must fail.
 Deliberate mutants belong to SourceLanding Mutation; operator waived execution.
+
+CP-1 has six existing cases and nineteen C1958 argument cases (25 results).
+The native-roster negative case specifically distinguishes Windows-only placement
+from the opposite native-Linux roster in the same file. It was added after a
+static census found the initial minimum one above the then-declared case count;
+the minimum and outcome assertions were not reduced. The first Final shared
+build timed out before any TUnit discovery, so no prior TUnit result is credited.
 
 ### Checkpoints
 

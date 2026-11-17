@@ -374,6 +374,7 @@ public sealed class RunCheckpointSourceScriptTests
     [Arguments("ubuntu", "rostered-skip", 0)]
     [Arguments("darwin", "rostered-skip", 0)]
     [Arguments("linux", "unlisted-skip", 2)]
+    [Arguments("linux", "native-roster", 2)]
     [Arguments("windows", "rostered-skip", 2)]
     [Arguments("linux", "rostered-pass", 0)]
     [Arguments("unknown", "rostered-skip", 2)]
@@ -396,7 +397,10 @@ public sealed class RunCheckpointSourceScriptTests
         var source = JsonNode.Parse(await File.ReadAllTextAsync(clean.Evidence))!.AsObject();
         var trxPath = Path.Combine(fixture.External, "placement.trx");
         const string rosterMethod = "C1210_Windows_linux_only_outcomes_are_exact";
-        var method = variant is "unlisted-skip" or "uncommitted-roster" ? "Unlisted_test" : rosterMethod;
+        var method = variant == "native-roster" ? "C1058_Open_descriptor_must_match_canonical_leaf" :
+            variant is "unlisted-skip" or "uncommitted-roster" ? "Unlisted_test" : rosterMethod;
+        var className = variant == "native-roster" ? "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests" :
+            "Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests";
         var outcome = variant == "rostered-pass" ? "Passed" : "NotExecuted";
         var skipped = outcome == "NotExecuted" ? 1 : 0;
         var executed = outcome == "Passed" ? 2 : variant == "rostered-skip" ? 0 : 1;
@@ -406,7 +410,7 @@ public sealed class RunCheckpointSourceScriptTests
         var extraResult = variant == "mixed-skips"
             ? "<UnitTestResult testId=\"other\" outcome=\"NotExecuted\" />" : "";
         if (variant == "duplicate-result") extraResult = "<UnitTestResult testId=\"placement\" outcome=\"NotExecuted\" />";
-        var definition = $"<UnitTest id=\"placement\"><TestMethod className=\"Antiphon.Tests.Scripts.WindowsUnitPlatformAdmissionTests\" name=\"{method}\" /></UnitTest>";
+        var definition = $"<UnitTest id=\"placement\"><TestMethod className=\"{className}\" name=\"{method}\" /></UnitTest>";
         var definitions = variant == "missing-definition" ? "" : definition;
         if (variant == "duplicate-definition") definitions += definition;
         var controlResult = executed == 0 ? "" :
