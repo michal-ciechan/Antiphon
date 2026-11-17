@@ -622,7 +622,7 @@ public sealed class NightlyWatchdogCoreTests
                      ("403-blocked", new(403, """{"ok":false,"description":"Forbidden: bot was blocked by the user"}"""), "blocked", null, null),
                      ("429", new(429, """{"ok":false,"parameters":{"retry_after":7}}"""), "rate-limited", 7, null),
                      ("503", new(503, "{}"), "transport", null, null),
-                     ("timeout", new(200, """{"ok":true,"result":{"message_id":1}}""", 2000), "transport", null, TimeSpan.FromMilliseconds(200)),
+                     ("timeout", new ScriptedResponse(200, """{"ok":true,"result":{"message_id":1}}""", Cancel: true), "transport", null, null),
                  })
         {
             TransportResult result;
@@ -686,7 +686,7 @@ public sealed class NightlyWatchdogCoreTests
         foreach (var (row, response, expected, timeout) in new (string, ScriptedResponse?, WindmillCallStatus, TimeSpan?)[]
                  {
                      ("5xx", new(502, "{}"), WindmillCallStatus.Unreachable, null),
-                     ("timeout", new(200, "\"v\"", 2000), WindmillCallStatus.Unreachable, TimeSpan.FromMilliseconds(200)),
+                     ("timeout", new ScriptedResponse(200, "\"v\"", Cancel: true), WindmillCallStatus.Unreachable, null),
                      ("401", new(401, "{}"), WindmillCallStatus.Unauthorized, null),
                      ("403", new(403, "{}"), WindmillCallStatus.Unauthorized, null),
                  })
