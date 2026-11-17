@@ -45,14 +45,14 @@ Desktop server log for this night: `C:\src\Antiphon\server\logs\antiphon-2026111
 - `Phone-home inventory refreshes for runner server2 epoch` and `failed 3 times in a row` (`PhoneHomeRecoveryPump.cs:268-272`). Logged at 02:51:05Z.
 - `Phone-home catch-up List for runner server2 failed` (`PhoneHomeRecoveryPump.cs:363-366`) and `Phone-home recovery pump cycle failed` (`:73`). Neither has appeared since 02:51 in the investigation. Their absence, with eligibility still false, is the stall. The pump is not retrying on a timer you can see.
 - `Phone-home connection server2 epoch` plus `accepted:` (`SessionRunnerEndpoints.cs:311-314`) or `ended:` (`:422`). The earlier restart the same night ended epoch 2 with `request_aborted` at 00:25Z and accepted epoch 1 at 00:29:13Z.
-- `Runner server2 unavailable for` (`RunnerAlarmCoordinator.cs:134`). Logged at 02:53:47Z as unavailable for 3.0 min. The `{Reason}` on that line is the status disconnect reason, which was the lease expiry at the flip.
+- `Runner server2 unavailable for` (`RunnerAlarmCoordinator.cs:134`). Logged at 02:53:47Z as unavailable for 3.0 min. The `{Reason}` on that line is the status disconnect reason at the alarm (`snapshot.DisconnectReason`, `RunnerAlarmCoordinator.cs:135`). That it was the lease expiry is an inference: the investigation does not quote the field (verdict 1).
 - `has not completed recovery` on the task hold, and later `released: hold cleared` (`AgentTaskDispatcher.cs:1153-1155`).
 
 A lease expiry writes no log line of its own. `ReadSnapshot` clears `DispatchEligible` and returns (`PhoneHomeRunnerDirectory.cs:984-994`). The CARD-1964 plan (G-6) confirms there is still no logger there. Do not wait for a line that says the lease expired.
 
 ### Leave these alone
 
-Do not restart the server2 runner container. A container restart kills the sessions and pty hosts inside it. The investigation treats that as unverified for pty survival and the worst recovery (investigation, recovery option 3). Running sessions and seats stay where they are.
+Do not restart the server2 runner container. Treat the sessions and pty hosts inside it as killed. Pty survival across a container restart is unverified, and the investigation calls that restart the worst recovery (investigation, recovery option 3). Running sessions and seats stay where they are.
 
 Do not delete a worktree, a ledger, a seat, or a lock to clear this. Drain and drain/clear do not restore eligibility. `PUT /api/session-runners/server2/capacity` needs an eligible runner (investigation, recovery option 2). There is no operator route that restarts only the phone-home connection.
 
@@ -60,13 +60,15 @@ Do not delete a worktree, a ledger, a seat, or a lock to clear this. Drain and d
 
 Restart the desktop AppHost from the main checkout (`C:\src\Antiphon`), not from a linked worktree. A worktree refuses with exit 3 and kills nothing (`docs/bootstrap.md`, restart gotcha; `docs/apphost-runbook.md:45-47`).
 
-Check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first. Exit 3 means another restart or launch is in flight. A stamp younger than 15 minutes is still in flight even if the holding pid has exited, unless the dead-launch proof in the AppHost runbook says otherwise.
+Check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first. Exit 3 means another restart or launch is in flight. A stamp younger than 15 minutes is still in flight even if the holding pid has exited, unless the dead-launch proof in the AppHost runbook says otherwise. Before the restart, `GET /api/version` must equal `git -C C:\src\Antiphon rev-parse HEAD`: the script builds that checkout and requires the served SHA to match HEAD (`scripts/restart-apphost.ps1:56-57`, `:187-214`, exit 5 at `:426-437`). `-ExpectedServerSha` is refused unless it already equals that HEAD, so it does not preserve an older served build.
 
 ```powershell
 pwsh -NoProfile -File scripts/restart-apphost.ps1
 ```
 
 What that does, from `docs/apphost-runbook.md:37-47` and `:76-85`, and `docs/bootstrap.md` (the restart gotcha and the watchdog paragraph): the script POSTs `/api/operator/shutdown` with reason `restart-apphost` (`docs/ops-http.md:154`), waits for that server pid to exit (default 20 seconds), then relaunches AppHost. The desktop session runner on port 17204 is not stopped. Postgres stays up. The server2 runner container is not part of this restart. The new server process accepts a new phone-home epoch; the sessions already running in the server2 container stay up, and the new connection's catch-up re-reads them (investigation, recovery option 4). The script reads the operator token and does not print it.
+
+After the CARD-1744 window, production recovery is `scripts/restart-linux-server.ps1` and `scripts/restart-apphost.ps1` is the desktop rollback, and the Docker server's roles soft rollback is a server restart with `Delegation__WorkspaceSlotRoles=none`. That window is not recorded as run, so until then the desktop command above and the section 2 hot reload stay the production path (`docs/docker-stack.md`, Production server on the server2 host, and `docs/docker-stack.md:1064-1065`).
 
 Success, all of these:
 
@@ -87,7 +89,7 @@ An AppHost restart during a live Windows qualification can flake host-load tests
 
 The exact await the pump is parked on is UNOBSERVED. The investigation says that needs `dotnet-dump collect -p <server pid>` and `dumpasync`, which that read-only pass did not take.
 
-If you take a stack first: `dotnet-stack report -p <server pid>`. The server pid is the `Antiphon.Server.exe` child of the `dotnet run` process AppHost started, not the session-runner executable and not a test host. A stack report does not show a parked async await, so it will not show the `WaitAsync` the investigation suspects (`SessionStateStore` gate or the phone-home send gate). Do not treat an empty-looking stack as proof the pump is idle. Skip the capture if server2 needs to accept work now. The restart does not depend on it.
+If you take a stack first: `dotnet-stack report -p <server pid>`. That pid is the server project AppHost adds with `AddProject` (`Antiphon.AppHost/Program.cs:67`), not the session-runner executable and not a test host. A stack report does not show a parked async await, so it will not show the `WaitAsync` the investigation suspects (`SessionStateStore` gate or the phone-home send gate). Do not treat an empty-looking stack as proof the pump is idle. Skip the capture if server2 needs to accept work now. The restart does not depend on it.
 
 ### Durable fix
 
@@ -119,11 +121,18 @@ At 01:13Z the investigation counted 5 open entries. At 01:40Z the same five were
 
 ### Count the open quarantines
 
-Read the ledger inside the standing runner container. The investigation used container `antiphon-runner-session-runner-1` and path `/work/workspace-slots/ledger.json`. Print only `dirId`, `slotId`, `class`, `reason`, `branch`, and `bytes`. Do not print paths, heads, errors, or file contents, and do not paste the ledger.
+Read the ledger inside the standing runner container. The investigation used container `antiphon-runner-session-runner-1` and path `/work/workspace-slots/ledger.json`. Print only `dirId`, `slotId`, `class`, `reason`, `branch`, and `bytes`. Do not print paths, heads, errors, or file contents, and do not paste the ledger. The runner image (`docker/session-runner-grok/Dockerfile`, target `session-testing`) installs `jq` and does not install `python3`. This count runs `jq` inside the container. No command in this runbook runs `python3` on the server2 host.
+
+On the server2 host, bash:
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=30 mc@server2 'docker exec antiphon-runner-session-runner-1 python3 -c "import json; d=json.load(open(\"/work/workspace-slots/ledger.json\")); rows=[e for e in d.get(\"quarantinedDirectories\",[]) if e.get(\"isOpen\")]; print(\"open\", len(rows));
-[print(e.get(\"dirId\"), e.get(\"slotId\"), e.get(\"class\"), e.get(\"reason\"), e.get(\"branch\"), e.get(\"bytes\")) for e in rows]"'
+docker exec antiphon-runner-session-runner-1 jq -r '[.quarantinedDirectories[]|select(.isOpen)] | "open \(length)", (.[] | "\(.dirId) \(.slotId) \(.class) \(.reason) \(.branch) \(.bytes)")' /work/workspace-slots/ledger.json
+```
+
+From the desktop, pwsh (PowerShell 7). The remote command is one single-quoted argument, so the jq program's double quotes and backslashes are not expanded by pwsh. The PowerShell form is UNTESTED on the desktop: verify it there by a first line `open <n>` and one line per open row. A jq error means the quotes were mangled. Do not paste the ledger.
+
+```powershell
+ssh -o BatchMode=yes -o ConnectTimeout=30 mc@server2 'docker exec antiphon-runner-session-runner-1 jq -r ''[.quarantinedDirectories[]|select(.isOpen)] | "open \(length)", (.[] | "\(.dirId) \(.slotId) \(.class) \(.reason) \(.branch) \(.bytes)")'' /work/workspace-slots/ledger.json'
 ```
 
 `open` greater than 4 is the degraded pool. The 01:13Z rows, from the investigation table, were:
@@ -225,7 +234,7 @@ Times are UTC on 2026-11-17. Counts are from the two investigations. This runboo
 | Four queued tasks started | 83d30eec 01:27:42Z, e7394f29 01:31:18Z, e96c2ae3 01:39:14Z, 2e74cf4e 01:39:26Z | slot investigation, Decision |
 | Ledger at 01:40Z | same five open. ws-02 still leased. No new quarantine | slot investigation, Decision |
 | Ledger and roles after 01:40Z | UNOBSERVED | CARD-1960 plan, G-11 |
-| Filesystem quarantines that day | 3 in about 9 hours (16:00, 21:49, 01:05), plus 2 custody lingering | slot investigation, observed rate |
+| Filesystem quarantines | 3 in about 9 hours (16:00 and 21:49 on 2026-11-16, 01:05 on 2026-11-17), plus 2 custody lingering | slot investigation, observed rate. 16:00Z on 2026-11-16 is 24 h before the plan's age-out at 16:00Z on 2026-11-17 |
 | Hang site, runner CPU, and whether a container restart keeps pty hosts | UNOBSERVED | phone-home investigation, UNOBSERVED |
 
 Notes:
