@@ -16,7 +16,8 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// CARD-0824 S1 D-A/D-B producer-to-recipient world. The server half is the real
 /// <see cref="RemoteWorkspacePreparerTests.Rig"/> (real dispatcher tick, preparer, phone-home host and
-/// ClientWebSocket). Its peer hands every <c>WorkspaceMirror</c> and <c>WorkspaceSlotRelease</c> frame to a
+/// ClientWebSocket). Its peer hands every <c>WorkspaceMirror</c>, <c>WorkspaceSlotRelease</c> and (CARD-1960)
+/// <c>WorkspaceSlotQuarantineRelease</c> frame to a
 /// real runner <see cref="PhoneHomeCommandDispatcher"/> whose <see cref="RunnerWorkspaceService"/> and
 /// <see cref="RunnerWorkspaceSlotPool"/> run on a scratch origin and clone, so recipient evidence is the
 /// runner ledger and the on-disk tree, never the server's request alone.
@@ -54,7 +55,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     /// </summary>
     public static async Task<C0824SlotTransportWorld> StartAsync(
         Action<DelegationSettings>? tweak = null, Action<IServiceCollection>? configure = null,
-        Action<PhoneHomeRunnerSettings>? runnerSettings = null)
+        Action<PhoneHomeRunnerSettings>? runnerSettings = null, Action<IServiceCollection>? configureHost = null)
     {
         var world = new C0824SlotTransportWorld(Path.Combine(Path.GetTempPath(), "c0824-transport-" + Guid.NewGuid().ToString("N")));
         world.BuildRepository();
@@ -72,7 +73,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
                 services.AddSingleton<ILandingGit>(git);
                 services.AddScoped<WorkspaceSlotReleaseService>();
                 configure?.Invoke(services);
-            }, runnerSettings: runnerSettings);
+            }, runnerSettings: runnerSettings, configureHost: configureHost);
         world.StartRunner();
         world.Rig.Peer.Reply = world.Answer;
         return world;
@@ -122,7 +123,8 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
     private PhoneHomeFrame? Answer(PhoneHomeFrame frame)
     {
         if (frame.Kind != PhoneHomeFrameKind.Request
-            || frame.Operation is not (PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceSlotRelease))
+            || frame.Operation is not (PhoneHomeOperation.WorkspaceMirror or PhoneHomeOperation.WorkspaceSlotRelease
+                or PhoneHomeOperation.WorkspaceSlotQuarantineRelease))
             return null;
         if (Intercept?.Invoke(frame) is { } answered)
             return answered;

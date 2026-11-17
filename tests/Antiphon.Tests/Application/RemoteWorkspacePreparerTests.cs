@@ -1183,13 +1183,16 @@ public sealed class RemoteWorkspacePreparerTests
             Action<DelegationSettings>? tweak = null, bool recovered = true, int capacity = 1,
             Action<IServiceCollection>? configure = null, RunnerCapabilitiesDto? capabilities = null,
             Action<PhoneHomeRunnerSettings>? runnerSettings = null,
-            RefOnlyDispatchFixture.SharedTransport? transport = null)
+            RefOnlyDispatchFixture.SharedTransport? transport = null,
+            Action<IServiceCollection>? configureHost = null)
         {
             var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure, _runnerSettings = runnerSettings };
             if (transport is not null) rig.Clock = transport.Clock;
             rig._ownsTransport = transport is null;
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-            rig.Host = transport?.Host ?? await PhoneHomeTestHost.StartAsync(rig.Clock, configureRunnerSettings: runnerSettings);
+            // CARD-1960: configureHost registers on the phone-home web host (its routes), not the rig's provider.
+            rig.Host = transport?.Host ?? await PhoneHomeTestHost.StartAsync(rig.Clock,
+                configureServices: configureHost, configureRunnerSettings: runnerSettings);
             if (transport is null) rig.Host.Capacity = capacity;
             rig.Peer = transport?.Peer ?? await rig.Host.ConnectPeerAsync(capabilities: capabilities);
             rig.Live = transport?.Live ?? await rig.Host.WaitLiveAsync(runnerId: rig.RunnerId);
