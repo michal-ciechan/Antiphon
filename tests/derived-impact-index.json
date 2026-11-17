@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 153,
+      "classes": 154,
       "reason": "cap",
-      "owed": 128,
+      "owed": 129,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 325,
+      "classes": 326,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -1789,9 +1789,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 104,
+      "classes": 105,
       "reason": "cap",
-      "owed": 79,
+      "owed": 80,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
@@ -1805,18 +1805,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 79,
+      "classes": 80,
       "reason": "cap",
-      "owed": 54,
+      "owed": 55,
       "first": [
+        "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeReadAdmissionTests",
         "PhoneHomeSessionRoutingTests",
         "PtyConditionalReadClientTests",
         "C1817RunnerRepositoryMaintenanceTests",
         "DelegateBranchDeliveryTests",
         "HostTopConsumerIngestTests",
-        "PhoneHomeCompletedCardTransportTests",
-        "PhoneHomeStrandedQueueTests"
+        "PhoneHomeCompletedCardTransportTests"
       ]
     },
     {
@@ -1853,9 +1853,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 431,
+      "classes": 432,
       "reason": "cap",
-      "owed": 406,
+      "owed": 407,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2034,9 +2034,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 130,
+      "classes": 131,
       "reason": "cap",
-      "owed": 105,
+      "owed": 106,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -2306,9 +2306,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
@@ -2317,7 +2317,7 @@
         "PhoneHomeTranscriptIncidentTests",
         "RunnerCapacityEndpointTests",
         "C0824DesktopLegacyReleaseSwitchTests",
-        "DelegateBranchDeliveryTests"
+        "C1960QuarantineReleaseRouteTests"
       ]
     },
     {
@@ -11691,7 +11691,8 @@
       "classes": [
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
-        "C1656RecordReleaseHardeningTests"
+        "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests"
       ]
     },
     {
@@ -14814,6 +14815,7 @@
         "AgentTaskInputFallbackTests",
         "BlockedTaskParkReclaimTests",
         "C0824WorkspaceSlotServerTests",
+        "C1960QuarantineReleaseRouteTests",
         "DelegateBranchDeliveryTests",
         "DesktopCapabilitiesSnapshotTests",
         "EffectiveSettingsPipelineTests",
@@ -15896,6 +15898,7 @@
         "C0747LandNoteExpireOffSwitchEndpointTests",
         "C0824WorkspaceSlotServerTests",
         "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests",
         "ExpectationHoldReleaseEndpointTests",
         "HangfireStartupSafetyTests",
         "LiveStartupIntegrationTests",
@@ -18089,13 +18092,13 @@
         "C1514HostLoadWireTests",
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
+        "C1960QuarantineReleaseRouteTests",
         "CardWorktreeMirrorCleanupTests",
         "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesReadyOrderingTests",
         "HostTopConsumerTests",
-        "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
@@ -18371,6 +18374,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1656RecordReleaseHardeningTests",
+        "C1960QuarantineReleaseRouteTests",
         "PhoneHomeRollingRunnerTests"
       ]
     },
@@ -22270,6 +22274,7 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionServerTests",
+        "C1960QuarantineReleaseRouteTests",
         "ImpactedClassesSelectorTests"
       ]
     },
@@ -25055,6 +25060,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/EphemeralHttpListener.cs",
       "classes": [
+        "C1960WorkspaceSlotsScriptTests",
         "CapabilityScriptTests",
         "CardCloseDeploymentPromptScriptTests",
         "CardDiagnoseScriptTests",
@@ -26568,7 +26574,8 @@
       "classes": [
         "C0824TransportLimiterTests",
         "C0824WorkspaceSlotServerTests",
-        "C1677RetentionServerTests"
+        "C1677RetentionServerTests",
+        "C1960QuarantineReleaseRouteTests"
       ]
     },
     {
