@@ -125,4 +125,46 @@ labels and the selector.
 
 ## Results
 
-Pending.
+Two runs through `tools/Antiphon.Checkpoints` (`start --plan <this file> --serial`), plan imported
+read-only first (`import --plan`, 6 rows). Every slot `granted waited=0s`; outputs deleted by the tool
+(CP-1's kept `bin-c1514np-red/` removed by hand). Load at start: CP-1 `17.07 24.45 29.62` (started a
+reading above the 16 rule; it fell to 11.4 just before), green run `13.20 20.87 23.81`.
+
+Red run `20261117-051305-9fff` at `9479e49e78734da5177521d7c6ffd46b9c8f6828` (base plus these notes only):
+
+```
+CHECKPOINT CP-1 commit=9479e49e78734da5177521d7c6ffd46b9c8f6828 build=ok filter=/*/*/C1514HostLoadNativeTests/Linux_ProductionFactoryPreservesHostSamples executed=1 passed=0 failed=1 skipped=0 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-051305-9fff/rows/CP-1/run.trx slot=granted waited=0s dirty=0 source=9479e49e78734da5177521d7c6ffd46b9c8f6828 sourceState=clean buildSource=verified
+FAILED Antiphon.SessionRunner.Tests.C1514HostLoadNativeTests.Linux_ProductionFactoryPreservesHostSamples (CP-1) ShouldAssertException: absentProvider.GetRequiredService<IOptions<HostStatsSettings>>().Value.HistoryPath     should be "/home/app/.local/share/antiphon/host-load"     but was null -> rows/CP-1/failures.md
+```
+
+The stack ends at `C1514HostLoadNativeTests.cs:line 38` in `VerifyAsync`, the Windows line.
+
+Green run `20261117-053608-6ba0` at `e221907dfa93ad55019c6675811180957aad82ba` (fix `dc86acc476b534c17c7a352f92d2db91572a5f13` plus index regen), `verdict: GREEN exit=0`, wall 26m10s:
+
+```
+CHECKPOINT CP-2 commit=e221907dfa93ad55019c6675811180957aad82ba build=ok filter=/*/*/C1514HostLoadNativeTests/Linux_ProductionFactoryPreservesHostSamples executed=1 passed=1 failed=0 skipped=0 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-053608-6ba0/rows/CP-2/run.trx slot=granted waited=0s dirty=0 source=e221907dfa93ad55019c6675811180957aad82ba sourceState=clean buildSource=verified
+CHECKPOINT CP-3 commit=e221907dfa93ad55019c6675811180957aad82ba build=reused filter=/*/*/(C1893CollectorDiagnosticsTests*)|(C1514HostLoadSpoolTests*)|(C1514HostLoadWireTests*)|(C1514HostLoadSampleTests*)|(C1514HostLoadAuthorityTests*)|(HostStatsEndpointTests*)|(HostStatsSamplerTests*)|(HostStatsStoreTests*)|(RunnerCapabilitiesTests*)/* executed=52 passed=52 failed=0 skipped=0 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-053608-6ba0/rows/CP-3/run.trx slot=granted waited=0s dirty=0 source=e221907dfa93ad55019c6675811180957aad82ba sourceState=clean buildSource=verified
+CHECKPOINT CP-4 commit=e221907dfa93ad55019c6675811180957aad82ba build=ok filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(DerivedImpactIndexTests*)|(MechanicalPcContractTests*)|(TaskPlatformGuidanceTests*)|(C1729LayeringGuardTests*)|(TestLaneCategoryGuardTests*)|(WindowsUnitPlatformAdmissionTests*)/* executed=114 passed=114 failed=0 skipped=1 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-053608-6ba0/rows/CP-4/run.trx slot=granted waited=0s dirty=0 source=e221907dfa93ad55019c6675811180957aad82ba sourceState=clean buildSource=verified
+CHECKPOINT CP-5 commit=e221907dfa93ad55019c6675811180957aad82ba build=reused filter=/*/*/(HostTopConsumerUpgradeReplayTests*)|(C1514HostLoadHistoryTests*)/* executed=26 passed=26 failed=0 skipped=0 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-053608-6ba0/rows/CP-5/run.trx slot=granted waited=0s dirty=0 source=e221907dfa93ad55019c6675811180957aad82ba sourceState=clean buildSource=verified
+CHECKPOINT CP-6 commit=e221907dfa93ad55019c6675811180957aad82ba build=reused filter=/*/*/(TestTimingOperationLabelTests*)|(ImpactedClassesSelectorTests*)/* executed=52 passed=52 failed=0 skipped=0 trx=/work/worktrees/task-4d0255a8/.antiphon/checkpoints/20261117-053608-6ba0/rows/CP-6/run.trx slot=granted waited=0s dirty=0 source=e221907dfa93ad55019c6675811180957aad82ba sourceState=clean buildSource=verified
+```
+
+CP-2 printed `C1514 native factory=Antiphon.SessionRunner.SystemHostStatsProbe arm=Antiphon.SessionRunner.LinuxHostStatsProbe cores=24`.
+CP-4 classes: TestClassificationPolicyTests 42, DerivedImpactIndexTests 27, C1729LayeringGuardTests 11,
+MechanicalPcContractTests 11, WindowsUnitPlatformAdmissionTests 7 (6 passed, 1 NotExecuted),
+TaskPlatformGuidanceTests 5, SlowTestRegistryMergeTests 5, NativeLinuxPolicyWitnessTests 3,
+SlowTestTripwireTests 2, TestClassificationGuardTests 1, TestLaneCategoryGuardTests 1.
+`C1729LayeringGuardTests` printed `VIOLATIONS 0 LISTED 162 STALE 0 AMBIGUOUS 3`; `DerivedImpactIndexTests`
+printed `derived-impact windowsOnly count=31 linuxOnly count=1`. The NotExecuted case is
+`WindowsUnitPlatformAdmissionTests.C1210_Windows_linux_only_outcomes_are_exact`
+(`Skipped: CARD-1210: the child skip-roster audit requires Windows placement.`).
+`validate --expected-source-sha e221907dfa93ad55019c6675811180957aad82ba --rows CP-2,CP-3,CP-5,CP-6`:
+`CHECKPOINT SOURCE VALID rows=4`. The whole-run validate returns `row_failed` for CP-4 `skipped=1` only.
+
+Derived impact index: driver built first (`dotnet build scripts/regenerate-derived-impact-index/...`
+under the build slot), run 1 `changed` (one edge, `HostLoadStoragePath.cs` -> `C1514HostLoadNativeTests`,
+because the test now names that type), run 2 `unchanged`; committed as `e221907df`.
+Nightly pins untouched (no input changed): policyHash `c2e3939821a8fef911600c44be767b951c8212bcb62824cb746e48c5aaba6909`,
+PinnedInputDigest `2f48120a65280582b586f9369e2eaf6b1bdc464a2362c8e49d434bd852479f60`,
+LegacyExclusionDigest `6d6ff646207dba9e3c09316e5bc77651f6801fe945ccde83b9b58644367b252a`.
+Mutation checks waived by the operator (2026-11-12). Native Windows proof: owed (see Owed).
