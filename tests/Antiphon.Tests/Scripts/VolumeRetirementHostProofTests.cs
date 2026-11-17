@@ -169,7 +169,7 @@ public sealed class VolumeRetirementHostProofTests
             var project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
             var proofLeaf = "c1008-proof-c1008" + new string('a', 32) + "-1700000000-" + new string('c', 32);
             var body = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1")) + "; " +
-                "function Get-C1008RetireProofExports { param($EvidenceRoot,$Run,$RecycleOperation,$InventoryRemote,$ProjectId,$Coordinated,$NetworkBudgetMs,$PreviousProofDirectory,$RequiredObjectDigest,$RequireObjectCoverage,$InventoryPhaseNonce) " +
+                "function Get-C1008RetireProofExports { param($EvidenceRoot,$Run,$RecycleOperation,$InventoryRemote,$ProjectId,[switch]$Coordinated,[int]$NetworkBudgetMs=600000,$PreviousProofDirectory,$RequiredObjectDigest,[switch]$RequireObjectCoverage,$InventoryPhaseNonce) " +
                 "$origin='https://fixture.invalid/retired.git'; $repo='repos/outer'; $proofName=Get-C1008Sha256 ($repo+[char]10+$origin); $originHash=Get-C1008Sha256 $origin; " +
                 "$dir=Join-Path $EvidenceRoot $env:C1957_PROOF_LEAF; New-Item -ItemType Directory -Force -Path $dir | Out-Null; " +
                 "[IO.File]::WriteAllText((Join-Path $dir $proofName), \"not-a-proof`n\"); " +
@@ -223,12 +223,12 @@ public sealed class VolumeRetirementHostProofTests
         {
             var deep = Path.Combine(root, "retirement-tooling", new string('d', 40), ".antiphon", "rolling-server2",
                 "exchange-" + new string('e', 32));
-            Directory.CreateDirectory(deep);
             if (deep.Length < 264)
             {
                 var fill = 264 - deep.Length - 1;
                 deep = Path.Combine(deep, new string('x', Math.Max(1, fill)));
             }
+            Directory.CreateDirectory(deep);
             deep.Length.ShouldBeGreaterThanOrEqualTo(264, "the witness must use a 264-character working directory");
             foreach (var segment in deep.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
                 segment.Length.ShouldBeLessThanOrEqualTo(255);
