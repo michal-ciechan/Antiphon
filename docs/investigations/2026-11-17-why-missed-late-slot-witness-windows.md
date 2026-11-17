@@ -17,23 +17,44 @@ The 4 s poll-count fix is doing its job. This failure is the late-slot witness i
 `ready` is `FixtureRestoreBarrierFailed` or `FixtureBuildSlotTimeout`. The 9.8 s duration
 contains the witness's real 8 s delay, so the delay finished and the probe then exited
 non-zero. A 2700 s go deadline and the 180 s WSL harness cap do not fit that duration.
+The delay is before `slot-held`. After `go`, both restores still finish together.
 
-The probe writes `ready` and then still has to unlink its container directory (`docker run
---rm` in the fixture model) and its cid directory (`c849_fixture_launch`). The cid line was
-`rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true`: under `set -e` the `|| true` covers
-only `rmdir`. A failed `rm -f` aborts the launch after `ready` exists. The model's `rm -rf`
-of the `--rm` container had the same effect: it replaced the payload status.
+The fixture model resolves a container id by scanning `$C1192_ROOT/containers/*/id`.
+The scan was `[ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ]`. The script
+runs with `set -euo pipefail`. A sibling `docker run --rm` unlinks that id after the `-f`
+test and before the read. Bash then aborts the inspect and writes
+`No such file or directory`. `c849_fixture_resource_state` accepts only an exact Docker
+absence line, so an unknown result (state 2) makes `c849_fixture_launch` return 2. Both
+`ready` files already exist, and the diagnosis is `FixtureConcurrentRestoreFailed`.
 
-On the unfixed fixture, a container cleanup that returns 1 after the payload reproduces the
-rc facts exactly: barrier code 2, `FixtureConcurrentRestoreFailed`, `late-slot-go-observed=0`,
-fixture exit 0, about 10 s, probe status 1. With the fix, the same forced failure of the
-container unlink and the cid unlink still reports `late-slot-go-observed=1`. A real restore
-failure (`C1192_FAULT=restore-p2`) still reports `FixtureConcurrentRestoreFailed` and
-`late-slot-go-observed=0`.
+A tight loop of that scan while another process removed and recreated the id aborted
+653 of 20000 times. One traced failure of the cleanup-hardened fixture captured the
+inspect result exactly: exit 1, and the output was the bash line
+`No such file or directory` for `containers/c849-...-restore-p2/id` followed by
+`Error: No such container: <64-hex>`. `c849_fixture_resource_state` rejects the
+extra line, so the launch state is 2. The trace was `PLANT_OK` for both restores,
+then `LAUNCH_STATE` state=2 for one and `LAUNCH_OK` state=1 for the other. Same
+facts as the rc row: barrier code 2, `FixtureConcurrentRestoreFailed`,
+`late-slot-go-observed=0`, fixture exit 0, about 9 s.
+On that hardened fixture, Linux TUnit of the four C1192/C1514 methods was 19/20
+(iteration 12, 9.253 s) and a direct bash sweep was 2/168. The id read now treats a
+vanished candidate as not this container and discards the diagnostic. The missing
+restore id still produces `Error: No such container: <id>` and state 1.
 
-An inherited `C589_SLOT_WAIT_SECONDS` of 5 or 8 does not produce this diagnosis (it refuses
-before `ready`, or as `FixtureBuildSlotTimeout`). The late-slot mode now sets the slot
-deadline to the injected delay plus 120 s, from the same delay the probe sleeps. Those
+The same bash model runs under WSL on the Windows rc host. This session cannot run
+that Windows test. A slower unlink widens the same window.
+
+A failed post-ready unlink can produce the same facts on its own. The cid line was
+`rm -f -- "$cid_dir/id"; rmdir -- "$cid_dir" || true`: under `set -e` the `|| true`
+covers only `rmdir`. The model's `rm -rf` of the `--rm` directory could replace the
+payload status. Both unlinks are now best-effort. A forced non-zero unlink then still
+reports `late-slot-go-observed=1`. A real restore failure (`C1192_FAULT=restore-p2`)
+still reports `FixtureConcurrentRestoreFailed` and `late-slot-go-observed=0`. The
+traced Linux failures were the id scan, not that unlink: the plant had succeeded and
+the launch failed in `c849_fixture_resource_state`.
+
+An inherited `C589_SLOT_WAIT_SECONDS` of 5 or 8 does not produce this diagnosis. The
+late-slot mode sets the slot deadline to the injected delay plus 120 s. Those
 inherited values then observe go.
 
 ## Introducing commit/card
@@ -54,8 +75,8 @@ approving review(s) with scope (Full/Interim) and the selection they actually ra
 why the failing test was outside that selection (lane/category/path): the class is waived
 for the 570 s cap, and `tests/impacted-classes.json` `remote-scripts` does not list
 `scripts/fixtures/c1192-workspace-contract.sh` or `C1514_Late_second_slot_still_observes_volume_go`.
-Linux green does not exercise a WSL unlink of a cid file and a `--rm` directory that have
-lived for the injected delay.
+Linux green on one pass does not exercise the id-scan race. The cleanup-hardened
+fixture still failed 1 of 20 TUnit runs and 2 of 168 direct runs with the rc facts.
 
 ## Cheapest pre-land check
 
@@ -63,14 +84,16 @@ the cheapest pre-land check as a path-glob -> class-filter entry for the impacte
 
 `scripts/fixtures/c1192-workspace-contract.sh` -> `/*/*/RemoteScriptContractTests/C1514_Late_second_slot_still_observes_volume_go`
 
-That filter on Linux does not catch this. Any new test in `RemoteScriptContractTests`, and
-any new witness for a Windows-native failure, needs a Windows-native run of that method
-before the rc. The next rc can run just that method on the desktop between runs.
+That filter on Linux catches this when it is repeated. One pass does not. The id scan
+failed about once in 20 TUnit runs and twice in 168 direct runs. Any new witness for a
+Windows-native failure still needs a Windows-native run of that method before the rc.
+The next rc can run just that method on the desktop between runs.
 
-The guard that catches the short-bound variant is the late-slot deadline, which is the
-injected delay plus 120 s. The guard that catches a cleanup unlink replacing a finished
-restore is the best-effort cid unlink in `c849_fixture_launch` and the `--rm` unlink in
-the fixture model. A Linux-only exact-method run will not.
+The guard for the scan is `c1192_read_container_id`: a vanished id is not this
+container, and the bash diagnostic is discarded. The guard for a short inherited slot
+bound is the late-slot deadline, the injected delay plus 120 s. The guard for a
+cleanup unlink replacing a finished restore is the best-effort cid unlink in
+`c849_fixture_launch` and the `--rm` unlink in the fixture model.
 
 ## Exemption
 
