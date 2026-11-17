@@ -33,6 +33,8 @@ public sealed partial class AgentSessionRuntime
     private readonly ConcurrentDictionary<Guid, PendingTerminalInput> _pendingInputs = new();
     private readonly ConcurrentDictionary<Guid, byte> _manualTurns = new();
     private readonly ConcurrentDictionary<Guid, IAgentProtocolAdapter> _testAdapters = new();
+    // The first same-instance caller subscribes OnTextDelta before a second caller returns.
+    private readonly object _testAdapterRegistration = new();
     // CARD-0164 test seam: herdr AgentStatus on in-process adapters (production reads it from the runner).
     private readonly ConcurrentDictionary<Guid, string?> _testAgentStatuses = new();
     // CARD-0186 S3 test seam: runner Pending on in-process adapters.
@@ -109,12 +111,26 @@ public sealed partial class AgentSessionRuntime
 
     public void Register(Guid sessionId, IAgentProtocolAdapter adapter)
     {
-        if (!_testAdapters.TryAdd(sessionId, adapter))
-            throw new ConflictException($"Agent session '{sessionId}' is already registered.");
+        lock (_testAdapterRegistration)
+        {
+            while (true)
+            {
+                if (_testAdapters.TryAdd(sessionId, adapter))
+                {
+                    _testBuffers.TryAdd(sessionId, new StringBuilder());
+                    adapter.OnTextDelta += OnTestAdapterDelta;
+                    return;
+                }
 
-        _testBuffers.TryAdd(sessionId, new StringBuilder());
-        adapter.OnTextDelta += OnTestAdapterDelta;
-        return;
+                if (!_testAdapters.TryGetValue(sessionId, out var existing))
+                    continue;
+
+                if (ReferenceEquals(existing, adapter))
+                    return;
+
+                throw new ConflictException($"Agent session '{sessionId}' is already registered.");
+            }
+        }
 
         void OnTestAdapterDelta(string text)
         {
