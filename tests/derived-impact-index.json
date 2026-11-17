@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 325,
+      "classes": 326,
       "reason": "allowlist"
     },
     {
@@ -3838,6 +3838,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Scripts/Baseline.cs",
+      "classes": [
+        "ReleaseImpactScriptTests"
+      ]
+    },
+    {
       "path": "scripts/lib/build-slot.ps1",
       "classes": [
         "StableBuildOutputDocumentationTests"
@@ -3890,13 +3896,26 @@
       "path": "scripts/lib/nightly-core.ps1",
       "classes": [
         "ImpactedClassesSelectorTests",
+        "ReleaseImpactScriptTests",
         "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/nightly-coverage.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
       "path": "scripts/lib/nightly-policy.ps1",
       "classes": [
         "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/release-authority.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -3926,6 +3945,7 @@
     {
       "path": "scripts/lib/test-selection.ps1",
       "classes": [
+        "ReleaseImpactScriptTests",
         "SelectorLineEndingAttributeTests"
       ]
     },
@@ -4089,6 +4109,24 @@
       "path": "scripts/test-live-startup-timing.ps1",
       "classes": [
         "StartupScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/test-release-gate.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/test-release-selection-cli.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/test-test-selection.ps1",
+      "classes": [
+        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -21568,7 +21606,8 @@
         "LandGraphAuditProjectInstanceTests",
         "LandNonCodeSkipTests",
         "PlanCoverageBindingTests",
-        "ReleaseImpactRuntimeTests"
+        "ReleaseImpactRuntimeTests",
+        "ReleaseImpactScriptTests"
       ]
     },
     {
