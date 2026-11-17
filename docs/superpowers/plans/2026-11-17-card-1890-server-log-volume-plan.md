@@ -256,6 +256,8 @@ CP-1 = 21 today + W-1 + W-2 + G-2 (3 new methods) + G-1 (1 new `[Arguments]` cas
 uses 24 as the floor in case Q-1 removes G-1. CP-2 has 3 methods (G-3 lives inside W-5). CP-3 is
 the 96 historical nodes. Code reports the actual TRX counts.
 
+Imported read-only at fc08bfff8 with `dotnet run --project tools/Antiphon.Checkpoints -- import --plan <this plan> --out .antiphon/c1890-checkpoints.yml` (build slot, `ANTIPHON_LINUX_COMPILER_POLICY=0`, load 14.8): **3 rows, 0 import warnings**; derived row timeouts CP-1 45 min, CP-2 15 min, CP-3 36 min.
+
 ## Files
 
 Changed: `server/appsettings.json`, `server/Application/Services/SessionRuntimeActionCoordinator.cs`,
