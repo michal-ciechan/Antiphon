@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -26,9 +28,27 @@ public sealed class ReleaseImpactScriptTests
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
     private const string Dynamic = "fixture/tests/Dyn/Dyn.csproj::Fixture.DynamicProbe";
+    private const string SeedDeclaration = "fixture/tests/Seed/SeedProbe.cs";
+    private const string Seeded = "fixture/tests/Seed/Seed.csproj::Fixture.SeedProbe";
+    private static readonly string LongSeed = "fixture/" + new string('x', 300) + ".ps1";
 
     // The real tree is immutable input: loaded and closed once per run in one bounded process.
     private static readonly Lazy<Task<JsonElement>> Shared = new(() => CloseAsync([RealCase()]));
+
+    // Seed-token variants share one bounded process; each case is its own immutable inventory.
+    private static readonly Lazy<Task<JsonElement>> SeedResults = new(() => CloseAsync(
+    [
+        SeedCase("escape", "\"../../outside.ps1\""),
+        SeedCase("dotdot", "\"fixture/scripts/../scripts/real.ps1\""),
+        SeedCase("drive", "\"C:/Windows/evil.ps1\""),
+        SeedCase("unc", "@\"\\\\server\\share\\evil.ps1\""),
+        SeedCase("rooted", "\"/etc/evil.ps1\""),
+        SeedCase("case-basename", "\"Foo.ps1\""),
+        SeedCase("case-path", "\"fixture/scripts/Real.ps1\""),
+        SeedCase("case-twins", "\"Twin.ps1\""),
+        SeedCase("missing", "\"fixture/scripts/absent.ps1\"", "\"absent-leaf.ps1\""),
+        SeedCase("long", "\"" + LongSeed + "\""),
+    ]));
 
     [Test]
     public async Task BasenameReachesBaselineHelper()
@@ -131,6 +151,83 @@ public sealed class ReleaseImpactScriptTests
             Classes(ambiguous, twin).ShouldBe([Dynamic], twin);
     }
 
+    // Seed tokens that miss an exact inventory key keep a path-specific reason, never a silent drop.
+    [Test]
+    public async Task EscapingSeedPathIsOutside()
+    {
+        var result = Case(await SeedResults.Value, "escape");
+        Reasons(result).ShouldContain(SeedReason("outside"));
+        Classes(result, "outside.ps1").ShouldBeEmpty("an escaping literal never reaches a root file");
+        AssertSeedControl(result);
+    }
+
+    [Test]
+    public async Task NormalizedSeedPathRecordsInventoryEdge()
+    {
+        var result = Case(await SeedResults.Value, "dotdot");
+        Classes(result, "fixture/scripts/real.ps1").ShouldBe([Seeded]);
+        Chain(result, "fixture/scripts/real.ps1", Seeded).ShouldBe([SeedDeclaration, "fixture/scripts/real.ps1"]);
+        Kinds(result, "fixture/scripts/real.ps1", Seeded).ShouldContain("script:path");
+        // The closure continues from the normalized node.
+        Chain(result, "fixture/scripts/lib/next.ps1", Seeded).ShouldBe(
+            [SeedDeclaration, "fixture/scripts/real.ps1", "fixture/scripts/lib/next.ps1"]);
+        Reasons(result).ShouldNotContain(r => r.StartsWith("script-target-unresolved:", StringComparison.Ordinal));
+        AssertSeedControl(result);
+    }
+
+    [Test]
+    public async Task RootedSeedPathIsOutside()
+    {
+        var results = await SeedResults.Value;
+        foreach (var name in new[] { "drive", "unc", "rooted" })
+        {
+            var result = Case(results, name);
+            Reasons(result).ShouldContain(SeedReason("outside"), name);
+            Classes(result, "fixture/scripts/evil.ps1").ShouldBeEmpty(name);
+            AssertSeedControl(result);
+        }
+    }
+
+    [Test]
+    public async Task CaseOnlySeedMatchIsNamed()
+    {
+        var results = await SeedResults.Value;
+        var basename = Case(results, "case-basename");
+        Reasons(basename).ShouldContain(SeedReason("case:Foo.ps1"));
+        Classes(basename, "fixture/scripts/foo.ps1").ShouldBe([Seeded], "the folded match stays a conservative positive");
+        AssertSeedControl(basename);
+        var path = Case(results, "case-path");
+        Reasons(path).ShouldContain(SeedReason("case:fixture/scripts/Real.ps1"));
+        Classes(path, "fixture/scripts/real.ps1").ShouldBe([Seeded]);
+        AssertSeedControl(path);
+    }
+
+    [Test]
+    public async Task FoldedSeedBasenameWithTwoFilesIsAmbiguous()
+    {
+        var result = Case(await SeedResults.Value, "case-twins");
+        Reasons(result).ShouldContain(SeedReason("ambiguous:Twin.ps1"));
+        Reasons(result).ShouldNotContain(SeedReason("case:Twin.ps1"));
+        foreach (var twin in new[] { "fixture/scripts/twin.ps1", "fixture/tools/TWIN.ps1" })
+            Classes(result, twin).ShouldBe([Seeded], twin);
+        AssertSeedControl(result);
+    }
+
+    [Test]
+    public async Task UnmatchedSeedPathIsMissing()
+    {
+        var results = await SeedResults.Value;
+        var missing = Case(results, "missing");
+        Reasons(missing).ShouldContain(SeedReason("missing:fixture/scripts/absent.ps1"));
+        Reasons(missing).ShouldContain(SeedReason("missing:absent-leaf.ps1"));
+        AssertSeedControl(missing);
+        // An unbounded token becomes a bounded detail: a fixed prefix plus a digest of the whole detail.
+        var detail = "missing:" + LongSeed;
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(detail))).ToLowerInvariant();
+        var bounded = Reasons(Case(results, "long")).Where(r => r.StartsWith(SeedReason("missing:"), StringComparison.Ordinal)).ToArray();
+        bounded.ShouldBe([SeedReason(detail[..128] + "~" + digest[..16])]);
+    }
+
     private static object RealCase()
     {
         var root = RepoRoot();
@@ -215,6 +312,38 @@ public sealed class ReleaseImpactScriptTests
         };
         foreach (var (path, text) in extra) files[path] = text;
         return new { name, files, consumers = new[] { Consumer(Dynamic, "fixture/tests/Dyn/DynamicProbe.cs") }, maxVisits = visits };
+    }
+
+    private static object SeedCase(string name, params string[] literals)
+    {
+        var calls = string.Concat(literals.Select(l => $"        await Harness.RunAsync({l});\n"));
+        var files = new SortedDictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["fixture/tests/Seed/Seed.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+            [SeedDeclaration] = "namespace Fixture;\ninternal class SeedProbe\n{\n    public async Task Runs()\n    {\n"
+                + "        await Harness.RunAsync(\"fixture/scripts/const.ps1\");\n" + calls + "    }\n}\n",
+            ["fixture/scripts/const.ps1"] = "function Get-FixtureConstant { 'constant' }\n",
+            ["fixture/scripts/real.ps1"] = ". (Join-Path $PSScriptRoot 'lib/next.ps1')\n",
+            ["fixture/scripts/lib/next.ps1"] = "function Get-FixtureNext { 'next' }\n",
+            ["fixture/scripts/foo.ps1"] = "# foo\n",
+            ["fixture/scripts/evil.ps1"] = "throw 'EXECUTED'\n",
+            ["outside.ps1"] = "throw 'EXECUTED'\n",
+        };
+        if (name == "case-twins")
+        {
+            files["fixture/scripts/twin.ps1"] = "# one\n";
+            files["fixture/tools/TWIN.ps1"] = "# two\n";
+        }
+        return new { name, files, consumers = new[] { Consumer(Seeded, SeedDeclaration) }, maxVisits = 0 };
+    }
+
+    private static string SeedReason(string detail) => "script-target-unresolved:" + SeedDeclaration + ":" + detail;
+
+    private static void AssertSeedControl(JsonElement result)
+    {
+        // Positive control: the exact constant literal beside every variant still records its edge.
+        Classes(result, "fixture/scripts/const.ps1").ShouldBe([Seeded]);
+        AssertIncomplete(result);
     }
 
     private static object Consumer(string identity, string declaration)
