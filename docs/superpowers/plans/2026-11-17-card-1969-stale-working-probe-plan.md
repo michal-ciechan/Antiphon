@@ -303,7 +303,14 @@ Suffix-collision check at 7901e9ba5 (`grep -rhoE "class <Name>[A-Za-z0-9_]*" tes
 `C1969_` is new (0 hits). Every OR operand has parentheses and a trailing `*`. The other rows use one exact
 class.
 
-Read-only import of this table: see the import line at the end of this section.
+Read-only import (plan commit `f1df456b4`, `ANTIPHON_LINUX_COMPILER_POLICY=0`, slot leased 0 s, held 30 s):
+`scripts/build-slot.ps1 -Label c1969-plan-import -- dotnet run --project tools/Antiphon.Checkpoints -p:UseAppHost=false -- import --plan <this file> --out .antiphon/c1969-plan-import.yaml`
+gave exit 0 and "imported 5 rows", with 0 import warnings (the only warnings were CA1416 compiler warnings in
+`Antiphon.HostCleanup`). It produced 3 builds (`bin-c1969-red`, `bin-c1969-stamp`, `bin-c1969-green`), row
+timeouts 45/45/45/24/30 min, and `minExecuted` 12/12/66/54/53. The filters are imported verbatim.
+
+Run timeout: do not pass `--total-timeout`, or pass at least the derived `2*sum+10`: 40 min for the CP-1 or
+CP-2 run alone, and 76 min for the CP-3..CP-5 run. The manifest `totalMinutes: 90` is the legacy default, not a cap.
 
 ## Performance budget
 
