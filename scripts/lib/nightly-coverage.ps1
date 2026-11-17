@@ -1244,6 +1244,8 @@ function Get-NightlyDiscoveryKnownIdentities {
 
 function ConvertFrom-NightlyCsStringLiteral {
     param([string]$Raw)
+    # The compiled copy (NightlyCsMethodIndex.StringLiteral) folds the escapes the same way, -eq's case-insensitivity included.
+    if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) { return [Antiphon.Nightly.NightlyCsMethodIndex]::StringLiteral($Raw) }
     $sb = New-Object System.Text.StringBuilder
     $i = 0
     while ($i -lt $Raw.Length) {

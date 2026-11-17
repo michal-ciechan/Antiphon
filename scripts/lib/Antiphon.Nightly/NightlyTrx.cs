@@ -103,5 +103,25 @@ namespace Antiphon.Nightly
             result.Properties.Add(new PSNoteProperty("Rows", rows.ToArray()));
             return result;
         }
+
+        /// <summary>Read-TestPhaseTrxRows' rows (test-phase-evidence.ps1): one
+        /// {TestId, Outcome, Name, Duration, StdOut, Path} object per scanned row, nulls as "".</summary>
+        public static object[] TimingRows(Antiphon.TestPhase.TrxTimingRead read, string path)
+        {
+            var rows = new object[read.Rows.Count];
+            for (var i = 0; i < rows.Length; i++)
+            {
+                var source = read.Rows[i];
+                var row = new PSObject();
+                row.Properties.Add(new PSNoteProperty("TestId", source.TestId ?? ""));
+                row.Properties.Add(new PSNoteProperty("Outcome", source.Outcome ?? ""));
+                row.Properties.Add(new PSNoteProperty("Name", source.Name ?? ""));
+                row.Properties.Add(new PSNoteProperty("Duration", source.Duration ?? ""));
+                row.Properties.Add(new PSNoteProperty("StdOut", source.StdOut ?? ""));
+                row.Properties.Add(new PSNoteProperty("Path", path));
+                rows[i] = row;
+            }
+            return rows;
+        }
     }
 }
