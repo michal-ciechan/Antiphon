@@ -505,6 +505,9 @@ public sealed class RunnerWorkspaceSlotPool
         var clean = await _service.GitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
         if (clean.ExitCode != 0)
             return "clean: " + Bound(clean.Stderr);
+        // Warm only. A nested obj/, bin/ or node_modules/ makes git clean -e keep the ignored parent.
+        if (!cold && await ClearRejectedIgnoredAsync(path, ct) is { } scoped)
+            return scoped;
         await ClearWorktreeStateAsync(owned, ct);
         if (branch is not null && branch != _service.PublishedBranch)
         {
@@ -644,8 +647,7 @@ public sealed class RunnerWorkspaceSlotPool
         var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
         if (status.ExitCode != 0)
             return new Failure("filesystem", "status", Bound(status.Stderr));
-        var foreign = StatusEntries(status.Stdout)
-            .Where(entry => !(entry.Code == "!!" && WorkspaceSlotResetPolicy.IsKeepListPath(entry.Path))).ToList();
+        var foreign = ForeignEntries(status.Stdout);
         if (foreign.Count > 0)
             return new Failure("custody", "dirty", "paths outside the keep-list: " + Bound(string.Join(", ", foreign.Select(entry => entry.Code + " " + entry.Path))));
         if (MarkerIn(gitDir) is { } marker)
@@ -655,6 +657,33 @@ public sealed class RunnerWorkspaceSlotPool
         var holders = _processes.Holders(path);
         if (holders.Count > 0)
             return new Failure("custody", "lingering", string.Join("; ", holders.Select(holder => $"pid={holder.Pid} argv0={holder.Argv0} kind={holder.Kind}")));
+        return null;
+    }
+
+    /// <summary>Status entries that are not ignored keep-list paths. Check and reset share this selection.</summary>
+    private static List<(string Code, string Path)> ForeignEntries(string porcelainZ) =>
+        StatusEntries(porcelainZ)
+            .Where(entry => !(entry.Code == "!!" && WorkspaceSlotResetPolicy.IsKeepListPath(entry.Path)))
+            .ToList();
+
+    /// <summary>
+    /// After a warm clean, delete each ignored parent the keep-list rejected. <c>--literal-pathspecs</c>
+    /// stops a residue name such as <c>*</c> from widening the clean.
+    /// </summary>
+    private async Task<string?> ClearRejectedIgnoredAsync(string path, CancellationToken ct)
+    {
+        var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
+        if (status.ExitCode != 0)
+            return "scoped clean: " + Bound(status.Stderr);
+        foreach (var entry in ForeignEntries(status.Stdout))
+        {
+            if (entry.Code != "!!")
+                continue;
+            var clean = await _service.GitAsync(path, ct, "--literal-pathspecs", "clean", "-ffdx", "--", entry.Path);
+            if (clean.ExitCode != 0)
+                return "scoped clean: " + Bound(clean.Stderr);
+        }
+
         return null;
     }
 
