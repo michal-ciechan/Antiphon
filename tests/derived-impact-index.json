@@ -24371,6 +24371,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
     },
