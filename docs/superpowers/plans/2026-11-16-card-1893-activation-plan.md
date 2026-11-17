@@ -18,7 +18,7 @@ Roles: **ORCHESTRATOR** is the desktop orchestrator (desktop shell, `ANTIPHON_AP
 | R-6 | Advisory: `own_tree` chowns, does not chmod | S1 adds an explicit `chmod 0700` (`docker/stack/init-state.sh:77-107`) | Mode 0700 is otherwise not applied |
 | R-7 | Advisory: `Host load ingest failed` is logged for every consume exception | Step 6 stops on the E-4 metadata witness; the log line is corroboration only (the warning carries no exception detail, `HostLoadIngestPump.cs:86`) | Avoids a false stop and a false pass |
 | R-8 | Advisory: `upgrade-broker` must not treat `unknown` as idle; not in `Phase=all`; in-container probe | Written into D-6 step 1 and S2's test list | The census helper turns a failed GET into `unknown` (`scripts/c590-remote.sh:2771`) |
-| R-9 | Advisory: CP-3 is unmeasured | Kept as a TestDesign obligation; rows split per slice (§6.3) | Unit-lane row deadline |
+| R-9 | Advisory: CP-3 is unmeasured | Kept as a TestDesign obligation; rows split per slice (§6 Checkpoints) | Unit-lane row deadline |
 | R-10 | (found in re-read) every cursor row's gaps make every task-load answer incomplete | New G-13; E-4 projects `gaps_present`; §9 item 4 names it | `HostLoadHistoryService.cs:156-157` |
 
 ## 1. Outcome in one paragraph
@@ -153,7 +153,9 @@ Rules:
 
 server2 Linux: no `-Runner` (runner-defaults places on server2), no `-Platform`.
 
-### 6.3 Checkpoints (provisional; TestDesign binds exact methods and measures)
+### Checkpoints
+
+Section 6.3, provisional: TestDesign binds exact methods and measures.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
