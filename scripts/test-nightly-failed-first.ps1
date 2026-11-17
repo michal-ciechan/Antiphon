@@ -1050,7 +1050,7 @@ $NightlySeams=@{
     $args=@{RepoRoot=$repo;LogRoot=$dir;TimingRoot=(Join-Path $dir 'timing');RunId='actual-run';Attempt=1;Sha=('a'*40);GitRef='origin/rc/2026-10-27';Profile='rc';PolicyPath=$policyFile;SeamsPath=$seams;AllowSharedTree=$true}
     if($History){$args.PriorFailuresPath=$History.Path;$args.PriorFailuresDigest=Get-NightlyHistoryDigest $History.Path}
     $result=& (Join-Path $PSScriptRoot 'nightly-tests.ps1') @args -PassThru
-    $summary=[IO.File]::ReadAllText((Join-Path $dir 'summary.json'))|ConvertFrom-Json
+    $summary=Read-NightlyJsonFile (Join-Path $dir 'summary.json')
     $schedule=[IO.File]::ReadAllText((Join-Path $dir 'dispatch-schedule.json'))|ConvertFrom-Json
     $projection=[IO.File]::ReadAllText((Join-Path $dir 'timing/groups-executed.json'))|ConvertFrom-Json
     Write-FFJson (Join-Path $dir 'actual-loop-observer.json') ([ordered]@{launches=$global:FFLoopBoundaryState.Launches.ToArray();discovery=$global:FFLoopBoundaryState.Discovery.ToArray();builds=$global:FFLoopBoundaryState.Builds})

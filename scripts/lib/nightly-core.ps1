@@ -157,6 +157,32 @@ function Test-NightlyCoreAvailable {
     return $true
 }
 
+# ConvertFrom-Json of a file's text ([IO.File]::ReadAllText decoding; -StripBom also drops one leading U+FEFF left
+# after decoding). With the core loaded it is parsed from the file's UTF-8 bytes with System.Text.Json into the same
+# objects (Antiphon.Nightly/NightlyJson.cs); a document that is not one strict JSON object goes to ConvertFrom-Json
+# for its own result or error. -Omit names property paths the caller never reads ('suites[].exclusions': the
+# exclusions of every suites element), which the core then never builds; ConvertFrom-Json keeps them.
+function Read-NightlyJsonFile([string]$Path, [switch]$StripBom, [string[]]$Omit) {
+    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
+        $value = [Antiphon.Nightly.NightlyJson]::ReadFile($Path, [bool]$StripBom, [string[]]@($Omit | Where-Object { $_ }))
+        if ($null -ne $value) { return $value }
+    }
+    $text = [IO.File]::ReadAllText($Path)
+    if ($StripBom -and $text.Length -gt 0 -and [int][char]$text[0] -eq 0xFEFF) { $text = $text.Substring(1) }
+    return $text | ConvertFrom-Json
+}
+
+# "$Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8", streamed to the file with
+# System.Text.Json when the core is loaded (NightlyJson.WriteFile: same content, not the same bytes - non-ASCII text
+# unescaped, shortest number forms). A value it does not write (an arbitrary .NET object, nesting past -Depth) is
+# written by ConvertTo-Json.
+function Write-NightlyJsonFile([string]$Path, $Value, [int]$Depth = 8) {
+    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
+        if ([Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { return }
+    }
+    $Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
 # Evidence file system (EvidenceFiles in Antiphon.Nightly/EvidenceFiles.cs). Off unless a nightly run turns it
 # on (nightly-tests.ps1): then the evidence scripts' reads and writes go through one write-behind file system,
 # so writes land on a background thread and this process reads what it wrote. Off, every helper below is the

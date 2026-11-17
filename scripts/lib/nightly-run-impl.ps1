@@ -782,7 +782,8 @@ function Invoke-AntiphonNightlyRunCore {
         $summaryPath = Join-Path $runDir 'summary.json'
         $summary = $null
         if (Test-Path -LiteralPath $summaryPath) {
-            try { $summary = Get-Content -LiteralPath $summaryPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $summary = $null }
+            # The verdict fields only (Read-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB, nearly all suite rows.
+            try { $summary = Read-NightlyJsonFile -Path (Resolve-Path -LiteralPath $summaryPath).ProviderPath -Omit 'suites','dispatchProgress' } catch { $summary = $null }
         }
         if ($summary) {
             $coverageComplete = [bool]$summary.coverageComplete
@@ -800,6 +801,8 @@ function Invoke-AntiphonNightlyRunCore {
         # A nonzero test exit is the tests verdict. Rewrite a summary that still
         # claims the tests passed so summary.json and last-run.json agree.
         if ($testExit -ne 0 -and $null -ne $summary -and [bool]$summary.testsPassed) {
+            # The rewrite keeps every field: read the whole summary.
+            $summary = Read-NightlyJsonFile -Path (Resolve-Path -LiteralPath $summaryPath).ProviderPath
             $summary.testsPassed = $false
             if ($null -ne $summary.PSObject.Properties['succeeded']) {
                 $summary.succeeded = $false

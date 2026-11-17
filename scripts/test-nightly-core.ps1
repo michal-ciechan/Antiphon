@@ -436,9 +436,66 @@ function Test-NCTrxMatchesFallback {
     Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $refusals -eq 5) 'trxIdentities' ('refusals ' + $refusals + ' compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
+# Read-NightlyJsonFile / Write-NightlyJsonFile (NightlyJson.cs, System.Text.Json) against ConvertFrom-Json and
+# ConvertTo-Json: the same objects read, the same content written (not the same bytes), and every document the core
+# does not read strictly (comments, a root array, a repeated name, UTF-16) handed to ConvertFrom-Json.
+function Test-NCJsonFilesMatchFallback {
+    $dir = Join-Path $root 'json-files'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $e = [char]0x00e9
+    $docs = [ordered]@{
+        'plain' = '{"s":"a\"b\\c' + '\' + 'u' + '00e9' + $e + '","i":1,"big":123456789012345678901234567890,"neg":-5,"d":1.0,"x":1e3,"t":true,"f":false,"n":null,"o":{"a":[],"b":[1,[2,{}]],"c":{}},"one":["only"]}'
+        'dates' = '{"z":"2026-11-17T10:00:00Z","frac":"2026-11-17T10:00:00.1234567Z","off":"2026-11-17T10:00:00+02:00","none":"2026-11-17T10:00:00","day":"2026-11-17","ms":"\/Date(1700000000000)\/","word":"2026-11-17Txx:00:00"}'
+        'comment' = '{"a":1 /* c */}'
+        'rootArray' = '[{"a":1}]'
+        'repeated' = '{"a":1,"A":2}'
+        'trailing' = '{"a":1} x'
+    }
+    $paths = [Collections.Generic.List[string]]::new()
+    foreach ($key in $docs.Keys) { $path = Join-Path $dir ($key + '.json'); [IO.File]::WriteAllText($path, $docs[$key]); $paths.Add($path) }
+    $bom = Join-Path $dir 'bom.json'; [IO.File]::WriteAllText($bom, ([string][char]0xFEFF) + '{"a":1}', [Text.UTF8Encoding]::new($true)); $paths.Add($bom)
+    $utf16 = Join-Path $dir 'utf16.json'; [IO.File]::WriteAllText($utf16, '{"a":"w"}', [Text.Encoding]::Unicode); $paths.Add($utf16)
+    $r = Invoke-NCBothWays {
+        @(foreach ($path in $paths) {
+            foreach ($strip in $false, $true) {
+                try { , (Read-NightlyJsonFile -Path $path -StripBom:$strip) } catch { 'refused: ' + $_.Exception.Message }
+            }
+        })
+    }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Compiled.Contains('refused: ')) 'jsonRead' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+
+    $summary = Join-Path $dir 'summary.json'
+    [IO.File]::WriteAllText($summary, '{"outcome":"PASS","suites":[{"id":"a","exclusions":[{"uid":"u"}],"trx":"a.trx"}],"dispatchProgress":{"liveness":"closed","suites":[{"id":"a","exclusions":[]}]}}')
+    $script:NightlyCoreAvailable = $null
+    $full = Read-NightlyJsonFile -Path $summary | ConvertTo-Json -Depth 8 -Compress
+    $rows = Read-NightlyJsonFile -Path $summary -Omit 'suites[].exclusions', 'dispatchProgress.suites[].exclusions' | ConvertTo-Json -Depth 8 -Compress
+    $top = Read-NightlyJsonFile -Path $summary -Omit 'suites', 'dispatchProgress' | ConvertTo-Json -Depth 8 -Compress
+    $omitOk = $rows -ceq '{"outcome":"PASS","suites":[{"id":"a","trx":"a.trx"}],"dispatchProgress":{"liveness":"closed","suites":[{"id":"a"}]}}' -and $top -ceq '{"outcome":"PASS"}' -and $full.Contains('"uid":"u"')
+    Assert-NC $omitOk 'jsonOmit' ('rows ' + $rows + ' top ' + $top)
+
+    $value = [ordered]@{
+        s = "q `" \ / `t $e $([char]0x2028) <&>"; i = 1; l = [long]5000000000; d = 1.0; d2 = 0.1; m = [decimal]'1.10'; nan = [double]::NaN
+        big = [Numerics.BigInteger]::Parse('123456789012345678901234567890'); t = $true; n = $null; dbn = [DBNull]::Value; ch = [char]'x'
+        utc = [datetime]::new(2026, 11, 17, 10, 0, 0, 123, [DateTimeKind]::Utc); none = [datetime]::new(2026, 11, 17, 10, 0, 0)
+        off = [datetimeoffset]::new(2026, 11, 17, 10, 0, 0, [timespan]::FromHours(2)); enum = [IO.FileAttributes]::Hidden
+        h = @{ a = 1 }; e = @(); one = @(1); nested = @(@(1, 2), @()); list = [Collections.Generic.List[object]]@(1, 'two')
+        pso = [pscustomobject]@{ z = 1; y = [ordered]@{ x = @() } }; rows = @(foreach ($i in 1..3) { [ordered]@{ id = "r$i"; exclusions = @([ordered]@{ uid = "u$i" }) } })
+    }
+    # The core writes the first; ConvertTo-Json writes the others (an arbitrary object, nesting past -Depth).
+    $cases = @(@{ Value = $value; Depth = 8 }, @{ Value = [ordered]@{ a = [IO.DirectoryInfo]::new($dir) }; Depth = 1 }, @{ Value = @{ deep = @{ a = @{ b = @{ c = 1 } } } }; Depth = 2 })
+    $written = Join-Path $dir 'written.json'
+    $r = Invoke-NCBothWays {
+        @(foreach ($case in $cases) {
+            Write-NightlyJsonFile -Path $written -Value $case.Value -Depth $case.Depth 3>$null
+            , ([IO.File]::ReadAllText($written) | ConvertFrom-Json)
+        })
+    }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback) 'jsonWrite' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; $expected = 21 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 24 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

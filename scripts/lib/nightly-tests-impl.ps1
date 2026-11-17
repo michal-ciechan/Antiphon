@@ -2279,7 +2279,8 @@ function Invoke-AntiphonNightlyTests {
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
     }
-    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    # Streamed by the core (Write-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB.
+    Write-NightlyJsonFile -Path $summaryPath -Value $summary -Depth 8
     Write-NightlyRunLine ('wrote {0}' -f $summaryPath)
 
     $exit = 0

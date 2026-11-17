@@ -325,8 +325,9 @@ function Read-NightlyHistoryText {
 }
 
 function Read-NightlyHistoryJson {
-    param([string]$Path)
-    return (Read-NightlyHistoryText $Path) | ConvertFrom-Json
+    param([string]$Path, [string[]]$Omit)
+    # Read-NightlyHistoryText | ConvertFrom-Json, parsed by the core when it can be, without the -Omit paths (nightly-core.ps1).
+    return Read-NightlyJsonFile -Path $Path -StripBom -Omit $Omit
 }
 
 function ConvertTo-NightlyHistoryTerminalInstant {
@@ -463,7 +464,8 @@ function Export-NightlyPriorFailures {
     }
     $summaryArtifact=Read-HistoryInput 'summary.json' 'summary'
     if ($null -eq $summaryArtifact) { throw 'run-not-closed: summary missing' }
-    try { $summary=Read-NightlyHistoryJson $summaryArtifact.FullPath } catch { throw 'history-schema: summary' }
+    # The per-chunk D-5 exclusion lists are most of a full run's summary and are not exported.
+    try { $summary=Read-NightlyHistoryJson $summaryArtifact.FullPath -Omit 'suites[].exclusions','dispatchProgress.suites[].exclusions' } catch { throw 'history-schema: summary' }
     if (-not $summary.runId -and $summary.invocationId) { $summary | Add-Member -NotePropertyName runId -NotePropertyValue ([string]$summary.invocationId) -Force }
     if ($summary.invocationId -and $summary.runId -cne $summary.invocationId) { throw 'history-provenance: run identity' }
     Assert-NightlyHistoryFields $summary @('runId','sha','profile','platform','policyHash','suites','completedAt')
@@ -714,7 +716,8 @@ function Read-NightlyPriorFailures {
         if (-not $artifact.Exists -or (Get-NightlyHistoryDigest $artifact.FullPath) -cne $e.sha256) { throw 'evidence-digest-mismatch' }
     }
     if (@($history.evidence | Where-Object { $_.relativePath -ceq 'summary.json' -and $_.kind -ceq 'summary' }).Count -ne 1) { throw 'history-provenance: summary missing' }
-    $summary=Read-NightlyHistoryJson (Join-Path $root 'summary.json')
+    # Provenance needs the top-level fields only.
+    $summary=Read-NightlyHistoryJson (Join-Path $root 'summary.json') -Omit 'suites','dispatchProgress'
     if (-not $summary.runId -and $summary.invocationId) { $summary | Add-Member -NotePropertyName runId -NotePropertyValue ([string]$summary.invocationId) -Force }
     $attempt='unknown'
     if ($summary.attempt) { $attempt=[string]$summary.attempt }
@@ -746,7 +749,7 @@ function Initialize-NightlyDispatchHistory {
             $previous=$history
         }else{
         $history=Read-NightlyPriorFailures @read
-        $summary=Read-NightlyHistoryJson (Join-Path $history.sourceRoot 'summary.json')
+        $summary=Read-NightlyHistoryJson (Join-Path $history.sourceRoot 'summary.json') -Omit 'suites','dispatchProgress.suites[].exclusions'
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
         if($summary.dispatchProgress -and $summary.dispatchProgress.PSObject.Properties.Name -ccontains 'liveness' -and $summary.dispatchProgress.liveness -cne 'closed'){throw 'history-liveness-unknown'}
         if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
