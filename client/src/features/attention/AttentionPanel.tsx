@@ -44,8 +44,10 @@ import { AbandonMessageDialog } from '../agents/AbandonMessageDialog'
 import {
   ATTENTION_GROUPS,
   ageSeconds,
+  groupCensusCount,
   groupOf,
   keyOf,
+  openAttentionCount,
   targetOf,
   visualOf,
   type AttentionGroupKey,
@@ -89,9 +91,9 @@ export function AttentionPanel() {
     return byGroup
   }, [items])
 
-  // Failures are context; they must not make a healthy fleet look busy, and the badge on the tab
-  // counts the same set for the same reason.
-  const openCount = items.filter((item) => item.kind !== 'RecentFailure').length
+  // Failures and historical land receipts are context. The badge uses the census, with the
+  // same exclusions as AttentionSummaryDto, so a truncated parked page still shows the fleet total.
+  const openCount = openAttentionCount(items, attention.data?.kindCounts)
 
   if (attention.isLoading) {
     return (
@@ -165,7 +167,8 @@ export function AttentionPanel() {
 
       {ATTENTION_GROUPS.map((group) => {
         const rows = grouped.get(group.key) ?? []
-        if (rows.length === 0) return null
+        const count = groupCensusCount(group.key, items, attention.data?.kindCounts)
+        if (rows.length === 0 && count === 0) return null
         const isCollapsed = collapsed.has(group.key)
 
         return (
@@ -177,7 +180,7 @@ export function AttentionPanel() {
                   {group.title}
                 </Text>
                 <Badge size="xs" variant="default">
-                  {rows.length}
+                  {count}
                 </Badge>
                 <Text size="xs" c="dimmed">
                   {group.hint}

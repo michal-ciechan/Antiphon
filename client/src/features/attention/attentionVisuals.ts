@@ -21,7 +21,7 @@ import {
   TbFlag,
 } from 'react-icons/tb'
 import type { AlertSeverity } from '../../api/agents'
-import type { AttentionItemDto, AttentionKind } from '../../api/attention'
+import type { AttentionItemDto, AttentionKind, AttentionKindCountDto } from '../../api/attention'
 
 /**
  * Kind → how the row reads, and severity → which group it lands in. Pure and total: every
@@ -461,7 +461,23 @@ export function homeBucketOf(item: AttentionItemDto): HomeAttentionBucket {
   }
 }
 
-export function homeBucketCounts(items: AttentionItemDto[]): {
+/** Same open-total exclusions as `AttentionSummaryDto`: context, not an alarm. */
+const CENSUS_CLOSED: ReadonlySet<AttentionKind> = new Set(['RecentFailure', 'LandLegacyUnverified'])
+
+export function openAttentionCount(
+  items: readonly AttentionItemDto[],
+  kindCounts?: readonly AttentionKindCountDto[],
+): number {
+  if (kindCounts) {
+    return kindCounts.reduce((sum, row) => (CENSUS_CLOSED.has(row.kind) ? sum : sum + row.count), 0)
+  }
+  return items.reduce((sum, item) => (CENSUS_CLOSED.has(item.kind) ? sum : sum + 1), 0)
+}
+
+export function homeBucketCounts(
+  items: readonly AttentionItemDto[],
+  kindCounts?: readonly AttentionKindCountDto[],
+): {
   blocked: number
   broken: number
   review: number
@@ -472,7 +488,63 @@ export function homeBucketCounts(items: AttentionItemDto[]): {
     if (bucket === 'hidden') continue
     counts[bucket] += 1
   }
+  if (!kindCounts) return counts
+  const loaded = loadedKindCounts(items)
+  for (const row of kindCounts) {
+    if (CENSUS_CLOSED.has(row.kind)) continue
+    const extra = row.count - (loaded.get(row.kind) ?? 0)
+    if (extra <= 0) continue
+    counts[undisplayedBucket(row.kind, items)] += extra
+  }
   return counts
+}
+
+export function groupCensusCount(
+  group: AttentionGroupKey,
+  items: readonly AttentionItemDto[],
+  kindCounts?: readonly AttentionKindCountDto[],
+): number {
+  const loaded = items.filter((item) => groupOf(item) === group).length
+  if (!kindCounts || group === 'failures') return loaded
+  const target = undisplayedGroupBucket(group)
+  const byKind = loadedKindCounts(items)
+  let extra = 0
+  for (const row of kindCounts) {
+    if (CENSUS_CLOSED.has(row.kind)) continue
+    const undisplayed = row.count - (byKind.get(row.kind) ?? 0)
+    if (undisplayed <= 0) continue
+    if (undisplayedBucket(row.kind, items) === target) extra += undisplayed
+  }
+  return loaded + extra
+}
+
+function undisplayedGroupBucket(group: AttentionGroupKey): 'blocked' | 'broken' | 'review' {
+  if (group === 'now') return 'blocked'
+  if (group === 'suspect') return 'review'
+  return 'broken'
+}
+
+function loadedKindCounts(items: readonly AttentionItemDto[]): Map<AttentionKind, number> {
+  const loaded = new Map<AttentionKind, number>()
+  for (const item of items) loaded.set(item.kind, (loaded.get(item.kind) ?? 0) + 1)
+  return loaded
+}
+
+function undisplayedBucket(
+  kind: AttentionKind,
+  items: readonly AttentionItemDto[],
+): 'blocked' | 'broken' | 'review' {
+  // Parked rows the page does not carry are Error, so they land in Broken.
+  // A channel-bound row on the page stays in the bucket its own severity chose.
+  if (kind === 'ParkedMessage') return 'broken'
+  const buckets = new Set<'blocked' | 'broken' | 'review'>()
+  for (const item of items) {
+    if (item.kind !== kind) continue
+    const bucket = homeBucketOf(item)
+    if (bucket !== 'hidden') buckets.add(bucket)
+  }
+  if (buckets.size === 1) return [...buckets][0]
+  return 'broken'
 }
 
 function severityGroup(severity: AlertSeverity): AttentionGroupKey {
