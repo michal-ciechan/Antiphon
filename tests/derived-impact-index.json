@@ -362,9 +362,9 @@
     },
     {
       "path": "server/Application/Dtos/SessionRunnerDtos.cs",
-      "classes": 134,
+      "classes": 135,
       "reason": "cap",
-      "owed": 109,
+      "owed": 110,
       "first": [
         "AgentSessionInterruptedLaunchResumeTests",
         "ClaudeDialogDeliveryTests",
@@ -1223,18 +1223,18 @@
     },
     {
       "path": "server/Application/Services/SessionRuntimeActionCoordinator.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
+        "ChannelInboundRecoveryTests",
         "ChannelOutboundRetentionTests",
         "ChannelPromptCorrelationTests",
         "CodexCliObservationGapTests",
         "CompactionRecoveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GrokRulesCompactionRecoveryTests",
-        "PostLandMutationDeliveryTests",
-        "SessionFinishedDuplicateTests"
+        "PostLandMutationDeliveryTests"
       ]
     },
     {
@@ -1854,9 +1854,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 432,
+      "classes": 433,
       "reason": "cap",
-      "owed": 407,
+      "owed": 408,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2163,9 +2163,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 145,
+      "classes": 146,
       "reason": "cap",
-      "owed": 120,
+      "owed": 121,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
@@ -2195,18 +2195,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/ClaudeDialogFixture.cs",
-      "classes": 93,
+      "classes": 94,
       "reason": "cap",
-      "owed": 68,
+      "owed": 69,
       "first": [
+        "PendingSettlementDeliveryTests",
         "RepairSourceSettlementTests",
         "SessionGenerationDeliveryOverlapTests",
         "SessionMessageQueueSupervisionTests",
         "SessionRunnerEventPumpTests",
         "AgentSessionServiceIntegrationTests",
         "C0824RefOnlyLandingTests",
-        "CapacityObsoleteQueueTests",
-        "ChannelBridgeTests"
+        "CapacityObsoleteQueueTests"
       ]
     },
     {
@@ -2355,9 +2355,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 520,
+      "classes": 521,
       "reason": "cap",
-      "owed": 495,
+      "owed": 496,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -4212,6 +4212,7 @@
       "classes": [
         "AgentPinnedInstructionEndpointTests",
         "ExpectationHoldReleaseEndpointTests",
+        "LogRetentionTests",
         "ProjectCascadeForeignKeyTests"
       ]
     },
@@ -10943,7 +10944,6 @@
         "AgentTaskStandingAgentDispatchTests",
         "CapacityRecoveryTranscriptTests",
         "ChannelBridgeTests",
-        "ChannelInboundRecoveryTests",
         "ChannelOutboundRecoveryTests",
         "ChannelReplyDurabilityTests",
         "ChannelReplyLateConfirmDispatchTests",
@@ -10952,6 +10952,7 @@
         "RuntimeActionClaimQueryTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "SessionRuntimeActionDeferralTests",
+        "SessionRuntimeActionLogVolumeTests",
         "SessionRuntimeActionRecoveryTests",
         "SessionRuntimeActionRoutingTests",
         "SessionRuntimeActionTemporaryBlockTests",
@@ -24844,13 +24845,13 @@
         "DispatchBaseNotificationTests",
         "DurableRunnerSpillReceiptTests",
         "PendingNoteWithholdTests",
-        "PendingSettlementDeliveryTests",
         "PhoneHomeQueuedTurnTests",
         "RemoteCompletionSpillTests",
         "SessionMessageQueueInterruptedAttemptTests",
         "SessionMessageQueuePhoneHomeDropTests",
         "SessionMessageQueueWedgedHeadTests",
         "SessionRuntimeActionDeferralTests",
+        "SessionRuntimeActionLogVolumeTests",
         "SessionRuntimeActionRecoveryTests",
         "SessionRuntimeActionRoutingTests",
         "StandingResumeReceiptReadinessTests",
@@ -24935,7 +24936,8 @@
         "BlockedTaskParkReclaimTests",
         "CommitRecoveryObligationsLoaderTests",
         "SeatDesktopJoinTests",
-        "SeatOccupancySamplerTests"
+        "SeatOccupancySamplerTests",
+        "SessionRuntimeActionLogVolumeTests"
       ]
     },
     {
@@ -25900,6 +25902,7 @@
         "AgentTuiLaunchResolverTests",
         "C1964RecoveryPumpStallTests",
         "LandRequestWriteDiagnosticTests",
+        "SessionRuntimeActionLogVolumeTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
     },
