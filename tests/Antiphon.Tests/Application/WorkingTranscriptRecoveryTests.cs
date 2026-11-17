@@ -441,6 +441,170 @@ public class WorkingTranscriptRecoveryTests
         finally { fault.Release.TrySetResult(); await probe; }
     }
 
+    // CARD-1969 W-1..W-7. The counter sees only the whole-row recovery projection
+    // (TranscriptEntries + ApiErrorTimeZoneId). 14 cases: W-1 4, W-2 2, W-3 2, W-4 1, W-5 2, W-6 2, W-7 1.
+    [Test, Arguments(300, true), Arguments(1200, true), Arguments(300, false), Arguments(1200, false)]
+    public async Task C1969_unchanged_working_probe_reads_a_bounded_tail(int n, bool cache)
+    {
+        var counter = new FullRowReadCounter();
+        await using var h = await Harness.CreateAsync(cache, counter: counter, seeded: false);
+        await h.SeedAsync(n, idle: false);
+        var (result, readRows, readCommands) = await ProbeBoundAsync(h);
+        result.Outcome.ToString().ShouldBe("CheckedWorking");
+        result.Reason.ShouldBe("runner_working");
+        readRows.ShouldBeLessThanOrEqualTo(128, $"whole-row rows {readRows} for n={n}");
+        readCommands.ShouldBeLessThanOrEqualTo(2, $"whole-row commands {readCommands} for n={n}");
+        readRows.ShouldBeGreaterThan(0);
+    }
+
+    [Test, Arguments(300), Arguments(1200)]
+    public async Task C1969_unchanged_idle_probe_reads_a_bounded_tail(int n)
+    {
+        var counter = new FullRowReadCounter();
+        await using var h = await Harness.CreateAsync(true, counter: counter, seeded: false);
+        await h.SeedAsync(n, idle: true);
+        var (result, readRows, readCommands) = await ProbeBoundAsync(h);
+        result.Outcome.ToString().ShouldBe("RecoveredIdle");
+        readRows.ShouldBeLessThanOrEqualTo(193, $"whole-row rows {readRows} for n={n}");
+        readCommands.ShouldBeLessThanOrEqualTo(3, $"whole-row commands {readCommands} for n={n}");
+        readRows.ShouldBeGreaterThan(0);
+        (await h.RowsAsync()).Count(r => r.Kind == "TurnEnd").ShouldBe(1);
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1969_middle_row_deleted_between_reads_is_observed(bool cache)
+    {
+        await using var h = await Harness.CreateAsync(cache, seeded: false);
+        await h.SeedAsync(300, idle: true);
+        h.Handler.Hold = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await h.Handler.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await DeleteStoredAsync(h, "c1969-150");
+            h.Handler.Release.TrySetResult();
+            var result = await probe;
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.Reason.ShouldBe("frontier_changed");
+            result.AddedCount.ShouldBe(0);
+            var rows = await h.RowsAsync();
+            rows.Count.ShouldBe(299);
+            rows.Count(r => r.Kind == "TurnEnd").ShouldBe(0);
+        }
+        finally { h.Handler.Release.TrySetResult(); await probe; }
+    }
+
+    [Test]
+    public async Task C1969_middle_row_deleted_at_the_fence_is_rejected()
+    {
+        var fault = new Faults();
+        await using var h = await Harness.CreateAsync(true, fault, seeded: false);
+        await h.SeedAsync(300, idle: true);
+        var before = await h.F.Store.ReadAsync(h.Id, default);
+        fault.HoldIdentity = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await fault.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await DeleteStoredAsync(h, "c1969-150");
+            fault.Release.TrySetResult();
+            var result = await probe;
+            (await h.RowsAsync()).Count(r => r.Kind == "TurnEnd").ShouldBe(0);
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.Reason.ShouldBe("frontier_changed_at_commit");
+            result.AddedCount.ShouldBe(0);
+            (await h.F.Store.ReadAsync(h.Id, default)).ShouldBe(before);
+        }
+        finally { fault.Release.TrySetResult(); await probe; }
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1969_tail_row_changed_in_place_is_observed(bool cache)
+    {
+        await using var h = await Harness.CreateAsync(cache, seeded: false);
+        await h.SeedAsync(300, idle: true);
+        h.Handler.Hold = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await h.Handler.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using (var db = h.F.Db())
+            {
+                var max = await db.TranscriptEntries.Where(t => t.AgentSessionId == h.Id).MaxAsync(t => t.Sequence);
+                await db.TranscriptEntries.Where(t => t.AgentSessionId == h.Id && t.Sequence == max - 2)
+                    .ExecuteUpdateAsync(s => s.SetProperty(t => t.Text, "c1969-edited"));
+            }
+            h.Handler.Release.TrySetResult();
+            var result = await probe;
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.Reason.ShouldBe("frontier_changed");
+            (await h.RowsAsync()).Count(r => r.Kind == "TurnEnd").ShouldBe(0);
+        }
+        finally { h.Handler.Release.TrySetResult(); await probe; }
+    }
+
+    [Test, Arguments(true), Arguments(false)]
+    public async Task C1969_top_row_replaced_at_its_sequence_is_observed(bool cache)
+    {
+        await using var h = await Harness.CreateAsync(cache, seeded: false);
+        await h.SeedAsync(300, idle: true);
+        h.Handler.Hold = true;
+        var probe = h.ProbeAsync();
+        try
+        {
+            await h.Handler.Reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await using (var db = h.F.Db())
+            {
+                var top = await db.TranscriptEntries.Where(t => t.AgentSessionId == h.Id)
+                    .OrderByDescending(t => t.Sequence).FirstAsync();
+                await db.SessionRuntimeActions.Where(a => a.TranscriptEntryId == top.Id).ExecuteDeleteAsync();
+                await db.TranscriptEntries.Where(t => t.Id == top.Id).ExecuteDeleteAsync();
+                db.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Id = Guid.NewGuid(), AgentSessionId = h.Id, Sequence = top.Sequence,
+                    Kind = "AssistantText", Uuid = "c1969-replaced-top", Text = "replaced", CreatedAt = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync();
+            }
+            h.Handler.Release.TrySetResult();
+            var result = await probe;
+            result.Outcome.ToString().ShouldBe("Unknown");
+            result.Reason.ShouldBe("frontier_changed");
+            (await h.RowsAsync()).Count(r => r.Kind == "TurnEnd").ShouldBe(0);
+        }
+        finally { h.Handler.Release.TrySetResult(); await probe; }
+    }
+
+    [Test]
+    public async Task C1969_tail_without_activity_falls_back_to_the_whole_read()
+    {
+        var counter = new FullRowReadCounter();
+        await using var h = await Harness.CreateAsync(true, counter: counter, seeded: false);
+        await h.SeedAsync(300, idle: true);
+        var notes = Enumerable.Range(0, 72).Select(i =>
+            h.F.Event(301 + i, "QueueEnqueue", 301 + i, "server only", "c1969-note-" + i)).ToArray();
+        await h.Runtime.PersistTranscriptAsync(h.Id, notes);
+        var (result, readRows, _) = await ProbeBoundAsync(h);
+        result.Outcome.ToString().ShouldBe("RecoveredIdle");
+        readRows.ShouldBeGreaterThanOrEqualTo(372, $"whole-row rows {readRows}");
+    }
+
+    private static async Task<(TranscriptRecoveryResult Result, int Rows, int Commands)> ProbeBoundAsync(Harness h)
+    {
+        h.Counter!.Reset();
+        var result = await h.ProbeAsync();
+        return (result, h.Counter.RowsRead, h.Counter.Commands);
+    }
+
+    private static async Task DeleteStoredAsync(Harness h, string uuid)
+    {
+        await using var db = h.F.Db();
+        var id = await db.TranscriptEntries.Where(t => t.AgentSessionId == h.Id && t.Uuid == uuid)
+            .Select(t => t.Id).SingleAsync();
+        await db.SessionRuntimeActions.Where(a => a.TranscriptEntryId == id).ExecuteDeleteAsync();
+        await db.TranscriptEntries.Where(t => t.Id == id).ExecuteDeleteAsync();
+    }
+
     private static async Task ChangeGenerationAsync(Harness h)
     {
         await using var db = h.F.Db();
@@ -461,29 +625,54 @@ public class WorkingTranscriptRecoveryTests
         public RecordingLogger<AgentSessionRuntime> Log { get; } = new();
         public Guid Id => F.SessionId;
         public DateTime Generation { get; private set; }
+        public FullRowReadCounter? Counter { get; init; }
         public SessionRunnerTranscriptEvent Prompt { get; private set; } = null!;
         public SessionRunnerTranscriptEvent End { get; private set; } = null!;
         public SessionRunnerTranscriptDto Snapshot { get => Handler.Snapshot; set => Handler.Snapshot = value; }
-        public static async Task<Harness> CreateAsync(bool cache, Faults? fault = null, bool nullUuid = false)
+        public static async Task<Harness> CreateAsync(bool cache, Faults? fault = null, bool nullUuid = false,
+            FullRowReadCounter? counter = null, bool seeded = true)
         {
-            var f = await SessionStateTestFixture.CreateAsync(fault, settings: new SessionStateSettings { Enabled = cache });
+            if (fault is not null && counter is not null)
+                throw new InvalidOperationException("The recovery harness accepts one interceptor.");
+            var f = await SessionStateTestFixture.CreateAsync((IInterceptor?)fault ?? counter,
+                settings: new SessionStateSettings { Enabled = cache });
             try
             {
                 var handler = new Handler();
                 var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
                 var client = new SessionRunnerHttpClient(http, new Factory(handler), Options.Create(new SessionRunnerSettings
                     { Enabled = true, BaseUrl = "http://runner.invalid" }));
-                var h = new Harness { F = f, Handler = handler, Http = http, Client = client };
+                var h = new Harness { F = f, Handler = handler, Http = http, Client = client, Counter = counter };
                 h.ReplaceRuntime(f.Store);
                 await using var db = f.Db();
                 h.Generation = (await db.AgentSessions.SingleAsync(s => s.Id == h.Id)).StartedAt;
                 h.Prompt = f.Event(1, "UserPrompt", 0, "working", "prompt") with { Uuid = nullUuid ? null : "prompt" };
                 h.End = f.Event(2, "TurnEnd", 2, "done", "end");
+                if (!seeded) return h;
                 await h.Runtime.PersistTranscriptAsync(h.Id, [h.Prompt]);
                 h.Snapshot = new(h.Id, [h.Prompt, h.End], 2, AcceptedStartedAt: h.Generation);
                 return h;
             }
             catch { await f.DisposeAsync(); throw; }
+        }
+        public async Task SeedAsync(int n, bool idle)
+        {
+            var events = new SessionRunnerTranscriptEvent[n];
+            for (var i = 0; i < n; i++)
+            {
+                var kind = i % 50 == 0 ? "UserPrompt"
+                    : i == n - 1 ? "ToolCall"
+                    : i % 2 == 1 ? "AssistantText" : "ToolCall";
+                events[i] = F.Event(i + 1, kind, i, "c1969-" + i, "c1969-" + i);
+            }
+            await Runtime.PersistTranscriptAsync(Id, events);
+            if (!idle)
+            {
+                Snapshot = new(Id, events, n, AcceptedStartedAt: Generation);
+                return;
+            }
+            var end = F.Event(n + 1, "TurnEnd", n, "done", "c1969-end");
+            Snapshot = new(Id, events.Append(end).ToArray(), end.Sequence, AcceptedStartedAt: Generation);
         }
         public void ReplaceRuntime(SessionStateStore? store) => Runtime = new AgentSessionRuntime(Client,
             F.Services.GetRequiredService<IEventBus>(), F.Services.GetRequiredService<IOptions<AgentSessionSettings>>(),
@@ -595,5 +784,35 @@ public class WorkingTranscriptRecoveryTests
             if (HoldSave) { Reached.TrySetResult(); await Release.Task.WaitAsync(TimeSpan.FromSeconds(20), ct); }
             return result;
         }
+    }
+
+    private sealed class FullRowReadCounter : DbCommandInterceptor
+    {
+        private int _rows, _commands;
+        public int RowsRead => Volatile.Read(ref _rows);
+        public int Commands => Volatile.Read(ref _commands);
+        public void Reset()
+        {
+            Interlocked.Exchange(ref _rows, 0);
+            Interlocked.Exchange(ref _commands, 0);
+        }
+
+        public override DbDataReader ReaderExecuted(DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
+            => Wrap(command, result);
+
+        public override ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command, CommandExecutedEventData eventData,
+            DbDataReader result, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(Wrap(command, result));
+
+        private DbDataReader Wrap(DbCommand command, DbDataReader result)
+        {
+            if (!command.CommandText.Contains("TranscriptEntries", StringComparison.Ordinal)
+                || !command.CommandText.Contains("ApiErrorTimeZoneId", StringComparison.Ordinal))
+                return result;
+            Interlocked.Increment(ref _commands);
+            return new CountingReader(result, CountRow);
+        }
+
+        private void CountRow(int _) => Interlocked.Increment(ref _rows);
     }
 }
