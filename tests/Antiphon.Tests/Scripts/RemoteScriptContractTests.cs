@@ -1092,6 +1092,17 @@ public sealed class RemoteScriptContractTests
             Fact(output, label).ShouldBe("1", label);
     }
 
+    // CARD-1514. The second restore's slot is granted after the first has waited
+    // longer than a few seconds for go. driver.sh waits until its slot deadline,
+    // so the first restore still sees go and both become ready.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1514_Late_second_slot_still_observes_volume_go()
+    {
+        var output = C1192Run("barrier-late-slot");
+        Fact(output, "late-slot-go-observed").ShouldBe("1", output);
+    }
+
     // CARD-0849. A second restore whose build slot arrives after the old 30s window
     // still starts. The driver records slot-held before the go wait and ready
     // immediately before restore, so the arrival window is the race itself.

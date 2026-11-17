@@ -668,6 +668,10 @@ simulate_restore() {
         return $?
     fi
     mkdir -p "$data/race/$project"
+    # CARD-1514. A slot granted after the other restore has already been waiting.
+    if [ "${C1192_SLOT_HELD_DELAY_FOR:-}" = "$project" ]; then
+        command sleep 8
+    fi
     printf '1\n' > "$data/race/$project/slot-held"
     wait_for_volume_file "$data/race/go" || return 1
     printf '1\n' > "$data/race/$project/ready"
@@ -2249,6 +2253,30 @@ mode_barriers() {
     emit never-status "$never"
     emit child-diagnosis "$child_diag"
     emit release-diagnosis "$rel_diag"
+}
+
+# CARD-1514. driver.sh waits for go until its slot deadline, so the first restore
+# is still waiting when the second slot is granted late and the barrier writes go.
+mode_barrier_late_slot() {
+    local packages="c849${RUN}race-packages" scratch="c849${RUN}race-scratch"
+    local vol="$C1192_ROOT/volumes/$WORK/data" code=0 out
+    enable_synthetic_clock
+    reset_runtime
+    : > "$C1192_ROOT/scenario.err"
+    require_init
+    plant_cache "$packages" nuget-packages
+    plant_cache "$scratch" nuget-scratch
+    C1192_SLOT_HELD_DELAY_FOR=p2
+    out=$(c849_fixture_race_restore_barrier "$ADMITTED" "$packages" "$scratch" 2>>"$C1192_ROOT/scenario.err") || code=$?
+    unset C1192_SLOT_HELD_DELAY_FOR
+    refuse_unexpected
+    emit late-slot-barrier-code "$code"
+    emit late-slot-diagnosis "$(diagnosis_of "$out")"
+    if [ "$code" = 0 ] && [ -f "$vol/race/go" ] && [ -f "$vol/race/p1/ready" ] && [ -f "$vol/race/p2/ready" ]; then
+        emit late-slot-go-observed 1
+    else
+        emit late-slot-go-observed 0
+    fi
 }
 
 install_lock_wrappers() {
@@ -5003,6 +5031,7 @@ case "$mode" in
     argv) mode_argv ;;
     race) mode_race ;;
     barriers) mode_barriers ;;
+    barrier-late-slot) mode_barrier_late_slot ;;
     slot-delay) mode_slot_delay ;;
     slot-timeout) mode_slot_timeout ;;
     slot-refusal) mode_slot_refusal ;;
