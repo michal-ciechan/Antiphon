@@ -12,21 +12,25 @@ function Refuses([scriptblock]$Action) { try { & $Action | Out-Null; return $fal
 function RefusalText([scriptblock]$Action) { try { & $Action | Out-Null; return '' } catch { return [string]$_.Exception.Message } }
 function Test-RcBoundaryOrdinalSortShape {
     param($Command)
-    # Base witness: while-loops and the literal name Compare-RcBoundaryIdentity only.
-    # A scriptblock comparer, a quadratic for, and a renamed comparator still pass.
+    # One key-building for, one New-Object, one static Sort with StringComparer.Ordinal.
+    # A scriptblock comparer, a nested loop, or any other command fails.
     $sortAst = $Command.ScriptBlock.Ast
-    $pairLoops = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.WhileStatementAst] }, $true))
-    $pairCommands = @($sortAst.FindAll({
-        param($node)
-        ($node -is [System.Management.Automation.Language.CommandAst]) -and ($node.GetCommandName() -ceq 'Compare-RcBoundaryIdentity')
-    }, $true))
-    $nativeSorts = @($sortAst.FindAll({
+    $loops = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.LoopStatementAst] }, $true))
+    $commands = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true))
+    $scripts = @($sortAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true))
+    $sorts = @($sortAst.FindAll({
         param($node)
         ($node -is [System.Management.Automation.Language.InvokeMemberExpressionAst]) -and
         ($node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst]) -and
         ($node.Member.Value -ceq 'Sort') -and $node.Static
     }, $true))
-    return (($pairLoops.Count -eq 0) -and ($pairCommands.Count -eq 0) -and ($nativeSorts.Count -eq 1))
+    if ($loops.Count -ne 1 -or -not ($loops[0] -is [System.Management.Automation.Language.ForStatementAst])) { return $false }
+    if ($commands.Count -ne 1 -or $commands[0].GetCommandName() -cne 'New-Object') { return $false }
+    if ($scripts.Count -ne 0 -or $sorts.Count -ne 1) { return $false }
+    $sortText = [string]$sorts[0].Extent.Text
+    if (-not $sortText.Contains('[StringComparer]::Ordinal')) { return $false }
+    if ($sortText.Contains('{') -or $sortText.Contains('}')) { return $false }
+    return $true
 }
 function Row([string]$Boundary, [string]$Key, [string]$Suite = 'antiphon') { return @{ boundary=$Boundary; suite=$Suite; identityKey=$Key } }
 if (-not (Test-Path -LiteralPath $lib)) {
@@ -95,19 +99,8 @@ if (-not (Test-Path -LiteralPath $lib)) {
             Note ($deadCounter.Count -eq 0) 'comparator counter runs only when Compare-RcBoundaryIdentity exists'
             $script:realDigest = ${function:Get-RcBoundaryCanonicalDigest}
             $script:digestCalls = 0
-            $script:pairCompares = 0
-            $script:realCompare = $null
             try {
-                if (Test-Path Function:Compare-RcBoundaryIdentity) {
-                    $script:realCompare = ${function:Compare-RcBoundaryIdentity}
-                    function Compare-RcBoundaryIdentity {
-                        param($Left, $Right)
-                        $script:pairCompares++
-                        & $script:realCompare $Left $Right
-                    }
-                }
                 New-RcBoundaryChunk -Identities $shuffled | Out-Null
-                Note ($script:pairCompares -eq 0) ('warm-up invoked a per-pair PowerShell comparator ' + $script:pairCompares + ' times')
                 function Get-RcBoundaryCanonicalDigest {
                     param($Suite, $Boundary, $Identities)
                     $script:digestCalls++
@@ -125,10 +118,8 @@ if (-not (Test-Path -LiteralPath $lib)) {
                     }
                 }
                 Note ($script:digestCalls -eq 2) ('digest calls for two chunks: ' + $script:digestCalls)
-                Note ($script:pairCompares -eq 0) ('per-pair PowerShell comparator ran ' + $script:pairCompares + ' times')
             } finally {
                 Set-Item Function:Get-RcBoundaryCanonicalDigest $script:realDigest
-                if ($null -ne $script:realCompare) { Set-Item Function:Compare-RcBoundaryIdentity $script:realCompare }
             }
             $ordered = @(Sort-RcBoundaryIdentities @(
                 @{class='a'; method='M'; caseKey=''}, @{class='Z'; method='M'; caseKey=''},
