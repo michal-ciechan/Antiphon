@@ -404,12 +404,18 @@ lesson): the green group cannot reuse the red build.
 | CP-3 | green | CP-2 | recovery-adjacent | `/*/*/(PhoneHomeDeferredKillTests*)\|(PhoneHomeStrandedQueueTests*)\|(PhoneHomeTranscriptIncidentTests*)\|(DefaultRunnerEligibilityTests*)/*` | R-1 | all listed, 0 failed | 27 | 4 |
 | CP-4 | green | CP-2 | directory-lease | `/*/*/(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)\|(PhoneHomeRunnerRetirementCycleTests*)\|(PhoneHomeImmediateSendTests*)/*` | R-2 | all listed, 0 failed | 31 | 4 |
 | CP-5 | green | CP-2 | backpressure-rolling | `/*/*/(PhoneHomeBackpressureTests*)\|(PhoneHomeRollingRunnerTests*)/*` | R-1,R-2 | all listed, 0 failed | 43 | 6 |
-| CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 85 | 6 |
+| CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 81 | 6 |
 | CP-7 | green | CP-2 | impact-index | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed, after the regenerate script ran and the index was committed | 27 | 12 |
 
 **Import check (2026-11-17, plan task):** `dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan <this plan> --out .antiphon/c1964-plan/manifest-1.yaml` (ignored path). It printed `imported 7 rows`, exit 0, with **no warnings**. The row timeouts it derived are 45, 45, 15, 15, 18, 18 and 36 minutes.
 
 **Import check, amendment 1 (2026-11-17, plan task 2bef90c6):** the same command with `--out .antiphon/c1964-plan-amend1/manifest.yaml` (ignored path) printed `imported 7 rows`, exit 0, with **no warnings**. The manifest carries `minExecuted` 14, 43, 27, 31, 43, 85 and 27 and the same timeouts, 45, 45, 15, 15, 18, 18 and 36 minutes.
+
+**CP-6 correction (amendment 2).** The CP-6 run at `e191ac858` (run `20261117-071442-5148`) executed 81 tests, 81 passed,
+and stopped on its floor of 85. `TaskPlatformGuidanceTests.cs` has 9 `[Test]` methods, but only 5 are in
+`TaskPlatformGuidanceTests`; the other 4 belong to `RunnerDefaultGuidanceTests` in the same file, which the class filter
+does not select. The TRX per-class counts match the table below. The filter is unchanged; the floor is the exact
+count of that filter.
 
 **Min derivation (amendment 1, B-3).** Each Min is the exact case count at `300c8a99d`: class-level `[Test]` methods
 at member indentation, where a method with k `[Arguments]` counts k, fixture text inside string literals is excluded, and
@@ -423,7 +429,7 @@ No roster method carries a skip attribute.
 | CP-3 | `PhoneHomeDeferredKillTests` 3; `PhoneHomeStrandedQueueTests` 16; `PhoneHomeTranscriptIncidentTests` 5; `DefaultRunnerEligibilityTests` 3 | 27 (unchanged) |
 | CP-4 | `PhoneHomeDirectoryTests` 8; `PhoneHomeRunnerRetirementIdentityTests` 9 (7); `PhoneHomeRunnerRetirementCycleTests` 1; `PhoneHomeImmediateSendTests` 13 | 31 (was 29) |
 | CP-5 | `PhoneHomeBackpressureTests` 9 (`.cs` 6, `.Bounds.cs` 3; `.Scheduling.cs` and `.Protocol.cs` hold no tests); `PhoneHomeRollingRunnerTests` 34 (`…DrainTests.cs` 23 from 22 methods, `…RetireTests.cs` 4, the main file 7) | 43 (was 42) |
-| CP-6 | `TestClassificationPolicyTests` 42 (28); `TestClassificationGuardTests` 1; `SlowTestRegistryMergeTests` 5 (3); `SlowTestTripwireTests` 2; `NativeLinuxPolicyWitnessTests` 3; `MechanicalPcContractTests` 11 (7); `TaskPlatformGuidanceTests` 9; `C1729LayeringGuardTests` 11; `TestLaneCategoryGuardTests` 1. The two `tests/Shared` classes are linked into `Antiphon.Tests` (`Antiphon.Tests.csproj:185`, `:209`). | 85 (was 60) |
+| CP-6 | `TestClassificationPolicyTests` 42 (28); `TestClassificationGuardTests` 1; `SlowTestRegistryMergeTests` 5 (3); `SlowTestTripwireTests` 2; `NativeLinuxPolicyWitnessTests` 3; `MechanicalPcContractTests` 11 (7); `TaskPlatformGuidanceTests` 5; `C1729LayeringGuardTests` 11; `TestLaneCategoryGuardTests` 1. The two `tests/Shared` classes are linked into `Antiphon.Tests` (`Antiphon.Tests.csproj:185`, `:209`). | 81 (amendment 2; amendment 1 said 85) |
 | CP-7 | `DerivedImpactIndexTests` 27 (`[Test]` at lines 134-877; the other `[Test]` tokens in the file are fixture text) | 27 (was 42) |
 
 Row meanings:
