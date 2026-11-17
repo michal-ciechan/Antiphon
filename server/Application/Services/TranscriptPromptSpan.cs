@@ -89,13 +89,7 @@ internal static class TranscriptPromptSpan
             .Select(s => (AgentKind?)s.AgentKind)
             .FirstOrDefaultAsync(ct) ?? AgentKind.Raw;
 
-        var rows = await db.TranscriptEntries.AsNoTracking()
-            .Where(t => t.AgentSessionId == sessionId
-                && (t.Kind == TranscriptKinds.UserPrompt
-                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
-            .OrderBy(t => t.Sequence)
-            .Select(t => new PromptRow(t.Sequence, t.Text, t.Timestamp, t.Kind))
-            .ToListAsync(ct);
+        var rows = await LoadPromptRowsAsync(db, sessionId, cache, ct);
 
         var inWindow = rows
             .Where(r => dispatchedAt == null || r.Timestamp == null || r.Timestamp > dispatchedAt)
@@ -122,6 +116,46 @@ internal static class TranscriptPromptSpan
                 .ToList(),
             rows);
     }
+
+    // CARD-1969 S2, DELIBERATELY INCOMPLETE (never landed alone; S3 lands with it): the stamp
+    // is max(Sequence) alone, read by its own statement AFTER the rows, so a prompt committed
+    // between the two statements is stored under a max that already includes it.
+    private static async Task<IReadOnlyList<PromptRow>> LoadPromptRowsAsync(
+        AppDbContext db, Guid sessionId, PromptCache cache, CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is not null
+            || db.Database.GetConnectionString() is not { } connection)
+            return await ReadRowsAsync(db, sessionId, ct);
+
+        var key = new PromptCache.Key(connection, sessionId);
+        var cached = cache.Lookup(key);
+        if (cached is not null && await ReadMaxAsync(db, sessionId, ct) == cached.MaxSequence)
+            return cached.Rows;
+
+        var rows = await ReadRowsAsync(db, sessionId, ct);
+        var max = await ReadMaxAsync(db, sessionId, ct);
+        cache.Store(key, new PromptCache.Entry(max, rows));
+        return rows;
+    }
+
+    private static async Task<IReadOnlyList<PromptRow>> ReadRowsAsync(
+        AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        await db.TranscriptEntries.AsNoTracking()
+            .TagWith("prompt-span.read")
+            .Where(t => t.AgentSessionId == sessionId
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .OrderBy(t => t.Sequence)
+            .Select(t => new PromptRow(t.Sequence, t.Text, t.Timestamp, t.Kind))
+            .ToListAsync(ct);
+
+    private static Task<long?> ReadMaxAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
+        db.TranscriptEntries.AsNoTracking()
+            .TagWith("prompt-span.stamp")
+            .Where(t => t.AgentSessionId == sessionId
+                && (t.Kind == TranscriptKinds.UserPrompt
+                    || t.Kind == TranscriptKinds.QueuedUserPrompt))
+            .MaxAsync(t => (long?)t.Sequence, ct);
 
     /// <summary>
     /// True when this session has at least one typed or queued prompt after
@@ -159,23 +193,51 @@ internal static class TranscriptPromptSpan
         || TranscriptKinds.IsTaskNotificationPrompt(TranscriptKinds.UserPrompt, text);
 
     /// <summary>
-    /// CARD-1969 S2 seam. Inert in this commit: it stores nothing and changes no read, so the
-    /// witnesses compile and stay red for the right reason.
+    /// CARD-1969 S2, DELIBERATELY INCOMPLETE: one lock over the map, entries replaced whole,
+    /// keyed by (connection string, session). The bounds and the idle clock are accepted and
+    /// ignored here; S3 enforces them.
     /// </summary>
     internal sealed class PromptCache
     {
         internal static PromptCache Shared { get; } = new(
             256, 4_000_000, 32_000_000, TimeSpan.FromSeconds(120), () => Environment.TickCount64);
 
+        private readonly object _gate = new();
+        private readonly Dictionary<Key, Entry> _entries = new();
+
         internal PromptCache(
             int maxEntries, long maxEntryChars, long maxTotalChars, TimeSpan idle, Func<long> nowMs)
         {
         }
 
-        internal void Forget(AppDbContext db, Guid sessionId)
+        internal readonly record struct Key(string Connection, Guid SessionId);
+
+        internal sealed record Entry(long? MaxSequence, IReadOnlyList<PromptRow> Rows);
+
+        internal Entry? Lookup(Key key)
         {
+            lock (_gate)
+                return _entries.GetValueOrDefault(key);
         }
 
-        internal (int Entries, long Chars) Snapshot() => (0, 0);
+        internal void Store(Key key, Entry entry)
+        {
+            lock (_gate)
+                _entries[key] = entry;
+        }
+
+        internal void Forget(AppDbContext db, Guid sessionId)
+        {
+            if (db.Database.GetConnectionString() is not { } connection)
+                return;
+            lock (_gate)
+                _entries.Remove(new Key(connection, sessionId));
+        }
+
+        internal (int Entries, long Chars) Snapshot()
+        {
+            lock (_gate)
+                return (_entries.Count, 0);
+        }
     }
 }
