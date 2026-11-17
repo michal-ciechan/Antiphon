@@ -1410,9 +1410,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 423,
+      "classes": 424,
       "reason": "cap",
-      "owed": 398,
+      "owed": 399,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -11432,7 +11432,8 @@
         "ChannelOutboundRecoveryTests",
         "SiblingToolReportBoundaryTests",
         "TaskReportFloorIndexTests",
-        "TaskReportTurnSelectorTests"
+        "TaskReportTurnSelectorTests",
+        "TranscriptPromptSpanTests"
       ]
     },
     {
