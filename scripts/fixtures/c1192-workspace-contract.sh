@@ -1189,6 +1189,17 @@ docker_run_payload() {
     run_script "$mount" "${PARSED_CMD[@]}"
 }
 
+# A sibling --rm can unlink an id after the caller has already seen the file.
+# set -e would abort the scan, and the bash diagnostic is not a Docker absence
+# line, so c849_fixture_resource_state would report the container unknown.
+c1192_read_container_id() {
+    local text=""
+    # The open error is the shell's, not read's. 2>/dev/null on read alone
+    # still reaches c849_fixture_resource_state as an unknown docker result.
+    { IFS= read -r text < "$1"; } 2>/dev/null || return 1
+    printf -v "$2" '%s' "$text"
+}
+
 # Single-line model fields use live Bash reads; do not fork cat for each ID
 # candidate and field. No identity, fault scenario or observation is cached.
 docker_inspect_container() {
@@ -1199,10 +1210,13 @@ docker_inspect_container() {
             *) name="$1"; shift ;;
         esac
     done
-    local requested="$name" candidate
+    local requested="$name" candidate id_text=""
     if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
         for candidate in "$C1192_ROOT/containers"/*; do
-            [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+            c1192_read_container_id "$candidate/id" id_text || continue
+            [ "$id_text" = "$name" ] || continue
+            name="${candidate##*/}"
+            break
         done
     fi
     local dir="$C1192_ROOT/containers/$name"
@@ -1317,10 +1331,13 @@ docker() {
             printf 'Cannot connect to the Docker daemon at unix:///missing.sock. Is the docker daemon running?\n' >&2
             return 1
         fi
-        local probe_target="${*: -1}" candidate
+        local probe_target="${*: -1}" candidate id_text=""
         if [[ "$probe_target" =~ ^[0-9a-f]{64}$ ]]; then
             for candidate in "$C1192_ROOT/containers"/*; do
-                [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$probe_target" ] && probe_target="${candidate##*/}" && break
+                c1192_read_container_id "$candidate/id" id_text || continue
+                [ "$id_text" = "$probe_target" ] || continue
+                probe_target="${candidate##*/}"
+                break
             done
             [ "$probe_target" != "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" ] || probe_target="c849-${RUN}-npm"
         fi
@@ -1402,10 +1419,13 @@ docker() {
                 esac
             done
             order_log "container $name"
-            local requested="$name" candidate
+            local requested="$name" candidate id_text=""
             if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
                 for candidate in "$C1192_ROOT/containers"/*; do
-                    [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+                    c1192_read_container_id "$candidate/id" id_text || continue
+                    [ "$id_text" = "$name" ] || continue
+                    name="${candidate##*/}"
+                    break
                 done
             fi
             [ "$name" = "$requested" ] || order_log "container $name"
@@ -1505,10 +1525,13 @@ docker() {
                     *) name="$1"; shift ;;
                 esac
             done
-            local requested="$name" candidate
+            local requested="$name" candidate id_text=""
             if [[ "$name" =~ ^[0-9a-f]{64}$ ]]; then
                 for candidate in "$C1192_ROOT/containers"/*; do
-                    [ -f "$candidate/id" ] && [ "$(< "$candidate/id")" = "$name" ] && name="${candidate##*/}" && break
+                    c1192_read_container_id "$candidate/id" id_text || continue
+                    [ "$id_text" = "$name" ] || continue
+                    name="${candidate##*/}"
+                    break
                 done
             fi
             if [ -z "$name" ] || [ ! -d "$C1192_ROOT/containers/$name" ]; then
