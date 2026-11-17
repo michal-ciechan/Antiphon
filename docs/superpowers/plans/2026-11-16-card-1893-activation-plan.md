@@ -187,6 +187,8 @@ else echo NOT-AFFECTED; fi
 ```
 With the S0 fallback (Q-8) the release instead requires `SessionRunner__HostStats__HistoryEnabled: "false"` in the base file. For `rc/2026-11-24` (`870a93d21`) the check prints `HOLD`.
 
+S0 shipped by CARD-1893-S0 at aaa774ee90d73ba62f2d5680ed3322e00bf6fd12: the check releases on the base-file value.
+
 **What happens on the desktop.** Nothing is held there. An AppHost restart onto rc-24 restarts the desktop server and desktop runner only (G-17); the old server2 runner keeps answering history with 503, so the pump creates no `server2` row (G-14). The desktop runner opens its own durable `%LOCALAPPDATA%` spool and gets its own cursor row, which is stable across restarts and is checked by E-4 for H-3.
 
 **Cost.** The runner-side content of rc-24 is only `9cf3e4917` (G-16), so server2 loses no runner fix. What is delayed: the rc-24 server2 rolling rollout as a whole, and every later rc's server2 rollout, until an rc carries S1 (by a reviewed rc port of S1 onto the current rc line, Q-9, or the next cut). With S1 in Code after the §6.1 order, the expected delay is one TestDesign + Code + Review + land + rc port cycle. Dispatch to server2 continues on the current runner image (keep-7 is unaffected). If an unrelated urgent runner fix needs a server2 rollout first, Q-8's S0 stop-gap releases the hold without S1.
