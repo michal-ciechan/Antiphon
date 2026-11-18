@@ -1011,10 +1011,34 @@ public sealed class DockerStackContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1893_S1_Hold_exits_nonzero_when_the_argument_does_not_resolve()
     {
-        var result = Hold(new HoldTree(Base: HoldPath, Temp: HoldDisable, Commit: new string('0', 40))).Single();
-        result.ShouldStartWith("exit=");
-        result.ShouldNotStartWith("exit=0 ");
-        result.ShouldEndWith(" out=");
+        // Exit 2 is the script refusing; a missing script (127) or a fail-open NOT-AFFECTED (0) is not.
+        Hold(new HoldTree(Base: HoldPath, Temp: HoldDisable, Commit: new string('0', 40)))
+            .ShouldBe(["exit=2 out="]);
+    }
+
+    // TestDesign G-21: a repository that lacks the collector object is not NOT-AFFECTED. There
+    // is-ancestor would exit 128; the script refuses before it.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_exits_nonzero_when_the_collector_object_is_absent()
+    {
+        var result = RemoteScriptContractSupport.LinuxShellResult("""
+            set -eu
+            fx=$(mktemp -d)
+            trap 'rm -rf "$fx"' EXIT
+            git init -q "$fx"
+            cd "$fx"
+            export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+            export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+            commit=$(git commit-tree "$(git mktree </dev/null)" -m fixture)
+            set +e
+            out=$(bash "$repo/scripts/c1893-runner-hold.sh" "$commit")
+            status=$?
+            set -e
+            printf 'C1893 exit=%s out=%s\n' "$status" "$out"
+            """, "repo");
+        result.Exit.ShouldBe(0, "fixture setup");
+        HoldResults(result.Output).ShouldBe(["exit=2 out="]);
     }
 
     // CARD-1985 A-1(c): a base that still turns history off holds even with both S1 lines.
