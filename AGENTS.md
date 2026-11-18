@@ -71,6 +71,7 @@ concurrency token by default.
 - Overnight build+test is Windmill `u/lndcobra/antiphon_nightly_tests` (scripts/nightly-run.ps1 against C:\Antiphon\nightly\checkout). Do not add a local Scheduled Task.
 - Direct builds use the worktree's native default output, one build at a time (CARD-1629); do not hand-quote arbitrary alternate OutputPath values. Read the testing/build guide for the current custom-output, headed-test, test-clock, shared-Postgres, and slow-build procedures.
 - A test host that boots real Program must never launch against the production runner. Use the established guard or an isolated runner.
+- A Merge runs short tests only; the full and longer tests are the rc qualification's job. Owner: [Merge verification is short (2026-11-18)](docs/orchestration-loop.md#merge-verification-is-short-2026-11-18).
 
 ### Sessions and pty
 
