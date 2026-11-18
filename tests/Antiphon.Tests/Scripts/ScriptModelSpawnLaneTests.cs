@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
 using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -8,9 +10,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1984 S1a. The lane resolver, the temp-path scanner and the process-start walk are
-/// stubs, so W-1 (except rows whose expected width is already 1), W-2, W-3, the W-4
-/// negative control and the W-5 controls fail for that reason.
+/// CARD-1984. W-1 pins the width formula, W-2 proves the lane overlaps, W-3 pins the family
+/// floor, W-4 walks compiled bodies, and W-5 rejects a fixed temp path.
 /// </summary>
 [Category("Unit")]
 public class ScriptModelSpawnLaneTests
@@ -211,18 +212,334 @@ public class ScriptModelSpawnLaneTests
         FixedTempFindings(source).ShouldNotBeEmpty(source);
     }
 
-    // S1a stub. Returning no findings makes every control row red and leaves the scan green.
+    private static readonly Regex TempLiteralRegex = new(
+        @"(?<![A-Za-z0-9_.\/])(?:/tmp|/dev/shm)/[A-Za-z0-9_.$*\-]+",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly string[] ComparisonCalls =
+    [
+        "ShouldContain", "ShouldNotContain", "ShouldStartWith", "Contains",
+        "StartsWith", "startsWith", "includes", "IndexOf",
+    ];
+
+    private static readonly string[] ExactTempTokens =
+    [
+        "/tmp/antiphon-pty-hosts",
+        "/tmp/donor",
+        "/tmp/escape",
+        "/tmp/c994-command-sentinel",
+    ];
+
+    private static readonly Regex GuidInStatement = new(
+        @"\{[^};]*Guid[^};]*\}",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    private static readonly Regex MktempOperand = new(
+        @"mktemp\s+-d(?:\s+-p\s+\S+)?\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// W-5 rule R1. A finding is <c>/tmp/&lt;name&gt;</c> or <c>/dev/shm/&lt;name&gt;</c> that is not
+    /// a comment, a unique suffix, an <c>mkdtemp</c>/<c>mktemp -d</c> argument, a same-file stem of
+    /// one of those, a comparison or case-arm, or an exact allowed token.
+    /// </summary>
     internal static List<string> FixedTempFindings(string source)
     {
-        _ = source;
-        return [];
+        var blanked = BlankFullLineComments(source);
+        var matches = TempLiteralRegex.Matches(blanked);
+        if (matches.Count == 0)
+            return [];
+
+        var stems = new List<string>();
+        foreach (Match match in matches)
+        {
+            if (IsCreationArgument(blanked, match.Index))
+            {
+                var stem = UniqueStem(match.Value);
+                if (stem.Length > 0)
+                    stems.Add(stem);
+            }
+        }
+
+        var findings = new List<string>();
+        foreach (Match match in matches)
+        {
+            if (IsAllowedTempLiteral(blanked, match, stems))
+                continue;
+            findings.Add(LineNumber(blanked, match.Index) + ":" + match.Value);
+        }
+
+        return findings;
     }
 
-    // S1a stub. A method that reaches Process.Start is not rejected, so the negative control is red.
     internal static bool ReachesProcessStart(MethodBase method)
     {
-        _ = method;
+        var pending = new Stack<MethodBase>();
+        var seen = new HashSet<(Module Module, int Token)>();
+        pending.Push(method);
+        EnqueueCompilerMethods(method, pending);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!seen.Add((current.Module, current.MetadataToken)))
+                continue;
+            var body = current.GetMethodBody();
+            if (body is null)
+                continue;
+            foreach (var member in ProcessSpawnLimitTests.ReferencedMembers(current, body))
+            {
+                if (IsSpawnMember(member))
+                    return true;
+                if (member is MethodBase called && InWalkScope(called))
+                {
+                    pending.Push(called);
+                    EnqueueCompilerMethods(called, pending);
+                }
+            }
+        }
+
         return false;
+    }
+
+    private static bool IsAllowedTempLiteral(string source, Match match, List<string> stems)
+    {
+        var literal = match.Value;
+        if (HasUniqueSuffix(literal) || GuidFollows(source, match.Index + match.Length))
+            return true;
+        if (IsCreationArgument(source, match.Index))
+            return true;
+        foreach (var stem in stems)
+        {
+            if (literal.StartsWith(stem, StringComparison.Ordinal))
+                return true;
+        }
+
+        if (IsComparisonOrCaseArm(source, match.Index))
+            return true;
+        return ExactTempTokens.Contains(literal, StringComparer.Ordinal);
+    }
+
+    private static bool HasUniqueSuffix(string literal) =>
+        literal.Contains("XXXX", StringComparison.Ordinal)
+        || literal.Contains("$RANDOM", StringComparison.Ordinal)
+        || literal.Contains("$BASHPID", StringComparison.Ordinal)
+        || literal.Contains("$$", StringComparison.Ordinal);
+
+    private static string UniqueStem(string literal)
+    {
+        var cut = literal.Length;
+        foreach (var marker in new[] { "$RANDOM", "$BASHPID", "XXXX", "$$" })
+        {
+            var at = literal.IndexOf(marker, StringComparison.Ordinal);
+            if (at >= 0 && at < cut)
+                cut = at;
+        }
+
+        return cut == 0 ? "" : literal[..cut];
+    }
+
+    private static bool GuidFollows(string source, int from)
+    {
+        var lineEnd = source.IndexOf('\n', from);
+        if (lineEnd < 0)
+            lineEnd = source.Length;
+        var semi = source.IndexOf(';', from, lineEnd - from);
+        var region = source[from..(semi >= 0 ? semi : lineEnd)];
+        return region.Contains("Guid.NewGuid()", StringComparison.Ordinal) || GuidInStatement.IsMatch(region);
+    }
+
+    private static bool IsCreationArgument(string source, int literalIndex)
+    {
+        foreach (var name in OpenCallNames(source, literalIndex))
+        {
+            if (name is "mkdtemp" or "mkdtempSync")
+                return true;
+        }
+
+        var lineStart = source.LastIndexOf('\n', Math.Max(0, literalIndex - 1));
+        var prefix = source[(lineStart + 1)..literalIndex];
+        return MktempOperand.IsMatch(prefix);
+    }
+
+    private static bool IsComparisonOrCaseArm(string source, int literalIndex)
+    {
+        var names = OpenCallNames(source, literalIndex);
+        if (names.Count > 0 && ComparisonCalls.Contains(names[^1], StringComparer.Ordinal))
+            return true;
+        return IsCaseArm(source, literalIndex);
+    }
+
+    private static bool IsCaseArm(string source, int literalIndex)
+    {
+        var lineStart = source.LastIndexOf('\n', Math.Max(0, literalIndex - 1)) + 1;
+        var lineEnd = source.IndexOf('\n', literalIndex);
+        if (lineEnd < 0)
+            lineEnd = source.Length;
+        var before = source[lineStart..literalIndex];
+        var depth = 0;
+        foreach (var c in before)
+        {
+            if (c == '(')
+                depth++;
+            else if (c == ')')
+                depth--;
+        }
+
+        if (depth > 0)
+            return false;
+        var after = source[literalIndex..lineEnd];
+        var stop = after.IndexOf(';');
+        var region = stop >= 0 ? after[..stop] : after;
+        return region.Contains(')');
+    }
+
+    private static List<string> OpenCallNames(string source, int end)
+    {
+        var stack = new List<string>();
+        var quote = '\0';
+        for (var i = 0; i < end; i++)
+        {
+            var c = source[i];
+            if (quote != '\0')
+            {
+                if (quote != '\'' && c == '\\')
+                {
+                    i++;
+                    continue;
+                }
+
+                if (c == quote)
+                    quote = '\0';
+                continue;
+            }
+
+            if (c is '\'' or '"' or '`')
+            {
+                quote = c;
+                continue;
+            }
+
+            if (c == '(')
+                stack.Add(CallName(source, i));
+            else if (c == ')' && stack.Count > 0)
+                stack.RemoveAt(stack.Count - 1);
+        }
+
+        return stack;
+    }
+
+    private static string CallName(string source, int parenIndex)
+    {
+        var i = parenIndex - 1;
+        while (i >= 0 && char.IsWhiteSpace(source[i]))
+            i--;
+        var end = i + 1;
+        while (i >= 0 && (char.IsLetterOrDigit(source[i]) || source[i] == '_'))
+            i--;
+        return source[(i + 1)..end];
+    }
+
+    private static string BlankFullLineComments(string source)
+    {
+        var builder = new StringBuilder(source.Length);
+        var start = 0;
+        while (start <= source.Length)
+        {
+            var end = source.IndexOf('\n', start);
+            if (end < 0)
+                end = source.Length;
+            var line = source[start..end];
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('#'))
+                builder.Append(' ', line.Length);
+            else
+                builder.Append(line);
+            if (end >= source.Length)
+                break;
+            builder.Append('\n');
+            start = end + 1;
+        }
+
+        return builder.ToString();
+    }
+
+    private static int LineNumber(string source, int index)
+    {
+        var line = 1;
+        for (var i = 0; i < index && i < source.Length; i++)
+        {
+            if (source[i] == '\n')
+                line++;
+        }
+
+        return line;
+    }
+
+    private static bool IsSpawnMember(MemberInfo member)
+    {
+        if (member is Type type)
+            return IsScriptHarness(type);
+        var owner = member.DeclaringType;
+        if (owner is null)
+            return false;
+        if (IsScriptHarness(owner))
+            return true;
+        if (owner == typeof(Process) && member.Name == "Start")
+            return true;
+        return owner == typeof(ProcessStartInfo) && member is ConstructorInfo;
+    }
+
+    private static bool IsScriptHarness(Type type)
+    {
+        for (var current = type; current is not null; current = current.DeclaringType)
+        {
+            if (current.Name == "ScriptHarnessProcess")
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool InWalkScope(MethodBase method)
+    {
+        var ns = method.DeclaringType?.Namespace;
+        if (string.IsNullOrEmpty(ns))
+            ns = Outermost(method.DeclaringType)?.Namespace;
+        return ns is not null
+            && (ns == "Antiphon.Tests" || ns.StartsWith("Antiphon.Tests.", StringComparison.Ordinal)
+                || ns == "Antiphon.TestSupport" || ns.StartsWith("Antiphon.TestSupport.", StringComparison.Ordinal));
+    }
+
+    private static Type? Outermost(Type? type)
+    {
+        while (type?.DeclaringType is not null)
+            type = type.DeclaringType;
+        return type;
+    }
+
+    private static void EnqueueCompilerMethods(MethodBase method, Stack<MethodBase> pending)
+    {
+        var owner = method.DeclaringType;
+        if (owner is null || method.Name.StartsWith('<'))
+            return;
+        var token = "<" + method.Name + ">";
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
+            | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        foreach (var sibling in owner.GetMethods(flags))
+        {
+            if (sibling.Name.StartsWith(token, StringComparison.Ordinal))
+                pending.Push(sibling);
+        }
+
+        foreach (var nested in owner.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            var owned = nested.Name.StartsWith(token, StringComparison.Ordinal);
+            foreach (var nestedMethod in nested.GetMethods(flags).Cast<MethodBase>().Concat(nested.GetConstructors(flags)))
+            {
+                if (owned || nestedMethod.Name.StartsWith(token, StringComparison.Ordinal))
+                    pending.Push(nestedMethod);
+            }
+        }
     }
 
     private static List<string> LimiterNames(MethodInfo method)

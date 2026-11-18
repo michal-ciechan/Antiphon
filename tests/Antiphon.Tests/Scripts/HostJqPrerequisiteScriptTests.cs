@@ -17,7 +17,7 @@ public sealed class HostJqPrerequisiteScriptTests
     internal const string NativeLinuxReason = "CARD-1210: C1025/C1058 host jq contracts require native Linux (bash, flock, /proc/self/fd, GNU coreutils); Windows skips explicitly.";
 
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Open_descriptor_must_match_canonical_leaf()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -39,7 +39,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Digest_is_bound_to_open_descriptor()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -55,7 +55,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Installed_pin_is_checked_before_execution()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -79,25 +79,25 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C1058_Version_probe_uses_open_descriptor()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
         return ProbeUsesDescriptor("H", "Qv", "c1058-version-foreign-zero");
     }
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C1058_True_probe_uses_open_descriptor()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
         return ProbeUsesDescriptor("Qv", "Qt", "c1058-true-foreign-zero");
     }
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C1058_False_probe_uses_open_descriptor()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
         return ProbeUsesDescriptor("Qt", "Qf", "c1058-false-foreign-zero");
     }
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C1058_Receipt_formatter_uses_open_descriptor()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -119,7 +119,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Changed_leaf_cannot_emit_success_proof()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -141,7 +141,7 @@ public sealed class HostJqPrerequisiteScriptTests
         good.AssertReceipt("check-host-jq", "check", start, DateTime.UtcNow, installed: false);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Pre_execution_link_checks_are_independent()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -156,7 +156,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Identity_comparisons_include_device()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -174,7 +174,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Final_link_checks_are_independent()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -189,7 +189,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Final_permission_checks_are_independent()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -210,7 +210,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Proof_is_buffered_until_final_admission()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -225,7 +225,7 @@ public sealed class HostJqPrerequisiteScriptTests
         result.Stdout.Trim().Split('\n').Length.ShouldBe(1, "exactly one buffered document");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Metadata_syntax_refuses()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -255,7 +255,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Observation_failures_are_invalid()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -289,7 +289,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Check_rejects_canonical_hardlink()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -328,7 +328,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Provision_removes_only_owned_stage_link()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -351,7 +351,7 @@ public sealed class HostJqPrerequisiteScriptTests
         Directory.GetDirectories(f.Parent, ".antiphon-jq.*").ShouldBeEmpty();
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1058_Staged_unlink_failure_refuses()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -374,7 +374,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Check_qualifies_deployment_shell()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -445,7 +445,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Check_rejects_canonical_leaf_symlink()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -479,7 +479,7 @@ public sealed class HostJqPrerequisiteScriptTests
         new FileInfo(f.Destination).LinkTarget.ShouldBe(f.HomeJq);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Receipt_rejects_canonical_lookup_with_unapproved_target()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -502,7 +502,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Check_has_no_install_effects()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -520,7 +520,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_requires_missing_jq()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -553,7 +553,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_admits_host_prerequisites()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -581,7 +581,7 @@ public sealed class HostJqPrerequisiteScriptTests
         (await check.Helper("check")).Exit.ShouldBe(0, "check does not need provision-only tools");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_refuses_unsafe_destination()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -607,7 +607,7 @@ public sealed class HostJqPrerequisiteScriptTests
         using var good = new HostJqFixture(); (await good.Helper("provision")).Exit.ShouldBe(0, "absent destination accepted control");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_serializes_and_rechecks()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -639,7 +639,7 @@ public sealed class HostJqPrerequisiteScriptTests
         (await locked.Helper("provision")).Exit.ShouldBe(2); locked.Trace.ShouldNotContain("download", Case.Sensitive, "lock refusal cannot continue");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_verifies_download_before_use()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -661,7 +661,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_publishes_complete_no_clobber()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -696,7 +696,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_cleans_only_owned_staging()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -723,7 +723,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_requalifies_published_jq()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -753,7 +753,7 @@ public sealed class HostJqPrerequisiteScriptTests
         proof["version"]!.GetValue<string>().ShouldBe("jq-1.7.1");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Provision_requires_canonical_source()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -784,7 +784,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Transport_is_bounded_and_reaped()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -828,7 +828,7 @@ public sealed class HostJqPrerequisiteScriptTests
 
     // Task 5b7656a9: on the real transport the awaited helper write must not leak a
     // VoidTaskResult; a healthy check emits no pipeline output at all.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Real_transport_emits_no_pipeline_output()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -836,7 +836,7 @@ public sealed class HostJqPrerequisiteScriptTests
         rows.ShouldBe(new[] { "OUTPUT hostjq count=0 types= streamed=True receipt=True" }, string.Join("\n", rows));
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Receipt_requires_complete_current_proof()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -902,7 +902,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Receipt_persistence_is_required()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -933,7 +933,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Transport_preserves_secret_custody()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -951,7 +951,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Explicit_tool_phases_never_deploy()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -969,7 +969,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Preflight_precedes_every_phase()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1015,7 +1015,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Preflight_is_fresh_for_each_entry()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1065,7 +1065,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1025_Final_recycle_guard_remains()
     {
         NativeLinuxGate.Require(NativeLinuxReason);

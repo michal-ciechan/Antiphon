@@ -11,7 +11,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// checkout-cwd child that writes the checkout stays on <see cref="ProcessSpawnLimit"/>.
 /// Classify by what is spawned, never by name. Assembly-local like
 /// <see cref="ProcessSpawnLimit"/>; it runs beside the strict lane and is not shared across
-/// test projects. S1a pins <see cref="Resolve"/> at 1 so the lane witnesses fail closed.
+/// test projects. Width is read once, when this type initializes.
 /// </summary>
 public sealed class ScriptModelSpawnLimit : IParallelLimit
 {
@@ -19,20 +19,27 @@ public sealed class ScriptModelSpawnLimit : IParallelLimit
 
     public const string SlotVariable = "ANTIPHON_BUILD_SLOT_MAXCPUCOUNT";
 
-    // S1a stub. S1b reads the override, the slot and the processor count once, here.
-    private static readonly int Resolved = 1;
+    private static readonly int Resolved = Resolve(
+        Environment.ProcessorCount,
+        Environment.GetEnvironmentVariable(OverrideVariable),
+        Environment.GetEnvironmentVariable(SlotVariable),
+        OperatingSystem.IsWindows());
 
     public int Limit => Resolved;
 
     /// <summary>
-    /// S1a stub. Every input resolves to 1 so the width pin, not a live formula, is what fails.
+    /// Override (1-8, clamped) wins. Otherwise Windows is 1. Otherwise a parsed slot cpu count
+    /// is clamped to 1-6. Otherwise the width is <c>Clamp(processorCount / 4, 2, 6)</c>.
+    /// An empty or non-numeric override falls through.
     /// </summary>
     internal static int Resolve(int processorCount, string? overrideValue, string? slotCpu, bool isWindows)
     {
-        _ = processorCount;
-        _ = overrideValue;
-        _ = slotCpu;
-        _ = isWindows;
-        return 1;
+        if (int.TryParse(overrideValue?.Trim(), out var requested))
+            return Math.Clamp(requested, 1, 8);
+        if (isWindows)
+            return 1;
+        if (int.TryParse(slotCpu?.Trim(), out var slot))
+            return Math.Clamp(slot, 1, 6);
+        return Math.Clamp(processorCount / 4, 2, 6);
     }
 }
