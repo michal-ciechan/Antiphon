@@ -4,6 +4,20 @@ Code task `92424f0e`, stacked on the review-clean CPU isolation tip `0f13b84917d
 
 Operator decision (2026-11-18, "we should only pin 1 cpu and rest to use shared"): Postgres gets one reserved physical core and may burst onto the shared pool, instead of the three-core pin `0-2,12-14`. One physical core is CPU 0 and its SMT sibling 12 (host topology: cpu0 `thread_siblings_list` = `0,12`, observed in `docs/investigations/2026-11-18-empty-cluster-deploy-prep.md` on `feat/card-task-61c8b8b6`; both are NUMA node0).
 
+## Final layout (Code task `27ed273a`, supersedes the design call below)
+
+Operator 2026-11-18, after this plan was written: "we should only pin 1 cpu and rest to use shared" and "Don't reserve cores for session runner". Design (2) with shares is final. The task branch merged `origin/master` `ae7bf7368` (which already carried S1/S2 as `b612dd5f7`/`1cffbb8ad`), resolved every conflict to master's side, and then edited master's single `cpu-isolation` case.
+
+- Postgres (production and drill): `cpuset: "0,12"` (one physical core, not exclusive, not reserved), `cpu_shares: 2048`, `mem_limit: 8g`, `shm_size: 1gb`, blkio weight 800, and no `cpus` (the cpuset caps it at 2 logical CPUs). The pin is one commented line per file plus `$script:Server2PostgresCpuset` in the deploy script; two physical cores is `0-1,12-13`.
+- Runner services: no `cpuset` and no `cpu_shares`; `docker-compose.server2-runner.yml` is byte-identical to its pre-CARD-1406 content, so no runner or broker recreate is owed.
+- V-1F. `-Case cpu-isolation` fails on master's three-core tree (observed: passed=51 failed=44).
+- V-2F. After the fix the whole script passes (observed: passed=407 failed=0).
+- V-3F. The case fails if Postgres loses or changes cpuset `0,12`, `cpu_shares: 2048` (or sets either twice), `mem_limit: 8g`, `shm_size: 1gb` or blkio weight 800, or sets any `cpus`; if any runner service or the temp overlay carries a `cpuset` or `cpu_shares`; or if the doc lacks the final sentence and V-4 expectations.
+- V-5F. Both refusals return `compose-invalid` without the cpuset, with `0-23`, `0-2,12-14`, `0,12,13` or a second cpuset line, without `cpu_shares: 2048`, with 1024 or 20480, with any `cpus` line, and for the memory, shm and blkio mutants; `-WhatIf` refuses copies without the cpuset and without `cpu_shares: 2048` and calls no docker.
+- R-1F. `node scripts/fixtures/c1906-compiler-policy-compose.mjs` and `c346-workspace-slot-compose.mjs` pass with no runner cpuset strip (the CARD-1893 HistoryEnabled allowance from master stays).
+- R-2F. `DockerStackContractTests*` and `DockerStackDocumentationTests*` once (operator: short tests only; CP-3's `DindRunnerContractTests`/`C1893S0RunnerHoldTests` not rerun because the runner compose returned to its pre-card bytes).
+- V-4F (operator, host daemon): Postgres `cpuset=[0,12] shares=2048 8589934592 1073741824 800`, both runner containers `cpuset=[] shares=0`; see `docs/docker-stack.md`.
+
 ## Design call
 
 Design (1) is implemented. The reservation is made from the runner side: `state-init`, `session-runner` and `build-slots` take cpuset `1-11,13-23`, so no runner thread, nested dockerd container or nested build can be scheduled on CPU 0 or 12. Postgres sets no cpuset (it may run on all 24 logical CPUs), `cpu_shares: 2048` (cgroup v1 `cpu.shares`, `HostConfig.CpuShares`; the runner services keep the default 1024), and keeps `cpus: 6.0` (CFS quota, at most six CPUs of time per period), `mem_limit: 8g`, `shm_size: 1gb` and blkio weight 800. Every key is a cgroup v1 `HostConfig` field that Compose v2 already exposes; nothing needs a parent cgroup or a cgroup v2 key.
