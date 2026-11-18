@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 329,
+      "classes": 330,
       "reason": "allowlist"
     },
     {
@@ -2188,9 +2188,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 146,
+      "classes": 147,
       "reason": "cap",
-      "owed": 121,
+      "owed": 122,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
@@ -2268,9 +2268,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingGitFixture.cs",
-      "classes": 49,
+      "classes": 52,
       "reason": "cap",
-      "owed": 24,
+      "owed": 27,
       "first": [
         "GitIndexLockPathTests",
         "GitPushUrlCacheTests",
@@ -3995,7 +3995,8 @@
       "classes": [
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "OwnedTempLeakTests"
       ]
     },
     {
@@ -4009,6 +4010,12 @@
       "path": "scripts/refresh-server2-github-token.ps1",
       "classes": [
         "RefreshGithubTokenScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/remove-review-scratch.ps1",
+      "classes": [
+        "OwnedTempLeakTests"
       ]
     },
     {
@@ -4160,6 +4167,14 @@
       "path": "scripts/test-live-startup-timing.ps1",
       "classes": [
         "StartupScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/test-rc-historical-evidence.ps1",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
       ]
     },
     {
@@ -22769,6 +22784,9 @@
       "path": "tests/Antiphon.Tests/Application/DelegationDispatchRecoveryBoundaryTests.BriefIdentity.cs",
       "classes": [
         "BootStallDocumentationTests",
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests",
         "SessionRunnerAbsenceEvidenceDocumentationTests"
       ]
     },
@@ -23387,7 +23405,10 @@
         "C0824RefOnlyProducerLifecycleTests",
         "C0824RefOnlyProvisionTests",
         "C0824WorkspaceSlotRoleGateTests",
-        "C0824WorkspaceSlotServerTests"
+        "C0824WorkspaceSlotServerTests",
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
       ]
     },
     {
@@ -23624,6 +23645,14 @@
       "path": "tests/Antiphon.Tests/Application/TaskSupervisionReceiptTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/TaskWorktreeRetirementTests.cs",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
       ]
     },
     {
@@ -25886,6 +25915,17 @@
       "classes": [
         "OwnedPtyFixtureCleanupTests",
         "OwnedPtyFixtureCleanupWindowsTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/OwnedTempRoot.cs",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests",
+        "DelegationDispatchRecoveryBoundaryTests",
+        "OwnedTempLeakTests",
+        "TaskWorktreeRetirementTests"
       ]
     },
     {
