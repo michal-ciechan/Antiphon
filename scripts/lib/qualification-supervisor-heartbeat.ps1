@@ -216,7 +216,6 @@ function Write-QualificationActiveChunkIdentity {
         # Rewritten at every batch start and end: on the background writer during a run (nightly-core.ps1).
         $activePath=Join-Path $Directory 'active-chunk.json'
         $recordText=[Antiphon.Nightly.TestPhaseRecords]::ActiveChunkJson($record)
-        if($null -eq $recordText){$recordText=$record|ConvertTo-Json -Depth 12}
         if(-not (Submit-NightlyDeferredEvidenceWrite $activePath $recordText $false)){Write-NightlyAtomicJson -Path $activePath -Object $record}
         return $true
     } catch {

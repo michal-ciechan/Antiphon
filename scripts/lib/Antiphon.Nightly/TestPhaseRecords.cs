@@ -167,38 +167,56 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// ConvertTo-Json -Depth 12 of the flat active-chunk record (string and integer values): Newtonsoft's
-        /// indented form, two-space indent, the platform line ending. Null when a value is of another type or a string
-        /// needs escaping (a quote, a backslash, a control or line-separator character): the caller then runs
-        /// ConvertTo-Json.
+        /// indented form, two-space indent, the platform line ending, and its default string escaping. Throws on an
+        /// empty record, a key that is not a string or a value of another type: the writer only builds strings and
+        /// integers.
         /// </summary>
         public static string ActiveChunkJson(IDictionary record)
         {
-            if (record == null || record.Count == 0) return null;
+            if (record == null || record.Count == 0) throw new ArgumentException("active-record-empty");
             var nl = Environment.NewLine;
             var sb = new StringBuilder("{");
             var first = true;
             foreach (DictionaryEntry entry in record)
             {
                 var key = entry.Key as string;
-                if (key == null || NeedsEscape(key)) return null;
-                string value;
-                if (entry.Value is string s) { if (NeedsEscape(s)) return null; value = "\"" + s + "\""; }
-                else if (entry.Value is int i) value = i.ToString(CultureInfo.InvariantCulture);
-                else if (entry.Value is long l) value = l.ToString(CultureInfo.InvariantCulture);
-                else return null;
-                sb.Append(first ? "" : ",").Append(nl).Append("  \"").Append(key).Append("\": ").Append(value);
+                if (key == null) throw new ArgumentException("active-record-key");
+                sb.Append(first ? "" : ",").Append(nl).Append("  ");
+                AppendJsonString(sb, key);
+                sb.Append(": ");
+                if (entry.Value is string s) AppendJsonString(sb, s);
+                else if (entry.Value is int i) sb.Append(i.ToString(CultureInfo.InvariantCulture));
+                else if (entry.Value is long l) sb.Append(l.ToString(CultureInfo.InvariantCulture));
+                else throw new ArgumentException("active-record-value " + key);
                 first = false;
             }
             return sb.Append(nl).Append('}').ToString();
         }
 
-        private static bool NeedsEscape(string s)
+        /// <summary>
+        /// A JSON string as Newtonsoft writes it with StringEscapeHandling.Default (ConvertTo-Json's default): the
+        /// quote, the backslash and the short control escapes, and a four-digit lower-case hex escape for the other
+        /// control characters, U+0085, U+2028 and U+2029. Everything else, apostrophes and non-ASCII included, is
+        /// written as is.
+        /// </summary>
+        private static void AppendJsonString(StringBuilder sb, string s)
         {
+            const char bs = (char)0x5C;
+            sb.Append('"');
             foreach (var c in s)
             {
-                if (c < ' ' || c == '"' || c == '\\' || c == '\u0085' || c == (char)0x2028 || c == (char)0x2029) return true;
+                if (c == '"') sb.Append(bs).Append('"');
+                else if (c == bs) sb.Append(bs).Append(bs);
+                else if (c == (char)0x08) sb.Append(bs).Append('b');
+                else if (c == (char)0x09) sb.Append(bs).Append('t');
+                else if (c == (char)0x0A) sb.Append(bs).Append('n');
+                else if (c == (char)0x0C) sb.Append(bs).Append('f');
+                else if (c == (char)0x0D) sb.Append(bs).Append('r');
+                else if (c < ' ' || c == (char)0x85 || c == (char)0x2028 || c == (char)0x2029)
+                    sb.Append(bs).Append('u').Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                else sb.Append(c);
             }
-            return false;
+            sb.Append('"');
         }
 
         private static readonly Regex SuitePattern =new Regex("^[a-z0-9][a-z0-9-]{0,40}$", RegexOptions.IgnoreCase);

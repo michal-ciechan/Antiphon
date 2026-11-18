@@ -371,7 +371,12 @@ function Test-NCActiveChunkGolden {
     $planTexts = @('{"version":1,"groups":[{"chunk":"a","plannedSeconds":1.5}],"runId":"r","attempt":"1","at":"2026-01-01T00:00:00Z"}', '{"a":1,"A":2}', '{"a":[]}', ' {"x": null} ')
     $records = @(
         [ordered]@{ format = 'antiphon-qualification-active-chunk-v1'; state = 'Active'; generation = 1; runId = 'r'; attempt = '1'; suite = 's'; chunk = 'c'; planFile = 'f'; planDigest = $h }
-        [ordered]@{ format = 'x'; generation = [long]12; s = 'quote"in' })
+        [ordered]@{ format = 'x'; generation = [long]12; s = 'quote"in' }
+        # Every escape ConvertTo-Json makes, and characters it leaves alone (DEL, apostrophe, HTML, non-ASCII,
+        # a surrogate pair), in a value and in a key.
+        [ordered]@{ ('k"' + [char]9 + '\') = ('a\b' + (-join ([char[]](8, 9, 10, 12, 13, 1, 31, 127, 0x85, 0x2028, 0x2029, 0xE9)))) + "'<>&" + [char]::ConvertFromUtf32(0x1F600); n = [int]-7 })
+    # Not strings or integers: the writer never builds these, so the core refuses them.
+    $refused = @([ordered]@{ format = 'x'; d = 1.5 }, [ordered]@{ format = 'x'; b = $true }, [ordered]@{})
     $typeList = { param($o) @($o.PSObject.Properties | ForEach-Object { $_.Name + ':' + $(if ($null -eq $_.Value) { 'null' } else { $_.Value.GetType().Name }) }) -join ',' }
     Assert-NCGolden 'activeChunk' {
         $ids = foreach ($name in $texts.Keys) {
@@ -387,8 +392,11 @@ function Test-NCActiveChunkGolden {
             $t = [Antiphon.Nightly.TestPhaseRecords]::ActiveChunkJson($rec)
             if ($null -eq $t) { 'null' } elseif ($t -ceq ($rec | ConvertTo-Json -Depth 12)) { 'same-as-ConvertTo-Json' } else { 'DIFFERS ' + $t }
         }
+        $jsons += foreach ($rec in $refused) {
+            try { 'DIFFERS ' + [Antiphon.Nightly.TestPhaseRecords]::ActiveChunkJson($rec) } catch { 'throw:' + $_.Exception.InnerException.Message }
+        }
         [ordered]@{ ids = @($ids); plans = @($plans); jsons = @($jsons) }
-    } @('valid={\"format\"', 'identityDigest', 'genStr=null', 'runIdDate=null', 'same-as-ConvertTo-Json')
+    } @('valid={\"format\"', 'identityDigest', 'genStr=null', 'runIdDate=null', 'same-as-ConvertTo-Json', 'throw:active-record-value d', 'throw:active-record-empty')
 }
 
 # The .NET type of every value in a read sidecar, depth first, so a parse that matches only as JSON still fails.
