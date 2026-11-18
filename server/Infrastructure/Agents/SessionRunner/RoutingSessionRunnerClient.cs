@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain.Agents;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 
@@ -21,13 +23,20 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
         Guid sessionId, TerminalSeatReleaseRequest request, CancellationToken ct) =>
         await (await Route(sessionId, ct)).ReleaseTerminalSeatAsync(sessionId, request, ct);
 
+    private static readonly TimeSpan BindingTtl = TimeSpan.FromSeconds(60);
+    private const int BindingCap = 4096;
+
     private readonly ISessionRunnerDirectory _directory;
+    private readonly TimeProvider _clock;
+    private readonly Action<Guid?> _dropBinding;
+    private readonly ConcurrentDictionary<Guid, (SessionRunnerBinding Binding, DateTimeOffset At)> _bindings = new();
 
     public RoutingSessionRunnerClient(ISessionRunnerDirectory directory, TimeProvider? clock = null)
     {
         _directory = directory;
-        // Accepted so the TTL witness can supply a clock. Route does not read it yet.
-        _ = clock;
+        _clock = clock ?? TimeProvider.System;
+        _dropBinding = DropBinding;
+        RunnerBindingInvalidation.Subscribe(_dropBinding);
     }
 
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
@@ -127,7 +136,12 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
 
     private async Task<ISessionRunnerClient> Route(Guid sessionId, CancellationToken ct)
     {
-        var binding = await _directory.GetBindingAsync(sessionId, ct);
+        if (!TryGetFresh(sessionId, out var binding))
+        {
+            binding = await _directory.GetBindingAsync(sessionId, ct);
+            Remember(sessionId, binding);
+        }
+
         return binding switch
         {
             SessionRunnerBinding.Missing => throw new NotFoundException("Session", sessionId),
@@ -135,5 +149,47 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
             SessionRunnerBinding.Remote remote => _directory.Resolve(remote.Owner.RunnerId),
             _ => _directory.Local,
         };
+    }
+
+    private bool TryGetFresh(Guid sessionId, out SessionRunnerBinding binding)
+    {
+        if (_bindings.TryGetValue(sessionId, out var entry) && _clock.GetUtcNow() - entry.At < BindingTtl)
+        {
+            binding = entry.Binding;
+            return true;
+        }
+
+        _bindings.TryRemove(sessionId, out _);
+        binding = null!;
+        return false;
+    }
+
+    private void Remember(Guid sessionId, SessionRunnerBinding binding)
+    {
+        if (binding is SessionRunnerBinding.Missing)
+            return;
+
+        if (!_bindings.ContainsKey(sessionId) && _bindings.Count >= BindingCap)
+        {
+            var now = _clock.GetUtcNow();
+            foreach (var pair in _bindings)
+            {
+                if (now - pair.Value.At >= BindingTtl)
+                    _bindings.TryRemove(pair.Key, out _);
+            }
+
+            if (_bindings.Count >= BindingCap)
+                _bindings.Clear();
+        }
+
+        _bindings[sessionId] = (binding, _clock.GetUtcNow());
+    }
+
+    private void DropBinding(Guid? sessionId)
+    {
+        if (sessionId is null)
+            _bindings.Clear();
+        else
+            _bindings.TryRemove(sessionId.Value, out _);
     }
 }

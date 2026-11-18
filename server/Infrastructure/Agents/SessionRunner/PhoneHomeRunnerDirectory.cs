@@ -208,6 +208,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         var row = await db.AgentSessions.AsNoTracking()
             .Where(s => s.Id == sessionId)
             .Select(s => new { s.RunnerId, s.RunnerStoreId, s.RunnerCwd })
+            .TagWith("rt.runner-binding")
             .FirstOrDefaultAsync(ct);
         if (row is null)
             return SessionRunnerBinding.Missing.Instance;

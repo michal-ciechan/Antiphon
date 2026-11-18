@@ -1,6 +1,8 @@
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Domain.Agents;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Time.Testing;
@@ -72,6 +74,90 @@ public sealed class RoutingBindingCacheTests
         await Should.ThrowAsync<ServiceUnavailableException>(() => client.GetAsync(id, CancellationToken.None));
         directory.ResolveCalls.ShouldBe(2);
     }
+
+    [Test]
+    public async Task C1987_binding_write_drops_the_cached_route()
+    {
+        RunnerBindingSql.WritesBindingColumns(ActivityWrite).ShouldBeFalse();
+        RunnerBindingSql.WritesBindingColumns(BindingSelect).ShouldBeFalse();
+        RunnerBindingSql.WritesBindingColumns(LastSeenUpdate).ShouldBeFalse();
+        RunnerBindingSql.WritesBindingColumns(OffsetSelect).ShouldBeFalse();
+        RunnerBindingSql.WritesBindingColumns(RunnerIdUpdate).ShouldBeTrue();
+        RunnerBindingSql.WritesBindingColumns(RunnerStoreUpdate).ShouldBeTrue();
+        RunnerBindingSql.WritesBindingColumns(RunnerCwdUpdate).ShouldBeTrue();
+        RunnerBindingSql.WritesBindingColumns(SessionDelete).ShouldBeTrue();
+
+        var clock = new FakeTimeProvider(Start);
+        var directory = new CountingDirectory
+        {
+            Binding = () => SessionRunnerBinding.Local.Instance,
+        };
+        var client = new RoutingSessionRunnerClient(directory, clock);
+        var id = Guid.NewGuid();
+        await client.GetAsync(id, CancellationToken.None);
+        await client.GetAsync(id, CancellationToken.None);
+        directory.BindingReads.ShouldBe(1, "binding reads before a write, budget 1");
+
+        RunnerBindingInvalidation.Notify(id);
+        await client.GetAsync(id, CancellationToken.None);
+        directory.BindingReads.ShouldBe(2);
+
+        RunnerBindingInvalidation.Notify(null);
+        await client.GetAsync(id, CancellationToken.None);
+        directory.BindingReads.ShouldBe(3);
+    }
+
+    private const string ActivityWrite = """
+        -- rt.activity.write
+        WITH target AS (
+            SELECT "Id" FROM "RunAttempts"
+            WHERE "AgentSessionId" = @p0
+              AND "Phase" = @p1
+              AND "CompletedAt" IS NULL
+            ORDER BY "AttemptNumber" DESC
+            LIMIT 1
+        ),
+        touch_attempt AS (
+            UPDATE "RunAttempts" AS attempt
+            SET "LastEventAt" = @p2
+            FROM target
+            WHERE attempt."Id" = target."Id"
+        )
+        UPDATE "AgentSessions"
+        SET "LastSeenAt" = @p3
+        WHERE "Id" = @p4
+        """;
+
+    private const string BindingSelect = """
+        -- rt.runner-binding
+        SELECT s."RunnerId", s."RunnerStoreId", s."RunnerCwd"
+        FROM "AgentSessions" AS s
+        WHERE s."Id" = @p
+        """;
+
+    private const string LastSeenUpdate = """
+        UPDATE "AgentSessions" SET "LastSeenAt" = @p WHERE "Id" = @id
+        """;
+
+    private const string OffsetSelect = """
+        SELECT "Id" FROM "AgentSessions" ORDER BY "LastSeenAt" OFFSET 10
+        """;
+
+    private const string RunnerIdUpdate = """
+        UPDATE "AgentSessions" AS a SET "RunnerId" = @p WHERE a."Id" = @id
+        """;
+
+    private const string RunnerStoreUpdate = """
+        UPDATE a SET "RunnerStoreId" = @p FROM "AgentSessions" AS a WHERE a."Id" = @id
+        """;
+
+    private const string RunnerCwdUpdate = """
+        UPDATE "AgentSessions" SET "RunnerCwd" = @p WHERE "Id" = @id
+        """;
+
+    private const string SessionDelete = """
+        DELETE FROM "AgentSessions" WHERE "Id" = @id
+        """;
 
     private sealed class CountingDirectory : ISessionRunnerDirectory
     {
