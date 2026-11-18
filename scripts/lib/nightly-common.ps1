@@ -360,8 +360,8 @@ function Get-NightlyAssemblyFileSha256 {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-NightlyEvidencePath $Path)) {
         throw ('missing file for hash {0}' -f $Path)
     }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($Path) }
-    return (Get-NightlyFileSha256 -Path $Path)
+    Assert-NightlyCoreAvailable 'Get-NightlyAssemblyFileSha256'
+    return [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($Path)
 }
 
 function ConvertFrom-NightlyJsonMap {

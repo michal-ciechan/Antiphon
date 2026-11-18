@@ -687,16 +687,11 @@ function Write-TestPhaseFailureMarker {
 
 function ConvertTo-TestPhaseExecutedChunk {
     param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
-    $core = Test-NightlyCoreAvailable
+    Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseExecutedChunk'
+    # One {testId, outcome} row per test (TestPhaseSummary.OutcomeRows).
     $priorOutcomes = New-Object System.Collections.Generic.List[object]
     if ($null -ne $Outcomes) {
-        if ($core) { $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Outcomes), 'testId', 'outcome', $true)) }
-        else {
-            foreach ($row in @($Outcomes)) {
-                if ($null -eq $row) { continue }
-                $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
-            }
-        }
+        $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Outcomes), 'testId', 'outcome', $true))
     }
     $chunkId = $Chunk
     $run = $RunId
@@ -725,13 +720,7 @@ function ConvertTo-TestPhaseExecutedChunk {
         if ($Item.PSObject.Properties.Name -contains 'testsPassed') { $tests = $Item.testsPassed }
         $priorOutcomes = New-Object System.Collections.Generic.List[object]
         if ($Item.PSObject.Properties.Name -contains 'outcomes' -and $null -ne $Item.outcomes) {
-            if ($core) { $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Item.outcomes), 'testId', 'outcome', $true)) }
-            else {
-                foreach ($row in @($Item.outcomes)) {
-                    if ($null -eq $row) { continue }
-                    $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
-                }
-            }
+            $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Item.outcomes), 'testId', 'outcome', $true))
         }
     }
     return [ordered]@{
@@ -1164,53 +1153,10 @@ function New-TestPhaseEnvelopeText {
         [string]$FreshJson,
         [string]$SettledJson
     )
-    if (Test-NightlyCoreAvailable) {
-        return [Antiphon.Nightly.TestPhaseRecords]::Envelope($Kind, $Sequence, $PublicationId, [string]$Context.Generation, [string]$Context.TimingRoot,
-            $Reason, $Suite, $Chunk, $SettledSuite, $SettledChunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, $FreshJson, $SettledJson, [string]$Context.WriterEnvironment)
-    }
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.Append('{')
-    [void]$sb.Append('"version":1')
-    [void]$sb.Append(',"kind":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text $Kind))
-    [void]$sb.Append(',"generation":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text ([string]$Context.Generation)))
-    [void]$sb.Append(',"sequence":')
-    [void]$sb.Append([string]$Sequence)
-    [void]$sb.Append(',"publicationId":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text $PublicationId))
-    [void]$sb.Append(',"root":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text ([string]$Context.TimingRoot)))
-    [void]$sb.Append(',"freshSuiteKey":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $Suite)))
-    [void]$sb.Append(',"settledSuiteKey":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $SettledSuite)))
-    [void]$sb.Append(',"freshChunkKey":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $Chunk)))
-    [void]$sb.Append(',"settledChunkKey":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $SettledChunk)))
-    [void]$sb.Append(',"freshRun":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $HeaderRun)))
-    [void]$sb.Append(',"freshAttempt":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $HeaderAttempt)))
-    [void]$sb.Append(',"freshHeaderSuite":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text (ConvertTo-TestPhaseB64 $HeaderSuite)))
-    [void]$sb.Append(',"digest":""')
-    [void]$sb.Append(',"rowJson":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text $FreshJson))
-    [void]$sb.Append(',"settledRowJson":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text $SettledJson))
-    [void]$sb.Append(',"writerEnvironment":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text ([string]$Context.WriterEnvironment)))
-    [void]$sb.Append(',"reason":')
-    [void]$sb.Append((ConvertTo-TestPhaseJsonString -Text $Reason))
-    [void]$sb.Append('}')
-    $text = $sb.ToString()
-    $hash = Get-TestPhaseSha256Text -Text $text
-    $needle = '"digest":""'
-    $at = $text.IndexOf($needle)
-    if ($at -lt 0) { throw 'digest-placeholder-missing' }
-    return $text.Remove($at, $needle.Length).Insert($at, '"digest":"' + $hash + '"')
+    # The journal envelope with its own SHA-256 in "digest" (TestPhaseRecords.Envelope).
+    Assert-NightlyCoreAvailable 'New-TestPhaseEnvelopeText'
+    return [Antiphon.Nightly.TestPhaseRecords]::Envelope($Kind, $Sequence, $PublicationId, [string]$Context.Generation, [string]$Context.TimingRoot,
+        $Reason, $Suite, $Chunk, $SettledSuite, $SettledChunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, $FreshJson, $SettledJson, [string]$Context.WriterEnvironment)
 }
 
 function ConvertTo-TestPhaseRecordObject {
@@ -2090,19 +2036,10 @@ function Write-TestPhaseExecutedManifest {
             $rows = @($trxRead.Rows)
         }
     }
-    if (Test-NightlyCoreAvailable) {
-        # One row per test (about 19,000 in the main suite): NightlyCore.cs TestPhaseSummary.OutcomeRows.
-        $outcomeRows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$rows, 'TestId', 'Outcome', $false)
-        $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($outcomeRows)
-    } else {
-        $outcomes = New-Object System.Collections.Generic.List[object]
-        $passed = 0
-        foreach ($row in $rows) {
-            $outcomes.Add([ordered]@{ testId = [string]$row.TestId; outcome = [string]$row.Outcome })
-            if ([string]$row.Outcome -eq 'Passed') { $passed++ }
-        }
-        $outcomeRows = @($outcomes.ToArray())
-    }
+    Assert-NightlyCoreAvailable 'Write-TestPhaseExecutedManifest'
+    # One row per test (about 19,000 in the main suite): NightlyCore.cs TestPhaseSummary.OutcomeRows.
+    $outcomeRows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$rows, 'TestId', 'Outcome', $false)
+    $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($outcomeRows)
     $digest = ''
     if ($trxIdentity.Kind -eq 'regular') {
         try { $digest = Get-NightlyFileSha256 -Path $TrxPath } catch { $digest = '' }
@@ -3206,22 +3143,18 @@ function Read-QualificationSidecar {
     if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $null }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
-    $core = Test-NightlyCoreAvailable
-    if ($core) {
-        if ([Antiphon.Nightly.TestPhaseRecords]::Dense($text, 4000, $Watch, $DeadlineMilliseconds)) { return $null }
-    } elseif (Test-QualificationSidecarDense -Text $text -Limit 4000 -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds) { return $null }
+    Assert-NightlyCoreAvailable 'Read-QualificationSidecar'
+    if ([Antiphon.Nightly.TestPhaseRecords]::Dense($text, 4000, $Watch, $DeadlineMilliseconds)) { return $null }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
         $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
         if (Test-Path -LiteralPath $dll) { Add-Type -Path $dll }
     }
     if ('Newtonsoft.Json.JsonConvert' -as [type]) {
-        if ($core) {
-            # Strict JSON read the way the Newtonsoft path below reads it (NightlyJson.ParseText); anything it
-            # cannot vouch for (null) still takes that path.
-            $parsed = [Antiphon.Nightly.NightlyJson]::ParseText($text, 60)
-            if ($null -ne $parsed) { return $parsed }
-        }
+        # Strict JSON read the way the Newtonsoft path below reads it (NightlyJson.ParseText); anything it
+        # cannot vouch for (null: comments, trailing commas, duplicates, a BOM) is Newtonsoft's.
+        $parsed = [Antiphon.Nightly.NightlyJson]::ParseText($text, 60)
+        if ($null -ne $parsed) { return $parsed }
         $settings = New-Object Newtonsoft.Json.JsonSerializerSettings
         $settings.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
         $token = [Newtonsoft.Json.JsonConvert]::DeserializeObject($text, $settings)
@@ -3240,196 +3173,16 @@ function Get-TestPhaseEvidenceKey {
     return [string]$TestId
 }
 
-function Get-TestPhaseNoteValue {
-    param($Object, [string[]]$Names)
-    if ($null -eq $Object) { return $null }
-    $props = @($Object.PSObject.Properties.Name)
-    foreach ($name in @($Names)) {
-        if ($props -contains $name) { return $Object.$name }
-    }
-    return $null
-}
-
-function Test-TestPhaseNotePresent {
-    param($Object, [string[]]$Names)
-    if ($null -eq $Object) { return $false }
-    $props = @($Object.PSObject.Properties.Name)
-    foreach ($name in @($Names)) {
-        if ($props -contains $name) { return $true }
-    }
-    return $false
-}
-
-function ConvertTo-TestPhaseOwnerImage {
-    param($Image)
-    $text = ''
-    if ($null -ne $Image) { $text = [string]$Image }
-    if ([string]::IsNullOrWhiteSpace($text)) { return 'unknown' }
-    return $text
-}
-
 function Write-TestPhaseOwnerObservation {
     param($Verdict, [string]$LogRoot, [string]$Suite, [string]$Chunk, [string]$RunId = '', [string]$Attempt = '')
-    if (Test-NightlyCoreAvailable) {
-        try {
-            # The document (or null: nothing to write) from TestPhaseRecords.OwnerDocument; naming, the
-            # existing-file refusal and the write stay here.
-            $doc = [Antiphon.Nightly.TestPhaseRecords]::OwnerDocument($Verdict, $Suite, $Chunk, $RunId, $Attempt)
-            if ($null -eq $doc) { return }
-            $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-            $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + [string]$doc['runId'] + '-' + [string]$doc['attempt'] + '.json')
-            if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') { return }
-            Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
-        } catch {
-            # Owner stamps are diagnostic. A write failure must not change the verdict.
-        }
-        return
-    }
     try {
-        if ($null -eq $Verdict) { return }
-        $names = @(
-            'rootExitedAtUtc', 'RootExitedAtUtc', 'jobEmpty', 'JobEmpty', 'JobEmptyObserved',
-            'descendants', 'Descendants', 'missedDescendantPids', 'MissedDescendantPids',
-            'drainMilliseconds', 'DrainMilliseconds', 'executionMilliseconds', 'ExecutionMilliseconds',
-            'descendantIdentities', 'DescendantIdentities'
-        )
-        if (-not (Test-TestPhaseNotePresent -Object $Verdict -Names $names)) { return }
-        if ($Suite -notmatch '^[a-z0-9][a-z0-9-]{0,40}$') { return }
-        if ($Chunk -notmatch '^[a-z0-9][a-z0-9._-]{0,80}$') { return }
-        $missed = @{}
-        $missedRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('missedDescendantPids', 'MissedDescendantPids')
-        if ($null -ne $missedRaw) {
-            foreach ($childPid in @($missedRaw)) {
-                if ($null -eq $childPid -or [string]::IsNullOrWhiteSpace([string]$childPid)) { continue }
-                $missed[[string]([int]$childPid)] = $true
-            }
-        }
-        $rows = New-Object System.Collections.Generic.List[object]
-        $descRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendants', 'Descendants')
-        if ($null -ne $descRaw) {
-            foreach ($row in @($descRaw)) {
-                if ($null -eq $row) { continue }
-                $pidValue = Get-TestPhaseNoteValue -Object $row -Names @('pid', 'Pid')
-                $childPid = 0
-                if ($null -ne $pidValue -and -not [string]::IsNullOrWhiteSpace([string]$pidValue)) { $childPid = [int]$pidValue }
-                $image = ConvertTo-TestPhaseOwnerImage (Get-TestPhaseNoteValue -Object $row -Names @('image', 'Image', 'ProcessName'))
-                if ($missed.ContainsKey([string]$childPid)) { $image = 'unknown' }
-                $started = Get-TestPhaseNoteValue -Object $row -Names @('startedAtUtc', 'StartedAtUtc')
-                $exited = Get-TestPhaseNoteValue -Object $row -Names @('exitedAtUtc', 'ExitedAtUtc')
-                $startedText = ''
-                $exitedText = ''
-                if ($null -ne $started) { $startedText = [string]$started }
-                if ($null -ne $exited) { $exitedText = [string]$exited }
-                $rows.Add([ordered]@{ pid = $childPid; image = [string]$image; startedAtUtc = $startedText; exitedAtUtc = $exitedText })
-            }
-        }
-        if ($rows.Count -eq 0) {
-            $identRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantIdentities', 'DescendantIdentities')
-            $imageRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantImages', 'DescendantImages')
-            $exitRaw = Get-TestPhaseNoteValue -Object $Verdict -Names @('descendantExitedAtUtc', 'DescendantExitedAtUtc')
-            $idents = @()
-            $images = @()
-            $exitStamps = @()
-            if ($null -ne $identRaw) { $idents = @($identRaw) }
-            if ($null -ne $imageRaw) { $images = @($imageRaw) }
-            if ($null -ne $exitRaw) { $exitStamps = @($exitRaw) }
-            for ($i = 0; $i -lt $idents.Count; $i++) {
-                $ident = [string]$idents[$i]
-                $colon = $ident.IndexOf(':')
-                $childPid = 0
-                $startedText = ''
-                if ($colon -gt 0) {
-                    $childPid = [int]$ident.Substring(0, $colon)
-                    $startedText = $ident.Substring($colon + 1)
-                }
-                $image = 'unknown'
-                if ($i -lt $images.Count) { $image = ConvertTo-TestPhaseOwnerImage $images[$i] }
-                if ($missed.ContainsKey([string]$childPid)) { $image = 'unknown' }
-                $exitedText = ''
-                if ($i -lt $exitStamps.Count -and $null -ne $exitStamps[$i]) { $exitedText = [string]$exitStamps[$i] }
-                $rows.Add([ordered]@{ pid = $childPid; image = [string]$image; startedAtUtc = $startedText; exitedAtUtc = $exitedText })
-            }
-        }
-        $seenPid = @{}
-        for ($seenIndex = 0; $seenIndex -lt $rows.Count; $seenIndex++) {
-            $seenPid[[string]$rows[$seenIndex].pid] = $true
-        }
-        foreach ($key in @($missed.Keys)) {
-            if ($seenPid.ContainsKey([string]$key)) { continue }
-            $missedPid = 0
-            $pidOk = $true
-            try { $missedPid = [int]$key } catch { $pidOk = $false }
-            if (-not $pidOk) { continue }
-            $rows.Add([ordered]@{ pid = $missedPid; image = 'unknown'; startedAtUtc = ''; exitedAtUtc = '' })
-        }
-        $job = $false
-        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')) {
-            $jobValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('jobEmpty', 'JobEmpty', 'JobEmptyObserved')
-            if ($null -ne $jobValue) { $job = [bool]$jobValue }
-        }
-        $drain = 0.0
-        $drainValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('drainMilliseconds', 'DrainMilliseconds')
-        if ($null -ne $drainValue) { $drain = [double]$drainValue }
-        $execution = 0.0
-        $executionValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('executionMilliseconds', 'ExecutionMilliseconds')
-        if ($null -ne $executionValue) { $execution = [double]$executionValue }
-        $exitedAt = ''
-        $exitedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('rootExitedAtUtc', 'RootExitedAtUtc')
-        if ($null -ne $exitedValue) { $exitedAt = [string]$exitedValue }
-        $startedAt = ''
-        $startedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('rootStartedAtUtc', 'RootStartedAtUtc')
-        if ($null -ne $startedValue) { $startedAt = [string]$startedValue }
-        $launch = 0.0
-        $launchValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('launchMilliseconds', 'LaunchMilliseconds')
-        if ($null -ne $launchValue) { $launch = [double]$launchValue }
-        $cleanup = 0.0
-        $cleanupValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('cleanupMilliseconds', 'CleanupMilliseconds')
-        if ($null -ne $cleanupValue) { $cleanup = [double]$cleanupValue }
-        $children = $false
-        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('childrenExited', 'ChildrenExited')) {
-            $childrenValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('childrenExited', 'ChildrenExited')
-            if ($null -ne $childrenValue) { $children = [bool]$childrenValue }
-        }
-        $drained = $false
-        if (Test-TestPhaseNotePresent -Object $Verdict -Names @('outputDrained', 'OutputDrained')) {
-            $drainedValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('outputDrained', 'OutputDrained')
-            if ($null -ne $drainedValue) { $drained = [bool]$drainedValue }
-        }
-        $remaining = 0
-        $remainingValue = Get-TestPhaseNoteValue -Object $Verdict -Names @('remainingProcessCount', 'RemainingProcessCount')
-        if ($null -ne $remainingValue) { $remaining = [int]$remainingValue }
-        $missedIds = New-Object System.Collections.Generic.List[int]
-        foreach ($key in @($missed.Keys)) {
-            $listed = 0
-            $listedOk = $true
-            try { $listed = [int]$key } catch { $listedOk = $false }
-            if ($listedOk) { $missedIds.Add($listed) }
-        }
-        $runKey = 'run'
-        if ($RunId -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$') { $runKey = $RunId }
-        $attemptKey = '0'
-        if ($Attempt -match '^[A-Za-z0-9][A-Za-z0-9._-]{0,40}$') { $attemptKey = $Attempt }
-        $doc = [ordered]@{
-            version = 1
-            suite = [string]$Suite
-            chunk = [string]$Chunk
-            runId = [string]$runKey
-            attempt = [string]$attemptKey
-            rootStartedAtUtc = $startedAt
-            rootExitedAtUtc = $exitedAt
-            jobEmpty = [bool]$job
-            launchMilliseconds = $launch
-            cleanupMilliseconds = $cleanup
-            drainMilliseconds = $drain
-            executionMilliseconds = $execution
-            childrenExited = [bool]$children
-            outputDrained = [bool]$drained
-            remainingProcessCount = [int]$remaining
-            missedDescendantPids = @($missedIds.ToArray())
-            descendants = @($rows.ToArray())
-        }
+        Assert-NightlyCoreAvailable 'Write-TestPhaseOwnerObservation'
+        # The document (or null: nothing to write) from TestPhaseRecords.OwnerDocument; naming, the
+        # existing-file refusal and the write stay here.
+        $doc = [Antiphon.Nightly.TestPhaseRecords]::OwnerDocument($Verdict, $Suite, $Chunk, $RunId, $Attempt)
+        if ($null -eq $doc) { return }
         $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-        $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + $runKey + '-' + $attemptKey + '.json')
+        $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + [string]$doc['runId'] + '-' + [string]$doc['attempt'] + '.json')
         if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') { return }
         Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
     } catch {

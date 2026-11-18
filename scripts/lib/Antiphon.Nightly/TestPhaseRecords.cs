@@ -95,7 +95,113 @@ namespace Antiphon.Nightly
             }
         }
 
-        private static readonly Regex SuitePattern = new Regex("^[a-z0-9][a-z0-9-]{0,40}$", RegexOptions.IgnoreCase);
+        // ---- active-chunk.json (qualification-supervisor-heartbeat.ps1) ----
+
+        private static readonly string[] ActiveStringFields =
+        {
+            "format", "state", "runId", "attempt", "suite", "chunk", "planFile", "planDigest",
+            "sourceDigest", "policyDigest", "costFileDigest", "assemblyDigest",
+        };
+        private static readonly Regex ActiveRunPattern = new Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$");
+        private static readonly Regex ActiveAttemptPattern = new Regex("^[1-9][0-9]*$");
+        private static readonly Regex ActiveChunkPattern = new Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$");
+        private static readonly Regex ActiveSuitePattern = new Regex("^[a-z0-9][a-z0-9-]{0,40}$");
+        private static readonly Regex Sha256Pattern = new Regex("^[a-f0-9]{64}$");
+
+        /// <summary>
+        /// The text of active-chunk.json bytes as Read-QualificationActiveChunkIdentity decodes them: a
+        /// StreamReader over the bytes, UTF-8 unless a byte-order mark says otherwise.
+        /// </summary>
+        public static string DecodeText(byte[] bytes)
+        {
+            using (var reader = new System.IO.StreamReader(new System.IO.MemoryStream(bytes ?? new byte[0]), Encoding.UTF8, true))
+                return reader.ReadToEnd();
+        }
+
+        /// <summary>
+        /// Read-QualificationActiveChunkIdentity's checks on the parsed record (ConvertFrom-Json of the bytes): the
+        /// record with identityDigest (SHA-256 of exactly those bytes) added, or null where the function returns null.
+        /// </summary>
+        public static PSObject ActiveChunkIdentity(object record, byte[] bytes)
+        {
+            try
+            {
+                if (record == null || bytes == null) return null;
+                var ps = PSObject.AsPSObject(record);
+                var names = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var p in ps.Properties) names.Add(p.Name);
+                foreach (var field in ActiveStringFields)
+                {
+                    // -cnotcontains: the exact spelling; $record.$field: the value, whatever its case.
+                    if (!names.Contains(field) || !(ps.Properties[field]?.Value is string)) return null;
+                }
+                string S(string name) => (string)ps.Properties[name].Value;
+                var generation = ps.Properties["generation"]?.Value;
+                if (!(generation is int) && !(generation is long)) return null;
+                if (!ActiveRunPattern.IsMatch(S("runId")) || !ActiveAttemptPattern.IsMatch(S("attempt")) || !ActiveChunkPattern.IsMatch(S("chunk"))) return null;
+                if (S("format") != "antiphon-qualification-active-chunk-v1" || (S("state") != "Active" && S("state") != "Idle")
+                    || Convert.ToInt64(generation, CultureInfo.InvariantCulture) <= 0 || S("runId").Length == 0 || S("attempt").Length == 0
+                    || !ActiveSuitePattern.IsMatch(S("suite")) || S("chunk").Length == 0
+                    || S("planFile") != "groups-planned-" + S("suite") + ".json" || !Sha256Pattern.IsMatch(S("planDigest"))) return null;
+                // Add-Member refuses an existing name (its error made the function return null).
+                if (ps.Properties["identityDigest"] != null) return null;
+                ps.Properties.Add(new PSNoteProperty("identityDigest", Sha256Hex(bytes)));
+                return ps;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Get-QualificationBytesDigest: lower-case hex SHA-256 of the bytes.</summary>
+        public static string Sha256Hex(byte[] bytes)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                var sb = new StringBuilder(64);
+                foreach (var b in sha.ComputeHash(bytes ?? new byte[0])) sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>
+        /// ConvertTo-Json -Depth 12 of the flat active-chunk record (string and integer values): Newtonsoft's
+        /// indented form, two-space indent, the platform line ending. Null when a value is of another type or a string
+        /// needs escaping (a quote, a backslash, a control or line-separator character): the caller then runs
+        /// ConvertTo-Json.
+        /// </summary>
+        public static string ActiveChunkJson(IDictionary record)
+        {
+            if (record == null || record.Count == 0) return null;
+            var nl = Environment.NewLine;
+            var sb = new StringBuilder("{");
+            var first = true;
+            foreach (DictionaryEntry entry in record)
+            {
+                var key = entry.Key as string;
+                if (key == null || NeedsEscape(key)) return null;
+                string value;
+                if (entry.Value is string s) { if (NeedsEscape(s)) return null; value = "\"" + s + "\""; }
+                else if (entry.Value is int i) value = i.ToString(CultureInfo.InvariantCulture);
+                else if (entry.Value is long l) value = l.ToString(CultureInfo.InvariantCulture);
+                else return null;
+                sb.Append(first ? "" : ",").Append(nl).Append("  \"").Append(key).Append("\": ").Append(value);
+                first = false;
+            }
+            return sb.Append(nl).Append('}').ToString();
+        }
+
+        private static bool NeedsEscape(string s)
+        {
+            foreach (var c in s)
+            {
+                if (c < ' ' || c == '"' || c == '\\' || c == '\u0085' || c == (char)0x2028 || c == (char)0x2029) return true;
+            }
+            return false;
+        }
+
+        private static readonly Regex SuitePattern =new Regex("^[a-z0-9][a-z0-9-]{0,40}$", RegexOptions.IgnoreCase);
         private static readonly Regex ChunkPattern = new Regex("^[a-z0-9][a-z0-9._-]{0,80}$", RegexOptions.IgnoreCase);
         private static readonly Regex RunPattern = new Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$", RegexOptions.IgnoreCase);
         private static readonly Regex AttemptPattern = new Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,40}$", RegexOptions.IgnoreCase);
@@ -137,15 +243,17 @@ namespace Antiphon.Nightly
             if (!NotePresent(verdict, OwnerNames)) return null;
             if (!SuitePattern.IsMatch(suite)) return null;
             if (!ChunkPattern.IsMatch(chunk)) return null;
-            // @{}: OrdinalIgnoreCase keys, enumerated in the Hashtable's own order (twice, as the function does).
-            var missed = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            // Missed pids in first-seen order (the PowerShell @{} enumerated in hash order, which varied by process).
+            var missed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var missedOrder = new List<string>();
             var missedRaw = NoteValue(verdict, "missedDescendantPids", "MissedDescendantPids");
             if (missedRaw != null)
             {
                 foreach (var childPid in PsValue.AsArray(missedRaw))
                 {
                     if (childPid == null || string.IsNullOrWhiteSpace(PsValue.Str(childPid))) continue;
-                    missed[ToInt(childPid).ToString(CultureInfo.InvariantCulture)] = true;
+                    var key = ToInt(childPid).ToString(CultureInfo.InvariantCulture);
+                    if (missed.Add(key)) missedOrder.Add(key);
                 }
             }
             var rows = new List<OrderedDictionary>();
@@ -159,7 +267,7 @@ namespace Antiphon.Nightly
                     var childPid = 0;
                     if (pidValue != null && !string.IsNullOrWhiteSpace(PsValue.Str(pidValue))) childPid = ToInt(pidValue);
                     var image = OwnerImage(NoteValue(row, "image", "Image", "ProcessName"));
-                    if (missed.ContainsKey(childPid.ToString(CultureInfo.InvariantCulture))) image = "unknown";
+                    if (missed.Contains(childPid.ToString(CultureInfo.InvariantCulture))) image = "unknown";
                     var started = NoteValue(row, "startedAtUtc", "StartedAtUtc");
                     var exited = NoteValue(row, "exitedAtUtc", "ExitedAtUtc");
                     rows.Add(OwnerRow(childPid, image, started == null ? "" : PsValue.Str(started), exited == null ? "" : PsValue.Str(exited)));
@@ -187,7 +295,7 @@ namespace Antiphon.Nightly
                     }
                     var image = "unknown";
                     if (i < images.Length) image = OwnerImage(images[i]);
-                    if (missed.ContainsKey(childPid.ToString(CultureInfo.InvariantCulture))) image = "unknown";
+                    if (missed.Contains(childPid.ToString(CultureInfo.InvariantCulture))) image = "unknown";
                     var exitedText = "";
                     if (i < exitStamps.Length && exitStamps[i] != null) exitedText = PsValue.Str(exitStamps[i]);
                     rows.Add(OwnerRow(childPid, image, startedText, exitedText));
@@ -195,7 +303,7 @@ namespace Antiphon.Nightly
             }
             var seenPid = new Hashtable(StringComparer.OrdinalIgnoreCase);
             foreach (var row in rows) seenPid[PsValue.Str(row["pid"])] = true;
-            foreach (var key in new ArrayList(missed.Keys))
+            foreach (var key in missedOrder)
             {
                 if (seenPid.ContainsKey(PsValue.Str(key))) continue;
                 int missedPid;
@@ -232,7 +340,7 @@ namespace Antiphon.Nightly
             var remainingValue = NoteValue(verdict, "remainingProcessCount", "RemainingProcessCount");
             if (remainingValue != null) remaining = ToInt(remainingValue);
             var missedIds = new List<object>();
-            foreach (var key in new ArrayList(missed.Keys))
+            foreach (var key in missedOrder)
             {
                 try { missedIds.Add(ToInt(key)); } catch (Exception) { }
             }

@@ -88,7 +88,13 @@ namespace Antiphon.Nightly
         /// repeated property name, a non-finite number, nesting deeper than maxDepth): the caller then runs its own
         /// Newtonsoft read.
         /// </summary>
-        public static PSObject ParseText(string text, int maxDepth)
+        public static PSObject ParseText(string text, int maxDepth) => ParseText(text, maxDepth, false);
+
+        /// <summary>
+        /// ParseText with dates: as ConvertFrom-Json reads the text (ISO date-times become DateTime, as ReadFile
+        /// describes); null wherever ConvertFrom-Json could read it differently, for the caller to run it.
+        /// </summary>
+        public static PSObject ParseText(string text, int maxDepth, bool dates)
         {
             if (string.IsNullOrEmpty(text) || text[0] == (char)0xFEFF) return null;
             try
@@ -97,7 +103,7 @@ namespace Antiphon.Nightly
                 var reader = new Utf8JsonReader(bytes,
                     new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false, MaxDepth = maxDepth });
                 if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
-                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), false);
+                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), dates);
                 if (reader.Read()) return null;
                 return HasNonFinite(root) ? null : root;
             }

@@ -299,32 +299,10 @@ function Get-NightlyPackedItemSeconds {
 function Split-NightlyItemsBySeconds {
     # First fit, largest first. An item at or over the target stays alone.
     param([object[]]$Items, [double]$TargetSeconds, [int]$MaxOperands)
+    Assert-NightlyCoreAvailable 'Split-NightlyItemsBySeconds'
     $ordered = @($Items | Sort-Object @{ Expression = { Get-NightlyPackedItemSeconds $_ }; Descending = $true }, @{ Expression = { [string]$_.Key } })
-    if (Test-NightlyCoreAvailable) {
-        # Placement loop compiled (NightlyCore.cs NightlyLaunchPlan.FirstFitBins); ordering stays here.
-        return @([Antiphon.Nightly.NightlyLaunchPlan]::FirstFitBins([object[]]$ordered, $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
-    }
-    $bins = New-Object System.Collections.ArrayList
-    foreach ($item in $ordered) {
-        $add = Get-NightlyPackedItemSeconds $item
-        $placed = $false
-        if ($add -lt $TargetSeconds) {
-            foreach ($bin in @($bins)) {
-                if ($bin.Closed -or $bin.Items.Count -ge $MaxOperands) { continue }
-                if (($bin.Seconds + $add) -gt $TargetSeconds) { continue }
-                [void]$bin.Items.Add($item)
-                $bin.Seconds += $add
-                $placed = $true
-                break
-            }
-        }
-        if (-not $placed) {
-            $bin = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = $add; Closed = ($add -ge $TargetSeconds) }
-            [void]$bin.Items.Add($item)
-            [void]$bins.Add($bin)
-        }
-    }
-    return @($bins.ToArray())
+    # Placement loop compiled (NightlyCore.cs NightlyLaunchPlan.FirstFitBins); the ordering stays in PowerShell.
+    return @([Antiphon.Nightly.NightlyLaunchPlan]::FirstFitBins([object[]]$ordered, $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
 }
 
 function Get-NightlyPrefixUnsafeNames {

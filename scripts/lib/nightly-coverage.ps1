@@ -652,19 +652,14 @@ function Get-NightlyLatestDiagnosticLog {
     if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) {
         return $null
     }
-    if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($Directory)) {
-        # NightlyCoverageParts.LatestDiagnosticLog; null (a tie, a hidden file) keeps the listing below.
-        $latest = [Antiphon.Nightly.NightlyCoverageParts]::LatestDiagnosticLog($Directory)
-        if ($null -ne $latest) {
-            if ($latest -eq '') { return $null }
-            return $latest
-        }
-    }
-    $files = @(Get-ChildItem -LiteralPath $Directory -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
-    if ($files.Count -eq 0) { return $null }
-    $diag = @($files | Where-Object { [string]$_.Extension -eq '.diag' })
-    if ($diag.Count -gt 0) { return $diag[0].FullName }
-    return $files[0].FullName
+    Assert-NightlyCoreAvailable 'Get-NightlyLatestDiagnosticLog'
+    # Relative to the PowerShell location, as Get-ChildItem resolved it; a file path lists only that file.
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Directory)
+    if (Test-Path -LiteralPath $full -PathType Leaf) { return [System.IO.Path]::GetFullPath($full) }
+    # Newest .diag, else newest file (NightlyCoverageParts.LatestDiagnosticLog).
+    $latest = [Antiphon.Nightly.NightlyCoverageParts]::LatestDiagnosticLog($full)
+    if ([string]::IsNullOrEmpty($latest)) { return $null }
+    return $latest
 }
 
 function Get-NightlyAssemblyHash {
@@ -995,14 +990,10 @@ function Get-NightlyDiscoveryIndexEntry {
     param($Index, [string]$Path)
     $key = ''
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        if ((Test-NightlyCoreAvailable) -and (Get-NightlyEvidencePendingLength $Path) -lt 0) {
-            # The disk bytes' digest, reused while the file is provably unchanged (NightlyCore.cs CachedFileSha256).
-            $key = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($Path)
-        } else {
-            $sha = [System.Security.Cryptography.SHA256]::Create()
-            try { $key = [BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path))) }
-            finally { $sha.Dispose() }
-        }
+        Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexEntry'
+        # The content digest: a queued write's bytes, else the disk digest reused while the file is provably
+        # unchanged (EvidenceFiles.CachedSha256).
+        $key = [Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)
         if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
     }
     $document = Read-NightlyDiscoveryDocument -Path $Path
@@ -1204,24 +1195,13 @@ function Get-NightlyExpectedSkipReasonClass {
 
 function Get-NightlyExpectedSkipRosterDigest {
     param($Entries)
-    if (Test-NightlyCoreAvailable) {
-        # Recomputed for every chunk verdict: NightlyCoverageParts.RosterDigest; null (an invalid reasonClass)
-        # leaves the loop below to raise its error.
-        $digest = [Antiphon.Nightly.NightlyCoverageParts]::RosterDigest($Entries)
-        if ($null -ne $digest) { return $digest }
-    }
-    $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($entry in @($Entries)) {
-        if ($null -eq $entry) { continue }
-        $className = Get-NightlyExpectedSkipReasonClass -Entry $entry
-        $line = ([string]$entry.platform) + "`n" + ([string]$entry.test) + "`n" + $className + "`n" + ([string]$entry.reasonPrefix)
-        [void]$lines.Add($line)
-    }
-    $sorted = $lines.ToArray()
-    [Array]::Sort($sorted, [StringComparer]::Ordinal)
-    $text = ''
-    if ($sorted.Length -gt 0) { $text = [string]::Join("`n", $sorted) }
-    return (Get-NightlySha256Text -Text $text)
+    Assert-NightlyCoreAvailable 'Get-NightlyExpectedSkipRosterDigest'
+    # Recomputed for every chunk verdict (NightlyCoverageParts.RosterDigest). Null: an entry's reasonClass is
+    # invalid, and Get-NightlyExpectedSkipReasonClass raises the roster error for the first such entry.
+    $digest = [Antiphon.Nightly.NightlyCoverageParts]::RosterDigest($Entries)
+    if ($null -ne $digest) { return $digest }
+    foreach ($entry in @($Entries)) { if ($null -ne $entry) { [void](Get-NightlyExpectedSkipReasonClass -Entry $entry) } }
+    throw 'expected-skip roster digest refused'
 }
 
 function Get-NightlyExpectedSkipStaleWarnings {
@@ -2002,19 +1982,12 @@ function ConvertTo-NightlyCoverageVerdict {
         $testsPassed = $false
         $reasons += 'zero-terminal-rows'
     }
-    $passedCount = $null
-    if (Test-NightlyCoreAvailable) {
-        # One compiled pass classifies every row once (the filters below normalise each row five times).
-        $classified = [Antiphon.Nightly.NightlyVerdicts]::ClassifyOutcomes($TerminalRows)
-        $failed = @($classified.Failed); $skipped = @($classified.Skipped)
-        $unexecuted = @($classified.NotExecuted); $unknown = @($classified.Unknown)
-        $passedCount = [int]$classified.Passed
-    } else {
-    $failed = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Failed' })
-    $skipped = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Skipped' })
-    $unexecuted = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'NotExecuted' })
-    $unknown = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Unknown' })
-    }
+    Assert-NightlyCoreAvailable 'ConvertTo-NightlyCoverageVerdict'
+    # One compiled pass classifies every row once.
+    $classified = [Antiphon.Nightly.NightlyVerdicts]::ClassifyOutcomes($TerminalRows)
+    $failed = @($classified.Failed); $skipped = @($classified.Skipped)
+    $unexecuted = @($classified.NotExecuted); $unknown = @($classified.Unknown)
+    $passedCount = [int]$classified.Passed
     # Expected platform skips stay out of the unexecuted bucket. Outcome=Skipped is unchanged.
     $rosterEntries = @()
     if ($null -ne $ExpectedSkipRoster) { $rosterEntries = @($ExpectedSkipRoster) }
@@ -2035,8 +2008,7 @@ function ConvertTo-NightlyCoverageVerdict {
         }
     }
     $unexecuted = $stillUnexecuted.ToArray()
-    if (Test-NightlyCoreAvailable) { $presentCount = [Antiphon.Nightly.NightlyCoverageParts]::PresentCount($TerminalRows) }
-    else { $presentCount = @($TerminalRows | Where-Object { $null -ne $_ }).Count }
+    $presentCount = [Antiphon.Nightly.NightlyCoverageParts]::PresentCount($TerminalRows)
     $allExpectedSkips = ($presentCount -gt 0 -and $expectedSkipRows.Count -eq $presentCount)
     $processExitTolerated = $false
     if ($failed.Count -gt 0) {
@@ -2081,9 +2053,6 @@ function ConvertTo-NightlyCoverageVerdict {
     if (-not [string]::Equals([string]$PolicyHash, [string]$ExpectedPolicyHash, [StringComparison]::OrdinalIgnoreCase)) {
         $coverageComplete = $false
         $reasons += ('policy-mismatch {0} vs {1}' -f $PolicyHash, $ExpectedPolicyHash)
-    }
-    if ($null -eq $passedCount) {
-        $passedCount = @($TerminalRows | Where-Object { (ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$_.Outcome)) -eq 'Passed' }).Count
     }
     $skipWarnings = @(Get-NightlyExpectedSkipStaleWarnings -Platform $Platform -Entries $rosterEntries -KnownTestIdentities $KnownTestIdentities)
     $rosterDigest = Get-NightlyExpectedSkipRosterDigest -Entries $rosterEntries

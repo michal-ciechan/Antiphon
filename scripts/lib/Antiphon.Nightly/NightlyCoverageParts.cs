@@ -1,6 +1,5 @@
 // Per-chunk pieces of the native suite verdict (nightly-coverage.ps1), compiled. Each returns what the named
-// PowerShell code computed, or null where it cannot vouch for the same answer; the caller then runs its
-// PowerShell body, which stays as the fallback.
+// PowerShell code computed; the PowerShell copies were removed (the core is required, 2026-11-13).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -55,36 +54,29 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Get-NightlyLatestDiagnosticLog for an existing directory: the newest .diag file, else the newest file
-        /// (by LastWriteTimeUtc). "" when the directory holds no files. Null wherever Get-ChildItem | Sort-Object
-        /// could answer differently (a hidden or system file, two candidates with the same time, an unreadable
-        /// directory): the caller then runs its PowerShell body.
+        /// Get-NightlyLatestDiagnosticLog for an existing directory: the newest .diag file, else the newest file, by
+        /// LastWriteTimeUtc; on equal times the first in directory order (as Sort-Object -Descending kept the
+        /// listing order). Hidden and system files are skipped, as Get-ChildItem without -Force skips them. ""
+        /// when there is no such file or the directory cannot be listed (Get-ChildItem -ErrorAction
+        /// SilentlyContinue listed nothing).
         /// </summary>
         public static string LatestDiagnosticLog(string directory)
         {
             try
             {
-                var files = new DirectoryInfo(directory).GetFiles();
-                if (files.Length == 0) return "";
                 FileInfo newestDiag = null, newestAny = null;
-                bool diagTie = false, anyTie = false;
-                foreach (var file in files)
+                foreach (var file in new DirectoryInfo(directory).GetFiles())
                 {
-                    if ((file.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) return null;
-                    Newest(file, ref newestAny, ref anyTie);
-                    if (string.Equals(file.Extension, ".diag", StringComparison.OrdinalIgnoreCase)) Newest(file, ref newestDiag, ref diagTie);
+                    if ((file.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
+                    if (newestAny == null || file.LastWriteTimeUtc > newestAny.LastWriteTimeUtc) newestAny = file;
+                    if (string.Equals(file.Extension, ".diag", StringComparison.OrdinalIgnoreCase)
+                        && (newestDiag == null || file.LastWriteTimeUtc > newestDiag.LastWriteTimeUtc)) newestDiag = file;
                 }
-                if (newestDiag != null) return diagTie ? null : newestDiag.FullName;
-                return anyTie ? null : newestAny.FullName;
+                if (newestDiag != null) return newestDiag.FullName;
+                return newestAny == null ? "" : newestAny.FullName;
             }
-            catch (IOException) { return null; }
-            catch (UnauthorizedAccessException) { return null; }
-        }
-
-        private static void Newest(FileInfo file, ref FileInfo newest, ref bool tie)
-        {
-            if (newest == null || file.LastWriteTimeUtc > newest.LastWriteTimeUtc) { newest = file; tie = false; }
-            else if (file.LastWriteTimeUtc == newest.LastWriteTimeUtc) tie = true;
+            catch (IOException) { return ""; }
+            catch (UnauthorizedAccessException) { return ""; }
         }
     }
 }

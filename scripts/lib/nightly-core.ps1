@@ -196,6 +196,11 @@ function Enable-NightlyDeferredEvidenceWrites {
     $script:NightlyDeferEvidenceWrites = $true
 }
 
+# Code ported to the core keeps no PowerShell copy (2026-11-13): it loads the core here and refuses without it.
+function Assert-NightlyCoreAvailable([string]$Caller) {
+    if (-not (Test-NightlyCoreAvailable)) { throw ('nightly-core-required ' + $Caller) }
+}
+
 function Disable-NightlyDeferredEvidenceWrites {
     if (-not $script:NightlyDeferEvidenceWrites) { return }
     $script:NightlyDeferEvidenceWrites = $false

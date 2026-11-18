@@ -133,7 +133,12 @@ function Assert-QualificationJournalUnsettled {
 function Read-QualificationPlanJson {
     param([string]$Path)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
-    return ((Read-NightlyEvidenceText $Path)|ConvertFrom-Json)
+    Assert-NightlyCoreAvailable 'Read-QualificationPlanJson'
+    $text=Read-NightlyEvidenceText $Path
+    # Strict JSON objects parse in the core (as ConvertFrom-Json reads them); anything else is ConvertFrom-Json's.
+    $parsed=[Antiphon.Nightly.NightlyJson]::ParseText($text,1024,$true)
+    if($null -ne $parsed){return $parsed}
+    return ($text|ConvertFrom-Json)
 }
 
 function Read-QualificationActiveChunkIdentity {
@@ -142,17 +147,14 @@ function Read-QualificationActiveChunkIdentity {
         $path=Join-Path $Directory 'active-chunk.json'
         # One read: the digest is of exactly the bytes parsed (a queued write answers from memory).
         if((Get-TestPhasePathIdentity $path).Kind -cne 'regular'){return $null}
+        Assert-NightlyCoreAvailable 'Read-QualificationActiveChunkIdentity'
         $bytes=Read-NightlyEvidenceBytes $path
-        $digest=Get-QualificationBytesDigest $bytes
-        $reader=New-Object System.IO.StreamReader((New-Object System.IO.MemoryStream(,$bytes)), [Text.Encoding]::UTF8, $true)
-        try { $record=$reader.ReadToEnd()|ConvertFrom-Json } finally { $reader.Dispose() }
-        foreach($field in @('format','state','runId','attempt','suite','chunk','planFile','planDigest','sourceDigest','policyDigest','costFileDigest','assemblyDigest')){
-            if($record.PSObject.Properties.Name -cnotcontains $field -or $record.$field -isnot [string]){return $null}
-        }
-        if(($record.generation -isnot [int] -and $record.generation -isnot [long]) -or $record.runId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or $record.attempt -cnotmatch '^[1-9][0-9]*$' -or $record.chunk -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$'){return $null}
-        if($record.format -cne 'antiphon-qualification-active-chunk-v1' -or $record.state -cnotin @('Active','Idle') -or [long]$record.generation -le 0 -or -not $record.runId -or -not $record.attempt -or $record.suite -cnotmatch '^[a-z0-9][a-z0-9-]{0,40}$' -or -not $record.chunk -or $record.planFile -cne ('groups-planned-'+$record.suite+'.json') -or $record.planDigest -cnotmatch '^[a-f0-9]{64}$'){return $null}
-        $record|Add-Member -NotePropertyName identityDigest -NotePropertyValue $digest
-        return $record
+        # Decoded as a StreamReader decodes them, parsed as ConvertFrom-Json parses them, checked and stamped with
+        # the digest of exactly these bytes in the core (TestPhaseRecords.ActiveChunkIdentity).
+        $text=[Antiphon.Nightly.TestPhaseRecords]::DecodeText($bytes)
+        $record=[Antiphon.Nightly.NightlyJson]::ParseText($text,1024,$true)
+        if($null -eq $record){$record=$text|ConvertFrom-Json}
+        return [Antiphon.Nightly.TestPhaseRecords]::ActiveChunkIdentity($record,$bytes)
     } catch {return $null}
 }
 
@@ -172,9 +174,9 @@ function Read-QualificationPlanSnapshot {
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
     # The file's digest without re-reading it while it is provably unchanged (EvidenceFiles.CachedSha256);
     # a snapshot is only ever built from bytes whose own digest is its key.
+    Assert-NightlyCoreAvailable 'Read-QualificationPlanSnapshot'
     $bytes=$null
-    if(Test-NightlyCoreAvailable){$digest=[Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)}
-    else{$bytes=Read-NightlyEvidenceBytes $Path;$digest=Get-QualificationBytesDigest $bytes}
+    $digest=[Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)
     $key=$Path+'|'+$digest
     if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
         if($null -eq $bytes){
@@ -213,7 +215,9 @@ function Write-QualificationActiveChunkIdentity {
         foreach($field in @('sourceDigest','policyDigest','costFileDigest','assemblyDigest')){if([string]$rows[0].$field -cne [string]$plan.$field){throw ('active-plan-'+$field)};$record[$field]=[string]$plan.$field}
         # Rewritten at every batch start and end: on the background writer during a run (nightly-core.ps1).
         $activePath=Join-Path $Directory 'active-chunk.json'
-        if(-not (Submit-NightlyDeferredEvidenceWrite $activePath ($record|ConvertTo-Json -Depth 12) $false)){Write-NightlyAtomicJson -Path $activePath -Object $record}
+        $recordText=[Antiphon.Nightly.TestPhaseRecords]::ActiveChunkJson($record)
+        if($null -eq $recordText){$recordText=$record|ConvertTo-Json -Depth 12}
+        if(-not (Submit-NightlyDeferredEvidenceWrite $activePath $recordText $false)){Write-NightlyAtomicJson -Path $activePath -Object $record}
         return $true
     } catch {
         Write-Warning -WarningAction Continue ('active-identity-unavailable: '+$_.Exception.Message)

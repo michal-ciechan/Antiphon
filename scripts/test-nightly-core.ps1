@@ -12,15 +12,39 @@ $root = New-C487Root $ResultsDirectory
 function Assert-NC([bool]$Ok, [string]$Name, [string]$Detail = '') { Assert-C487 $Ok ('NC ' + $Case + '.' + $Name) $Detail }
 
 # Runs $Body with the compiled core and again with the PowerShell fallback (same session), returning both
-# results as JSON text. The switch is the session flag the loader caches.
-function Invoke-NCBothWays([scriptblock]$Body) {
+# results as JSON text. The switch is the session flag the loader caches. Where the body reaches code whose
+# PowerShell copy was removed (nightly-core-required), the fallback result is the golden that copy produced
+# (scripts/fixtures/nightly/core-golden/<Golden>.json); with no golden named the run fails.
+function Invoke-NCBothWays([scriptblock]$Body, [string]$Golden = '') {
     $script:NightlyCoreAvailable = $null
     $core = Test-NightlyCoreAvailable
     $compiled = (& $Body) | ConvertTo-Json -Depth 14 -Compress
     $script:NightlyCoreAvailable = $false
     try { $fallback = (& $Body) | ConvertTo-Json -Depth 14 -Compress }
+    catch {
+        if ([string]$_.Exception.Message -notlike 'nightly-core-required *') { throw }
+        if (-not $Golden) { $fallback = 'unnamed golden: ' + $_.Exception.Message }
+        else { $fallback = [IO.File]::ReadAllText((Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Golden + '.json')), [Text.Encoding]::UTF8) }
+    }
     finally { $script:NightlyCoreAvailable = $null }
+    if ($env:NC_DUMP) { Add-Content -LiteralPath $env:NC_DUMP -Value $fallback.Substring(0, [Math]::Min(60, $fallback.Length)) }
     return [pscustomobject]@{ Core = $core; Compiled = $compiled; Fallback = $fallback }
+}
+
+# Ported code whose PowerShell copy was removed (2026-11-13 rule) is checked against the output that copy
+# produced when it was removed (scripts/fixtures/nightly/core-golden/<name>.json), serialised as
+# Invoke-NCBothWays serialises. Each listed witness must appear in the golden text.
+function Assert-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @()) {
+    $core = Test-NightlyCoreAvailable
+    $actual = ''
+    try { $actual = (& $Body) | ConvertTo-Json -Depth 14 -Compress } catch { $actual = 'throw: ' + $_.Exception.Message }
+    $goldenPath = Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Name + '.json')
+    # A new golden is written only on request (NC_GOLDEN_WRITE=<name>) and then still has to be reviewed.
+    if ($env:NC_GOLDEN_WRITE -ceq $Name) { [IO.File]::WriteAllText($goldenPath, $actual, [Text.UTF8Encoding]::new($false)) }
+    $expected = [IO.File]::ReadAllText($goldenPath, [Text.Encoding]::UTF8)
+    $ok = $core -and $actual -ceq $expected
+    foreach ($witness in $Witnesses) { if (-not $expected.Contains($witness)) { $ok = $false } }
+    Assert-NC $ok $Name ('actual ' + $actual + ' expected ' + $expected)
 }
 
 function Get-NCFixtureNodes([int]$Take) {
@@ -71,7 +95,7 @@ function Test-NCCoreMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'census' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 
     $r = Invoke-NCBothWays { @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) `
-        -Exclusions $rules -ProfileAware $true -Native $true -SuiteId antiphon -PolicyObject $policy.Object) }
+        -Exclusions $rules -ProfileAware $true -Native $true -SuiteId antiphon -PolicyObject $policy.Object) } 'plan'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'plan' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 
     $r = Invoke-NCBothWays {
@@ -183,20 +207,14 @@ function Test-NCDiagnosticsMatchFallback {
     $trxRows = @([pscustomobject]@{ TestId = 'a'; Outcome = 'Passed' }, [pscustomobject]@{ TestId = 'b'; Outcome = 'passed' },
         [pscustomobject]@{ TestId = 'c'; Outcome = 'Failed' }, [pscustomobject]@{ TestId = 7; Outcome = $null }, [pscustomobject]@{ Other = 1 })
     $item = '{"chunk":"c1","outcomes":[{"testId":"x","outcome":"Passed"},null,{"testId":5,"outcome":"Skipped"},{"outcome":"Failed"}]}' | ConvertFrom-Json
-    $r = Invoke-NCBothWays {
-        $passed = 0
-        if (Test-NightlyCoreAvailable) {
-            $rows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$trxRows, 'TestId', 'Outcome', $false)
-            $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($rows)
-        } else {
-            $rows = @(foreach ($t in $trxRows) { [ordered]@{ testId = [string]$t.TestId; outcome = [string]$t.Outcome }; if ([string]$t.Outcome -eq 'Passed') { $passed++ } })
-        }
+    Assert-NCGolden 'outcomeRows' {
+        $rows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$trxRows, 'TestId', 'Outcome', $false)
+        $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($rows)
         [ordered]@{
             manifest = (ConvertTo-TestPhaseExecutedChunk -Chunk 'c' -RunId 'r' -Attempt '1' -Suite 's' -PassedCount $passed -Outcomes @($rows + @($null, @{ testId = 'h'; outcome = 'Passed' })))
             item = (ConvertTo-TestPhaseExecutedChunk -Item $item -Chunk 'c' -RunId 'r' -Attempt '1' -Suite 's' -Outcomes @())
         }
-    }
-    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('"passedCount":2')) 'outcomeRows' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    } @('"passedCount":2')
     Test-NCEvidenceRecordsMatchFallback
 }
 
@@ -227,7 +245,7 @@ function Test-NCEvidenceRecordsMatchFallback {
         [pscustomobject]@{ unrelated = 1 }
         $null
     )
-    $r = Invoke-NCBothWays {
+    Assert-NCGolden 'evidenceRecords' {
         $script:NCRecordArm++
         $sidecarRows = foreach ($name in $sidecars.Keys) {
             $value = $null; $err = ''
@@ -235,7 +253,7 @@ function Test-NCEvidenceRecordsMatchFallback {
             [ordered]@{ name = $name; err = $err; json = ($value | ConvertTo-Json -Depth 20 -Compress); types = (@(Get-NCValueTypes $value) -join ',') }
         }
         $densities = foreach ($text in @('', 'a,b:c', ((1..10) -join ','), ('{' + ((1..6) -join ':') + '}'))) {
-            if ($script:NightlyCoreAvailable) { [Antiphon.Nightly.TestPhaseRecords]::Dense($text, 5, $null, 0) } else { Test-QualificationSidecarDense -Text $text -Limit 5 -Watch $null -DeadlineMilliseconds 0 }
+            [Antiphon.Nightly.TestPhaseRecords]::Dense($text, 5, $null, 0)
         }
         $context = [pscustomobject]@{ Generation = 'a' * 32; TimingRoot = 'C:\t "x"\timing'; WriterEnvironment = $null }
         $envelopes = @(
@@ -252,9 +270,7 @@ function Test-NCEvidenceRecordsMatchFallback {
             }
         }
         [ordered]@{ sidecars = @($sidecarRows); densities = @($densities); envelopes = $envelopes; owners = @($owners) }
-    }
-    $ok = $r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('System.Numerics.BigInteger') -and $r.Fallback.Contains('missedDescendantPids') -and $r.Fallback.Contains('owner-Session-Runner-Chunk.A-run-0.json') -and $r.Fallback.Contains('object,a:,System.Int64')
-    Assert-NC $ok 'evidenceRecords' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    } @('System.Numerics.BigInteger', 'missedDescendantPids', 'owner-Session-Runner-Chunk.A-run-0.json', 'object,a:,System.Int64')
     Test-NCCoveragePartsMatchFallback
 }
 
@@ -289,7 +305,7 @@ function Test-NCCoveragePartsMatchFallback {
         }
     }
     $rows = @([pscustomobject]@{ Identity = 'a'; Outcome = 'NotExecuted' }, $null, [pscustomobject]@{ Identity = 'b'; Outcome = 'Passed' })
-    $r = Invoke-NCBothWays {
+    Assert-NCGolden 'coverageParts' {
         $digests = foreach ($roster in $rosters) { try { Get-NightlyExpectedSkipRosterDigest -Entries $roster } catch { 'throw:' + $_.Exception.Message } }
         $latest = foreach ($name in $cases.Keys) {
             $found = Get-NightlyLatestDiagnosticLog -Directory (Join-Path $logs $name)
@@ -303,8 +319,76 @@ function Test-NCCoveragePartsMatchFallback {
             }
         }
         [ordered]@{ digests = @($digests); latest = @($latest); verdicts = @($verdicts) }
+    } @('throw:expected-skip roster reasonClass Platform', 'diagNewest=b.diag', 'diagTie=a.diag', 'hidden=a.diag')
+    Test-NCActiveChunkGolden
+}
+
+# The active-chunk marker (TestPhaseRecords.ActiveChunkIdentity/ActiveChunkJson, NightlyJson.ParseText with
+# dates): identity reads over valid and refused records, plan reads, and the record text. The golden matched
+# the removed PowerShell bodies on every case.
+function Test-NCActiveChunkGolden {
+    $dir = Join-Path $root 'nc-active'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $h = 'a' * 64
+    $valid = [ordered]@{ format = 'antiphon-qualification-active-chunk-v1'; state = 'Active'; generation = 3; runId = 'run-1'; attempt = '2'; suite = 'antiphon'; chunk = 'all-group-1'
+        planFile = 'groups-planned-antiphon.json'; planDigest = $h; sourceDigest = ('b' * 40); policyDigest = $h; costFileDigest = $h; assemblyDigest = $h }
+    $variant = {
+        param($changes, [string[]]$drop = @())
+        $v = [ordered]@{}
+        foreach ($k in $valid.Keys) { if ($drop -notcontains $k) { $v[$k] = $valid[$k] } }
+        foreach ($k in $changes.Keys) { $v[$k] = $changes[$k] }
+        $v | ConvertTo-Json -Depth 5
     }
-    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('throw:expected-skip roster reasonClass Platform') -and $r.Fallback.Contains('diagNewest=b.diag')) 'coverageParts' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    $texts = [ordered]@{
+        valid = & $variant @{}
+        idle = & $variant @{ state = 'Idle'; generation = 1 }
+        stateCase = & $variant @{ state = 'active' }
+        gen0 = & $variant @{ generation = 0 }
+        genStr = & $variant @{ generation = '1' }
+        genDouble = & $variant @{ generation = 1.5 }
+        genBig = & $variant @{ generation = 99999999999 }
+        noGen = & $variant @{} @('generation')
+        noFormat = & $variant @{} @('format')
+        runIdDate = & $variant @{ runId = '2026-01-01T00:00:00' }
+        attempt0 = & $variant @{ attempt = '0' }
+        suiteUpper = & $variant @{ suite = 'Antiphon'; planFile = 'groups-planned-Antiphon.json' }
+        planFile = & $variant @{ planFile = 'groups-planned-other.json' }
+        digestUpper = & $variant @{ planDigest = ('A' * 64) }
+        sourceNum = & $variant @{ sourceDigest = 5 }
+        hasIdentity = & $variant @{ identityDigest = 'x' }
+        extra = & $variant @{ extra = @(1, 2) }
+        bom = ([string][char]0xFEFF) + (& $variant @{})
+        array = '[1,2]'
+        comment = '{ /* c */ ' + (& $variant @{}).Substring(1)
+        trailing = (& $variant @{}).TrimEnd().TrimEnd('}') + ',}'
+        empty = ''
+    }
+    foreach ($name in $texts.Keys) {
+        $d = Join-Path $dir $name; [void][IO.Directory]::CreateDirectory($d)
+        # LF on every platform, so the identity digests in the golden do not depend on ConvertTo-Json's line ends.
+        [IO.File]::WriteAllText((Join-Path $d 'active-chunk.json'), $texts[$name].Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
+    }
+    $planTexts = @('{"version":1,"groups":[{"chunk":"a","plannedSeconds":1.5}],"runId":"r","attempt":"1","at":"2026-01-01T00:00:00Z"}', '{"a":1,"A":2}', '{"a":[]}', ' {"x": null} ')
+    $records = @(
+        [ordered]@{ format = 'antiphon-qualification-active-chunk-v1'; state = 'Active'; generation = 1; runId = 'r'; attempt = '1'; suite = 's'; chunk = 'c'; planFile = 'f'; planDigest = $h }
+        [ordered]@{ format = 'x'; generation = [long]12; s = 'quote"in' })
+    $typeList = { param($o) @($o.PSObject.Properties | ForEach-Object { $_.Name + ':' + $(if ($null -eq $_.Value) { 'null' } else { $_.Value.GetType().Name }) }) -join ',' }
+    Assert-NCGolden 'activeChunk' {
+        $ids = foreach ($name in $texts.Keys) {
+            $r = Read-QualificationActiveChunkIdentity (Join-Path $dir $name)
+            $name + '=' + $(if ($null -eq $r) { 'null' } else { ($r | ConvertTo-Json -Compress -Depth 5) + '|' + (& $typeList $r) })
+        }
+        $i = 0
+        $plans = foreach ($t in $planTexts) {
+            $p = Join-Path $dir ('plan-' + (++$i) + '.json'); [IO.File]::WriteAllText($p, $t)
+            try { $v = Read-QualificationPlanJson $p; ($v | ConvertTo-Json -Compress -Depth 5) + '|' + (& $typeList $v) } catch { 'throw:' + $_.Exception.Message }
+        }
+        $jsons = foreach ($rec in $records) {
+            $t = [Antiphon.Nightly.TestPhaseRecords]::ActiveChunkJson($rec)
+            if ($null -eq $t) { 'null' } elseif ($t -ceq ($rec | ConvertTo-Json -Depth 12)) { 'same-as-ConvertTo-Json' } else { 'DIFFERS ' + $t }
+        }
+        [ordered]@{ ids = @($ids); plans = @($plans); jsons = @($jsons) }
+    } @('valid={\"format\"', 'identityDigest', 'genStr=null', 'runIdDate=null', 'same-as-ConvertTo-Json')
 }
 
 # The .NET type of every value in a read sidecar, depth first, so a parse that matches only as JSON still fails.
@@ -336,13 +420,18 @@ function Test-NCVerdictsMatchFallback {
     $classes = @($nodes | ForEach-Object { $_.ClassName } | Select-Object -Unique)
     $classSets = @(, @()) + @(, @('')) + @(, @($classes | Select-Object -First 4)) + @(, @(@($classes | Select-Object -First 2) + 'No.Such.Class' + $classes[5].Split('(')[0]))
     $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
-    $r = Invoke-NCBothWays {
-        $entry.Views.Clear()
-        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
+    # ConvertTo-NightlyCoverageVerdict has no PowerShell copy left: its rows against the golden the copy produced.
+    Assert-NCGolden 'coverageVerdicts' {
         [ordered]@{
             verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $trx.ToArray() -ProcessExit 0 -Sha 'a' -ExpectedSha 'A' -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'p' -ExpectedPolicyHash 'p'
             verdictNull = ConvertTo-NightlyCoverageVerdict -TerminalRows $null -ProcessExit 1 -Sha 'a' -ExpectedSha 'b' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
             verdictEmpty = ConvertTo-NightlyCoverageVerdict -TerminalRows @() -ProcessExit 0 -Sha '' -ExpectedSha '' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
+        }
+    } @('failed-row', 'zero-terminal-rows', 'sha-mismatch')
+    $r = Invoke-NCBothWays {
+        $entry.Views.Clear()
+        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
+        [ordered]@{
             perClassSet = @(foreach ($set in $classSets) { [ordered]@{
                 cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set
                 present = Test-NightlyRequiredClassesPresent -TerminalRows $trx.ToArray() -RequiredClasses $set
@@ -379,14 +468,13 @@ function Test-NCLaunchPlanMatchesFallback {
         [pscustomobject]@{ Key = 'big'; Seconds = 600.0 }, [pscustomobject]@{ Key = 'edge'; Seconds = 120.0 },
         [pscustomobject]@{ Key = 'none' }, [pscustomobject]@{ Key = 'text'; Seconds = '45.5' },
         [pscustomobject]@{ Key = 'c'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'd'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'e'; Seconds = 89.9 })
-    $r = Invoke-NCBothWays {
+    Assert-NCGolden 'packing' {
         foreach ($cap in @(2, 3, 0)) {
             foreach ($bin in @(Split-NightlyItemsBySeconds -Items $items -TargetSeconds 120 -MaxOperands $cap)) {
                 [ordered]@{ cap = $cap; keys = (@($bin.Items | ForEach-Object { $_.Key }) -join ','); seconds = $bin.Seconds; closed = $bin.Closed; type = $bin.Items.GetType().Name }
             }
         }
-    }
-    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('"closed":true')) 'packing' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    } @('"closed":true')
 }
 
 function Test-NCParentProcessMatchesFallback {
@@ -663,7 +751,7 @@ function Test-NCJsonFilesMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 29 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 31 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
