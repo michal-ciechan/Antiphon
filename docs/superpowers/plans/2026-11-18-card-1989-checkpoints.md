@@ -80,3 +80,28 @@ Native Windows execution is not claimed. Changed logic is portable PowerShell,
 with no new OS branch or production factory. Production script remains ASCII and
 uses PowerShell 5.1-compatible syntax. No live retire-temp preview/apply is allowed.
 Restart: none.
+
+## Renewal cost decision (V-6)
+
+`c1609_publication_gate` renews at every gate. The coordinator requests required
+object coverage on renew; `Get-C1008RetireProofExports` passes `-FreshGraph`, and
+`Write-C1609HostOriginProofAttempt` disables bundle reuse for FreshGraph. The
+existing `Fresh_graph_renewal_fetches_again_for_unchanged_advertisement` witness
+requires a second real fetch. Sharing one downloaded bundle across the five
+renewals would change that invariant, so this repair retains it. The Debug note
+measured 541.8 seconds of network across the renewals; this repair makes control
+cost attributable but does not claim to reduce renewal traffic.
+
+## Red provenance
+
+Production remained byte-identical to base for the red runs. CP-1..CP-4 failed at
+77f3c71a3df13da162a0671b1c91a638f88b458a: 8000 rejected, over-bound hash admitted,
+timings missing, and widened-bound ref guard rejected as origin before reaching
+the intended ref comparison. CP-5's absent-key fixture was corrected, then failed
+for the missing config function at 342e4a0909ddb4480894a72cf41ff181bd4c5e2c.
+CP-6's cleanup fixture was corrected, then failed for the missing timing receipt
+at 4a579f8b6c1b561a77618ef0cb05c2e76fd3f45f. CP-7 at 342e4a0909ddb4480894a72cf41ff181bd4c5e2c
+executed 19 methods: 18 passed, only the updated 8000-ms acceptance failed.
+An earlier CP-7 was stopped and joined before any test child launched; its native
+argument adapter was repaired to use literal ProcessStartInfo arguments. Preserve
+these fixture failures and stopped-run costs; they are not passing evidence.

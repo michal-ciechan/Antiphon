@@ -1,6 +1,13 @@
 # Offline production-function witnesses. No SSH, Docker or live origin is used.
-param([ValidateSet('window','deadline','timings','guards','config','receipt')][string]$Case)
+param([Parameter(Mandatory=$true)][ValidateSet('window','deadline','timings','guards','config','receipt')][string]$Case)
 $ErrorActionPreference = 'Stop'
+if([IO.File]::Exists('/proc/loadavg')){
+    do {
+        $load=[IO.File]::ReadAllText('/proc/loadavg').Trim();Write-Output ('LOAD '+$load)
+        $busy=[double]::Parse($load.Split(' ')[0],[Globalization.CultureInfo]::InvariantCulture) -ge 16
+        if($busy){Start-Sleep -Seconds 30}
+    }while($busy)
+}
 . (Join-Path $PSScriptRoot 'c590-real.ps1')
 function Assert-True([bool]$Value,[string]$Message) { if(-not $Value){throw $Message} }
 $root=Join-Path ([IO.Path]::GetTempPath()) ('c1989-'+[guid]::NewGuid().ToString('N'))
