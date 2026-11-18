@@ -2534,6 +2534,118 @@ function Test-TargetServer2RefusesContainer {
     } finally { Remove-Fixture $fx }
 }
 
+
+function New-Server2DrillDump {
+    param([string]$Dest, [string]$Name = 'antiphon-20261118T075000Z.dump', [int]$Bytes = 1048576)
+    New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+    $path = Join-Path $Dest $Name
+    [System.IO.File]::WriteAllBytes($path, (New-Object byte[] $Bytes))
+    return $path
+}
+
+function Get-Server2LineIndex {
+    param([string[]]$Lines, [string]$Pattern, [int]$After = -1)
+    for ($i = $After + 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match $Pattern) { return $i }
+    }
+    return -1
+}
+
+function Test-PlainDrillServer2 {
+    $fx = New-Fixture
+    try {
+        Install-SnapshotServer2Fake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        $base = @('-Plain', '-RestoreDrill', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        $plan = Invoke-Server2Case $fx (@('-WhatIf') + $base)
+        Assert-True ($plan.Exit -eq 0) 'PlainDrillServer2 plan exits 0' "exit=$($plan.Exit) $($plan.Err) $($plan.Out)"
+        Assert-True ($plan.Out -match 'step source: target=server2 container=antiphon-server2-postgres-postgres-1 context=antiphon-server2') 'PlainDrillServer2 plan names the source' $plan.Out
+        Assert-True ($plan.Out -match 'step drill:') 'PlainDrillServer2 plan lists drill steps' $plan.Out
+        Assert-True ($plan.Out -notmatch 'plain-drill-unsupported') 'PlainDrillServer2 plan is not refused' $plan.Out
+        Assert-NoDocker $plan 'PlainDrillServer2 plan'
+        $missing = Invoke-Server2Case $fx (@('-Execute') + $base)
+        Assert-True ($missing.Exit -eq 9 -and $missing.Out -match 'reason=missing-snapshot') 'PlainDrillServer2 without a dump is missing-snapshot' "exit=$($missing.Exit) $($missing.Err) $($missing.Out)"
+        Assert-True ([string]$missing.Tools -notmatch ' run ') 'PlainDrillServer2 without a dump starts nothing' ([string]$missing.Tools)
+        $dump = New-Server2DrillDump $dest
+        Set-Content -LiteralPath (Join-Path $dest 'antiphon-20261117T075000Z.dump.partial') -Value 'partial' -Encoding ASCII
+        New-Server2DrillDump $dest 'antiphon-20261117T075000Z.dump' 2048 | Out-Null
+        $run = Invoke-Server2Case $fx (@('-Execute') + $base)
+        Assert-True ($run.Exit -eq 0) 'PlainDrillServer2 exits 0' "exit=$($run.Exit) $($run.Err) $($run.Out)"
+        Assert-True ($run.Out -match 'drill=1' -and $run.Out -match 'tables=139') 'PlainDrillServer2 reports drill=1 tables=' $run.Out
+        Assert-True ($run.Out -match 'bytes=1048576' -and $run.Out -match 'seconds=[0-9]+') 'PlainDrillServer2 reports bytes and seconds' $run.Out
+        $lines = @(Get-Server2DockerLines $run)
+        $loose = @($lines | Where-Object { $_ -notmatch '^docker --context antiphon-server2 ' })
+        Assert-True ($loose.Count -eq 0) 'PlainDrillServer2 every docker call names the context' ($loose -join ' | ')
+        $runAt = Get-Server2LineIndex $lines ' run -d '
+        $runLine = ''
+        if ($runAt -ge 0) { $runLine = $lines[$runAt] }
+        Assert-True ($runLine -match '--label antiphon\.snapshot-drill=1' -and $runLine -match '--network none') 'PlainDrillServer2 run is labelled and offline' $runLine
+        Assert-True ($runLine.EndsWith(' ' + $script:Server2ImageId)) 'PlainDrillServer2 run uses the source image id' $runLine
+        $cpAt = Get-Server2LineIndex $lines (' cp ' + [regex]::Escape($dump) + ' [0-9a-f]{64}:/tmp/antiphon-drill\.dump$') $runAt
+        Assert-True ($runAt -ge 0 -and $cpAt -gt $runAt) 'PlainDrillServer2 copies the newest dump into the scratch container' ($lines -join ' | ')
+        $listAt = Get-Server2LineIndex $lines ' exec [0-9a-f]{64} pg_restore --list /tmp/antiphon-drill\.dump$' $cpAt
+        Assert-True ($listAt -gt $cpAt) 'PlainDrillServer2 lists the dump inside the scratch container' ($lines -join ' | ')
+        $restoreAt = Get-Server2LineIndex $lines ' exec [0-9a-f]{64} pg_restore --no-owner --no-acl --exit-on-error -U antiphon -d antiphon_drill /tmp/antiphon-drill\.dump$' $listAt
+        Assert-True ($restoreAt -gt $listAt) 'PlainDrillServer2 restores into antiphon_drill' ($lines -join ' | ')
+        $psql = @($lines | Where-Object { $_ -match ' psql ' })
+        Assert-True ($psql.Count -ge 1) 'PlainDrillServer2 counts tables with psql' ($lines -join ' | ')
+        $foreignPsql = @($psql | Where-Object { $_ -notmatch ' -d antiphon_drill ' -or $_ -match ' -d antiphon ' })
+        Assert-True ($foreignPsql.Count -eq 0) 'PlainDrillServer2 psql reads only the scratch database' ($psql -join ' | ')
+        $psqlAt = Get-Server2LineIndex $lines ' psql ' $restoreAt
+        $rmAt = Get-Server2LineIndex $lines ' rm -f [0-9a-f]{64}$' $psqlAt
+        $volAt = Get-Server2LineIndex $lines ' volume rm antiphon-postgres-drill-pgdata$' $rmAt
+        Assert-True ($psqlAt -gt $restoreAt -and $rmAt -gt $psqlAt -and $volAt -gt $rmAt) 'PlainDrillServer2 removes the scratch container then its volume' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ':/work' }).Count -eq 0) 'PlainDrillServer2 binds no /work stage' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ' -v [^ ]*:/var/lib/postgresql/data' -and $_ -notmatch ' -v antiphon-postgres-drill-pgdata:/var/lib/postgresql/data' }).Count -eq 0) 'PlainDrillServer2 mounts only the scratch volume' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ' exec antiphon-server2-postgres-postgres-1 ' }).Count -eq 0) 'PlainDrillServer2 runs nothing inside production' ($lines -join ' | ')
+        Assert-True (($run.Out + $run.Err) -notmatch 'ssh://') 'PlainDrillServer2 prints no endpoint' $run.Out
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainDrillDesktopRefused {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $cases = @(
+            @{ Name = 'default plan'; Args = @('-WhatIf', '-Plain', '-RestoreDrill') },
+            @{ Name = 'desktop plan'; Args = @('-WhatIf', '-Plain', '-RestoreDrill', '-Target', 'desktop') },
+            @{ Name = 'desktop execute'; Args = @('-Execute', '-Plain', '-RestoreDrill', '-Target', 'desktop') }
+        )
+        foreach ($case in $cases) {
+            $name = 'PlainDrillDesktopRefused ' + [string]$case.Name
+            $result = Invoke-Snapshot -Fixture $fx -Arguments (@($case.Args) + @('-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage))
+            Assert-True ($result.Exit -eq 2) "$name exits 2" "exit=$($result.Exit) $($result.Err) $($result.Out)"
+            Assert-True ($result.Out -match 'reason=plain-drill-unsupported') "$name reason" $result.Out
+            Assert-NoDocker $result $name
+            Assert-True (-not (Test-Path -LiteralPath $dest)) "$name writes nothing" $dest
+        }
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-PlainDrillRefusesProduction {
+    $fx = New-Fixture
+    try {
+        Install-SnapshotServer2Fake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        New-Server2DrillDump $dest | Out-Null
+        $base = @('-Execute', '-Plain', '-RestoreDrill', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        $cases = @(
+            @{ Name = 'production container'; Args = @('-ScratchContainer', 'antiphon-server2-postgres-postgres-1') },
+            @{ Name = 'production volume'; Args = @('-ScratchVolume', 'antiphon-server2-postgres_pgdata') },
+            @{ Name = 'production database'; Args = @('-ScratchDatabase', 'antiphon') }
+        )
+        foreach ($case in $cases) {
+            $name = 'PlainDrillRefusesProduction ' + [string]$case.Name
+            $result = Invoke-Server2Case $fx ($base + @($case.Args))
+            Assert-True ($result.Exit -eq 9) "$name exits 9" "exit=$($result.Exit) $($result.Err) $($result.Out)"
+            Assert-True ($result.Out -match 'reason=drill-refused') "$name reason" $result.Out
+            Assert-True ([string]$result.Tools -notmatch ' run ') "$name starts nothing" ([string]$result.Tools)
+            Assert-True ([string]$result.Tools -notmatch 'pg_restore') "$name restores nothing" ([string]$result.Tools)
+            Assert-True ([string]$result.Tools -notmatch ' volume (create|rm) ') "$name changes no volume" ([string]$result.Tools)
+        }
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -2550,7 +2662,8 @@ $all = @(
     'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused',
     'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder',
     'TargetDesktopUnchanged', 'TargetServer2Plan', 'TargetServer2ContextOnEveryCall', 'TargetServer2RefusesTcp',
-    'TargetServer2SourceMismatch', 'TargetStatusFields', 'TargetServer2RefusesContainer'
+    'TargetServer2SourceMismatch', 'TargetStatusFields', 'TargetServer2RefusesContainer',
+    'PlainDrillServer2', 'PlainDrillDesktopRefused', 'PlainDrillRefusesProduction'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
@@ -2560,7 +2673,8 @@ $script:SnapshotPosixFakeCases = @(
     'StagingPreservesOperatorFiles', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned',
     'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure',
-    'TargetServer2ContextOnEveryCall', 'TargetServer2RefusesTcp', 'TargetServer2SourceMismatch'
+    'TargetServer2ContextOnEveryCall', 'TargetServer2RefusesTcp', 'TargetServer2SourceMismatch',
+    'PlainDrillServer2', 'PlainDrillRefusesProduction'
 )
 function Invoke-SnapshotCase {
     param([string]$Name)
