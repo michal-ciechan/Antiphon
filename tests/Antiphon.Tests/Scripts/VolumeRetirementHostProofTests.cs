@@ -400,7 +400,9 @@ public sealed class VolumeRetirementHostProofTests
     }
 
     // Operator decision 2026-11-16 widened only the host freshness fence to a provisional
-    // 11,000 ms. The desktop live check keeps its five-second control and Git budget.
+    // 11,000 ms. CARD-1989 made the desktop live check's control and Git budget
+    // configurable (ANTIPHON_RETIRE_CONTROL_WINDOW_MS, default and cap 8,000 ms) below
+    // those unchanged host fences.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Final_live_check_bounds_the_configurable_desktop_budget()
@@ -422,8 +424,8 @@ public sealed class VolumeRetirementHostProofTests
             File.Exists(trace).ShouldBeFalse(budget + " ms must be refused before Git starts");
         }
         var coordinator = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
-        coordinator.ShouldContain("$remaining=[Math]::Min($controlWindowMs-[int]$controlWatch.ElapsedMilliseconds,", Case.Sensitive);
-        coordinator.ShouldContain("if($controlWatch.ElapsedMilliseconds -gt $controlWindowMs){throw 'control-deadline'}", Case.Sensitive);
+        coordinator.ShouldContain("$remaining=[Math]::Min($controlWindowMs-[int]($controlWatch.ElapsedMilliseconds-$cleanupMs),", Case.Sensitive);
+        coordinator.ShouldContain("if(($controlWatch.ElapsedMilliseconds-$cleanupMs) -gt $controlWindowMs){throw 'control-deadline'}", Case.Sensitive);
     }
 
     [Test]
