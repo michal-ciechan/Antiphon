@@ -13,7 +13,8 @@ namespace Antiphon.SessionRunner;
 /// </summary>
 public sealed record TempFamily(
     string Id, string Pattern, string? Producer, string? Literal, string Sample,
-    string? Container = null, bool DefaultEnabled = true, bool RequiresMirrorAbsent = false)
+    string? Container = null, bool DefaultEnabled = true, bool RequiresMirrorAbsent = false,
+    int MinAgeHours = 0, bool FilesOnly = false)
 {
     private Regex? _regex;
 
@@ -51,6 +52,8 @@ public sealed class RunnerTempSweep
 {
     public const string ClaudeScratch = "claude-scratch";
     public const string ClaudeContainer = "claude-1654";
+    public const string ReviewClone = "review-clone";
+    public const string SessionAnsi = "session-ansi";
 
     /// <summary>
     /// The shipped family table (plan §3.5). The <c>pty-test-root</c> alternation equals
@@ -95,6 +98,12 @@ public sealed class RunnerTempSweep
         new(ClaudeScratch, "^claude-1654/-work-worktrees-task-[0-9a-f]{8}\\z", null, null,
             "claude-1654/-work-worktrees-task-0123abcd",
             Container: ClaudeContainer, DefaultEnabled: false, RequiresMirrorAbsent: true),
+        new(ReviewClone, "^(?:antiphon-review-[0-9a-f]{8}|review-[0-9a-f]{8}-master[0-9]?)\\z",
+            "scripts/new-review-scratch.ps1", "'antiphon-review-'", "antiphon-review-0123abcd",
+            DefaultEnabled: false, MinAgeHours: 168),
+        new(SessionAnsi, "^[0-9a-f]{32}\\.ansi\\.log\\z",
+            "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs", "$\"{_sessionId:N}.ansi.log\"",
+            "0123456789abcdef0123456789abcdef.ansi.log", DefaultEnabled: false, MinAgeHours: 168, FilesOnly: true),
     ];
 
     private static readonly string[] DeniedExact =
@@ -120,6 +129,9 @@ public sealed class RunnerTempSweep
     private readonly TempSweepLimits _limits;
     private readonly Func<string, bool> _mirrorPresent;
     private readonly string _retiringRoot;
+    private string? _sessionLogRoot;
+    private Func<Guid, bool>? _sessionKnown;
+    private RunnerScratchClonePolicy? _scratchPolicy;
 
     public RunnerTempSweep(string tempRoot, IReadOnlyList<TempFamily> families, IWorkspaceHolderScan holders,
         Func<string, int?> ownerUid, int runnerUid, TimeProvider clock, TempSweepLimits limits,
@@ -142,19 +154,27 @@ public sealed class RunnerTempSweep
     /// <summary>The production composition over another temp root (the native witnesses bind it to a test root, never /tmp).</summary>
     internal static RunnerTempSweep CreateDefault(string retiringRoot, string tempRoot) =>
         new(tempRoot, RegisteredFamilies, new ProcWorkspaceSlotProcessProbe(), TempSweepNative.LstatUid,
-            TempSweepNative.EffectiveUid(), TimeProvider.System, new TempSweepLimits(), DefaultMirrorPresent, retiringRoot);
+            TempSweepNative.EffectiveUid(), TimeProvider.System, new TempSweepLimits(), DefaultMirrorPresent, retiringRoot)
+        { _sessionKnown = _ => true }; // Without the runtime's census, log ownership is unknown.
 
-    // CARD-1896 composition surface, introduced with its red production-factory witness.
+    /// <summary>The same factory is used by Program and the native witness over private roots.</summary>
     internal static RunnerTempSweep CreateForRunner(string retiringRoot, string tempRoot,
-        SessionRunnerSettings settings, SessionRunnerRuntime runtime, RunnerWorkspaceService workspace) =>
-        CreateDefault(retiringRoot, tempRoot);
+        SessionRunnerSettings settings, SessionRunnerRuntime runtime, RunnerWorkspaceService workspace)
+    {
+        var sweep = CreateDefault(retiringRoot, tempRoot);
+        sweep._sessionLogRoot = Path.GetFullPath(settings.SessionLogPath).Replace('\\', '/').TrimEnd('/');
+        // Keep every tracked session, including one awaiting release after process exit.
+        sweep._sessionKnown = id => runtime.List().Any(session => session.SessionId == id);
+        sweep._scratchPolicy = new RunnerScratchClonePolicy(workspace, retiringRoot);
+        return sweep;
+    }
 
     public string TempRoot => _tempRoot;
 
     /// <summary>Test seam (review 12ba9a25 A-2): runs between the delete-time inventory and the validated delete.</summary>
     internal Action<string>? AfterDeleteInventory { get; set; }
 
-    private sealed record Facts(string Name, string Path, TempFamily Family, bool IsFile, long Bytes, DateTime Newest);
+    private sealed record Facts(string Name, string Path, TempFamily Family, bool IsFile, long Bytes, DateTime Newest, string? Root);
 
     public async Task<PhoneHomeTempSweepResponse> SweepAsync(PhoneHomeTempSweepRequest request, CancellationToken ct)
     {
@@ -168,7 +188,7 @@ public sealed class RunnerTempSweep
                 Detail: "temp root must be an absolute path below /", Root: _tempRoot);
 
         var now = _clock.GetUtcNow().UtcDateTime;
-        var cutoff = now - TimeSpan.FromHours(request.MinAgeHours);
+        var separateLogs = _sessionLogRoot is not null && _sessionLogRoot != _tempRoot;
         var maxEntries = Math.Min(request.MaxEntries, _limits.MaxEntries);
         var maxBytes = Math.Min(request.MaxBytes, _limits.MaxBytes);
         var kept = new List<TempSweepCandidate>();
@@ -242,7 +262,8 @@ public sealed class RunnerTempSweep
 
             // Review 12ba9a25 D-1: a name carrying a line break or any other control character is never a family
             // candidate, whatever a pattern says (defence in depth beside the \z anchors).
-            var match = HasControl(name) ? null : _families.FirstOrDefault(f => f.Container is null && f.Regex.IsMatch(name));
+            var match = HasControl(name) ? null : _families.FirstOrDefault(f => f.Container is null
+                && (!separateLogs || f.Id != SessionAnsi) && f.Regex.IsMatch(name));
             if (IsDenied(name))
             {
                 // Hard deny regardless of family; a denied name is never measured or touched.
@@ -256,12 +277,40 @@ public sealed class RunnerTempSweep
                 Evaluate(name, match);
         }
 
-        void Evaluate(string name, TempFamily family)
+        if (separateLogs && Directory.Exists(_sessionLogRoot))
+        {
+            var family = _families.Single(f => f.Id == SessionAnsi);
+            var refusal = ContainerRefusal(_sessionLogRoot!);
+            if (refusal is null && !RunnerCompletedCardWorkspaceRemoval.UnlinkedPath(_sessionLogRoot!))
+                refusal = TempSweepCodes.Symlink;
+            if (refusal is not null)
+                Keep(new TempSweepCandidate("", family.Id, TempSweepCodes.Kept, refusal, Root: _sessionLogRoot));
+            else
+            {
+                try
+                {
+                    foreach (var path in Directory.EnumerateFileSystemEntries(_sessionLogRoot!).Order(StringComparer.Ordinal))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        var name = Path.GetFileName(path);
+                        if (!HasControl(name) && family.Regex.IsMatch(name))
+                            Evaluate(name, family, _sessionLogRoot);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Keep(new TempSweepCandidate("", family.Id, TempSweepCodes.Kept, TempSweepCodes.UnprovenContent,
+                        Detail: ex.GetType().Name, Root: _sessionLogRoot));
+                }
+            }
+        }
+
+        void Evaluate(string name, TempFamily family, string? root = null)
         {
             var enabled = request.Families is not null && request.Families.TryGetValue(family.Id, out var flag) ? flag : family.DefaultEnabled;
             if (!enabled)
             {
-                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.FamilyDisabled));
+                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.FamilyDisabled, Root: root));
                 return;
             }
             if (family.RequiresMirrorAbsent)
@@ -274,24 +323,29 @@ public sealed class RunnerTempSweep
                 }
             }
 
-            var path = _tempRoot + "/" + name;
+            var path = (root ?? _tempRoot) + "/" + name;
             var walk = Walk(path);
             if (walk.Reason is not null)
             {
-                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, walk.Reason, walk.Bytes, walk.Newest, Detail: walk.Detail));
+                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, walk.Reason, walk.Bytes, walk.Newest, Detail: walk.Detail, Root: root));
+                return;
+            }
+            if (family.FilesOnly && !walk.IsFile)
+            {
+                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.UnprovenContent, Root: root));
                 return;
             }
             if (walk.Newest is not { } newest)
             {
-                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.AgeUnknown, walk.Bytes));
+                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.AgeUnknown, walk.Bytes, Root: root));
                 return;
             }
-            if (newest > cutoff)
+            if (newest > now - TimeSpan.FromHours(Math.Max(request.MinAgeHours, family.MinAgeHours)))
             {
-                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.TooYoung, walk.Bytes, newest));
+                Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.TooYoung, walk.Bytes, newest, Root: root));
                 return;
             }
-            eligible.Add(new Facts(name, path, family, walk.IsFile, walk.Bytes, newest));
+            eligible.Add(new Facts(name, path, family, walk.IsFile, walk.Bytes, newest, root));
         }
 
         // Each family gets one turn per round. Large entries lead each round and each
@@ -331,6 +385,13 @@ public sealed class RunnerTempSweep
                 continue;
             }
 
+            var special = await SpecialRefusalAsync(facts, ct);
+            if (special is not null)
+            {
+                Keep(Candidate(facts, TempSweepCodes.Kept, special));
+                continue;
+            }
+
             if (!execute)
             {
                 acted.Add(Candidate(facts, TempSweepCodes.WouldRemove, null));
@@ -361,7 +422,18 @@ public sealed class RunnerTempSweep
     }
 
     private static TempSweepCandidate Candidate(Facts facts, string verdict, string? reason) =>
-        new(facts.Name, facts.Family.Id, verdict, reason, facts.Bytes, facts.Newest);
+        new(facts.Name, facts.Family.Id, verdict, reason, facts.Bytes, facts.Newest, Root: facts.Root);
+
+    private async Task<string?> SpecialRefusalAsync(Facts facts, CancellationToken ct)
+    {
+        if (facts.Family.Id == SessionAnsi && _sessionKnown?.Invoke(Guid.ParseExact(facts.Name[..32], "N")) == true)
+            return TempSweepCodes.LiveProcess;
+        if (facts.Family.Id != ReviewClone)
+            return null;
+        if (!File.Exists(Path.Combine(facts.Path, RunnerScratchClonePolicy.OwnerFile)))
+            return "scratch_registration_missing";
+        return _scratchPolicy is null ? "scratch_audit_unknown" : await _scratchPolicy.CheckAsync(facts.Path, ct);
+    }
 
     internal static bool IsDenied(string name) =>
         DeniedExact.Contains(name, StringComparer.OrdinalIgnoreCase)
@@ -372,6 +444,8 @@ public sealed class RunnerTempSweep
     /// <summary>The reported prefix: hex and digit runs folded, then each control character escaped as <c>\xNN</c>.</summary>
     internal static string Normalize(string name)
     {
+        if (name.StartsWith(ClaudeContainer + "/", StringComparison.Ordinal))
+            return ClaudeContainer + "/" + Normalize(name[(ClaudeContainer.Length + 1)..]);
         if (RandomName.IsMatch(name))
             return name.StartsWith("MSBuildTemp", StringComparison.Ordinal) ? "MSBuildTemp<random>" : "<random>";
         var value = DigitRun.Replace(HexRun.Replace(name, "<hex>"), "<n>");
@@ -503,6 +577,8 @@ public sealed class RunnerTempSweep
         {
             if (facts.IsFile)
             {
+                if (await SpecialRefusalAsync(facts, ct) is { } refusal)
+                    return (refusal, null);
                 // A top-level regular file (rcspeed-<hex>.ps1): re-read it without following a link, then unlink it.
                 var file = new FileInfo(facts.Path);
                 if (IsLink(file) || !IsRegular(file) || file.Length != facts.Bytes || file.LastWriteTimeUtc != facts.Newest)
@@ -513,6 +589,10 @@ public sealed class RunnerTempSweep
             {
                 var identity = RunnerWorkspaceNoFollowDelete.Identity(facts.Path);
                 var entries = await RunnerWorkspaceNoFollowDelete.InventoryAsync(facts.Path, identity, ct, allowLinks: true);
+                // Bind the publication/ownership audit to the exact inventory the delete
+                // revalidates; an edit during that audit cannot be silently deleted.
+                if (await SpecialRefusalAsync(facts, ct) is { } refusal)
+                    return (refusal, null);
                 AfterDeleteInventory?.Invoke(facts.Path);
                 await RunnerWorkspaceNoFollowDelete.DeleteOwnedAsync(facts.Path, identity, entries, null, null, ct, allowLinks: true);
             }
