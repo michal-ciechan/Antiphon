@@ -4,6 +4,8 @@
 # An empty bind or image refuses to start.
 # The volume name is pinned. Use this file only with project
 # antiphon-server2-postgres. Another project name still mounts that volume.
+# Image for this move: postgres:16@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+# (PostgreSQL 16.14, the desktop version). Never the floating postgres:16 tag (16.16 now).
 name: antiphon-server2-postgres
 
 services:
@@ -18,8 +20,18 @@ services:
       - -c
       - pg_stat_statements.max=5000
     restart: unless-stopped
-    mem_limit: 4g
-    cpus: 4.0
+    # CARD-1406 CPU isolation, cgroup v1 keys only. Postgres owns three whole physical
+    # cores: CPUs 0-2 and their SMT siblings 12-14. The runner services in
+    # docker-compose.server2-runner.yml take 3-11,15-23, so the sets are disjoint.
+    # cpus follows the cpuset: 6.0 for six logical CPUs (the plan said 3.0 for 0-2).
+    # shm_size lifts /dev/shm above the 64 MB engine default for parallel query.
+    # blkio weight 800 against the default 500 is a bias, not a reservation.
+    cpuset: "0-2,12-14"
+    cpus: 6.0
+    mem_limit: 8g
+    shm_size: 1gb
+    blkio_config:
+      weight: 800
     environment:
       POSTGRES_DB: antiphon
       POSTGRES_USER: antiphon

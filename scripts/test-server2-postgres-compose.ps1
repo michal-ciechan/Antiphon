@@ -378,8 +378,11 @@ function Invoke-Case {
                     'ANTIPHON_POSTGRES_IMAGE:?',
                     'POSTGRES_PASSWORD:?',
                     ':5432:5432',
-                    'mem_limit: 4g',
-                    'cpus: 4.0',
+                    'cpuset: "0-2,12-14"',
+                    'cpus: 6.0',
+                    'mem_limit: 8g',
+                    'shm_size: 1gb',
+                    "    blkio_config:`n      weight: 800",
                     'restart: unless-stopped',
                     'pg_isready -U antiphon -d antiphon',
                     'shared_preload_libraries=pg_stat_statements',
@@ -660,7 +663,12 @@ function Invoke-Case {
                     "networks:`n  antiphon-server2-postgres-drill:`n    name: antiphon-server2-postgres-drill",
                     "    networks:`n      - antiphon-server2-postgres-drill",
                     'ANTIPHON_POSTGRES_IMAGE:?',
-                    'POSTGRES_PASSWORD:?'
+                    'POSTGRES_PASSWORD:?',
+                    'cpuset: "0-2,12-14"',
+                    'cpus: 6.0',
+                    'mem_limit: 8g',
+                    'shm_size: 1gb',
+                    "    blkio_config:`n      weight: 800"
                 )) {
                 Assert-True ($text.Contains($need)) ('drill compose contains ' + $need) 'missing'
             }
