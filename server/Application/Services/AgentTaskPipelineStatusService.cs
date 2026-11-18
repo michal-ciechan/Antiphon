@@ -5,6 +5,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.HostLoad;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -78,7 +79,8 @@ public sealed class AgentTaskPipelineStatusService
         RemoteWorkspacePreparer? remotePrep = null,
         DispatchConcurrencySettingsService? concurrency = null,
         PhoneHomeRunnerDirectory? directory = null,
-        RunnerDefaultSettingsService? runnerDefaults = null, HostLoadShadowCache? hostLoad = null)
+        RunnerDefaultSettingsService? runnerDefaults = null, HostLoadShadowCache? hostLoad = null,
+        HostLoadRunnerKeys? runnerKeys = null)
     {
         _db = db;
         _settings = settings.Value;
@@ -90,6 +92,8 @@ public sealed class AgentTaskPipelineStatusService
         _directory = directory;
         _runnerDefaults = runnerDefaults;
         _hostLoad = hostLoad;
+        // Accepted so a caller can name the direct key. The projection still reads the desktop literal.
+        _ = runnerKeys;
     }
 
     public Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct) =>
