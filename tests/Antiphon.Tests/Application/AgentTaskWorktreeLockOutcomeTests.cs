@@ -43,7 +43,11 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
     /// <summary>
     /// The harness-built land service must use <see cref="GitSettings.WorktreeBaseInspectionTimeoutSeconds"/>
     /// (5). A missing <c>IOptions&lt;GitSettings&gt;</c> uses that same default (CARD-1749).
-    /// Three seconds is inside the production budget, so the long sibling token survives.
+    /// The long sibling's first Git command is held until the inspection deadline cancels it, so the
+    /// deadline itself is measured: at least 4.5 s from the call (the old 2 s fallback is far below),
+    /// and the sibling is reported as an inspection timeout, never silently dropped. A wall-clock race
+    /// against real Git children (a 3 s stall plus every later spawn inside 5 s) failed on a loaded
+    /// Windows desktop (rc run f2de5b30, group 24).
     /// </summary>
     [Test]
     [Timeout(120_000)]
@@ -52,24 +56,29 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
         new GitSettings().WorktreeBaseInspectionTimeoutSeconds.ShouldBe(5);
         await using var h = new LandingSafetyHarness();
         await h.InitializeAsync();
-        var marker = await AddUnlandedSiblingAsync(h, 1, longBranches: true);
-        var token = marker["unlanded-sibling=".Length..];
+        h.LandGitSettings.WorktreeBaseInspectionTimeoutSeconds.ShouldBe(5);
+        await AddUnlandedSiblingAsync(h, 1, longBranches: true);
         var verified = (await h.Fixture.RequiredAsync(h.Fixture.Repository, "rev-parse", "HEAD")).Trim();
-        var slowed = 0;
-        h.Fixture.Git.BeforeCommand = async (_, _) =>
+        var call = new System.Diagnostics.Stopwatch();
+        TimeSpan? cancelledAt = null;
+        var held = 0;
+        h.Fixture.Git.BeforeCommandAsync = async (_, _, ct) =>
         {
-            if (Interlocked.Exchange(ref slowed, 1) == 0)
-                await Task.Delay(TimeSpan.FromSeconds(3));
-            return null;
+            if (Interlocked.Exchange(ref held, 1) != 0) return;
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            finally { cancelledAt = call.Elapsed; }
         };
         await using var scope = h.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var land = scope.ServiceProvider.GetRequiredService<AgentTaskLandService>();
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == h.Fixture.TaskId);
+        call.Start();
         var (siblings, warnings) = await land.CollectUnlandedSiblingsAsync(
             task, h.Fixture.Repository, CancellationToken.None, verified);
-        siblings.ShouldContain(token);
-        warnings.ShouldNotContain(w => w.Contains("inspection_timeout", StringComparison.Ordinal));
+        cancelledAt.ShouldNotBeNull();
+        cancelledAt.Value.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(4.5));
+        siblings.ShouldBeEmpty();
+        warnings.ShouldContain(w => w.Contains("sibling inspection unknown (inspection_timeout)", StringComparison.Ordinal));
     }
 
     private static async Task DeliverAsync(bool busy, bool owners, string backend, bool sibling = false,
@@ -106,6 +115,10 @@ public sealed class AgentTaskWorktreeLockOutcomeTests
             });
             var bridge = receiver!;
             if (sibling) siblingWarning = await AddUnlandedSiblingAsync(h.H, siblingCount, longBranches);
+            // This class proves outcome delivery and the sibling summary, not the inspection deadline
+            // (the test above measures that). Four long siblings cost a dozen Git children; on a loaded
+            // Windows desktop they outran the 5 s product budget and the summary lost tokens (rc f2de5b30).
+            if (sibling) h.H.LandGitSettings = new GitSettings { WorktreeBaseInspectionTimeoutSeconds = 60 };
             // Successful admission does not create a notification; this cut precedes the Outcome.
             await using (var db = h.H.CreateContext())
                 (await db.AgentTaskLandNotifications.AnyAsync(n => n.TaskId == h.Context.TaskId)).ShouldBeFalse();
