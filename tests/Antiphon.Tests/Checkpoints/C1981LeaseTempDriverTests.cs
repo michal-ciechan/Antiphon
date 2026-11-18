@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Antiphon.Checkpoints;
 using Antiphon.TestSupport;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
