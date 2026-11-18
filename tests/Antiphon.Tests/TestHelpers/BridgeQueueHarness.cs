@@ -683,6 +683,8 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             await ActionWorker.StopAsync(CancellationToken.None);
             ActionWorker.Dispose();
         }
+        await TempRootCleanup.FinishAsync(TempRoot, PreserveDatabaseOnDispose, async () =>
+        {
         if (!PreserveDatabaseOnDispose)
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(ConnectionString)))
         {
@@ -726,18 +728,28 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
 
         Scope.Dispose();
         await Provider.DisposeAsync();
-        try
-        {
-            if (!PreserveDatabaseOnDispose && Directory.Exists(TempRoot))
-                Directory.Delete(TempRoot, recursive: true);
-        }
-        catch
-        {
-            // Best-effort.
-        }
+        });
 
         if (AfterDispose is not null)
             await AfterDispose.DisposeAsync();
+    }
+
+    /// <summary>CARD-1981. Deletes the harness temp root after cleanup. A throw from cleanup skips the delete.</summary>
+    internal static class TempRootCleanup
+    {
+        internal static async Task FinishAsync(string root, bool preserveDatabase, Func<Task> cleanup)
+        {
+            await cleanup();
+            try
+            {
+                if (!preserveDatabase && Directory.Exists(root))
+                    Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+                // Best-effort.
+            }
+        }
     }
 
     // All sessions in these tests are runtime-registered fakes. Most only need the empty ListAsync
