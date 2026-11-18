@@ -85,8 +85,15 @@ internal sealed class RunnerScratchClonePolicy(RunnerWorkspaceService workspace,
                     return "scratch_repository_unknown";
                 var origin = await workspace.InspectionGitAsync(repo, budget.Token, "remote", "get-url", "origin");
                 if (origin.ExitCode != 0 || origin.Stdout.Trim() != endpoint) return "scratch_origin_unknown";
-                var status = await workspace.InspectionGitAsync(repo, budget.Token,
-                    "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none", "--", ".", ":(exclude)" + OwnerFile);
+                // Status intentionally hides assume-unchanged and skip-worktree edits.
+                // Their presence makes cleanliness unprovable, even with a clean status.
+                var index = await workspace.InspectionGitAsync(repo, budget.Token, "ls-files", "-v", "-z");
+                if (index.ExitCode != 0) return "scratch_audit_unknown";
+                if (index.Stdout.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+                    .Any(entry => entry[0] == 'S' || char.IsLower(entry[0]))) return "scratch_index_hidden";
+                string[] statusArgs = ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none", "--", "."];
+                if (repo == root) statusArgs = [.. statusArgs, ":(exclude)" + OwnerFile];
+                var status = await workspace.InspectionGitAsync(repo, budget.Token, statusArgs);
                 if (status.ExitCode != 0) return "scratch_audit_unknown";
                 if (status.Stdout.Length > 0) return "scratch_dirty";
                 var unpublished = await workspace.InspectionGitAsync(repo, budget.Token,

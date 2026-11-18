@@ -131,6 +131,7 @@ public sealed class RunnerTempSweep
     private readonly string _retiringRoot;
     private string? _sessionLogRoot;
     private Func<Guid, bool>? _sessionKnown;
+    private Func<Guid, Action, bool>? _withUntrackedSession;
     private RunnerScratchClonePolicy? _scratchPolicy;
 
     public RunnerTempSweep(string tempRoot, IReadOnlyList<TempFamily> families, IWorkspaceHolderScan holders,
@@ -164,7 +165,8 @@ public sealed class RunnerTempSweep
         var sweep = CreateDefault(retiringRoot, tempRoot);
         sweep._sessionLogRoot = Path.GetFullPath(settings.SessionLogPath).Replace('\\', '/').TrimEnd('/');
         // Keep every tracked session, including one awaiting release after process exit.
-        sweep._sessionKnown = id => runtime.List().Any(session => session.SessionId == id);
+        sweep._sessionKnown = id => !runtime.TryWithUntrackedSession(id, static () => { });
+        sweep._withUntrackedSession = runtime.TryWithUntrackedSession;
         sweep._scratchPolicy = new RunnerScratchClonePolicy(workspace, retiringRoot);
         return sweep;
     }
@@ -579,11 +581,24 @@ public sealed class RunnerTempSweep
             {
                 if (await SpecialRefusalAsync(facts, ct) is { } refusal)
                     return (refusal, null);
-                // A top-level regular file (rcspeed-<hex>.ps1): re-read it without following a link, then unlink it.
-                var file = new FileInfo(facts.Path);
-                if (IsLink(file) || !IsRegular(file) || file.Length != facts.Bytes || file.LastWriteTimeUtc != facts.Newest)
-                    return (TempSweepCodes.ChangedSinceInventory, null);
-                File.Delete(facts.Path);
+                (string Reason, string? Detail)? fileFailure = null;
+                void DeleteFile()
+                {
+                    // Re-read without following a link, then unlink while a session
+                    // log's identity is still protected against concurrent creation.
+                    var file = new FileInfo(facts.Path);
+                    if (IsLink(file) || !IsRegular(file) || file.Length != facts.Bytes || file.LastWriteTimeUtc != facts.Newest)
+                        fileFailure = (TempSweepCodes.ChangedSinceInventory, null);
+                    else
+                        File.Delete(facts.Path);
+                }
+                if (facts.Family.Id == SessionAnsi && _withUntrackedSession is not null)
+                {
+                    if (!_withUntrackedSession(Guid.ParseExact(facts.Name[..32], "N"), DeleteFile))
+                        return (TempSweepCodes.LiveProcess, null);
+                }
+                else DeleteFile();
+                if (fileFailure is not null) return fileFailure;
             }
             else
             {

@@ -1271,9 +1271,27 @@ when it is not denied (`antiphon-pty-hosts`, `antiphon-pty-*`, `CoreFxPipe_*`, `
 `systemd-*`, `node-compile-cache` and the CARD-0826 `IsDenied` names), not a symlink, owned with every
 descendant by the runner uid, within 100,000 entries and 1 GiB, its newest regular-file write older than
 `MinAgeHours` (48), and the fail-closed holder scan finds no process with a cwd or fd inside. At most
-`MaxEntriesPerTick` (200) entries and `MaxBytesPerTick` (20 GiB) go per tick, oldest first, through the
+`MaxEntriesPerTick` (200) entries and `MaxBytesPerTick` (20 GiB) go per tick, one entry per family per
+round, largest first within each family and round (oldest/name break ties). An entry larger than the
+remaining byte budget is kept while smaller fitting entries may proceed. Removal goes through the
 no-follow delete (an inner symlink is unlinked, never followed; a socket or FIFO keeps the entry). Every
 other name is reported as `unregistered` with its count and bytes per normalized prefix and never touched.
+
+CARD-1896 adds two separately disabled families with a **seven-day minimum**, even when the request's
+age is lower. `session-ansi` matches only `<32hex>.ansi.log` regular files in the runner's configured
+`SessionLogPath`. Tracked sessions, in-progress launches and process holders keep their logs. The final
+validation and unlink share the session launch gate. The residue row preserves the configured root.
+`review-clone` recognizes `antiphon-review-<8hex>` containers and legacy `review-<8hex>-master[0-9]`
+names, but a matching name alone grants no deletion authority. Create new review/master scratch
+containers with `scripts/new-review-scratch.ps1 -TaskId <guid> -OwnerWorktree <absolute-worktree>`
+and clone into a child such as `master`. The helper records `.antiphon-scratch-owner` and refuses
+existing containers; never retrofit a marker onto an old checkout. The owner and its retiring copies
+must be absent. A workspace-slot owner remains protected while that slot exists, including reuse.
+Only standalone clones with the runner's exact live origin are eligible: linked worktrees, unknown
+content, dirty/untracked work, hidden index flags, unpublished local/ref-log commits and audit failures
+are kept. Existing scratch worktrees need their owning repository's sanctioned removal path.
+Neither family is enabled by this change. Unregistered six-character random names, MSBuild random
+names and decimal process IDs aggregate into stable prefix rows; this changes reporting only.
 
 Rows: Lane `RunnerTemp` in the tick's residue run (`Scope=runner-retention:server2`): one per family entry
 (`would_remove`, `removed` or a kept reason, `Branch=temp:<family>;bytes=<n>`) and one per unregistered prefix
