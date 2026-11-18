@@ -1,5 +1,5 @@
 # Offline production-function witnesses. No SSH, Docker or live origin is used.
-param([Parameter(Mandatory=$true)][ValidateSet('window','deadline','timings','guards','config','receipt')][string]$Case)
+param([Parameter(Mandatory=$true)][ValidateSet('window','deadline','timings','guards','config','receipt','moved')][string]$Case)
 $ErrorActionPreference = 'Stop'
 if([IO.File]::Exists('/proc/loadavg')){
     do {
@@ -26,6 +26,25 @@ $header=@('c1008-host-proof 2',('operation '+$operation),('origin '+(Get-C1008Sh
     ('advertisement '+(Get-C1008Sha256 $advertisement)),'count 1','completed 1700000001')
 [IO.File]::WriteAllText($proof,($header -join "`n")+"`n"+$advertisement)
 $script:delayHash=0;$script:delayGit=0;$script:withdraw=$false;$script:gitCalls=0
+$script:delayCleanup=0;$script:failCleanup=$false;$script:moved=$false;$script:lastScratch=''
+# Measured steady controls on server2 (CARD-1989 Review c4d03262): bundle hash
+# 0.9-1.4 s, ls-remote 1.0-1.15 s. The configured floor must fit their maxima.
+$steadyHashMs=1400;$steadyGitMs=1150;$floorMs=3000
+# Slow cleanup is injected at both the cmdlet and the production helper, so the
+# witness does not depend on how the proof removes its scratch directory.
+$script:realCleanup=${function:Remove-C1609LiveScratch}
+function Invoke-SlowCleanup([string]$Path) {
+    if($script:delayCleanup){Start-Sleep -Milliseconds $script:delayCleanup}
+    if($script:realCleanup){& $script:realCleanup $Path}
+    else{Microsoft.PowerShell.Management\Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue}
+    if($script:failCleanup){throw 'cleanup-io'}
+}
+function Remove-C1609LiveScratch { param([string]$Scratch) Invoke-SlowCleanup $Scratch }
+function Remove-Item {
+    [CmdletBinding()] param([string]$LiteralPath,[switch]$Recurse,[switch]$Force)
+    if([IO.Path]::GetFileName($LiteralPath) -cmatch '^c1609-live-'){Invoke-SlowCleanup $LiteralPath;return}
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Recurse:$Recurse -Force:$Force -ErrorAction SilentlyContinue
+}
 function Get-FileHash {
     param($LiteralPath,$Algorithm)
     if($script:delayHash){Start-Sleep -Milliseconds $script:delayHash}
@@ -33,9 +52,19 @@ function Get-FileHash {
 }
 function Invoke-C1609HostGit {
     param($Repo,$WorkingDirectory,$GitArgs,$TimeoutMs)
-    $script:gitCalls++;$script:gitBudget=$TimeoutMs
+    $script:gitCalls++;$script:lastScratch=$WorkingDirectory
+    if($GitArgs[0] -ceq 'ls-remote'){$script:gitBudget=$TimeoutMs}
+    if($script:moved){
+        # A fast-forward of the proved branch takes CARD-1986's graph path; its
+        # unbundle (8.6 s for the real 145 MiB bundle, CARD-1992) is killed at the
+        # remaining budget the way Invoke-C1609BoundedProcess kills a slow child.
+        if($GitArgs[0] -ceq 'ls-remote'){return (('f'*40)+"`trefs/heads/main`n")}
+        if($GitArgs -contains 'unbundle'){Start-Sleep -Milliseconds ($TimeoutMs+50);throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2)}
+        return ''
+    }
     if($script:delayGit){Start-Sleep -Milliseconds $script:delayGit}
-    if($script:withdraw){return (('d'*40)+"`trefs/heads/main`n")}
+    # A deleted proved ref is a withdrawal; a moved head would take the graph path.
+    if($script:withdraw){return (('d'*40)+"`trefs/heads/other`n")}
     return $advertisement
 }
 function Invoke-Witness([int]$Budget) {
@@ -68,15 +97,30 @@ try {
             Assert-True ($script:timing.elapsedMs -ge 1200) 'deadline must retain elapsed time'
         }
         timings {
-            $script:delayHash=80;$script:delayGit=120
-            Invoke-Witness 1000
+            # A successful proof at the configured floor, with the measured steady
+            # hash and ls-remote maxima and a slow scratch cleanup, still passes.
+            $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS=[string]$floorMs
+            $budget=Get-C1609ControlWindowMs
+            $script:delayHash=$steadyHashMs;$script:delayGit=$steadyGitMs;$script:delayCleanup=1500
+            Invoke-Witness $budget
             $names=@($script:timing.steps|ForEach-Object {$_.step})
             foreach($name in @('proof-read','bundle-hash','expected-parse','ls-remote','live-parse','compare','cleanup')){
                 Assert-True ($names -contains $name) ('missing timing '+$name)
             }
-            Assert-True (($script:timing.steps|Where-Object step -eq 'bundle-hash').elapsedMs -ge 80) 'hash duration is real'
-            Assert-True (($script:timing.steps|Where-Object step -eq 'ls-remote').elapsedMs -ge 120) 'git duration is real'
-            Assert-True ($script:gitBudget -lt 1000) 'git gets remaining shared budget'
+            Assert-True (($script:timing.steps|Where-Object step -eq 'bundle-hash').elapsedMs -ge $steadyHashMs) 'hash duration is real'
+            Assert-True (($script:timing.steps|Where-Object step -eq 'ls-remote').elapsedMs -ge $steadyGitMs) 'git duration is real'
+            Assert-True ($script:gitBudget -lt ($budget-$steadyHashMs)) 'git gets remaining shared budget'
+            Assert-True ($script:timing.outcome -ceq 'passed') 'successful proof at the floor passes'
+            Assert-True (($script:timing.steps|Where-Object step -eq 'cleanup').elapsedMs -ge 1500) 'cleanup duration is recorded'
+            Assert-True ($script:timing.cleanupMs -ge 1500) 'cleanup time is reported separately'
+            Assert-True ($script:timing.elapsedMs -lt $budget) 'charged control time excludes scratch cleanup'
+            Assert-True (-not [IO.Directory]::Exists($script:lastScratch)) 'scratch is still removed'
+            # A failing best-effort cleanup never turns a successful proof into a refusal.
+            $script:delayHash=0;$script:delayGit=0;$script:delayCleanup=0;$script:failCleanup=$true
+            Invoke-Witness $budget
+            Assert-True ($script:timing.outcome -ceq 'passed') 'cleanup failure keeps the proof'
+            Assert-True (-not [IO.Directory]::Exists($script:lastScratch)) 'failing cleanup still removed its scratch'
+            $script:failCleanup=$false
         }
         guards {
             $script:withdraw=$true;$refused=$false
@@ -96,7 +140,9 @@ try {
             Assert-True ((Get-C1609ControlWindowMs) -eq 8000) 'absent default must be 8000'
             $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='';Assert-True ((Get-C1609ControlWindowMs) -eq 8000) 'empty default'
             $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='7000';Assert-True ((Get-C1609ControlWindowMs) -eq 7000) 'configured window'
-            foreach($value in @('0','-1','999','8001','15000','abc','1;echo bad')){
+            $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS=[string]$floorMs;Assert-True ((Get-C1609ControlWindowMs) -eq $floorMs) 'floor is admitted'
+            $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='8000';Assert-True ((Get-C1609ControlWindowMs) -eq 8000) 'cap is admitted'
+            foreach($value in @('0','-1','999','1000','2999','8001','15000','abc','1;echo bad','03000')){
                 $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS=$value;$refused=$false
                 try{Get-C1609ControlWindowMs|Out-Null}catch{$refused=$true}
                 Assert-True $refused ('invalid window must refuse: '+$value)
@@ -118,7 +164,7 @@ case "$response" in C1609_CONTROL_RESPONSE*) exit 0;; *) exit 3;; esac
             & chmod 0700 $ssh
             if($LASTEXITCODE -ne 0){throw 'fixture chmod failed'}
             $oldPath=$env:PATH;$env:PATH=$root+[IO.Path]::PathSeparator+$env:PATH
-            $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='1000'
+            $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS=[string]$floorMs
             $project='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
             function Get-C1008RetireProofExports {
                 param($EvidenceRoot,$Run,$RecycleOperation,$InventoryRemote,$ProjectId,[switch]$Coordinated,
@@ -141,21 +187,28 @@ case "$response" in C1609_CONTROL_RESPONSE*) exit 0;; *) exit 3;; esac
                 foreach($slow in @($false,$true)){
                     $evidence=Join-Path $root ('evidence-'+$slow)
                     [void][IO.Directory]::CreateDirectory($evidence)
-                    $script:delayGit=if($slow){1200}else{0}
+                    # Fast path: a successful proof whose cleanup alone would cross the
+                    # floor. Slow path: ls-remote itself overruns the window.
+                    $script:delayGit=if($slow){$floorMs+200}else{1700}
+                    $script:delayCleanup=if($slow){0}else{1500}
                     $receipt=Join-Path $evidence 'remote-output.txt'
                     $code=Invoke-C1609RetirementCoordinator -Remote 'fixture' -EvidenceRoot $evidence -Run 'fixture' `
                         -Operation $operation -ProjectId $project -ReceiptPath $receipt
                     Assert-True ($code -eq $(if($slow){2}else{0})) ('coordinator must preserve success/refusal exit: '+[IO.File]::ReadAllText($receipt))
                     $record=Get-Content -Raw (Join-Path $evidence 'coordinator-controls.jsonl')|ConvertFrom-Json
-                    Assert-True ($record.limitMs -eq 1000) 'receipt binds configured limit'
+                    Assert-True ($record.limitMs -eq $floorMs) 'receipt binds configured limit'
                     Assert-True ($record.origins.Count -eq 1) 'receipt retains each origin'
                     Assert-True ($record.origins[0].steps.Count -ge 5) 'receipt retains individual control steps'
                     if($slow){
                         Assert-True ($record.outcome -ceq 'refused' -and $record.step -ceq 'ls-remote') 'receipt names failing step'
-                        Assert-True ($record.elapsedMs -ge 1200) 'receipt retains failed elapsed time'
+                        Assert-True ($record.elapsedMs -ge $floorMs) 'receipt retains failed elapsed time'
                         $message=[IO.File]::ReadAllText($receipt)
                         Assert-True ($message.Contains('failure-reason=control-deadline') -and $message.Contains('control-step=ls-remote')) 'failure message names deadline and step'
-                    }else{Assert-True ($record.outcome -ceq 'passed') 'success receipt'}
+                    }else{
+                        Assert-True ($record.outcome -ceq 'passed') 'success receipt'
+                        Assert-True ($record.cleanupMs -ge 1500) 'success receipt reports uncharged cleanup'
+                        Assert-True ($record.elapsedMs -lt $floorMs) 'success receipt charges control steps only'
+                    }
                     Assert-True (-not ([IO.File]::ReadAllText((Join-Path $evidence 'coordinator-controls.jsonl'))).Contains($origin)) 'receipt must not contain origin URL'
                 }
             } finally {
@@ -174,6 +227,20 @@ case "$response" in C1609_CONTROL_RESPONSE*) exit 0;; *) exit 3;; esac
                     foreach($path in @($inv,$pd,$exchange,$dir)){if([IO.Directory]::Exists($path)){[IO.Directory]::Delete($path)}}
                 }
             }
+        }
+        moved {
+            # CARD-1992: master fast-forwards during the proof window. The graph
+            # read cannot finish inside the window; the control refuses closed and
+            # names the step, never admitting the moved ref without proof.
+            $script:moved=$true;$refused=$false;$message=''
+            try{Invoke-Witness $floorMs}catch{$refused=$true;$message=[string]$_.Exception.Message}
+            Assert-True $refused 'moved ref beyond the window must refuse'
+            Assert-True ($script:timing.step -ceq 'moved-ref') 'refusal names moved-ref'
+            Assert-True ($script:timing.reason -ceq 'control-deadline') 'refusal is the control deadline'
+            Assert-True ($script:C1609LiveProofReason -ceq 'control-deadline') 'diagnosis is the control deadline'
+            Assert-True ($script:timing.elapsedMs -ge $floorMs) 'refusal retains elapsed time'
+            Assert-True (-not $message.Contains('withdrawn-ref')) 'a fast-forward is not reported as withdrawal'
+            Assert-True (-not [IO.Directory]::Exists($script:lastScratch)) 'moved-ref scratch is removed'
         }
     }
     Write-Output ('PASS C1989 '+$Case)
