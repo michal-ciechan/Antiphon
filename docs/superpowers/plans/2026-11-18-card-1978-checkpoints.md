@@ -63,3 +63,30 @@ Run through the checkpoint tool with --expected-source-sha set to committed HEAD
 
 V-2/R-2 and M-1 for compiled rows remain incomplete until the output decision is
 resolved and those rows are added and executed. The Unit lane stays nightly/rc.
+
+## Continuation state
+
+The CP-1 red source is 58bed81e89dc61ae43002f2b136abcb87e7d6eba. Its six fixture
+cases have one intended failure: rc-probe-linux-skip expected 0, actual 2,
+skip_identity_unlisted. The five existing controls pass. The two-line behavioral
+repair is 53e6fc335467a3907f0ebd6d154c5387b4e4ee08; its CP-1 rerun passes all six.
+These are synthetic-receipt tests of the real validator, not fresh TUnit evidence.
+The original generated reports stay in .antiphon/checkpoints/20261118-074635-8bd7
+and .antiphon/checkpoints/20261118-075222-438a respectively.
+
+The full-range selector names CardFilePrivacyGitTests, CardFilePrivacyPathTests,
+LinuxOnlyExpectedSkipClosureTests, RcBridgeProbePlatformTests,
+RunCheckpointSourceScriptTests, TestLaneCategoryGuardTests, and
+WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates.
+No capped or owed classes were reported. Re-evaluate after index regeneration.
+The brief's full named guard union is also pending because the roster is a
+classification input. Do not run whole slow classes: split required methods into
+rows under ten minutes, with explicit nonzero counts.
+
+The card-wide Linux SkipTestException source-census witness remains unimplemented.
+Existing unrostered off-Windows skips include AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash
+and ScriptHarnessSharingTests.Held_reader_accepts_shim_sentinel_append. A global
+all-sites-equal-WindowsOnly assertion would therefore be red for more than this
+card's RcBridge defect. Do not silently roster those methods or claim the narrow
+receipt regression establishes that global invariant. Complete/disposition that
+acceptance work in the continuation before Final Review.
