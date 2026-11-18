@@ -2,7 +2,7 @@
 
 Base: 6414a71967575b2a7dfbf283ee273f930b7a2100. Linux only. The SDK leak was observed on Linux; Windows `%TEMP%` behaviour stays unchanged.
 
-CP-1 and CP-3 through CP-5 are one TUnit method. CP-2 runs both methods of `C1981LeaseTempDriverTests`: the leased child and the symlink refusal. The first row pays the cold `Antiphon.Tests` build. Later rows of the same project reuse it. Session runner rows build that project once. Rows are serial and stay under ten minutes. Mutation checks are waived. CP-6 is the guard union: a `[NativeLinuxOnly]` marker is a policy input, and this slice adds the Windows rc exclusion rows for the three new antiphon witnesses. `C1210_Windows_linux_only_outcomes_are_exact` is the one Linux skip.
+CP-1 and CP-3 through CP-5 are one TUnit method. CP-2 runs both methods of `C1981LeaseTempDriverTests`: the leased child and the symlink refusal. The first row pays the cold `Antiphon.Tests` build. Later rows of the same project reuse it. Session runner rows build that project once. Rows are serial and stay under ten minutes. Mutation checks are waived. CP-6 is the guard union: a `[NativeLinuxOnly]` marker is a policy input. The rc census requires one methods set per class, so `C1981LeaseTempDriverTests` is one Windows exclusion row for both methods, and `C1981_LeaseTempDirConfinesSdkScratch` joins the existing `BuildSlotScriptTests` row beside `C800_WrapperInterruptKillsChildAndReleasesLease` (owner stays CARD-0590). The session-runner method stays on its class row. `C1210_Windows_linux_only_outcomes_are_exact` is the one Linux skip.
 
 ## Verification design
 
