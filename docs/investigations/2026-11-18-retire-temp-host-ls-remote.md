@@ -21,7 +21,7 @@ previous advertisement as `withdrawn-ref`, does not retry it, and reports it as
   `-c protocol.allow=never -c protocol.https.allow=always -c http.followRedirects=false -c credential.interactive=false`,
   env `GIT_TERMINAL_PROMPT=0` (`:23-27`), inside a short scratch bare repo under `%TEMP%\c1609-host-<guid>`.
 - Command: `git --git-dir <scratch> ls-remote https://github.com/michal-ciechan/Antiphon.git refs/heads/* refs/tags/* refs/antiphon/salvage/*`
-  (`:282`, again at `:331`; live control at `:418`). The URL is the trusted origin from the operator registry
+  (`:282`, again at `:335`; live control at `:416`). The URL is the trusted origin from the operator registry
   (`trusted-origins.json` / `private-origins.txt` in the exchange inventory). `repos/antiphon` is only the
   repo label from the temp volume inventory; the host never reads that path.
 - Credential source: the desktop user's normal git credential helper (non-interactive). Not printed.
@@ -29,7 +29,7 @@ previous advertisement as `withdrawn-ref`, does not retry it, and reports it as
   600 s overall network budget; the apply's live control is 5 s (`:400-404`).
 - **`status=2` is not a git exit code.** Every failure in an attempt, whatever its reason token
   (`git`, `snapshot`, `withdrawn-ref`, `deadline`, ...), is rethrown as
-  `Get-C1008HostLsRemoteDiagnosis -Repo <repo> -Status 2` (`:356`, `:79`, `:423`;
+  `Get-C1008HostLsRemoteDiagnosis -Repo <repo> -Status 2` (`:358`, `:79`, `:423`;
   formatter `scripts/c1008-host-proof.ps1:53`). The real reason is written only to the local
   `host-proof.log` in the exchange directory.
 - Retry rule (`:213-229`): only `snapshot` is retried (max 5 attempts in the budget). `withdrawn-ref`
@@ -96,7 +96,7 @@ Operator: nothing. No credential refresh is needed; the registry is present and 
 
 Code fix: already carded as **CARD-1986** (narrow `withdrawn-ref` in `scripts/c1609-host-proof.ps1:299`
 and `:419` to deleted/non-fast-forward/tag/temp-volume-own refs; report `withdrawn-ref` with the ref name
-instead of `status=2`). The apply's 5 s live control (`:418-419`) has the same semantics, so the apply
+instead of `status=2`). The apply's 5 s live control (`:416-419`) has the same semantics, so the apply
 is exposed to the same race (and to CARD-1989's 5 s window). No new card needed.
 
 ## (E) server2 state (read-only, 06:52:19Z)
