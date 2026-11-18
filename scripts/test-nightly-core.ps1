@@ -255,6 +255,56 @@ function Test-NCEvidenceRecordsMatchFallback {
     }
     $ok = $r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('System.Numerics.BigInteger') -and $r.Fallback.Contains('missedDescendantPids') -and $r.Fallback.Contains('owner-Session-Runner-Chunk.A-run-0.json') -and $r.Fallback.Contains('object,a:,System.Int64')
     Assert-NC $ok 'evidenceRecords' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    Test-NCCoveragePartsMatchFallback
+}
+
+# NightlyCoverageParts.cs: the roster digest, the present-row count of the coverage verdict and the latest
+# diagnostic log, each against its PowerShell body (and the refusals the compiled path hands back to it).
+function Test-NCCoveragePartsMatchFallback {
+    # A hashtable entry's reasonClass key is not a PSObject property, so it reads as 'platform'; the last
+    # roster's 'Platform' fails the case-sensitive check and must raise the PowerShell error.
+    $rosters = @(
+        @([pscustomobject]@{ platform = 'windows'; test = 'N.C.M'; reasonPrefix = 'p'; reasonClass = 'live-context' }, $null,
+          [pscustomobject]@{ platform = 'linux'; test = 'A.B.C'; reasonPrefix = 'q' }, @{ platform = 'windows'; test = 'H.T.M'; reasonPrefix = 'h'; reasonClass = 'bogus' },
+          [pscustomobject]@{ platform = 'windows'; test = 'N.C.A'; reasonPrefix = 'r'; ReasonClass = '  ' }),
+        @(),
+        $null,
+        @([pscustomobject]@{ platform = 'windows'; test = 'X.Y.Z'; reasonPrefix = 'z'; reasonClass = 'Platform' }))
+    $logs = Join-Path $root 'nc-logs'
+    $cases = [ordered]@{
+        empty = @()
+        diagNewest = @(@('a.diag', -30), @('b.diag', -10), @('c.log', 0))
+        noDiag = @(@('a.log', -20), @('b.txt', -5))
+        diagTie = @(@('a.diag', -10), @('b.diag', -10))
+        upperExt = @(@('A.DIAG', -10), @('b.log', 0))
+        hidden = @(@('a.diag', -10), @('h.diag', 0, 'hidden'))
+    }
+    $base = [datetime]::UtcNow.AddHours(-1)
+    foreach ($name in $cases.Keys) {
+        $d = Join-Path $logs $name
+        [void][IO.Directory]::CreateDirectory($d)
+        foreach ($f in $cases[$name]) {
+            $p = Join-Path $d $f[0]; [IO.File]::WriteAllText($p, $f[0]); [IO.File]::SetLastWriteTimeUtc($p, $base.AddSeconds($f[1]))
+            if ($f.Count -gt 2) { [IO.File]::SetAttributes($p, [IO.FileAttributes]::Hidden) }
+        }
+    }
+    $rows = @([pscustomobject]@{ Identity = 'a'; Outcome = 'NotExecuted' }, $null, [pscustomobject]@{ Identity = 'b'; Outcome = 'Passed' })
+    $r = Invoke-NCBothWays {
+        $digests = foreach ($roster in $rosters) { try { Get-NightlyExpectedSkipRosterDigest -Entries $roster } catch { 'throw:' + $_.Exception.Message } }
+        $latest = foreach ($name in $cases.Keys) {
+            $found = Get-NightlyLatestDiagnosticLog -Directory (Join-Path $logs $name)
+            if ($null -eq $found) { $name + '=null' } else { $name + '=' + [IO.Path]::GetFileName($found) }
+        }
+        $verdicts = foreach ($exit in @(0, 8)) {
+            foreach ($set in @($rows, @($null), @())) {
+                $v = ConvertTo-NightlyCoverageVerdict -TerminalRows $set -ProcessExit $exit -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'p' -ExpectedPolicyHash 'p' `
+                    -Platform 'windows' -ExpectedSkipRoster @([pscustomobject]@{ platform = 'windows'; test = 'a'; reasonPrefix = 'p' })
+                [ordered]@{ exit = $exit; tolerated = $v.processExitTolerated; tests = $v.testsPassed; coverage = $v.coverageComplete; reasons = @($v.reasons); digest = $v.rosterDigest }
+            }
+        }
+        [ordered]@{ digests = @($digests); latest = @($latest); verdicts = @($verdicts) }
+    }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('throw:expected-skip roster reasonClass Platform') -and $r.Fallback.Contains('diagNewest=b.diag')) 'coverageParts' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
 # The .NET type of every value in a read sidecar, depth first, so a parse that matches only as JSON still fails.
@@ -613,7 +663,7 @@ function Test-NCJsonFilesMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 28 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 29 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

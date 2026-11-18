@@ -22,7 +22,7 @@ $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = 'cc8fba6f91d42ef4575ea1e8b356727a8a92a70bdb29d4108832235c65fe6f0e'
+$script:PinnedInputDigest = 'a82ad059ae5d0ab0166e4f9553749f7c07fab6e0b0fd95c4d6c5322ef5461a90'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")

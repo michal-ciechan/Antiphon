@@ -652,6 +652,14 @@ function Get-NightlyLatestDiagnosticLog {
     if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) {
         return $null
     }
+    if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($Directory)) {
+        # NightlyCoverageParts.LatestDiagnosticLog; null (a tie, a hidden file) keeps the listing below.
+        $latest = [Antiphon.Nightly.NightlyCoverageParts]::LatestDiagnosticLog($Directory)
+        if ($null -ne $latest) {
+            if ($latest -eq '') { return $null }
+            return $latest
+        }
+    }
     $files = @(Get-ChildItem -LiteralPath $Directory -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
     if ($files.Count -eq 0) { return $null }
     $diag = @($files | Where-Object { [string]$_.Extension -eq '.diag' })
@@ -1196,6 +1204,12 @@ function Get-NightlyExpectedSkipReasonClass {
 
 function Get-NightlyExpectedSkipRosterDigest {
     param($Entries)
+    if (Test-NightlyCoreAvailable) {
+        # Recomputed for every chunk verdict: NightlyCoverageParts.RosterDigest; null (an invalid reasonClass)
+        # leaves the loop below to raise its error.
+        $digest = [Antiphon.Nightly.NightlyCoverageParts]::RosterDigest($Entries)
+        if ($null -ne $digest) { return $digest }
+    }
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($entry in @($Entries)) {
         if ($null -eq $entry) { continue }
@@ -2021,8 +2035,9 @@ function ConvertTo-NightlyCoverageVerdict {
         }
     }
     $unexecuted = $stillUnexecuted.ToArray()
-    $presentRows = @($TerminalRows | Where-Object { $null -ne $_ })
-    $allExpectedSkips = ($presentRows.Count -gt 0 -and $expectedSkipRows.Count -eq $presentRows.Count)
+    if (Test-NightlyCoreAvailable) { $presentCount = [Antiphon.Nightly.NightlyCoverageParts]::PresentCount($TerminalRows) }
+    else { $presentCount = @($TerminalRows | Where-Object { $null -ne $_ }).Count }
+    $allExpectedSkips = ($presentCount -gt 0 -and $expectedSkipRows.Count -eq $presentCount)
     $processExitTolerated = $false
     if ($failed.Count -gt 0) {
         $testsPassed = $false
