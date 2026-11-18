@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 329,
+      "classes": 330,
       "reason": "allowlist"
     },
     {
@@ -1404,9 +1404,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 277,
+      "classes": 278,
       "reason": "cap",
-      "owed": 252,
+      "owed": 253,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1634,9 +1634,9 @@
     },
     {
       "path": "server/Domain/Entities/TranscriptEntry.cs",
-      "classes": 125,
+      "classes": 126,
       "reason": "cap",
-      "owed": 100,
+      "owed": 101,
       "first": [
         "SessionMessageQueueGrokPtyIntegrationTests",
         "SessionMessageQueueServiceTests",
@@ -1650,9 +1650,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 605,
+      "classes": 606,
       "reason": "cap",
-      "owed": 580,
+      "owed": 581,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1666,9 +1666,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 605,
+      "classes": 606,
       "reason": "cap",
-      "owed": 580,
+      "owed": 581,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1863,9 +1863,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 434,
+      "classes": 436,
       "reason": "cap",
-      "owed": 409,
+      "owed": 411,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2380,9 +2380,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 521,
+      "classes": 522,
       "reason": "cap",
-      "owed": 496,
+      "owed": 497,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -11604,6 +11604,8 @@
       "classes": [
         "AgentTaskLandReceiptTests",
         "AgentTaskReplyIntegrationTests",
+        "PromptSpanOutcomeReadTests",
+        "PromptSpanOutcomeTests",
         "SessionMessageQueueDeliveryVerificationTests",
         "TaskReportFloorIndexTests",
         "TaskReportTurnSelectorTests",
@@ -15224,10 +15226,30 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Data/DbCallSiteMetrics.cs",
+      "classes": [
+        "DbCallSiteMetricsTests",
+        "PtyUtf8DecoderTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Data/DbCommandMetrics.cs",
       "classes": [
         "DbCommandMetricsTests",
-        "ExternalBoundaryTests"
+        "ExternalBoundaryTests",
+        "PromptSpanOutcomeTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/DbRateModels.cs",
+      "classes": [
+        "DbRateSamplerTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/DbRateWindow.cs",
+      "classes": [
+        "DbRateSamplerTests"
       ]
     },
     {
@@ -15264,6 +15286,18 @@
       "path": "server/Infrastructure/Data/HostMaintenanceStore.cs",
       "classes": [
         "HostCleanupMaintenanceTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/PgStatLabel.cs",
+      "classes": [
+        "DbRateSamplerTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/PgStatStatementsSql.cs",
+      "classes": [
+        "DbRateSamplerTests"
       ]
     },
     {
