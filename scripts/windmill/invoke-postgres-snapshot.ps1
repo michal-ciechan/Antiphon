@@ -2,6 +2,9 @@
 <#
 .SYNOPSIS
     Desktop entry for the daily plain snapshot. Runs the dump, then posts one status line.
+    SNAPSHOT-TARGET beside this runner copy picks the source (runbook G-4): absent
+    means desktop (the unchanged child command); server2 adds -Target server2. Any
+    other content, including an empty file, fails the run with reason=bad-target.
     ASCII-only. No secrets on stdout.
 #>
 $ErrorActionPreference = 'Stop'
@@ -42,6 +45,25 @@ function Resolve-PlainSnapshotScript {
     return ''
 }
 
+function Get-PlainSnapshotTarget {
+    param([string]$SettingFile)
+    if ([string]::IsNullOrWhiteSpace($SettingFile)) {
+        $SettingFile = Join-Path $PSScriptRoot 'SNAPSHOT-TARGET'
+    }
+    if (-not (Test-Path -LiteralPath $SettingFile)) { return 'desktop' }
+    if (-not (Test-Path -LiteralPath $SettingFile -PathType Leaf)) { return '' }
+    $value = ([System.IO.File]::ReadAllText($SettingFile)).Trim()
+    if ($value -ceq 'desktop' -or $value -ceq 'server2') { return $value }
+    return ''
+}
+
+function Get-PlainSnapshotChildArguments {
+    param([string]$Snapshot, [string]$Staging, [string]$Target)
+    $list = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute', '-OneDriveCopy', '-StagingPath', $Staging)
+    if ($Target -ceq 'server2') { $list += @('-Target', 'server2') }
+    return $list
+}
+
 function Write-SafeSnapshotText {
     param([string]$Text, [int]$Max = 80)
     if ([string]::IsNullOrWhiteSpace($Text)) { return }
@@ -55,7 +77,7 @@ function Write-SafeSnapshotText {
 }
 
 function Invoke-PlainSnapshotChild {
-    param([string]$Snapshot)
+    param([string]$Snapshot, [string]$Target = 'desktop')
     $exe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $stamp = [guid]::NewGuid().ToString('N')
     $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ('snapshot-out-' + $stamp + '.txt')
@@ -64,10 +86,8 @@ function Invoke-PlainSnapshotChild {
         # Local\antiphon is writable by another account, so the default staging
         # parent fails CARD-1413. This profile directory's parents pass.
         $staging = 'C:\Users\lndco\antiphon-snapshot-staging'
-        $proc = Start-Process -FilePath $exe -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Snapshot, '-Plain', '-Execute', '-OneDriveCopy',
-            '-StagingPath', $staging
-        ) -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $childArgs = Get-PlainSnapshotChildArguments -Snapshot $Snapshot -Staging $staging -Target $Target
+        $proc = Start-Process -FilePath $exe -ArgumentList $childArgs -Wait -PassThru -NoNewWindow -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         $stdout = ''
         $stderr = ''
         if (Test-Path -LiteralPath $stdoutPath) { $stdout = [System.IO.File]::ReadAllText($stdoutPath) }
@@ -82,18 +102,22 @@ function Invoke-PlainSnapshotChild {
 if ($MyInvocation.InvocationName -eq '.') { return }
 
 $snapshot = Resolve-PlainSnapshotScript
+$target = Get-PlainSnapshotTarget
 $recordDir = 'C:\Users\lndco\antiphon-backups\job-status'
 if (-not (Test-Path -LiteralPath $recordDir)) { New-Item -ItemType Directory -Path $recordDir | Out-Null }
 $recordPath = Join-Path $recordDir 'db-backup.json'
 $code = 1
 if ([string]::IsNullOrWhiteSpace($snapshot)) {
     Write-Output 'SNAPSHOT fail exit=1 reason=missing-script'
+} elseif ([string]::IsNullOrWhiteSpace($target)) {
+    Write-Output 'SNAPSHOT fail exit=1 reason=bad-target'
 } else {
     Write-Output ('snapshot-script=' + $snapshot)
+    Write-Output ('snapshot-target=' + $target)
     if (-not [string]::IsNullOrWhiteSpace($script:PlainSnapshotSourceSha)) {
         Write-Output ('source-sha=' + $script:PlainSnapshotSourceSha)
     }
-    $ran = Invoke-PlainSnapshotChild $snapshot
+    $ran = Invoke-PlainSnapshotChild $snapshot $target
     $code = [int]$ran.Exit
     Write-SafeSnapshotText $ran.Out
     if ($code -ne 0) { Write-SafeSnapshotText $ran.Err 40 }

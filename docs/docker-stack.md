@@ -2113,6 +2113,12 @@ if case antiphon-server2-postgres-drill_pgdata in *-drill_pgdata) true ;; *) ech
 
 Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `is_called`, and count, minimum primary key, and maximum primary key on TranscriptEntries, AgentTasks, SessionQueuedMessages, AgentTaskLandNotifications, and AgentTaskEvents. All five are over 32 MiB, so the check is not a row-body checksum. Do not print transcript text. Record dump elapsed time, restore elapsed time, copy elapsed time, and the dump file size. The script has no command that removes `antiphon_pgdata` or the production volume.
 
+### Desktop after the move (runbook G-1, G-4)
+
+`ANTIPHON_SKIP_DEV_POSTGRES=1` in the environment of `dev-aspire.ps1` or `scripts/autostart-apphost.ps1` keeps the desktop `antiphon-postgres` stopped once the database lives on server2. Both launchers bring up the other `docker-compose.dev.yml` services with `--no-deps` (redpanda today), log `ANTIPHON_SKIP_DEV_POSTGRES=1: desktop Postgres bring-up skipped`, and skip their `antiphon-postgres` wait. Absent, empty or any value but `1` keeps the old `up -d` of every service. `restart-apphost.ps1` passes it through by inheritance. Witness: `scripts/test-dev-postgres-optout.ps1`.
+
+The daily plain snapshot follows the database through `SNAPSHOT-TARGET` beside the runner copy (`scripts/windmill/README.md`). `scripts/postgres-snapshot.ps1 -Plain -Target server2` dumps `antiphon-server2-postgres-postgres-1` over `-Server2DockerHost` (default `ssh://mc@server2`, never printed) into the same desktop folders. `-Target server2` refuses the age path and `-RestoreDrill` (`target-plain-only`) and an explicit `-Container` other than the server2 container (`target-container`).
+
 ## Staging server on the server2 host (CARD-1742)
 
 `docker-compose.server2-staging-server.yml` is a staging Antiphon server on the server2 host daemon. The project is `antiphon-server2-staging`. It is not the phone-home runner project, not the nested dockerd, not Windmill, and not the desktop production database. It does not attach to the CARD-1406 host Postgres service. That service's operator drill is still owed, so this stack brings its own scratch Postgres on the network `antiphon-server2-staging`.

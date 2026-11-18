@@ -41,6 +41,11 @@
     the root must be owned by the caller and owner-only, under parents that
     others cannot rename in. Docker must answer on a local unix:// or npipe://
     endpoint unless -AllowRemoteDocker is passed.
+    -Target is desktop (default, unchanged) or server2 (runbook G-4, after the
+    Postgres move). server2 is -Plain only: it dumps the CARD-1406 container
+    antiphon-server2-postgres-postgres-1 through the ssh docker endpoint
+    -Server2DockerHost (default ssh://mc@server2) and writes, verifies, copies
+    and prunes into the same desktop folders. The endpoint is never printed.
     ASCII-only. Do not pass a password or connection string.
 #>
 [CmdletBinding()]
@@ -69,7 +74,9 @@ param(
     [string]$SourceVolume = 'antiphon_pgdata',
     [string]$ScratchImage = 'postgres:16',
     [switch]$AllowRemoteDocker,
-    [int]$StaleRunMinutes = 360
+    [int]$StaleRunMinutes = 360,
+    [string]$Target = 'desktop',
+    [string]$Server2DockerHost = 'ssh://mc@server2'
 )
 
 # A drill may reuse only a container that carries this label. These names stay
@@ -80,6 +87,10 @@ $script:SnapshotPlainDumpPattern = '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$'
 $script:SnapshotPlainDestination = 'C:\Users\lndco\antiphon-backups'
 $script:SnapshotPlainDecision = '2026-11-10'
 $script:SnapshotOneDriveRetain = 7
+$script:SnapshotServer2Container = 'antiphon-server2-postgres-postgres-1'
+$script:SnapshotTarget = 'desktop'
+# Read at script scope: inside a function $PSBoundParameters is that function's own.
+$script:SnapshotContainerBound = $PSBoundParameters.ContainsKey('Container')
 $script:SnapshotProductionContainers = @(
     'antiphon-postgres',
     'antiphon-server2-postgres-postgres-1'
@@ -655,6 +666,10 @@ function Get-SnapshotReasonCode {
         'destination-acl' { return 3 }
         'destination-link' { return 3 }
         'plain-drill-unsupported' { return 2 }
+        'bad-target' { return 2 }
+        'target-container' { return 2 }
+        'target-docker-host' { return 2 }
+        'target-plain-only' { return 2 }
         'staging-inside-sync' { return 3 }
         'staging-inside-destination' { return 3 }
         'staging-link' { return 3 }
@@ -725,6 +740,24 @@ function Test-SnapshotOutsideFile {
         return $InsideReason
     }
     return 'ok'
+}
+
+# Runbook G-4. desktop keeps the container and the docker endpoint exactly as
+# before. server2 names the CARD-1406 container and an ssh:// docker endpoint
+# (encrypted transport; the daemon guard below is for tcp://). An explicit
+# -Container that is not the server2 container is refused, never mixed.
+function Resolve-SnapshotTarget {
+    param([string]$Target, [string]$Container, [bool]$ContainerBound, [string]$DockerHost)
+    $fail = { param($r) [pscustomobject]@{ Ok = $false; Reason = $r; Target = ''; Container = ''; DockerHost = '' } }
+    if ($Target -ceq 'desktop') {
+        return [pscustomobject]@{ Ok = $true; Reason = 'ok'; Target = 'desktop'; Container = $Container; DockerHost = '' }
+    }
+    if ($Target -cne 'server2') { return (& $fail 'bad-target') }
+    if ($ContainerBound -and $Container -cne $script:SnapshotServer2Container) { return (& $fail 'target-container') }
+    if ([string]::IsNullOrEmpty($DockerHost) -or $DockerHost -cnotmatch '^ssh://([A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$') {
+        return (& $fail 'target-docker-host')
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = 'ok'; Target = 'server2'; Container = $script:SnapshotServer2Container; DockerHost = $DockerHost }
 }
 
 # The guards above apply to whichever daemon docker talks to. A tcp:// daemon
@@ -1378,7 +1411,7 @@ function Write-SnapshotPlainStatus {
         $folderToken = ConvertTo-SnapshotJsonString $OneDriveFolder
         $cloud = ',"oneDrive":"' + $OneDrive + '","oneDriveBytes":' + $OneDriveBytes + ',"oneDriveFolder":"' + $folderToken + '"'
     }
-    $json = '{"utc":"' + $Utc + '","exit":' + $Code + ',"bytes":' + $Bytes + ',"sha256":"' + $Sha256Prefix + '","duration":' + $DurationSec + ',"tables":' + $Tables + ',"mode":"plain","encryption":"none","operatorDecision":"' + $script:SnapshotPlainDecision + '"' + $cloud + '}'
+    $json = '{"utc":"' + $Utc + '","exit":' + $Code + ',"bytes":' + $Bytes + ',"sha256":"' + $Sha256Prefix + '","duration":' + $DurationSec + ',"tables":' + $Tables + ',"mode":"plain","encryption":"none","operatorDecision":"' + $script:SnapshotPlainDecision + '"' + $cloud + ',"target":"' + $script:SnapshotTarget + '"}'
     if ($json -match '(?i)password\s*=|postgres://|Host\s*=') { return $false }
     $partial = Join-Path $Dir 'snapshot-status.json.partial'
     $final = Join-Path $Dir 'snapshot-status.json'
@@ -1807,7 +1840,8 @@ function Invoke-SnapshotPlainPublish {
 }
 
 function Invoke-SnapshotPlainMode {
-    param([bool]$PlanOnly)
+    param([bool]$PlanOnly, $Source)
+    $Container = [string]$Source.Container
     $sync = $SyncRoot
     if ([string]::IsNullOrWhiteSpace($sync)) { $sync = 'C:\Users\lndco\OneDrive' }
     $dest = $Destination
@@ -1850,6 +1884,9 @@ function Invoke-SnapshotPlainMode {
         Write-Output 'step acl: user-only directory=absent'
     }
 
+    $endpointKind = 'local'
+    if (-not [string]::IsNullOrEmpty([string]$Source.DockerHost)) { $endpointKind = 'ssh' }
+    Write-Output ('step source: target=' + $Source.Target + ' container=' + $Container + ' docker=' + $endpointKind)
     Write-Output ('step dump: docker exec ' + $Container + ' pg_dump -Fc --no-owner --no-acl -U antiphon -d ' + $Database + ' -f /tmp/antiphon-snapshot.dump')
     Write-Output ('step verify: pg_restore --list on the new file must include TABLE DATA before prune; minimum ' + $MinimumDumpBytes + ' bytes')
     Write-Output 'step copy: write the dump to antiphon-<utc>.dump.partial then rename to antiphon-<utc>.dump'
@@ -1883,17 +1920,25 @@ function Invoke-SnapshotPlainMode {
     if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
     $rootState = Test-SnapshotStagingRoot $stage
     if ($rootState -ne '') { return Write-SnapshotResult $false $rootState '' }
-    $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
-    if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
-    Write-SnapshotDaemonWarning
+    $remoteHost = [string]$Source.DockerHost
+    if ([string]::IsNullOrEmpty($remoteHost)) {
+        $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source ([bool]$AllowRemoteDocker)
+        if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
+        Write-SnapshotDaemonWarning
+    }
     if (-not (Initialize-SnapshotStaging $stage)) { return Write-SnapshotResult $false 'staging-mode' '' }
     $run = [string]$script:SnapshotRunStaging
     if ([string]::IsNullOrWhiteSpace($run)) { return Write-SnapshotResult $false 'staging-mode' '' }
+    $savedDockerHost = [Environment]::GetEnvironmentVariable('DOCKER_HOST')
     try {
+        # server2: every docker call of this publish (dump, list, size, both copies,
+        # cleanup) goes to the ssh endpoint; the previous value is restored after.
+        if (-not [string]::IsNullOrEmpty($remoteHost)) { [Environment]::SetEnvironmentVariable('DOCKER_HOST', $remoteHost) }
         $published = Invoke-SnapshotPlainPublish $Container $Database $run $dest $Retain $dockerCmd.Source $MinimumDumpBytes ([bool]$OneDriveCopy) $sync $OneDriveRetain
         if (-not [string]::IsNullOrWhiteSpace([string]$published.Loud)) { Write-Output ([string]$published.Loud) }
         return Write-SnapshotResult $false $published.Reason $published.Detail
     } finally {
+        if (-not [string]::IsNullOrEmpty($remoteHost)) { [Environment]::SetEnvironmentVariable('DOCKER_HOST', $savedDockerHost) }
         [void](Remove-SnapshotStaging $run)
     }
 }
@@ -1907,11 +1952,17 @@ function Invoke-PostgresSnapshot {
         return Write-SnapshotResult $true 'ambiguous-mode' ''
     }
     if ($WhatIf) { $planOnly = $true }
+    $source = Resolve-SnapshotTarget -Target $Target -Container $Container -ContainerBound ([bool]$script:SnapshotContainerBound) -DockerHost $Server2DockerHost
+    if (-not $source.Ok) { return Write-SnapshotResult $planOnly $source.Reason '' }
+    $script:SnapshotTarget = $source.Target
+    if ($source.Target -ne 'desktop' -and (-not $Plain -or $RestoreDrill)) {
+        return Write-SnapshotResult $planOnly 'target-plain-only' ''
+    }
     if ($Plain -and $RestoreDrill) {
         Write-Output ('PLAIN UNENCRYPTED operator-decision=' + $script:SnapshotPlainDecision + ' encryption=none')
         return Write-SnapshotResult $planOnly 'plain-drill-unsupported' ''
     }
-    if ($Plain) { return Invoke-SnapshotPlainMode $planOnly }
+    if ($Plain) { return Invoke-SnapshotPlainMode $planOnly $source }
     $sync = $SyncRoot
     if ([string]::IsNullOrWhiteSpace($sync)) { $sync = 'C:\Users\lndco\OneDrive' }
     $dest = $Destination
