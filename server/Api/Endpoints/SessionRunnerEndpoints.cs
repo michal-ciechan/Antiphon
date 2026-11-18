@@ -9,6 +9,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.HostLoad;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -41,7 +42,9 @@ public static class SessionRunnerEndpoints
             var prep = http.RequestServices.GetService<RemoteWorkspacePreparer>();
             var rows = await SessionRunnerCatalogue.ListAsync(directory, db, delegation, prep, ct);
             var load = http.RequestServices.GetService<HostLoadShadowCache>();
-            return Results.Ok(rows.Select(r => r with { Load = load?.Get(r.RunnerId) }));
+            // A phone-home host maps this route without the host-load graph. The default key is desktop.
+            var keys = http.RequestServices.GetService<HostLoadRunnerKeys>() ?? HostLoadRunnerKeys.Default;
+            return Results.Ok(rows.Select(r => r with { Load = load?.Get(keys.Canonical(r.RunnerId)) }));
         }).WithTags("SessionRunners");
 
         app.MapPost(PhoneHomeProtocol.RegisterPath, (
@@ -61,7 +64,12 @@ public static class SessionRunnerEndpoints
         app.MapGet("/api/session-runners/{runnerId}/status", (
             string runnerId,
             PhoneHomeRunnerDirectory directory, HttpContext http) =>
-            Results.Ok(directory.Status(runnerId) with { Load = http.RequestServices.GetService<HostLoadShadowCache>()?.Status(runnerId) })).WithTags("SessionRunners");
+        {
+            // Same optional graph as the catalogue: an unregistered key stays on the default desktop fold.
+            var keys = http.RequestServices.GetService<HostLoadRunnerKeys>() ?? HostLoadRunnerKeys.Default;
+            var load = http.RequestServices.GetService<HostLoadShadowCache>()?.Status(keys.Canonical(runnerId));
+            return Results.Ok(directory.Status(runnerId) with { Load = load });
+        }).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/capacity", async (
             string runnerId, PhoneHomeRunnerDirectory directory, [FromServices] HostBudgetService budgets,
