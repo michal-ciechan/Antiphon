@@ -206,7 +206,18 @@ function Test-NCDiagnosticsMatchFallback {
         csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
     } }
     $rowCore = [Antiphon.Nightly.TestPhaseSummary]::Row($row, [string[]]@($row.Keys))
-    Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # TestPhaseSummaryFast: the whole-roster tests.csv lines and the [bool]$test.incomplete scan.
+    $rowTwo = [ordered]@{ testId = 'b'; duration = '1.5'; joined = $false; db = 0; outcome = '' }
+    $fastRows = [Antiphon.Nightly.TestPhaseSummaryFast]::Rows(@($row, $rowTwo), [string[]]@($row.Keys))
+    $fastOk = ($fastRows.Count -eq 2 -and $fastRows[0] -ceq $rowCore -and $fastRows[1] -ceq [Antiphon.Nightly.TestPhaseSummary]::Row($rowTwo, [string[]]@($row.Keys)))
+    $fastOk = $fastOk -and ([Antiphon.Nightly.TestPhaseSummaryFast]::Rows(@(), [string[]]@('a')).Count -eq 0)
+    foreach ($v in @($null, $false, $true, 0, 1, '', 'False', [object[]]@(), [object[]]@($false))) {
+        $tests = [Collections.Generic.List[object]]::new()
+        $tests.Add([ordered]@{ incomplete = $false }); $tests.Add([ordered]@{ incomplete = $v }); $tests.Add([pscustomobject]@{ other = 1 })
+        $loop = $false; foreach ($test in $tests) { if ([bool]$test.incomplete) { $loop = $true } }
+        $fastOk = $fastOk -and ([Antiphon.Nightly.TestPhaseSummaryFast]::AnyIncomplete($tests) -eq $loop)
+    }
+    Assert-NC ($fastOk -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('fast ' + $fastOk + ' compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 
     # Executed-chunk outcome rows (TestPhaseSummary.OutcomeRows/PassedCount): TRX-shaped rows through the
     # manifest writer's loop and envelope-shaped rows (JSON objects, dictionaries, nulls) through the item path.

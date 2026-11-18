@@ -2275,7 +2275,7 @@ function ConvertTo-TestPhaseSummaryRows {
             $suiteText = ''
             if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
             [Antiphon.Nightly.TestPhaseSummary]::TagRows(@($trxRead.Rows), $group, $suiteText)
-            foreach ($row in @($trxRead.Rows)) { $trxRows.Add($row) }
+            $trxRows.AddRange([object[]]@($trxRead.Rows))
             continue
         }
         foreach ($row in @($trxRead.Rows)) {
@@ -2416,7 +2416,7 @@ function ConvertTo-TestPhaseSummaryRows {
     }
     if ($core) {
         $unjoined = [Antiphon.Nightly.TestPhaseSummary]::UnjoinedTrxRows($trxRows.ToArray(), $joinedTrx, $completeTestIds)
-        foreach ($row in $unjoined.Rows) { $tests.Add($row) }
+        $tests.AddRange([object[]]@($unjoined.Rows))
         if ($unjoined.PassedWithoutPhase -and -not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
     } else {
     foreach ($row in $trxRows) {
@@ -2473,8 +2473,12 @@ function ConvertTo-TestPhaseSummaryRows {
         if (-not $quality.Contains([string]$token)) { $quality.Add([string]$token) }
     }
     $complete = $quality.Count -eq 0
+    if ($core) {
+        if ([Antiphon.Nightly.TestPhaseSummaryFast]::AnyIncomplete($tests)) { $complete = $false }
+    } else {
     foreach ($test in $tests) {
         if ([bool]$test.incomplete) { $complete = $false }
+    }
     }
     $spent = 0
     if ($null -ne $budget.Watch) { $spent = [int]$budget.Watch.ElapsedMilliseconds }
@@ -2527,8 +2531,9 @@ function Write-TestPhaseSummaryFiles {
     foreach ($h in $headers) { $headCells += (ConvertTo-TestPhaseCsvCell -Value $h) }
     $lines.Add(($headCells -join ','))
     $core = Test-NightlyCoreAvailable
+    if ($core) { $lines.AddRange([Antiphon.Nightly.TestPhaseSummaryFast]::Rows($orderedTests, [string[]]$headers)) }
+    else {
     foreach ($test in $orderedTests) {
-        if ($core) { $lines.Add([Antiphon.Nightly.TestPhaseSummary]::Row($test, [string[]]$headers)); continue }
         $cells = @(
             (ConvertTo-TestPhaseCsvCell -Value $test.testId),
             (ConvertTo-TestPhaseCsvCell -Value $test.duration),
@@ -2549,6 +2554,7 @@ function Write-TestPhaseSummaryFiles {
             (ConvertTo-TestPhaseCsvCell -Value $test.droppedPhaseCount)
         )
         $lines.Add(($cells -join ','))
+    }
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
     Write-NightlyEvidenceLines (Join-Path $timing 'tests.csv') $lines.ToArray()
@@ -3681,12 +3687,12 @@ function Invoke-QualificationPostRunAggregation {
 function Get-QualificationTimingReport {
     param([string]$LogRoot, [string]$TimingRoot)
     Sync-NightlyDeferredEvidenceWrites
-    $chunks = @()
+    $chunks = New-Object System.Collections.Generic.List[object]
     if (-not [string]::IsNullOrWhiteSpace($LogRoot) -and (Test-Path -LiteralPath $LogRoot)) {
         foreach ($file in @(Get-ChildItem -LiteralPath $LogRoot -Filter '*.timing.json' -File -ErrorAction SilentlyContinue)) {
             try {
                 $row = Read-QualificationSidecar -Path $file.FullName
-                if ($null -ne $row) { $chunks += $row }
+                if ($null -ne $row) { $chunks.AddRange([object[]]@($row)) }
             } catch { }
         }
     }
@@ -3714,7 +3720,7 @@ function Get-QualificationTimingReport {
     foreach ($key in @($bySuite.Keys | Sort-Object)) { $timeline += $bySuite[$key] }
     return [pscustomobject]@{
         TimingRoot = [string]$TimingRoot
-        Chunks = @($chunks)
+        Chunks = $chunks.ToArray()
         Timeline = @($timeline)
     }
 }
