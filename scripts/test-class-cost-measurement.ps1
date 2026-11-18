@@ -3,7 +3,6 @@
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
-$env:ANTIPHON_NIGHTLY_CORE = 'off'
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
 if ([string]::IsNullOrWhiteSpace($ResultsDirectory)) {
     $ResultsDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('cm-' + [guid]::NewGuid().ToString('N'))

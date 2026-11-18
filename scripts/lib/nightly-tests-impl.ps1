@@ -54,69 +54,18 @@ function Get-NightlyProfileExecutionChunks {
     # Group-Object's semantics by running it over one item per class: keys are
     # case-insensitive, named by their first node, and ordered as Group-Object
     # orders them on this PowerShell; nodes keep discovery order within a class.
+    Assert-NightlyCoreAvailable 'Get-NightlyProfileExecutionChunks'
     $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $Exclusions
     $index = 0
     foreach ($chunk in $Chunks) {
         $required = @($chunk.classes)
-        if (Test-NightlyCoreAvailable) {
-            # Compiled first pass (NightlyCore.cs); Group-Object stays here for its ordering.
-            $bucketList = [Antiphon.Nightly.NightlyDiscovery]::BucketByBareClass(@($DiscoveryNodes), [string[]]$required, $exclusionIndex)
-            foreach ($group in @($bucketList | Group-Object Bare)) {
-                $bare = [string]$group.Name
-                $bucket = @($group.Group)[0]
-                $members = $bucket.Nodes
-                $requiredNodes = @($bucket.Required)
-                if ($requiredNodes.Count -eq 0) { continue }
-                if ($requiredNodes.Count -eq $members.Count) {
-                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
-                } else {
-                    foreach ($method in @($requiredNodes | Group-Object { $_.Method })) {
-                        $node = @($method.Group)[0]
-                        $dot = $bare.LastIndexOf('.')
-                        if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
-                        $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
-                        [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group) }
-                    }
-                }
-            }
-            continue
-        }
-        # Per raw class (ClassName + Type): chunk membership, bare name and exclusion rows.
-        $classes = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
-        $buckets = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::OrdinalIgnoreCase)
-        $keys = [Collections.Generic.List[object]]::new()
-        foreach ($node in @($DiscoveryNodes)) {
-            $className = [string]$node.ClassName
-            $classKey = $className + [char]0 + [string]$node.Type
-            $class = $null
-            if (-not $classes.TryGetValue($classKey, [ref]$class)) {
-                $class = [pscustomobject]@{
-                    Assigned = [bool](Test-NightlyClassAssigned -ClassName $node.ClassName -TypeName $node.Type -RequiredClasses $required)
-                    Bare = [string](Get-NightlyBareClassIdentity -Name $className)
-                    Exclusion = (Get-NightlyProfileExclusionEntry -Index $exclusionIndex -ClassName $className -Type ([string]$node.Type))
-                }
-                $classes[$classKey] = $class
-            }
-            if (-not $class.Assigned) { continue }
-            $bucket = $null
-            if (-not $buckets.TryGetValue($class.Bare, [ref]$bucket)) {
-                $bucket = [pscustomobject]@{ Nodes = [Collections.Generic.List[object]]::new(); Excludes = $false }
-                $buckets[$class.Bare] = $bucket
-                $keys.Add([pscustomobject]@{ Bare = $class.Bare })
-            }
-            $bucket.Nodes.Add($node)
-            if ($null -ne $class.Exclusion) { $bucket.Excludes = $true }
-        }
-        foreach ($group in @($keys | Group-Object Bare)) {
+        # Compiled first pass (NightlyCore.cs); Group-Object stays here for its ordering.
+        $bucketList = [Antiphon.Nightly.NightlyDiscovery]::BucketByBareClass(@($DiscoveryNodes), [string[]]$required, $exclusionIndex)
+        foreach ($group in @($bucketList | Group-Object Bare)) {
             $bare = [string]$group.Name
-            $bucket = $buckets[$bare]
+            $bucket = @($group.Group)[0]
             $members = $bucket.Nodes
-            $requiredNodes = @($members)
-            if ($bucket.Excludes) {
-                $requiredNodes = @(foreach ($node in $members) {
-                    if (-not (Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $node)) { $node }
-                })
-            }
+            $requiredNodes = @($bucket.Required)
             if ($requiredNodes.Count -eq 0) { continue }
             if ($requiredNodes.Count -eq $members.Count) {
                 [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
@@ -150,13 +99,6 @@ function Get-NightlyBareTypeParts {
     }
 }
 
-function Test-NightlyTypeNamePrefixes {
-    param([string]$Left, [string]$Right)
-    if ([string]::IsNullOrEmpty($Left) -or [string]::IsNullOrEmpty($Right)) { return $false }
-    if ($Left.Length -ge $Right.Length) { return $false }
-    return $Right.StartsWith($Left, [StringComparison]::Ordinal)
-}
-
 function New-NightlyClassGroupFilter {
     param([string]$Namespace, [string[]]$TypeNames)
     $ordered = @($TypeNames | Sort-Object)
@@ -167,39 +109,8 @@ function New-NightlyClassGroupFilter {
 function Test-NightlyClassGroupFilter {
     param([string[]]$Classes, [string]$GroupFilter)
     if ([string]::IsNullOrWhiteSpace($GroupFilter)) { return $false }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter) }
-    $matched = [regex]::Match($GroupFilter, '^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$')
-    if (-not $matched.Success) { return $false }
-    $ns = $matched.Groups[1].Value
-    $body = $matched.Groups[2].Value
-    $operands = @()
-    foreach ($op in [regex]::Matches($body, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) {
-        $operands += $op.Groups[1].Value
-    }
-    $classList = @($Classes)
-    if ($operands.Count -lt 2 -or $classList.Count -ne $operands.Count) { return $false }
-    $seen = @{}
-    foreach ($op in $operands) {
-        if ($seen.ContainsKey($op)) { return $false }
-        $seen[$op] = $true
-    }
-    for ($i = 0; $i -lt $operands.Count; $i++) {
-        for ($j = $i + 1; $j -lt $operands.Count; $j++) {
-            if (Test-NightlyTypeNamePrefixes -Left $operands[$i] -Right $operands[$j]) { return $false }
-            if (Test-NightlyTypeNamePrefixes -Left $operands[$j] -Right $operands[$i]) { return $false }
-        }
-    }
-    $have = @{}
-    foreach ($c in $classList) {
-        $parts = Get-NightlyBareTypeParts -ClassName ([string]$c)
-        if ($null -eq $parts -or $parts.Namespace -cne $ns) { return $false }
-        if (-not $have.ContainsKey($parts.Type)) { $have[$parts.Type] = 0 }
-        $have[$parts.Type] = [int]$have[$parts.Type] + 1
-    }
-    foreach ($op in $operands) {
-        if (-not $have.ContainsKey($op) -or [int]$have[$op] -ne 1) { return $false }
-    }
-    return $true
+    Assert-NightlyCoreAvailable 'Test-NightlyClassGroupFilter'
+    return [Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter)
 }
 
 # CARD-1410. Launch groups pack by estimated serial seconds. A class with a
@@ -250,44 +161,12 @@ function Test-NightlyHeavyFamilyType {
     return $false
 }
 
-function Get-NightlyLaunchNodeSeconds {
-    param($Node, [bool]$Heavy, $MeasuredPerNode, [bool]$Lane = $false)
-    if ($null -ne $MeasuredPerNode) { return [double]$MeasuredPerNode }
-    $unit = [double]$script:NightlyLaunchNodeSeconds
-    foreach ($category in @($Node.Categories)) {
-        if ([string]$category -ceq 'Slow') {
-            $unit = $(if ($Lane) { [double]$script:NightlyLaunchLaneSlowNodeSeconds } else { [double]$script:NightlyLaunchSlowNodeSeconds })
-            break
-        }
-    }
-    if ($Heavy) { $unit = $unit * [double]$script:NightlyLaunchHeavyFamilyFactor }
-    return $unit
-}
-
 function Get-NightlyLaunchClassCost {
     param([object[]]$Nodes, [string]$TypeName, [string]$Bare = '')
-    if (Test-NightlyCoreAvailable) {
-        return [Antiphon.Nightly.NightlyLaunchPlan]::ClassCost($Nodes, $TypeName, $Bare, (Get-NightlyClassCostTable),
-            [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
-            [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
-    }
-    $heavy = Test-NightlyHeavyFamilyType -TypeName $TypeName
-    $lane = (-not [string]::IsNullOrEmpty($TypeName)) -and ($TypeName.IndexOf('Land', [StringComparison]::Ordinal) -ge 0 -or $TypeName.IndexOf('Delivery', [StringComparison]::Ordinal) -ge 0)
-    $table = Get-NightlyClassCostTable
-    $measured = $null
-    if (-not [string]::IsNullOrEmpty($Bare) -and $table.ContainsKey($Bare)) { $measured = [double]$table[$Bare] }
-    $count = 0
-    $seconds = 0.0
-    foreach ($node in @($Nodes)) {
-        if ($null -eq $node) { continue }
-        $count++
-        $seconds += Get-NightlyLaunchNodeSeconds -Node $node -Heavy $heavy -MeasuredPerNode $measured -Lane $lane
-    }
-    if ($count -eq 0) {
-        $count = 1
-        $seconds = Get-NightlyLaunchNodeSeconds -Node $null -Heavy $heavy -MeasuredPerNode $measured -Lane $lane
-    }
-    return [pscustomobject]@{ NodeCount = $count; Seconds = $seconds; MeasuredPerNode = $measured; Heavy = $heavy }
+    Assert-NightlyCoreAvailable 'Get-NightlyLaunchClassCost'
+    return [Antiphon.Nightly.NightlyLaunchPlan]::ClassCost($Nodes, $TypeName, $Bare, (Get-NightlyClassCostTable),
+        [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
+        [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
 }
 
 function Get-NightlyPackedItemSeconds {
@@ -541,89 +420,11 @@ function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
 function ConvertTo-NightlyBoundaryLaunchGroups {
     # Opt-in metadata only. The caller supplies one suite and its boundary map;
     # missing/conflicting mappings stay unassigned. This grants no carry credit.
-    # The compiled path indexes full discovery once per pack. The PowerShell-only
-    # fallback keeps the per-node walk.
+    # The compiled pack indexes full discovery once.
     param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
     . (Join-Path $PSScriptRoot 'rc-boundary.ps1')
-    if (Test-NightlyCoreAvailable) {
-        return @(ConvertTo-NightlyBoundaryLaunchGroupsIndexed -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
-    }
-    $boundaries = @('host','core','persistence','git','runners','integrations','application','scripts','checkpoints','tui','e2e','client','messaging','session-runner','pty-host','agents-pty','observability','server-git','markdown-pdf')
-    $mapping = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    if ($null -ne $ClassBoundaries) { foreach ($key in $ClassBoundaries.Keys) { $mapping.Add([string]$key, $ClassBoundaries[$key]) } }
-    $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    $classNames = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-    $byUid = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    $names = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($node in $DiscoveryNodes) {
-        $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
-        if ($null -eq $parts -or [string]::IsNullOrWhiteSpace([string]$node.Method) -or [string]::IsNullOrWhiteSpace([string]$node.Uid)) { throw 'boundary-pack: incomplete discovery identity' }
-        if ($byUid.ContainsKey([string]$node.Uid)) { throw 'boundary-pack: duplicate discovery UID' }
-        $byUid.Add([string]$node.Uid, $node)
-        if ($classNames.ContainsKey($parts.Bare) -and $classNames[$parts.Bare] -cne $parts.Bare) { throw 'boundary-pack: case-colliding class identity' }
-        $classNames[$parts.Bare] = $parts.Bare
-        $key = $parts.Bare + '/' + [string]$node.Method
-        if ($names.ContainsKey($key) -and $names[$key] -cne $key) { throw 'boundary-pack: case-colliding method identity' }
-        $names[$key] = $key
-        if (-not $byClass.ContainsKey($parts.Bare)) { $byClass.Add($parts.Bare, [Collections.Generic.List[object]]::new()) }
-        $byClass[$parts.Bare].Add($node)
-    }
-    $partitions = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($leaf in $Leaves) {
-        if (@($leaf.classes).Count -ne 1) { throw 'boundary-pack: leaf must have one class' }
-        $bare = [string]@($leaf.classes)[0]
-        if (-not $byClass.ContainsKey($bare)) { throw 'boundary-pack: leaf has no discovery membership' }
-        $members = @($byClass[$bare].ToArray())
-        if ($leaf.exactFilter) {
-            $members = @($members | Where-Object {
-                $parts = Get-NightlyBareTypeParts -ClassName ([string]$_.ClassName)
-                ('/*/{0}/{1}/{2}' -f $parts.Namespace, $parts.Type, $_.Method) -ceq $leaf.exactFilter
-            })
-            [string[]]$declared = @($leaf.nodes | ForEach-Object { [string]$_.Uid })
-            [string[]]$actual = @($members | ForEach-Object { [string]$_.Uid })
-            [Array]::Sort($declared, [StringComparer]::Ordinal); [Array]::Sort($actual, [StringComparer]::Ordinal)
-            if ((ConvertTo-Json -InputObject @($declared) -Compress) -cne (ConvertTo-Json -InputObject @($actual) -Compress)) { throw 'boundary-pack: incomplete exact-method cases' }
-            # Use the discovery objects, not caller-supplied objects bearing those UIDs.
-            $leaf = [pscustomobject]@{ id=$leaf.id; classes=@($bare); exactFilter=$leaf.exactFilter; nodes=$members }
-        }
-        if ($members.Count -eq 0) { throw 'boundary-pack: empty leaf membership' }
-        foreach ($node in $members) { if (-not $expected.Add([string]$node.Uid)) { throw 'boundary-pack: overlapping leaves' } }
-        $boundary = 'unassigned'
-        if ($mapping.ContainsKey($bare) -and $mapping[$bare] -is [string] -and $mapping[$bare] -cin $boundaries) { $boundary = [string]$mapping[$bare] }
-        if (-not $partitions.ContainsKey($boundary)) { $partitions.Add($boundary, [Collections.Generic.List[object]]::new()) }
-        $partitions[$boundary].Add($leaf)
-    }
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $memberships = [Collections.Generic.List[object]]::new()
-    [string[]]$ordered = @($partitions.Keys); [Array]::Sort($ordered, [StringComparer]::Ordinal)
-    $result = [Collections.Generic.List[object]]::new()
-    $discoveryIndex = $null
-    if (Test-NightlyCoreAvailable) { $discoveryIndex = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
-    foreach ($boundary in $ordered) {
-        # Keep the entire universe for prefix safety, including other boundaries
-        # and excluded siblings. The legacy packer owns cost and filter decisions.
-        $chunks = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $partitions[$boundary].ToArray() -DiscoveryNodes $DiscoveryNodes -DiscoveryIndex $discoveryIndex)
-        foreach ($chunk in $chunks) {
-            $members = @($chunk.nodes)
-            if ($members.Count -eq 0) { $members = @(foreach ($class in $chunk.classes) { $byClass[[string]$class].ToArray() }) }
-            $cases = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-            foreach ($node in $members) {
-                if (-not $expected.Contains([string]$node.Uid) -or -not $seen.Add([string]$node.Uid)) { throw 'boundary-pack: case partition mismatch' }
-                $case = [ordered]@{ className=[string]$node.ClassName; method=[string]$node.Method; uid=[string]$node.Uid }
-                $cases.Add((ConvertTo-Json -InputObject @($case.className,$case.method,$case.uid) -Compress), $case)
-            }
-            $memberships.Add(@{ suite=$SuiteId; boundary=$boundary; identities=@(foreach ($node in $members) {
-                @{ identityKey=((Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)) + '/' + [string]$node.Method); caseKey=[string]$node.Uid }
-            }) })
-            [string[]]$caseKeys = @($cases.Keys); [Array]::Sort($caseKeys, [StringComparer]::Ordinal)
-            Add-Member -InputObject $chunk -NotePropertyName caseMembership -NotePropertyValue @(foreach ($key in $caseKeys) { $cases[$key] }) -Force
-            Add-Member -InputObject $chunk -NotePropertyName caseIdentityBasis -NotePropertyValue 'discovery-only' -Force
-            $result.Add($chunk)
-        }
-    }
-    if (-not $seen.SetEquals($expected)) { throw 'boundary-pack: incomplete case partition' }
-    return @(Complete-NightlyBoundaryLaunchGroups -Chunks $result.ToArray() -Memberships $memberships.ToArray())
+    Assert-NightlyCoreAvailable 'ConvertTo-NightlyBoundaryLaunchGroups'
+    return @(ConvertTo-NightlyBoundaryLaunchGroupsIndexed -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
 }
 
 function ConvertTo-NightlyProfileLaunchGroups {
@@ -636,23 +437,11 @@ function ConvertTo-NightlyProfileLaunchGroups {
     $exact = New-Object System.Collections.ArrayList
     $classItems = New-Object System.Collections.ArrayList
     $oversized = New-Object System.Collections.ArrayList
-    $nodesByBare = @{}
+    Assert-NightlyCoreAvailable 'ConvertTo-NightlyProfileLaunchGroups'
+    # Compiled passes over the discovery (NightlyCore.cs): nodes by bare class and types by namespace.
     $indexed = $DiscoveryIndex
-    if ($null -ne $indexed -or (Test-NightlyCoreAvailable)) {
-        # Compiled passes over the discovery (NightlyCore.cs): nodes by bare class and types by namespace.
-        if ($null -eq $indexed) { $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
-        $nodesByBare = $indexed.NodesByBare
-        $DiscoveryNodesForIndex = @()
-    } else { $DiscoveryNodesForIndex = @($DiscoveryNodes) }
-    foreach ($node in $DiscoveryNodesForIndex) {
-        if ($null -eq $node) { continue }
-        $bare = Get-NightlyBareClassIdentity -Name ([string]$node.ClassName)
-        if ([string]::IsNullOrWhiteSpace($bare)) { continue }
-        if (-not $nodesByBare.ContainsKey($bare)) {
-            $nodesByBare[$bare] = New-Object System.Collections.ArrayList
-        }
-        [void]$nodesByBare[$bare].Add($node)
-    }
+    if ($null -eq $indexed) { $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
+    $nodesByBare = $indexed.NodesByBare
     $sourceId = 'all'
     foreach ($leaf in @($Leaves)) {
         $id = [string]$leaf.id
@@ -692,21 +481,12 @@ function ConvertTo-NightlyProfileLaunchGroups {
     }
 
     $byNs = @{}
-    $universe = @{}
-    if ($null -ne $indexed) { $universe = $indexed.Universe }
+    $universe = $indexed.Universe
     foreach ($item in @($classItems)) {
         if (-not $byNs.ContainsKey($item.Namespace)) {
             $byNs[$item.Namespace] = New-Object System.Collections.ArrayList
         }
         [void]$byNs[$item.Namespace].Add($item)
-    }
-    foreach ($node in $DiscoveryNodesForIndex) {
-        $parts = Get-NightlyBareTypeParts -ClassName ([string]$node.ClassName)
-        if ($null -eq $parts) { continue }
-        if (-not $universe.ContainsKey($parts.Namespace)) {
-            $universe[$parts.Namespace] = New-Object System.Collections.Generic.List[string]
-        }
-        $universe[$parts.Namespace].Add([string]$parts.Type)
     }
     foreach ($item in @($classItems)) {
         if (-not $universe.ContainsKey($item.Namespace)) {
