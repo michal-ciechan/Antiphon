@@ -381,7 +381,7 @@ $graded = @{
     key      = $keyState -eq 'ok'
     restart  = $restartState -eq 'ok'
     refusal  = $refusalState -eq 'ok'
-    claude   = $claudeVersion -eq '2.1.280'
+    claude   = $claudeVersion -eq '2.1.327'
     claudeAuth = $claudeAuth -eq 'logged-out'
 }
 if ($Containment) { $graded['containment'] = $containmentState -eq 'ok' }

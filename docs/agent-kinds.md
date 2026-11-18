@@ -35,7 +35,7 @@ host path that ends in the same name. **Runner-bound delegated Worktree tasks** 
 -Runner server2`) are Grok or Claude Code (CARD-0628). Card-backed starts, OnAgent, Shared,
 ReadOnly, pins, Herdr and custom wrappers stay refused, and SourceLanding is refused until CARD-0604
 Cut B ships the Linux custody backend. Grok and Claude Code are the agents the image carries (Claude
-Code 2.1.280, pinned by SHA-256); Codex is not installed there and stays refused.
+Code 2.1.327, pinned by SHA-256 `343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9`); Codex is not installed there and stays refused.
 
 A runner-bound Claude launch is projected to the image's `claude` with
 `CLAUDE_CONFIG_DIR=/state/claude`. Its credential is the runner container's own
@@ -243,10 +243,12 @@ Three things worth knowing about that table:
   returned `claude-opus-5-5` in `modelUsage`.
   Claude Code 2.1.284+ is likewise required for `sonnet` (the Medium tier) to resolve to
   Sonnet 5.5: on 2026-09-29 on the server2 runner, `--model sonnet` returned `claude-sonnet-5` in
-  `modelUsage` on the image's pinned 2.1.280 (2.1.281-2.1.283 carry the same mapping) and
-  `claude-sonnet-5-5` on 2.1.284. The runner image pins the CLI by version and SHA-256
-  (`docker/session-runner-grok/Dockerfile`), so server2's Medium tier reaches Sonnet 5.5 only
-  after that pin is bumped and the image redeployed.
+  `modelUsage` on the image's then-pinned 2.1.280 (2.1.281-2.1.283 carry the same mapping) and
+  `claude-sonnet-5-5` on 2.1.284. The runner image now pins Claude Code 2.1.327 by version and
+  SHA-256 (`docker/session-runner-grok/Dockerfile`), which is above that floor. A desktop binary
+  scan of 2.1.327 reported `latest_per_family` sonnet as `claude-sonnet-5-5`. This pin change
+  did not execute the linux-x64 binary. The rebuilt image's Medium mapping is confirmed by the
+  rollout canary, not by the pin commit.
 - **Grok is collapsed to `grok-4.7` at every tier** (CARD-0169 collapse; 2026-09-21 bump from
   `grok-4.6`) — the operator's instruction, not a capability judgement. `grok-4.6` and `grok-4.5`
   remain selectable model ids in the profile catalogue and in historical records; they are only
