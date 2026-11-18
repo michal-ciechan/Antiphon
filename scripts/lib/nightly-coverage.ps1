@@ -662,8 +662,8 @@ function Get-NightlyLatestDiagnosticLog {
 function Get-NightlyAssemblyHash {
     param([string]$ExePath)
     $dll = [System.IO.Path]::ChangeExtension($ExePath, '.dll')
-    if (Test-Path -LiteralPath $dll) { return (Get-NightlyFileSha256 -Path $dll) }
-    if (Test-Path -LiteralPath $ExePath) { return (Get-NightlyFileSha256 -Path $ExePath) }
+    if (Test-Path -LiteralPath $dll) { return (Get-NightlyAssemblyFileSha256 -Path $dll) }
+    if (Test-Path -LiteralPath $ExePath) { return (Get-NightlyAssemblyFileSha256 -Path $ExePath) }
     return (Get-NightlySha256Text -Text ([string]$ExePath))
 }
 

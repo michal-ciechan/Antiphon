@@ -32,26 +32,18 @@ public sealed class RcFailedFirstExecutionTests
              "FF ActualLoopFollowsSchedule.chainDigestMissing", "FF ActualLoopFollowsSchedule.chainIngress"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(1080), TimeSpan.FromSeconds(10)), cancellationToken);
 
-    // Actual entrypoint plus S2's measured ~55s D-15 matrix, shared setup (CARD-1514).
-    // R5 (CARD-1638): execution budget 2x the 240.257s TRX duration in checkpoint run
-    // 20261102-133640-5f80 (server2, load 32-38 on 24 cores; the card's 163s has no receipt);
-    // method timeout keeps the 60s cleanup margin. Provisional: n=2 (163s, 240.3s).
+    // Actual entrypoint journal custody (CARD-1514). The D-15 diagnostic/authority matrix
+    // it used to repeat runs in C1590_ArchiveHoldsNoGitRepository (ConservationDiagnostics)
+    // and RcFailedFirstPlannerTests.FullBytesAndCoverageConserved.
+    // R5 (CARD-1638) budget kept from the matrix-inclusive measurement (240.3s on loaded server2).
     [Test, Timeout(541_000)]
     public Task JournalCustodySurvivesInterleaving(CancellationToken cancellationToken) =>
-        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(JournalCustodySurvivesInterleaving), 27,
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-failed-first.ps1", "FF", nameof(JournalCustodySurvivesInterleaving), 9,
             ["FF JournalCustodySurvivesInterleaving.interleaving", "FF JournalCustodySurvivesInterleaving.hostDiscovery",
              "FF JournalCustodySurvivesInterleaving.prefixState", "FF JournalCustodySurvivesInterleaving.journalBindings",
              "FF JournalCustodySurvivesInterleaving.oneContextClose", "FF JournalCustodySurvivesInterleaving.timeoutPermutation",
              "FF JournalCustodySurvivesInterleaving.custody", "FF JournalCustodySurvivesInterleaving.fieldPolicies",
-             "FF JournalCustodySurvivesInterleaving.activeIdentity",
-             "FF JournalCustodySurvivesInterleaving.terminalMatrix", "FF JournalCustodySurvivesInterleaving.stickyHeader",
-             "FF JournalCustodySurvivesInterleaving.settlementOrder", "FF JournalCustodySurvivesInterleaving.reasonSequence",
-             "FF JournalCustodySurvivesInterleaving.timelines", "FF JournalCustodySurvivesInterleaving.phaseSummariesAndIndex",
-             "FF JournalCustodySurvivesInterleaving.schedulePolicy", "FF JournalCustodySurvivesInterleaving.lazyPreparation",
-             "FF JournalCustodySurvivesInterleaving.preparationBarrier", "FF JournalCustodySurvivesInterleaving.e2ePreparation",
-             "FF JournalCustodySurvivesInterleaving.diagnosticWriteFailure", "FF JournalCustodySurvivesInterleaving.authorityBytes",
-             "FF JournalCustodySurvivesInterleaving.authorityBinding", "FF JournalCustodySurvivesInterleaving.originalManifestBytes",
-             "FF JournalCustodySurvivesInterleaving.artifactSchemas", "FF JournalCustodySurvivesInterleaving.phaseBindings"],
+             "FF JournalCustodySurvivesInterleaving.activeIdentity"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(481), TimeSpan.FromSeconds(10)), cancellationToken);
 
     // CARD-1590: the retained archive keeps the authority fixture inputs but never the

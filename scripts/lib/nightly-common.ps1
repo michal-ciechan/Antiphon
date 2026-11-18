@@ -352,6 +352,18 @@ function Get-NightlyFileSha256 {
     }
 }
 
+function Get-NightlyAssemblyFileSha256 {
+    # Get-NightlyFileSha256 for a built test assembly, which one process hashes many times (discovery, the
+    # phase manifest, each in-process run). The compiled digest is reused only while the file is provably
+    # unchanged (NightlyCore.cs CachedFileSha256). Build outputs never go through the write-behind queue.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-NightlyEvidencePath $Path)) {
+        throw ('missing file for hash {0}' -f $Path)
+    }
+    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($Path) }
+    return (Get-NightlyFileSha256 -Path $Path)
+}
+
 function ConvertFrom-NightlyJsonMap {
     param($Object)
     if ($null -eq $Object) { return $null }

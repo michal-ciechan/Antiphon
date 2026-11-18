@@ -474,17 +474,80 @@ function Get-FFArgument([object[]]$Arguments, [string]$Name) {
     if ($i -ge 0 -and $i+1 -lt $Arguments.Count) { return [string]$Arguments[$i+1] }
     return ''
 }
-function Write-FFDiagnostic([string]$Directory, [object[]]$Nodes, [string]$State = 'Passed') {
-    [void][IO.Directory]::CreateDirectory($Directory)
-    $text = [Text.StringBuilder]::new()
-    [void]$text.Append("Version: '1.44.0.0'`nVersion: 2.2.2`n")
-    foreach ($n in $Nodes) {
-        $outcome = $State
-        if ($null -ne $n.PSObject.Properties['Outcome']) { $outcome = [string]$n.Outcome }
-        [void]$text.Append(('TestNodeUpdateMessage {{ TestNode = TestNode {{ Uid = TestNodeUid {{ Value = {0} }}, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty {{ AssemblyFullName = Fixture, Namespace = {1}, TypeName = {2}, MethodName = {3}, MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }}, {4}TestNodeStateProperty {{ Explanation =  }} ] }} }}' -f $n.Uid,$n.Namespace,$n.Type,$n.Method,$outcome))
-        [void]$text.Append("`n")
+# Fake-runner output is written per test node (19,012 in the full replay), so the
+# per-node formatting lives in C#. Bytes match the former PowerShell writers.
+if (-not ('AntiphonFixture.FFText' -as [type])) {
+Add-Type -TypeDefinition @'
+using System.Collections;
+using System.Globalization;
+using System.IO;
+using System.Management.Automation;
+using System.Text;
+namespace AntiphonFixture {
+public static class FFText {
+    static PSPropertyInfo Prop(object o, string name) {
+        return o == null ? null : PSObject.AsPSObject(o).Properties[name];
     }
-    [IO.File]::WriteAllText((Join-Path $Directory 'fixture.diag'), $text.ToString())
+    static string Str(object o, string name) {
+        IDictionary d = (o is PSObject ? ((PSObject)o).BaseObject : o) as IDictionary;
+        object v = null;
+        if (d != null) { if (d.Contains(name)) { v = d[name]; } }
+        else { PSPropertyInfo p = Prop(o, name); if (p != null) { v = p.Value; } }
+        if (v == null) { return string.Empty; }
+        return (string)LanguagePrimitives.ConvertTo(v, typeof(string), CultureInfo.InvariantCulture);
+    }
+    public static void Diagnostic(string directory, object[] nodes, string state) {
+        Directory.CreateDirectory(directory);
+        StringBuilder text = new StringBuilder();
+        text.Append("Version: '1.44.0.0'\nVersion: 2.2.2\n");
+        if (nodes != null) {
+            foreach (object n in nodes) {
+                string outcome = state;
+                if (Prop(n, "Outcome") != null) { outcome = Str(n, "Outcome"); }
+                text.Append("TestNodeUpdateMessage { TestNode = TestNode { Uid = TestNodeUid { Value = ").Append(Str(n, "Uid"))
+                    .Append(" }, DisplayName = fixture, Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Fixture, Namespace = ").Append(Str(n, "Namespace"))
+                    .Append(", TypeName = ").Append(Str(n, "Type"))
+                    .Append(", MethodName = ").Append(Str(n, "Method"))
+                    .Append(", MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ").Append(outcome)
+                    .Append("TestNodeStateProperty { Explanation =  } ] } }\n");
+            }
+        }
+        File.WriteAllText(Path.Combine(directory, "fixture.diag"), text.ToString());
+    }
+    // Same bytes as Write-C487Trx for rows {Id=Uid; ClassName; MethodName=Method; Outcome=state}.
+    public static void NodeTrx(string path, object[] nodes, string state) {
+        StringBuilder defs = new StringBuilder("<TestDefinitions>");
+        StringBuilder results = new StringBuilder("<Results>");
+        string outcome = string.IsNullOrWhiteSpace(state) ? "Passed" : state;
+        if (nodes != null) {
+            foreach (object n in nodes) {
+                string id = Str(n, "Uid"); string cls = Str(n, "ClassName"); string method = Str(n, "Method");
+                defs.Append("<UnitTest id=\"").Append(id).Append("\" name=\"").Append(cls).Append('.').Append(method)
+                    .Append("\"><TestMethod className=\"").Append(cls).Append("\" name=\"").Append(method).Append("\" /></UnitTest>");
+                results.Append("<UnitTestResult testId=\"").Append(id).Append("\" testName=\"").Append(cls).Append('.').Append(method)
+                    .Append("\" outcome=\"").Append(outcome).Append("\" />");
+            }
+        }
+        defs.Append("</TestDefinitions>"); results.Append("</Results>");
+        string dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) { Directory.CreateDirectory(dir); }
+        File.WriteAllText(path, "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun>" + defs.ToString() + results.ToString() + "</TestRun>");
+    }
+    static readonly System.Security.Cryptography.SHA256 Sha = System.Security.Cryptography.SHA256.Create();
+    // Lower-case hex SHA-256 of a file: (Get-FileHash -Algorithm SHA256).Hash.ToLowerInvariant().
+    public static string Sha256(string path) {
+        byte[] hash;
+        using (FileStream stream = File.OpenRead(path)) { hash = Sha.ComputeHash(stream); }
+        StringBuilder sb = new StringBuilder(64);
+        foreach (byte b in hash) { sb.Append(b.ToString("x2", CultureInfo.InvariantCulture)); }
+        return sb.ToString();
+    }
+}
+}
+'@
+}
+function Write-FFDiagnostic([string]$Directory, [object[]]$Nodes, [string]$State = 'Passed') {
+    [AntiphonFixture.FFText]::Diagnostic($Directory, $Nodes, $State)
 }
 function Invoke-FFPreparedArm {
     param($Fixture, [string]$Name, [object[]]$Members = @(), [string]$Variant = 'pass')
@@ -1035,9 +1098,8 @@ $NightlySeams=@{
             $state='Passed';$code=0;$timeout=$false
             if($special -and $global:FFLoopBoundaryState.Variant -ceq 'failure'){$state='Failed';$code=2}
             if($special -and $global:FFLoopBoundaryState.Variant -ceq 'timeout'){$timeout=$true;$code=1}
-            $rows=@(foreach($n in $nodes){[pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome=$state}})
             $trx=Join-Path (Get-FFArgument $ArgumentList '--results-directory') (Get-FFArgument $ArgumentList '--report-trx-filename')
-            Write-C487Trx $trx $rows;Write-FFDiagnostic $diag $nodes $state
+            [AntiphonFixture.FFText]::NodeTrx($trx,[object[]]$nodes,$state);Write-FFDiagnostic $diag $nodes $state
             $existing=Join-Path $script:QualificationTimingRoot 'groups-executed.json'
             if([IO.File]::Exists($existing)){$global:FFLoopBoundaryState.SettledBeforeReturn=$true}
             $global:FFLoopBoundaryState.Active--
@@ -1393,9 +1455,8 @@ function Test-JournalCustodySurvivesInterleaving {
         else{$null -ne $_.legacyCost -or $null -ne $_.qualifiedCost}
     }).Count -eq 0
     Assert-FF ($identitiesOk -and $idle.state -ceq 'Idle' -and $pricesOk) 'activeIdentity'
-    # Same real helper path used by the public coordinator, with the complete
-    # D-15 diagnostic/authority matrix from S2. Share the small immutable setup.
-    Test-FullBytesAndCoverageConserved -DiagnosticsOnly
+    # The D-15 diagnostic/authority matrix is owned by ConservationDiagnostics
+    # (C1590_ArchiveHoldsNoGitRepository) and FullBytesAndCoverageConserved.
 }
 
 switch -Exact ($Case) {
@@ -1403,7 +1464,7 @@ switch -Exact ($Case) {
     'PreviousOrder' { Test-FFPreviousOrder; $expected=1 }
     'HeartbeatBindings' { Test-FFHeartbeatBindings; $expected=4 }
     'ActualLoopFollowsSchedule' { Test-ActualLoopFollowsSchedule; $expected=18 }
-    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=27 }
+    'JournalCustodySurvivesInterleaving' { Test-JournalCustodySurvivesInterleaving; $expected=9 }
     'ConservationDiagnostics' { Test-FullBytesAndCoverageConserved -DiagnosticsOnly; $expected=18 }
     'FullBytesAndCoverageConserved' { Test-FullBytesAndCoverageConserved; $expected=23 }
     'GlobalReplayPriority' { Test-GlobalReplayPriority; $expected=10 }
@@ -1443,7 +1504,7 @@ foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
     $destination=Join-Path $archive $relative
     [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
     [IO.File]::Copy($file.FullName,$destination,$false)
-    $inventory.Add([ordered]@{path=$relative;kind='regular';copied=$true;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()})
+    $inventory.Add([ordered]@{path=$relative;kind='regular';copied=$true;sha256=[AntiphonFixture.FFText]::Sha256($file.FullName)})
 }
 Write-FFJson (Join-Path $archive 'inventory.json') ([ordered]@{source=$sourceSha;case=$Case;testClass=$(if($Case -cin @('EvidenceUnion','RefusesIncompleteEvidence','OrdinaryFailedChunk')){'Antiphon.Tests.Scripts.RcFailureHistoryTests'}else{'Antiphon.Tests.Scripts.RcFailedFirstPlannerTests'});files=$inventory.ToArray()})
 $performancePath=Join-Path $root 'performance.json'

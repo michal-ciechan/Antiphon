@@ -232,6 +232,21 @@ function Test-NCLaunchPlanMatchesFallback {
         @(@('N.S.Alpha', 'N.S.Beta'), ''))
     $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool](Test-NightlyClassGroupFilter -Classes $c[0] -GroupFilter $c[1]) }) }
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # Split-NightlyItemsBySeconds (NightlyLaunchPlan.FirstFitBins): first fit with ties, items with no Seconds
+    # (the 0.5 default), a string Seconds, items at or over the target, and the operand cap.
+    $items = @(
+        [pscustomobject]@{ Key = 'b'; Seconds = 30.0 }, [pscustomobject]@{ Key = 'a'; Seconds = 30.0 },
+        [pscustomobject]@{ Key = 'big'; Seconds = 600.0 }, [pscustomobject]@{ Key = 'edge'; Seconds = 120.0 },
+        [pscustomobject]@{ Key = 'none' }, [pscustomobject]@{ Key = 'text'; Seconds = '45.5' },
+        [pscustomobject]@{ Key = 'c'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'd'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'e'; Seconds = 89.9 })
+    $r = Invoke-NCBothWays {
+        foreach ($cap in @(2, 3, 0)) {
+            foreach ($bin in @(Split-NightlyItemsBySeconds -Items $items -TargetSeconds 120 -MaxOperands $cap)) {
+                [ordered]@{ cap = $cap; keys = (@($bin.Items | ForEach-Object { $_.Key }) -join ','); seconds = $bin.Seconds; closed = $bin.Closed; type = $bin.Items.GetType().Name }
+            }
+        }
+    }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('"closed":true')) 'packing' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
 function Test-NCParentProcessMatchesFallback {
@@ -394,6 +409,19 @@ function Test-NCSourceGapsMatchFallback {
     $two = @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($tests, [string[]]@('N.Cached.Alpha')))
     $three = [Antiphon.Nightly.NightlyTestSources]::ReadText($path)
     Assert-NC ($one.Count -eq 0 -and $two.Count -eq 1 -and $three.Contains('Omega')) 'sourceTextCache' ('settled ' + $one.Count + ' rewritten ' + $two.Count)
+    # Assembly digest cache: a same-length rewrite of a settled (cached) file is rehashed, and a file still
+    # inside the racy window is never served from the cache.
+    $dll = Join-Path $fixture 'Fixture.dll'
+    [IO.File]::WriteAllText($dll, 'assembly-one')
+    [IO.File]::SetLastWriteTimeUtc($dll, [DateTime]::UtcNow.AddHours(-1))
+    $h1 = Get-NightlyAssemblyFileSha256 -Path $dll
+    $h1Again = Get-NightlyAssemblyFileSha256 -Path $dll
+    [IO.File]::WriteAllText($dll, 'assembly-two')
+    $h2 = Get-NightlyAssemblyFileSha256 -Path $dll
+    [IO.File]::WriteAllText($dll, 'assembly-xyz')
+    $h3 = Get-NightlyAssemblyFileSha256 -Path $dll
+    Assert-NC ($h1 -ceq $h1Again -and $h1 -ceq (Get-NightlySha256Text -Text 'assembly-one') -and
+        $h2 -ceq (Get-NightlySha256Text -Text 'assembly-two') -and $h3 -ceq (Get-NightlySha256Text -Text 'assembly-xyz') -and $h2 -cne $h1) 'assemblyHashCache' ('h1 ' + $h1 + ' h2 ' + $h2 + ' h3 ' + $h3)
 }
 
 # Read-NightlyTrxIdentities' row loop (NightlyTrx.cs) against the fallback: rows, column order and refusals.
@@ -495,7 +523,7 @@ function Test-NCJsonFilesMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 24 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 26 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

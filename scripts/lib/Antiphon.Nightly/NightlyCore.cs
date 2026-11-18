@@ -114,6 +114,51 @@ namespace Antiphon.Nightly
             }
         }
 
+        private sealed class HashEntry
+        {
+            public long Length;
+            public long WriteTicks;
+            public string Hash;
+        }
+
+        private static readonly object HashGate = new object();
+        private static readonly Dictionary<string, HashEntry> Hashes = new Dictionary<string, HashEntry>(StringComparer.Ordinal);
+
+        /// <summary>
+        /// FileSha256 for build outputs hashed repeatedly in one process (the suite test assembly is hashed for
+        /// discovery, for the phase manifest and for every in-process invocation). A cached digest is reused only
+        /// while the file keeps the length and last-write time it had when hashed, and is cached only when that
+        /// write time was already more than NightlyTestSources.RacySeconds old (git's racy-clean rule), so a rewrite
+        /// that keeps the length still stamps a newer time and cannot be missed.
+        /// </summary>
+        public static string CachedFileSha256(string path)
+        {
+            var before = new System.IO.FileInfo(path);
+            if (!before.Exists) return FileSha256(path);
+            var length = before.Length;
+            var ticks = before.LastWriteTimeUtc.Ticks;
+            lock (HashGate)
+            {
+                if (Hashes.TryGetValue(path, out var hit) && hit.Length == length && hit.WriteTicks == ticks) return hit.Hash;
+            }
+            var hash = FileSha256(path);
+            var after = new System.IO.FileInfo(path);
+            var settled = after.Exists && after.Length == length && after.LastWriteTimeUtc.Ticks == ticks
+                && (DateTime.UtcNow - after.LastWriteTimeUtc).TotalSeconds > NightlyTestSources.RacySeconds;
+            lock (HashGate)
+            {
+                if (settled) Hashes[path] = new HashEntry { Length = length, WriteTicks = ticks, Hash = hash };
+                else Hashes.Remove(path);
+            }
+            return hash;
+        }
+
+        /// <summary>Drops every cached digest (tests).</summary>
+        public static void ClearHashes()
+        {
+            lock (HashGate) Hashes.Clear();
+        }
+
         /// <summary>Test-NightlyClassAssigned.</summary>
         public static bool Assigned(string className, string typeName, string[] requiredClasses)
         {
@@ -910,6 +955,58 @@ namespace Antiphon.Nightly
     /// <summary>Launch packing helpers from nightly-tests-impl.ps1 that ran once per discovered test or class pair.</summary>
     public static class NightlyLaunchPlan
     {
+        /// <summary>
+        /// Split-NightlyItemsBySeconds' placement over items already in packing order (the Sort-Object stays in
+        /// PowerShell): first fit, and an item at or over the target stays alone. Each bin is
+        /// { Items (ArrayList), Seconds, Closed }. An item's seconds are Get-NightlyPackedItemSeconds: its
+        /// Seconds property as [double], else defaultSeconds.
+        /// </summary>
+        public static PSObject[] FirstFitBins(object[] items, double targetSeconds, int maxOperands, double defaultSeconds)
+        {
+            var lists = new List<ArrayList>();
+            var totals = new List<double>();
+            var closed = new List<bool>();
+            if (items != null)
+            {
+                foreach (var item in items)
+                {
+                    var property = item == null ? null : PSObject.AsPSObject(item).Properties["Seconds"];
+                    var add = property == null
+                        ? defaultSeconds
+                        : (double)LanguagePrimitives.ConvertTo(property.Value, typeof(double), CultureInfo.InvariantCulture);
+                    var placed = false;
+                    if (add < targetSeconds)
+                    {
+                        for (var b = 0; b < lists.Count; b++)
+                        {
+                            if (closed[b] || lists[b].Count >= maxOperands) continue;
+                            if ((totals[b] + add) > targetSeconds) continue;
+                            lists[b].Add(item);
+                            totals[b] += add;
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if (!placed)
+                    {
+                        lists.Add(new ArrayList { item });
+                        totals.Add(add);
+                        closed.Add(add >= targetSeconds);
+                    }
+                }
+            }
+            var bins = new PSObject[lists.Count];
+            for (var b = 0; b < lists.Count; b++)
+            {
+                var bin = new PSObject();
+                bin.Properties.Add(new PSNoteProperty("Items", lists[b]));
+                bin.Properties.Add(new PSNoteProperty("Seconds", totals[b]));
+                bin.Properties.Add(new PSNoteProperty("Closed", closed[b]));
+                bins[b] = bin;
+            }
+            return bins;
+        }
+
         /// <summary>Get-NightlyBareTypeParts: { Bare, Namespace, Type } of a class name, or null.</summary>
         public static PSObject BareTypeParts(string className)
         {

@@ -299,8 +299,13 @@ function Get-NightlyPackedItemSeconds {
 function Split-NightlyItemsBySeconds {
     # First fit, largest first. An item at or over the target stays alone.
     param([object[]]$Items, [double]$TargetSeconds, [int]$MaxOperands)
+    $ordered = @($Items | Sort-Object @{ Expression = { Get-NightlyPackedItemSeconds $_ }; Descending = $true }, @{ Expression = { [string]$_.Key } })
+    if (Test-NightlyCoreAvailable) {
+        # Placement loop compiled (NightlyCore.cs NightlyLaunchPlan.FirstFitBins); ordering stays here.
+        return @([Antiphon.Nightly.NightlyLaunchPlan]::FirstFitBins([object[]]$ordered, $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
+    }
     $bins = New-Object System.Collections.ArrayList
-    foreach ($item in @($Items | Sort-Object @{ Expression = { Get-NightlyPackedItemSeconds $_ }; Descending = $true }, @{ Expression = { [string]$_.Key } })) {
+    foreach ($item in $ordered) {
         $add = Get-NightlyPackedItemSeconds $item
         $placed = $false
         if ($add -lt $TargetSeconds) {
@@ -1347,7 +1352,7 @@ function Prepare-NightlySuiteExecution {
             $phaseAssemblyDigest = ''
             $phaseDll = [IO.Path]::Combine($RepoRoot, 'tests', $phaseAssembly, 'bin', 'Debug', 'net9.0', ($phaseAssembly + '.dll'))
             if (-not [string]::IsNullOrWhiteSpace($phaseAssembly) -and (Test-Path -LiteralPath $phaseDll)) {
-                $phaseAssemblyDigest = Get-NightlyFileSha256 -Path $phaseDll
+                $phaseAssemblyDigest = Get-NightlyAssemblyFileSha256 -Path $phaseDll
             }
             $phaseCostDigest = ''
             if (-not [string]::IsNullOrWhiteSpace([string]$script:NightlyClassCostPath) -and (Test-Path -LiteralPath $script:NightlyClassCostPath)) {
