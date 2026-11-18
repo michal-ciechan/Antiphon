@@ -265,8 +265,8 @@ public sealed class DockerStackDocumentationTests
         text.ShouldContain("linux-cgroup-v1");
         text.ShouldContain("not a custody receipt");
         // CARD-0628 G-17c.
-        text.ShouldContain("Claude Code 2.1.280");
-        text.ShouldContain("1e08503d");
+        text.ShouldContain("Claude Code 2.1.327");
+        text.ShouldContain("343c744b");
         // CARD-0628 Round D.
         text.ShouldContain("CLAUDE_OAUTH_TOKEN_FILE");
         text.ShouldContain("/run/antiphon/claude-oauth-token");

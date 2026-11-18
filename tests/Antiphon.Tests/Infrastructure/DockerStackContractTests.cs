@@ -557,8 +557,8 @@ public sealed class DockerStackContractTests
     public void Runner_pins_claude_by_version_and_digest()
     {
         var body = RunnerBody();
-        body.ShouldContain("ARG CLAUDE_CODE_VERSION=2.1.280");
-        System.Text.RegularExpressions.Regex.IsMatch(body, @"ARG CLAUDE_CODE_SHA256=1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b\s")
+        body.ShouldContain("ARG CLAUDE_CODE_VERSION=2.1.327");
+        System.Text.RegularExpressions.Regex.IsMatch(body, @"ARG CLAUDE_CODE_SHA256=343c744baa14bfd38286a7cb90871051f04379956da6c5b803a9e66019a76ac9\s")
             .ShouldBeTrue("the published 64-hex digest is pinned");
         body.ShouldContain("https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude");
         body.ShouldContain("echo \"${CLAUDE_CODE_SHA256}  /tmp/claude-install/claude\" | sha256sum -c -");
@@ -568,7 +568,7 @@ public sealed class DockerStackContractTests
         Order(body, "sha256sum -c -", "install -m 0755 /tmp/claude-install/claude").ShouldBeTrue("verify before install");
         Order(body, "/usr/local/bin/claude --version", "rm -rf /tmp/claude-install").ShouldBeTrue("the temp tree is removed last");
         body.ShouldContain("any GROK_HOME or CLAUDE_CONFIG_DIR contents");
-        body.Contains("install.sh | bash -s 2.1.280", StringComparison.Ordinal).ShouldBeFalse("no moving-bootstrap installer");
+        body.Contains("install.sh | bash -s 2.1.327", StringComparison.Ordinal).ShouldBeFalse("no moving-bootstrap installer");
         Text("docker/session-runner-grok/Dockerfile").Contains("ENV CLAUDE_CODE_OAUTH_TOKEN", StringComparison.Ordinal)
             .ShouldBeFalse("the token is never an image layer");
     }
@@ -642,7 +642,7 @@ public sealed class DockerStackContractTests
     public void Testing_stage_asserts_claude_after_node_merge()
     {
         var body = SessionTesting();
-        const string probe = "claude --version | grep -F '2.1.280'";
+        const string probe = "claude --version | grep -F '2.1.327'";
         body.ShouldContain(probe);
         Order(body, "COPY --from=node22 /usr/local /usr/local", probe).ShouldBeTrue("asserted after the merge");
         body.ShouldContain("rm -rf /tmp/claude-probe");

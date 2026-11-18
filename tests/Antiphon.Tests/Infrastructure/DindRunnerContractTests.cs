@@ -485,7 +485,7 @@ public sealed class DindRunnerContractTests
 
             var config = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(configDir, ".claude.json")))!;
             config["hasCompletedOnboarding"]!.GetValue<bool>().ShouldBeTrue();
-            config["lastOnboardingVersion"]!.GetValue<string>().ShouldBe("2.1.280");
+            config["lastOnboardingVersion"]!.GetValue<string>().ShouldBe("2.1.327");
             config["theme"]!.GetValue<string>().ShouldBe("light");
             config["numStartups"]!.GetValue<int>().ShouldBe(3);
             foreach (var key in new[] { "/work/worktrees", "/work/repos/antiphon" })

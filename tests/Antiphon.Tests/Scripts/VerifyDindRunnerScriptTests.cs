@@ -146,7 +146,7 @@ public sealed class VerifyDindRunnerScriptTests
         script.ShouldContain("@($containerName, 'claude', '--version')");
         script.ShouldContain("@($containerName, 'claude', 'auth', 'status', '--json')");
         script.ShouldContain("$claudeStatus.ExitCode -eq 1 -and $claudeStatus.Output -match '\"loggedIn\"\\s*:\\s*false'");
-        script.ShouldContain("claude   = $claudeVersion -eq '2.1.280'");
+        script.ShouldContain("claude   = $claudeVersion -eq '2.1.327'");
         script.ShouldContain("claudeAuth = $claudeAuth -eq 'logged-out'");
         script.ShouldContain("claude={9} claudeAuth={10}");
         foreach (var name in new[] { "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "credentials.json" })
