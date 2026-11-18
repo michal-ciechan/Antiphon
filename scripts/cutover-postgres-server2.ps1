@@ -33,6 +33,14 @@
     after StopOnly and before the secret changes restarts AppHost on the old
     connection string first. If desktop postgres was stopped, it is started
     again before that restart.
+    Runbook G-1: the phase 4 restart runs with ANTIPHON_SKIP_DEV_POSTGRES=1 so
+    it does not start the desktop postgres again; every other restart clears
+    it. Phase 5 ends non-zero with the manual stop command unless
+    antiphon-postgres is exited. Runbook G-6: an unreadable server2 side of
+    gate 6 rolls back only with -AcceptDataLossRollback, with a warning; an
+    unreadable desktop side always refuses. Every rollback that removes the
+    secret writes desktop into the backup snapshot-target file
+    (-SnapshotTargetFile, default $script:CutoverSnapshotTargetDefaultPath).
     ASCII-only: it may run under Windows PowerShell 5.1.
 #>
 [CmdletBinding(PositionalBinding = $false)]
@@ -71,7 +79,10 @@ param(
     [string]$ProbeTargetContainer = '',
     # CARD-1980: per-table bound for the gate 6 content fingerprint. 1200 seconds is 20 minutes.
     [ValidateRange(1, 7200)]
-    [int]$ContentStatementTimeoutSeconds = 1200
+    [int]$ContentStatementTimeoutSeconds = 1200,
+    # Backup retarget plan D-2/W-5: the snapshot-target file a phase 6 rollback resets to desktop.
+    # Empty means $script:CutoverSnapshotTargetDefaultPath; tests point it at a temporary file.
+    [string]$SnapshotTargetFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,6 +101,12 @@ $script:KeyTables = @(
 # when this is 1 in their process environment (scripts/lib/dev-postgres-compose.ps1).
 # restart-apphost.ps1 passes it on by inheritance.
 $script:CutoverSkipDevPostgresVariable = 'ANTIPHON_SKIP_DEV_POSTGRES'
+
+# Backup retarget plan D-2 (docs/superpowers/plans/2026-11-18-postgres-backup-retarget-plan.md):
+# the daily snapshot job dumps the database this one word names, desktop or server2. The plan
+# names snapshot-target; scripts/windmill/invoke-postgres-snapshot.ps1 reads SNAPSHOT-TARGET
+# beside its runner copy, the same file on NTFS. The name is not final: change it only here.
+$script:CutoverSnapshotTargetDefaultPath = 'C:\Users\lndco\antiphon-snapshot-runner\snapshot-target'
 
 function Fail-Cutover {
     param([string]$Message, [int]$Code = 3)
@@ -182,7 +199,7 @@ function Show-CutoverWhatIf {
     Write-Host '  EXIT CHECK 5: health is 200, the version SHA equals the rc tip and advertises land-v2, pool flags match, server2 shows a desktop client, and the desktop antiphon-postgres is still exited.'
     Write-Host '  STOP GATE 5: a post-check fails. The operator runs phase 6. The script does not restart itself again. A running or unreadable desktop antiphon-postgres fails closed with the manual stop command instead; that is not a reason for phase 6.'
     Write-Host 'PHASE 6 Rollback'
-    Write-Host '  EXIT CHECK 6: desktop postgres is started again, per-table high-water marks and content checksums are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart.'
+    Write-Host '  EXIT CHECK 6: desktop postgres is started again, per-table high-water marks and content checksums are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart. Once the secret is removed, the backup snapshot-target file is reset to desktop.'
     Write-Host '  STOP GATE 6: if the new database has extra or changed rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. A failed desktop read stops the rollback. A failed server2 read stops it unless -AcceptDataLossRollback was passed, which rolls back without the comparison and leaves every server2 write behind. Neither data directory is removed.'
     Write-Host 'WHATIF: does not POST, does not call docker, and does not call dotnet user-secrets set.'
     Write-Host 'REFUSE: without a verified snapshot reference and a passed drill record the window does not start.'
@@ -963,6 +980,25 @@ function Assert-CutoverDesktopPostgresDown {
     Write-Host 'PHASE 5 desktop antiphon-postgres is exited after the restart.'
 }
 
+function Get-CutoverSnapshotTargetPath {
+    if (-not [string]::IsNullOrWhiteSpace($SnapshotTargetFile)) { return $SnapshotTargetFile }
+    return $script:CutoverSnapshotTargetDefaultPath
+}
+
+function Set-CutoverSnapshotTargetDesktop {
+    # Backup retarget plan W-5: once AppHost goes back to the desktop volume, the daily snapshot
+    # must dump the desktop again, even after a passed server2 backup proof. ASCII, no BOM, one
+    # word. The directory is never created: a missing runner copy is the operator's to fix.
+    $path = Get-CutoverSnapshotTargetPath
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($path)) { return $false }
+        [System.IO.File]::WriteAllText($path, 'desktop', (New-Object System.Text.ASCIIEncoding))
+        return ([System.IO.File]::ReadAllText($path).Trim() -ceq 'desktop')
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-CutoverRollback {
     Assert-CutoverOperatorInputs
     Reset-CutoverWindowState
@@ -996,11 +1032,21 @@ function Invoke-CutoverRollback {
         Invoke-CutoverMaintenance
         $script:CutoverEnteredMaintenance = $true
         Set-CutoverConnectionSecret -Remove
+        $snapshotPath = Get-CutoverSnapshotTargetPath
+        $snapshotReset = Set-CutoverSnapshotTargetDesktop
+        if ($snapshotReset) {
+            Write-Host ('PHASE 6: snapshot target reset to desktop in ' + $snapshotPath + '. The next daily snapshot dumps the desktop volume.')
+        } else {
+            Write-Host ('PHASE 6: snapshot target could not be written in ' + $snapshotPath + '. The rollback restart continues.')
+        }
         $code = Invoke-CutoverRestart -ExpectedSha $RcTip
         if ($code -ne 0) { Fail-Cutover ('REFUSED: rollback restart exited ' + $code + '. Do not start a second copy if the lock is held.') }
         Invoke-CutoverMaintenance -Clear
         $script:CutoverEnteredMaintenance = $false
         Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume. Maintenance lifted.'
+        if (-not $snapshotReset) {
+            Fail-Cutover ('PHASE 6 failed: AppHost is back on the desktop volume, but the snapshot target was not reset. Write desktop into ' + $snapshotPath + ' by hand (ASCII, one word, no BOM), or the daily snapshot keeps dumping server2.') 2
+        }
         $script:CutoverWindowSucceeded = $true
         exit 0
     } finally {
