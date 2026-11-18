@@ -267,6 +267,9 @@ function Test-NightlyRunContextOwnership {
     return [pscustomobject]$result
 }
 
+# The PowerShell bodies of ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256 and Get-NightlyParentProcess stay:
+# nightly-run.ps1 and release-cut.ps1 run them under Windows PowerShell 5.1 (the scheduled launcher), where the
+# compiled core does not load.
 function ConvertTo-NightlyCanonicalJson {
     param($Object)
     if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Object) }

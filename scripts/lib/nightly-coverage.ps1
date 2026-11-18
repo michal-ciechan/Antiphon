@@ -16,6 +16,8 @@ $script:NightlySupportedMtp = '2.2.2'
 # inside the arguments cannot terminate the name early.
 $script:NightlyDiagnosticTypeNameClass = '[A-Za-z0-9_.+\x60()<>,\[\] \u00B7-]'
 
+# The PowerShell row loop stays: publish-release.ps1, promote-release.ps1 and the release selection worker read a
+# TRX in processes that may have no core (Windows PowerShell 5.1, a script copy without the project).
 function Read-NightlyTrxIdentities {
     param([string]$TrxPath)
     if (-not (Test-Path -LiteralPath $TrxPath)) {
@@ -122,56 +124,16 @@ function ConvertFrom-NightlyDiscoveryDocument {
     if ([string]::IsNullOrWhiteSpace([string]$Object.assemblyHash)) {
         throw 'missing assemblyHash'
     }
-    if (Test-NightlyCoreAvailable) {
-        # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs): the same rows and the same refusals.
-        $compiled = [Antiphon.Nightly.NightlyDocuments]::DiscoveryNodes($Object.nodes)
-        if ($compiled.Error) { throw $compiled.Error }
-        return [pscustomobject]@{
-            Format = $format
-            TunitVersion = $tunit
-            MtpVersion = $mtp
-            AssemblyHash = [string]$Object.assemblyHash
-            Nodes = $compiled.Nodes
-        }
-    }
-    $nodes = [Collections.Generic.List[object]]::new()
-    $uids = @{}
-    foreach ($n in @($Object.nodes)) {
-        $uid = [string]$n.uid
-        if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated discovery record: missing uid' }
-        if ($uids.ContainsKey($uid)) { throw ('duplicate discovery uid {0}' -f $uid) }
-        $uids[$uid] = $true
-        $typeName = [string]$n.type
-        $method = [string]$n.method
-        if ([string]::IsNullOrWhiteSpace($typeName) -or [string]::IsNullOrWhiteSpace($method)) {
-            throw ('truncated discovery record uid={0}' -f $uid)
-        }
-        $categories = @()
-        if ($n.categories) { foreach ($c in @($n.categories)) { $categories += [string]$c } }
-        $excluded = $false
-        if ($n.PSObject.Properties.Name -contains 'excluded') { $excluded = [bool]$n.excluded }
-        foreach ($c in $categories) {
-            if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
-        }
-        $nodes.Add([pscustomobject]@{
-            Uid = $uid
-            Assembly = [string]$n.assembly
-            Namespace = [string]$n.namespace
-            Type = $typeName
-            Method = $method
-            Signature = [string]$n.signature
-            State = [string]$n.state
-            ClassName = $(if ([string]::IsNullOrWhiteSpace([string]$n.namespace)) { $typeName } else { '{0}.{1}' -f $n.namespace, $typeName })
-            Excluded = $excluded
-            Categories = $categories
-        })
-    }
+    Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiscoveryDocument'
+    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs).
+    $compiled = [Antiphon.Nightly.NightlyDocuments]::DiscoveryNodes($Object.nodes)
+    if ($compiled.Error) { throw $compiled.Error }
     return [pscustomobject]@{
         Format = $format
         TunitVersion = $tunit
         MtpVersion = $mtp
         AssemblyHash = [string]$Object.assemblyHash
-        Nodes = $nodes.ToArray()
+        Nodes = $compiled.Nodes
     }
 }
 
@@ -235,36 +197,20 @@ function Test-NightlyPinnedDiagnosticVersions {
 
 function Get-NightlyDiagnosticStateProperty {
     param([string]$Record)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::StateProperty($Record) }
-    $absent = [pscustomobject]@{ Name = ''; ExplanationStart = -1 }
-    # Enter the TestNode's own property list, not the update-message properties
-    # or display text. Match the pinned identifier -> optional location -> state
-    # transition; state-looking words in free text are not property boundaries.
-    $envelope = [regex]::Match($Record, '(?s)TestNode \{ Uid = TestNodeUid \{ Value = [^}]* \}, DisplayName = .*?, Properties = \[ ')
-    if (-not $envelope.Success) { return $absent }
-    $identifier = 'TestMethodIdentifierProperty \{ AssemblyFullName = [^{}\r\n]+, Namespace = [A-Za-z0-9_.]*, TypeName = ' + $script:NightlyDiagnosticTypeNameClass + '*?, MethodName = [A-Za-z0-9_]*, MethodArity = \d+, ParameterTypeFullNames = \[[^{}\r\n]*\], ReturnTypeFullName = [^{}\r\n]+ \}, '
-    $location = '(?:TestFileLocationProperty \{ FilePath = [^\r\n]*?, LineSpan = LinePositionSpan \{ Start = LinePosition \{ Line = \d+, Column = \d+ \}, End = LinePosition \{ Line = \d+, Column = \d+ \} \} \}, )?'
-    $transition = [regex]::new($identifier + $location + '(?<name>[A-Za-z]+)TestNodeStateProperty \{ Explanation = ')
-    $hit = $transition.Match($Record, $envelope.Index + $envelope.Length)
-    if (-not $hit.Success) { return $absent }
-    # Unescaped free text can mimic a complete transition. Stop at the second
-    # interpretation: neither a terminal success nor an exact message is safe.
-    if ($hit.NextMatch().Success) { return $absent }
-    return [pscustomobject]@{ Name = $hit.Groups['name'].Value; ExplanationStart = $hit.Index + $hit.Length }
+    # Enters the TestNode's own property list, not the update-message properties or display text, and matches the
+    # pinned identifier -> optional location -> state transition; state-looking words in free text are not
+    # property boundaries, and a second complete transition (unescaped free text) answers absent
+    # (Antiphon.Nightly NightlyDiagnostics).
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticStateProperty' }
+    return [Antiphon.Nightly.NightlyDiagnostics]::StateProperty($Record)
 }
 
 function Get-NightlyDiagnosticStateName {
     param([string]$Record, $StateProperty = $null)
     if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::StateName([string]$StateProperty.Name) }
-    switch -CaseSensitive ($StateProperty.Name) {
-        'Passed' { return 'Passed' }
-        'Skipped' { return 'Skipped' }
-        'Discovered' { return 'Discovered' }
-        'InProgress' { return 'InProgress' }
-        { $_ -cin @('Failed', 'Error', 'Timeout', 'Cancelled') } { return 'Failed' }
-        default { return '' }
-    }
+    # Passed, Skipped, Discovered and InProgress as named; Failed, Error, Timeout and Cancelled are Failed; else ''.
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticStateName' }
+    return [Antiphon.Nightly.NightlyDiagnostics]::StateName([string]$StateProperty.Name)
 }
 
 function Get-NightlyDiagnosticFailureMessage {
@@ -322,92 +268,18 @@ function Test-NightlyDiagnosticExceptionTail {
 function Test-NightlyDiagnosticTypeNameComplete {
     # A node name is a complete identifier, optionally followed by one balanced
     # constructor-argument suffix. Commas belong inside those arguments.
-    # IndexOf plus a balance count stays within Windows PowerShell 5.1.
     param([string]$Name)
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::TypeNameComplete($Name) }
-    $openAt = $Name.IndexOf('(')
-    $closeAt = $Name.IndexOf(')')
-    $commaAt = $Name.IndexOf(',')
-    if ($openAt -lt 0 -and $closeAt -lt 0) {
-        if ($commaAt -ge 0) { return $false }
-        return $true
-    }
-    if ($openAt -le 0) { return $false }
-    if (-not $Name.EndsWith(')', [StringComparison]::Ordinal)) { return $false }
-    $depth = 0
-    $i = 0
-    while ($i -lt $Name.Length) {
-        $ch = $Name.Substring($i, 1)
-        if ($ch -eq '(') {
-            $depth++
-        } elseif ($ch -eq ')') {
-            $depth--
-            if ($depth -lt 0) { return $false }
-        } elseif ($ch -eq ',' -and $depth -eq 0) {
-            return $false
-        }
-        $i++
-    }
-    return ($depth -eq 0)
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Test-NightlyDiagnosticTypeNameComplete' }
+    return [Antiphon.Nightly.NightlyDiagnostics]::TypeNameComplete($Name)
 }
 
 function ConvertFrom-NightlyDiagnosticRecord {
     param([string]$Record, [string]$State, $StateProperty = $null)
-    if (Test-NightlyCoreAvailable) {
-        $converted = [Antiphon.Nightly.NightlyDiagnostics]::ConvertRecord($Record, $State)
-        if ($converted.Error) { throw $converted.Error }
-        $node = $converted.Node
-        if ($State -eq 'Failed') {
-            $message = Get-NightlyDiagnosticFailureMessage -Record $Record -StateProperty $StateProperty
-            if ($null -ne $message) {
-                $node | Add-Member -NotePropertyName Message -NotePropertyValue $message
-            }
-        }
-        return $node
-    }
-    if ($Record -notmatch 'TestNodeUid \{ Value = (?<uid>[^}]+?) \}') {
-        throw 'truncated diagnostic record: missing uid'
-    }
-    $uid = $Matches['uid'].Trim()
-    $typeName = ''
-    $method = ''
-    $ns = ''
-    $assembly = ''
-    $typePattern = '(?<![A-Za-z])TypeName = (?<type>' + $script:NightlyDiagnosticTypeNameClass + '+?), MethodName = '
-    if ($Record -match $typePattern) { $typeName = $Matches['type'] }
-    if ($Record -match '(?<![A-Za-z])MethodName = (?<method>[A-Za-z0-9_]+)') { $method = $Matches['method'] }
-    if ($Record -match '(?<![A-Za-z])Namespace = (?<ns>[A-Za-z0-9_\.]+)') { $ns = $Matches['ns'] }
-    if ($Record -match 'AssemblyFullName = (?<asm>[^,]+)') { $assembly = $Matches['asm'].Trim() }
-    if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated diagnostic record: missing uid' }
-    if ([string]::IsNullOrWhiteSpace($typeName) -or [string]::IsNullOrWhiteSpace($method)) {
-        throw ('truncated diagnostic record uid={0}' -f $uid)
-    }
-    if (-not (Test-NightlyDiagnosticTypeNameComplete -Name $typeName)) {
-        throw ('truncated diagnostic record uid={0}' -f $uid)
-    }
-    $categories = @()
-    foreach ($m in [regex]::Matches($Record, 'TestMetadataProperty \{ Key = (?<key>[A-Za-z0-9_]+)')) {
-        $categories += $m.Groups['key'].Value
-    }
-    $excluded = $false
-    foreach ($c in $categories) {
-        if ($c -eq 'OptIn' -or $c -eq 'Explicit') { $excluded = $true }
-    }
-    $className = $(if ([string]::IsNullOrWhiteSpace($ns)) { $typeName } else { '{0}.{1}' -f $ns, $typeName })
-    $node = [pscustomobject]@{
-        Uid = $uid
-        Assembly = $assembly
-        Namespace = $ns
-        Type = $typeName
-        Method = $method
-        Signature = ''
-        State = $State
-        Outcome = $State
-        ClassName = $className
-        Excluded = $excluded
-        Categories = $categories
-    }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiagnosticRecord' }
+    $converted = [Antiphon.Nightly.NightlyDiagnostics]::ConvertRecord($Record, $State)
+    if ($converted.Error) { throw $converted.Error }
+    $node = $converted.Node
     # Native MTP failure explanations include the multiline failure message.
     # Timeout and Cancelled are failed states. Only a unique validated field
     # boundary supplies Message; ambiguous or malformed text keeps Failed.
@@ -465,42 +337,12 @@ function ConvertFrom-NightlyExecutionJson {
 
 function Get-NightlyDiagnosticRecords {
     param([string]$Text)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDiagnostics]::Records($Text) }
     # A record ends at the next structural node update or logging header, never
-    # at display-name punctuation. Keep the original physical line endings.
+    # at display-name punctuation, and keeps the original physical line endings.
     # Every TestNodeUpdateMessage envelope starts a record, including a second
     # envelope on the same line. A bare TestNode { Uid in explanation text does not.
-    $record = New-Object System.Text.StringBuilder
-    $envelopePattern = 'TestNodeUpdateMessage \{[^\r\n]*?TestNode = TestNode \{ Uid = TestNodeUid'
-    foreach ($line in [regex]::Split($Text, '(?<=\n)')) {
-        $envelopeHits = [regex]::Matches($line, $envelopePattern)
-        if ($envelopeHits.Count -ge 2) {
-            if ($record.Length -gt 0) { $record.ToString(); [void]$record.Clear() }
-            $start = 0
-            $hitIndex = 1
-            while ($hitIndex -lt $envelopeHits.Count) {
-                $at = $envelopeHits[$hitIndex].Index
-                if ($at -gt $start) {
-                    $piece = $line.Substring($start, $at - $start)
-                    if ($piece.Length -gt 0) { $piece }
-                }
-                $start = $at
-                $hitIndex++
-            }
-            if ($start -lt $line.Length) { [void]$record.Append($line.Substring($start)) }
-            continue
-        }
-        $nodeStart = $line -match '^(?:[^\r\n]*?TestNodeUpdateMessage \{[^\r\n]*?TestNode = |\s*)TestNode \{ Uid = TestNodeUid'
-        $headerStart = $line -match '^\d{4}-\d{2}-\d{2}T\S+\s+\S+\s+(?:TRACE|DEBUG|INFORMATION|WARNING|ERROR|CRITICAL)\b' -or
-                       $line -match '^\s*version:\s+'
-        if ($nodeStart -or $headerStart) {
-            if ($record.Length -gt 0) { $record.ToString(); [void]$record.Clear() }
-        }
-        if ($nodeStart -or ($record.Length -gt 0 -and -not $headerStart)) {
-            [void]$record.Append($line)
-        }
-    }
-    if ($record.Length -gt 0) { $record.ToString() }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticRecords' }
+    return [Antiphon.Nightly.NightlyDiagnostics]::Records($Text)
 }
 
 function ConvertFrom-NightlyDiagnosticLog {
@@ -555,21 +397,9 @@ function ConvertFrom-NightlyDiagnosticLog {
 
 function ConvertTo-NightlyNormalizedOutcome {
     param([string]$Outcome)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($Outcome) }
-    $raw = ([string]$Outcome).Trim().ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($raw)) { return 'Unknown' }
-    switch ($raw) {
-        'passed' { return 'Passed' }
-        'pass' { return 'Passed' }
-        'failed' { return 'Failed' }
-        'fail' { return 'Failed' }
-        'error' { return 'Failed' }
-        'skipped' { return 'Skipped' }
-        'notexecuted' { return 'NotExecuted' }
-        'notrunnable' { return 'NotExecuted' }
-        'pending' { return 'NotExecuted' }
-        default { return 'Unknown' }
-    }
+    # Passed, Failed (also fail, error), Skipped, NotExecuted (also notrunnable, pending), else Unknown.
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertTo-NightlyNormalizedOutcome' }
+    return [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($Outcome)
 }
 
 function ConvertTo-NightlyDiscoveryDocument {
@@ -578,34 +408,9 @@ function ConvertTo-NightlyDiscoveryDocument {
         [string]$AssemblyHash
     )
     if ([string]::IsNullOrWhiteSpace($AssemblyHash)) { throw 'missing assemblyHash' }
-    $mapped = @()
-    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs); the loop below appended one row at a time.
-    if (Test-NightlyCoreAvailable) { $mapped = [Antiphon.Nightly.NightlyDocuments]::DocumentNodes($Nodes); $Nodes = @() }
-    foreach ($n in @($Nodes)) {
-        $uid = [string]$n.uid
-        $typeName = [string]$n.type
-        $method = [string]$n.method
-        $ns = [string]$n.namespace
-        $assembly = [string]$n.assembly
-        $signature = [string]$n.signature
-        $state = [string]$n.state
-        if ([string]::IsNullOrWhiteSpace($state)) { $state = 'Discovered' }
-        $categories = @()
-        if ($n.categories) { foreach ($c in @($n.categories)) { $categories += [string]$c } }
-        $excluded = $false
-        if ($n.PSObject.Properties.Name -contains 'excluded') { $excluded = [bool]$n.excluded }
-        $mapped += [ordered]@{
-            uid = $uid
-            assembly = $assembly
-            namespace = $ns
-            type = $typeName
-            method = $method
-            signature = $signature
-            state = $state
-            excluded = $excluded
-            categories = $categories
-        }
-    }
+    Assert-NightlyCoreAvailable 'ConvertTo-NightlyDiscoveryDocument'
+    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs).
+    $mapped = [Antiphon.Nightly.NightlyDocuments]::DocumentNodes($Nodes)
     return [ordered]@{
         format = $script:NightlyDiscoveryFormat
         tunitVersion = $script:NightlySupportedTunit
@@ -748,26 +553,9 @@ function Get-NightlyClassNameFromIdentity {
 function Test-NightlyClassAssigned {
     param([string]$ClassName, [string]$TypeName, [string[]]$RequiredClasses)
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $true }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::Assigned($ClassName, $TypeName, $RequiredClasses) }
-    $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($ClassName)) {
-        $candidates += $ClassName
-        $candidates += (Get-NightlyBareClassIdentity -Name $ClassName)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TypeName)) {
-        $candidates += $TypeName
-        $candidates += (Get-NightlyBareClassIdentity -Name $TypeName)
-    }
-    foreach ($c in @($RequiredClasses)) {
-        $want = [string]$c
-        if ([string]::IsNullOrWhiteSpace($want)) { continue }
-        $wantBare = Get-NightlyBareClassIdentity -Name $want
-        foreach ($have in $candidates) {
-            if ([string]::Equals($want, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-            if ([string]::Equals($wantBare, $have, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-        }
-    }
-    return $false
+    # A required class names the node's ClassName or Type, or the bare form of either, ignoring case.
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Test-NightlyClassAssigned' }
+    return [Antiphon.Nightly.NightlyClassNames]::Assigned($ClassName, $TypeName, $RequiredClasses)
 }
 
 function Test-NightlyDiscoveryExcluded {
@@ -828,45 +616,20 @@ function Get-NightlyDiscoveryDispositionIndexed {
     <# Get-NightlyDiscoveryDisposition (profile-aware) against a New-NightlyProfileExclusionIndex: only the rows
        that match the node's class are walked, in policy order, so the first declaring row still wins. #>
     param($Index, $Node)
-    if (Test-NightlyCoreAvailable) { return $Index.Disposition($Node) }
-    $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
-    if ($null -ne $entry) {
-        foreach ($row in $entry.Rows) {
-            $methods = @($row.Methods)
-            if ($methods.Count -eq 0) {
-                return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
-            }
-            foreach ($m in $methods) {
-                if ([string]::Equals([string]$m, [string]$Node.Method, [StringComparison]::OrdinalIgnoreCase)) {
-                    return [pscustomobject]@{ Disposition = 'excluded'; Reason = [string]$row.Reason; Owner = [string]$row.Owner; Uid = [string]$Node.Uid }
-                }
-            }
-        }
-    }
-    return [pscustomobject]@{ Disposition = 'required'; Reason = ''; Owner = ''; Uid = [string]$Node.Uid }
+    return $Index.Disposition($Node)
 }
 
 function New-NightlyClassAssignmentCache {
     <# Test-NightlyClassAssigned depends only on (ClassName, TypeName) for fixed RequiredClasses: a caller that tests
        many nodes keeps one of these and asks once per class. #>
     param([string[]]$RequiredClasses = @())
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.ClassAssignment]::new($RequiredClasses) }
-    return [pscustomobject]@{
-        RequiredClasses = $RequiredClasses
-        Verdicts = [Collections.Generic.Dictionary[string, bool]]::new([StringComparer]::Ordinal)
-    }
+    Assert-NightlyCoreAvailable 'New-NightlyClassAssignmentCache'
+    return [Antiphon.Nightly.ClassAssignment]::new($RequiredClasses)
 }
 
 function Test-NightlyClassAssignedCached {
     param($Cache, [string]$ClassName, [string]$TypeName)
-    if (Test-NightlyCoreAvailable) { return $Cache.Assigned($ClassName, $TypeName) }
-    $key = $ClassName + [char]0 + $TypeName
-    $verdict = $false
-    if (-not $Cache.Verdicts.TryGetValue($key, [ref]$verdict)) {
-        $verdict = [bool](Test-NightlyClassAssigned -ClassName $ClassName -TypeName $TypeName -RequiredClasses $Cache.RequiredClasses)
-        $Cache.Verdicts[$key] = $verdict
-    }
-    return $verdict
+    return $Cache.Assigned($ClassName, $TypeName)
 }
 
 function Get-NightlyDiscoveryCensus {
@@ -875,53 +638,19 @@ function Get-NightlyDiscoveryCensus {
       disposition; duplicates and unclassified nodes are reported, never dropped.
     #>
     param([object[]]$DiscoveryNodes, $ProfileExclusions = $null, [switch]$ProfileAware)
-    $required = [Collections.Generic.List[object]]::new()
-    $excluded = [Collections.Generic.List[object]]::new()
-    $seen = @{}
-    $duplicates = [Collections.Generic.List[object]]::new()
+    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryCensus'
     # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
-    $digest = $null
-    if (Test-NightlyCoreAvailable) {
-        $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
-        $required.AddRange([object[]]$rows.Required)
-        $excluded.AddRange([object[]]$rows.Excluded)
-        $duplicates.AddRange([object[]]$rows.Duplicates)
-        # Sorted-UID digest (OrdinalIgnoreCase, Ordinal tie-break), compiled.
-        $digest = [Antiphon.Nightly.PlannedManifestCheck]::CensusDigest([object[]]$rows.Required, [object[]]$rows.Excluded)
-        $DiscoveryNodes = @()
-    }
-    foreach ($n in @($DiscoveryNodes)) {
-        $uid = [string]$n.Uid
-        if ([string]::IsNullOrWhiteSpace($uid)) { continue }
-        if ($seen.ContainsKey($uid)) { $duplicates.Add($uid); continue }
-        $seen[$uid] = $true
-        if ($ProfileAware) { $d = Get-NightlyDiscoveryDispositionIndexed -Index $exclusionIndex -Node $n }
-        else { $d = Get-NightlyDiscoveryDisposition -Node $n -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware }
-        $row = [ordered]@{
-            uid = $uid
-            class = [string]$n.ClassName
-            method = [string]$n.Method
-            categories = @($n.Categories)
-            disposition = $d.Disposition
-            reason = $d.Reason
-            owner = $d.Owner
-        }
-        if ($d.Disposition -eq 'required') { $required.Add($row) } else { $excluded.Add($row) }
-    }
-    if ($null -eq $digest) {
-        # Same order as PlannedManifestCheck.SortCensusUids: census UIDs are unique OrdinalIgnoreCase, so
-        # OrdinalIgnoreCase alone is total here and its Ordinal tie-break never applies.
-        [string[]]$requiredUids = @(foreach ($r in $required) { [string]$r.uid })
-        [string[]]$excludedUids = @(foreach ($r in $excluded) { [string]$r.uid })
-        [Array]::Sort($requiredUids, [StringComparer]::OrdinalIgnoreCase)
-        [Array]::Sort($excludedUids, [StringComparer]::OrdinalIgnoreCase)
-        $digest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
-            required = @($requiredUids)
-            excluded = @($excludedUids)
-        }))
-    }
+    $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
+    $required = [Collections.Generic.List[object]]::new()
+    $excluded = [Collections.Generic.List[object]]::new()
+    $duplicates = [Collections.Generic.List[object]]::new()
+    $required.AddRange([object[]]$rows.Required)
+    $excluded.AddRange([object[]]$rows.Excluded)
+    $duplicates.AddRange([object[]]$rows.Duplicates)
+    # Sorted-UID digest (OrdinalIgnoreCase, Ordinal tie-break), compiled.
+    $digest = [Antiphon.Nightly.PlannedManifestCheck]::CensusDigest([object[]]$rows.Required, [object[]]$rows.Excluded)
     return [pscustomobject]@{
         Ok = ($duplicates.Count -eq 0 -and $required.Count -gt 0)
         Required = $required.ToArray()
@@ -935,28 +664,10 @@ function Get-NightlyDiscoveryCensus {
 
 function Get-NightlyRequiredDiscoveryUids {
     param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
-    $uids = [Collections.Generic.List[object]]::new()
-    $seen = @{}
+    Assert-NightlyCoreAvailable 'Get-NightlyRequiredDiscoveryUids'
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
-    if (Test-NightlyCoreAvailable) {
-        return [Antiphon.Nightly.NightlyDiscovery]::RequiredUids(@($DiscoveryNodes), $RequiredClasses, $exclusionIndex)
-    }
-    $assignment = New-NightlyClassAssignmentCache -RequiredClasses $RequiredClasses
-    foreach ($n in @($DiscoveryNodes)) {
-        if ($ProfileAware) {
-            if (Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $n) { continue }
-        } elseif (Test-NightlyDiscoveryExcluded -Node $n) { continue }
-        if (-not (Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type))) {
-            continue
-        }
-        $uid = [string]$n.Uid
-        if ([string]::IsNullOrWhiteSpace($uid)) { continue }
-        if ($seen.ContainsKey($uid)) { continue }
-        $seen[$uid] = $true
-        $uids.Add($uid)
-    }
-    return $uids.ToArray()
+    return [Antiphon.Nightly.NightlyDiscovery]::RequiredUids(@($DiscoveryNodes), $RequiredClasses, $exclusionIndex)
 }
 
 <#
@@ -1008,70 +719,14 @@ function Get-NightlyDiscoveryIndexView {
     $nodes = @($Entry.Document.Nodes)
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
-    if (Test-NightlyCoreAvailable) {
-        $pass = [Antiphon.Nightly.NightlyDiscovery]::IndexView($nodes, $exclusionIndex)
-        $view = [pscustomobject]@{
-            Nodes = $nodes
-            Excluded = $pass.Excluded
-            ByClass = $pass.ByClass
-            RequiredUids = $pass.RequiredUids
-            Classes = $pass.Classes
-            Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
-        }
-        $Entry.Views[$policyKey] = $view
-        return $view
-    }
-    $excluded = New-Object 'bool[]' $nodes.Count
-    $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
-    $allRequired = [Collections.Generic.List[object]]::new()
-    $seenUid = @{}
-    $classes = [Collections.Generic.List[object]]::new()
-    $seenClass = @{}
-    for ($i = 0; $i -lt $nodes.Count; $i++) {
-        $n = $nodes[$i]
-        $className = [string]$n.ClassName
-        $typeName = [string]$n.Type
-        $names = [Collections.Generic.List[string]]::new()
-        if (-not [string]::IsNullOrWhiteSpace($className)) {
-            $names.Add($className)
-            $names.Add((Get-NightlyBareClassIdentity -Name $className))
-        }
-        if (-not [string]::IsNullOrWhiteSpace($typeName)) {
-            $names.Add($typeName)
-            $names.Add((Get-NightlyBareClassIdentity -Name $typeName))
-        }
-        foreach ($name in $names) {
-            $hits = $null
-            if (-not $byClass.TryGetValue($name, [ref]$hits)) {
-                $hits = [Collections.Generic.List[int]]::new()
-                $byClass[$name] = $hits
-            }
-            if ($hits.Count -eq 0 -or $hits[$hits.Count - 1] -ne $i) { $hits.Add($i) }
-        }
-        if ($ProfileAware) { $isExcluded = Test-NightlyProfileExclusionIndexed -Index $exclusionIndex -Node $n }
-        else { $isExcluded = Test-NightlyDiscoveryExcluded -Node $n }
-        if ($isExcluded) {
-            $excluded[$i] = $true
-            continue
-        }
-        $uid = [string]$n.Uid
-        if (-not [string]::IsNullOrWhiteSpace($uid) -and -not $seenUid.ContainsKey($uid)) {
-            $seenUid[$uid] = $true
-            $allRequired.Add($uid)
-        }
-        $t = Get-NightlyBareClassIdentity -Name $className
-        if ([string]::IsNullOrWhiteSpace($t)) { $t = Get-NightlyBareClassIdentity -Name $typeName }
-        if (-not [string]::IsNullOrWhiteSpace($t) -and -not $seenClass.ContainsKey($t)) {
-            $seenClass[$t] = $true
-            $classes.Add($t)
-        }
-    }
+    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexView'
+    $pass = [Antiphon.Nightly.NightlyDiscovery]::IndexView($nodes, $exclusionIndex)
     $view = [pscustomobject]@{
         Nodes = $nodes
-        Excluded = $excluded
-        ByClass = $byClass
-        RequiredUids = $allRequired.ToArray()
-        Classes = $classes.ToArray()
+        Excluded = $pass.Excluded
+        ByClass = $pass.ByClass
+        RequiredUids = $pass.RequiredUids
+        Classes = $pass.Classes
         Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
     }
     $Entry.Views[$policyKey] = $view
@@ -1083,37 +738,15 @@ function Get-NightlyDiscoveryIndexRequiredUids {
     # launch's classes alone.
     param($View, [string[]]$RequiredClasses = @())
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $View.RequiredUids }
-    if (Test-NightlyCoreAvailable) {
-        return [Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($View.ByClass, $View.Excluded, $View.Nodes, $RequiredClasses)
-    }
-    $selected = [Collections.Generic.SortedSet[int]]::new()
-    foreach ($c in @($RequiredClasses)) {
-        $want = [string]$c
-        if ([string]::IsNullOrWhiteSpace($want)) { continue }
-        foreach ($name in @($want, (Get-NightlyBareClassIdentity -Name $want))) {
-            $hits = $null
-            if ($View.ByClass.TryGetValue($name, [ref]$hits)) {
-                foreach ($i in $hits) { [void]$selected.Add($i) }
-            }
-        }
-    }
-    $uids = [Collections.Generic.List[object]]::new()
-    $seen = @{}
-    foreach ($i in $selected) {
-        if ($View.Excluded[$i]) { continue }
-        $uid = [string]$View.Nodes[$i].Uid
-        if ([string]::IsNullOrWhiteSpace($uid) -or $seen.ContainsKey($uid)) { continue }
-        $seen[$uid] = $true
-        $uids.Add($uid)
-    }
-    return $uids.ToArray()
+    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexRequiredUids'
+    return [Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($View.ByClass, $View.Excluded, $View.Nodes, $RequiredClasses)
 }
 
 function Get-NightlyIdentityBagKey {
     param([string]$ClassName, [string]$TypeName, [string]$MethodName)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::BagKey($ClassName, $TypeName, $MethodName) }
-    $simple = Get-NightlyClassNameFromIdentity -ClassName $(if ([string]::IsNullOrWhiteSpace($ClassName)) { $TypeName } else { $ClassName })
-    return (('{0}.{1}' -f $simple, $MethodName).ToLowerInvariant())
+    # '<simple class name>.<method>' in lower case; the type names the class when ClassName is blank.
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyIdentityBagKey' }
+    return [Antiphon.Nightly.NightlyClassNames]::BagKey($ClassName, $TypeName, $MethodName)
 }
 
 function Test-NightlyChunkMembership {
@@ -1230,147 +863,10 @@ function Get-NightlyDiscoveryKnownIdentities {
 
 function ConvertFrom-NightlyCsStringLiteral {
     param([string]$Raw)
-    # The compiled copy (NightlyCsMethodIndex.StringLiteral) folds the escapes the same way, -eq's case-insensitivity included.
-    if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) { return [Antiphon.Nightly.NightlyCsMethodIndex]::StringLiteral($Raw) }
-    $sb = New-Object System.Text.StringBuilder
-    $i = 0
-    while ($i -lt $Raw.Length) {
-        if ($Raw[$i] -eq '\' -and ($i + 1) -lt $Raw.Length) {
-            $nch = $Raw[$i + 1]
-            if ($nch -eq 'n') { [void]$sb.Append("`n") }
-            elseif ($nch -eq 'r') { [void]$sb.Append("`r") }
-            elseif ($nch -eq 't') { [void]$sb.Append("`t") }
-            elseif ($nch -eq '"') { [void]$sb.Append('"') }
-            elseif ($nch -eq '\') { [void]$sb.Append('\') }
-            else { [void]$sb.Append($nch) }
-            $i += 2
-            continue
-        }
-        [void]$sb.Append($Raw[$i])
-        $i++
-    }
-    return $sb.ToString()
-}
-
-function ConvertTo-NightlyCsStructuralMask {
-    # Strings and comments keep their newlines and lose every other character, so braces inside them are not structural.
-    param([string]$Text)
-    $n = $Text.Length
-    if ($n -eq 0) { return '' }
-    $chars = $Text.ToCharArray()
-    $i = 0
-    while ($i -lt $n) {
-        $c = $chars[$i]
-        if ($c -eq '/' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '/') {
-            while ($i -lt $n -and $chars[$i] -ne "`n") { $chars[$i] = ' '; $i++ }
-            continue
-        }
-        if ($c -eq '/' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '*') {
-            $chars[$i] = ' '; $i++
-            if ($i -lt $n) { $chars[$i] = ' '; $i++ }
-            while ($i -lt $n) {
-                if ($chars[$i] -eq '*' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '/') {
-                    $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
-                    break
-                }
-                if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
-                $i++
-            }
-            continue
-        }
-        if ($c -eq "'") {
-            $chars[$i] = ' '; $i++
-            while ($i -lt $n) {
-                $q = $chars[$i]
-                $chars[$i] = ' '
-                $i++
-                if ($q -eq '\') {
-                    if ($i -lt $n) { $chars[$i] = ' '; $i++ }
-                    continue
-                }
-                if ($q -eq "'" -or $q -eq "`n") { break }
-            }
-            continue
-        }
-        if ($c -eq '@' -and ($i + 1) -lt $n -and $chars[$i + 1] -eq '"') {
-            $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
-            while ($i -lt $n) {
-                if ($chars[$i] -eq '"') {
-                    if (($i + 1) -lt $n -and $chars[$i + 1] -eq '"') {
-                        $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
-                        continue
-                    }
-                    $chars[$i] = ' '; $i++
-                    break
-                }
-                if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
-                $i++
-            }
-            continue
-        }
-        $dollars = 0
-        $k = $i
-        if ($c -eq '$') {
-            while ($k -lt $n -and $chars[$k] -eq '$') { $dollars++; $k++ }
-        }
-        if ($k -lt $n -and $chars[$k] -eq '"') {
-            $qcount = 0
-            while ($k -lt $n -and $chars[$k] -eq '"') { $qcount++; $k++ }
-            if ($qcount -eq 2 -and $dollars -eq 0) {
-                $chars[$i] = ' '; $chars[$i + 1] = ' '; $i += 2
-                continue
-            }
-            if ($qcount -ge 3 -or $qcount -eq 1) {
-                while ($i -lt $k) { $chars[$i] = ' '; $i++ }
-                if ($qcount -ge 3) {
-                    while ($i -lt $n) {
-                        if ($chars[$i] -eq '"') {
-                            $run = 0
-                            $r = $i
-                            while ($r -lt $n -and $chars[$r] -eq '"') { $run++; $r++ }
-                            if ($run -ge $qcount) {
-                                while ($i -lt $r) { $chars[$i] = ' '; $i++ }
-                                break
-                            }
-                        }
-                        if ($chars[$i] -ne "`n") { $chars[$i] = ' ' }
-                        $i++
-                    }
-                    continue
-                }
-                while ($i -lt $n) {
-                    $q = $chars[$i]
-                    $chars[$i] = ' '
-                    $i++
-                    if ($q -eq '\') {
-                        if ($i -lt $n) { $chars[$i] = ' '; $i++ }
-                        continue
-                    }
-                    if ($q -eq '"' -or $q -eq "`n") { break }
-                }
-                continue
-            }
-        }
-        $i++
-    }
-    return -join $chars
-}
-
-function Get-NightlyCsMatchEnd {
-    param([string]$Mask, [int]$Open, [char]$OpenChar, [char]$CloseChar)
-    $depth = 0
-    $i = $Open
-    $n = $Mask.Length
-    while ($i -lt $n) {
-        $ch = $Mask[$i]
-        if ($ch -eq $OpenChar) { $depth++ }
-        elseif ($ch -eq $CloseChar) {
-            $depth--
-            if ($depth -eq 0) { return $i }
-        }
-        $i++
-    }
-    return -1
+    # The n, r, t, quote and backslash escapes fold to their characters; any other escaped character stands for
+    # itself (NightlyCsMethodIndex.StringLiteral).
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertFrom-NightlyCsStringLiteral' }
+    return [Antiphon.Nightly.NightlyCsMethodIndex]::StringLiteral($Raw)
 }
 
 function Initialize-NightlyCsMethodIndex {
@@ -1379,242 +875,12 @@ function Initialize-NightlyCsMethodIndex {
         return $script:NightlyCsMethodIndex
     }
     $script:NightlyCsMethodIndexRoot = $RepoRoot
+    # The compiled index (Antiphon.Nightly.NightlyCsMethodIndex), made by its first user.
     $script:NightlyCsMethodIndex = @{
-        ClassFiles = @{}
-        Methods = @{}
-        Parsed = @{}
-        Mapped = $false
-        # The compiled index (Antiphon.Nightly.NightlyCsMethodIndex) when Get-NightlyReachableSkipTexts can use it.
         NativeDecided = $false
         Native = $null
     }
     return $script:NightlyCsMethodIndex
-}
-
-function Update-NightlyCsClassFiles {
-    param($Index, [string]$RepoRoot)
-    if ($Index.Mapped) { return }
-    $testsRoot = Join-Path $RepoRoot 'tests'
-    $classRx = [regex]'\b(?:class|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)\b'
-    if (Test-Path -LiteralPath $testsRoot -PathType Container) {
-        $pending = New-Object 'System.Collections.Generic.Stack[string]'
-        $pending.Push($testsRoot)
-        while ($pending.Count -gt 0) {
-            $dir = $pending.Pop()
-            $name = [System.IO.Path]::GetFileName($dir)
-            if ($name -eq 'bin' -or $name -eq 'obj' -or $name.StartsWith('bin-', [System.StringComparison]::Ordinal)) { continue }
-            foreach ($sub in [System.IO.Directory]::EnumerateDirectories($dir)) { $pending.Push($sub) }
-            foreach ($file in [System.IO.Directory]::EnumerateFiles($dir, '*.cs')) {
-                $text = [System.IO.File]::ReadAllText($file)
-                foreach ($match in $classRx.Matches($text)) {
-                    $className = $match.Groups[1].Value
-                    if (-not $Index.ClassFiles.ContainsKey($className)) {
-                        $Index.ClassFiles[$className] = New-Object System.Collections.Generic.List[string]
-                    }
-                    if (-not $Index.ClassFiles[$className].Contains($file)) {
-                        [void]$Index.ClassFiles[$className].Add($file)
-                    }
-                }
-            }
-        }
-    }
-    $Index.Mapped = $true
-}
-
-function Add-NightlyCsMethodRecord {
-    param($Index, $Record)
-    $key = [string]$Record.Class + '.' + [string]$Record.Method
-    if (-not $Index.Methods.ContainsKey($key)) {
-        $Index.Methods[$key] = New-Object System.Collections.Generic.List[object]
-    }
-    [void]$Index.Methods[$key].Add($Record)
-}
-
-function Import-NightlyCsFileMethods {
-    param($Index, [string]$Path)
-    if ($Index.Parsed.ContainsKey($Path)) { return }
-    $Index.Parsed[$Path] = $true
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
-    $text = [System.IO.File]::ReadAllText($Path)
-    $mask = ConvertTo-NightlyCsStructuralMask -Text $text
-    $n = $mask.Length
-    $namespaces = New-Object System.Collections.Generic.List[object]
-    $nsRx = [regex]'\bnamespace\s+([A-Za-z_][A-Za-z0-9_\.]*)'
-    foreach ($match in $nsRx.Matches($mask)) {
-        $nsName = $match.Groups[1].Value
-        $j = $match.Index + $match.Length
-        while ($j -lt $n -and [char]::IsWhiteSpace($mask[$j])) { $j++ }
-        if ($j -ge $n) { continue }
-        if ($mask[$j] -eq ';') {
-            $start = $j
-            $end = $n - 1
-            foreach ($prior in $namespaces.ToArray()) {
-                if ($prior.FileScoped -and $prior.End -ge $start) { $prior.End = $start - 1 }
-            }
-            [void]$namespaces.Add([pscustomobject]@{ Name = $nsName; Start = $start; End = $end; FileScoped = $true })
-        } elseif ($mask[$j] -eq '{') {
-            $end = Get-NightlyCsMatchEnd -Mask $mask -Open $j -OpenChar '{' -CloseChar '}'
-            if ($end -lt 0) { $end = $n - 1 }
-            [void]$namespaces.Add([pscustomobject]@{ Name = $nsName; Start = $j; End = $end; FileScoped = $false })
-        }
-    }
-    $classes = New-Object System.Collections.Generic.List[object]
-    $classRx = [regex]'\b(?:class|struct|record)\s+([A-Za-z_][A-Za-z0-9_]*)\b'
-    foreach ($match in $classRx.Matches($mask)) {
-        $className = $match.Groups[1].Value
-        $j = $match.Index + $match.Length
-        $paren = 0
-        $angle = 0
-        $bodyOpen = -1
-        while ($j -lt $n) {
-            $ch = $mask[$j]
-            if ($ch -eq '(') { $paren++ }
-            elseif ($ch -eq ')') { if ($paren -gt 0) { $paren-- } }
-            elseif ($ch -eq '<') { $angle++ }
-            elseif ($ch -eq '>') { if ($angle -gt 0) { $angle-- } }
-            elseif ($ch -eq '{' -and $paren -eq 0 -and $angle -eq 0) { $bodyOpen = $j; break }
-            elseif ($ch -eq ';' -and $paren -eq 0 -and $angle -eq 0) { break }
-            $j++
-        }
-        if ($bodyOpen -lt 0) { continue }
-        $bodyEnd = Get-NightlyCsMatchEnd -Mask $mask -Open $bodyOpen -OpenChar '{' -CloseChar '}'
-        if ($bodyEnd -lt 0) { continue }
-        $ns = ''
-        $nsStart = -1
-        foreach ($item in $namespaces.ToArray()) {
-            if ($match.Index -ge $item.Start -and $match.Index -le $item.End -and $item.Start -ge $nsStart) {
-                $ns = [string]$item.Name
-                $nsStart = $item.Start
-            }
-        }
-        [void]$classes.Add([pscustomobject]@{ Name = $className; Namespace = $ns; Open = $bodyOpen; End = $bodyEnd })
-    }
-    $mod = 'public|private|internal|protected|static|async|override|virtual|sealed|new|unsafe|partial|extern|required|file'
-    $methodRx = [regex]::new('(?m)^[ \t]*(?:\[[^\]]*\][ \t\r\n]*)*(?:(?:' + $mod + ')[ \t]+)+', 'Compiled')
-    foreach ($match in $methodRx.Matches($mask)) {
-        $owner = $null
-        $ownerOpen = -1
-        foreach ($classInfo in $classes.ToArray()) {
-            if ($match.Index -gt $classInfo.Open -and $match.Index -lt $classInfo.End -and $classInfo.Open -ge $ownerOpen) {
-                $owner = $classInfo
-                $ownerOpen = $classInfo.Open
-            }
-        }
-        if ($null -eq $owner) { continue }
-        $pos = $match.Index + $match.Length
-        $limit = $pos + 8000
-        if ($limit -gt $n) { $limit = $n }
-        $parenAt = -1
-        $sigParen = 0
-        $sigAngle = 0
-        while ($pos -lt $limit) {
-            $ch = $mask[$pos]
-            if ($ch -eq '(' -and $sigAngle -eq 0) { $parenAt = $pos; break }
-            if ($ch -eq '<') { $sigAngle++ }
-            elseif ($ch -eq '>') { if ($sigAngle -gt 0) { $sigAngle-- } }
-            elseif (($ch -eq '{' -or $ch -eq ';' -or $ch -eq '=') -and $sigAngle -eq 0 -and $sigParen -eq 0) { break }
-            $pos++
-        }
-        if ($parenAt -lt 0) { continue }
-        $j = $parenAt - 1
-        while ($j -ge 0 -and [char]::IsWhiteSpace($mask[$j])) { $j-- }
-        if ($j -ge 0 -and $mask[$j] -eq '>') {
-            $angle = 1
-            $j--
-            while ($j -ge 0 -and $angle -gt 0) {
-                if ($mask[$j] -eq '>') { $angle++ }
-                elseif ($mask[$j] -eq '<') { $angle-- }
-                $j--
-            }
-            while ($j -ge 0 -and [char]::IsWhiteSpace($mask[$j])) { $j-- }
-        }
-        if ($j -lt 0) { continue }
-        $nameEnd = $j
-        while ($j -ge 0 -and ([char]::IsLetterOrDigit($mask[$j]) -or $mask[$j] -eq '_')) { $j-- }
-        if ($nameEnd -le $j) { continue }
-        $methodName = $mask.Substring($j + 1, $nameEnd - $j)
-        if ($methodName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { continue }
-        $closeParen = Get-NightlyCsMatchEnd -Mask $mask -Open $parenAt -OpenChar '(' -CloseChar ')'
-        if ($closeParen -lt 0) { continue }
-        $k = $closeParen + 1
-        while ($k -lt $n -and [char]::IsWhiteSpace($mask[$k])) { $k++ }
-        $bodyStart = $k
-        $bodyEnd = $k
-        if ($k -lt $n -and $mask[$k] -eq '{') {
-            $braceEnd = Get-NightlyCsMatchEnd -Mask $mask -Open $k -OpenChar '{' -CloseChar '}'
-            if ($braceEnd -lt 0) { continue }
-            $bodyEnd = $braceEnd + 1
-        } elseif ($k + 1 -lt $n -and $mask[$k] -eq '=' -and $mask[$k + 1] -eq '>') {
-            $bodyStart = $k
-            $pDepth = 0
-            $bDepth = 0
-            while ($k -lt $n) {
-                $ch = $mask[$k]
-                if ($ch -eq '(') { $pDepth++ }
-                elseif ($ch -eq ')') { if ($pDepth -gt 0) { $pDepth-- } }
-                elseif ($ch -eq '{') { $bDepth++ }
-                elseif ($ch -eq '}') { if ($bDepth -gt 0) { $bDepth-- } }
-                elseif ($ch -eq ';' -and $pDepth -eq 0 -and $bDepth -eq 0) { $bodyEnd = $k + 1; break }
-                $k++
-            }
-            if ($bodyEnd -le $bodyStart) { continue }
-        } elseif ($k -lt $n -and $mask[$k] -eq ';') {
-            $bodyEnd = $k + 1
-        } else {
-            continue
-        }
-        $sliceEnd = $bodyEnd
-        if ($sliceEnd -gt $text.Length) { $sliceEnd = $text.Length }
-        $record = [pscustomobject]@{
-            Namespace = [string]$owner.Namespace
-            Class = [string]$owner.Name
-            Method = $methodName
-            File = $Path
-            Text = $text.Substring($match.Index, $sliceEnd - $match.Index)
-            Body = $text.Substring($bodyStart, $sliceEnd - $bodyStart)
-            BodyMask = $mask.Substring($bodyStart, $sliceEnd - $bodyStart)
-        }
-        Add-NightlyCsMethodRecord -Index $Index -Record $record
-    }
-}
-
-function Get-NightlyCsMethods {
-    param($Index, [string]$RepoRoot, [string]$ClassName, [string]$MethodName, [string]$Namespace = '')
-    Update-NightlyCsClassFiles -Index $Index -RepoRoot $RepoRoot
-    if ($Index.ClassFiles.ContainsKey($ClassName)) {
-        foreach ($file in $Index.ClassFiles[$ClassName].ToArray()) {
-            Import-NightlyCsFileMethods -Index $Index -Path ([string]$file)
-        }
-    }
-    $key = $ClassName + '.' + $MethodName
-    if (-not $Index.Methods.ContainsKey($key)) { return @() }
-    $all = $Index.Methods[$key].ToArray()
-    if ([string]::IsNullOrWhiteSpace($Namespace)) { return $all }
-    $matched = @($all | Where-Object { $_.Namespace -ceq $Namespace })
-    return $matched
-}
-
-function Get-NightlyCsSkipLiterals {
-    param([string]$Text, [bool]$FoldRefusal)
-    $found = New-Object System.Collections.Generic.List[string]
-    if ([string]::IsNullOrEmpty($Text)) { return @() }
-    $rx = [regex]'Skip\.Test\(\s*"((?:\\.|[^"\\])*)"|SkipTestException\(\s*"((?:\\.|[^"\\])*)"|NativeLinuxGate\.Require\(\s*"((?:\\.|[^"\\])*)"|NativeLinuxOnly\(\s*"((?:\\.|[^"\\])*)"|new\s+LiveClaudeRefusal\(\s*"((?:\\.|[^"\\])*)"'
-    foreach ($match in $rx.Matches($Text)) {
-        $group = 0
-        if ($match.Groups[1].Success) { $group = 1 }
-        elseif ($match.Groups[2].Success) { $group = 2 }
-        elseif ($match.Groups[3].Success) { $group = 3 }
-        elseif ($match.Groups[4].Success) { $group = 4 }
-        elseif ($match.Groups[5].Success) { $group = 5 }
-        if ($group -eq 0) { continue }
-        $literal = ConvertFrom-NightlyCsStringLiteral -Raw $match.Groups[$group].Value
-        if ($group -eq 5) {
-            if ($FoldRefusal) { [void]$found.Add('20 ' + $literal) }
-        } else {
-            [void]$found.Add($literal)
-        }
-    }
-    return $found.ToArray()
 }
 
 function Test-NightlyLiveClaudeRefusalFolds {
@@ -1633,53 +899,6 @@ function Test-NightlyLiveClaudeRefusalFolds {
     return $folds
 }
 
-function Get-NightlyCsCalls {
-    param([string]$BodyMask)
-    $calls = New-Object System.Collections.Generic.List[object]
-    if ([string]::IsNullOrEmpty($BodyMask)) { return @() }
-    $keywords = @{
-        if = $true; for = $true; while = $true; switch = $true; catch = $true; using = $true
-        lock = $true; return = $true; new = $true; throw = $true; foreach = $true; sizeof = $true
-        typeof = $true; nameof = $true; when = $true; fixed = $true; checked = $true; unchecked = $true
-    }
-    $n = $BodyMask.Length
-    for ($i = 0; $i -lt $n; $i++) {
-        if ($BodyMask[$i] -ne '(') { continue }
-        $j = $i - 1
-        while ($j -ge 0 -and [char]::IsWhiteSpace($BodyMask[$j])) { $j-- }
-        if ($j -ge 0 -and $BodyMask[$j] -eq '>') {
-            $depth = 1
-            $j--
-            while ($j -ge 0 -and $depth -gt 0) {
-                if ($BodyMask[$j] -eq '>') { $depth++ }
-                elseif ($BodyMask[$j] -eq '<') { $depth-- }
-                $j--
-            }
-            while ($j -ge 0 -and [char]::IsWhiteSpace($BodyMask[$j])) { $j-- }
-        }
-        if ($j -lt 0 -or -not ([char]::IsLetterOrDigit($BodyMask[$j]) -or $BodyMask[$j] -eq '_')) { continue }
-        $end = $j
-        while ($j -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$j]) -or $BodyMask[$j] -eq '_')) { $j-- }
-        $name = $BodyMask.Substring($j + 1, $end - $j)
-        if ($keywords.ContainsKey($name)) { continue }
-        $qual = ''
-        $k = $j
-        while ($k -ge 0 -and [char]::IsWhiteSpace($BodyMask[$k])) { $k-- }
-        if ($k -ge 0 -and $BodyMask[$k] -eq '.') {
-            $k--
-            while ($k -ge 0 -and [char]::IsWhiteSpace($BodyMask[$k])) { $k-- }
-            if ($k -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$k]) -or $BodyMask[$k] -eq '_')) {
-                $qEnd = $k
-                while ($k -ge 0 -and ([char]::IsLetterOrDigit($BodyMask[$k]) -or $BodyMask[$k] -eq '_')) { $k-- }
-                $qual = $BodyMask.Substring($k + 1, $qEnd - $k)
-            }
-        }
-        if ($qual -eq 'this') { $qual = '' }
-        [void]$calls.Add([pscustomobject]@{ Name = $name; Qualifier = $qual })
-    }
-    return $calls.ToArray()
-}
-
 function Get-NightlyReachableSkipTexts {
     param([string]$RepoRoot, [string]$Identity)
     $index = Initialize-NightlyCsMethodIndex -RepoRoot $RepoRoot
@@ -1691,79 +910,17 @@ function Get-NightlyReachableSkipTexts {
     if ($classDot -lt 1) { return @() }
     $className = $head.Substring($classDot + 1)
     $namespace = $head.Substring(0, $classDot)
-    # The compiled walk (NightlyCsIndex.cs) returns the same texts in the same order; the PowerShell below is the
-    # fallback (Windows PowerShell 5.1, no core). It needs a fully qualified tests path, as its file reads do.
+    # The compiled walk (NightlyCsIndex.cs): skip literals of the method and of what it calls, to depth 3. Same-class
+    # helpers and gate calls (Require*, Resolve, CreateAsync) keep separate budgets (24 and 12) so a long test body
+    # cannot crowd out the skip chain; other calls stay at 12. The tests path is made absolute as
+    # Start-NightlyExpectedSkipScan makes it.
     if (-not $index.NativeDecided) {
+        Assert-NightlyCoreAvailable 'Get-NightlyReachableSkipTexts'
         $index.NativeDecided = $true
-        $testsRoot = Join-Path $RepoRoot 'tests'
-        if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($testsRoot)) {
-            $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList $testsRoot
-        }
+        $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList ([System.IO.Path]::GetFullPath((Join-Path $RepoRoot 'tests')))
     }
-    if ($null -ne $index.Native) {
-        $foldNative = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
-        return $index.Native.ReachableSkipTexts($className, $method, $namespace, $foldNative)
-    }
-    $starts = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName $className -MethodName $method -Namespace $namespace)
-    $fold = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
-    $texts = New-Object System.Collections.Generic.List[string]
-    $visited = @{}
-    $queue = New-Object System.Collections.Generic.Queue[object]
-    foreach ($start in @($starts)) {
-        if ($null -eq $start) { continue }
-        $queue.Enqueue([pscustomobject]@{ Method = $start; Depth = 0 })
-    }
-    # Same-class helpers and gate calls (Require*, Resolve, CreateAsync) keep a separate
-    # budget so a long test body cannot crowd out the skip chain. Other calls stay at 12.
-    $followedOther = 0
-    $followedSame = 0
-    $followedGate = 0
-    while ($queue.Count -gt 0) {
-        $item = $queue.Dequeue()
-        $current = $item.Method
-        if ($null -eq $current) { continue }
-        $visit = [string]$current.File + '|' + [string]$current.Namespace + '|' + [string]$current.Class + '|' + [string]$current.Method + '|' + [string]$current.Text.Length
-        if ($visited.ContainsKey($visit)) { continue }
-        $visited[$visit] = $true
-        foreach ($literal in @(Get-NightlyCsSkipLiterals -Text ([string]$current.Text) -FoldRefusal $fold)) {
-            [void]$texts.Add([string]$literal)
-        }
-        if ([int]$item.Depth -ge 3) { continue }
-        foreach ($call in @(Get-NightlyCsCalls -BodyMask ([string]$current.BodyMask))) {
-            $callName = [string]$call.Name
-            $sameClass = [string]::IsNullOrWhiteSpace([string]$call.Qualifier)
-            $gate = $false
-            if ($callName -ceq 'Resolve' -or $callName -ceq 'CreateAsync' -or $callName.StartsWith('Require')) { $gate = $true }
-            if ($sameClass) {
-                if ($followedSame -ge 24) { continue }
-            } elseif ($gate) {
-                if ($followedGate -ge 12) { continue }
-            } else {
-                if ($followedOther -ge 12) { continue }
-            }
-            $targets = @()
-            if ($sameClass) {
-                $targets = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName ([string]$current.Class) -MethodName $callName -Namespace ([string]$current.Namespace))
-            } else {
-                $targets = @(Get-NightlyCsMethods -Index $index -RepoRoot $RepoRoot -ClassName ([string]$call.Qualifier) -MethodName $callName -Namespace '')
-            }
-            foreach ($target in @($targets)) {
-                if ($null -eq $target) { continue }
-                if ($sameClass) {
-                    if ($followedSame -ge 24) { break }
-                    $followedSame++
-                } elseif ($gate) {
-                    if ($followedGate -ge 12) { break }
-                    $followedGate++
-                } else {
-                    if ($followedOther -ge 12) { break }
-                    $followedOther++
-                }
-                $queue.Enqueue([pscustomobject]@{ Method = $target; Depth = ([int]$item.Depth + 1) })
-            }
-        }
-    }
-    return $texts.ToArray()
+    $foldNative = Test-NightlyLiveClaudeRefusalFolds -RepoRoot $RepoRoot
+    return $index.Native.ReachableSkipTexts($className, $method, $namespace, $foldNative)
 }
 
 # The three end-of-run expected-skip scans (source gaps, reason gaps, roster drift) read only tests/ and the
@@ -1925,67 +1082,12 @@ function Get-NightlyExpectedSkipSourceGaps {
         $wanted += $entry
     }
     if ($wanted.Count -eq 0) { return @() }
-    $testsRoot = Join-Path $RepoRoot 'tests'
-    # The compiled scan (NightlyTestSources.cs) returns the same gaps in the same order and shares one racy-safe
-    # read of each source file with the reason-gap walk; the PowerShell below is the fallback (5.1, no core).
-    if ((Test-NightlyCoreAvailable) -and [System.IO.Path]::IsPathFullyQualified($testsRoot)) {
-        $tests = [string[]]@(foreach ($entry in $wanted) { [string]$entry.test })
-        return @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($testsRoot, $tests))
-    }
-    $byClass = @{}
-    foreach ($entry in $wanted) {
-        $test = [string]$entry.test
-        $methodDot = $test.LastIndexOf('.')
-        if ($methodDot -lt 1) { continue }
-        $method = $test.Substring($methodDot + 1)
-        $head = $test.Substring(0, $methodDot)
-        $classDot = $head.LastIndexOf('.')
-        $className = if ($classDot -lt 0) { $head } else { $head.Substring($classDot + 1) }
-        if (-not $byClass.ContainsKey($className)) {
-            $byClass[$className] = @{ methods = @{}; seenClass = $false }
-        }
-        $byClass[$className].methods[$method] = $false
-    }
-    if (Test-Path -LiteralPath $testsRoot -PathType Container) {
-        $pending = New-Object 'System.Collections.Generic.Stack[string]'
-        $pending.Push($testsRoot)
-        while ($pending.Count -gt 0) {
-            $dir = $pending.Pop()
-            $name = [System.IO.Path]::GetFileName($dir)
-            if ($name -eq 'bin' -or $name -eq 'obj' -or $name.StartsWith('bin-', [System.StringComparison]::Ordinal)) { continue }
-            foreach ($sub in [System.IO.Directory]::EnumerateDirectories($dir)) { $pending.Push($sub) }
-            foreach ($file in [System.IO.Directory]::EnumerateFiles($dir, '*.cs')) {
-                $text = [System.IO.File]::ReadAllText($file)
-                foreach ($className in @($byClass.Keys)) {
-                    $bucket = $byClass[$className]
-                    # Both patterns hold the name literally (case-sensitive), so a file without it cannot match:
-                    # the ordinal search only skips files the regex would reject.
-                    if ($text.IndexOf($className, [System.StringComparison]::Ordinal) -lt 0) { continue }
-                    if (-not [regex]::IsMatch($text, ('\bclass\s+' + [regex]::Escape($className) + '\b'))) { continue }
-                    $bucket.seenClass = $true
-                    foreach ($method in @($bucket.methods.Keys)) {
-                        if ($bucket.methods[$method]) { continue }
-                        if ([regex]::IsMatch($text, ('\b' + [regex]::Escape($method) + '\s*\('))) {
-                            $bucket.methods[$method] = $true
-                        }
-                    }
-                }
-            }
-        }
-    }
-    $gaps = @()
-    foreach ($entry in $wanted) {
-        $test = [string]$entry.test
-        $methodDot = $test.LastIndexOf('.')
-        if ($methodDot -lt 1) { $gaps += $test; continue }
-        $method = $test.Substring($methodDot + 1)
-        $head = $test.Substring(0, $methodDot)
-        $classDot = $head.LastIndexOf('.')
-        $className = if ($classDot -lt 0) { $head } else { $head.Substring($classDot + 1) }
-        $bucket = $byClass[$className]
-        if ($null -eq $bucket -or -not $bucket.seenClass -or -not $bucket.methods[$method]) { $gaps += $test }
-    }
-    return $gaps
+    Assert-NightlyCoreAvailable 'Get-NightlyExpectedSkipSourceGaps'
+    # The compiled scan (NightlyTestSources.cs) shares one racy-safe read of each source file with the reason-gap
+    # walk. The tests path is made absolute as Start-NightlyExpectedSkipScan makes it.
+    $testsRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot 'tests'))
+    $tests = [string[]]@(foreach ($entry in $wanted) { [string]$entry.test })
+    return @([Antiphon.Nightly.NightlyTestSources]::ExpectedSkipSourceGaps($testsRoot, $tests))
 }
 
 function Find-NightlyExpectedSkipEntry {
@@ -2148,71 +1250,16 @@ function Test-NightlyCounterAgreement {
 
 function Test-NightlyExpandedRowsPresent {
     param([object[]]$DiscoveryNodes, [object[]]$TerminalRows, [string[]]$RequiredUids)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::ExpandedRowsPresent($TerminalRows, $RequiredUids) }
-    $terminalUids = @{}
-    $executed = @('Passed', 'Failed', 'Skipped')
-    foreach ($r in @($TerminalRows)) {
-        $outcome = ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$r.Outcome)
-        if ([string]::IsNullOrWhiteSpace($outcome) -and $r.State) {
-            $outcome = ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$r.State)
-        }
-        if ($executed -notcontains $outcome) { continue }
-        $uid = [string]$r.Uid
-        if (-not [string]::IsNullOrWhiteSpace($uid)) { $terminalUids[$uid] = $true }
-    }
-    $missing = [Collections.Generic.List[object]]::new()
-    foreach ($uid in @($RequiredUids)) {
-        $key = [string]$uid
-        if ([string]::IsNullOrWhiteSpace($key)) { continue }
-        if (-not $terminalUids.ContainsKey($key)) { $missing.Add($key) }
-    }
-    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing.ToArray() }
+    # Required UIDs with no executed (Passed, Failed, Skipped) terminal row.
+    Assert-NightlyCoreAvailable 'Test-NightlyExpandedRowsPresent'
+    return [Antiphon.Nightly.NightlyVerdicts]::ExpandedRowsPresent($TerminalRows, $RequiredUids)
 }
 
 function Test-NightlyTrxDiagnosticCrossCheck {
     param([object[]]$TrxRows, [object[]]$TerminalNodes, [string[]]$RequiredClasses = @())
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($TrxRows, $TerminalNodes, $RequiredClasses) }
-    $trxBag = @{}
-    $diagBag = @{}
-    $extra = @()
-    $assignment = New-NightlyClassAssignmentCache -RequiredClasses $RequiredClasses
-    foreach ($r in @($TrxRows)) {
-        $assigned = Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$r.ClassName) -TypeName ''
-        if (-not $assigned) {
-            if ($RequiredClasses -and @($RequiredClasses).Count -gt 0) {
-                $extra += ('{0}.{1}' -f $r.ClassName, $r.MethodName)
-            }
-            continue
-        }
-        $key = Get-NightlyIdentityBagKey -ClassName ([string]$r.ClassName) -TypeName '' -MethodName ([string]$r.MethodName)
-        if (-not $trxBag.ContainsKey($key)) { $trxBag[$key] = 0 }
-        $trxBag[$key]++
-    }
-    foreach ($n in @($TerminalNodes)) {
-        if (-not (Test-NightlyClassAssignedCached -Cache $assignment -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type))) {
-            continue
-        }
-        $method = [string]$n.Method
-        if ([string]::IsNullOrWhiteSpace($method)) { $method = [string]$n.MethodName }
-        $key = Get-NightlyIdentityBagKey -ClassName ([string]$n.ClassName) -TypeName ([string]$n.Type) -MethodName $method
-        if (-not $diagBag.ContainsKey($key)) { $diagBag[$key] = 0 }
-        $diagBag[$key]++
-    }
-    $mismatch = @()
-    $allKeys = @{}
-    foreach ($k in @($trxBag.Keys)) { $allKeys[$k] = $true }
-    foreach ($k in @($diagBag.Keys)) { $allKeys[$k] = $true }
-    foreach ($k in @($allKeys.Keys)) {
-        $t = 0; $d = 0
-        if ($trxBag.ContainsKey($k)) { $t = [int]$trxBag[$k] }
-        if ($diagBag.ContainsKey($k)) { $d = [int]$diagBag[$k] }
-        if ($t -ne $d) { $mismatch += ('{0} trx={1} diag={2}' -f $k, $t, $d) }
-    }
-    return [pscustomobject]@{
-        Ok = ($mismatch.Count -eq 0 -and $extra.Count -eq 0)
-        Mismatch = $mismatch
-        ExtraClasses = $extra
-    }
+    # The TRX rows and the diagnostic terminal nodes of the required classes as identity bags: every count must agree.
+    Assert-NightlyCoreAvailable 'Test-NightlyTrxDiagnosticCrossCheck'
+    return [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($TrxRows, $TerminalNodes, $RequiredClasses)
 }
 
 function Test-NightlySuiteUidUnion {
@@ -2226,24 +1273,8 @@ function Test-NightlyRequiredClassesPresent {
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) {
         return [pscustomobject]@{ Ok = $true; Missing = @() }
     }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyVerdicts]::RequiredClassesPresent($TerminalRows, $RequiredClasses) }
-    $present = @{}
-    foreach ($r in @($TerminalRows)) {
-        $cn = [string]$r.ClassName
-        if ([string]::IsNullOrWhiteSpace($cn)) { continue }
-        $present[$cn] = $true
-        $present[(Get-NightlyBareClassIdentity -Name $cn)] = $true
-    }
-    $missing = @()
-    foreach ($c in @($RequiredClasses)) {
-        $name = [string]$c
-        if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        $wantBare = Get-NightlyBareClassIdentity -Name $name
-        if (-not $present.ContainsKey($name) -and -not $present.ContainsKey($wantBare)) {
-            $missing += $name
-        }
-    }
-    return [pscustomobject]@{ Ok = ($missing.Count -eq 0); Missing = $missing }
+    Assert-NightlyCoreAvailable 'Test-NightlyRequiredClassesPresent'
+    return [Antiphon.Nightly.NightlyVerdicts]::RequiredClassesPresent($TerminalRows, $RequiredClasses)
 }
 
 function ConvertTo-NightlyNativeSuiteVerdict {
