@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 329,
+      "classes": 328,
       "reason": "allowlist"
     },
     {
@@ -170,15 +170,6 @@
         "AgentTaskInputFallbackTests",
         "AgentTaskInputSpillTests",
         "AgentTaskInternalDecisionLifecycleTests"
-      ]
-    },
-    {
-      "path": "docker-compose.server2-runner.yml",
-      "classes": 26,
-      "reason": "cap",
-      "owed": 1,
-      "first": [
-        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -2124,18 +2115,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 39,
+      "classes": 38,
       "reason": "cap",
-      "owed": 14,
+      "owed": 13,
       "first": [
-        "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
         "ZombieCensusPlatformTests",
         "DirectoryBuildRspTests",
-        "DockerDeliveryObservationTests"
+        "DockerDeliveryObservationTests",
+        "E2ECopyOwnedPtyHostAppHostContractTests"
       ]
     },
     {
@@ -2818,7 +2809,6 @@
         "C1008HostFixtureSetupInsertionTests",
         "C1008PlatformContractTests",
         "C1364BoundLandWaitProofTests",
-        "C1893S0RunnerHoldTests",
         "CheckpointImportTests",
         "CodexRunnerImageContractTests",
         "CustodyNamespaceBootstrapTests",
@@ -2838,7 +2828,8 @@
         "VerifyDindRunnerScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests"
+        "VolumeRetirementReceiptTests",
+        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -2994,6 +2985,7 @@
       "classes": [
         "CodexRunnerImageContractTests",
         "DindRunnerContractTests",
+        "DockerStackContractTests",
         "RemoteScriptContractTests"
       ]
     },
@@ -23983,7 +23975,6 @@
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
       "classes": [
-        "C1893S0RunnerHoldTests",
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
         "CodexRootExecContractTests",
@@ -24000,6 +23991,7 @@
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
         "LandGraphAuditProjectInstanceTests",
+        "PackageVersionPinContractTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
@@ -26162,6 +26154,12 @@
       "classes": [
         "LandingGitTests",
         "LandingSourceFreshnessTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/RemoteScriptContractSupport.cs",
+      "classes": [
+        "DockerStackContractTests"
       ]
     },
     {
