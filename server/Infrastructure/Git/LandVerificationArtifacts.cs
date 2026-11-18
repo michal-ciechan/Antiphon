@@ -9,18 +9,22 @@ namespace Antiphon.Server.Infrastructure.Git;
 
 /// <summary>
 /// Persistent build outputs, outside the disposable land worktree. Callers hold L then R.
-/// Nothing here deletes an old generation or adopts an unmarked existing directory.
+/// Nothing here adopts an unmarked existing directory; only <see cref="Prune"/> deletes, and only
+/// owned set-aside generations under the root (CARD-1994).
 /// </summary>
 public sealed class LandVerificationArtifacts
 {
+    private const string Quarantined = "quarantined";
+    private const int KeepSetAside = 2;
+
     internal string? SdkIdentity { get; init; }
 
     public async Task<Generation> PrepareAsync(string common, string worktree, bool reuse,
-        Action<string> diagnostic, CancellationToken ct)
+        Action<string> diagnostic, CancellationToken ct, string? target = null)
     {
         var sdk = SdkIdentity ?? await ReadSdkAsync(worktree, ct);
         var toolchain = $"{sdk}|{RuntimeInformation.OSDescription}|{RuntimeInformation.ProcessArchitecture}|Debug";
-        return Prepare(common, toolchain, reuse, diagnostic);
+        return Prepare(common, toolchain, reuse, diagnostic, target);
     }
 
     internal string RootFor(string common, string toolchain) => Path.Combine(common, "antiphon", "land-verify",
@@ -38,7 +42,7 @@ public sealed class LandVerificationArtifacts
             RequireNoLinks(root);
             if (!Path.Exists(root)) CreateOwned(root, owner);
             RequireOwner(root, owner);
-            var currentFile = Path.Combine(root, "current");
+            var currentFile = Path.Combine(root, PointerFor(target));
             if (Path.Exists(currentFile))
             {
                 RequireNoLinks(currentFile);
@@ -46,16 +50,19 @@ public sealed class LandVerificationArtifacts
                 if (!Guid.TryParseExact(id, "N", out _)) throw new IOException("invalid-generation");
                 var current = Path.Combine(root, id);
                 RequireOwner(current, owner);
-                RequireUnlinkedTree(current);
-                var stateFile = Path.Combine(current, "state");
-                var state = ReadSmall(stateFile);
+                // CARD-1994: the mark first. Only a generation that will be reused is scanned.
+                var state = ReadSmall(Path.Combine(current, "state"));
                 if (state == "ready")
                 {
+                    RequireUnlinkedTree(current);
                     WriteState(current, "building");
                     diagnostic("land_artifacts warm " + current);
+                    Prune(root, owner, current, diagnostic);
                     return new(current, owner);
                 }
-                if (state != "building") throw new IOException("invalid-state");
+                if (state is not ("building" or Quarantined)) throw new IOException("invalid-state");
+                // Still building: the last build was killed or crashed, or never recorded its exit.
+                WriteState(current, Quarantined);
                 diagnostic("land_artifacts quarantined " + current);
             }
             var generationId = Guid.NewGuid().ToString("N");
@@ -64,11 +71,75 @@ public sealed class LandVerificationArtifacts
             WriteState(path, "building");
             WriteAtomic(currentFile, generationId);
             diagnostic("land_artifacts new " + path);
+            Prune(root, owner, path, diagnostic);
             return new(path, owner);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return Cold(owner, diagnostic, "unusable-owned-root:" + ex.GetType().Name);
+        }
+    }
+
+    /// <summary>
+    /// CARD-1994: one current pointer per target lane in the same root. Master (and no target) keeps the
+    /// v1 <c>current</c> pointer, every <c>rc/*</c> line shares <c>current-rc</c>, any other target gets its own.
+    /// </summary>
+    internal static string PointerFor(string? target)
+    {
+        var branch = target is null ? null
+            : target.StartsWith("refs/heads/", StringComparison.Ordinal) ? target["refs/heads/".Length..] : target;
+        if (string.IsNullOrEmpty(branch) || branch == "master") return "current";
+        if (branch.StartsWith("rc/", StringComparison.Ordinal)) return "current-rc";
+        return "current-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(branch)))[..16].ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// CARD-1994: keeps the newest <see cref="KeepSetAside"/> set-aside generations and deletes older ones.
+    /// Callers hold the land execution lock, so no other land is building here. Only owned, unlinked,
+    /// generation-named direct children of the root that no pointer names are candidates; a failure
+    /// to prune is a diagnostic, never a cold land.
+    /// </summary>
+    private static void Prune(string root, string owner, string active, Action<string> diagnostic)
+    {
+        try
+        {
+            var referenced = new HashSet<string>(StringComparer.Ordinal) { Path.GetFileName(active) };
+            foreach (var pointer in Directory.EnumerateFiles(root, "current*"))
+            {
+                var name = Path.GetFileName(pointer);
+                if (name != "current" && !name.StartsWith("current-", StringComparison.Ordinal)) continue;
+                referenced.Add(ReadSmall(pointer));
+            }
+            var candidates = new List<(string Path, DateTime At)>();
+            foreach (var entry in Directory.EnumerateDirectories(root))
+            {
+                var id = Path.GetFileName(entry);
+                if (!Guid.TryParseExact(id, "N", out _) || referenced.Contains(id)) continue;
+                var path = Path.Combine(root, id);
+                if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(path)), root, StringComparison.Ordinal)) continue;
+                try
+                {
+                    RequireNoLinks(path);
+                    RequireOwner(path, owner);
+                    var stateFile = Path.Combine(path, "state");
+                    if (ReadSmall(stateFile) is not (Quarantined or "building")) continue;
+                    candidates.Add((path, File.GetLastWriteTimeUtc(stateFile)));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    diagnostic($"land_artifacts retained {path} reason={ex.Message}");
+                }
+            }
+            foreach (var (path, _) in candidates.OrderByDescending(c => c.At)
+                         .ThenByDescending(c => c.Path, StringComparer.Ordinal).Skip(KeepSetAside))
+            {
+                Directory.Delete(path, recursive: true);
+                diagnostic("land_artifacts pruned " + path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            diagnostic("land_artifacts prune-skipped reason=" + ex.GetType().Name);
         }
     }
 

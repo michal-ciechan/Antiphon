@@ -29,11 +29,22 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
         {
             var generation = correlation.CommonDirectory is { } common
                 ? await (artifacts ?? new LandVerificationArtifacts()).PrepareAsync(common, worktree,
-                    settings?.Value.ReuseVerificationArtifacts ?? true, observer.Line, ct)
+                    settings?.Value.ReuseVerificationArtifacts ?? true, observer.Line, ct, correlation.TargetRef)
                 : null;
+            var built = false;
             var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, observer, ct,
-                buildSlots, RunProcess, artifactsPath: generation?.Path ?? correlation.ArtifactsPath);
-            if (result.Ok) generation?.Complete();
+                buildSlots, RunProcess, artifactsPath: generation?.Path ?? correlation.ArtifactsPath, buildExited: build =>
+                {
+                    built = true;
+                    // CARD-1994: MSBuild exits 0 or 1 after writing only what compiled, so the outputs stay
+                    // incrementally valid for the next land. Any other status is a kill or crash: the
+                    // generation stays building and the next land sets it aside.
+                    if (build.Ok || build.ExitCode == 1) generation?.Complete();
+                    else if (generation is not null)
+                        observer.Line($"land_artifacts unfinished exit={build.ExitCode?.ToString() ?? "unknown"} {generation.Path}");
+                });
+            // No build child ran (a build-slot timeout): the generation is as Prepare found it.
+            if (!built) generation?.Complete();
             return new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait);
         }
         finally
