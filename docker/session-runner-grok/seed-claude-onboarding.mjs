@@ -1,7 +1,9 @@
 // CARD-0628. Pre-seed the Claude config the CLI actually reads so a fresh task under
 // /work/worktrees/* does not stop on onboarding or the trust dialog.
 //
-// Measured in the Claude Code binary (desktop 2.1.281; the image pins 2.1.280):
+// The quoted version tracks ARG CLAUDE_CODE_VERSION and is written only when absent.
+// UNOBSERVED on 2.1.327: the key set below was measured on desktop 2.1.281 and image
+// pin 2.1.280. This file does not re-measure those keys.
 //   hasCompletedOnboarding must be true or the first-run flow runs again.
 //   projects[<path>].hasTrustDialogAccepted === true is the trust flag (Qke).
 //   ah() maps a directory inside a git repo to its canonical git root, which for a
@@ -16,7 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-const pinnedOnboardingVersion = "2.1.280";
+const pinnedOnboardingVersion = "2.1.327";
 const trustPaths = ["/work/repos/antiphon", "/work/worktrees"];
 const dir = process.env.CLAUDE_CONFIG_DIR || "/state/claude";
 

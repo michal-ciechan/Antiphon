@@ -113,8 +113,10 @@ export GIT_CONFIG_GLOBAL="$GIT_IDENTITY_SOURCE"
 
 # --- step 2c: Claude onboarding and worktree trust (CARD-0628, CARD-1176) -------------
 # A fresh Claude store has no hasCompletedOnboarding and no project trust, so the first
-# task in /work/worktrees/* stops on those dialogs. The CLI (2.1.280 / 2.1.281) reads
-# hasCompletedOnboarding and projects[<path>].hasTrustDialogAccepted. ah() maps a linked
+# task in /work/worktrees/* stops on those dialogs. Measured on CLI 2.1.280 / 2.1.281,
+# that binary reads hasCompletedOnboarding and projects[<path>].hasTrustDialogAccepted.
+# UNOBSERVED on image pin 2.1.327: whether that binary still reads them. The seed still
+# writes the measured set. ah() maps a linked
 # worktree to its canonical git root, and ub() walks parents up to that root. Honour
 # CLAUDE_CONFIG_DIR, and when it is unset keep the production store /state/claude. Create
 # that directory as root before dropping privileges: the CARD-0604 harness mounts no
