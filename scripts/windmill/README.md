@@ -113,6 +113,64 @@ under LocalAppData\antiphon fails the parent check on this desktop because
 that folder grants another account full control. The profile directory's
 parents pass, and the CARD-1413 check is unchanged.
 
+### Source database (snapshot-target)
+
+The backup follows the database to server2 (backup retarget plan
+`docs/superpowers/plans/2026-11-18-postgres-backup-retarget-plan.md`). The
+job still runs on the desktop worker and still writes into the same desktop
+folders, OneDrive copy, `snapshot-status.json` and Telegram line. The source is
+the one word in `C:\Users\lndco\antiphon-snapshot-runner\snapshot-target`:
+
+- `desktop` dumps `antiphon-postgres` on the local daemon, as before.
+- `server2` runs `postgres-snapshot.ps1 -Target server2`. Every docker call
+  goes through the Docker context `antiphon-server2`, whose endpoint must be
+  `ssh://`. A `DOCKER_HOST` of any kind is refused (`docker-host`), a `tcp://`
+  context is refused (`docker-context`), and the endpoint is never printed.
+  Before the dump, `antiphon-server2-postgres-postgres-1` must be running,
+  carry the compose project `antiphon-server2-postgres` and mount
+  `antiphon-server2-postgres_pgdata` at `/var/lib/postgresql/data`, else
+  `source-mismatch` (exit 9). `pg_dump` runs on server2.
+- A missing file, an empty file or any other value fails closed with
+  `reason=target-invalid`, and the job still posts
+  `DB backup: FAIL exit 9 target-invalid src=none`.
+
+The Telegram line names the source: `DB backup: OK 0.7 GB +cloud src=server2`,
+or `DB backup: FAIL exit <n> <reason> src=<target>` with the child's reason.
+`snapshot-status.json` adds `target` and `serverVersion`.
+
+Prerequisite (operator): an SSH key for a server2 account in the `docker` group
+in the `lndco` profile, and
+`docker context create antiphon-server2 --docker host=ssh://<user>@<server2>`,
+checked with `docker --context antiphon-server2 version`. The runner refresh
+also copies the new scripts, re-pins SOURCE-SHA, and writes `desktop` with
+`Set-SnapshotTarget desktop`.
+
+Change the word only through `Set-SnapshotTarget`, dot-sourced from the runner
+copy so the job does not run:
+
+    powershell -NoProfile -Command ". C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1; Set-SnapshotTarget server2"
+
+It writes the word ASCII without a BOM, reads it back and must print
+`SNAPSHOT TARGET server2`. Any other word is refused and the file is left as it
+was.
+
+Rollback: every cutover phase 6 rollback that returns production to the
+desktop volume runs `Set-SnapshotTarget desktop` and checks it prints
+`SNAPSHOT TARGET desktop`, whether or not the flip and the restore proof
+succeeded. The write is idempotent, so it also runs when the flip never
+happened. Without it the next 07:50 run would dump server2 while production is
+the desktop volume again. If phase 6 stops before AppHost is back on the
+desktop volume, leave the word and record it with the phase 6 exit.
+
+Restore proof on server2: `postgres-snapshot.ps1 -Plain -RestoreDrill -Execute
+-Target server2` copies the newest plain dump into the labelled scratch
+container `antiphon-postgres-drill` (volume `antiphon-postgres-drill-pgdata`,
+`--network none`, image = the production container's image id), restores it
+with `pg_restore --exit-on-error` into `antiphon_drill`, prints
+`drill=1 bytes=<n> tables=<n> seconds=<n>` and removes the scratch container
+and volume unless `-KeepScratch`. The desktop target still refuses a plain
+drill (`plain-drill-unsupported`).
+
 `u/lndcobra/antiphon_postgres_snapshot_stale` runs at `0 0 8 * * *`
 Europe/London. It posts only when no plain dump and no exit-0 status is newer
 than 26 hours. A healthy 07:50 run does not send a second message.
