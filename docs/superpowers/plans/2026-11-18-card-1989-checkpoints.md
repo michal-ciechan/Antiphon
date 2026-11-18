@@ -3,7 +3,8 @@
 Base: e229fb4d3fb859ee16f82bc553b1d4a5cfdccce4. Code owner: 62cec2de.
 
 The coordinator and live proof assertion share a configurable wall-clock budget.
-Use `ANTIPHON_RETIRE_CONTROL_WINDOW_MS`, default 8000, range 1000..8000.
+Use `ANTIPHON_RETIRE_CONTROL_WINDOW_MS`, default 8000, range 3000..8000 (floor raised from
+1000 by the round-2 repair below).
 The ceiling preserves the host's existing 10-second response read and 11-second
 effect fence. A 15-second default would require widening those independent gates;
 that is outside this repair. No proof, ref, nonce, renewal or effect gate changes.
@@ -32,13 +33,18 @@ command rows need no build, avoiding prohibited custom output directories.
 V-1: a live read over the old five seconds passes inside eight seconds.
 V-2: a hash that exceeds a one-second configured budget refuses before Git, names
 bundle-hash and reports its actual elapsed time.
-V-3: all step durations are populated and Git receives only remaining budget.
+V-3: all step durations are populated and Git receives only remaining budget; a
+successful proof at the 3000 ms floor with the measured steady hash (1.4 s) and
+ls-remote (1.15 s) maxima passes, and scratch cleanup is recorded but not charged.
 R-1: withdrawn refs and bundle tampering still refuse.
 V-4: absent, empty, valid and invalid configuration states.
 V-5: coordinator persists success/failure timing receipts (offline protocol fixture).
 R-2: affected class selections, bounded to short rows; no whole slow class.
 R-3: pin recomputation, land graph, evidence diff, merge-tree, OS branch audit.
 V-6: inspect whether renewals can share a bundle without changing proof semantics.
+V-7: a proved branch that fast-forwards during the window (CARD-1986 graph path)
+refuses closed at step moved-ref with control-deadline when the graph read cannot
+finish in the window (CARD-1992), never as an admitted or withdrawn ref.
 
 ### Checkpoints
 
@@ -85,6 +91,7 @@ V-6: inspect whether renewals can share a bundle without changing proof semantic
 | CP-39 | S2 | n/a | rolling-39 | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RollingVolumeRecycleScriptTests -Method '(C1693_Retire_temp_census_ignores_standing_runner_churn_between_passes*)\|(C1697_Wrapper_standing_census_compares_only_rows_bound_to_server2*)'` | R-2 | 2 named methods, nonzero each, zero failures | n/a | 3 | true |
 | CP-40 | S2 | n/a | legacy-missing-shell | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RollingVolumeRecycleScriptTests -Method C1008_Legacy_rolling_and_jq_rosters_remain_missing_shell` | R-2 | 1 complete legacy mode, nonzero, zero failures | n/a | 7 | true |
 | CP-41 | S2 | n/a | legacy-present | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RollingVolumeRecycleScriptTests -Method C1008_Legacy_rolling_and_jq_rosters_remain_present` | R-2 | 1 complete legacy mode, nonzero, zero failures | n/a | 7 | true |
+| CP-43 | S3 | n/a | moved | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case moved` | V-7 | 1 PASS, zero failures | n/a | 1 | true |
 | CP-42 | S2 | n/a | preview-private-origin | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RollingVolumeRecycleScriptTests -Method '(C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt*)\|(C1008_Host_proof_admits_only_an_authenticated_private_origin*)'` | R-2 | 2 named methods, nonzero each, zero failures | n/a | 7 | true |
 
 The native-output adapter builds each committed group at CP-7, CP-8 or CP-25, records committed source and DLL
@@ -150,3 +157,39 @@ That run finished at 3426.835 seconds (3156.782 execution, 270.053 admission),
 with CP-27..CP-39 green and CP-25/26 timed out. Include it in the same required
 performance Debug follow-up. Its manifest and original receipts retain the exact
 source, filters and costs; parameterized methods are counted from fresh TRX.
+
+## Round 2 repair (Code 05a3e971, Review c4d03262 blocker)
+
+Review c4d03262 (`docs/superpowers/reviews/2026-11-18-card-1989-review.md` at
+e1c263950b6ce4e2b950470b90385f246d57d679) found the 1000 ms floor could not finish a
+successful proof: the finally block charged `Remove-Item -Recurse` of the empty
+scratch (856 ms, 1073 ms) and the coordinator charged it again (step complete,
+1068 ms over a 1000 ms window). Repair, all at the unchanged 8000 ms default and cap:
+
+- Floor 3000 ms. One origin's measured steady controls are bundle hash 0.9-1.4 s and
+  ls-remote 1.0-1.15 s, at most 2.55 s; proof read, parses and compare measured
+  under 100 ms. 3000 ms leaves about 0.45 s. Several origins share one window, so a
+  multi-origin control should keep the default.
+- Cleanup: `Remove-C1609LiveScratch` uses `Directory.Delete` (2 ms) with the
+  cmdlet as fallback for read-only Windows Git objects. It runs after the charged
+  time is recorded, is reported as `cleanupMs` and the `cleanup` step, and never
+  fails a successful proof; the coordinator subtracts per-origin `cleanupMs` from
+  its window check and receipt. Every proof step still enforces the budget.
+- Merge of master 9cb2550e74a5dd18cae82b4788abf02e50521435 (CARD-1986): the live
+  moved-ref graph read is one budgeted step, `moved-ref`; a Git child killed at the
+  remaining budget, or CARD-1986's remaining-time check, is reported as
+  `control-deadline` at the running step. Withdrawn refs keep CARD-1986's
+  `RecycleOriginMoved` diagnosis.
+- CARD-1993: the stale five-second live-check comment is refreshed.
+
+Red at e4712081b4e70f7ab68683d95ce19ec9a8d6c361 (production = merge 315d918f17):
+CP-3 refused at step cleanup (elapsed 4997, limit 3000); CP-5 admitted 1000; CP-6
+fast path `control-step=cleanup control-elapsed-ms=4036 control-limit-ms=3000`.
+CP-43 passed already at the merge (behaviour confirmation, not a red witness).
+
+Rows run this round (S3, one checkpoint run at the committed tip): CP-1..CP-6 and
+CP-43 (all script cases share the merged function), CP-7 (VolumeRetirementHostProofTests,
+CARD-1986 and CARD-1989 witnesses together, native build), and the guard rows
+CP-19 (layering), CP-20 (derived index), CP-21 (declaration category). CP-8..CP-18 and
+CP-22..CP-42 are not re-run (operator SHORT-only, 2026-11-18); their earlier results
+stay at their recorded SHAs and are not credited to this tip.
