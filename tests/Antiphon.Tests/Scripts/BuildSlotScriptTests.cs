@@ -168,6 +168,16 @@ public sealed class BuildSlotScriptTests
     }
 
     [Test]
+    [NativeLinuxOnly("CARD-1981 the SDK temp leak was observed on Linux only")]
+    public Task C1981_LeaseTempDirConfinesSdkScratch() =>
+        ScriptHarness.RunHarnessCaseAsync("test-build-slot.ps1", "C1981", "C1981_LeaseTempDirConfinesSdkScratch", 5,
+            "C1981 LeaseTempDirConfinesSdkScratch child TMPDIR is a short owned lease path",
+            "C1981 LeaseTempDirConfinesSdkScratch TEMP and TMP stay off the lease path",
+            "C1981 LeaseTempDirConfinesSdkScratch parent TMPDIR is unchanged",
+            "C1981 LeaseTempDirConfinesSdkScratch the sdk scratch and the lease directory are gone",
+            "C1981 LeaseTempDirConfinesSdkScratch parent /tmp gains no six-character directory");
+
+    [Test]
     public Task C1048_WrapperPwshModulePathUnchanged()
     {
         if (!OperatingSystem.IsWindows()) throw new TUnit.Core.Exceptions.SkipTestException("Windows module-path qualification requires Windows");
