@@ -45,6 +45,12 @@ when you intend to discard the existing measurements:
 docker exec antiphon-postgres psql -U antiphon -d antiphon -c 'SELECT pg_stat_statements_reset();'
 ```
 
+To read the rate without resetting, run `pwsh -File scripts/pg-qps.ps1 -Seconds 60`
+from the checkout. Pass `-Container <name>` or `-ConnectionEnv <VAR>` (the
+variable holds an Npgsql or libpq connection string). The script never prints
+that string. `-Json` writes one object. The same snapshot is sampled in
+process once a minute and served at `GET /api/diagnostics/db-rate`.
+
 The Compose `antiphon` role is the database superuser and can reset the
 statistics. The extension can exist in databases without the library
 preloaded, including the separate E2E and test Postgres containers; querying

@@ -18,7 +18,7 @@ public sealed class DbCommandMetrics : DbCommandInterceptor, IDisposable
     internal const int MaxTagLength = 64;
     private const int MaxTags = 128;
     private const string Overflow = "rt.overflow";
-    private static readonly string[] Prefixes = ["session-state.", "rt."];
+    private static readonly string[] Prefixes = ["session-state.", "rt.", "prompt-span."];
     private readonly ConcurrentDictionary<string, StrongBox<long>> _tags = new(StringComparer.Ordinal);
     private readonly Meter _meter = new("Antiphon.Db.Commands");
     private readonly Counter<long> _commands;
