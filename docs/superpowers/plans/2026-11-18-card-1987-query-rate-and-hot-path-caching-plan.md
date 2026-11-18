@@ -352,7 +352,7 @@ truth. The scan's expected count moves from 18 to 19, and one expected name is a
 | Stmt | Call site | Why that often | CARD-1403 / earlier | Smallest safe change | Staleness and invalidation | Must never be cached | Witness | Est. saved/s |
 |---|---|---|---|---|---|---|---|---:|
 | B1 | `PhoneHomeRunnerDirectory.GetBindingAsync` `:203-217`, through `RoutingSessionRunnerClient.Route` `:123-133` | Per routed runner call. Every Get/GetTranscript/GetSnapshot/SendInput/Kill/Observe through the singleton routing client reads the binding first, for local sessions too | Nothing on this path. The recovery pump's owner cache (CARD-0679 D-3) covers only pump events | S2a, D-6 | 30 s TTL, positive-only; insert-only columns | `Missing`; the park fence's re-read | V-10, V-11, V-12 | ~17.4 |
-| B2 (part) | `AgentSessionRuntime.RecordActivityAsync` `:2674` | Per output chunk, coalesced to 1 per session per 1 s | CARD-0679 D-3 coalescing | S2b, D-7 | 5 s write interval | n/a (no read cached) | V-13, V-14 | ~4.0 + see B4/B5 |
+| B2 (part) | `AgentSessionRuntime.RecordActivityAsync` `:2673` | Per output chunk, coalesced to 1 per session per 1 s | CARD-0679 D-3 coalescing | S2b, D-7 | 5 s write interval | n/a (no read cached) | V-13, V-14 | ~4.0 + see B4/B5 |
 | B2 (rest, ~9.8/s) | **UNOBSERVED** (full `AgentSessions` entity loads; the truncated text cannot separate the sites; M-2 and S1c) | UNOBSERVED | | S2c after S1c | | Any read that feeds delivery, TurnEnd, recovery or status decisions | S2c's own | UNOBSERVED |
 | B3 | 214 `BeginTransactionAsync` sites plus multi-statement saves | UNOBSERVED | | None in this plan (D-9) | | | S1c (V-9) attributes | 0 claimed |
 | B4 | `RecordActivityAsync` `:2677-2682` | Same write as B2's part | | S2b | | | V-13 | (in S2b) |
@@ -452,7 +452,7 @@ Tests: new `tests/Antiphon.Tests/Infrastructure/DbCallSiteSamplerTests.cs`:
 Files:
 - `server/Infrastructure/Agents/SessionRunner/RoutingSessionRunnerClient.cs` (cache, optional
   `TimeProvider` and settings constructor parameters)
-- `PhoneHomeRunnerDirectory.cs` (`TagWith("rt.runner.binding")` on the `:207-210` read; no other
+- `PhoneHomeRunnerDirectory.cs` (`TagWith("rt.runner.binding")` on the `:206-210` read; no other
   change)
 - `server/Application/Settings/PhoneHomeRunnerSettings.cs` (`RoutingBindingCacheSeconds`, default 30,
   validator 0-300)
@@ -541,12 +541,12 @@ the runner (`postgres:16` pull); a pull failure is reported as not run, never as
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1a | `tests/Antiphon.Tests -> bin-c1987-s1a/` | c1987-s1a | `/*/*/PgQpsScriptTests/C1987_*` | V-1..V-5 | 5 passed, 0 failed/skipped | 5 | 15 |
-| CP-2 | S1a | `tests/Antiphon.Tests -> bin-c1987-s1a-ps51/` | c1987-s1a-ps51 | `/*/*/ToolchainFloorWarningTests/C1698_WindowsPowerShellSyntax` | V-5b | 1 passed | 1 | 8 |
+| CP-2 | S1a | CP-1 | c1987-s1a-ps51 | `/*/*/ToolchainFloorWarningTests/C1698_WindowsPowerShellSyntax` | V-5b | 1 passed | 1 | 8 |
 | CP-3 | S1b | `tests/Antiphon.Tests -> bin-c1987-s1b/` | c1987-s1b | `/*/*/PgStatementRateSamplerTests/C1987_*` | V-6 | 5 passed, 0 failed/skipped | 5 | 10 |
 | CP-4 | S1c | `tests/Antiphon.Tests -> bin-c1987-s1c/` | c1987-s1c | `/*/*/DbCallSiteSamplerTests/C1987_*` | V-9 | 3 passed, 0 failed/skipped | 3 | 10 |
 | CP-5 | S2a-red | `tests/Antiphon.Tests -> bin-c1987-s2a-red/` | c1987-s2a-red | `/*/*/RoutingBindingCacheTests/C1987_repeated_routed_calls_read_the_binding_once` | V-10 witness | 1 executed, failed: 20 lookups, expected 2 | 1 | 10 |
 | CP-6 | S2a | `tests/Antiphon.Tests -> bin-c1987-s2a/` | c1987-s2a | `/*/*/RoutingBindingCacheTests/C1987_*` | V-10..V-12 | 4 passed, 0 failed/skipped | 4 | 10 |
-| CP-7 | S2a | `tests/Antiphon.Tests -> bin-c1987-s2a-routing/` | c1987-s2a-routing | `/*/*/(PhoneHomeSessionRoutingTests*)\|(TaskParkPublicationTests*)/*` | existing routing and park-fence behaviour | all executed passed, 0 failed/skipped; Code records the count | 1 | 10 |
+| CP-7 | S2a | CP-6 | c1987-s2a-routing | `/*/*/(PhoneHomeSessionRoutingTests*)\|(TaskParkPublicationTests*)/*` | existing routing and park-fence behaviour | all executed passed, 0 failed/skipped; Code records the count | 1 | 10 |
 | CP-8 | S2b-red | `tests/Antiphon.Tests -> bin-c1987-s2b-red/` | c1987-s2b-red | `/*/*/AgentSessionRuntimeActivityTests/(C1987_activity_write_is_one_command*)\|(C1987_default_interval_is_five_seconds*)` | V-13/V-14 witnesses | 2 executed, both failed on the count/interval assertion | 2 | 10 |
 | CP-9 | S2b | `tests/Antiphon.Tests -> bin-c1987-s2b/` | c1987-s2b | `/*/*/AgentSessionRuntimeActivityTests/*` | V-13, V-14, the rewritten existing method | 4 passed, 0 failed/skipped | 4 | 10 |
 
@@ -560,9 +560,11 @@ Filter notes:
   to the routed-call methods and records the cut.
 - Code runs `import --plan` on this file before the first run (memory: a table can refuse on import).
 
+Import (plan task 70f587e0, 2026-11-18, at this file): `dotnet run --project tools/Antiphon.Checkpoints -- import --plan <this file> --out .antiphon/c1987-import-2.yaml` through `build-slot.ps1` printed `imported 9 rows` with **0 warnings** (the first import warned that CP-2 and CP-7 duplicated a same-After build; they now reuse CP-1 and CP-6).
+
 ## Performance budget
 
-- **Selection.** 9 rows, 9 cold `Antiphon.Tests` builds. Estimates are 15 + 8 + 10 × 7 = **93 min**
+- **Selection.** 9 rows, 7 cold `Antiphon.Tests` builds (CP-2 reuses CP-1, CP-7 reuses CP-6). Estimates are 15 + 8 + 10 × 7 = **93 min**
   of deadline input across seven `After` groups. These are deadlines, not expected durations. No row
   is expected near 30 minutes; any that passes 30 gets a Debug task with its timing. A cold
   `Antiphon.Tests` build on server2 is about 5-6 min (recent plans); the test bodies are seconds.
