@@ -39,6 +39,10 @@ $script:Server2PostgresProject = 'antiphon-server2-postgres'
 $script:Server2PostgresDrillProject = 'antiphon-server2-postgres-drill'
 $script:Server2PostgresDrillVolume = 'antiphon-server2-postgres-drill_pgdata'
 $script:Server2PostgresExit = 1
+# CARD-1406 final layout: Postgres is pinned to one physical core (CPU 0 and its SMT
+# sibling 12), not exclusively, and wins a shared CPU by cpu_shares 2048. This is the
+# one value to change with the compose files; two physical cores is '0-1,12-13'.
+$script:Server2PostgresCpuset = '0,12'
 
 function Get-Server2PostgresRepoRoot {
     if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) { return $RepoRoot }
@@ -169,6 +173,19 @@ function Read-Server2PostgresEnv {
     return @{ Map = $map; Present = $present }
 }
 
+function Get-Server2PostgresCpuRefusal {
+    param([string]$Text)
+    # Exactly one cpuset line with the named pin, exactly one cpu_shares 2048 line, and
+    # no cpus quota (the cpuset already caps Postgres at its logical CPUs).
+    $norm = $Text.Replace("`r`n", "`n")
+    if ([regex]::Matches($norm, '(?m)^\s*cpuset\s*:').Count -ne 1) { return 'compose-invalid' }
+    if (-not (Test-Server2PostgresExactLine $norm ('    cpuset: "' + $script:Server2PostgresCpuset + '"'))) { return 'compose-invalid' }
+    if ([regex]::Matches($norm, '(?m)^\s*cpu_shares\s*:').Count -ne 1) { return 'compose-invalid' }
+    if (-not (Test-Server2PostgresExactLine $norm '    cpu_shares: 2048')) { return 'compose-invalid' }
+    if ($norm -match '(?m)^\s*cpus\s*:') { return 'compose-invalid' }
+    return ''
+}
+
 function Get-Server2PostgresComposeRefusal {
     param([string]$Text)
     if ($Text -match 'antiphon_pgdata') { return 'volume-forbidden' }
@@ -181,8 +198,6 @@ function Get-Server2PostgresComposeRefusal {
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             ':5432:5432',
-            'cpuset: "0-2,12-14"',
-            'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',
             "    blkio_config:`n      weight: 800",
@@ -198,7 +213,7 @@ function Get-Server2PostgresComposeRefusal {
         )) {
         if (-not $Text.Contains($need)) { return 'compose-invalid' }
     }
-    return ''
+    return (Get-Server2PostgresCpuRefusal $Text)
 }
 
 function Get-Server2PostgresDrillComposeRefusal {
@@ -218,8 +233,6 @@ function Get-Server2PostgresDrillComposeRefusal {
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             '127.0.0.1:5434:5432',
-            'cpuset: "0-2,12-14"',
-            'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',
             "    blkio_config:`n      weight: 800",
@@ -233,7 +246,7 @@ function Get-Server2PostgresDrillComposeRefusal {
         )) {
         if (-not $norm.Contains($need)) { return 'compose-invalid' }
     }
-    return ''
+    return (Get-Server2PostgresCpuRefusal $norm)
 }
 
 function Expand-Server2PostgresCompose {
