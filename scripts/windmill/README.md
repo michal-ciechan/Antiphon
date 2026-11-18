@@ -108,20 +108,6 @@ ahead of the pinned bytes.
 Delete SOURCE-SHA.txt if it is present, and do not write SOURCE-SHA.txt again.
 That stale file was a 40-hex git id. A pin left in it does not select a script.
 
-SNAPSHOT-TARGET in that directory picks the database the job dumps (runbook
-G-4, the Postgres move to server2). Absent means `desktop`: the child command
-is unchanged and dumps `antiphon-postgres`. `server2` (ASCII, one word, a
-trailing newline is fine) adds `-Target server2`: the dump runs in
-`antiphon-server2-postgres-postgres-1` through `DOCKER_HOST=ssh://mc@server2`
-and lands, is verified (`pg_restore --list` twice), copied to OneDrive and
-pruned in the same desktop folders, so the 08:00 stale check is unchanged.
-`snapshot-status.json` records `target`. Any other content, including an
-empty file, fails the run with `reason=bad-target` and posts FAIL. Write
-`server2` only after the cutover, and re-pin SOURCE-SHA to the
-`postgres-snapshot.ps1` that has `-Target`. The desktop needs
-`ssh -o BatchMode=yes mc@server2 docker version` to succeed for the
-Windmill SSH user.
-
 Staging is `C:\Users\lndco\antiphon-snapshot-staging`. The default
 under LocalAppData\antiphon fails the parent check on this desktop because
 that folder grants another account full control. The profile directory's
