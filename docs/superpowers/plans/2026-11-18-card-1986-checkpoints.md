@@ -28,3 +28,12 @@ S1 commits witnesses before production changes and executes CP-1 through CP-4 re
 | CP-10 | S2 | CP-1 | layering | `/*/*/C1729LayeringGuardTests/Repository_graph_satisfies_the_committed_allowlist` | requested census: violations 0, listed 162 | all listed, 0 failed | 1 | 1 | true |
 
 Red evidence at 024b404585 (base production bytes): one short `C1986_*` selection combined CP-1/2/3/4/9 to avoid repeated discovery. Total 10, failed 9 on the intended behavior/diagnosis assertions, passed 1 new-branch control; 82 seconds. Build 221 seconds, zero errors, compiler policy disabled. This is the explicit reason for that additional pre-fix selection. Final qualification uses each exact table row. The first plan-only commit's subject mentioned witnesses before their addition; the next two commits contain the actual witnesses.
+
+Additional exact rows for object-type coverage after replacing per-object Git scans with one topological traversal:
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---|---|---|
+| CP-11 | S2 | CP-1 | object-types | `/*/*/VolumeRetirementHostProofTests/Host_proves_complete_origin_ancestry` | commit/tree/blob/annotated-tag preservation and wrong/missing objects | all listed, 0 failed | 1 | 1 | true |
+| CP-12 | S2 | CP-1 | salvage-objects | `/*/*/VolumeRetirementPublicationTests/Host_origin_salvage_proves_exact_required_objects` | multiple required commits plus a tree through salvage | all listed, 0 failed | 1 | 1 | true |
+
+CP-1 at 9c511f163f228a487e3c36a0585164433a7705cd passed 4/4 in 62 seconds. The runner was stopped and joined while waiting on load before CP-2; no test child was running. That source was superseded to batch covering-root discovery into one topological graph traversal, avoiding one process/scan per required commit. Final rows rerun against the final source. Stable master/main refs take precedence over ephemeral task branches when either covers an object.

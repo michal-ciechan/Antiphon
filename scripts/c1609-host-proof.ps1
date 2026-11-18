@@ -202,8 +202,8 @@ function Assert-C1609BundleAdvertisement {
 # The attempts share one scratch repository: a retry fetches incrementally with --prune instead of
 # re-cloning the whole origin, so its ls-remote..ls-remote window is seconds, not a full clone (the
 # 2026-11-04 preview c72743c9 re-cloned 5081 refs per attempt and logged reason=snapshot three times).
-# Local refs still equal the fetched advertisement exactly; leftover objects reach no proof because
-# every reachability check and the bundle start from those refs.
+# Before dependency pruning, local refs equal the fetched advertisement exactly.
+# Leftover objects reach no proof: reachability and bundles start from bound refs.
 # CARD-1986: a renewal binds the refs that cover the audited objects, not every
 # concurrently dispatched task's branch. The v2 advertisement and its bundle
 # carry exactly those dependencies; no unbound sidecar can weaken a live check.
@@ -242,16 +242,32 @@ function Select-C1986DependencyAdvertisement {
             if($peeled.Trim() -cmatch '^([0-9a-f]{40}) commit$'){[void]$commits.Add($Matches[1])}
         }
     }
-    foreach($oid in $commits){
-        $cover=Invoke-C1609HostGit -Repo $Repo -WorkingDirectory $Scratch -TimeoutMs (Get-C1986Remaining $Watch $BudgetMs) `
-            -GitArgs @('--git-dir',$Scratch,'for-each-ref',('--contains='+$oid),'--format=%(refname)','refs/heads/','refs/antiphon/salvage/')
-        $refs=@($cover.TrimEnd([char]10).Split([char]10)|Where-Object{$_})
-        if(-not $refs.Count){throw 'unpublished-commit'}
-        # Prefer an already selected covering root, then a head, then salvage.
-        $chosen=@($refs|Where-Object{$selected.Contains($_)}|Select-Object -First 1)
-        if(-not $chosen.Count){$chosen=@($refs|Where-Object{$_.StartsWith('refs/heads/')}|Select-Object -First 1)}
-        if(-not $chosen.Count){$chosen=@($refs[0])}
-        [void]$selected.Add($chosen[0])
+    if($commits.Count){
+        # One traversal for the whole required roster, rather than one Git child
+        # and graph scan per protected commit on a fleet-sized origin. A child's
+        # covering ref also covers its parents; topo order visits children first.
+        $rootRows=@($Advertisement|Where-Object{$_ -cmatch '\trefs/(heads/|antiphon/salvage/)'}|
+            Sort-Object {if($_.Substring(41) -ceq 'refs/heads/master'){0}elseif($_.Substring(41) -ceq 'refs/heads/main'){1}else{2}}, { $_.Substring(41) })
+        $cover=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+        for($i=0;$i -lt $rootRows.Count;$i++){
+            $oid=$rootRows[$i].Substring(0,40)
+            if(-not $cover.ContainsKey($oid)){$cover[$oid]=$i}
+        }
+        $file=Join-Path $Scratch 'c1986-commits';if([IO.File]::Exists($file)){[IO.File]::Delete($file)}
+        [void](Invoke-C1609HostGit -Repo $Repo -WorkingDirectory $Scratch -TimeoutMs (Get-C1986Remaining $Watch $BudgetMs) `
+            -GitArgs @('--git-dir',$Scratch,'rev-list','--topo-order','--parents','--stdin') -OutputFile $file `
+            -InputText (($cover.Keys -join [char]10)+[char]10))
+        foreach($line in [IO.File]::ReadLines($file)){
+            if($line -cnotmatch '^[0-9a-f]{40}( [0-9a-f]{40})*$'){throw 'commit-graph'}
+            $ids=$line.Split(' ');$oid=$ids[0]
+            if(-not $cover.ContainsKey($oid)){throw 'commit-graph'}
+            $rank=$cover[$oid]
+            if($commits.Remove($oid)){[void]$selected.Add($rootRows[$rank].Substring(41))}
+            foreach($parent in $ids|Select-Object -Skip 1){
+                if(-not $cover.ContainsKey($parent) -or $rank -lt $cover[$parent]){$cover[$parent]=$rank}
+            }
+        }
+        if($commits.Count){throw 'unpublished-commit'}
     }
     $trees=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($row in $RequiredObjects){
