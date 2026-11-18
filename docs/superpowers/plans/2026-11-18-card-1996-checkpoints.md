@@ -21,7 +21,7 @@ CP-1 is three in-process file scans, no database and no service. The first-row E
 
 ### Checkpoints
 
-Run through the checkpoint tool with `--expected-source-sha` set to committed HEAD, `--serial`, and `--timeout 570s`. Wait until the exit is not 75.
+Run through the checkpoint tool with `--expected-source-sha` set to committed HEAD and `--serial`. Wait until the exit is not 75. The tool derives the row deadline from EstimatedMinutes and does not take a TUnit `--timeout` flag; direct `dotnet run` rows pass `--timeout 570s`. `ANTIPHON_LINUX_COMPILER_POLICY=0` is set on the tool process so its build inherits it.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
