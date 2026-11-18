@@ -230,10 +230,13 @@ public sealed class DockerStackDocumentationTests
         var script = DockerStackDocuments.Read("scripts/c1008-retirement.sh").Replace("\r\n", "\n");
         var reasons = System.Text.RegularExpressions.Regex.Matches(section, @"reason=([a-z-]+)")
             .Select(match => match.Groups[1].Value).Distinct().ToArray();
-        reasons.ShouldBe(new[] { "registry-missing", "inventory", "registry-invalid", "registry-project", "unapproved-origin", "proof-exchange" },
+        // CARD-1986 documents withdrawn-ref, which the desktop proof (c1609-host-proof.ps1) emits, not the host script.
+        reasons.ShouldBe(new[] { "registry-missing", "inventory", "registry-invalid", "registry-project", "withdrawn-ref", "unapproved-origin", "proof-exchange" },
             "c1689-docs: the exchange reasons");
-        foreach (var reason in reasons)
+        var hostProof = DockerStackDocuments.Read("scripts/c1609-host-proof.ps1");
+        foreach (var reason in reasons.Where(reason => reason != "withdrawn-ref"))
             script.ShouldContain("=" + reason, Case.Sensitive, "c1689-docs: the script emits " + reason);
+        hostProof.ShouldContain("RecycleOriginMoved reason=withdrawn-ref", Case.Sensitive, "c1986-docs: the desktop proof emits withdrawn-ref");
         foreach (var stage in new[] { "request", "response", "binding", "freshness", "digest", "record" })
         {
             section.ShouldContain("`" + stage + "` means", Case.Sensitive, "c1689-docs: stage " + stage);
