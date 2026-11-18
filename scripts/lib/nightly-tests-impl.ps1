@@ -300,26 +300,18 @@ function Split-NightlyItemsBySeconds {
     # First fit, largest first. An item at or over the target stays alone.
     param([object[]]$Items, [double]$TargetSeconds, [int]$MaxOperands)
     Assert-NightlyCoreAvailable 'Split-NightlyItemsBySeconds'
-    $ordered = @($Items | Sort-Object @{ Expression = { Get-NightlyPackedItemSeconds $_ }; Descending = $true }, @{ Expression = { [string]$_.Key } })
-    # Placement loop compiled (NightlyCore.cs NightlyLaunchPlan.FirstFitBins); the ordering stays in PowerShell.
-    return @([Antiphon.Nightly.NightlyLaunchPlan]::FirstFitBins([object[]]$ordered, $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
+    # Compiled (PlannerParts.cs NightlyPlannerParts.SplitBySeconds): the Sort-Object order of
+    # Get-NightlyPackedItemSeconds descending then [string]Key (same List.Sort, same comparison),
+    # then the NightlyLaunchPlan.FirstFitBins placement.
+    return @([Antiphon.Nightly.NightlyPlannerParts]::SplitBySeconds([object[]]@($Items), $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
 }
 
 function Get-NightlyPrefixUnsafeNames {
     # A name that prefixes another name cannot be a (Name*) OR operand.
+    # Compiled (PlannerParts.cs NightlyPlannerParts.PrefixUnsafeNames): an ordinal HashSet[string].
     param([string[]]$Names)
-    $unsafe = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $distinct = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($name in @($Names)) { [void]$distinct.Add([string]$name) }
-    $sorted = [string[]]@($distinct)
-    [Array]::Sort($sorted, [StringComparer]::Ordinal)
-    for ($i = 0; $i -lt $sorted.Count; $i++) {
-        for ($j = $i + 1; $j -lt $sorted.Count; $j++) {
-            if (-not $sorted[$j].StartsWith($sorted[$i], [StringComparison]::Ordinal)) { break }
-            if ($sorted[$j].Length -gt $sorted[$i].Length) { [void]$unsafe.Add($sorted[$i]); break }
-        }
-    }
-    return ,$unsafe
+    Assert-NightlyCoreAvailable 'Get-NightlyPrefixUnsafeNames'
+    return ,([Antiphon.Nightly.NightlyPlannerParts]::PrefixUnsafeNames($Names))
 }
 
 function New-NightlyMethodGroupFilter {
@@ -678,9 +670,15 @@ function ConvertTo-NightlyProfileLaunchGroups {
         $known = @()
         if ($nodesByBare.ContainsKey($parts.Bare)) { $known = @($nodesByBare[$parts.Bare].ToArray()) }
         $cost = Get-NightlyLaunchClassCost -Nodes $known -TypeName $parts.Type -Bare $parts.Bare
-        Add-Member -InputObject $parts -NotePropertyName Key -NotePropertyValue ([string]$parts.Bare)
-        Add-Member -InputObject $parts -NotePropertyName NodeCount -NotePropertyValue ([int]$cost.NodeCount)
-        Add-Member -InputObject $parts -NotePropertyName Seconds -NotePropertyValue ([double]$cost.Seconds)
+        # The type parts plus Key, NodeCount and Seconds, in that order (was three Add-Member calls).
+        $parts = [pscustomobject]@{
+            Bare = $parts.Bare
+            Namespace = $parts.Namespace
+            Type = $parts.Type
+            Key = [string]$parts.Bare
+            NodeCount = [int]$cost.NodeCount
+            Seconds = [double]$cost.Seconds
+        }
         # CARD-1584: native E2E startup is priced per expanded case. Keep
         # lone E2E classes below 25 minutes; large matrices expose small
         # argument batches as methods so this splitter can honor the bound.

@@ -824,7 +824,9 @@ function Resolve-NightlyPriorFailures {
         }
         $exclusions=@($suite.exclusions)
         if ($QualificationMode -ceq 'PriorFailureSweep') { $exclusions=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $exclusionProfile -SuiteId $suite.id -Platform $platform) }
-        $bySuite.Add([string]$suite.id,[pscustomobject]@{Suite=$suite;Nodes=$index;Chunks=$chunkIndex;AllChunks=$allChunks;Exclusions=$exclusions})
+        # Test-NightlyProfileNodeExcluded resolved once per class (the census index; same verdicts).
+        $exclusionIndex=[Antiphon.Nightly.ProfileExclusionIndex]::new($exclusions)
+        $bySuite.Add([string]$suite.id,[pscustomobject]@{Suite=$suite;Nodes=$index;Chunks=$chunkIndex;AllChunks=$allChunks;Exclusions=$exclusions;ExclusionIndex=$exclusionIndex})
     }
     foreach ($member in @($History.members)) {
         $reason=''; $required=@(); $chunks=@()
@@ -834,7 +836,8 @@ function Resolve-NightlyPriorFailures {
             $suite=$entry.Suite
             $nodes=@()
             if ($entry.Nodes.ContainsKey([string]$member.className)) { $nodes=@($entry.Nodes[[string]$member.className].ToArray()) }
-            $required=@($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded -Node $_ -ProfileExclusions @($entry.Exclusions) -ProfileAware) })
+            $exclusionIndex=$entry.ExclusionIndex
+            $required=@(foreach ($n in $nodes) { if (-not $exclusionIndex.Excluded($n)) { $n } })
             if ($QualificationMode -ceq 'PriorFailureSweep') {
                 foreach ($n in $nodes) {
                     foreach ($row in @($entry.Exclusions)) {

@@ -774,9 +774,38 @@ function Test-NCJsonFilesMatchFallback {
     Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback) 'jsonWrite' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
+function Test-NCPlannerPartsGolden {
+    # NightlyPlannerParts (PlannerParts.cs): the Split-NightlyItemsBySeconds order (Sort-Object, unstable for ties,
+    # current culture case-insensitive keys) and Get-NightlyPrefixUnsafeNames, against the PowerShell output.
+    $saved = [Globalization.CultureInfo]::CurrentCulture
+    try {
+        [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+        $keys = @('b', 'B', 'a', 'A', 'ab', 'Ab', '', ([string][char]0x00E9), ('e' + [char]0x0301), 'E', ([string][char]0x00DF), 'ss', 'SS', ([string][char]0x0130), 'i', 'I', 'z10', 'z2', 'Alpha', 'alpha')
+        $seconds = @(30.0, 30.0, 0.5, 45.5, 120.0, 600.0, 30.0)
+        $items = @(for ($i = 0; $i -lt 60; $i++) {
+            $o = [ordered]@{ Key = $keys[($i * 7) % $keys.Count] }
+            if ($i % 11 -ne 3) { $o.Seconds = $seconds[($i * 5) % $seconds.Count] }
+            $o.Idx = $i
+            [pscustomobject]$o
+        })
+        $prefix = @(@('Alpha', 'AlphaBeta', 'alpha', 'Beta', 'Beta', ''), @('Run', 'Run2', 'Runner', 'Ru'), @(([string][char]0x00E9), ([string][char]0x00E9 + 'x'), 'e'), @())
+        Assert-NCGolden 'planner-parts' {
+            foreach ($cap in @(1000, 3)) {
+                foreach ($bin in @(Split-NightlyItemsBySeconds -Items $items -TargetSeconds $(if ($cap -eq 3) { 120 } else { 1e9 }) -MaxOperands $cap)) {
+                    [ordered]@{ cap = $cap; idx = (@($bin.Items | ForEach-Object { $_.Idx }) -join ','); seconds = $bin.Seconds; closed = $bin.Closed }
+                }
+            }
+            foreach ($names in $prefix) {
+                $unsafe = Get-NightlyPrefixUnsafeNames -Names $names
+                [string[]]$sorted = @($unsafe); [Array]::Sort($sorted, [StringComparer]::Ordinal)
+                [ordered]@{ type = $unsafe.GetType().Name; unsafe = $sorted }
+            }
+        } @('"cap":3', '"unsafe":["","Alpha"]', '"unsafe":["Ru","Run"]')
+    } finally { [Globalization.CultureInfo]::CurrentCulture = $saved }
+}
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 31 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; $expected = 32 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
