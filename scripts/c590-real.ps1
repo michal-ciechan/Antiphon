@@ -374,8 +374,9 @@ function Invoke-C1609RetirementCoordinator {
     $proc=[Diagnostics.Process]::new();$proc.StartInfo=$psi;$started=$false;$code=2
     $watch=[Diagnostics.Stopwatch]::StartNew();$networkMs=0L;$previousDirectory='';$previousDigest='none'
     $objectDigest=Get-C1008Sha256 ''; $nonces=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $lineBuffer='';$exitedAt=$null;$phaseBinding='';$failureLine=0;$failureScript='';$failureReason='';$script:C1609LiveProofReason=''
+    $lineBuffer='';$exitedAt=$null;$phaseBinding='';$failureLine=0;$failureScript='';$failureReason='';$script:C1609LiveProofReason='';$control=$null
     try {
+        $controlWindowMs=Get-C1609ControlWindowMs
         [void]$proc.Start();$started=$true;$proc.StandardInput.NewLine="`n"
         $streams=@(@{reader=$proc.StandardOutput;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$true},
             @{reader=$proc.StandardError;buffer=[char[]]::new(4096);task=$null;done=$false;count=0;protocol=$false})
@@ -422,7 +423,10 @@ function Invoke-C1609RetirementCoordinator {
                             # Staging a large graph can outlive its last network read.
                             # Complete this very control request with fresh live refs,
                             # bound to the same approved inventory and proof set.
-                            $controlWatch=[Diagnostics.Stopwatch]::StartNew()
+                            $controlWatch=[Diagnostics.Stopwatch]::StartNew();$cleanupMs=0L
+                            $script:C1609LiveProofReason=''
+                            $control=@{schema=1;nonce=$exchange;purpose=$purpose;limitMs=$controlWindowMs;
+                                outcome='refused';step='inventory';reason='';origins=[Collections.Generic.List[object]]::new()}
                             try {
                                 if($previousDirectory){
                                     $inventoryDirectory=Join-Path ([IO.Path]::GetDirectoryName($previousDirectory)) ('inventory-'+$phaseBinding)
@@ -430,13 +434,32 @@ function Invoke-C1609RetirementCoordinator {
                                     if($allow.schema -ne 1 -or $allow.projectId -cne $ProjectId -or $allow.origins -isnot [array]){throw 'control-origin'}
                                     $rows=@(Read-C1008PrivateOriginLines -Text ([IO.File]::ReadAllText((Join-Path $inventoryDirectory 'private-origins.txt'))))
                                     foreach($row in $rows){
-                                        $remaining=[Math]::Min(5000-[int]$controlWatch.ElapsedMilliseconds,600000-[int]$networkMs-[int]$controlWatch.ElapsedMilliseconds)
+                                        $remaining=[Math]::Min($controlWindowMs-[int]($controlWatch.ElapsedMilliseconds-$cleanupMs),600000-[int]$networkMs-[int]$controlWatch.ElapsedMilliseconds)
+                                        if($remaining -le 0){throw 'control-deadline'}
+                                        $timing=@{};$control.origins.Add($timing)
                                         Assert-C1609LiveOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $Operation `
-                                            -ProofFile (Join-Path $previousDirectory $row.ProofName) -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining
+                                            -ProofFile (Join-Path $previousDirectory $row.ProofName) -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining -Timing $timing
+                                        # Scratch cleanup is outside the control budget.
+                                        $cleanupMs+=[long]$timing.cleanupMs
                                     }
                                 }
-                                if($controlWatch.ElapsedMilliseconds -gt 5000){throw 'control-deadline'}
-                            } finally {$networkMs += $controlWatch.ElapsedMilliseconds}
+                                $control.step='complete'
+                                if(($controlWatch.ElapsedMilliseconds-$cleanupMs) -gt $controlWindowMs){throw 'control-deadline'}
+                                $control.outcome='passed'
+                            } catch {
+                                $reason=[string]$_.Exception.Message
+                                $control.reason=if($script:C1609LiveProofReason){$script:C1609LiveProofReason}elseif($reason -cmatch '^[a-z][a-z-]{0,31}$'){$reason}else{'other'}
+                                if($control.origins.Count -and $control.origins[$control.origins.Count-1].outcome -ceq 'refused'){
+                                    $control.step=$control.origins[$control.origins.Count-1].step
+                                }
+                                throw
+                            } finally {
+                                $control.cleanupMs=0L;foreach($originTiming in $control.origins){$control.cleanupMs+=[long]$originTiming.cleanupMs}
+                                $control.elapsedMs=$controlWatch.ElapsedMilliseconds-$control.cleanupMs
+                                $networkMs += $controlWatch.ElapsedMilliseconds
+                                [IO.File]::AppendAllText((Join-Path $EvidenceRoot 'coordinator-controls.jsonl'),
+                                    (($control|ConvertTo-Json -Depth 8 -Compress)+"`n"))
+                            }
                             $response='C1609_CONTROL_RESPONSE '+$exchange+' '+$purpose+' '+$proof+' '+$objects
                         } elseif($line.StartsWith('C1609_PROOF_REQUEST') -or $line.StartsWith('C1609_CONTROL_REQUEST')){throw 'protocol'}
                         if($response){
@@ -462,7 +485,11 @@ function Invoke-C1609RetirementCoordinator {
     finally {
         if($started){try{$proc.StandardInput.Close()}catch{};if(-not $proc.HasExited){$proc.Kill($true);[void]$proc.WaitForExit(2000)}}
         $proc.Dispose()
-        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"+'failure-line='+$failureLine+"`n"+'failure-script='+$failureScript+"`n"+'failure-reason='+$failureReason+"`n"))
+        $timingDetail=''
+        if($null -ne $control -and $control.outcome -ceq 'refused'){
+            $timingDetail='control-step='+$control.step+"`n"+'control-elapsed-ms='+$control.elapsedMs+"`n"+'control-limit-ms='+$control.limitMs+"`n"
+        }
+        [IO.File]::WriteAllText($ReceiptPath,('transport-exit='+$code+"`n"+'failure-line='+$failureLine+"`n"+'failure-script='+$failureScript+"`n"+'failure-reason='+$failureReason+"`n"+$timingDetail))
     }
     return $code
 }

@@ -12,7 +12,9 @@
     POSTGRES_PASSWORD. This script never prints the password.
     -WhatIf accepts only a bind inside 100.64.0.0/10. -Execute still requires
     that bind to equal the single line of tailscale ip -4.
-    The image must be postgres:16@sha256:<64 hex> or postgres@sha256:<64 hex>.
+    The image must be postgres:16@sha256:<64 hex>, postgres@sha256:<64 hex>,
+    or an exact 16.N patch tag with a digest: postgres:16.14@sha256:<64 hex>
+    (or postgres:16.14-trixie@sha256:<64 hex>).
     The production compose runs only as project antiphon-server2-postgres.
     The drill compose runs only as project antiphon-server2-postgres-drill.
     The drill commands take or locate the encrypted B1 snapshot, time the
@@ -74,6 +76,8 @@ function Test-Server2PostgresImage {
     if ($Image -match '(?i)alpine') { return 'image-alpine' }
     if ($Image -match '^postgres:16@sha256:[0-9a-f]{64}$') { return '' }
     if ($Image -match '^postgres@sha256:[0-9a-f]{64}$') { return '' }
+    # Runbook G-2: an exact 16.N patch tag (Debian trixie default or -trixie) may sit beside the digest.
+    if ($Image -cmatch '^postgres:16\.(0|[1-9][0-9]*)(-trixie)?@sha256:[0-9a-f]{64}$') { return '' }
     return 'image-floating'
 }
 
@@ -171,15 +175,13 @@ function Get-Server2PostgresComposeRefusal {
     if ($Text -match '(?i)alpine') { return 'image-alpine' }
     if ($Text -match '0\.0\.0\.0') { return 'bind-any' }
     if ($Text -match '5433') { return 'port-5433' }
-    # CARD-1406: Postgres carries no cpu pin; the runner keeps core 0 (CPUs 0,12) free.
-    if ($Text -match '(?m)^\s*cpuset\s*:') { return 'compose-invalid' }
-    if (-not (Test-Server2PostgresExactLine $Text '    cpu_shares: 2048')) { return 'compose-invalid' }
     foreach ($need in @(
             'name: antiphon-server2-postgres',
             'ANTIPHON_POSTGRES_BIND_ADDRESS:?',
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             ':5432:5432',
+            'cpuset: "0-2,12-14"',
             'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',
@@ -205,9 +207,6 @@ function Get-Server2PostgresDrillComposeRefusal {
     if ($norm.Contains('antiphon_pgdata')) { return 'volume-forbidden' }
     if ($norm.Contains('name: antiphon-server2-postgres_pgdata')) { return 'volume-forbidden' }
     if ($norm -match '5433') { return 'port-5433' }
-    # CARD-1406: Postgres carries no cpu pin; the runner keeps core 0 (CPUs 0,12) free.
-    if ($norm -match '(?m)^\s*cpuset\s*:') { return 'compose-invalid' }
-    if (-not (Test-Server2PostgresExactLine $norm '    cpu_shares: 2048')) { return 'compose-invalid' }
     if ($norm -match '(?i)alpine') { return 'image-alpine' }
     if ($norm -match '0\.0\.0\.0') { return 'bind-any' }
     if ($norm.Contains(':5432:5432')) { return 'port-production' }
@@ -219,6 +218,7 @@ function Get-Server2PostgresDrillComposeRefusal {
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             '127.0.0.1:5434:5432',
+            'cpuset: "0-2,12-14"',
             'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',

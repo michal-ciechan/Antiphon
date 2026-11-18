@@ -12,6 +12,8 @@ public sealed class C1722GitTimeoutBudgetTests
     // rounded up to milliseconds. Min/median/p95/max and host/load: the task plan timing table.
     // The 60s Git floor is the commissioned loaded-Windows startup exception (rc 472c7495);
     // Linux timings are provisional for Windows. Collect Windows timings in the next CARD-1722 rc.
+    // The two CARD-1961 rows are five Linux samples of their own two-method filter at master f4d78303 on
+    // loaded server2 (load 10-12); the 7.437 s max is a first-in-run warmup sample (others 0.603-0.937 s).
     [Test]
     [Arguments(typeof(C0824RunnerBranchRefsTests), nameof(C0824RunnerBranchRefsTests.C0824_deletes_local_and_tracking_refs_at_expected_sha), 0.152)]
     [Arguments(typeof(C0824RunnerBranchRefsTests), nameof(C0824RunnerBranchRefsTests.C0824_absent_refs_are_idempotent_success), 0.165)]
@@ -65,6 +67,8 @@ public sealed class C1722GitTimeoutBudgetTests
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_PoolBoundedAcrossSequentialAndConcurrentLeases), 5.200)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_ReviewLeaseIsExactTreeNeverSubjectBranch), 0.451)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_FlagOffRunnerKeepsTaskMirror), 1.018)]
+    [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C1961_WarmReleaseClearsNestedKeepNamesUnderRejectedIgnoredParents), 0.410)]
+    [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C1961_UntrackedFileBesideResidueStillQuarantinesUntouched), 7.437)]
     [Arguments(typeof(C1677RetentionDispatchTests), nameof(C1677RetentionDispatchTests.Recent_use_by_this_runner_keeps_the_tree), 1.543)]
     [Arguments(typeof(C1677RetentionEngineTests), nameof(C1677RetentionEngineTests.Clean_pushed_old_mirror_is_removed_without_force_or_prune), 0.514)]
     [Arguments(typeof(C1677RetentionEngineTests), nameof(C1677RetentionEngineTests.Confinement_refuses_outside_scope), 0.265)]

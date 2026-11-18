@@ -11,7 +11,7 @@ using TUnit.Core;
 
 namespace Antiphon.Tests;
 
-/// <summary>CARD-0050 S5: non-git process-spawning classes share a 1-wide lane; CARD-1421: git-only classes a 2-4-wide lane; CARD-1747: checkpoint-tool classes a 2-wide lane.</summary>
+/// <summary>CARD-0050 S5: non-git process-spawning classes share a 1-wide lane; CARD-1421: git-only classes a 2-4-wide lane; CARD-1747: checkpoint-tool classes a 2-wide lane; CARD-1984: script-model methods a 2-6-wide lane.</summary>
 [Category("Unit")]
 public class ProcessSpawnLimitTests
 {
@@ -125,6 +125,15 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Infrastructure.GitDiffSpikeTests),
         typeof(LandSourceIdentityTests),
         typeof(Antiphon.Tests.Infrastructure.LandingGitTests),
+    ];
+
+    // CARD-1984: a floor, not a census. The limiter is method-level. S1 is HostJq; S2 adds the Rolling trio.
+    private static readonly Type[] ScriptModelClasses =
+    [
+        typeof(Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests),
+        typeof(Antiphon.Tests.Scripts.RollingProductionMountTests),
+        typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleCensusChurnTests),
+        typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests),
     ];
 
     [Test]
@@ -779,23 +788,59 @@ public class ProcessSpawnLimitTests
     public void No_class_carries_both_limiters()
     {
         StrictClasses.Intersect(GitOnlyClasses).ShouldBeEmpty("a class belongs to one roster");
+        StrictClasses.Intersect(ScriptModelClasses).ShouldBeEmpty("a class belongs to one roster");
+        GitOnlyClasses.Intersect(ScriptModelClasses).ShouldBeEmpty("a class belongs to one roster");
+        StrictClasses.ShouldContain(typeof(Antiphon.Tests.Scripts.RunCheckpointScriptTests));
         var seen = new HashSet<Type>();
         var both = new List<string>();
-        foreach (var type in StrictClasses.Concat(GitOnlyClasses).Concat(CheckpointCandidateTypes()))
+        foreach (var type in StrictClasses.Concat(GitOnlyClasses).Concat(ScriptModelClasses).Concat(CheckpointCandidateTypes()))
         {
             if (!seen.Add(type))
                 continue;
-            var lanes = new[]
-            {
-                HasSpawnLimiter(type, typeof(ProcessSpawnLimit)) ? "ProcessSpawnLimit" : null,
-                HasSpawnLimiter(type, typeof(GitProcessSpawnLimit)) ? "GitProcessSpawnLimit" : null,
-                HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit)) ? "CheckpointToolSpawnLimit" : null,
-            }.Where(name => name is not null).ToList();
+            var lanes = ClassLanes(type);
             if (lanes.Count > 1)
                 both.Add(type.FullName + " carries " + string.Join(" and ", lanes));
+            if (!ScriptModelClasses.Contains(type))
+                continue;
+            var scriptMethods = 0;
+            foreach (var method in type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            {
+                if (method.GetCustomAttribute<TestAttribute>() is null)
+                    continue;
+                var methodLanes = MethodLanes(method);
+                if (methodLanes.Count > 1)
+                    both.Add(type.FullName + "." + method.Name + " carries " + string.Join(" and ", methodLanes));
+                else if (methodLanes.Contains("ScriptModelSpawnLimit"))
+                    scriptMethods++;
+                else if (lanes.Count > 0 && methodLanes.Count == 1 && methodLanes[0] != lanes[0])
+                    both.Add(type.FullName + "." + method.Name + " carries " + methodLanes[0] + " on a " + lanes[0] + " class");
+            }
+
+            if (scriptMethods == 0)
+                both.Add(type.Name + " is on the script-model floor but no test method carries ScriptModelSpawnLimit");
         }
 
         both.ShouldBeEmpty(string.Join(Environment.NewLine, both));
+    }
+
+    private static List<string> ClassLanes(Type type)
+    {
+        var lanes = new List<string>();
+        if (HasSpawnLimiter(type, typeof(ProcessSpawnLimit))) lanes.Add(nameof(ProcessSpawnLimit));
+        if (HasSpawnLimiter(type, typeof(GitProcessSpawnLimit))) lanes.Add(nameof(GitProcessSpawnLimit));
+        if (HasSpawnLimiter(type, typeof(CheckpointToolSpawnLimit))) lanes.Add(nameof(CheckpointToolSpawnLimit));
+        if (HasSpawnLimiter(type, typeof(ScriptModelSpawnLimit))) lanes.Add(nameof(ScriptModelSpawnLimit));
+        return lanes;
+    }
+
+    private static List<string> MethodLanes(MethodInfo method)
+    {
+        var lanes = new List<string>();
+        if (HasSpawnLimiter(method, typeof(ProcessSpawnLimit))) lanes.Add(nameof(ProcessSpawnLimit));
+        if (HasSpawnLimiter(method, typeof(GitProcessSpawnLimit))) lanes.Add(nameof(GitProcessSpawnLimit));
+        if (HasSpawnLimiter(method, typeof(CheckpointToolSpawnLimit))) lanes.Add(nameof(CheckpointToolSpawnLimit));
+        if (HasSpawnLimiter(method, typeof(ScriptModelSpawnLimit))) lanes.Add(nameof(ScriptModelSpawnLimit));
+        return lanes;
     }
 
     private static bool HasSpawnLimiter(MemberInfo member, Type limit) =>
@@ -930,7 +975,7 @@ public class ProcessSpawnLimitTests
         .ToDictionary(opCode => opCode.Value);
 
     /// <summary>The methods, fields and types a body's IL names through metadata tokens.</summary>
-    private static IEnumerable<MemberInfo> ReferencedMembers(MethodBase method, MethodBody body)
+    internal static IEnumerable<MemberInfo> ReferencedMembers(MethodBase method, MethodBody body)
     {
         var il = body.GetILAsByteArray();
         if (il is null)

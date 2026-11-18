@@ -33,6 +33,14 @@
     after StopOnly and before the secret changes restarts AppHost on the old
     connection string first. If desktop postgres was stopped, it is started
     again before that restart.
+    Runbook G-1: the phase 4 restart runs with ANTIPHON_SKIP_DEV_POSTGRES=1 so
+    it does not start the desktop postgres again; every other restart clears
+    it. Phase 5 ends non-zero with the manual stop command unless
+    antiphon-postgres is exited. Runbook G-6: an unreadable server2 side of
+    gate 6 rolls back only with -AcceptDataLossRollback, with a warning; an
+    unreadable desktop side always refuses. Every rollback that removes the
+    secret writes desktop into the backup snapshot-target file
+    (-SnapshotTargetFile, default $script:CutoverSnapshotTargetDefaultPath).
     ASCII-only: it may run under Windows PowerShell 5.1.
 #>
 [CmdletBinding(PositionalBinding = $false)]
@@ -71,7 +79,10 @@ param(
     [string]$ProbeTargetContainer = '',
     # CARD-1980: per-table bound for the gate 6 content fingerprint. 1200 seconds is 20 minutes.
     [ValidateRange(1, 7200)]
-    [int]$ContentStatementTimeoutSeconds = 1200
+    [int]$ContentStatementTimeoutSeconds = 1200,
+    # Backup retarget plan D-2/W-5: the snapshot-target file a phase 6 rollback resets to desktop.
+    # Empty means $script:CutoverSnapshotTargetDefaultPath; tests point it at a temporary file.
+    [string]$SnapshotTargetFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -85,6 +96,17 @@ $script:KeyTables = @(
     'AgentTaskLandNotifications',
     'AgentTaskEvents'
 )
+
+# Runbook G-1: dev-aspire.ps1 and scripts/autostart-apphost.ps1 skip the desktop postgres bring-up
+# when this is 1 in their process environment (scripts/lib/dev-postgres-compose.ps1).
+# restart-apphost.ps1 passes it on by inheritance.
+$script:CutoverSkipDevPostgresVariable = 'ANTIPHON_SKIP_DEV_POSTGRES'
+
+# Backup retarget plan D-2 (docs/superpowers/plans/2026-11-18-postgres-backup-retarget-plan.md):
+# the daily snapshot job dumps the database this one word names, desktop or server2. The plan
+# names snapshot-target; scripts/windmill/invoke-postgres-snapshot.ps1 reads SNAPSHOT-TARGET
+# beside its runner copy, the same file on NTFS. The name is not final: change it only here.
+$script:CutoverSnapshotTargetDefaultPath = 'C:\Users\lndco\antiphon-snapshot-runner\snapshot-target'
 
 function Fail-Cutover {
     param([string]$Message, [int]$Code = 3)
@@ -171,14 +193,14 @@ function Show-CutoverWhatIf {
     Write-Host '  EXIT CHECK 3: count(*) per user table, sequences, extensions, migration ids, and key-table minimum and maximum primary keys match.'
     Write-Host '  STOP GATE 3: any mismatch. Do not repoint.'
     Write-Host 'PHASE 4 Repoint and restart'
-    Write-Host '  EXIT CHECK 4: desktop postgres is stopped, antiphon_pgdata remains listed, the user-secrets key is set from stdin with its value not displayed, maintenance is lifted, and restart-apphost.ps1 -ExpectedServerSha exits 0.'
+    Write-Host '  EXIT CHECK 4: desktop postgres is stopped, antiphon_pgdata remains listed, the user-secrets key is set from stdin with its value not displayed, maintenance is lifted, and restart-apphost.ps1 -ExpectedServerSha exits 0 with ANTIPHON_SKIP_DEV_POSTGRES=1 so it does not start the desktop postgres again.'
     Write-Host '  STOP GATE 4: compose offers to remove the data directory, restart exit is 3, or the SHA mismatches. Exit 5 keeps the restart lock. Go to phase 6 if the secret was already changed.'
     Write-Host 'PHASE 5 Post-checks'
-    Write-Host '  EXIT CHECK 5: health is 200, the version SHA equals the rc tip and advertises land-v2, pool flags match, and server2 shows a desktop client.'
-    Write-Host '  STOP GATE 5: a post-check fails. The operator runs phase 6. The script does not restart itself again.'
+    Write-Host '  EXIT CHECK 5: health is 200, the version SHA equals the rc tip and advertises land-v2, pool flags match, server2 shows a desktop client, and the desktop antiphon-postgres is still exited.'
+    Write-Host '  STOP GATE 5: a post-check fails. The operator runs phase 6. The script does not restart itself again. A running or unreadable desktop antiphon-postgres fails closed with the manual stop command instead; that is not a reason for phase 6.'
     Write-Host 'PHASE 6 Rollback'
-    Write-Host '  EXIT CHECK 6: desktop postgres is started again, per-table high-water marks and content checksums are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart.'
-    Write-Host '  STOP GATE 6: if the new database has extra or changed rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. A failed read stops the rollback. Neither data directory is removed.'
+    Write-Host '  EXIT CHECK 6: desktop postgres is started again, per-table high-water marks and content checksums are compared, and AppHost is restarted with -ExpectedServerSha against the untouched desktop volume. Maintenance is lifted after that restart. Once the secret is removed, the backup snapshot-target file is reset to desktop.'
+    Write-Host '  STOP GATE 6: if the new database has extra or changed rows the old desktop volume lacks, the script stops unless -AcceptDataLossRollback was passed. A failed desktop read stops the rollback. A failed server2 read stops it unless -AcceptDataLossRollback was passed, which rolls back without the comparison and leaves every server2 write behind. Neither data directory is removed.'
     Write-Host 'WHATIF: does not POST, does not call docker, and does not call dotnet user-secrets set.'
     Write-Host 'REFUSE: without a verified snapshot reference and a passed drill record the window does not start.'
 }
@@ -345,6 +367,7 @@ function Reset-CutoverWindowState {
     $script:CutoverOldStringRestartSucceeded = $false
     $script:CutoverDesktopPostgresStopped = $false
     $script:CutoverWindowSucceeded = $false
+    $script:CutoverPhase5Passed = $false
 }
 
 function Get-CutoverMaintenanceMarkerPath {
@@ -417,6 +440,8 @@ function Complete-CutoverWindowExit {
                     Write-Host ('RECOVERY: AppHost is still down. The secret was not changed. Start AppHost on the old connection string with restart-apphost.ps1 -ExpectedServerSha. Restart exit ' + $code + '.')
                 }
             }
+        } elseif (-not $success -and $secret -and [bool]$script:CutoverPhase5Passed) {
+            Write-Host 'RECOVERY: AppHost runs on server2 and passed the phase 5 mechanical checks. Only the desktop postgres check failed. Do not run phase 6 for this.'
         } elseif (-not $success -and $secret) {
             Write-Host 'RECOVERY: the connection secret was already changed. This run does not restart on the old string. Operator runs phase 6.'
         } elseif ($AllowOldStringRestart -and -not $success -and $stopped -and -not $secret -and $restarted -and -not $restartOk -and -not $skippedRestart) {
@@ -498,7 +523,14 @@ function Invoke-CutoverGet {
 }
 
 function Invoke-CutoverRestart {
-    param([switch]$StopOnly, [string]$ExpectedSha)
+    param([switch]$StopOnly, [string]$ExpectedSha, [switch]$SkipDevPostgres)
+    # Runbook G-1: only the phase 4 restart onto server2 keeps the desktop postgres down. Every
+    # other restart (old string, rollback) needs it up, so an inherited opt-out is cleared.
+    if ($SkipDevPostgres) {
+        [Environment]::SetEnvironmentVariable($script:CutoverSkipDevPostgresVariable, '1')
+    } else {
+        Remove-Item -LiteralPath ('Env:' + $script:CutoverSkipDevPostgresVariable) -ErrorAction SilentlyContinue
+    }
     $restart = Join-Path $Repository 'scripts/restart-apphost.ps1'
     $restartArgs = @($script:CommandHost, '-NoProfile', '-File', $restart)
     if ($StopOnly) { $restartArgs += '-StopOnly' }
@@ -770,22 +802,25 @@ function Get-CutoverContentFingerprint {
 function Test-CutoverNewHasExtraRows {
     $script:CutoverContentCanonical = $null
     $script:CutoverContentCompared = 0
+    # Which side failed to read when this returns $null: source (desktop) or target (server2).
+    $script:CutoverRowCompareUnreadable = ''
     $tableSql = "SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 1"
     $sourceText = Invoke-CutoverPsql -Target source -Sql $tableSql
     $targetText = Invoke-CutoverPsql -Target target -Sql $tableSql
-    if ($null -eq $sourceText -or $null -eq $targetText) { return $null }
+    if ($null -eq $sourceText) { $script:CutoverRowCompareUnreadable = 'source'; return $null }
+    if ($null -eq $targetText) { $script:CutoverRowCompareUnreadable = 'target'; return $null }
     $sourceMap = @{}
     foreach ($ident in @(Split-CutoverLines $sourceText)) {
-        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { $script:CutoverRowCompareUnreadable = 'source'; return $null }
         $fp = Get-CutoverContentFingerprint -Target source -Ident $ident
-        if ($null -eq $fp) { return $null }
+        if ($null -eq $fp) { $script:CutoverRowCompareUnreadable = 'source'; return $null }
         $sourceMap[$ident] = $fp
     }
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($ident in @(Split-CutoverLines $targetText)) {
-        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { return $null }
+        if ($ident -notmatch '^[A-Za-z0-9_."]+$') { $script:CutoverRowCompareUnreadable = 'target'; return $null }
         $fp = Get-CutoverContentFingerprint -Target target -Ident $ident
-        if ($null -eq $fp) { return $null }
+        if ($null -eq $fp) { $script:CutoverRowCompareUnreadable = 'target'; return $null }
         $old = $null
         if ($sourceMap.ContainsKey($ident)) { $old = [string]$sourceMap[$ident] }
         if ($null -eq $old -or $old -ne $fp) { return $true }
@@ -917,6 +952,53 @@ function Invoke-CutoverCopyAndRestore {
     return [int]$code
 }
 
+function Assert-CutoverDesktopPostgresDown {
+    # Runbook G-1: after the phase 4 restart the desktop copy must stay stopped. A running or
+    # unreadable antiphon-postgres fails closed with the manual stop command. AppHost already
+    # runs on server2, so this is not a reason for phase 6.
+    $compose = Join-Path $Repository 'docker-compose.dev.yml'
+    $manual = 'docker compose -f "' + $compose + '" stop postgres'
+    $status = ''
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $status = (& docker inspect -f '{{.State.Status}}' antiphon-postgres 2>$null | Out-String).Trim()
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 1 } else { $code = [int]$code }
+    } catch {
+        $code = 1
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+    if ($code -ne 0) {
+        Fail-Cutover ('PHASE 5 failed: desktop antiphon-postgres state could not be read after the restart. AppHost runs on server2. Make sure the stale desktop copy is stopped by hand: ' + $manual + ' (never rm, never down -v).') 2
+    }
+    if ($status -ne 'exited') {
+        if ($status -notmatch '^[a-z]{1,20}$') { $status = 'unknown' }
+        Fail-Cutover ('PHASE 5 failed: desktop antiphon-postgres is ' + $status + ' after the restart, although ' + $script:CutoverSkipDevPostgresVariable + '=1 was set for it. AppHost runs on server2; this is not a reason for phase 6. Stop the stale desktop copy by hand: ' + $manual + ' (never rm, never down -v).') 2
+    }
+    Write-Host 'PHASE 5 desktop antiphon-postgres is exited after the restart.'
+}
+
+function Get-CutoverSnapshotTargetPath {
+    if (-not [string]::IsNullOrWhiteSpace($SnapshotTargetFile)) { return $SnapshotTargetFile }
+    return $script:CutoverSnapshotTargetDefaultPath
+}
+
+function Set-CutoverSnapshotTargetDesktop {
+    # Backup retarget plan W-5: once AppHost goes back to the desktop volume, the daily snapshot
+    # must dump the desktop again, even after a passed server2 backup proof. ASCII, no BOM, one
+    # word. The directory is never created: a missing runner copy is the operator's to fix.
+    $path = Get-CutoverSnapshotTargetPath
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($path)) { return $false }
+        [System.IO.File]::WriteAllText($path, 'desktop', (New-Object System.Text.ASCIIEncoding))
+        return ([System.IO.File]::ReadAllText($path).Trim() -ceq 'desktop')
+    } catch {
+        return $false
+    }
+}
+
 function Invoke-CutoverRollback {
     Assert-CutoverOperatorInputs
     Reset-CutoverWindowState
@@ -927,23 +1009,44 @@ function Invoke-CutoverRollback {
     if ($startCode -ne 0) { Fail-Cutover 'REFUSED: desktop postgres did not start.' }
     $extra = Test-CutoverNewHasExtraRows
     if ($null -eq $extra) {
-        Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
-    }
-    if ($extra -and -not $AcceptDataLossRollback) {
+        # Runbook G-6: server2 down is the main reason to roll back. -AcceptDataLossRollback covers an
+        # unreadable server2 side only; an unreadable desktop side still refuses.
+        if ($script:CutoverRowCompareUnreadable -ne 'target') {
+            Fail-Cutover 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
+        }
+        if (-not $AcceptDataLossRollback) {
+            Fail-Cutover 'REFUSED: stop gate 6: the server2 database could not be read, so the rows only it holds are unknown. Pass -AcceptDataLossRollback to roll back without the comparison. Neither data directory is removed.'
+        }
+        Write-Host 'WARNING: PHASE 6: the server2 database could not be read. -AcceptDataLossRollback rolls back without the row comparison.'
+        Write-Host 'WARNING: every write made on server2 since phase 4 (tasks, lands, transcripts, events, queued messages) is not on the desktop volume and will be left behind. Both data directories are kept. No reverse migration exists (runbook G-8).'
+    } elseif ($extra -and -not $AcceptDataLossRollback) {
         Fail-Cutover 'REFUSED: stop gate 6: the new database has rows the old desktop volume lacks. Pass -AcceptDataLossRollback to roll back. Neither data directory is removed.'
     }
     if ($extra) {
         Write-Host 'PHASE 6: -AcceptDataLossRollback accepted. Rows that exist only on the new database will be left behind.'
     }
+    if (-not [string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($script:CutoverSkipDevPostgresVariable))) {
+        Write-Host ('PHASE 6: ' + $script:CutoverSkipDevPostgresVariable + ' was set in this process and is cleared for the rollback restart. Remove it from the user environment as well, or a later restart leaves the desktop postgres down.')
+    }
     try {
         Invoke-CutoverMaintenance
         $script:CutoverEnteredMaintenance = $true
         Set-CutoverConnectionSecret -Remove
+        $snapshotPath = Get-CutoverSnapshotTargetPath
+        $snapshotReset = Set-CutoverSnapshotTargetDesktop
+        if ($snapshotReset) {
+            Write-Host ('PHASE 6: snapshot target reset to desktop in ' + $snapshotPath + '. The next daily snapshot dumps the desktop volume.')
+        } else {
+            Write-Host ('PHASE 6: snapshot target could not be written in ' + $snapshotPath + '. The rollback restart continues.')
+        }
         $code = Invoke-CutoverRestart -ExpectedSha $RcTip
         if ($code -ne 0) { Fail-Cutover ('REFUSED: rollback restart exited ' + $code + '. Do not start a second copy if the lock is held.') }
         Invoke-CutoverMaintenance -Clear
         $script:CutoverEnteredMaintenance = $false
         Write-Host 'PHASE 6 exit check: AppHost restarted against the untouched desktop volume. Maintenance lifted.'
+        if (-not $snapshotReset) {
+            Fail-Cutover ('PHASE 6 failed: AppHost is back on the desktop volume, but the snapshot target was not reset. Write desktop into ' + $snapshotPath + ' by hand (ASCII, one word, no BOM), or the daily snapshot keeps dumping server2.') 2
+        }
         $script:CutoverWindowSucceeded = $true
         exit 0
     } finally {
@@ -1097,7 +1200,8 @@ function Invoke-CutoverWindow {
     if ($status -ne 'exited') { Fail-Cutover 'REFUSED: desktop postgres is not exited. The secret was not changed.' }
     Set-CutoverConnectionSecret
     $script:CutoverSecretChanged = $true
-    $up = Invoke-CutoverRestart -ExpectedSha $RcTip
+    Write-Host ('PHASE 4: ' + $script:CutoverSkipDevPostgresVariable + '=1 for the restart, so it does not start the desktop postgres again.')
+    $up = Invoke-CutoverRestart -ExpectedSha $RcTip -SkipDevPostgres
     if ($up -ne 0) {
         Write-Host 'STOP GATE 4: restart did not exit 0 after the secret changed. Exit 5 keeps the restart lock. Operator runs phase 6.'
         Fail-Cutover ('REFUSED: restart exited ' + $up + '. Do not start a second copy.')
@@ -1127,6 +1231,9 @@ function Invoke-CutoverWindow {
         Fail-Cutover 'PHASE 5 failed: server2 shows no desktop client. Operator runs phase 6.' 2
     }
     Write-Host 'PHASE 5 mechanical checks passed.'
+    $script:CutoverPhase5Passed = $true
+    Assert-CutoverDesktopPostgresDown
+    Write-Host ('OPERATOR: set ' + $script:CutoverSkipDevPostgresVariable + '=1 in the user environment, so later restarts and the logon auto-start keep the desktop postgres down. This script sets it only for its own restart.')
     Write-Host 'OPERATOR: confirm one dispatch, one land, Hangfire, and the 30 minute monitor. This script does not create that task.'
     $script:CutoverWindowSucceeded = $true
     exit 0

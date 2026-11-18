@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.SessionRunner.Tests.C1677TempSweepTests;
@@ -187,6 +189,90 @@ public sealed class C1677TempSweepNativeTests
         var candidate = Single(response, name);
         candidate.Verdict.ShouldBe(TempSweepCodes.WouldRemove, candidate.Reason + " " + candidate.Detail);
         Directory.EnumerateFiles(path).Count().ShouldBe(3);
+
+        // CARD-1896 V-5: the real production factory must use the configured log root,
+        // and a tracked session remains protected even when no process holds its log.
+        using var git = C1677RetentionScratch.Create();
+        var settings = new SessionRunnerSettings { SessionLogPath = s.Root + "/session-logs" };
+        Directory.CreateDirectory(settings.SessionLogPath);
+        await using var runtime = new SessionRunnerRuntime(Options.Create(settings), NullLogger<SessionRunnerRuntime>.Instance);
+        var active = Guid.NewGuid();
+        var old = Guid.NewGuid();
+        var tracked = new SessionRunnerRuntime.RunnerSession(active, settings, new SessionRunnerEventHub(), NullLogger.Instance);
+        tracked.MarkLaunchFinishedForTests();
+        runtime.AdoptSessionForTests(tracked);
+        runtime.List().ShouldContain(session => session.SessionId == active);
+        foreach (var id in new[] { active, old })
+        {
+            var log = Path.Combine(settings.SessionLogPath, id.ToString("N") + ".ansi.log");
+            File.WriteAllText(log, "ansi");
+            File.SetLastWriteTimeUtc(log, DateTime.UtcNow.AddDays(-10));
+        }
+        var composed = RunnerTempSweep.CreateForRunner(git.Retiring, s.Tmp, settings, runtime, git.Service());
+        var logs = await composed.SweepAsync(C1896TempSweepPolicyTests.Enabled("session-ansi"), ct);
+        Single(logs, active.ToString("N") + ".ansi.log").Reason.ShouldBe(TempSweepCodes.LiveProcess);
+        Single(logs, old.ToString("N") + ".ansi.log").Verdict.ShouldBe(TempSweepCodes.Removed);
+        File.ReadAllText(Path.Combine(settings.SessionLogPath, active.ToString("N") + ".ansi.log")).ShouldBe("ansi");
+        File.Exists(Path.Combine(settings.SessionLogPath, old.ToString("N") + ".ansi.log")).ShouldBeFalse();
+
+        // A launch can own the identity before it enters the session census.
+        // Holding its real gate must keep the log even without a tracked session or fd.
+        var launching = Guid.NewGuid();
+        var launchingLog = Path.Combine(settings.SessionLogPath, launching.ToString("N") + ".ansi.log");
+        File.WriteAllText(launchingLog, "launch");
+        File.SetLastWriteTimeUtc(launchingLog, DateTime.UtcNow.AddDays(-10));
+        var launchGate = runtime.LaunchGateForTest(launching);
+        await launchGate.WaitAsync(ct);
+        string? launchRefusal;
+        try
+        {
+            launchGate.CurrentCount.ShouldBe(0);
+            runtime.List().ShouldNotContain(session => session.SessionId == launching);
+            var launchSweep = await composed.SweepAsync(C1896TempSweepPolicyTests.Enabled("session-ansi"), ct);
+            launchRefusal = Single(launchSweep, launching.ToString("N") + ".ansi.log").Reason;
+        }
+        finally { launchGate.Release(); }
+
+        // CARD-1896 V-4: explicit owner registration, then a real clean published clone.
+        // The owner must be gone; dirty and unpublished work survive even after that.
+        const string scratchName = "antiphon-review-1234abcd";
+        var scratch = s.Tmp + "/" + scratchName;
+        Directory.CreateDirectory(scratch);
+        var owner = git.Worktrees + "/task-1234abcd";
+        Directory.CreateDirectory(owner);
+        File.WriteAllText(scratch + "/.antiphon-scratch-owner", owner);
+        C1677RetentionScratch.Git(git.Root, "clone", git.OriginGit, scratch + "/master");
+        s.Age(scratch, TimeSpan.FromDays(30));
+        var clones = C1896TempSweepPolicyTests.Enabled("review-clone");
+        Single(await composed.SweepAsync(clones, ct), scratchName).Reason.ShouldBe(TempSweepCodes.MirrorPresent);
+        Directory.Delete(owner);
+        File.WriteAllText(scratch + "/master/unpublished.txt", "keep");
+        s.Age(scratch, TimeSpan.FromDays(30));
+        Single(await composed.SweepAsync(clones, ct), scratchName).Reason.ShouldBe("scratch_dirty");
+        File.ReadAllText(scratch + "/master/unpublished.txt").ShouldBe("keep");
+        C1677RetentionScratch.Git(scratch + "/master", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+            "add", "unpublished.txt");
+        C1677RetentionScratch.Git(scratch + "/master", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "-m", "unpublished");
+        s.Age(scratch, TimeSpan.FromDays(30));
+        Single(await composed.SweepAsync(clones, ct), scratchName).Reason.ShouldBe("scratch_unpublished");
+        Directory.Exists(scratch).ShouldBeTrue();
+        C1677RetentionScratch.Git(scratch + "/master", "push", "origin", "main");
+        C1677RetentionScratch.Git(scratch + "/master", "update-index", "--assume-unchanged", "unpublished.txt");
+        File.WriteAllText(scratch + "/master/unpublished.txt", "hidden edit");
+        s.Age(scratch, TimeSpan.FromDays(30));
+        var hiddenRefusal = Single(await composed.SweepAsync(clones with { Mode = TempSweepModes.DryRun }, ct), scratchName).Reason;
+        File.ReadAllText(scratch + "/master/unpublished.txt").ShouldBe("hidden edit");
+        C1677RetentionScratch.Git(scratch + "/master", "update-index", "--no-assume-unchanged", "unpublished.txt");
+        C1677RetentionScratch.Git(scratch + "/master", "checkout", "--", "unpublished.txt");
+        s.Age(scratch, TimeSpan.FromDays(30));
+        Single(await composed.SweepAsync(clones with { Mode = TempSweepModes.DryRun }, ct), scratchName)
+            .Verdict.ShouldBe(TempSweepCodes.WouldRemove);
+        Directory.Exists(scratch).ShouldBeTrue();
+        Single(await composed.SweepAsync(clones, ct), scratchName).Verdict.ShouldBe(TempSweepCodes.Removed);
+        Directory.Exists(scratch).ShouldBeFalse();
+        new[] { launchRefusal, hiddenRefusal }.ShouldBe(new[] { TempSweepCodes.LiveProcess, "scratch_index_hidden" });
+        File.ReadAllText(launchingLog).ShouldBe("launch");
     }
 
     [Test]

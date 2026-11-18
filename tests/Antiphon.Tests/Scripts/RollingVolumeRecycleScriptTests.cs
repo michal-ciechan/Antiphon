@@ -651,7 +651,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Option_manifest_is_strict()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -757,7 +757,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Documentation_and_transport_pins_match()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -777,7 +777,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -878,7 +878,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // receipt never authorizes apply; the operation token and the Ready preview do.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1040,7 +1040,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // still refuse, and missing current tooling still refuses apply.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Cross_sha_cleanup_image_binds_the_retired_temp()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1186,7 +1186,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // lets an apply without the operation token through the gate.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Older_retirement_receipt_is_ignored()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1250,7 +1250,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // not authorize an apply without the operation token.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Disagreeing_cross_sha_images_refuse()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1344,7 +1344,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [Arguments("review-evidence-antiphon")]
     [Arguments("review-evidence-backup")]
     [Arguments("antiphon-symlink")]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public void C1594_Antiphon_evidence_gitdir(string variant)
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1475,7 +1475,7 @@ public sealed class RollingVolumeRecycleScriptTests
         var result = Path.Combine(fixture.Root, "hook-result");
         // Remount the volume and /work, then write. A detached child writes again after
         // the audit returns. Capture the shell stderr before the append's own redirection.
-        await File.WriteAllTextAsync(hook, "#!/bin/bash\n" +
+        await FixtureExecutable.WriteAsync(hook, "#!/bin/bash\n" +
             "exec 2>" + BashSingle(result + ".err") + "\n" +
             "mount -o remount,bind,rw -- " + BashSingle(volume) + " 2>>" + BashSingle(result + ".err") + " || true\n" +
             "mount -o remount,bind,rw /work 2>>" + BashSingle(result + ".err") + " || true\n" +
@@ -1487,8 +1487,7 @@ public sealed class RollingVolumeRecycleScriptTests
             "setsid bash -c " + BashSingle("sleep 2; mount -o remount,bind,rw -- \"$1\" 2>/dev/null || true; mount -o remount,bind,rw /work 2>/dev/null || true; printf ' late' >> \"$2\"") +
             " _ " + BashSingle(volume) + " " + BashSingle(description) + " </dev/null >/dev/null 2>&1 &\n" +
             "exit 0\n");
-        var setup = await C994ScriptProcess.Run("bash", "-c",
-            "chmod 0755 " + BashSingle(hook) + " && git -C " + BashSingle(repo) + " config core.fsmonitor " + BashSingle(hook));
+        var setup = await C994ScriptProcess.Run("git", "-C", repo, "config", "core.fsmonitor", hook);
         setup.Exit.ShouldBe(0, "recycle-preview-receipt: fsmonitor hook; " + setup.Output);
     }
 
@@ -1647,7 +1646,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // The hang stub ignores SIGTERM, so a client-only timeout leaves it running.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Preview_helper_removal_is_owned()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -2560,7 +2559,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // compare ignores an off-runner land, and c1008_tasks_wait clears, expires with the waited suffix
     // or refuses an invalid bound before any read. sleep is stubbed; the polls are counted.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public void C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands()
     {
         var report = LinuxShell(C1353HostCensusScript());
@@ -2740,7 +2739,7 @@ public sealed class RollingVolumeRecycleScriptTests
         => await C1361CensusProbes.Counts();
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1371_Post_removal_count_drift_does_not_abort()
         => await C1361CensusProbes.PostRemoval();
 
@@ -3434,10 +3433,9 @@ internal sealed class C1008HostFixture : IDisposable
         var dockerBin = Path.Combine(Root, "docker-cli");
         Directory.CreateDirectory(dockerBin);
         var dockerCli = Path.Combine(dockerBin, "docker");
-        await File.WriteAllTextAsync(dockerCli, "#!/bin/sh\nexec bash " +
+        // CARD-1984 B-1: created by a child, so no write handle of this process can meet its exec.
+        await FixtureExecutable.WriteAsync(dockerCli, "#!/bin/sh\nexec bash " +
             VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh")) + " \"$@\"\n");
-        var executable = await C994ScriptProcess.Run("chmod", "0755", dockerCli);
-        if (executable.Exit != 0) throw new InvalidOperationException("fake Docker executable: " + executable.Output);
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject

@@ -68,6 +68,7 @@ function Test-C1008SafeAuditDiagnosis {
     param([string]$Diagnosis)
     if ([string]::IsNullOrEmpty($Diagnosis)) { return $false }
     if ($Diagnosis.IndexOf('@') -ge 0 -or $Diagnosis.IndexOf('://') -ge 0) { return $false }
+    if ($Diagnosis -cmatch '^RecycleOriginMoved reason=withdrawn-ref repo=[A-Za-z0-9._/-]+ ref=refs/[A-Za-z0-9._/-]+ old=[0-9a-f]{40} new=([0-9a-f]{40}|deleted)$') { return $true }
     return $Diagnosis -cmatch '^Recycle[A-Za-z0-9]+( audit check=[A-Za-z0-9_-]+ status=[0-9]* repo=[A-Za-z0-9._/-]+( reason=[A-Za-z0-9_-]+)?)?$'
 }
 

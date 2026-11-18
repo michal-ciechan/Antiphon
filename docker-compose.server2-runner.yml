@@ -17,11 +17,10 @@ services:
     # repository that does not exist. The deploy builds this exact tag.
     image: antiphon-server2/server:${SOURCE_SHA12:?SOURCE_SHA12 is required}
     user: "0:0"
-    # CARD-1406: every service in this file stays off physical core 0 (CPU 0 and its SMT
-    # sibling 12), reserved for the host Postgres (see docker-compose.server2-postgres.yml,
-    # which sets no pin and bursts onto the shared CPUs under cpu_shares). A recreate keeps
-    # the pin; the temp overlay sets none and inherits it.
-    cpuset: "1-11,13-23"
+    # CARD-1406: every service in this file stays off the host Postgres cpuset (three whole
+    # physical cores, see docker-compose.server2-postgres.yml). A recreate keeps the pin; the
+    # temp overlay sets none and inherits it.
+    cpuset: "3-11,15-23"
     entrypoint: ["/bin/sh", "/stack/init-state.sh"]
     environment:
       # CARD-0660 Review 275c5757 D1: only this state-init requires the Codex home mount below;
@@ -47,9 +46,9 @@ services:
     image: antiphon-server2/session-testing:${SOURCE_SHA12:?SOURCE_SHA12 is required}
     user: "0:0"
     privileged: true
-    # CARD-1406: 22 of the 24 CPUs. The nested dockerd creates its containers' cgroups under
+    # CARD-1406: 18 of the 24 CPUs. The nested dockerd creates its containers' cgroups under
     # this one, so Testcontainers and nested builds are bounded by the same set.
-    cpuset: "1-11,13-23"
+    cpuset: "3-11,15-23"
     init: true
     restart: unless-stopped
     stop_grace_period: 90s
@@ -75,10 +74,10 @@ services:
       ANTIPHON_LINUX_COMPILER_POLICY: &RunnerLinuxCompilerPolicyDefault ${ANTIPHON_LINUX_COMPILER_POLICY:-0}
       # CARD-0589 D-4: the host build/test driver budget the runner brokers at /build-slots. Ten seats
       # share four concurrent build or test drivers at six MSBuild nodes each, refused below 16 GB
-      # available (cpuset 1-11,13-23: 22 of the 24 CPUs, with core 0 (CPUs 0,12) reserved for the
-      # host Postgres (CARD-1406), which also bursts onto these 22 under cpu_shares; 4 x 6 = 24
-      # nodes oversubscribe them; no cgroup memory cap, other services on the host). Change these
-      # and redeploy; SessionRunner__BuildSlots__Enabled "false" answers every acquire unlimited.
+      # available (cpuset 3-11,15-23: 18 of the 24 CPUs, with 0-2,12-14 reserved for the host
+      # Postgres cpuset (CARD-1406), so 4 x 6 = 24 nodes oversubscribe those 18; no cgroup memory
+      # cap, other services on the host). Change these and redeploy;
+      # SessionRunner__BuildSlots__Enabled "false" answers every acquire unlimited.
       SessionRunner__BuildSlots__MaxConcurrent: "4"
       SessionRunner__BuildSlots__MaxCpuCount: "6"
       SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"
@@ -183,9 +182,9 @@ services:
     profiles: [broker]
     image: antiphon-server2/session-testing:${BUILD_SLOTS_SHA12:?BUILD_SLOTS_SHA12 is required}
     user: "1654:1654"
-    # CARD-1406: off the reserved Postgres core 0 (CPUs 0,12). This line changes the broker
-    # config hash, so the first rollout that carries it recreates the broker once.
-    cpuset: "1-11,13-23"
+    # CARD-1406: off the host Postgres cpuset. This line changes the broker config hash, so
+    # the first rollout that carries it recreates the broker once.
+    cpuset: "3-11,15-23"
     working_dir: /app
     entrypoint: ["dotnet", "Antiphon.SessionRunner.dll"]
     restart: unless-stopped

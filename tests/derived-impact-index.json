@@ -173,6 +173,15 @@
       ]
     },
     {
+      "path": "docker-compose.server2-runner.yml",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
       "path": "docs/agent-card-lifecycle.md",
       "classes": 178,
       "reason": "cap",
@@ -1319,14 +1328,14 @@
       "reason": "cap",
       "owed": 106,
       "first": [
+        "WorktreeResidueRecoveryTests",
         "WorktreeRetirementRaceTests",
         "AdvisoryChangePolicyTests",
         "AgentReportStoreBudgetTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
-        "AgentTaskCheckSweepTests",
-        "AgentTaskDispatchFailureTests"
+        "AgentTaskCheckSweepTests"
       ]
     },
     {
@@ -1963,9 +1972,25 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.DecisionPaths.cs",
-      "classes": 79,
+      "classes": 80,
       "reason": "cap",
-      "owed": 54,
+      "owed": 55,
+      "first": [
+        "CodexLaunchRefusalTests",
+        "CompactionContinuationStopTests",
+        "DelegateBranchDeliveryTests",
+        "GrokHerdrRealCliStubProxyCanaryTests",
+        "GrokRulesHttpAcceptanceTests",
+        "HerdrPaneChildKillTests",
+        "HerdrStatusPushTests",
+        "PtyConditionalReadTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
+      "classes": 80,
+      "reason": "cap",
+      "owed": 55,
       "first": [
         "CodexLaunchRefusalTests",
         "CompactionContinuationStopTests",
@@ -1979,9 +2004,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
-      "classes": 90,
+      "classes": 93,
       "reason": "cap",
-      "owed": 65,
+      "owed": 68,
       "first": [
         "ClaudeDialogInputGuardTests",
         "HerdrEventPumpTests",
@@ -1989,8 +2014,8 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerEventHubTests",
-        "GrokRulesRunnerRefusalTests",
-        "RunnerPlatformLaunchTests"
+        "C1677TempSweepNativeTests",
+        "GrokRulesRunnerRefusalTests"
       ]
     },
     {
@@ -2083,9 +2108,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 72,
+      "classes": 73,
       "reason": "cap",
-      "owed": 47,
+      "owed": 48,
       "first": [
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
@@ -2227,9 +2252,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 571,
+      "classes": 572,
       "reason": "cap",
-      "owed": 546,
+      "owed": 547,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2311,14 +2336,14 @@
       "reason": "cap",
       "owed": 42,
       "first": [
+        "C1960QuarantineReleaseRouteTests",
         "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeSpillTransportTests",
         "PhoneHomeTranscriptIncidentTests",
-        "RunnerCapacityEndpointTests",
-        "C0824DesktopLegacyReleaseSwitchTests"
+        "RunnerCapacityEndpointTests"
       ]
     },
     {
@@ -2773,6 +2798,7 @@
         "DindRunnerContractTests",
         "DockerStackContractTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -2801,6 +2827,7 @@
         "DockerStackDocumentationTests",
         "HostJqPrerequisiteScriptTests",
         "HostStatsProbeParseTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -2811,8 +2838,7 @@
         "VerifyDindRunnerScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -3461,6 +3487,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3517,6 +3544,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
@@ -3554,6 +3582,7 @@
         "ClaudeTokenRefreshOptInTests",
         "DockerStackContractTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3612,6 +3641,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3641,6 +3671,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3663,6 +3694,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3685,6 +3717,7 @@
     {
       "path": "scripts/fixtures/c1008-recycle-real-cases.mjs",
       "classes": [
+        "ProcessSpawnLimitTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleDockerTests"
       ]
@@ -3699,6 +3732,7 @@
         "CheckpointImportTests",
         "DockerStackDocumentationTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3757,6 +3791,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3778,6 +3813,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3805,6 +3841,7 @@
     {
       "path": "scripts/fixtures/c994-production-compose-model.mjs",
       "classes": [
+        "ProcessSpawnLimitTests",
         "RollingProductionMountTests"
       ]
     },
@@ -3953,6 +3990,14 @@
       ]
     },
     {
+      "path": "scripts/new-review-scratch.ps1",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
+      ]
+    },
+    {
       "path": "scripts/pipeline-definition.ps1",
       "classes": [
         "PipelineDefinitionDocumentationTests",
@@ -4010,7 +4055,8 @@
       "path": "scripts/server2-host-jq.sh",
       "classes": [
         "HostJqFixtureClosureTests",
-        "HostJqPrerequisiteScriptTests"
+        "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4096,6 +4142,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -12196,6 +12243,7 @@
         "AgentTaskLandSweepTests",
         "AgentTaskWorktreeBaseCreateTests",
         "AgentTaskWorktreeBaseResolverTests",
+        "AgentTaskWorktreeLockOutcomeTests",
         "CardFileGitFailureAcceptanceTests",
         "DelegationTestServicesTests",
         "DelegationWorktreeTests",
@@ -12210,7 +12258,6 @@
         "WorktreeBaseSelectionTests",
         "WorktreeDefaultCallerTests",
         "WorktreeManagerGitIntegrationTests",
-        "WorktreeResidueRecoveryTests",
         "WorktreeResidueSweepTests"
       ]
     },
@@ -18407,7 +18454,8 @@
         "C1677TempSweepDispatchTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepServerTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1896TempSweepPolicyTests"
       ]
     },
     {
@@ -19663,6 +19711,36 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
+      "classes": [
+        "BlockedParkWireTests",
+        "Card1619LinuxStopIntentTests",
+        "Card1619RunnerExitTests",
+        "Card1653SocketDirTests",
+        "CodexBootWedgeProbeTests",
+        "CodexHerdrRealCliStubProxyCanaryTests",
+        "DelegationDispatchRecoveryBoundaryTests",
+        "GrokRulesFileLaunchTests",
+        "GrokRulesRunnerRefusalTests",
+        "HerdrAdoptionSweepTests",
+        "HerdrAttachTests",
+        "HerdrEventPumpTests",
+        "HerdrLaunchShapeTests",
+        "HerdrRunnerSessionTests",
+        "PhoneHomeBackpressureTests",
+        "PhoneHomeConnectionServiceTests",
+        "PtyHostAdoptionTests",
+        "RunnerCapacityCountTests",
+        "RunnerPlatformLaunchTests",
+        "RunnerSessionGenerationTests",
+        "RunnerStartupDiagnosticsTests",
+        "SessionBufferBoundsTests",
+        "SessionRunnerRuntimeTests",
+        "TranscriptAdoptionSafetyTests",
+        "TranscriptSinceReadTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
       "classes": [
         "BlockedParkWireTests",
@@ -19809,7 +19887,8 @@
         "C1677RetentionEngineTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1896TempSweepPolicyTests"
       ]
     },
     {
@@ -20755,6 +20834,7 @@
         "C1677RetentionInventoryTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepDispatchTests",
+        "C1677TempSweepNativeTests",
         "C1677TempSweepTests"
       ]
     },
@@ -20762,6 +20842,12 @@
       "path": "tests/Antiphon.SessionRunner.Tests/C1677TempFamilyRegistryTests.cs",
       "classes": [
         "DerivedImpactIndexTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/C1896TempSweepPolicyTests.cs",
+      "classes": [
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -24158,7 +24244,9 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/HostJqPrerequisiteScriptTests.cs",
       "classes": [
-        "HostJqFixtureClosureTests"
+        "HostJqFixtureClosureTests",
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
       ]
     },
     {
@@ -24264,6 +24352,20 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RollingProductionMountTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleCensusChurnTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -24272,11 +24374,13 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
+        "ScriptModelSpawnLaneTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementReceiptTests",
@@ -24442,6 +24546,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
@@ -25204,6 +25309,15 @@
       "classes": [
         "ChannelOutboundStorageTests",
         "WindowsUnitPlatformAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/FixtureExecutable.cs",
+      "classes": [
+        "HostJqPrerequisiteScriptTests",
+        "RollingVolumeRecycleCensusChurnTests",
+        "RollingVolumeRecycleScriptTests",
+        "ScriptModelSpawnLaneTests"
       ]
     },
     {
@@ -26206,6 +26320,17 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/ScriptModelSpawnLimit.cs",
+      "classes": [
+        "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
+        "RollingProductionMountTests",
+        "RollingVolumeRecycleCensusChurnTests",
+        "RollingVolumeRecycleScriptTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/ScriptedSessionRunnerClient.cs",
       "classes": [
         "SessionRunnerEventPumpTests",
@@ -26436,6 +26561,12 @@
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbClonePool.cs",
       "classes": [
         "TestDbClonePoolTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/TestDbFailureEvidence.cs",
+      "classes": [
+        "TestDbFixtureLifecycleTests"
       ]
     },
     {

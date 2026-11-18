@@ -1,5 +1,6 @@
 using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.TestSupport;
+using Antiphon.Tests.Scripts;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -44,8 +45,7 @@ public sealed class RcBridgeProbePlatformTests
     [Test]
     public void Windows_probe_reports_a_measured_count()
     {
-        if (!OperatingSystem.IsWindows())
-            throw new SkipTestException("Windows public probe runs on Windows.");
+        WindowsUnitSkipRoster.SkipOnLinux(nameof(RcBridgeProbePlatformTests), nameof(Windows_probe_reports_a_measured_count));
         OperatingSystem.IsWindows().ShouldBeTrue();
         var result = new WindowsRcBridgeProbe().Probe(424242);
         result.ConnectionCountMeasured.ShouldBeTrue();

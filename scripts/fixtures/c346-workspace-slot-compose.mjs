@@ -217,6 +217,14 @@ const oldPath = root + '/docker-compose.server2-runner.yml';
 fs.writeFileSync(oldPath, cp.execFileSync('git', ['show',
   '303c2476acc3c26538b98717e01776d2385ca450:docker-compose.server2-runner.yml'], {cwd: repo}));
 const base = JSON.parse(bash('C1008_COMPOSE_DIR="$FIXTURE_ROOT" compose_host config --format json\n'));
+// CARD-1893 S0 (ea4209a16) adds exactly this one base session-runner line as an intentional
+// stop-gap; CARD-1985 retires it in CARD-1893 S1, which must delete this allowance with it.
+// Every other environment line still has to match the historical render.
+const s0HistoryKey = 'SessionRunner__HostStats__HistoryEnabled';
+assert.equal(current.services['session-runner'].environment[s0HistoryKey], 'false',
+  'CARD-1893 S0 HistoryEnabled stop-gap changed: CARD-1985 retires this allowance');
+assert.equal(Object.hasOwn(base.services['session-runner'].environment, s0HistoryKey), false);
+delete current.services['session-runner'].environment[s0HistoryKey];
 assert.equal(current.services['session-runner'].environment[key], 'false');
 assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), false);
 delete current.services['session-runner'].environment[key];
@@ -225,7 +233,7 @@ assert.equal(current.services['session-runner'].environment.ANTIPHON_LINUX_COMPI
 delete current.services['session-runner'].environment.ANTIPHON_LINUX_COMPILER_POLICY;
 // CARD-1406 pins every runner service off the host Postgres cpuset; retain the historical comparison.
 for (const service of Object.keys(current.services)) {
-  assert.equal(current.services[service].cpuset, '1-11,13-23', service + ' carries the CARD-1406 runner cpuset');
+  assert.equal(current.services[service].cpuset, '3-11,15-23', service + ' carries the CARD-1406 runner cpuset');
   delete current.services[service].cpuset;
 }
 assert.deepEqual(current, base, 'default render changed outside the new false flag');

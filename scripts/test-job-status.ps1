@@ -326,7 +326,224 @@ function Test-HelperAscii {
     }
 }
 
-$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'RunnerSourceSha', 'HelperAscii')
+
+# Backup retarget S2 (plan 2026-11-18-postgres-backup-retarget-plan.md): the
+# one-word snapshot-target file, Set-SnapshotTarget (W-3 flip, W-5 rollback)
+# and the src= status line. The job runs with the child, the script resolver
+# and the Telegram sender replaced by recorders.
+function New-InvokeRoot {
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-target-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $here 'windmill\invoke-postgres-snapshot.ps1') -Destination (Join-Path $root 'invoke-postgres-snapshot.ps1')
+    Copy-Item -LiteralPath (Join-Path $here 'windmill\job-status.ps1') -Destination (Join-Path $root 'job-status.ps1')
+    New-Item -ItemType Directory -Path (Join-Path $root 'job-status') -Force | Out-Null
+    return $root
+}
+
+function Write-TargetFileBytes {
+    param([string]$Root, [string]$Text)
+    [System.IO.File]::WriteAllBytes((Join-Path $Root 'snapshot-target'), [System.Text.Encoding]::ASCII.GetBytes($Text))
+}
+
+function Get-TargetFileHex {
+    param([string]$Root)
+    $path = Join-Path $Root 'snapshot-target'
+    if (-not (Test-Path -LiteralPath $path)) { return 'ABSENT' }
+    return ([System.BitConverter]::ToString([System.IO.File]::ReadAllBytes($path)))
+}
+
+function Split-TargetOutput {
+    param([object[]]$Items)
+    $info = New-Object System.Collections.Generic.List[string]
+    $values = New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($Items)) {
+        if ($item -is [System.Management.Automation.InformationRecord]) { [void]$info.Add([string]$item.MessageData) }
+        else { [void]$values.Add([string]$item) }
+    }
+    return @{ Info = ($info -join "`n"); Values = $values.ToArray() }
+}
+
+function Test-TargetFileValues {
+    $root = New-InvokeRoot
+    try {
+        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        if (-not (Get-Command Get-SnapshotTarget -ErrorAction SilentlyContinue)) {
+            Write-Fail 'TargetFileValues reader exists' 'Get-SnapshotTarget missing'
+            return
+        }
+        $path = Join-Path $root 'snapshot-target'
+        Assert-True (-not (Test-Path -LiteralPath $path)) 'TargetFileValues file starts absent' $path
+        Assert-True ((Get-SnapshotTarget -Dir $root) -eq '') 'TargetFileValues missing file is invalid' 'accepted'
+        foreach ($bad in @(@{ Name = 'empty'; Text = '' }, @{ Name = 'cased with space'; Text = 'Server2 ' }, @{ Name = 'unknown'; Text = 'server3' },
+                @{ Name = 'two lines'; Text = "server2`r`ndesktop`r`n" }, @{ Name = 'blank'; Text = "  `r`n" }, @{ Name = 'two newlines'; Text = "desktop`n`n" })) {
+            Write-TargetFileBytes $root ([string]$bad.Text)
+            $got = Get-SnapshotTarget -Dir $root
+            Assert-True ($got -eq '') ('TargetFileValues ' + [string]$bad.Name + ' is invalid') ("got=$got")
+        }
+        foreach ($good in @(@{ Text = 'desktop'; Want = 'desktop' }, @{ Text = "desktop`r`n"; Want = 'desktop' }, @{ Text = 'server2'; Want = 'server2' }, @{ Text = "server2`r`n"; Want = 'server2' }, @{ Text = "server2`n"; Want = 'server2' })) {
+            Write-TargetFileBytes $root ([string]$good.Text)
+            $got = Get-SnapshotTarget -Dir $root
+            Assert-True ($got -ceq [string]$good.Want) ('TargetFileValues accepts ' + ([string]$good.Text).Replace("`r", '\r').Replace("`n", '\n')) ("got=$got")
+        }
+        Write-TargetFileBytes $root 'server3'
+        $script:TargetChildCalls = New-Object System.Collections.Generic.List[string]
+        $script:TargetSent = New-Object System.Collections.Generic.List[string]
+        function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = ''; Err = '' } }
+        function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
+        function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+        $text = @($jobRun.Lines) -join "`n"
+        Assert-True ($text -match 'reason=target-invalid') 'TargetFileValues wrapper reports target-invalid' $text
+        Assert-True ([int]$jobRun.Exit -eq 9) 'TargetFileValues wrapper exits 9' ("exit=$($jobRun.Exit)")
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-TargetInvalidSendsFail {
+    $root = New-InvokeRoot
+    try {
+        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        if (-not (Get-Command Invoke-PlainSnapshotJob -ErrorAction SilentlyContinue)) {
+            Write-Fail 'TargetInvalidSendsFail job exists' 'Invoke-PlainSnapshotJob missing'
+            return
+        }
+        foreach ($variant in @(@{ Name = 'missing'; Text = $null }, @{ Name = 'bad word'; Text = 'Server2' })) {
+            Remove-Item -LiteralPath (Join-Path $root 'snapshot-target') -Force -ErrorAction SilentlyContinue
+            if ($null -ne $variant.Text) { Write-TargetFileBytes $root ([string]$variant.Text) }
+            $script:TargetChildCalls = New-Object System.Collections.Generic.List[string]
+            $script:TargetSent = New-Object System.Collections.Generic.List[string]
+            function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = ''; Err = '' } }
+            function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
+            function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
+            $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+            $name = 'TargetInvalidSendsFail ' + [string]$variant.Name
+            Assert-True ($script:TargetChildCalls.Count -eq 0) "$name starts no child" ($script:TargetChildCalls -join ' | ')
+            Assert-True ($script:TargetSent.Count -eq 1) "$name sends once" ("sent=$($script:TargetSent.Count)")
+            $line = ''
+            if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
+            Assert-True ($line -ceq 'DB backup: FAIL exit 9 target-invalid src=none') "$name line" $line
+            Assert-True ([int]$jobRun.Exit -eq 9) "$name exits 9" ("exit=$($jobRun.Exit)")
+            $record = Join-Path (Join-Path $root 'job-status') 'db-backup.json'
+            $json = ''
+            if (Test-Path -LiteralPath $record) { $json = [System.IO.File]::ReadAllText($record) }
+            Assert-True ($json -match '"detail":"exit 9 target-invalid src=none"') "$name records the failure" $json
+        }
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-OkLineNamesSource {
+    if (-not (Import-JobStatus)) { return }
+    $cmd = Get-Command New-PlainBackupCloudRecord -ErrorAction SilentlyContinue
+    if (-not $cmd -or -not $cmd.Parameters.ContainsKey('Target')) {
+        Write-Fail 'OkLineNamesSource -Target' 'New-PlainBackupCloudRecord -Target missing'
+        return
+    }
+    $server2 = New-PlainBackupCloudRecord -Bytes 750000000 -OneDrive 'ok' -Target 'server2'
+    Assert-True ((Format-JobStatusLine $server2) -ceq 'DB backup: OK 0.7 GB +cloud src=server2') 'OkLineNamesSource server2 ok line' (Format-JobStatusLine $server2)
+    $desktop = New-PlainBackupCloudRecord -Bytes 750000000 -OneDrive 'ok' -Target 'desktop'
+    Assert-True ((Format-JobStatusLine $desktop) -ceq 'DB backup: OK 0.7 GB +cloud src=desktop') 'OkLineNamesSource desktop ok line' (Format-JobStatusLine $desktop)
+    $warn = New-PlainBackupCloudRecord -Bytes 750000000 -OneDrive 'missing' -Target 'server2'
+    Assert-True ((Format-JobStatusLine $warn) -ceq 'DB backup: WARN 0.7 GB no cloud copy src=server2') 'OkLineNamesSource warn line' (Format-JobStatusLine $warn)
+    $plain = New-PlainBackupCloudRecord -Bytes 750000000 -OneDrive 'ok'
+    Assert-True ((Format-JobStatusLine $plain) -ceq 'DB backup: OK 0.7 GB +cloud') 'OkLineNamesSource without -Target is unchanged' (Format-JobStatusLine $plain)
+    $bad = New-PlainBackupCloudRecord -Bytes 750000000 -OneDrive 'ok' -Target 'server 2'
+    Assert-True ($null -eq $bad) 'OkLineNamesSource refuses a bad target token' 'accepted'
+}
+
+function Test-FailLineCarriesReason {
+    $root = New-InvokeRoot
+    try {
+        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        if (-not (Get-Command Get-PlainSnapshotFailDetail -ErrorAction SilentlyContinue)) {
+            Write-Fail 'FailLineCarriesReason parser exists' 'Get-PlainSnapshotFailDetail missing'
+            return
+        }
+        $cases = @(
+            @{ Name = 'dump-failed'; Exit = 4; Out = "PLAIN UNENCRYPTED operator-decision=2026-11-10 encryption=none`r`nSNAPSHOT fail exit=4 reason=dump-failed`r`n"; Want = 'exit 4 dump-failed src=server2' },
+            @{ Name = 'detail after reason'; Exit = 9; Out = 'SNAPSHOT fail exit=9 reason=drill-refused guard=database'; Want = 'exit 9 drill-refused src=server2' },
+            @{ Name = 'reason with a space'; Exit = 4; Out = 'SNAPSHOT fail exit=4 reason=dump failed'; Want = 'exit 4 src=server2' },
+            @{ Name = 'reason with ='; Exit = 4; Out = 'SNAPSHOT fail exit=4 reason=dump=failed'; Want = 'exit 4 src=server2' },
+            @{ Name = 'other exit'; Exit = 4; Out = 'SNAPSHOT fail exit=5 reason=verify-failed'; Want = 'exit 4 src=server2' },
+            @{ Name = 'no line'; Exit = 4; Out = 'something else'; Want = 'exit 4 src=server2' }
+        )
+        foreach ($case in $cases) {
+            $got = Get-PlainSnapshotFailDetail -Code ([int]$case.Exit) -Text ([string]$case.Out) -Target 'server2'
+            Assert-True ($got -ceq [string]$case.Want) ('FailLineCarriesReason ' + [string]$case.Name) ("got=$got")
+        }
+        Write-TargetFileBytes $root 'server2'
+        $script:TargetChildCalls = New-Object System.Collections.Generic.List[string]
+        $script:TargetSent = New-Object System.Collections.Generic.List[string]
+        function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 4; Out = "SNAPSHOT fail exit=4 reason=dump-failed`r`n"; Err = '' } }
+        function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
+        function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+        $line = ''
+        if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
+        Assert-True ($line -ceq 'DB backup: FAIL exit 4 dump-failed src=server2') 'FailLineCarriesReason wrapper line' $line
+        Assert-True ([int]$jobRun.Exit -eq 4) 'FailLineCarriesReason wrapper exits 4' ("exit=$($jobRun.Exit)")
+        Assert-True ($script:TargetChildCalls.Count -eq 1 -and $script:TargetChildCalls[0] -match '-Target server2$') 'FailLineCarriesReason child gets -Target server2' ($script:TargetChildCalls -join ' | ')
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-TargetRollbackRestoresDesktop {
+    $root = New-InvokeRoot
+    try {
+        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
+        if (-not (Get-Command Set-SnapshotTarget -ErrorAction SilentlyContinue)) {
+            Write-Fail 'TargetRollbackRestoresDesktop helper exists' 'Set-SnapshotTarget missing'
+            return
+        }
+        $desktopHex = [System.BitConverter]::ToString([System.Text.Encoding]::ASCII.GetBytes('desktop'))
+        $flip = Split-TargetOutput @(Set-SnapshotTarget server2 6>&1)
+        Assert-True ($flip.Info -match 'SNAPSHOT TARGET server2') 'TargetRollbackRestoresDesktop flip prints the word' $flip.Info
+        Assert-True (@($flip.Values).Count -eq 1 -and $flip.Values[0] -ceq 'server2') 'TargetRollbackRestoresDesktop flip returns server2' (@($flip.Values) -join ',')
+        Assert-True ((Get-SnapshotTarget) -ceq 'server2') 'TargetRollbackRestoresDesktop flip lands next to the runner copy' (Get-TargetFileHex $root)
+        $back = Split-TargetOutput @(Set-SnapshotTarget desktop 6>&1)
+        Assert-True ($back.Info -match 'SNAPSHOT TARGET desktop') 'TargetRollbackRestoresDesktop rollback prints the word' $back.Info
+        Assert-True (@($back.Values).Count -eq 1 -and $back.Values[0] -ceq 'desktop') 'TargetRollbackRestoresDesktop rollback returns desktop' (@($back.Values) -join ',')
+        Assert-True ((Get-TargetFileHex $root) -ceq $desktopHex) 'TargetRollbackRestoresDesktop file bytes are exactly desktop' (Get-TargetFileHex $root)
+        Assert-True ((Get-SnapshotTarget) -ceq 'desktop') 'TargetRollbackRestoresDesktop reader returns desktop' (Get-TargetFileHex $root)
+        $again = Split-TargetOutput @(Set-SnapshotTarget desktop 6>&1)
+        Assert-True ((Get-TargetFileHex $root) -ceq $desktopHex) 'TargetRollbackRestoresDesktop second rollback keeps the bytes' (Get-TargetFileHex $root)
+        Assert-True ($again.Info -ceq $back.Info -and (@($again.Values) -join ',') -ceq (@($back.Values) -join ',')) 'TargetRollbackRestoresDesktop second rollback has the same output' ($again.Info + ' / ' + (@($again.Values) -join ','))
+        foreach ($bad in @('Desktop', 'server3', '')) {
+            $refused = Split-TargetOutput @(Set-SnapshotTarget $bad 6>&1)
+            Assert-True (@($refused.Values).Count -eq 1 -and $refused.Values[0] -ceq '') ("TargetRollbackRestoresDesktop refuses '" + $bad + "'") (@($refused.Values) -join ',')
+            Assert-True ($refused.Info -notmatch 'SNAPSHOT TARGET (desktop|server2)') ("TargetRollbackRestoresDesktop '" + $bad + "' prints no word") $refused.Info
+            Assert-True ((Get-TargetFileHex $root) -ceq $desktopHex) ("TargetRollbackRestoresDesktop '" + $bad + "' leaves the bytes") (Get-TargetFileHex $root)
+        }
+        [void](Set-SnapshotTarget server2 6>$null)
+        [void](Set-SnapshotTarget desktop 6>$null)
+        $script:TargetChildCalls = New-Object System.Collections.Generic.List[string]
+        $script:TargetSent = New-Object System.Collections.Generic.List[string]
+        function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = 'SNAPSHOT ok exit=0 reason=ok'; Err = '' } }
+        function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
+        function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
+        $statusPath = Join-Path $root 'snapshot-status.json'
+        Set-Content -LiteralPath $statusPath -Value '{"utc":"20261118T075000Z","exit":0,"bytes":750000000,"mode":"plain","oneDrive":"ok","target":"desktop","serverVersion":"16.14"}' -Encoding ASCII
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath $statusPath
+        $args0 = ''
+        if ($script:TargetChildCalls.Count -ge 1) { $args0 = [string]$script:TargetChildCalls[0] }
+        Assert-True ($script:TargetChildCalls.Count -eq 1) 'TargetRollbackRestoresDesktop job runs one child' ("calls=$($script:TargetChildCalls.Count)")
+        Assert-True ($args0 -match '(^| )-Target desktop$') 'TargetRollbackRestoresDesktop child gets -Target desktop' $args0
+        Assert-True ($args0 -notmatch 'server2') 'TargetRollbackRestoresDesktop child never names server2' $args0
+        Assert-True ($args0 -match '-Plain -Execute -OneDriveCopy') 'TargetRollbackRestoresDesktop child keeps the plain arguments' $args0
+        $line = ''
+        if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
+        Assert-True ($line -ceq 'DB backup: OK 0.7 GB +cloud src=desktop') 'TargetRollbackRestoresDesktop ok line names desktop' $line
+        Assert-True ([int]$jobRun.Exit -eq 0) 'TargetRollbackRestoresDesktop job exits 0' ("exit=$($jobRun.Exit)")
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'RunnerSourceSha', 'HelperAscii',
+    'TargetFileValues', 'TargetInvalidSendsFail', 'OkLineNamesSource', 'FailLineCarriesReason', 'TargetRollbackRestoresDesktop')
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }

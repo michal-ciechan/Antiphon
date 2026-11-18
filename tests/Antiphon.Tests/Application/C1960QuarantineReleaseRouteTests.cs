@@ -44,6 +44,46 @@ public sealed class C1960QuarantineReleaseRouteTests
         services.AddSingleton<ISessionRunnerDirectory>(provider => provider.GetRequiredService<PhoneHomeRunnerDirectory>());
 
     [Test]
+    [Arguments("removed")]
+    [Arguments("refused")]
+    [Arguments("removal_failed")]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
+    public async Task Release_log_waits_for_runner_and_records_actual_outcome(string outcome)
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync(configureServices: MapDirectory);
+        await using var peer = await host.ConnectPeerAsync(capabilities: SlotRunner());
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        peer.SilentFor(PhoneHomeOperation.WorkspaceSlotQuarantineRelease);
+        var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
+        var post = host.PostOperatorAsync(Route(host.AllowedRunnerId, DirId),
+            new { disposition = "Pushed", reason = "published", requester = "orchestrator" }, token);
+        var frame = await WaitForAsync(peer, PhoneHomeOperation.WorkspaceSlotQuarantineRelease, 1, post);
+        // Receipt of the request is a barrier: the runner has not answered it yet.
+        var beforeAnswer = host.Logs.Entries.Where(entry => entry.Category == "WorkspaceSlotQuarantineRelease").ToArray();
+        var answer = new PhoneHomeWorkspaceSlotQuarantineReleaseResponse(DirId, outcome);
+        await peer.EmitAsync(new PhoneHomeFrame(PhoneHomeFrameKind.Result, frame.Epoch, frame.RequestId, frame.Operation,
+            JsonSerializer.SerializeToElement(answer, PhoneHomeFraming.Json)));
+        using var response = await post.WaitAsync(Bound);
+
+        beforeAnswer.ShouldBeEmpty("the release outcome is unknown until the runner answers");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadFromJsonAsync<PhoneHomeWorkspaceSlotQuarantineReleaseResponse>(PhoneHomeFraming.Json))
+            .ShouldBe(answer);
+        var logged = host.Logs.Entries.Where(entry => entry.Category == "WorkspaceSlotQuarantineRelease")
+            .ShouldHaveSingleItem();
+        logged.Level.ShouldBe(LogLevel.Warning);
+        logged["Outcome"].ShouldBe(outcome);
+        logged["DirId"].ShouldBe(DirId);
+        logged["RunnerId"].ShouldBe(host.AllowedRunnerId);
+        logged["Disposition"].ShouldBe("Pushed");
+        logged["Requester"].ShouldBe("orchestrator");
+        logged["Reason"].ShouldBe("published");
+        logged.Message.ShouldContain("outcome=" + outcome);
+        logged.Message.ShouldNotContain(" released ");
+        host.Logs.Entries.ShouldAllBe(entry => !entry.Message.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
     [ParallelLimiter<Antiphon.Tests.TestHelpers.WorkspaceRigConcurrencyLimit>]
     public async Task Route_forwards_release_and_returns_runner_answer()
     {

@@ -18,13 +18,10 @@ $doc = Join-Path $repo 'docs/docker-stack.md'
 $testingDoc = Join-Path $repo 'docs/testing-and-build.md'
 $runnerCompose = Join-Path $repo 'docker-compose.server2-runner.yml'
 $tempRunnerCompose = Join-Path $repo 'docker-compose.server2-runner.temp.yml'
-# CARD-1406 CPU isolation, one reserved core (operator 2026-11-18). Physical core 0
-# (CPU 0 and its SMT sibling 12) is reserved: the runner services own the other 22
-# CPUs, and Postgres carries no cpuset, so it may burst onto all 24 under cpu_shares
-# and its CFS quota.
-$script:ReservedCpuset = '0,12'
-$script:RunnerCpuset = '1-11,13-23'
-$script:PostgresCpuShares = '    cpu_shares: 2048'
+# CARD-1406 CPU isolation. Postgres owns three whole physical cores (CPUs 0-2
+# and their SMT siblings 12-14); the runner services own the other 18 CPUs.
+$script:PostgresCpuset = '0-2,12-14'
+$script:RunnerCpuset = '3-11,15-23'
 $script:HostCpuCount = 24
 $script:SmtSiblingOffset = 12
 $script:Passed = 0
@@ -364,6 +361,7 @@ $cases = @(
     'project-refusal',
     'refuse-bind-cgnat',
     'image-repodigest',
+    'image-patch-pin',
     'cpu-isolation'
 )
 
@@ -380,7 +378,7 @@ function Invoke-Case {
                     'ANTIPHON_POSTGRES_IMAGE:?',
                     'POSTGRES_PASSWORD:?',
                     ':5432:5432',
-                    'cpu_shares: 2048',
+                    'cpuset: "0-2,12-14"',
                     'cpus: 6.0',
                     'mem_limit: 8g',
                     'shm_size: 1gb',
@@ -666,7 +664,7 @@ function Invoke-Case {
                     "    networks:`n      - antiphon-server2-postgres-drill",
                     'ANTIPHON_POSTGRES_IMAGE:?',
                     'POSTGRES_PASSWORD:?',
-                    'cpu_shares: 2048',
+                    'cpuset: "0-2,12-14"',
                     'cpus: 6.0',
                     'mem_limit: 8g',
                     'shm_size: 1gb',
@@ -832,22 +830,63 @@ function Invoke-Case {
                 Assert-NoDocker $root 'repodigest' $result
             } finally { Remove-Root $root }
         }
+        'image-patch-pin' {
+            # Runbook G-2: the env file may state the exact patch version beside the digest.
+            Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for the patch pin' $deploy
+            if (-not (Test-Path -LiteralPath $deploy)) { return }
+            . $deploy
+            $digest = '@sha256:' + ('9' * 64)
+            foreach ($pin in @(('postgres:16.14' + $digest), ('postgres:16.14-trixie' + $digest), ('postgres:16.0' + $digest))) {
+                $reason = Test-Server2PostgresImage $pin
+                Assert-True ($reason -eq '') ('patch pin accepted: ' + $pin.Split('@')[0]) $reason
+            }
+            foreach ($float in @(
+                    'postgres:16.14',
+                    'postgres:16.14-trixie',
+                    'postgres:16',
+                    'postgres:latest',
+                    ('postgres:latest' + $digest),
+                    ('postgres:16.14-bookworm' + $digest),
+                    ('postgres:17.2' + $digest),
+                    ('postgres:16.14.1' + $digest),
+                    ('postgres:16.' + $digest),
+                    ('postgres:16.014' + $digest),
+                    ('postgres:16.14@sha256:' + ('9' * 12)),
+                    ('postgres:16.14@sha256:' + ('A' * 64)),
+                    ('library/postgres:16.14' + $digest)
+                )) {
+                $reason = Test-Server2PostgresImage $float
+                Assert-True ($reason -eq 'image-floating') ('still floating: ' + $float.Split('@')[0]) $reason
+            }
+            $root = New-Root
+            try {
+                $envFile = New-EnvFile $root -Image ('postgres:16.14' + $digest)
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -eq 0 -and (Get-Reason $result) -eq 'ok') 'WhatIf accepts postgres:16.14@sha256' (Get-Reason $result)
+                Assert-NoDocker $root 'patch-pin' $result
+                $envFile = New-EnvFile $root -Image 'postgres:16.14'
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -ne 0 -and (Get-Reason $result) -eq 'image-floating') 'WhatIf refuses a digest-less patch tag' (Get-Reason $result)
+                Assert-NoDocker $root 'patch-no-digest' $result
+            } finally { Remove-Root $root }
+        }
         'cpu-isolation' {
-            $reserved = ConvertFrom-Cpuset $script:ReservedCpuset
+            $pgSet = ConvertFrom-Cpuset $script:PostgresCpuset
             $runnerSet = ConvertFrom-Cpuset $script:RunnerCpuset
-            $parsed = ($null -ne $reserved) -and ($null -ne $runnerSet)
-            Assert-True $parsed 'declared cpusets parse' ($script:ReservedCpuset + ' / ' + $script:RunnerCpuset)
+            $parsed = ($null -ne $pgSet) -and ($null -ne $runnerSet)
+            Assert-True $parsed 'declared cpusets parse' ($script:PostgresCpuset + ' / ' + $script:RunnerCpuset)
             if (-not $parsed) { return }
-            Assert-True (Test-CpusetDisjoint $reserved $runnerSet) 'reserved core and runner cpuset are disjoint' 'overlap'
-            Assert-True (($reserved.Count + $runnerSet.Count) -eq $script:HostCpuCount) 'reserved core and runner cpuset cover every host CPU once' (($reserved.Count + $runnerSet.Count).ToString())
-            $low = $reserved.Min
-            $oneCore = ($reserved.Count -eq 2) -and $reserved.Contains($low + $script:SmtSiblingOffset)
-            Assert-True $oneCore 'reserved set is one physical core (a CPU and its SMT sibling)' $script:ReservedCpuset
-            Assert-True ($reserved.Contains(0) -and $reserved.Contains(12)) 'reserved core is CPU 0 and its sibling 12' $script:ReservedCpuset
-            Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '0-23') $reserved)) 'an unpinned 0-23 set intersects the reserved core' 'disjoint'
-            Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '0-2,12-14') $runnerSet)) 'the old three-core pin 0-2,12-14 overlaps the runner set' 'disjoint'
+            Assert-True (Test-CpusetDisjoint $pgSet $runnerSet) 'declared Postgres and runner cpusets are disjoint' 'overlap'
+            Assert-True (($pgSet.Count + $runnerSet.Count) -eq $script:HostCpuCount) 'declared cpusets cover every host CPU once' (($pgSet.Count + $runnerSet.Count).ToString())
+            $whole = $true
+            foreach ($cpu in $pgSet) {
+                if (-not $pgSet.Contains(($cpu + $script:SmtSiblingOffset) % $script:HostCpuCount)) { $whole = $false }
+            }
+            Assert-True $whole 'Postgres cpuset holds whole physical cores (each SMT sibling too)' $script:PostgresCpuset
+            Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '0-23') $pgSet)) 'an unpinned 0-23 set intersects the Postgres cpuset' 'disjoint'
             Assert-True ($null -eq (ConvertFrom-Cpuset '3-24')) 'a cpuset past the host CPU count does not parse' 'parsed'
 
+            $pgLiteral = 'cpuset: "' + $script:PostgresCpuset + '"'
             $postgresFiles = @(
                 @{ Label = 'production'; Path = $compose; Refusal = 'Get-Server2PostgresComposeRefusal'; Drill = $false },
                 @{ Label = 'drill'; Path = $drillCompose; Refusal = 'Get-Server2PostgresDrillComposeRefusal'; Drill = $true }
@@ -862,13 +901,11 @@ function Invoke-Case {
                 if (-not $blocks.Contains('postgres')) { continue }
                 $body = "`n" + ($blocks['postgres'] -join "`n") + "`n"
                 $sets = @(Get-ServiceCpusets $blocks['postgres'])
-                Assert-True ($sets.Count -eq 0) ($label + ' postgres carries no cpuset and may burst onto every CPU') ('cpusets=' + ($sets -join '|'))
-                foreach ($need in @($script:PostgresCpuShares, '    cpus: 6.0', '    mem_limit: 8g', '    shm_size: 1gb', "    blkio_config:`n      weight: 800")) {
+                Assert-True (($sets.Count -eq 1) -and ($sets[0] -ceq $script:PostgresCpuset)) ($label + ' postgres ' + $pgLiteral) ('cpusets=' + ($sets -join '|'))
+                foreach ($need in @('    cpus: 6.0', '    mem_limit: 8g', '    shm_size: 1gb', "    blkio_config:`n      weight: 800")) {
                     Assert-True ($body.Contains("`n" + $need + "`n")) ($label + ' postgres has ' + $need.Trim().Replace("`n", ' ')) 'missing'
                 }
-                $shareLines = @($blocks['postgres'] | Where-Object { $_ -match '^\s*cpu_shares\s*:' })
-                Assert-True ($shareLines.Count -eq 1) ($label + ' postgres sets cpu_shares exactly once') ('lines=' + $shareLines.Count)
-                foreach ($old in @('cpus: 4.0', 'mem_limit: 4g', 'cpus: 3.0', 'cpuset: "0-2,12-14"')) {
+                foreach ($old in @('cpus: 4.0', 'mem_limit: 4g', 'cpus: 3.0')) {
                     Assert-True (-not $text.Contains($old)) ($label + ' compose omits ' + $old) 'present'
                 }
                 foreach ($service in @($blocks.Keys)) {
@@ -890,13 +927,10 @@ function Invoke-Case {
             }
             foreach ($service in @($runnerBlocks.Keys)) {
                 $sets = @(Get-ServiceCpusets $runnerBlocks[$service])
-                $spec = $null
-                if ($sets.Count -eq 1) { $spec = ConvertFrom-Cpuset $sets[0] }
-                $inside = ($null -ne $spec) -and $spec.IsSubsetOf($runnerSet) -and (Test-CpusetDisjoint $spec $reserved)
-                Assert-True $inside ('runner ' + $service + ' stays inside ' + $script:RunnerCpuset + ' and off the reserved core ' + $script:ReservedCpuset) ('cpusets=' + ($sets -join '|'))
+                $off = ($sets.Count -eq 1) -and (Test-CpusetDisjoint (ConvertFrom-Cpuset $sets[0]) $pgSet)
+                Assert-True $off ('runner ' + $service + ' is pinned off the Postgres cpuset') ('cpusets=' + ($sets -join '|'))
             }
             Assert-True (($runnerText.Length -gt 0) -and ($runnerText -notmatch '(?m)^\s*mem_limit\s*:')) 'runner compose sets no memory cap' 'mem_limit present or file missing'
-            Assert-True (($runnerText.Length -gt 0) -and ($runnerText -notmatch '(?m)^\s*cpu_shares\s*:')) 'runner compose keeps the default cpu_shares (1024)' 'cpu_shares present or file missing'
 
             $tempText = ''
             if (Test-Path -LiteralPath $tempRunnerCompose) { $tempText = [System.IO.File]::ReadAllText($tempRunnerCompose).Replace("`r`n", "`n") }
@@ -904,31 +938,24 @@ function Invoke-Case {
 
             $docText = ''
             if (Test-Path -LiteralPath $doc) { $docText = [System.IO.File]::ReadAllText($doc) }
-            $sentence = 'The runner cpuset is ' + $script:RunnerCpuset + ', which reserves physical core 0 (CPUs ' + $script:ReservedCpuset + ') for Postgres; Postgres has no cpuset'
+            $sentence = 'Postgres cpuset is ' + $script:PostgresCpuset + ' and the runner cpuset is ' + $script:RunnerCpuset
             Assert-True ($docText.Contains($sentence)) ('doc says ' + $sentence) 'missing'
-            foreach ($field in @('HostConfig.CpusetCpus', 'HostConfig.CpuShares', 'HostConfig.NanoCpus')) {
-                Assert-True ($docText.Contains($field)) ('doc names the on-host ' + $field + ' check') 'missing'
-            }
-            Assert-True (-not $docText.Contains('Postgres cpuset is 0-2,12-14')) 'doc drops the three-core Postgres pin' 'present'
+            Assert-True ($docText.Contains('HostConfig.CpusetCpus')) 'doc names the on-host HostConfig.CpusetCpus check' 'missing'
 
             Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for cpu isolation' $deploy
             if (-not (Test-Path -LiteralPath $deploy)) { return }
             . $deploy
-            $shares = $script:PostgresCpuShares + "`n"
             foreach ($file in $postgresFiles) {
                 if (-not (Test-Path -LiteralPath $file.Path)) { continue }
                 $label = $file.Label
                 $text = [System.IO.File]::ReadAllText($file.Path).Replace("`r`n", "`n")
                 $refuse = Get-Command $file.Refusal
                 $accepted = & $refuse $text
-                Assert-True ($accepted -eq '') ($label + ' refusal accepts the reserved-core compose') $accepted
+                Assert-True ($accepted -eq '') ($label + ' refusal accepts the pinned compose') $accepted
                 $mutants = @(
-                    @{ Name = 'without cpu_shares 2048'; From = $shares; To = '' },
-                    @{ Name = 'with cpu_shares 1024'; From = $shares; To = "    cpu_shares: 1024`n" },
-                    @{ Name = 'with cpu_shares 20480'; From = $shares; To = "    cpu_shares: 20480`n" },
-                    @{ Name = 'with a hard 0,12 pin'; From = $shares; To = "    cpuset: `"0,12`"`n" + $shares },
-                    @{ Name = 'with the old 0-2,12-14 pin'; From = $shares; To = "    cpuset: `"0-2,12-14`"`n" + $shares },
-                    @{ Name = 'with the runner cpuset'; From = $shares; To = '    ' + $runnerLiteral + "`n" + $shares },
+                    @{ Name = 'without the cpuset'; From = '    ' + $pgLiteral + "`n"; To = '' },
+                    @{ Name = 'with an unpinned 0-23 cpuset'; From = $pgLiteral; To = 'cpuset: "0-23"' },
+                    @{ Name = 'with the runner cpuset'; From = $pgLiteral; To = $runnerLiteral },
                     @{ Name = 'without cpus 6.0'; From = "    cpus: 6.0`n"; To = '' },
                     @{ Name = 'with cpus 3.0'; From = 'cpus: 6.0'; To = 'cpus: 3.0' },
                     @{ Name = 'without mem_limit 8g'; From = "    mem_limit: 8g`n"; To = '' },
@@ -944,13 +971,13 @@ function Invoke-Case {
                 $root = New-Root
                 try {
                     $copy = Join-Path $root.Root 'compose.yml'
-                    $stripped = $text.Replace($shares, '')
+                    $stripped = $text.Replace('    ' + $pgLiteral + "`n", '')
                     [System.IO.File]::WriteAllText($copy, $stripped)
                     $arguments = @('-WhatIf', '-ComposeFile', $copy)
                     if ($file.Drill) { $arguments = @('-WhatIf', '-RestoreDrill', '-ComposeFile', $copy) }
                     else { $arguments += @('-EnvFile', (New-EnvFile $root)) }
                     $result = Invoke-Deploy $root $arguments
-                    Assert-True (($stripped -cne $text) -and $result.Exit -eq 2 -and (Get-Reason $result) -eq 'compose-invalid') ($label + ' WhatIf refuses a compose without cpu_shares 2048') ('exit=' + $result.Exit + ' reason=' + (Get-Reason $result))
+                    Assert-True (($stripped -cne $text) -and $result.Exit -eq 2 -and (Get-Reason $result) -eq 'compose-invalid') ($label + ' WhatIf refuses a compose without the cpuset') ('exit=' + $result.Exit + ' reason=' + (Get-Reason $result))
                     Assert-NoDocker $root ($label + ' cpu-isolation') $result
                 } finally { Remove-Root $root }
             }
