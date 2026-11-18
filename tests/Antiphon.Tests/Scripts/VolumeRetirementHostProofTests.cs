@@ -58,6 +58,23 @@ public sealed class VolumeRetirementHostProofTests
     }
 
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Renewal_narrows_the_initial_full_origin_graph()
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U, "refs/heads/required");
+        await f.Publish(f.X, "refs/heads/unrelated");
+        var initial = await f.WriteProof();
+        initial.Exit.ShouldBe(0, initial.Output);
+        await f.Git(f.Bare, "update-ref", "refs/heads/unrelated", f.A);
+        var renewed = await f.WriteProof([(f.U, "commit")], previous: initial.File, freshGraph: true);
+        renewed.Exit.ShouldBe(0, renewed.Output);
+        await f.Git(f.Bare, "update-ref", "-d", "refs/heads/unrelated");
+        var live = await f.WriteProof(previous: renewed.File, finalCheck: true);
+        live.Exit.ShouldBe(0, live.Output);
+    }
+
+    [Test]
     [Arguments("delete")]
     [Arguments("rewrite")]
     [Arguments("tag")]
