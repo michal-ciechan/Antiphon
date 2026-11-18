@@ -326,6 +326,7 @@ internal static class WindowsUnitSkipRoster
     [
         new("Antiphon.Tests.Application", "CardFilePrivacyGitTests", "Junction_ancestors_refuse_root_and_managed_file_aliases", 3, WindowsJunctionReason),
         new("Antiphon.Tests.Application", "CardFilePrivacyPathTests", "Reparse_alias_refuses_sync_and_content_mutations_before_pinning_or_touching_outside_bytes", 3, WindowsJunctionReason),
+        new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
         new("Antiphon.Tests.Scripts", "WindowsUnitPlatformAdmissionTests", "C1210_Windows_linux_only_outcomes_are_exact", 1, "CARD-1210: the child skip-roster audit requires Windows placement."),
     ];
 
