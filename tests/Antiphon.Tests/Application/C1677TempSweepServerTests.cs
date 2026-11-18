@@ -151,6 +151,25 @@ public sealed class C1677TempSweepServerTests
     }
 
     [Test]
+    public async Task Configured_ansi_root_is_preserved_in_the_residue_row()
+    {
+        await using var w = await World.StartAsync();
+        w.Settings.TempSweep.Enabled = true;
+        // Use the wire payload so the witness also fails against the pre-CARD-1896
+        // contract, which ignored the candidate's root and attributed it to /tmp.
+        w.Reply = JsonSerializer.Deserialize<PhoneHomeTempSweepResponse>("""
+            {"mode":"DryRun","root":"/tmp","candidates":[
+              {"name":"0123456789abcdef0123456789abcdef.ansi.log","family":"session-ansi",
+               "verdict":"would_remove","bytes":4,"root":"/fixture/session-logs"}],"unregistered":[]}
+            """, PhoneHomeFraming.Json)!;
+        await w.TickAsync();
+        var row = (await w.TempRowsAsync()).ShouldHaveSingleItem();
+        row.Path.ShouldBe("/fixture/session-logs/0123456789abcdef0123456789abcdef.ansi.log");
+        row.Branch.ShouldBe("temp:session-ansi;bytes=4");
+        row.Outcome.ShouldBe("Preview");
+    }
+
+    [Test]
     public async Task Claude_scratch_is_sent_off_by_default()
     {
         // V-51c (G-113).
