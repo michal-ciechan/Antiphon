@@ -600,6 +600,25 @@ public sealed class TaskWorktreeRetirementTests
         {
             if (string.IsNullOrEmpty(root))
                 return;
+            var full = Path.GetFullPath(root);
+            var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+            var name = Path.GetFileName(full);
+            if (!string.Equals(Path.GetDirectoryName(full), temp, StringComparison.Ordinal) || !IsC459Name(name))
+                return;
+            OwnedTempRoot.TryDelete(full);
+        }
+
+        private static bool IsC459Name(string name)
+        {
+            if (name.Length != 13 || !name.StartsWith("c459-", StringComparison.Ordinal))
+                return false;
+            for (var i = 5; i < name.Length; i++)
+            {
+                var c = name[i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                    return false;
+            }
+            return true;
         }
     }
 }

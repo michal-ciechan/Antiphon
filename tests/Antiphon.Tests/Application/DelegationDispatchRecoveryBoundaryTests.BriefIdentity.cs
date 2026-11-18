@@ -836,6 +836,7 @@ public partial class DelegationDispatchRecoveryBoundaryTests
         var agentId = Guid.NewGuid();
         var directory = Path.Combine(Path.GetTempPath(), "antiphon-c1150-" + taskId.ToString("N"));
         Directory.CreateDirectory(directory);
+        OwnedTempRoot.Track(directory);
         var when = Pg(DateTime.UtcNow.AddMinutes(-2));
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
         var slug = "b" + agentId.ToString("N")[..12];
