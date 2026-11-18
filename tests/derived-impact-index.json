@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 329,
+      "classes": 331,
       "reason": "allowlist"
     },
     {
@@ -1332,18 +1332,18 @@
     },
     {
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
-      "classes": 57,
+      "classes": 58,
       "reason": "cap",
-      "owed": 32,
+      "owed": 33,
       "first": [
+        "RunnerStateAlarmExclusionTests",
         "AdvisoryChangePolicyTests",
         "BlockedTaskParkReclaimTests",
         "C0824RefOnlyConsumerTests",
         "C1677RetentionServerTests",
         "ClaudeCredentialProbeDispatcherTests",
         "DefaultRunnerEligibilityTests",
-        "DefaultRunnerPinTests",
-        "DesktopCapabilitiesSnapshotTests"
+        "DefaultRunnerPinTests"
       ]
     },
     {
@@ -2116,18 +2116,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 38,
+      "classes": 39,
       "reason": "cap",
-      "owed": 13,
+      "owed": 14,
       "first": [
+        "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
         "ZombieCensusPlatformTests",
         "DirectoryBuildRspTests",
-        "DockerDeliveryObservationTests",
-        "E2ECopyOwnedPtyHostAppHostContractTests"
+        "DockerDeliveryObservationTests"
       ]
     },
     {
@@ -2836,6 +2836,7 @@
     {
       "path": "docker-compose.server2-server.yml",
       "classes": [
+        "C1744G1DesktopWinComposeTests",
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests"
       ]
@@ -3621,6 +3622,7 @@
     {
       "path": "scripts/deploy-server2-server.ps1",
       "classes": [
+        "C1744G1DesktopWinComposeTests",
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests"
       ]
@@ -12400,6 +12402,7 @@
     {
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
       "classes": [
+        "C1744G1DesktopWinComposeTests",
         "C1964RecoveryPumpStallTests",
         "CodexCliObservationTests",
         "CodexPhoneHomeCreateTests",
@@ -12423,8 +12426,7 @@
         "PipelineHandoffPilotTests",
         "RemoteExecutableLaunchTests",
         "RemoteWorkspacePreparerTests",
-        "RunnerCodexCliEvidenceTests",
-        "RunnerStateAlarmExclusionTests"
+        "RunnerCodexCliEvidenceTests"
       ]
     },
     {
@@ -24061,6 +24063,7 @@
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
       "classes": [
+        "C1744G1DesktopWinComposeTests",
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
         "CodexRootExecContractTests",
@@ -24077,7 +24080,6 @@
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
         "LandGraphAuditProjectInstanceTests",
-        "PackageVersionPinContractTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
