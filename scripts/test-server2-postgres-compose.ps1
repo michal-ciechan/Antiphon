@@ -291,7 +291,8 @@ $cases = @(
     'drill-commands',
     'project-refusal',
     'refuse-bind-cgnat',
-    'image-repodigest'
+    'image-repodigest',
+    'image-patch-pin'
 )
 
 function Invoke-Case {
@@ -749,6 +750,46 @@ function Invoke-Case {
                 $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
                 Assert-True ($result.Exit -eq 0 -and (Get-Reason $result) -eq 'ok') 'WhatIf accepts a postgres RepoDigest pin' (Get-Reason $result)
                 Assert-NoDocker $root 'repodigest' $result
+            } finally { Remove-Root $root }
+        }
+        'image-patch-pin' {
+            # Runbook G-2: the env file may state the exact patch version beside the digest.
+            Assert-True (Test-Path -LiteralPath $deploy) 'deploy script exists for the patch pin' $deploy
+            if (-not (Test-Path -LiteralPath $deploy)) { return }
+            . $deploy
+            $digest = '@sha256:' + ('9' * 64)
+            foreach ($pin in @(('postgres:16.14' + $digest), ('postgres:16.14-trixie' + $digest), ('postgres:16.0' + $digest))) {
+                $reason = Test-Server2PostgresImage $pin
+                Assert-True ($reason -eq '') ('patch pin accepted: ' + $pin.Split('@')[0]) $reason
+            }
+            foreach ($float in @(
+                    'postgres:16.14',
+                    'postgres:16.14-trixie',
+                    'postgres:16',
+                    'postgres:latest',
+                    ('postgres:latest' + $digest),
+                    ('postgres:16.14-bookworm' + $digest),
+                    ('postgres:17.2' + $digest),
+                    ('postgres:16.14.1' + $digest),
+                    ('postgres:16.' + $digest),
+                    ('postgres:16.014' + $digest),
+                    ('postgres:16.14@sha256:' + ('9' * 12)),
+                    ('postgres:16.14@sha256:' + ('A' * 64)),
+                    ('library/postgres:16.14' + $digest)
+                )) {
+                $reason = Test-Server2PostgresImage $float
+                Assert-True ($reason -eq 'image-floating') ('still floating: ' + $float.Split('@')[0]) $reason
+            }
+            $root = New-Root
+            try {
+                $envFile = New-EnvFile $root -Image ('postgres:16.14' + $digest)
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -eq 0 -and (Get-Reason $result) -eq 'ok') 'WhatIf accepts postgres:16.14@sha256' (Get-Reason $result)
+                Assert-NoDocker $root 'patch-pin' $result
+                $envFile = New-EnvFile $root -Image 'postgres:16.14'
+                $result = Invoke-Deploy $root @('-WhatIf', '-EnvFile', $envFile)
+                Assert-True ($result.Exit -ne 0 -and (Get-Reason $result) -eq 'image-floating') 'WhatIf refuses a digest-less patch tag' (Get-Reason $result)
+                Assert-NoDocker $root 'patch-no-digest' $result
             } finally { Remove-Root $root }
         }
         default { Write-Fail $Name 'unknown case' }
