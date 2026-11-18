@@ -64,12 +64,14 @@ V-6: inspect whether renewals can share a bundle without changing proof semantic
 | CP-18 | S2 | n/a | bound-land-wait | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class C1364BoundLandWaitProofTests -Method C1364_Wrapper_*` | R-2 | 3 fresh TRX results, zero failures | n/a | 2 | true |
 | CP-19 | S2 | n/a | layering | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class C1729LayeringGuardTests` | R-3 | zero violations, listed 162 | n/a | 2 | true |
 | CP-20 | S2 | n/a | derived-index | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class DerivedImpactIndexTests -Method committed_index_matches_the_builder` | R-3 | 1 fresh TRX result, zero failures | n/a | 2 | true |
+| CP-21 | S2 | n/a | declaration-category | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class TestLaneCategoryGuardTests` | R-3 | every method, zero failures | n/a | 2 | true |
 
 The native-output adapter builds once at CP-7, records committed source and DLL
 SHA-256, and refuses reuse at a different SHA or after a DLL change. Each row
 emits a fresh TRX with counts; checkpoint command-row buildSource is honestly
 notApplicable, with the additional native build binding in `.antiphon/c1989-native`.
-All 16 derived impacted classes are represented. The large adjacent classes have
+All 17 impacted classes are represented, including TestLaneCategoryGuardTests
+selected by the changed test declaration. The large adjacent classes have
 method-scoped selections under the operator's SHORT-only override; the named
 invariants are origin publication, final control binding, receipt and effect
 fences, wrapper admission, helper custody, and unchanged bridge routing. No whole
@@ -85,7 +87,7 @@ Restart: none.
 
 `c1609_publication_gate` renews at every gate. The coordinator requests required
 object coverage on renew; `Get-C1008RetireProofExports` passes `-FreshGraph`, and
-`Write-C1609HostOriginProofAttempt` disables bundle reuse for FreshGraph. The
+`Invoke-C1609HostOriginProofAttempt` disables bundle reuse for FreshGraph. The
 existing `Fresh_graph_renewal_fetches_again_for_unchanged_advertisement` witness
 requires a second real fetch. Sharing one downloaded bundle across the five
 renewals would change that invariant, so this repair retains it. The Debug note
@@ -105,3 +107,10 @@ executed 19 methods: 18 passed, only the updated 8000-ms acceptance failed.
 An earlier CP-7 was stopped and joined before any test child launched; its native
 argument adapter was repaired to use literal ProcessStartInfo arguments. Preserve
 these fixture failures and stopped-run costs; they are not passing evidence.
+
+At production commit 81ba831c0cf3cdc3961a662fc938affb4de875f6 CP-1, CP-2, CP-4
+and CP-5 passed. CP-3 correctly refused when its cold fixture first imported the
+file-management module during cleanup, exceeding its unchanged 1000-ms budget.
+Fixture setup now uses New-Item, matching the real proof exchange's preparation;
+the budget and all assertions remain unchanged. CP-6 was stopped and joined while
+still polling host load, before its fixture began. Rerun only CP-3 and CP-6.

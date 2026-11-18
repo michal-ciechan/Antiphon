@@ -11,7 +11,9 @@ if([IO.File]::Exists('/proc/loadavg')){
 . (Join-Path $PSScriptRoot 'c590-real.ps1')
 function Assert-True([bool]$Value,[string]$Message) { if(-not $Value){throw $Message} }
 $root=Join-Path ([IO.Path]::GetTempPath()) ('c1989-'+[guid]::NewGuid().ToString('N'))
-[void][IO.Directory]::CreateDirectory($root)
+# The real proof exchange uses New-Item/Get-Content before the control clock.
+# Perform the same module initialization in fixture setup, not during cleanup.
+New-Item -ItemType Directory -Path $root | Out-Null
 $origin='https://fixture.invalid/repo.git';$repo='repos/fixture'
 $operation='c100800000000000000000000000000000001'
 $proof=Join-Path $root 'proof'
@@ -38,8 +40,13 @@ function Invoke-C1609HostGit {
 }
 function Invoke-Witness([int]$Budget) {
     $script:timing=@{}
-    Assert-C1609LiveOriginProof -OriginUrl $origin -RepoRelative $repo -OperationId $operation -ProofFile $proof `
-        -ApprovedOrigins @($origin) -NetworkBudgetMs $Budget -Timing $script:timing
+    try {
+        Assert-C1609LiveOriginProof -OriginUrl $origin -RepoRelative $repo -OperationId $operation -ProofFile $proof `
+            -ApprovedOrigins @($origin) -NetworkBudgetMs $Budget -Timing $script:timing
+    } catch {
+        Write-Output ('CONTROL '+($script:timing|ConvertTo-Json -Depth 8 -Compress))
+        throw
+    }
 }
 try {
     switch($Case){
@@ -138,7 +145,7 @@ case "$response" in C1609_CONTROL_RESPONSE*) exit 0;; *) exit 3;; esac
                     $receipt=Join-Path $evidence 'remote-output.txt'
                     $code=Invoke-C1609RetirementCoordinator -Remote 'fixture' -EvidenceRoot $evidence -Run 'fixture' `
                         -Operation $operation -ProjectId $project -ReceiptPath $receipt
-                    Assert-True ($code -eq $(if($slow){2}else{0})) 'coordinator must preserve success/refusal exit'
+                    Assert-True ($code -eq $(if($slow){2}else{0})) ('coordinator must preserve success/refusal exit: '+[IO.File]::ReadAllText($receipt))
                     $record=Get-Content -Raw (Join-Path $evidence 'coordinator-controls.jsonl')|ConvertFrom-Json
                     Assert-True ($record.limitMs -eq 1000) 'receipt binds configured limit'
                     Assert-True ($record.origins.Count -eq 1) 'receipt retains each origin'
