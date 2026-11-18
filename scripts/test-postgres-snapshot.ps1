@@ -383,6 +383,9 @@ function Install-SnapshotFake {
     $docker = @'
 #!/bin/sh
 printf '%s\n' "$0 $*" >> "$CARD1405_TOOL_MARKER"
+if [ -n "${CARD1405_RECORD_DOCKER_HOST:-}" ]; then
+    printf 'DOCKER_HOST=%s\n' "${DOCKER_HOST:-}" >> "$CARD1405_TOOL_MARKER"
+fi
 scenario="${CARD1405_SCENARIO:-}"
 state="${CARD1405_DOCKER_STATE:-/tmp/card1405-docker-state}"
 bytes="${CARD1405_DUMP_BYTES:-0}"
@@ -582,6 +585,9 @@ case "$cmd" in
         exit 0
         ;;
     cp)
+        case "$target" in
+            *:/*) exit 0 ;;
+        esac
         if [ "$scenario" = "publish" ]; then
             "$CARD1405_PWSH" -NoProfile -Command "[System.IO.File]::WriteAllBytes('$target', (New-Object byte[] $bytes))" || exit 1
         fi
@@ -2225,6 +2231,104 @@ function Test-PlainPublishPruneOrder {
     }
 }
 
+# Runbook G-4: -Target server2 dumps the CARD-1406 container over an ssh docker
+# endpoint into the same desktop folders. Desktop stays the default.
+function Test-TargetResolve {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'TargetResolve script exists' $scriptPath; return }
+    . $scriptPath
+    if (-not (Get-Command Resolve-SnapshotTarget -ErrorAction SilentlyContinue)) {
+        Write-Fail 'TargetResolve function' 'Resolve-SnapshotTarget missing'
+        return
+    }
+    $desk = Resolve-SnapshotTarget -Target 'desktop' -Container 'antiphon-postgres' -ContainerBound $false -DockerHost 'ssh://mc@server2'
+    Assert-True ($desk.Ok -and $desk.Target -eq 'desktop' -and $desk.Container -eq 'antiphon-postgres' -and $desk.DockerHost -eq '') 'desktop keeps the local container and endpoint' ("{0} {1} {2} {3}" -f $desk.Reason, $desk.Target, $desk.Container, $desk.DockerHost)
+    $deskCustom = Resolve-SnapshotTarget -Target 'desktop' -Container 'custom-pg' -ContainerBound $true -DockerHost 'ssh://mc@server2'
+    Assert-True ($deskCustom.Ok -and $deskCustom.Container -eq 'custom-pg') 'desktop keeps an explicit -Container' ([string]$deskCustom.Container)
+    $s2 = Resolve-SnapshotTarget -Target 'server2' -Container 'antiphon-postgres' -ContainerBound $false -DockerHost 'ssh://mc@server2'
+    Assert-True ($s2.Ok -and $s2.Target -eq 'server2') 'server2 resolves' ([string]$s2.Reason)
+    Assert-True ($s2.Container -ceq 'antiphon-server2-postgres-postgres-1') 'server2 uses the CARD-1406 container' ([string]$s2.Container)
+    Assert-True ($s2.DockerHost -ceq 'ssh://mc@server2') 'server2 uses the ssh docker endpoint' ([string]$s2.DockerHost)
+    $s2Same = Resolve-SnapshotTarget -Target 'server2' -Container 'antiphon-server2-postgres-postgres-1' -ContainerBound $true -DockerHost 'ssh://mc@server2'
+    Assert-True ($s2Same.Ok) 'server2 accepts its own container named explicitly' ([string]$s2Same.Reason)
+    $s2Desk = Resolve-SnapshotTarget -Target 'server2' -Container 'antiphon-postgres' -ContainerBound $true -DockerHost 'ssh://mc@server2'
+    Assert-True ((-not $s2Desk.Ok) -and $s2Desk.Reason -eq 'target-container') 'server2 refuses the desktop container' ([string]$s2Desk.Reason)
+    foreach ($endpoint in @('tcp://10.0.0.9:2375', 'unix:///var/run/docker.sock', '', 'ssh://mc@server2;rm', 'ssh://-oProxyCommand=x')) {
+        $bad = Resolve-SnapshotTarget -Target 'server2' -Container 'antiphon-postgres' -ContainerBound $false -DockerHost $endpoint
+        Assert-True ((-not $bad.Ok) -and $bad.Reason -eq 'target-docker-host') ('server2 refuses endpoint ' + $endpoint) ([string]$bad.Reason)
+    }
+    foreach ($name in @('', 'Server2', 'server3', 'remote')) {
+        $bad = Resolve-SnapshotTarget -Target $name -Container 'antiphon-postgres' -ContainerBound $false -DockerHost 'ssh://mc@server2'
+        Assert-True ((-not $bad.Ok) -and $bad.Reason -eq 'bad-target') ("target '" + $name + "' is refused") ([string]$bad.Reason)
+    }
+}
+
+function Test-TargetPlans {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $common = @('-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        $desk = Invoke-Snapshot -Fixture $fx -Arguments $common
+        Assert-True ($desk.Exit -eq 0) 'desktop plan exits 0' "exit=$($desk.Exit) $($desk.Out)"
+        Assert-True ($desk.Out -match 'step source: target=desktop container=antiphon-postgres docker=local') 'desktop plan names the desktop source' $desk.Out
+        Assert-True ($desk.Out -match 'docker exec antiphon-postgres pg_dump') 'desktop plan dumps antiphon-postgres' $desk.Out
+        $s2 = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-Target', 'server2'))
+        Assert-True ($s2.Exit -eq 0) 'server2 plan exits 0' "exit=$($s2.Exit) $($s2.Err) $($s2.Out)"
+        Assert-True ($s2.Out -match 'step source: target=server2 container=antiphon-server2-postgres-postgres-1 docker=ssh') 'server2 plan names the server2 source' $s2.Out
+        Assert-True ($s2.Out -match 'docker exec antiphon-server2-postgres-postgres-1 pg_dump') 'server2 plan dumps the server2 container' $s2.Out
+        Assert-True ($s2.Out -match ('step destination: ' + [regex]::Escape($dest))) 'server2 plan keeps the desktop destination' $s2.Out
+        Assert-True ($s2.Out -notmatch 'mc@server2') 'server2 plan does not print the endpoint' $s2.Out
+        Assert-NoDocker $s2 'server2 plan'
+        Assert-NoSecret $s2 $fx 'server2 plan'
+        $bad = Invoke-Snapshot -Fixture $fx -Arguments ($common + @('-Target', 'server3'))
+        Assert-True ($bad.Exit -eq 2 -and $bad.Out -match 'reason=bad-target') 'unknown target exits 2' "exit=$($bad.Exit) $($bad.Out)"
+        Assert-NoDocker $bad 'unknown target'
+        $age = Invoke-Snapshot -Fixture $fx -Arguments @('-WhatIf', '-Target', 'server2', '-RecipientFile', $fx.Recipient, '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        Assert-True ($age.Exit -eq 2 -and $age.Out -match 'reason=target-plain-only') 'server2 age snapshot is refused' "exit=$($age.Exit) $($age.Out)"
+        $drill = Invoke-Snapshot -Fixture $fx -Arguments @('-WhatIf', '-RestoreDrill', '-Target', 'server2', '-IdentityFile', $fx.Identity, '-Destination', $fx.Dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        Assert-True ($drill.Exit -eq 2 -and $drill.Out -match 'reason=target-plain-only') 'server2 restore drill is refused' "exit=$($drill.Exit) $($drill.Out)"
+        Assert-NoDocker $drill 'server2 restore drill'
+        Assert-True (-not (Test-Path -LiteralPath $dest)) 'target plans write nothing' $dest
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetServer2Publish {
+    $fx = New-Fixture
+    try {
+        if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'TargetServer2Publish script exists' $scriptPath; return }
+        Install-SnapshotFake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        $environment = @{
+            CARD1405_SCENARIO = 'publish'
+            CARD1405_DOCKER_STATE = (Join-Path $fx.Root 'docker-state')
+            CARD1405_DUMP_BYTES = '1048576'
+            CARD1405_TABLE_DATA = '1'
+            CARD1405_RECORD_DOCKER_HOST = '1'
+            DOCKER_HOST = 'tcp://10.0.0.9:2375'
+        }
+        $run = Invoke-Snapshot -Fixture $fx -Arguments @(
+            '-Execute', '-Plain', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage
+        ) -ExtraEnv $environment
+        Assert-True ($run.Exit -eq 0) 'server2 plain publish exits 0' "exit=$($run.Exit) $($run.Err) $($run.Out)"
+        $calls = @($run.Tools -split "`n" | Where-Object { $_ -match '/docker ' })
+        $hosts = @($run.Tools -split "`n" | Where-Object { $_ -match '^DOCKER_HOST=' })
+        Assert-True ($calls.Count -ge 5) 'server2 publish calls docker' ("calls=" + $calls.Count)
+        Assert-True ($hosts.Count -eq $calls.Count -and @($hosts | Where-Object { $_ -cne 'DOCKER_HOST=ssh://mc@server2' }).Count -eq 0) 'every docker call uses the ssh endpoint' (($hosts | Select-Object -Unique) -join ',')
+        Assert-True (@($calls | Where-Object { $_ -match ' exec antiphon-server2-postgres-postgres-1 pg_dump ' }).Count -eq 1) 'server2 publish dumps the server2 container' $run.Tools
+        Assert-True (@($calls | Where-Object { $_ -match ' exec antiphon-server2-postgres-postgres-1 pg_restore --list ' }).Count -eq 2) 'server2 publish lists the dump twice (restore proof)' $run.Tools
+        Assert-True (@($calls | Where-Object { $_ -match 'antiphon-postgres[ :]' }).Count -eq 0) 'server2 publish never touches the desktop container' $run.Tools
+        Assert-True (@($calls | Where-Object { $_ -match ' context ' }).Count -eq 0) 'server2 publish does not read the local docker context' $run.Tools
+        $dumps = @(Get-ChildItem -LiteralPath $dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($dumps.Count -eq 1) 'server2 dump lands in the desktop destination' ("dumps=" + $dumps.Count)
+        $statusPath = Join-Path $dest 'snapshot-status.json'
+        $status = ''
+        if (Test-Path -LiteralPath $statusPath) { $status = [System.IO.File]::ReadAllText($statusPath) }
+        Assert-True ($status -match '"exit":0' -and $status -match '"mode":"plain"') 'server2 status records success' $status
+        Assert-True ($status -match '"target":"server2"') 'server2 status records the target' $status
+        Assert-True ($run.Out -notmatch 'mc@server2' -and $run.Out -notmatch '10\.0\.0\.9') 'server2 publish prints no endpoint' $run.Out
+        Assert-NoSecret $run $fx 'server2 publish'
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -2239,7 +2343,8 @@ $all = @(
     'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules',
     'PlainOffByDefault', 'PlainPlan', 'PlainInsideOneDrive', 'PlainMissingOneDrive', 'PlainAclOpen',
     'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused',
-    'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder'
+    'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder',
+    'TargetResolve', 'TargetPlans', 'TargetServer2Publish'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
@@ -2248,7 +2353,7 @@ $script:SnapshotPosixFakeCases = @(
     'DrillRefusesOwnVolume', 'DrillRefusesForeignVolume', 'DrillRefusesVolumeMismatch', 'DrillRefusesPgHost',
     'StagingPreservesOperatorFiles', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned',
-    'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure'
+    'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure', 'TargetServer2Publish'
 )
 function Invoke-SnapshotCase {
     param([string]$Name)
