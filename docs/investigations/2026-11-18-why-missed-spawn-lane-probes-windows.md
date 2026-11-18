@@ -142,7 +142,17 @@ rely on lane width.
 
 ## Evidence (server2 Linux, tip of this branch)
 
-See the task report for row counts. The load gate was 1-minute average below 16. Every build and
+| Row | Selection | Result |
+|---|---|---|
+| index driver | `regenerate-derived-impact-index.ps1` (driver built first), run twice | `derived-impact-index unchanged` both times |
+| build | `dotnet build tests/Antiphon.Tests -p:UseAppHost=false` | 0 errors, 3m01s |
+| lane class | `ScriptModelSpawnLaneTests/*` | 36/36 passed, 0 skipped; both probes passed, about 3 ms each |
+| guard union + skip closure | the 10 named guard classes plus `ExpectedPlatformSkipRosterTests`, `LinuxOnlyExpectedSkipClosureTests` | 90 total, 89 passed, 1 skipped (`C1210_Windows_linux_only_outcomes_are_exact`, expected on Linux); C1729 `VIOLATIONS 0 LISTED 162` |
+| derived index | `DerivedImpactIndexTests/*` | 27/27 passed |
+| A5 census | `test-rc-platform.ps1 -Case LinuxOnlyWindowsExclusionPolicy` | 6/6 PASS |
+| live-lane pins | `test-live-lane-run.ps1 -Case C1545_WrapperOnlyPaidManifest` | 21/21 PASS |
+
+The load gate was 1-minute average below 16. Every build and
 run went through `build-slot.ps1` with `ANTIPHON_LINUX_COMPILER_POLICY=0`, and every run used
 `--timeout 570s`.
 
