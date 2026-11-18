@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 328,
+      "classes": 329,
       "reason": "allowlist"
     },
     {
@@ -20671,6 +20671,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+      "classes": [
+        "LinkedTestHelperClosureTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Resilience.Tests/ResilienceCircuitTests.cs",
       "classes": [
         "ImpactedClassesSelectorTests"
@@ -24131,6 +24137,7 @@
       "path": "tests/Antiphon.Tests/Layering/LayeringGuardEngine.cs",
       "classes": [
         "C1729LayeringGuardTests",
+        "LinkedTestHelperClosureTests",
         "SpecialistRoleContractTests"
       ]
     },
