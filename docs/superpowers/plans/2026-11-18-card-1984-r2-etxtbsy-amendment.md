@@ -73,3 +73,12 @@ contributes its `[Arguments]` cases.
 The remaining users of `C1008HostFixture.Run` stay with the nightly Unit lane under the round's Final profile:
 `RemoteScriptContractTests`, the four `VolumeRetirement*` classes, `RetiredTempContainerHostTests` and `C1364BoundLandWaitProofTests`.
 The change there is mechanical: the same fake-CLI bytes and mode 0755, now written by a child.
+
+## Stress finding (2026-11-18)
+
+HostJq stress run 9 at width 6, with host load 22 at its start, failed `C1025_Preflight_is_fresh_for_each_entry`. That
+method is strict-lane after W-11. Its "all" shape runs five phases in one wrapper pwsh, and that run passed
+`C1008WrapperFixture`'s 30 s deadline (`C1008_FIXTURE_CHILD_LIMIT`, no new segfault). In CP-23 the same run took 17.4 s
+with no wide-lane sibling. Every other HostJq spawn in CP-23 stayed under 10 s. The method now carries a key-less
+`[NotInParallel]`, so it runs alone and the deadline is unchanged. That deadline is under 2× even the 17.4 s
+low-contention time (test-performance standards). Rebudgeting it is outside this stage, which may not widen a timeout.
