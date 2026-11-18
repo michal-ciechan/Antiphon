@@ -1183,21 +1183,20 @@ function ConvertTo-TestPhaseRecordObject {
 
 function Read-TestPhaseGenerationPrefix {
     param([string]$GenerationDir)
+    # Every record is re-read from disk and its digest re-checked in the core (TestPhaseJournalRead.ReadPrefix),
+    # which stops at a break (unreadable-record, bad-digest, sequence-mismatch) or at a record whose envelope only
+    # ConvertFrom-Json reads exactly; that one is read here as before and the core continues after it.
+    Assert-NightlyCoreAvailable 'Read-TestPhaseGenerationPrefix'
     $loaded = New-Object System.Collections.Generic.List[object]
     $expected = 1
     $corrupt = $false
     $reason = ''
     while ($true) {
-        $name = $expected.ToString('00000000') + '.json'
-        $path = Join-Path $GenerationDir $name
-        if (-not (Test-NightlyEvidencePath $path)) { break }
-        $text = ''
-        try { $text = Read-NightlyEvidenceText $path } catch { $corrupt = $true; $reason = 'unreadable-record'; break }
-        if ([string]::IsNullOrWhiteSpace($text) -or -not (Test-TestPhaseRecordDigest -Text $text)) {
-            $corrupt = $true
-            $reason = 'bad-digest'
-            break
-        }
+        $step = [Antiphon.Nightly.TestPhaseJournalRead]::ReadPrefix($GenerationDir, $expected, [bool]$script:NightlyDeferEvidenceWrites, $loaded)
+        $expected = $step.Expected
+        if ($step.Corrupt) { $corrupt = $true; $reason = [string]$step.Reason; break }
+        if ($null -eq $step.PendingText) { break }
+        $text = [string]$step.PendingText
         $parsed = $null
         try { $parsed = $text | ConvertFrom-Json } catch { $corrupt = $true; $reason = 'malformed-record'; break }
         if ($null -eq $parsed -or [int]$parsed.sequence -ne $expected) { $corrupt = $true; $reason = 'sequence-mismatch'; break }
@@ -1290,61 +1289,10 @@ function Initialize-TestPhaseSeedGeneration {
 
 function Get-TestPhaseReduction {
     param($Context)
-    $chunkRecords = New-Object System.Collections.Generic.List[object]
-    foreach ($rec in $Context.Records) {
-        if ($null -eq $rec) { continue }
-        if ([string]$rec.Kind -eq 'chunk') { $chunkRecords.Add($rec) }
-    }
-    $list = New-Object System.Collections.ArrayList
-    if ($Context.HasSeed) {
-        foreach ($row in $Context.SeedRows) {
-            [void]$list.Add([pscustomobject]@{
-                Json = [string]$row.SettledJson
-                Fresh = [string]$row.SettledJson
-                Suite = [string]$row.SettledSuite
-                Chunk = [string]$row.SettledChunk
-            })
-        }
-    }
-    $last = $null
-    # Test-TestPhaseSuiteChunkEqual inlined: this pass is quadratic in the chunk count.
-    $cmp = [System.StringComparer]::InvariantCultureIgnoreCase
-    foreach ($rec in $chunkRecords) {
-        $freshSuite = [string]$rec.FreshSuite
-        $freshChunk = [string]$rec.FreshChunk
-        for ($i = $list.Count - 1; $i -ge 0; $i--) {
-            $entry = $list[$i]
-            if ($cmp.Equals($entry.Suite, $freshSuite) -and $cmp.Equals($entry.Chunk, $freshChunk)) {
-                $list.RemoveAt($i)
-            }
-        }
-        [void]$list.Add([pscustomobject]@{
-            Json = [string]$rec.SettledJson
-            Fresh = [string]$rec.FreshJson
-            Suite = [string]$rec.SettledSuite
-            Chunk = [string]$rec.SettledChunk
-        })
-        $last = $rec
-    }
-    $headerRun = ''
-    $headerAttempt = ''
-    $headerSuite = ''
-    if ($null -ne $last) {
-        $headerRun = [string]$last.HeaderRun
-        $headerAttempt = [string]$last.HeaderAttempt
-        $headerSuite = [string]$last.HeaderSuite
-    } elseif ($Context.HeaderReady) {
-        $headerRun = [string]$Context.HeaderRun
-        $headerAttempt = [string]$Context.HeaderAttempt
-        $headerSuite = [string]$Context.HeaderSuite
-    }
-    return [pscustomobject]@{
-        Entries = $list
-        ChunkCount = $chunkRecords.Count
-        HeaderRun = $headerRun
-        HeaderAttempt = $headerAttempt
-        HeaderSuite = $headerSuite
-    }
+    # Seed rows, then each chunk record replacing every earlier entry with its fresh (suite, chunk), each field
+    # compared on its own (invariant culture, ignoring case); keyed in the core (TestPhaseJournalRead.Reduce).
+    Assert-NightlyCoreAvailable 'Get-TestPhaseReduction'
+    return [Antiphon.Nightly.TestPhaseJournalRead]::Reduce($Context)
 }
 
 function Get-TestPhaseProjectedDocument {
@@ -2234,16 +2182,28 @@ function ConvertTo-TestPhaseSummaryRows {
                 $rowJson = [string]$entry.Json
                 if ($entryIndex -eq ($reduced.Entries.Count - 1)) { $rowJson = [string]$entry.Fresh }
                 if ([string]::IsNullOrWhiteSpace($rowJson)) { continue }
-                $chunkObj = $null
-                try { $chunkObj = ($rowJson | ConvertFrom-Json) } catch { $chunkObj = $null }
-                if ($null -eq $chunkObj) { continue }
+                # Only trx, chunk and suite are read: the core takes them from a strict parse of the document and
+                # leaves anything else (not one strict JSON object, a non-string value) to ConvertFrom-Json.
                 $trxRel = ''
-                if ($chunkObj.PSObject.Properties.Name -contains 'trx') { $trxRel = [string]$chunkObj.trx }
+                $chunkText = ''
+                $suiteText = ''
+                $fields = [Antiphon.Nightly.TestPhaseJournalRead]::ChunkFields($rowJson)
+                if ($null -ne $fields) {
+                    $trxRel = [string]$fields[0]
+                    $chunkText = [string]$fields[1]
+                    $suiteText = [string]$fields[2]
+                } else {
+                    $chunkObj = $null
+                    try { $chunkObj = ($rowJson | ConvertFrom-Json) } catch { $chunkObj = $null }
+                    if ($null -eq $chunkObj) { continue }
+                    if ($chunkObj.PSObject.Properties.Name -contains 'trx') { $trxRel = [string]$chunkObj.trx }
+                    if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
+                    $chunkText = [string]$chunkObj.chunk
+                    $suiteText = [string]$chunkObj.suite
+                }
                 if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
                 $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory $trxRel))
-                $trxGroups[$fullTrx] = [string]$chunkObj.chunk
-                $suiteText = [string]$chunkObj.suite
-                if ([string]::IsNullOrWhiteSpace($suiteText) -and $chunkObj.PSObject.Properties.Name -contains 'suite') { $suiteText = [string]$chunkObj.suite }
+                $trxGroups[$fullTrx] = $chunkText
                 $trxSuites[$fullTrx] = $suiteText
             }
         }
