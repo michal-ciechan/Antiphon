@@ -300,7 +300,7 @@ public sealed class VolumeRetirementHostProofTests
     // 11,000 ms. The desktop live check keeps its five-second control and Git budget.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task Final_live_check_keeps_the_five_second_desktop_budget()
+    public async Task Final_live_check_bounds_the_configurable_desktop_budget()
     {
         using var f = await VolumeRetirementPublicationFixture.Create();
         var initial = await f.WriteProof([(f.A, "commit")]);
@@ -308,10 +308,10 @@ public sealed class VolumeRetirementHostProofTests
         var trace = Path.Combine(f.Root, "live-check-budget.txt");
         var observeGit = "[IO.File]::AppendAllText(" + VolumeRetirementPublicationFixture.Ps(trace) + ", 'git'+[char]10); ";
 
-        var admitted = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: 5000, extraShim: observeGit);
-        admitted.Exit.ShouldBe(0, "5,000 ms stays the admitted maximum: " + admitted.Output);
+        var admitted = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: 8000, extraShim: observeGit);
+        admitted.Exit.ShouldBe(0, "8,000 ms fits below the unchanged host read and effect fences: " + admitted.Output);
         File.Exists(trace).ShouldBeTrue("the admitted live check reads the origin through the observed Git runner");
-        foreach (var budget in new[] { 5001, 11000 })
+        foreach (var budget in new[] { 0, 8001, 11000 })
         {
             if (File.Exists(trace)) File.Delete(trace);
             var refused = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: budget, extraShim: observeGit);
@@ -319,8 +319,8 @@ public sealed class VolumeRetirementHostProofTests
             File.Exists(trace).ShouldBeFalse(budget + " ms must be refused before Git starts");
         }
         var coordinator = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
-        coordinator.ShouldContain("$remaining=[Math]::Min(5000-[int]$controlWatch.ElapsedMilliseconds,", Case.Sensitive);
-        coordinator.ShouldContain("if($controlWatch.ElapsedMilliseconds -gt 5000){throw 'control-deadline'}", Case.Sensitive);
+        coordinator.ShouldContain("$remaining=[Math]::Min($controlWindowMs-[int]$controlWatch.ElapsedMilliseconds,", Case.Sensitive);
+        coordinator.ShouldContain("if($controlWatch.ElapsedMilliseconds -gt $controlWindowMs){throw 'control-deadline'}", Case.Sensitive);
     }
 
     [Test]
