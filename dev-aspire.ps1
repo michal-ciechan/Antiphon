@@ -17,6 +17,7 @@ $ErrorActionPreference = 'Stop'
 $root         = $PSScriptRoot
 . (Join-Path $root 'scripts\apphost-common.ps1')
 . (Join-Path $root 'scripts\lib\live-startup-timing.ps1')
+. (Join-Path $root 'scripts\lib\dev-postgres-compose.ps1')
 
 $worktree = Get-AppHostWorktreeClassification -SourceRoot $root
 if (-not $worktree.Verified -or (-not $worktree.IsMainWorktree -and -not $AllowWorktree)) {
@@ -77,13 +78,22 @@ if ($netCompleted -and $netCompleted.State -eq 'Completed') {
 # Postgres is an EXTERNAL standalone container (docker-compose.dev.yml, restart:
 # unless-stopped) - not Aspire-managed. The AppHost references it via
 # AddConnectionString. Bring it up here in case it isn't already (idempotent).
-Write-Host "`n> Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
-$containerTiming = Start-LiveStartupPhase -Operation container-start
-try { docker compose -f "$root\docker-compose.dev.yml" up -d 2>&1 | Out-Null }
-finally { Stop-LiveStartupPhase -Phase $containerTiming -Succeeded ($LASTEXITCODE -eq 0) }
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  WARNING: could not start Postgres via docker compose." -ForegroundColor Yellow
+# Runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 (database moved to server2) brings up
+# the other compose services only, so a restart never revives the desktop copy.
+$devPostgresSkipped = Test-DevPostgresSkipped (Get-DevPostgresSkipValue)
+if ($devPostgresSkipped) {
+    Write-Host "`n> Ensuring dev compose services except Postgres are up..." -ForegroundColor Cyan
 } else {
+    Write-Host "`n> Ensuring Postgres container 'antiphon-postgres' is up..." -ForegroundColor Cyan
+}
+$containerTiming = Start-LiveStartupPhase -Operation container-start
+$composeUp = $null
+try { $composeUp = Invoke-DevComposeUp -ComposeFile "$root\docker-compose.dev.yml" }
+finally { Stop-LiveStartupPhase -Phase $containerTiming -Succeeded ($null -ne $composeUp -and $composeUp.Exit -eq 0) }
+if ($devPostgresSkipped) { Write-Host "  $($composeUp.Message)" -ForegroundColor Yellow }
+if ($composeUp.Exit -ne 0) {
+    Write-Host "  WARNING: could not start the dev compose services via docker compose." -ForegroundColor Yellow
+} elseif (-not $devPostgresSkipped) {
     Write-Host "  Postgres container ensured" -ForegroundColor DarkGray
 }
 
@@ -194,6 +204,12 @@ if ($dashboardUrl) {
 Write-Host "`n> Checking Postgres..." -ForegroundColor Cyan
 $pgDeadline = (Get-Date).AddSeconds(45)
 $pgOK = $false
+if ($devPostgresSkipped) {
+    # The desktop container stays stopped on purpose; the AppHost secret names the server2 database.
+    $pgDeadline = Get-Date
+    $pgOK = $true
+    Write-Host "  Postgres: desktop container not checked (ANTIPHON_SKIP_DEV_POSTGRES=1)" -ForegroundColor DarkGray
+}
 while ((Get-Date) -lt $pgDeadline) {
     Start-Sleep 5
     $runningPg = docker ps --filter name=antiphon-postgres --format "{{.Status}}" 2>&1 | Where-Object { $_ -like "Up*" }
