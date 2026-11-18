@@ -12,6 +12,7 @@ public static class HostLoadRegistration
         services.AddOptions<HostLoadHistorySettings>().Bind(configuration.GetSection(HostLoadHistorySettings.SectionName))
             .PostConfigure(s => s.Validate()).ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<HostLoadRunnerKeys>();
         services.AddSingleton<HostLoadCounterCache>(); services.AddSingleton<HostLoadShadowCache>();
         services.AddSingleton<HostLoadRecommendation>();
         services.AddScoped<IHostLoadCapacityReader, HostLoadCapacityReader>();

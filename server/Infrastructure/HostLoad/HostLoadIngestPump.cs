@@ -9,8 +9,10 @@ namespace Antiphon.Server.Infrastructure.HostLoad;
 
 /// <summary>Two pending 1MiB pages per runner. Refusal retains the runner spool's unacknowledged page.</summary>
 public sealed class HostLoadIngestPump(IServiceScopeFactory scopes, ISessionRunnerDirectory directory,
-    IOptions<HostLoadHistorySettings> settings, TimeProvider time, ILogger<HostLoadIngestPump> logger) : BackgroundService
+    IOptions<HostLoadHistorySettings> settings, TimeProvider time, ILogger<HostLoadIngestPump> logger,
+    HostLoadRunnerKeys? keys = null) : BackgroundService
 {
+    private readonly HostLoadRunnerKeys _keys = keys ?? HostLoadRunnerKeys.Default;
     private readonly Channel<HostLoadIngestBatch> _queue = Channel.CreateBounded<HostLoadIngestBatch>(256);
     private readonly object _gate = new();
     private readonly Dictionary<string, int> _pending = new(StringComparer.Ordinal);
@@ -20,10 +22,10 @@ public sealed class HostLoadIngestPump(IServiceScopeFactory scopes, ISessionRunn
     public string? LastFailure { get; private set; }
     public bool TryEnqueue(HostLoadIngestBatch batch)
     {
-        HostLoadIngestService.Validate(batch);
+        HostLoadIngestService.Validate(batch, _keys);
         lock (_gate)
         {
-            var runner = HostLoadCounterCache.Canonical(batch.RunnerId);
+            var runner = _keys.Canonical(batch.RunnerId);
             var count = _pending.GetValueOrDefault(runner);
             if (count >= settings.Value.IngestQueueCapacityPerRunner || (_pending.Count >= 128 && !_pending.ContainsKey(runner)))
             { RefusedBatches++; return false; }
@@ -38,7 +40,7 @@ public sealed class HostLoadIngestPump(IServiceScopeFactory scopes, ISessionRunn
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var canonical = HostLoadCounterCache.Canonical(runnerId);
+        var canonical = _keys.Canonical(runnerId);
         var after = await db.HostLoadIngestCursors.AsNoTracking().Where(c => c.RunnerId == canonical).Select(c => c.Cursor).SingleOrDefaultAsync(linked.Token);
         var page = await directory.Resolve(runnerId).GetHostLoadHistoryAsync(after, 120, linked.Token);
         if (page is null) return false;
@@ -50,7 +52,7 @@ public sealed class HostLoadIngestPump(IServiceScopeFactory scopes, ISessionRunn
         try
         {
             var batch = await _queue.Reader.ReadAsync(ct);
-            lock (_gate) _pending[HostLoadCounterCache.Canonical(batch.RunnerId)]--;
+            lock (_gate) _pending[_keys.Canonical(batch.RunnerId)]--;
             using var scope = scopes.CreateScope();
             var receipt = await scope.ServiceProvider.GetRequiredService<HostLoadIngestService>().IngestAsync(batch, ct);
             CommittedBatches++; LastFailure = null; return receipt;

@@ -8,24 +8,28 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Infrastructure.HostLoad;
 
 public sealed class HostLoadCapacityReader(AppDbContext db, HostBudgetService budgets,
-    ISessionRunnerDirectory directory, TimeProvider time, DispatchConcurrencySettingsService? concurrency = null) : IHostLoadCapacityReader
+    ISessionRunnerDirectory directory, TimeProvider time, DispatchConcurrencySettingsService? concurrency = null,
+    HostLoadRunnerKeys? keys = null) : IHostLoadCapacityReader
 {
     public async Task<HostLoadCapacityInput> ReadAsync(string runnerId, Guid? projectId, AgentTaskRole? role, CancellationToken ct)
     {
-        var canonical = HostLoadCounterCache.Canonical(runnerId);
+        var fold = keys ?? HostLoadRunnerKeys.Default;
+        var canonical = fold.Canonical(runnerId);
         var open = await db.AgentTasks.AsNoTracking().Where(t => (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working)
             && !t.CapacityWaitRetained)
             .Select(t => new { t.RunnerId, t.ProjectId, t.Role }).ToListAsync(ct);
-        var host = await budgets.EffectiveAsync(canonical == "desktop" ? "local" : canonical, ct);
-        var hostOccupied = open.Count(t => HostLoadCounterCache.Canonical(t.RunnerId ?? "desktop") == canonical);
-        var descriptor = await directory.DescribeAsync(canonical, ct);
-        var declared = directory.DeclaredCapacity(canonical);
+        var host = await budgets.EffectiveAsync(fold.IsDirect(canonical) ? "local" : canonical, ct);
+        var hostOccupied = open.Count(t => fold.Canonical(t.RunnerId ?? "desktop") == canonical);
+        // Directory calls for the direct runner stay on the desktop alias.
+        var directoryId = fold.IsDirect(canonical) ? "desktop" : canonical;
+        var descriptor = await directory.DescribeAsync(directoryId, ct);
+        var declared = directory.DeclaredCapacity(directoryId);
         if (declared is null && descriptor is { Available: true, DispatchEligible: true, Stale: false, Capacity: { } described })
             declared = described;
         int? runnerRemaining = null;
         if (declared is int seats)
         {
-            var inventory = await directory.GetInventoryAsync(canonical, ct);
+            var inventory = await directory.GetInventoryAsync(directoryId, ct);
             if (inventory is RunnerInventory.Available available)
                 runnerRemaining = Math.Max(0, seats - available.Sessions.Count(s => RunnerSlotService.OccupiesCapacity(s.Status)));
         }

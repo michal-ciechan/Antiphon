@@ -17,15 +17,18 @@ public sealed record HostLoadIngestReceipt(int Inserted, int Duplicates, string?
 
 /// <summary>One bounded transaction commits K, loss ranges and the cursor. Derived progress is separate.</summary>
 public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHistorySettings> options,
-    HostLoadCounterCache counters, TimeProvider time)
+    HostLoadCounterCache counters, TimeProvider time, HostLoadRunnerKeys? keys = null)
 {
+    private readonly HostLoadRunnerKeys _keys = keys ?? new HostLoadRunnerKeys(
+        options, Options.Create(new PhoneHomeRunnerSettings { Enabled = false }));
+
     public async Task<HostLoadIngestReceipt> IngestAsync(HostLoadIngestBatch batch, CancellationToken ct)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3), time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
         var token = linked.Token;
-        Validate(batch);
-        var runnerId = HostLoadCounterCache.Canonical(batch.RunnerId);
+        Validate(batch, _keys);
+        var runnerId = _keys.Canonical(batch.RunnerId);
         var unique = new Dictionary<(Guid Store, Guid Boot, long Seq), (HostLoadSample Sample, string Payload, string Hash)>();
         foreach (var sample in batch.Page.Samples)
         {
@@ -75,7 +78,7 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
 
     private HostLoadBinding? Binding(string runnerId, HostLoadSample sample)
     {
-        var matches = options.Value.Bindings.Where(b => HostLoadCounterCache.Canonical(b.RunnerId) == runnerId
+        var matches = options.Value.Bindings.Where(b => _keys.Canonical(b.RunnerId) == runnerId
             && sample.SampledAt >= b.From && (b.To is null || sample.SampledAt < b.To)
             && b.PhysicalHostKey == sample.PhysicalHostKey && b.Revision == sample.BindingRevision
             && b.SourceEpoch == sample.SourceEpoch).ToArray();
@@ -84,8 +87,9 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
     private bool IsSolePrimary(HostLoadBinding binding, DateTimeOffset at) => options.Value.Bindings.Count(b => b.Primary
         && b.PhysicalHostKey == binding.PhysicalHostKey && b.SourceEpoch == binding.SourceEpoch && at >= b.From && (b.To is null || at < b.To)) == 1;
 
-    public static void Validate(HostLoadIngestBatch batch)
+    public static void Validate(HostLoadIngestBatch batch, HostLoadRunnerKeys? keys = null)
     {
+        var fold = keys ?? HostLoadRunnerKeys.Default;
         var page = batch.Page;
         if (page.SchemaVersion != 1 || page.Source.RunnerStoreId == Guid.Empty || page.Samples.Count > 120
             || JsonSerializer.SerializeToUtf8Bytes(page, PhoneHomeFraming.Json).Length > 1048576)
@@ -94,7 +98,7 @@ public sealed class HostLoadIngestService(AppDbContext db, IOptions<HostLoadHist
         {
             if (sample.SchemaVersion != 1 || sample.Source.RunnerStoreId != page.Source.RunnerStoreId || sample.Source.BootId == Guid.Empty
                 || sample.Source.Sequence <= 0 || sample.IntervalSeconds != 5 || sample.SampledAt.Offset != TimeSpan.Zero
-                || HostLoadCounterCache.Canonical(sample.Source.RunnerId) != HostLoadCounterCache.Canonical(batch.RunnerId)
+                || fold.Canonical(sample.Source.RunnerId) != fold.Canonical(batch.RunnerId)
                 || sample.CpuPercent is < 0 or > 100 || sample.Processes.Any(p => p.Name is not ("runner" or "session" or "pty-host"))
                 || sample.TopConsumers.Count > HostConsumerRules.MaxCount
                 || sample.TopConsumers.Any(row => !HostConsumerRules.IsPublishable(row)))
