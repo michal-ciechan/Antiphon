@@ -80,6 +80,7 @@ authorized; it is not a claim that execution was authorized or performed.
 | CP-2 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-green/ | c1896-green | `/*/*/C1677TempSweepTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 5 | 3 |
 | CP-3 | S1 | CP-2 | c1896-adjacent | `/*/*/(C1677TempFamilyRegistryTests*)\|(C1677TempSweepNativeTests*)\|(C1677TempSweepDispatchTests*)/*` | R-2,R-3,R-4 runner | all listed, 0 failed | 3 | 2 |
 | CP-4 | S0 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-policy-red/ | c1896-policy-red | `/*/*/C1896TempSweepPolicyTests/*` | V-4,V-5 | all listed, 0 failed after fix; eight missing-family assertion failures before fix | 8 | 3 |
+| CP-5 | S0-native | tests/Antiphon.SessionRunner.Tests -> bin-c1896-native-red/ | c1896-native-red | `/*/*/C1677TempSweepNativeTests/Production_owner_seam_reads_each_entrys_own_uid` | V-4,V-5,R-3 | all listed, 0 failed after fix; missing configured log before fix | 1 | 3 |
 
 This is the closed list for the authored witness slice, not a complete Final
 manifest. V-4/V-5 and the server part of R-4 require additional short rows once
