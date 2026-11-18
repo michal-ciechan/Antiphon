@@ -44,6 +44,12 @@
     antiphon-server2-postgres_pgdata at /var/lib/postgresql/data
     (source-mismatch otherwise). The dump still lands in the desktop
     destination. snapshot-status.json records target and serverVersion.
+    -Plain -RestoreDrill -Target server2 is the plain restore drill: it
+    copies the newest plain dump into the labelled scratch container on
+    server2 (image = the source container's image id), lists and restores
+    it there, counts public tables in the scratch database and prints
+    drill=1 bytes=<n> tables=<n> seconds=<n>. -Plain -RestoreDrill on the
+    desktop target is still plain-drill-unsupported.
 
     The recipient and identity are -RecipientFile / -IdentityFile paths, or
     -RecipientRef / -IdentityRef environment-variable names whose values are
@@ -1257,6 +1263,117 @@ function Remove-SnapshotDrillContainer {
     Invoke-SnapshotNative $Docker @('volume', 'rm', $DrillVolume) | Out-Null
 }
 
+function New-SnapshotDrillState {
+    return @{ Owned = $false; VolumeCreated = $false; SourceId = ''; TargetId = ''; ProtectedMounts = @(); Source = $null }
+}
+
+# The guard prefix both drills share: refuse production names, ids, mounts and
+# volumes, then reuse a clean labelled scratch container or start one. $State is
+# updated in place so the caller's finally can clean up after an early refusal.
+# Returns $null when the scratch container is ready, otherwise the refusal.
+function Invoke-SnapshotDrillScratch {
+    param(
+        [hashtable]$State,
+        [string]$Docker,
+        [string]$DrillContainer,
+        [string]$DrillDatabase,
+        [string]$DrillVolume,
+        [string]$Image,
+        [string]$SourceContainer,
+        [string]$SourceDatabase,
+        [string]$SourceVolume
+    )
+    if (Test-SnapshotNameMatch $DrillDatabase @($SourceDatabase, 'antiphon')) {
+        return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=database' }
+    }
+    $source = Get-SnapshotContainerFact $Docker $SourceContainer
+    if (-not $source.Found -or -not $source.Parse -or [string]::IsNullOrWhiteSpace($source.Id)) {
+        return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=source-unknown' }
+    }
+    $State.SourceId = $source.Id
+    $State.ProtectedMounts = @(Get-SnapshotProtectedMounts $Docker $source $SourceContainer)
+    $productionIds = @(Get-SnapshotProductionIds $Docker $SourceContainer $source)
+    if (Test-SnapshotIdPrefixHit $DrillContainer $productionIds) {
+        return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
+    }
+    $existing = Get-SnapshotContainerFact $Docker $DrillContainer
+    if ($existing.Found -and -not $existing.Parse) {
+        return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
+    }
+    if ($existing.Found) {
+        if (Test-SnapshotIdPrefixHit $DrillContainer (@($existing.Id) + $productionIds)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
+        }
+        $guard = Test-SnapshotReuseGuard $existing $State.SourceId $source.Name $SourceVolume $productionIds $State.ProtectedMounts
+        if ($guard -ne 'ok') {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
+        }
+        $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $State.ProtectedMounts $existing.Id $false
+        if ($gate -ne 'ok') {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
+        }
+        $mounted = $false
+        foreach ($mount in @($existing.Mounts)) {
+            if (Test-SnapshotNameMatch $DrillVolume @($mount)) { $mounted = $true }
+        }
+        if (-not $mounted) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=volume-mismatch' }
+        }
+        $State.TargetId = $existing.Id
+    } else {
+        $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $State.ProtectedMounts '' $true
+        if ($gate -eq 'absent') {
+            $made = Invoke-SnapshotNative $Docker @('volume', 'create', '--label', ($script:SnapshotDrillLabel + '=1'), $DrillVolume)
+            if ($made.Exit -ne 0) {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+            }
+            $check = Get-SnapshotVolumeFact $Docker $DrillVolume
+            if (-not $check.Found -or -not $check.Parse -or $check.Label -ne '1') {
+                return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+            }
+            $State.VolumeCreated = $true
+        } elseif ($gate -ne 'ok') {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
+        }
+        $started = Invoke-SnapshotNative $Docker @(
+            'run', '-d', '--name', $DrillContainer,
+            '--label', ($script:SnapshotDrillLabel + '=1'),
+            '--network', 'none',
+            '-v', ($DrillVolume + ':/var/lib/postgresql/data'),
+            '-e', 'POSTGRES_HOST_AUTH_METHOD=trust',
+            '-e', 'POSTGRES_USER=antiphon',
+            $Image
+        )
+        if ($started.Exit -ne 0) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+        }
+        $created = Get-SnapshotContainerFact $Docker $DrillContainer
+        $guard = Test-SnapshotReuseGuard $created $State.SourceId $source.Name $SourceVolume $productionIds $State.ProtectedMounts
+        if ($guard -ne 'ok') {
+            if ($created.Found -and $created.Parse -and $created.Label -eq '1' -and -not (Test-SnapshotSameId $created.Id $State.SourceId)) {
+                $State.Owned = $true
+                $State.TargetId = $created.Id
+            }
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
+        }
+        $State.TargetId = $created.Id
+    }
+    if ([string]::IsNullOrWhiteSpace($State.TargetId)) {
+        return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
+    }
+    $State.Owned = $true
+    return $null
+}
+
+function Complete-SnapshotDrillScratch {
+    param([hashtable]$State, [string]$Docker, [string]$DrillContainer, [string]$DrillVolume, [string]$SourceVolume, [bool]$Keep)
+    if ($State.Owned -and -not $Keep) {
+        Remove-SnapshotDrillContainer $Docker $DrillContainer $DrillVolume $State.SourceId $SourceVolume $State.TargetId $State.ProtectedMounts
+    } elseif ($State.VolumeCreated -and -not $State.Owned) {
+        Remove-SnapshotCreatedVolume $Docker $DrillVolume $SourceVolume $State.ProtectedMounts
+    }
+}
+
 function Invoke-SnapshotDrill {
     param(
         [string]$Stage,
@@ -1274,92 +1391,12 @@ function Invoke-SnapshotDrill {
         [int64]$MinimumBytes,
         [bool]$Keep
     )
-    $owned = $false
-    $volumeCreated = $false
-    $sourceId = ''
-    $targetId = ''
-    $protectedMounts = @()
+    $state = New-SnapshotDrillState
     $plain = Join-Path $Stage 'antiphon-drill-plain.dump'
     try {
-        if (Test-SnapshotNameMatch $DrillDatabase @($SourceDatabase, 'antiphon')) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=database' }
-        }
-        $source = Get-SnapshotContainerFact $Docker $SourceContainer
-        if (-not $source.Found -or -not $source.Parse -or [string]::IsNullOrWhiteSpace($source.Id)) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=source-unknown' }
-        }
-        $sourceId = $source.Id
-        $protectedMounts = @(Get-SnapshotProtectedMounts $Docker $source $SourceContainer)
-        $productionIds = @(Get-SnapshotProductionIds $Docker $SourceContainer $source)
-        if (Test-SnapshotIdPrefixHit $DrillContainer $productionIds) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
-        }
-        $existing = Get-SnapshotContainerFact $Docker $DrillContainer
-        if ($existing.Found -and -not $existing.Parse) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
-        }
-        if ($existing.Found) {
-            if (Test-SnapshotIdPrefixHit $DrillContainer (@($existing.Id) + $productionIds)) {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=id-prefix' }
-            }
-            $guard = Test-SnapshotReuseGuard $existing $sourceId $source.Name $SourceVolume $productionIds $protectedMounts
-            if ($guard -ne 'ok') {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
-            }
-            $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $protectedMounts $existing.Id $false
-            if ($gate -ne 'ok') {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
-            }
-            $mounted = $false
-            foreach ($mount in @($existing.Mounts)) {
-                if (Test-SnapshotNameMatch $DrillVolume @($mount)) { $mounted = $true }
-            }
-            if (-not $mounted) {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=volume-mismatch' }
-            }
-            $targetId = $existing.Id
-        } else {
-            $gate = Test-SnapshotVolumeGate $Docker $DrillVolume $SourceVolume $protectedMounts '' $true
-            if ($gate -eq 'absent') {
-                $made = Invoke-SnapshotNative $Docker @('volume', 'create', '--label', ($script:SnapshotDrillLabel + '=1'), $DrillVolume)
-                if ($made.Exit -ne 0) {
-                    return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
-                }
-                $check = Get-SnapshotVolumeFact $Docker $DrillVolume
-                if (-not $check.Found -or -not $check.Parse -or $check.Label -ne '1') {
-                    return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
-                }
-                $volumeCreated = $true
-            } elseif ($gate -ne 'ok') {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $gate) }
-            }
-            $started = Invoke-SnapshotNative $Docker @(
-                'run', '-d', '--name', $DrillContainer,
-                '--label', ($script:SnapshotDrillLabel + '=1'),
-                '--network', 'none',
-                '-v', ($DrillVolume + ':/var/lib/postgresql/data'),
-                '-e', 'POSTGRES_HOST_AUTH_METHOD=trust',
-                '-e', 'POSTGRES_USER=antiphon',
-                $Image
-            )
-            if ($started.Exit -ne 0) {
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
-            }
-            $created = Get-SnapshotContainerFact $Docker $DrillContainer
-            $guard = Test-SnapshotReuseGuard $created $sourceId $source.Name $SourceVolume $productionIds $protectedMounts
-            if ($guard -ne 'ok') {
-                if ($created.Found -and $created.Parse -and $created.Label -eq '1' -and -not (Test-SnapshotSameId $created.Id $sourceId)) {
-                    $owned = $true
-                    $targetId = $created.Id
-                }
-                return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = ('guard=' + $guard) }
-            }
-            $targetId = $created.Id
-        }
-        if ([string]::IsNullOrWhiteSpace($targetId)) {
-            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=inspect' }
-        }
-        $owned = $true
+        $refused = Invoke-SnapshotDrillScratch $state $Docker $DrillContainer $DrillDatabase $DrillVolume $Image $SourceContainer $SourceDatabase $SourceVolume
+        if ($null -ne $refused) { return $refused }
+        $targetId = [string]$state.TargetId
         $newest = @(Get-ChildItem -LiteralPath $DestDir -Filter 'antiphon-*.dump.age' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match $script:SnapshotDumpPattern } | Sort-Object Name -Descending)
         if ($newest.Count -lt 1) { return [pscustomobject]@{ Code = 9; Reason = 'missing-snapshot'; Detail = '' } }
@@ -1407,12 +1444,124 @@ function Invoke-SnapshotDrill {
         return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('drill=1 bytes=' + $plainBytes) }
     } finally {
         Remove-SnapshotPartial @($plain)
-        if ($owned -and -not $Keep) {
-            Remove-SnapshotDrillContainer $Docker $DrillContainer $DrillVolume $sourceId $SourceVolume $targetId $protectedMounts
-        } elseif ($volumeCreated -and -not $owned) {
-            Remove-SnapshotCreatedVolume $Docker $DrillVolume $SourceVolume $protectedMounts
-        }
+        Complete-SnapshotDrillScratch $state $Docker $DrillContainer $DrillVolume $SourceVolume $Keep
     }
+}
+
+# Plan D-6/D-7: the server2 plain drill. The newest plain dump is copied into
+# the labelled scratch container (no bind mount: over the ssh context a bind
+# would name a server2 path), listed and restored there, and the public tables
+# are counted in the scratch database only. The scratch image is the source
+# container's own image id, so the drill proves restore into the same server.
+function Invoke-SnapshotPlainDrill {
+    param(
+        [string]$DumpPath,
+        [string]$DrillContainer,
+        [string]$DrillDatabase,
+        [string]$DrillVolume,
+        [string]$Image,
+        [string]$Docker,
+        [string]$SourceContainer,
+        [string]$SourceDatabase,
+        [string]$SourceVolume,
+        [int64]$MinimumBytes,
+        [bool]$Keep
+    )
+    $started = [System.Diagnostics.Stopwatch]::StartNew()
+    $state = New-SnapshotDrillState
+    $remote = '/tmp/antiphon-drill.dump'
+    try {
+        $dumpBytes = ([System.IO.FileInfo]::new($DumpPath)).Length
+        if ($dumpBytes -lt $MinimumBytes) { return [pscustomobject]@{ Code = 5; Reason = 'verify-failed'; Detail = '' } }
+        $refused = Invoke-SnapshotDrillScratch $state $Docker $DrillContainer $DrillDatabase $DrillVolume $Image $SourceContainer $SourceDatabase $SourceVolume
+        if ($null -ne $refused) { return $refused }
+        $targetId = [string]$state.TargetId
+        $ready = $false
+        for ($try = 0; $try -lt 30; $try++) {
+            $probe = Invoke-SnapshotNative $Docker @('exec', $targetId, 'pg_isready', '-U', 'antiphon')
+            if ($probe.Exit -eq 0) { $ready = $true; break }
+            Start-Sleep -Seconds 1
+        }
+        if (-not $ready) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        if (Test-SnapshotNameMatch $DrillDatabase @('antiphon', $SourceDatabase)) {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-refused'; Detail = 'guard=database' }
+        }
+        $dropped = Invoke-SnapshotNative $Docker @('exec', $targetId, 'dropdb', '--if-exists', '-U', 'antiphon', $DrillDatabase)
+        if ($dropped.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        $createdDb = Invoke-SnapshotNative $Docker @('exec', $targetId, 'createdb', '-U', 'antiphon', $DrillDatabase)
+        if ($createdDb.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        $sent = Invoke-SnapshotNative $Docker @('cp', $DumpPath, ($targetId + ':' + $remote))
+        if ($sent.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        $listed = Invoke-SnapshotNative $Docker @('exec', $targetId, 'pg_restore', '--list', $remote)
+        $toc = @($listed.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($listed.Exit -ne 0 -or -not (Test-SnapshotTableData $toc)) {
+            return [pscustomobject]@{ Code = 5; Reason = 'verify-failed'; Detail = '' }
+        }
+        $restored = Invoke-SnapshotNative $Docker @(
+            'exec', $targetId, 'pg_restore', '--no-owner', '--no-acl', '--exit-on-error',
+            '-U', 'antiphon', '-d', $DrillDatabase, $remote
+        )
+        if ($restored.Exit -ne 0) { return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' } }
+        $counted = Invoke-SnapshotNative $Docker @(
+            'exec', $targetId, 'psql', '-U', 'antiphon', '-d', $DrillDatabase, '-tAc',
+            "select count(*) from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'"
+        )
+        $countLines = @($counted.Lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($counted.Exit -ne 0 -or $countLines.Count -ne 1 -or ([string]$countLines[0]).Trim() -notmatch '^[0-9]{1,6}$') {
+            return [pscustomobject]@{ Code = 9; Reason = 'drill-failed'; Detail = '' }
+        }
+        $tables = [int](([string]$countLines[0]).Trim())
+        $seconds = [int]$started.Elapsed.TotalSeconds
+        return [pscustomobject]@{ Code = 0; Reason = 'ok'; Detail = ('drill=1 bytes=' + $dumpBytes + ' tables=' + $tables + ' seconds=' + $seconds) }
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace([string]$state.TargetId) -and $state.Owned) {
+            Invoke-SnapshotNative $Docker @('exec', [string]$state.TargetId, 'rm', '-f', $remote) | Out-Null
+        }
+        Complete-SnapshotDrillScratch $state $Docker $DrillContainer $DrillVolume $SourceVolume $Keep
+    }
+}
+
+function Invoke-SnapshotPlainDrillMode {
+    param([bool]$PlanOnly)
+    Write-Output ('PLAIN UNENCRYPTED operator-decision=' + $script:SnapshotPlainDecision + ' encryption=none')
+    if ($script:SnapshotContainerBound) { return Write-SnapshotResult $PlanOnly 'ambiguous-mode' '' }
+    $source = $script:SnapshotServer2Container
+    $sourceVolume = $script:SnapshotServer2Volume
+    $script:SnapshotDockerContext = $script:SnapshotServer2Context
+    $dest = $Destination
+    if ([string]::IsNullOrWhiteSpace($dest)) { $dest = $script:SnapshotPlainDestination }
+    $database = Get-SnapshotBareName $Database
+    $scratch = Get-SnapshotBareName $ScratchContainer
+    $scratchDb = Get-SnapshotBareName $ScratchDatabase
+    $scratchVolume = Get-SnapshotBareName $ScratchVolume
+    $namesOk = (Test-SnapshotToken $database) -and (Test-SnapshotToken $scratch) -and
+        (Test-SnapshotToken $scratchDb) -and (Test-SnapshotToken $scratchVolume)
+    if (-not $namesOk -or $MinimumDumpBytes -lt 1) { return Write-SnapshotResult $PlanOnly 'bad-name' '' }
+    $drillGuard = Test-SnapshotDrillRefused $source $database $scratch $scratchDb $scratchVolume $sourceVolume
+    if (-not [string]::IsNullOrWhiteSpace($drillGuard)) {
+        return Write-SnapshotResult $PlanOnly 'drill-refused' ('guard=' + $drillGuard)
+    }
+    Write-Output ('step source: target=server2 container=' + $source + ' context=' + $script:SnapshotServer2Context)
+    Write-Output ('step drill: copy the newest antiphon-<utc>.dump from ' + $dest + ' into scratch container ' + $scratch + ' with docker cp (no bind mount)')
+    Write-Output 'step drill: the scratch image is the source container image id'
+    Write-Output ('step drill: pg_restore --list must include TABLE DATA, then pg_restore --exit-on-error into database ' + $scratchDb + ' volume ' + $scratchVolume + ' network none')
+    Write-Output ('step drill: count public tables in ' + $scratchDb + ' only; leave the production database and volume untouched')
+    Write-Output 'step drill: remove the labelled scratch container and volume unless -KeepScratch'
+    if ($PlanOnly) { return Write-SnapshotResult $true 'ok' ('drill=1 scratch=' + $scratch) }
+
+    $newest = @(Get-ChildItem -LiteralPath $dest -Filter 'antiphon-*.dump' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match $script:SnapshotPlainDumpPattern } | Sort-Object Name -Descending)
+    if ($newest.Count -lt 1) { return Write-SnapshotResult $false 'missing-snapshot' '' }
+    $dockerCmd = Get-Command docker -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $dockerCmd) { return Write-SnapshotResult $false 'missing-docker' '' }
+    $daemon = Test-SnapshotDockerDaemon $dockerCmd.Source $false
+    if ($daemon -ne '') { return Write-SnapshotResult $false $daemon '' }
+    $sourceFact = Get-SnapshotContainerFact $dockerCmd.Source $source
+    if (-not (Test-SnapshotServer2Source $sourceFact)) { return Write-SnapshotResult $false 'source-mismatch' '' }
+    $image = [string]$sourceFact.ImageId
+    if ($image -cnotmatch '^sha256:[0-9a-f]{64}$') { return Write-SnapshotResult $false 'drill-refused' 'guard=image' }
+    $drilled = Invoke-SnapshotPlainDrill $newest[0].FullName $scratch $scratchDb $scratchVolume $image $dockerCmd.Source $source $database $sourceVolume $MinimumDumpBytes ([bool]$KeepScratch)
+    return Write-SnapshotResult $false $drilled.Reason $drilled.Detail
 }
 
 function Test-SnapshotPlainInsideOneDrive {
@@ -2032,6 +2181,7 @@ function Invoke-PostgresSnapshot {
         # The server2 source is plain-only; the age path keeps the desktop.
         return Write-SnapshotResult $planOnly 'ambiguous-mode' ''
     }
+    if ($Plain -and $RestoreDrill -and ($Target -ceq 'server2')) { return Invoke-SnapshotPlainDrillMode $planOnly }
     if ($Plain -and $RestoreDrill) {
         Write-Output ('PLAIN UNENCRYPTED operator-decision=' + $script:SnapshotPlainDecision + ' encryption=none')
         return Write-SnapshotResult $planOnly 'plain-drill-unsupported' ''
