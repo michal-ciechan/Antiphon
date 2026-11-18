@@ -1,6 +1,7 @@
 #requires -Version 7.0
 # NightlyCore.cs against the PowerShell it replaces: every compiled path must return exactly what the
-# PowerShell fallback (ANTIPHON_NIGHTLY_CORE=off, Windows PowerShell 5.1) returns. ASCII-only.
+# PowerShell copy returns (ANTIPHON_NIGHTLY_CORE=off, Windows PowerShell 5.1) where one is kept, and otherwise
+# what it returned when it was removed (scripts/fixtures/nightly/core-golden). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
 foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','test-phase-evidence','c487-harness') {
@@ -14,20 +15,42 @@ function Assert-NC([bool]$Ok, [string]$Name, [string]$Detail = '') { Assert-C487
 # Runs $Body with the compiled core and again with the PowerShell fallback (same session), returning both
 # results as JSON text. The switch is the session flag the loader caches. Where the body reaches code whose
 # PowerShell copy was removed (nightly-core-required), the fallback result is the golden that copy produced
-# (scripts/fixtures/nightly/core-golden/<Golden>.json); with no golden named the run fails.
-function Invoke-NCBothWays([scriptblock]$Body, [string]$Golden = '') {
+# (scripts/fixtures/nightly/core-golden/<Golden>.json); with no golden named the run fails. A golden over
+# 64 KB is kept as its SHA-256 and length: Fallback is then the compiled text when that matches, the digest
+# line when it does not. -Normalize names a run-specific directory, written as <root> in both results.
+function Invoke-NCBothWays([scriptblock]$Body, [string]$Golden = '', [string]$Normalize = '') {
     $script:NightlyCoreAvailable = $null
     $core = Test-NightlyCoreAvailable
     $compiled = (& $Body) | ConvertTo-Json -Depth 14 -Compress
     $script:NightlyCoreAvailable = $false
+    $ran = $true
     try { $fallback = (& $Body) | ConvertTo-Json -Depth 14 -Compress }
     catch {
         if ([string]$_.Exception.Message -notlike 'nightly-core-required *') { throw }
-        if (-not $Golden) { $fallback = 'unnamed golden: ' + $_.Exception.Message }
-        else { $fallback = [IO.File]::ReadAllText((Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Golden + '.json')), [Text.Encoding]::UTF8) }
+        $ran = $false
+        $fallback = 'unnamed golden: ' + $_.Exception.Message
     }
     finally { $script:NightlyCoreAvailable = $null }
-    if ($env:NC_DUMP) { Add-Content -LiteralPath $env:NC_DUMP -Value $fallback.Substring(0, [Math]::Min(60, $fallback.Length)) }
+    if ($Normalize) {
+        $compiled = $compiled.Replace($Normalize.Replace('\', '\\'), '<root>').Replace($Normalize, '<root>')
+        $fallback = $fallback.Replace($Normalize.Replace('\', '\\'), '<root>').Replace($Normalize, '<root>')
+    }
+    if ($Golden) {
+        $goldenPath = Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Golden + '.json')
+        $digest = { param($text) 'sha256:' + (Get-NightlySha256Text -Text $text) + ' chars:' + $text.Length }
+        # Written only on request (NC_GOLDEN_WRITE=<name>), from the PowerShell copy while it exists, and then
+        # still has to be reviewed.
+        if ($env:NC_GOLDEN_WRITE -ceq $Golden -or $env:NC_GOLDEN_WRITE -ceq '*') {
+            $text = $(if ($ran) { $fallback } else { $compiled })
+            if ($text.Length -gt 65536) { $text = & $digest $text }
+            [IO.File]::WriteAllText($goldenPath, $text, [Text.UTF8Encoding]::new($false))
+        }
+        if (-not $ran) {
+            $fallback = [IO.File]::ReadAllText($goldenPath, [Text.Encoding]::UTF8)
+            if ($fallback.StartsWith('sha256:') -and $fallback -ceq (& $digest $compiled)) { $fallback = $compiled }
+        }
+    }
+    if ($env:NC_DUMP) { Add-Content -LiteralPath $env:NC_DUMP -Value ('' + $fallback.Length + ' ' + $fallback.Substring(0, [Math]::Min(60, $fallback.Length))) }
     return [pscustomobject]@{ Core = $core; Compiled = $compiled; Fallback = $fallback }
 }
 
@@ -98,7 +121,7 @@ function Test-NCCoreMatchesFallback {
         defaultCensus = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
         required = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $nodes -RequiredClasses $classes -ProfileExclusions $rules -ProfileAware)
         defaultRequired = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes $nodes)
-    } }
+    } } 'census'
     Assert-NC $r.Core 'coreLoaded' 'NightlyCore.cs did not compile or load'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'census' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 
@@ -110,11 +133,12 @@ function Test-NCCoreMatchesFallback {
         $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
         $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $rules -ProfileAware
         [ordered]@{ excluded = @($view.Excluded); byClass = $view.ByClass; required = $view.RequiredUids; classes = $view.Classes; census = $view.Census.Digest }
-    }
+    } 'indexView'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'indexView' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 
     $trx = @($nodes | Select-Object -First 60 | ForEach-Object { [pscustomobject]@{ ClassName = $_.ClassName; MethodName = $_.Method } })
-    $r = Invoke-NCBothWays { Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes @($nodes | Select-Object -First 50) -RequiredClasses $classes }
+    # The mismatch list comes out in hashtable order, which differs from process to process: sorted for the golden.
+    $r = Invoke-NCBothWays { Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes @($nodes | Select-Object -First 50) -RequiredClasses $classes) } 'crossCheck'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'crossCheck' $r.Compiled
 
     $noted = 'text' | Add-Member -NotePropertyName Extra -NotePropertyValue 1 -PassThru
@@ -125,8 +149,13 @@ function Test-NCCoreMatchesFallback {
         pso = [pscustomobject]@{ z = 1; y = @(1, @(2)); x = $null }; deep = $deep; date = [datetime]'2026-01-02T03:04:05'
         enum = [IO.FileAttributes]::Hidden; ch = [char]'x'; dbnull = [DBNull]::Value; sw = [switch]$true
     }
-    $r = Invoke-NCBothWays { @(foreach ($k in $samples.Keys) { (ConvertTo-TestPhaseJsonText -Value $samples[$k]) + '|' + (ConvertTo-TestPhaseJsonText -Value $samples[$k] -Depth 20) }) + @((ConvertTo-TestPhaseJsonString -Text $null)) }
+    $r = Invoke-NCBothWays { @(foreach ($k in $samples.Keys) { (ConvertTo-TestPhaseJsonText -Value $samples[$k]) + '|' + (ConvertTo-TestPhaseJsonText -Value $samples[$k] -Depth 20) }) + @((ConvertTo-TestPhaseJsonString -Text $null)) } 'json'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'json' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
+function Get-NCSortedCross($Cross) {
+    [string[]]$mismatch = @($Cross.Mismatch); [Array]::Sort($mismatch, [StringComparer]::Ordinal)
+    return [pscustomobject]@{ Ok = $Cross.Ok; Mismatch = $mismatch; ExtraClasses = $Cross.ExtraClasses }
 }
 
 function Get-NCOutcome([scriptblock]$Body) {
@@ -237,7 +266,7 @@ function Test-NCDiagnosticsMatchFallback {
             }
         }
         [ordered]@{ records = @($perRecord) }
-    }
+    } 'diagnosticRecords'
     # ConvertFrom-NightlyDiagnosticLog has no PowerShell record loop left: whole logs against the golden it produced.
     $logs = Test-NCGolden 'diagnosticLogs' {
         @(foreach ($path in $paths) {
@@ -260,7 +289,7 @@ function Test-NCDiagnosticsMatchFallback {
         outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { ConvertTo-NightlyNormalizedOutcome -Outcome $o })
         sha = Get-NightlyFileSha256 -Path $hashed
         csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
-    } }
+    } } 'summaryHelpers'
     $rowCore = [Antiphon.Nightly.TestPhaseSummary]::Row($row, [string[]]@($row.Keys))
     # TestPhaseSummaryFast: the whole-roster tests.csv lines and the [bool]$test.incomplete scan.
     $rowTwo = [ordered]@{ testId = 'b'; duration = '1.5'; joined = $false; db = 0; outcome = '' }
@@ -517,7 +546,7 @@ function Test-NCVerdictsMatchFallback {
         $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
         [ordered]@{
             perClassSet = @(foreach ($set in $classSets) { [ordered]@{
-                cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set
+                cross = Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set)
                 present = Test-NightlyRequiredClassesPresent -TerminalRows $trx.ToArray() -RequiredClasses $set
                 required = @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $set)
             } })
@@ -525,7 +554,7 @@ function Test-NCVerdictsMatchFallback {
             expandedNull = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $null -RequiredUids $null
             crossNull = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $null -TerminalNodes $null -RequiredClasses $null
         }
-    }
+    } 'verdicts'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains(' trx=')) 'verdicts' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
@@ -543,7 +572,7 @@ function Test-NCLaunchPlanMatchesFallback {
         @(@('N.S.Alpha', 'N.S.Alpha'), '/*/N.S/(Alpha*)|(Beta*)/*'),
         @($null, '/*/N.S/(Alpha*)|(Beta*)/*'),
         @(@('N.S.Alpha', 'N.S.Beta'), ''))
-    $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool](Test-NightlyClassGroupFilter -Classes $c[0] -GroupFilter $c[1]) }) }
+    $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool](Test-NightlyClassGroupFilter -Classes $c[0] -GroupFilter $c[1]) }) } 'groupFilter'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     # Split-NightlyItemsBySeconds (NightlyLaunchPlan.FirstFitBins): first fit with ties, items with no Seconds
     # (the 0.5 default), a string Seconds, items at or over the target, and the operand cap.
@@ -583,7 +612,7 @@ function Test-NCProjectWalkMatchesFallback {
     # Hidden is the attribute on Windows and the leading dot on Linux, which ignores the attribute; .NET reports both.
     $hidden = Get-Item -LiteralPath (Join-Path $tree '.hidden') -Force
     $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
-    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) }
+    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) } 'projectWalk'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     # In a git checkout the walk skips ignored directories (nested ones too); untracked projects are kept.
     $repo = Join-Path $root 'nc-git-projects'
@@ -595,7 +624,7 @@ function Test-NCProjectWalkMatchesFallback {
     [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), "out/`ncache/`n")
     [IO.File]::WriteAllText((Join-Path $repo 'deep/a/.gitignore'), "scratch/`n")
     $null = & git -C $repo init -q 2>&1
-    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $repo) }
+    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $repo) } 'gitIgnoredWalk'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback -ceq '["deep/a/Kept.csproj","kept/Untracked.csproj"]') 'gitIgnoredWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
@@ -625,7 +654,7 @@ function Test-NCEvidenceFilesMatchFallback {
         $spent = [Diagnostics.Stopwatch]::StartNew(); Start-Sleep -Milliseconds 20
         $b = Read-TestPhaseBoundedBytes -Path (Join-Path $dir 'small.json') -DeadlineMilliseconds 5 -Watch $spent
         $rows + @([ordered]@{ budget = $true; bytes = $b.Bytes; complete = $b.Complete; refused = $b.Refused; kind = $b.Kind })
-    }
+    } 'boundedRead' $root
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'boundedRead' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     # Queued evidence writes answer as the landed files will: identity, existence, text, bytes and hash.
     $queued = Join-Path $dir 'queued'
@@ -669,7 +698,7 @@ function Test-NCDocumentsMatchFallback {
     $nodes.Add([ordered]@{ uid = 'dict-node'; type = 'T'; method = 'M'; excluded = $true; categories = @('A', 'B') })
     $r = Invoke-NCBothWays {
         $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes.ToArray() -AssemblyHash 'abc'
-        $json = $doc | ConvertTo-Json -Depth 12
+        $json = $doc | ConvertTo-Json -Depth 12 -Compress
         $back = ConvertFrom-NightlyDiscoveryDocument -Object ($json | ConvertFrom-Json) -ExpectedFormat $script:NightlyDiscoveryFormat
         $refusals = @(foreach ($bad in @(
             @([pscustomobject]@{ uid = 'Same'; type = 'T'; method = 'M' }, [pscustomobject]@{ uid = 'same'; type = 'T'; method = 'M' }),
@@ -680,7 +709,7 @@ function Test-NCDocumentsMatchFallback {
             try { [void](ConvertFrom-NightlyDiscoveryDocument -Object $o -ExpectedFormat $script:NightlyDiscoveryFormat); 'accepted' } catch { $_.Exception.Message }
         })
         [ordered]@{ json = $json; back = $back; canonical = (ConvertTo-NightlyCanonicalJson -Object $doc); refusals = $refusals }
-    }
+    } 'discoveryDocuments'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'discoveryDocuments' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
     $mixed = [ordered]@{
         zeta = 1; Alpha = [long]2; beta = 1.5; Gamma = [decimal]2.25; '' = 'dropped'; flag = $false; none = $null
@@ -711,7 +740,7 @@ function Test-NCSourceGapsMatchFallback {
         'N.Skipped.Run', 'X.Beta.Go', 'Beta.Go', 'Beta', '', '.Go', 'N.AlphaBeta.Other', 'N.Gamma.Run', 'N.gamma.Run', 'N.Alpha.Run')) {
         [pscustomobject]@{ platform = 'windows'; test = $test }
     }) + @($null, [pscustomobject]@{ platform = 'linux'; test = 'N.Nope.Run' })
-    $r = Invoke-NCBothWays { @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $fixture -Platform 'windows' -Entries $entries) }
+    $r = Invoke-NCBothWays { @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $fixture -Platform 'windows' -Entries $entries) } 'sourceGaps'
     Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Compiled.Contains('N.Alpha.Missing') -and -not $r.Compiled.Contains('"N.Alpha.Run"')) 'sourceGaps' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     $path = Join-Path $tests 'C/Cache.cs'
     [IO.File]::WriteAllText($path, 'class Cached { void Alpha() { } }')
@@ -824,13 +853,15 @@ function Test-NCJsonFilesMatchFallback {
     # The core writes the first; ConvertTo-Json writes the others (an arbitrary object, nesting past -Depth).
     $cases = @(@{ Value = $value; Depth = 8 }, @{ Value = [ordered]@{ a = [IO.DirectoryInfo]::new($dir) }; Depth = 1 }, @{ Value = @{ deep = @{ a = @{ b = @{ c = 1 } } } }; Depth = 2 })
     $written = Join-Path $dir 'written.json'
-    $r = Invoke-NCBothWays {
-        @(foreach ($case in $cases) {
-            Write-NightlyJsonFile -Path $written -Value $case.Value -Depth $case.Depth 3>$null
-            , ([IO.File]::ReadAllText($written) | ConvertFrom-Json)
-        })
-    }
-    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback) 'jsonWrite' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # Each file against what ConvertTo-Json writes for the same value, read back.
+    $wrote = @(foreach ($case in $cases) {
+        Write-NightlyJsonFile -Path $written -Value $case.Value -Depth $case.Depth 3>$null
+        , ([IO.File]::ReadAllText($written) | ConvertFrom-Json)
+    }) | ConvertTo-Json -Depth 14 -Compress
+    $reference = @(foreach ($case in $cases) {
+        , ($case.Value | ConvertTo-Json -Depth $case.Depth 3>$null | ConvertFrom-Json)
+    }) | ConvertTo-Json -Depth 14 -Compress
+    Assert-NC ($wrote -ceq $reference -and $wrote.Contains('"id":"r3"')) 'jsonWrite' ('wrote ' + $wrote + ' reference ' + $reference)
 }
 
 function Test-NCPlannerPartsGolden {
@@ -901,7 +932,7 @@ function Test-NCPlannedManifestMatchesFallback {
         $s = ''; for ($k = $rng.Next(1, 5); $k -gt 0; $k--) { $s += $alpha[$rng.Next($alpha.Count)] }
         & $node ('Ns.' + $s) $(if ($i % 4 -eq 0) { 'Ns.Ex' } else { 'Ns.C' })
     })
-    $r = Invoke-NCBothWays { Get-NightlyDiscoveryCensus -DiscoveryNodes $tieNodes -ProfileExclusions $rules -ProfileAware }
+    $r = Invoke-NCBothWays { Get-NightlyDiscoveryCensus -DiscoveryNodes $tieNodes -ProfileExclusions $rules -ProfileAware } 'censusTies'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'censusTies' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
