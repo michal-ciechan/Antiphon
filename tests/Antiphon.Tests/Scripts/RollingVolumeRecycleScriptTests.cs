@@ -1475,7 +1475,7 @@ public sealed class RollingVolumeRecycleScriptTests
         var result = Path.Combine(fixture.Root, "hook-result");
         // Remount the volume and /work, then write. A detached child writes again after
         // the audit returns. Capture the shell stderr before the append's own redirection.
-        await File.WriteAllTextAsync(hook, "#!/bin/bash\n" +
+        await FixtureExecutable.WriteAsync(hook, "#!/bin/bash\n" +
             "exec 2>" + BashSingle(result + ".err") + "\n" +
             "mount -o remount,bind,rw -- " + BashSingle(volume) + " 2>>" + BashSingle(result + ".err") + " || true\n" +
             "mount -o remount,bind,rw /work 2>>" + BashSingle(result + ".err") + " || true\n" +
@@ -1487,8 +1487,7 @@ public sealed class RollingVolumeRecycleScriptTests
             "setsid bash -c " + BashSingle("sleep 2; mount -o remount,bind,rw -- \"$1\" 2>/dev/null || true; mount -o remount,bind,rw /work 2>/dev/null || true; printf ' late' >> \"$2\"") +
             " _ " + BashSingle(volume) + " " + BashSingle(description) + " </dev/null >/dev/null 2>&1 &\n" +
             "exit 0\n");
-        var setup = await C994ScriptProcess.Run("bash", "-c",
-            "chmod 0755 " + BashSingle(hook) + " && git -C " + BashSingle(repo) + " config core.fsmonitor " + BashSingle(hook));
+        var setup = await C994ScriptProcess.Run("git", "-C", repo, "config", "core.fsmonitor", hook);
         setup.Exit.ShouldBe(0, "recycle-preview-receipt: fsmonitor hook; " + setup.Output);
     }
 
@@ -3434,10 +3433,9 @@ internal sealed class C1008HostFixture : IDisposable
         var dockerBin = Path.Combine(Root, "docker-cli");
         Directory.CreateDirectory(dockerBin);
         var dockerCli = Path.Combine(dockerBin, "docker");
-        await File.WriteAllTextAsync(dockerCli, "#!/bin/sh\nexec bash " +
+        // CARD-1984 B-1: created by a child, so no write handle of this process can meet its exec.
+        await FixtureExecutable.WriteAsync(dockerCli, "#!/bin/sh\nexec bash " +
             VolumeRetirementFixture.Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c1008-fake-docker.sh")) + " \"$@\"\n");
-        var executable = await C994ScriptProcess.Run("chmod", "0755", dockerCli);
-        if (executable.Exit != 0) throw new InvalidOperationException("fake Docker executable: " + executable.Output);
         File.WriteAllText(StatePath, Docker.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "statuses.json"), Statuses.ToJsonString());
         File.WriteAllText(Path.Combine(Root, "tasks.json"), new JsonObject

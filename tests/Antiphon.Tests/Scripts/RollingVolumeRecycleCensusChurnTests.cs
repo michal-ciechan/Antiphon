@@ -61,7 +61,7 @@ public sealed class RollingVolumeRecycleCensusChurnTests
                 ["Mounts"] = new JsonArray(),
                 ["HostConfig"] = new JsonObject { ["Tmpfs"] = null, ["Mounts"] = null }
             }.ToJsonString() + "]";
-            File.WriteAllText(Path.Combine(bin, "docker"), """
+            FixtureExecutable.Write(Path.Combine(bin, "docker"), """
                 #!/bin/bash
                 printf '%s\n' "$*" >> "${C1099_TRACE:?}"
                 if [ "$1" = ps ]; then
@@ -79,11 +79,10 @@ public sealed class RollingVolumeRecycleCensusChurnTests
                   exit 1
                 fi
                 exit 2
-                """);
-            File.SetUnixFileMode(Path.Combine(bin, "docker"), UnixFileMode.UserRead | UnixFileMode.UserExecute);
+                """, "500");
 
             var script = Path.Combine(root, "census.sh");
-            File.WriteAllText(script, """
+            FixtureExecutable.Write(script, """
                 #!/bin/bash
                 set -euo pipefail
                 export PATH="${C1099_BIN:?}:$PATH"
@@ -105,7 +104,7 @@ public sealed class RollingVolumeRecycleCensusChurnTests
                 set -e
                 printf '%s\n' "$code"
                 printf '%s\n' "$result"
-                """);
+                """, "644");
             File.WriteAllText(Path.Combine(root, "census.fn.sh"), census);
             var psi = new ProcessStartInfo("bash")
             {

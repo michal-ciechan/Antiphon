@@ -451,7 +451,7 @@ public sealed class HostJqPrerequisiteScriptTests
         NativeLinuxGate.Require(NativeLinuxReason);
         using var f = new HostJqFixture();
         f.HomeShadow(); f.PathPrefix = ""; // Keep the destination ON PATH and resolve the canonical leaf.
-        File.WriteAllText(f.HomeJq, File.ReadAllText(f.Payload)); // Working jq with an execution trace.
+        FixtureExecutable.Copy(f.Payload, f.HomeJq); // Working jq with an execution trace.
         File.CreateSymbolicLink(f.Destination, f.HomeJq);
         await f.InitializeRepo();
         var homeHash = f.Hash(f.HomeJq); var homeInode = await f.Inode(f.HomeJq);
@@ -969,7 +969,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Preflight_precedes_every_phase()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1015,7 +1015,7 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1025_Preflight_is_fresh_for_each_entry()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
@@ -1232,7 +1232,7 @@ internal sealed class HostJqFixture : IDisposable
         File.WriteAllText(Root + "/scripts/fake-http.ps1", "param($Method,$RunnerId,$Suffix,$BodyJson,$Path)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'HTTP '+$Method+[Environment]::NewLine)\n'__503__'\nexit 0\n");
         File.WriteAllText(Root + "/scripts/fake-verify.ps1", "param($Case,$Manifest)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'case '+$Case+[Environment]::NewLine)\nexit 2\n");
         foreach (var tool in ProvisionTools.Concat(new[] { "bash", "git", "pwsh" })) File.CreateSymbolicLink(Tools + "/" + tool, Locate(tool));
-        File.WriteAllText(Payload, JqScript("healthy")); Executable(Payload);
+        FixtureExecutable.Write(Payload, JqScript("healthy"));
         WriteTool("docker", "[ \"$fault\" != no-daemon ] || exit 1\n[ \"$fault\" != sibling ] || { echo sibling; exit 0; }\necho fixture-host");
         WriteTool("hostname", "[ \"$fault\" != hostname ] || exit 1\necho fixture-host");
         WriteTool("uname", "if [ \"$1\" = -s ]; then [ \"$fault\" != os ] || { echo Darwin; exit 0; }; echo Linux; else [ \"$fault\" != arch ] || { echo aarch64; exit 0; }; echo x86_64; fi");
@@ -1256,14 +1256,14 @@ internal sealed class HostJqFixture : IDisposable
     internal void Existing(string fault = "healthy", bool elsewhere = false)
     {
         var path = elsewhere ? OtherJq : Destination;
-        if (fault == "healthy") File.Copy(_jq, path, overwrite: true);
-        else File.WriteAllText(path, JqScript(fault));
-        File.SetUnixFileMode(path, fault == "nonexec" ? UnixFileMode.UserRead | UnixFileMode.UserWrite : (UnixFileMode)Convert.ToInt32("755", 8));
+        var mode = fault == "nonexec" ? "600" : "755";
+        if (fault == "healthy") FixtureExecutable.Copy(_jq, path, mode);
+        else FixtureExecutable.Write(path, JqScript(fault), mode);
     }
     internal void HomeShadow()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(HomeJq)!);
-        File.Copy(_jq, HomeJq); Executable(HomeJq);
+        FixtureExecutable.Copy(_jq, HomeJq);
         PathPrefix = Path.GetDirectoryName(HomeJq)! + ":";
     }
     internal void Fault(string value)
@@ -1281,7 +1281,7 @@ internal sealed class HostJqFixture : IDisposable
     internal void WriteTool(string tool, string body)
     {
         var path = Tools + "/" + tool; File.Delete(path);
-        File.WriteAllText(path, "#!/usr/bin/bash\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\n" + body + "\n"); Executable(path);
+        FixtureExecutable.Write(path, "#!/usr/bin/bash\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\n" + body + "\n");
     }
     internal async Task InitializeRepo(bool shortDeadline = false)
     {
@@ -1404,12 +1404,12 @@ internal sealed class HostJqFixture : IDisposable
     }
     internal Task Mode(string path, string mode)
     { File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32(mode, 8)); return Task.CompletedTask; }
-    internal void IdentityExisting() { File.WriteAllText(Destination, IdentityScript("original")); Executable(Destination); }
+    internal void IdentityExisting() => FixtureExecutable.Write(Destination, IdentityScript("original"));
     internal async Task Identity(bool existing = true)
     {
         Directory.CreateDirectory(Control);
         File.WriteAllText(Root + "/scripts/identity-hook.sh", IdentityHook);
-        File.WriteAllText(Control + "/replacement", IdentityScript("foreign")); Executable(Control + "/replacement");
+        FixtureExecutable.Write(Control + "/replacement", IdentityScript("foreign"));
         // Verify the foreign program is fully functional before any fault, then clear setup markers.
         foreach (var args in new[] { new[] { "--version" }, new[] { "-en", "true" }, new[] { "-en", "false" }, new[] { "-cn", "{schema:1}" } })
         {
@@ -1617,7 +1617,6 @@ internal sealed class HostJqFixture : IDisposable
         var found = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':').Select(p => Path.Combine(p, tool)).FirstOrDefault(File.Exists);
         found.ShouldNotBeNull("C1025 prerequisite missing: " + tool); return found!;
     }
-    private static void Executable(string path) => File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32("755", 8));
     public void Dispose()
     {
         if (Linked is not null && Directory.Exists(Linked)) Directory.Delete(Linked, true);

@@ -18,12 +18,14 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public class ScriptModelSpawnLaneTests
 {
-    // D-5 keep list for RollingVolumeRecycleScriptTests. S1's floor is HostJq only, so these
-    // names are not consulted until S2 adds that class. Each one starts a child whose working
-    // directory is the shared checkout and that writes there (deploy-server2.ps1 -Rolling,
-    // the jq roster's .antiphon/c973-jq-* evidence, or the host-proof pwsh writer).
+    // D-5 keep list. Each one starts a child whose working directory is the shared checkout and
+    // that writes there (deploy-server2.ps1 -Rolling, the jq roster's .antiphon/c973-jq-*
+    // evidence, or the host-proof pwsh writer). Round 2 (W-11) returned the two HostJq methods
+    // that run the real deploy-server2.ps1 -Rolling through C1025RolloutFixture.
     private static readonly HashSet<string> StrictKeep =
     [
+        "HostJqPrerequisiteScriptTests.C1025_Preflight_precedes_every_phase",
+        "HostJqPrerequisiteScriptTests.C1025_Preflight_is_fresh_for_each_entry",
         "RollingVolumeRecycleScriptTests.C1087_Read_failures_name_their_cause",
         "RollingVolumeRecycleScriptTests.C1087_Project_resolves_by_repository_identity",
         "RollingVolumeRecycleScriptTests.C1693_Retire_temp_census_ignores_standing_runner_churn_between_passes",
