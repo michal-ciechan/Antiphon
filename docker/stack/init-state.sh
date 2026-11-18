@@ -9,10 +9,13 @@ for d in \
   /state /state/logs /state/keyring /state/check-interpreter /state/diagnose \
   /work /work/repos /work/worktrees \
   /runner-state /runner-state/session-runner /runner-state/pty-hosts /runner-state/logs /runner-state/grok \
-  /runner-state/claude
+  /runner-state/claude /runner-state/host-load
 do
   mkdir -p "$d"
 done
+# CARD-1893 D-5: the server2 runner spools host-load history at /state/host-load. own_tree below
+# only chowns, so the directory is made private here.
+chmod 0700 /runner-state/host-load
 for d in /state /work /runner-state; do
   owner=$(stat -c %u "$d")
   if [ "$owner" != "0" ] && [ "$owner" != "$uid" ]; then

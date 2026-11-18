@@ -76,9 +76,15 @@ services:
       # CARD-0718: indexed keys bind the two volumes the Hosts page stats.
       SessionRunner__HostStats__Volumes__0: /work
       SessionRunner__HostStats__Volumes__1: /state
-      # CARD-1893 S0 (plan section 7.0, Q-8): no host-stats history until S1 sets HistoryPath.
-      # The temp compose keeps no override and inherits this value.
-      SessionRunner__HostStats__HistoryEnabled: "false"
+      # CARD-1893 S1 (D-5, D-3): host-load history lives on the runner-state volume, never the
+      # container layer, and carries a literal binding identity (compose_host passes no env file,
+      # so an interpolated value would bind empty). The server binding repeats these values; the
+      # epoch is the landed literal. The temp override turns history off (D-4).
+      SessionRunner__HostStats__HistoryPath: /state/host-load
+      SessionRunner__HostStats__PhysicalHostKey: server2
+      SessionRunner__HostStats__BindingRevision: "1"
+      SessionRunner__HostStats__SourceEpoch: "58d738a7-044a-4089-a66f-42503861b8bf"
+      SessionRunner__HostStats__AuthorityId: server2-build-slots
       PhoneHome__GrokHome: /state/grok
       GROK_HOME: /state/grok
       # CARD-0628 D-6: one Claude store in three places. CLAUDE_CONFIG_DIR is the runner process's

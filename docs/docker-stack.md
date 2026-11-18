@@ -1934,6 +1934,41 @@ share one underlying filesystem.
 
 The same compose file sets the server2 **host build budget** (CARD-0589): `SessionRunner__BuildSlots__MaxConcurrent: "4"`, `SessionRunner__BuildSlots__MaxCpuCount: "6"`, `SessionRunner__BuildSlots__MinAvailableMemoryMb: "16384"`. Ten seats share four concurrent build/test driver leases at `-maxcpucount:6` each, and no lease is granted below 16 GB available (24 cores, no cgroup memory cap, other services on the host). Seats are counted first, then slots, then the memory floor: a free seat can still queue its builds, and a free slot never admits a session. To change the budget, edit those values and redeploy the runner; `SessionRunner__BuildSlots__Enabled: "false"` makes every acquire answer unlimited. Check it after a deploy with `docker exec antiphon-runner-session-runner-1 curl -fsS http://127.0.0.1:8080/build-slots` (200, `budget` equal to the configured value). Delegates in the container reach it at that address, the default of `scripts/lib/build-slot.ps1` on Linux (`ANTIPHON_BUILD_SLOTS_URL` overrides it). Contract, wait lines and exit codes: [testing-and-build.md](testing-and-build.md), Build slots (CARD-0589).
 
+### server2 host-load history and the runner hold (CARD-1893)
+
+The standing server2 runner keeps its durable host-load history on the runner-state volume:
+`docker-compose.server2-runner.yml` sets `SessionRunner__HostStats__HistoryPath: /state/host-load`
+and the literal binding identity `SessionRunner__HostStats__PhysicalHostKey: server2`,
+`BindingRevision: "1"`, a fixed `SourceEpoch` GUID and `AuthorityId: server2-build-slots`. The
+values are literals because `compose_host` passes no env file, so an interpolated value would bind
+empty. The server's primary `HostLoadHistory:Bindings` row for `server2` must repeat the same key,
+revision and epoch before a runner with this compose is rolled (activation plan step 5). `state-init`
+creates `/runner-state/host-load` (the same volume, seen at `/state/host-load` by the runner) and
+makes it 0700. Without a configured path the collector would open its spool in the container layer
+and pin the server cursor to a store the next recreate deletes. The base file has
+no `SessionRunner__HostStats__HistoryEnabled` line: the S0 stop-gap that kept history off on
+both runners was retired by S1 (CARD-1985). The temp override sets
+`SessionRunner__HostStats__HistoryEnabled: "false"`, so `server2-temp` opens no spool and never
+gets a cursor row.
+
+**Runner hold (activation plan section 7.0).** Before `-Phase deploy-temp`, `-Phase redeploy-old` or `-Phase all`
+with `-Sha X`, run in the desktop main checkout (Git Bash):
+
+```
+git fetch origin
+bash scripts/c1893-runner-hold.sh <40-hex rollout sha>
+```
+
+Run `git fetch origin` in that checkout first; the script itself does not fetch. It reads the
+commit's compose files with `git show`, never the working tree, and prints one word with exit 0.
+`NOT-AFFECTED`: the commit does not contain the collector `9cf3e4917`. `RELEASED`: the commit
+carries the S1 shape above (the base path, no base `HistoryEnabled` line, the temp `"false"`), or
+the S0 shape of an older rc (the base `HistoryEnabled: "false"`, no path, no history key in the
+temp file). `HOLD` means do not run the phase; it includes S1 lines beside a base that still
+disables history. A commit or object that does not resolve exits 2 with nothing on stdout, so an
+unfetched commit never reads as `NOT-AFFECTED`. `drain-old`, `drain-temp`, `retire-temp`,
+`check-*` and `provision-host-jq` start no runner from a new image and are not held.
+
 ### Server2 load before builds (2026-11-16)
 
 On the 24-core host, seven tasks with several concurrent builders drove load from
