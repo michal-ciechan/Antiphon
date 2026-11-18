@@ -18,14 +18,17 @@ services:
       - -c
       - pg_stat_statements.max=5000
     restart: unless-stopped
-    # CARD-1406 CPU isolation, cgroup v1 keys only. Postgres owns three whole physical
-    # cores: CPUs 0-2 and their SMT siblings 12-14. The runner services in
-    # docker-compose.server2-runner.yml take 3-11,15-23, so the sets are disjoint.
-    # cpus follows the cpuset: 6.0 for six logical CPUs (the plan said 3.0 for 0-2).
+    # CARD-1406 CPU isolation, cgroup v1 keys only (operator 2026-11-18: pin one CPU, the
+    # rest shared; no cores reserved for the session runner). Postgres is pinned to one
+    # physical core, CPU 0 and its SMT sibling 12. The pin is not exclusive: the runner
+    # services in docker-compose.server2-runner.yml set no cpuset and also run on 0 and 12,
+    # where cpu_shares 2048 (against the default 1024) makes Postgres win by weight.
+    # The cpuset is the one line to change; two physical cores is cpuset "0-1,12-13".
+    # No cpus quota: the cpuset already caps Postgres at 2 logical CPUs.
     # shm_size lifts /dev/shm above the 64 MB engine default for parallel query.
     # blkio weight 800 against the default 500 is a bias, not a reservation.
-    cpuset: "0-2,12-14"
-    cpus: 6.0
+    cpuset: "0,12"
+    cpu_shares: 2048
     mem_limit: 8g
     shm_size: 1gb
     blkio_config:
