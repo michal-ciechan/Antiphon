@@ -49,6 +49,7 @@ V-6: inspect whether renewals can share a bundle without changing proof semantic
 | CP-3 | S1-S2 | n/a | timings | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case timings` | V-3 | 1 PASS, zero failures | n/a | 1 | true |
 | CP-4 | S1-S2 | n/a | guards | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case guards` | R-1 | 1 PASS, zero failures | n/a | 1 | true |
 | CP-5 | S1-S2 | n/a | config | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case config` | V-4 | 1 PASS, zero failures | n/a | 1 | true |
+| CP-6 | S1-S2 | n/a | receipt | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case receipt` | V-5 | 1 PASS, two protocol exchanges, zero failures | n/a | 1 | true |
 
 Native Windows execution is not claimed. Changed logic is portable PowerShell,
 with no new OS branch or production factory. Production script remains ASCII and
