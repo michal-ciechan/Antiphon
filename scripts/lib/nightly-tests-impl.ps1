@@ -1597,7 +1597,8 @@ function Invoke-NightlyScheduledChunk {
             $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
         }
         if ($nativeVerdict.terminalNodes) {
-            foreach ($tn in @($nativeVerdict.terminalNodes)) { $suiteTerminalNodes += $tn }
+            # One concatenation per chunk, not one array copy per terminal node (19,000 in the main suite).
+            $suiteTerminalNodes = @($suiteTerminalNodes) + @($nativeVerdict.terminalNodes)
         }
         $row.trx = $trxPath
         $row.evidenceReasons = @($nativeVerdict.reasons)

@@ -687,11 +687,15 @@ function Write-TestPhaseFailureMarker {
 
 function ConvertTo-TestPhaseExecutedChunk {
     param($Item, [string]$Chunk, [string]$RunId, [string]$Attempt, [string]$Suite, [double]$HostWallSeconds, [bool]$TrxMissing, [int]$PassedCount, $Outcomes, [string]$Trx, [string]$TrxDigest, $ExitCode, $CoverageComplete, $TestsPassed)
+    $core = Test-NightlyCoreAvailable
     $priorOutcomes = New-Object System.Collections.Generic.List[object]
     if ($null -ne $Outcomes) {
-        foreach ($row in @($Outcomes)) {
-            if ($null -eq $row) { continue }
-            $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+        if ($core) { $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Outcomes), 'testId', 'outcome', $true)) }
+        else {
+            foreach ($row in @($Outcomes)) {
+                if ($null -eq $row) { continue }
+                $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+            }
         }
     }
     $chunkId = $Chunk
@@ -721,9 +725,12 @@ function ConvertTo-TestPhaseExecutedChunk {
         if ($Item.PSObject.Properties.Name -contains 'testsPassed') { $tests = $Item.testsPassed }
         $priorOutcomes = New-Object System.Collections.Generic.List[object]
         if ($Item.PSObject.Properties.Name -contains 'outcomes' -and $null -ne $Item.outcomes) {
-            foreach ($row in @($Item.outcomes)) {
-                if ($null -eq $row) { continue }
-                $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+            if ($core) { $priorOutcomes.AddRange([Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]@($Item.outcomes), 'testId', 'outcome', $true)) }
+            else {
+                foreach ($row in @($Item.outcomes)) {
+                    if ($null -eq $row) { continue }
+                    $priorOutcomes.Add([ordered]@{ testId = [string]$row.testId; outcome = [string]$row.outcome })
+                }
             }
         }
     }
@@ -1350,9 +1357,14 @@ function Get-TestPhaseReduction {
         }
     }
     $last = $null
+    # Test-TestPhaseSuiteChunkEqual inlined: this pass is quadratic in the chunk count.
+    $cmp = [System.StringComparer]::InvariantCultureIgnoreCase
     foreach ($rec in $chunkRecords) {
+        $freshSuite = [string]$rec.FreshSuite
+        $freshChunk = [string]$rec.FreshChunk
         for ($i = $list.Count - 1; $i -ge 0; $i--) {
-            if (Test-TestPhaseSuiteChunkEqual -LeftSuite $list[$i].Suite -LeftChunk $list[$i].Chunk -RightSuite $rec.FreshSuite -RightChunk $rec.FreshChunk) {
+            $entry = $list[$i]
+            if ($cmp.Equals($entry.Suite, $freshSuite) -and $cmp.Equals($entry.Chunk, $freshChunk)) {
                 $list.RemoveAt($i)
             }
         }
@@ -2074,11 +2086,18 @@ function Write-TestPhaseExecutedManifest {
             $rows = @($trxRead.Rows)
         }
     }
-    $outcomes = New-Object System.Collections.Generic.List[object]
-    $passed = 0
-    foreach ($row in $rows) {
-        $outcomes.Add([ordered]@{ testId = [string]$row.TestId; outcome = [string]$row.Outcome })
-        if ([string]$row.Outcome -eq 'Passed') { $passed++ }
+    if (Test-NightlyCoreAvailable) {
+        # One row per test (about 19,000 in the main suite): NightlyCore.cs TestPhaseSummary.OutcomeRows.
+        $outcomeRows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$rows, 'TestId', 'Outcome', $false)
+        $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($outcomeRows)
+    } else {
+        $outcomes = New-Object System.Collections.Generic.List[object]
+        $passed = 0
+        foreach ($row in $rows) {
+            $outcomes.Add([ordered]@{ testId = [string]$row.TestId; outcome = [string]$row.Outcome })
+            if ([string]$row.Outcome -eq 'Passed') { $passed++ }
+        }
+        $outcomeRows = @($outcomes.ToArray())
     }
     $digest = ''
     if ($trxIdentity.Kind -eq 'regular') {
@@ -2093,7 +2112,7 @@ function Write-TestPhaseExecutedManifest {
         if ($Verdict.PSObject.Properties.Name -contains 'coverageComplete') { $coverageComplete = [bool]$Verdict.coverageComplete }
         if ($Verdict.PSObject.Properties.Name -contains 'testsPassed') { $testsPassed = [bool]$Verdict.testsPassed }
     }
-    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomes.ToArray()) -Trx (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
+    $fresh = ConvertTo-TestPhaseExecutedChunk -Chunk $Chunk -RunId $RunId -Attempt $Attempt -Suite $Suite -HostWallSeconds $HostWallSeconds -TrxMissing $trxMissing -PassedCount $passed -Outcomes @($outcomeRows) -Trx (ConvertTo-TestPhaseRelativePath -LogRoot $LogRoot -Path $TrxPath) -TrxDigest $digest -ExitCode $exitCode -CoverageComplete $coverageComplete -TestsPassed $testsPassed
     $persistent = $false
     $bound = $null
     if ($null -ne $script:TestPhaseExecutedContext) {

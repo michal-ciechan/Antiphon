@@ -170,9 +170,19 @@ $script:QualificationPlanSnapshots = @{}
 function Read-QualificationPlanSnapshot {
     param([string]$Path)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
-    $bytes=Read-NightlyEvidenceBytes $Path
-    $digest=Get-QualificationBytesDigest $bytes
+    # The file's digest without re-reading it while it is provably unchanged (EvidenceFiles.CachedSha256);
+    # a snapshot is only ever built from bytes whose own digest is its key.
+    $bytes=$null
+    if(Test-NightlyCoreAvailable){$digest=[Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)}
+    else{$bytes=Read-NightlyEvidenceBytes $Path;$digest=Get-QualificationBytesDigest $bytes}
     $key=$Path+'|'+$digest
+    if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
+        if($null -eq $bytes){
+            $bytes=Read-NightlyEvidenceBytes $Path
+            $digest=Get-QualificationBytesDigest $bytes
+            $key=$Path+'|'+$digest
+        }
+    }
     if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
         # As [IO.File]::ReadAllText decodes: UTF-8 unless a byte-order mark says otherwise.
         $reader=New-Object System.IO.StreamReader((New-Object System.IO.MemoryStream(,$bytes)), [Text.Encoding]::UTF8, $true)

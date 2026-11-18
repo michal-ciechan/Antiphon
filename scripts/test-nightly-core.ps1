@@ -177,6 +177,26 @@ function Test-NCDiagnosticsMatchFallback {
     } }
     $rowCore = [Antiphon.Nightly.TestPhaseSummary]::Row($row, [string[]]@($row.Keys))
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+
+    # Executed-chunk outcome rows (TestPhaseSummary.OutcomeRows/PassedCount): TRX-shaped rows through the
+    # manifest writer's loop and envelope-shaped rows (JSON objects, dictionaries, nulls) through the item path.
+    $trxRows = @([pscustomobject]@{ TestId = 'a'; Outcome = 'Passed' }, [pscustomobject]@{ TestId = 'b'; Outcome = 'passed' },
+        [pscustomobject]@{ TestId = 'c'; Outcome = 'Failed' }, [pscustomobject]@{ TestId = 7; Outcome = $null }, [pscustomobject]@{ Other = 1 })
+    $item = '{"chunk":"c1","outcomes":[{"testId":"x","outcome":"Passed"},null,{"testId":5,"outcome":"Skipped"},{"outcome":"Failed"}]}' | ConvertFrom-Json
+    $r = Invoke-NCBothWays {
+        $passed = 0
+        if (Test-NightlyCoreAvailable) {
+            $rows = [Antiphon.Nightly.TestPhaseSummary]::OutcomeRows([object[]]$trxRows, 'TestId', 'Outcome', $false)
+            $passed = [Antiphon.Nightly.TestPhaseSummary]::PassedCount($rows)
+        } else {
+            $rows = @(foreach ($t in $trxRows) { [ordered]@{ testId = [string]$t.TestId; outcome = [string]$t.Outcome }; if ([string]$t.Outcome -eq 'Passed') { $passed++ } })
+        }
+        [ordered]@{
+            manifest = (ConvertTo-TestPhaseExecutedChunk -Chunk 'c' -RunId 'r' -Attempt '1' -Suite 's' -PassedCount $passed -Outcomes @($rows + @($null, @{ testId = 'h'; outcome = 'Passed' })))
+            item = (ConvertTo-TestPhaseExecutedChunk -Item $item -Chunk 'c' -RunId 'r' -Attempt '1' -Suite 's' -Outcomes @())
+        }
+    }
+    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('"passedCount":2')) 'outcomeRows' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
 function Test-NCVerdictsMatchFallback {
@@ -523,7 +543,7 @@ function Test-NCJsonFilesMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 26 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 27 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

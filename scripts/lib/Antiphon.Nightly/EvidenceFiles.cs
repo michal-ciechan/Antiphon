@@ -134,6 +134,17 @@ namespace Antiphon.Nightly
             }
         }
 
+        /// <summary>
+        /// Sha256 of the file as a reader sees it, for large evidence files re-validated per chunk (the planned
+        /// groups and the discovery document). A queued write is hashed from memory; otherwise the disk digest
+        /// is reused only while the file is provably unchanged (NightlyClassNames.CachedFileSha256).
+        /// </summary>
+        public static string CachedSha256(string path)
+        {
+            if (PendingLength(path) >= 0) return Sha256(path);
+            return NightlyClassNames.CachedFileSha256(path);
+        }
+
         // ---- Writes: queued ----------------------------------------------------------------------------------
 
         /// <summary>[IO.File]::WriteAllText(path, text) / with UTF8Encoding($false): UTF-8 without a byte-order mark.</summary>

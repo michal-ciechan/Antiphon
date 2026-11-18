@@ -1359,6 +1359,40 @@ namespace Antiphon.Nightly
     /// <summary>Per-row helpers of the test-phase summary in test-phase-evidence.ps1.</summary>
     public static class TestPhaseSummary
     {
+        /// <summary>
+        /// The executed-chunk outcome rows (Write-TestPhaseExecutedManifest, ConvertTo-TestPhaseExecutedChunk): for
+        /// each row, [ordered]@{ testId = [string]$row.&lt;idName&gt;; outcome = [string]$row.&lt;outcomeName&gt; }.
+        /// skipNulls drops null rows (the ConvertTo-TestPhaseExecutedChunk loops); otherwise a null row yields
+        /// empty strings, as [string]$null.X does.
+        /// </summary>
+        public static object[] OutcomeRows(object[] rows, string idName, string outcomeName, bool skipNulls)
+        {
+            if (rows == null) return new object[0];
+            var result = new List<object>(rows.Length);
+            foreach (var row in rows)
+            {
+                if (row == null && skipNulls) continue;
+                result.Add(new OrderedDictionary(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "testId", PsValue.Str(PsValue.Prop(row, idName)) },
+                    { "outcome", PsValue.Str(PsValue.Prop(row, outcomeName)) },
+                });
+            }
+            return result.ToArray();
+        }
+
+        /// <summary>Rows of OutcomeRows whose outcome -eq 'Passed' (PowerShell's case-insensitive -eq).</summary>
+        public static int PassedCount(object[] outcomeRows)
+        {
+            var passed = 0;
+            if (outcomeRows == null) return 0;
+            foreach (var row in outcomeRows)
+            {
+                if (LanguagePrimitives.Equals(PsValue.Str(PsValue.Prop(row, "outcome")), "Passed", true, CultureInfo.InvariantCulture)) passed++;
+            }
+            return passed;
+        }
+
         /// <summary>ConvertTo-TestPhaseCsvCell: quoted, quotes doubled, a leading = + - @ neutralised with '.</summary>
         public static string Cell(object value)
         {

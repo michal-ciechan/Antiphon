@@ -987,9 +987,14 @@ function Get-NightlyDiscoveryIndexEntry {
     param($Index, [string]$Path)
     $key = ''
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        $sha = [System.Security.Cryptography.SHA256]::Create()
-        try { $key = [BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path))) }
-        finally { $sha.Dispose() }
+        if ((Test-NightlyCoreAvailable) -and (Get-NightlyEvidencePendingLength $Path) -lt 0) {
+            # The disk bytes' digest, reused while the file is provably unchanged (NightlyCore.cs CachedFileSha256).
+            $key = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($Path)
+        } else {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try { $key = [BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($Path))) }
+            finally { $sha.Dispose() }
+        }
         if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
     }
     $document = Read-NightlyDiscoveryDocument -Path $Path
