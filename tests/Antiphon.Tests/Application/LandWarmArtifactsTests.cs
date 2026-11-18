@@ -161,7 +161,7 @@ public sealed class LandWarmArtifactsTests
         compiler.ResultPaths.ShouldAllBe(p => File.Exists(Path.Combine(p, "owner.json")));
         compiler.WriteReport = true;
         (await verifier.VerifyAsync(f.Root, "/*/*/Selected/*", correlation, CancellationToken.None)).Passed.ShouldBeTrue();
-        compiler.BuildPaths[2].ShouldNotBe(compiler.BuildPaths[1], "failed verification quarantines the generation");
+        compiler.BuildPaths[2].ShouldBe(compiler.BuildPaths[1], "a failed test run leaves the build outputs reusable (CARD-1994)");
     }
 
     [Test]
@@ -223,7 +223,8 @@ public sealed class LandWarmArtifactsTests
         operation.Publication.ShouldBe(LandPublicationOutcome.Refused);
         operation.LastReason.ShouldBe("verification_failed");
         (await h.Fixture.RequiredAsync(h.Fixture.Remote, "rev-parse", h.Fixture.TargetRef)).Trim().ShouldBe(target);
-        File.ReadAllText(Path.Combine(compiler.BuildPaths.Single(), "state")).ShouldBe("building");
+        File.ReadAllText(Path.Combine(compiler.BuildPaths.Single(), "state")).ShouldBe("ready",
+            "a build that exits normally with a compile error leaves its outputs reusable (CARD-1994)");
         await using var reacquired = await new LandExecutionLease(h.Fixture.Git)
             .TryAcquireAsync(h.Fixture.Repository, CancellationToken.None);
         reacquired.ShouldNotBeNull();
@@ -257,6 +258,152 @@ public sealed class LandWarmArtifactsTests
         compiler.BuildPaths[1].ShouldNotBe(compiler.BuildPaths[0]);
     }
 
+    [Test]
+    public async Task C1994_FailedBuildLeavesTheSameGenerationReusable()
+    {
+        await using var f = new LandingGitFixture();
+        var compiler = new Compiler { BuildOk = false };
+        var verifier = Verifier(compiler);
+        var correlation = new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), null,
+            CommonDirectory: Path.Combine(f.Root, "common"));
+        (await verifier.VerifyAsync(f.Root, null, correlation, CancellationToken.None)).Passed.ShouldBeFalse();
+        File.ReadAllText(Path.Combine(compiler.BuildPaths[0], "state")).ShouldBe("ready",
+            "msbuild exited normally (exit 1): only the projects that compiled were written");
+        compiler.BuildOk = true;
+        (await verifier.VerifyAsync(f.Root, null, correlation, CancellationToken.None)).Passed.ShouldBeTrue();
+        compiler.BuildPaths[1].ShouldBe(compiler.BuildPaths[0], "the land after a failed build reuses its outputs");
+        Directory.GetDirectories(Path.GetDirectoryName(compiler.BuildPaths[0])!).Length.ShouldBe(1,
+            "no generation was set aside and none was created");
+    }
+
+    [Test]
+    [Arguments(137)]
+    [Arguments(-1)]
+    [Arguments(null)]
+    public async Task C1994_KilledBuildSetsTheGenerationAside(int? exitCode)
+    {
+        await using var f = new LandingGitFixture();
+        // 137: SIGKILL on Linux; -1: Process.Kill (TerminateProcess) on Windows; null: no exit status recorded.
+        var compiler = new Compiler { BuildOk = false, BuildExitCode = exitCode, RecordExit = exitCode is not null };
+        var verifier = Verifier(compiler);
+        var correlation = new LandingVerificationCorrelation(Guid.NewGuid(), Guid.NewGuid(), null,
+            CommonDirectory: Path.Combine(f.Root, "common"));
+        (await verifier.VerifyAsync(f.Root, null, correlation, CancellationToken.None)).Passed.ShouldBeFalse();
+        File.ReadAllText(Path.Combine(compiler.BuildPaths[0], "state")).ShouldBe("building");
+        compiler.BuildOk = true;
+        compiler.BuildExitCode = null;
+        compiler.RecordExit = true;
+        (await verifier.VerifyAsync(f.Root, null, correlation, CancellationToken.None)).Passed.ShouldBeTrue();
+        compiler.BuildPaths[1].ShouldNotBe(compiler.BuildPaths[0], "a killed build may have half-written an output");
+        Path.GetDirectoryName(compiler.BuildPaths[1]).ShouldBe(Path.GetDirectoryName(compiler.BuildPaths[0]));
+        File.ReadAllText(Path.Combine(compiler.BuildPaths[0], "state")).ShouldBe("quarantined");
+    }
+
+    [Test]
+    public async Task C1994_SetAsideReadsTheMarkBeforeScanningTheGeneration()
+    {
+        await using var f = new LandingGitFixture();
+        var artifacts = new LandVerificationArtifacts();
+        var common = Path.Combine(f.Root, "common");
+        var interrupted = artifacts.Prepare(common, "sdk", true, _ => { });
+        var target = Path.Combine(f.Root, "foreign-file");
+        File.WriteAllText(target, "retain");
+        File.CreateSymbolicLink(Path.Combine(interrupted.Path, "linked-output"), target);
+        var diagnostics = new List<string>();
+        var next = artifacts.Prepare(common, "sdk", true, diagnostics.Add);
+        Path.GetDirectoryName(next.Path).ShouldBe(Path.GetDirectoryName(interrupted.Path),
+            "a generation that is set aside is never scanned, so its link cannot turn the land cold");
+        next.Path.ShouldNotBe(interrupted.Path);
+        diagnostics.ShouldContain("land_artifacts quarantined " + interrupted.Path);
+        diagnostics.ShouldNotContain(line => line.Contains("cold reason="));
+        File.ReadAllText(target).ShouldBe("retain");
+    }
+
+    [Test]
+    public async Task C1994_PruneKeepsTwoNewestSetAsideAndNeverTheActiveOrAnEscape()
+    {
+        await using var f = new LandingGitFixture();
+        var artifacts = new LandVerificationArtifacts();
+        var common = Path.Combine(f.Root, "common");
+        var active = artifacts.Prepare(common, "sdk", true, _ => { });
+        active.Complete();
+        var root = Path.GetDirectoryName(active.Path)!;
+        var owner = File.ReadAllText(Path.Combine(active.Path, "owner.json"));
+        var now = DateTime.UtcNow;
+        string Dead(int hoursAgo, string state = "quarantined", string? ownerText = null, string? at = null)
+        {
+            var path = at ?? Path.Combine(root, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(path);
+            File.WriteAllText(Path.Combine(path, "owner.json"), ownerText ?? owner);
+            File.WriteAllText(Path.Combine(path, "payload.dll"), "output");
+            File.WriteAllText(Path.Combine(path, "state"), state);
+            File.SetLastWriteTimeUtc(Path.Combine(path, "state"), now.AddHours(-hoursAgo));
+            return path;
+        }
+        var oldest = Dead(5, "building"); // set aside before CARD-1994: left building, unreferenced
+        var older = Dead(4);
+        var newer = Dead(2, "building");
+        var newest = Dead(1);
+        var foreign = Dead(6, ownerText: "foreign marker");
+        var unnamed = Dead(7, at: Path.Combine(root, "not-a-generation"));
+        var outside = Dead(8, at: Path.Combine(f.Root, "outside"));
+        var escape = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateSymbolicLink(escape, outside);
+        File.SetLastWriteTimeUtc(Path.Combine(active.Path, "state"), now.AddHours(-9));
+        var diagnostics = new List<string>();
+        try
+        {
+            artifacts.Prepare(common, "sdk", true, diagnostics.Add).Path.ShouldBe(active.Path);
+            Directory.Exists(active.Path).ShouldBeTrue("the active generation is never pruned, however old");
+            Directory.Exists(newest).ShouldBeTrue();
+            Directory.Exists(newer).ShouldBeTrue();
+            Directory.Exists(older).ShouldBeFalse("only the last two set-aside generations are kept");
+            Directory.Exists(oldest).ShouldBeFalse("only the last two set-aside generations are kept");
+            Directory.Exists(foreign).ShouldBeTrue("a foreign marker is retained");
+            Directory.Exists(unnamed).ShouldBeTrue("only generation-named entries are candidates");
+            Path.Exists(escape).ShouldBeTrue("a linked entry under the root is retained");
+            File.ReadAllText(Path.Combine(outside, "payload.dll")).ShouldBe("output", "nothing outside the root is deleted");
+            diagnostics.Count(line => line.StartsWith("land_artifacts pruned ")).ShouldBe(2);
+        }
+        finally { Directory.Delete(escape); } // The link only, never its target.
+    }
+
+    [Test]
+    public async Task C1994_TargetLanesKeepTheirOwnWarmGeneration()
+    {
+        await using var f = new LandingGitFixture();
+        var artifacts = new LandVerificationArtifacts();
+        var common = Path.Combine(f.Root, "common");
+        var master = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/master");
+        master.Complete();
+        var rc = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/rc/2026-11-18");
+        rc.Complete();
+        rc.Path.ShouldNotBe(master.Path, "an rc land must not rebuild master's warm outputs in place");
+        Path.GetDirectoryName(rc.Path).ShouldBe(Path.GetDirectoryName(master.Path));
+        var masterAgain = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/master");
+        masterAgain.Path.ShouldBe(master.Path);
+        masterAgain.Complete();
+        artifacts.Prepare(common, "sdk", true, _ => { }).Path.ShouldBe(master.Path, "no target keeps the v1 pointer");
+        var nextRc = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/rc/2026-11-19");
+        nextRc.Path.ShouldBe(rc.Path, "successive rc lines share one lane");
+        File.SetLastWriteTimeUtc(Path.Combine(rc.Path, "state"), DateTime.UtcNow.AddDays(-3));
+        for (var i = 0; i < 3; i++)
+        {
+            var dead = Path.Combine(Path.GetDirectoryName(master.Path)!, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dead);
+            File.Copy(Path.Combine(master.Path, "owner.json"), Path.Combine(dead, "owner.json"));
+            File.WriteAllText(Path.Combine(dead, "state"), "quarantined");
+        }
+        artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/master").Path.ShouldBe(master.Path);
+        Directory.Exists(rc.Path).ShouldBeTrue("another lane's current generation is never pruned");
+        var compiler = new Compiler();
+        var verifier = Verifier(compiler);
+        foreach (var target in new[] { "refs/heads/master", "refs/heads/rc/2026-11-20" })
+            (await verifier.VerifyAsync(f.Root, null, new(Guid.NewGuid(), Guid.NewGuid(), null,
+                CommonDirectory: Path.Combine(f.Root, "verifier-common"), TargetRef: target), CancellationToken.None)).Passed.ShouldBeTrue();
+        compiler.BuildPaths[1].ShouldNotBe(compiler.BuildPaths[0], "the verifier keys its generation by the land target");
+    }
+
     private static LandingVerifier Verifier(Compiler compiler, bool reuse = true) => new(
         artifacts: new LandVerificationArtifacts { SdkIdentity = "fixture-sdk" },
         settings: Options.Create(new LandingSettings { ReuseVerificationArtifacts = reuse }))
@@ -268,6 +415,8 @@ public sealed class LandWarmArtifactsTests
         public List<string> ResultPaths { get; } = [];
         public List<string> TestArtifactPaths { get; } = [];
         public bool BuildOk { get; set; } = true;
+        public int? BuildExitCode { get; set; }
+        public bool RecordExit { get; set; } = true;
         public bool WriteReport { get; set; } = true;
         public Action? OnBuild { get; set; }
         public Task<AgentTaskLandService.ProcessResult> RunAsync(string cwd, ILandingChildObserver? observer,
@@ -280,7 +429,8 @@ public sealed class LandWarmArtifactsTests
                 BuildPaths.Add(output);
                 OnBuild?.Invoke();
                 ct.ThrowIfCancellationRequested();
-                return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : "compiler failed"));
+                return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : "compiler failed")
+                    { ExitCode = RecordExit ? BuildExitCode ?? (BuildOk ? 0 : 1) : null });
             }
             var resultsIndex = Array.IndexOf(args, "--results-directory");
             var results = resultsIndex < 0 ? output : args[resultsIndex + 1];
