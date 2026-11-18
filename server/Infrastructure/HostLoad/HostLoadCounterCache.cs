@@ -31,6 +31,10 @@ public sealed class HostLoadCounterCache
         }
     }
 
-    /// <summary>Default-key fold. Production readers use an injected <see cref="HostLoadRunnerKeys"/>.</summary>
+    /// <summary>
+    /// Test-only default-key fold, used by <c>C1514HostLoadFixture</c>. It is correct only while
+    /// <see cref="HostLoadRunnerKeys.Default"/> is the configured key. Production readers take an
+    /// injected <see cref="HostLoadRunnerKeys"/>.
+    /// </summary>
     public static string Canonical(string id) => HostLoadRunnerKeys.Default.Canonical(id);
 }
