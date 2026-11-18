@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 327,
+      "classes": 328,
       "reason": "allowlist"
     },
     {
@@ -2099,18 +2099,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 38,
+      "classes": 39,
       "reason": "cap",
-      "owed": 13,
+      "owed": 14,
       "first": [
+        "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
         "ZombieCensusPlatformTests",
         "DirectoryBuildRspTests",
-        "DockerDeliveryObservationTests",
-        "E2ECopyOwnedPtyHostAppHostContractTests"
+        "DockerDeliveryObservationTests"
       ]
     },
     {
@@ -2792,6 +2792,7 @@
         "C1008HostFixtureSetupInsertionTests",
         "C1008PlatformContractTests",
         "C1364BoundLandWaitProofTests",
+        "C1893S0RunnerHoldTests",
         "CheckpointImportTests",
         "CodexRunnerImageContractTests",
         "CustodyNamespaceBootstrapTests",
@@ -23889,6 +23890,7 @@
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
       "classes": [
+        "C1893S0RunnerHoldTests",
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
         "CodexRootExecContractTests",
@@ -23905,7 +23907,6 @@
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
         "LandGraphAuditProjectInstanceTests",
-        "PackageVersionPinContractTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
