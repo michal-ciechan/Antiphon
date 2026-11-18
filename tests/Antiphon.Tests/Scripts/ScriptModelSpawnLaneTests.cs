@@ -52,8 +52,14 @@ public class ScriptModelSpawnLaneTests
         "RollingVolumeRecycleScriptTests.C1008_Host_proof_file_omits_credentials",
     ];
 
-    // S1 floor. S2 appends the three Rolling classes.
-    private static readonly string[] Families = ["HostJqPrerequisiteScriptTests"];
+    // S1 floor was HostJq. S2 appends the three Rolling classes.
+    private static readonly string[] Families =
+    [
+        "HostJqPrerequisiteScriptTests",
+        "RollingProductionMountTests",
+        "RollingVolumeRecycleCensusChurnTests",
+        "RollingVolumeRecycleScriptTests",
+    ];
 
     [Test]
     [Arguments(24, "", "", false, 6)]
