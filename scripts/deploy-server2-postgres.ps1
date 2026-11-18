@@ -171,13 +171,15 @@ function Get-Server2PostgresComposeRefusal {
     if ($Text -match '(?i)alpine') { return 'image-alpine' }
     if ($Text -match '0\.0\.0\.0') { return 'bind-any' }
     if ($Text -match '5433') { return 'port-5433' }
+    # CARD-1406: Postgres carries no cpu pin; the runner keeps core 0 (CPUs 0,12) free.
+    if ($Text -match '(?m)^\s*cpuset\s*:') { return 'compose-invalid' }
+    if (-not (Test-Server2PostgresExactLine $Text '    cpu_shares: 2048')) { return 'compose-invalid' }
     foreach ($need in @(
             'name: antiphon-server2-postgres',
             'ANTIPHON_POSTGRES_BIND_ADDRESS:?',
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             ':5432:5432',
-            'cpuset: "0-2,12-14"',
             'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',
@@ -203,6 +205,9 @@ function Get-Server2PostgresDrillComposeRefusal {
     if ($norm.Contains('antiphon_pgdata')) { return 'volume-forbidden' }
     if ($norm.Contains('name: antiphon-server2-postgres_pgdata')) { return 'volume-forbidden' }
     if ($norm -match '5433') { return 'port-5433' }
+    # CARD-1406: Postgres carries no cpu pin; the runner keeps core 0 (CPUs 0,12) free.
+    if ($norm -match '(?m)^\s*cpuset\s*:') { return 'compose-invalid' }
+    if (-not (Test-Server2PostgresExactLine $norm '    cpu_shares: 2048')) { return 'compose-invalid' }
     if ($norm -match '(?i)alpine') { return 'image-alpine' }
     if ($norm -match '0\.0\.0\.0') { return 'bind-any' }
     if ($norm.Contains(':5432:5432')) { return 'port-production' }
@@ -214,7 +219,6 @@ function Get-Server2PostgresDrillComposeRefusal {
             'ANTIPHON_POSTGRES_IMAGE:?',
             'POSTGRES_PASSWORD:?',
             '127.0.0.1:5434:5432',
-            'cpuset: "0-2,12-14"',
             'cpus: 6.0',
             'mem_limit: 8g',
             'shm_size: 1gb',

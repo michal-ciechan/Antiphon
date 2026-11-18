@@ -241,7 +241,7 @@ assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), fa
 delete current.services['session-runner'].environment[key];
 // CARD-1406 pins every runner service off the host Postgres cpuset; retain the historical comparison.
 for (const service of Object.keys(current.services)) {
-  assert.equal(current.services[service].cpuset, '3-11,15-23', service + ' carries the CARD-1406 runner cpuset');
+  assert.equal(current.services[service].cpuset, '1-11,13-23', service + ' carries the CARD-1406 runner cpuset');
   delete current.services[service].cpuset;
 }
 assert.deepEqual(current, base, 'default render changed outside the new zero flag');

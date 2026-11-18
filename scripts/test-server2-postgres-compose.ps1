@@ -845,7 +845,7 @@ function Invoke-Case {
             Assert-True $oneCore 'reserved set is one physical core (a CPU and its SMT sibling)' $script:ReservedCpuset
             Assert-True ($reserved.Contains(0) -and $reserved.Contains(12)) 'reserved core is CPU 0 and its sibling 12' $script:ReservedCpuset
             Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '0-23') $reserved)) 'an unpinned 0-23 set intersects the reserved core' 'disjoint'
-            Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '3-11,15-23') (ConvertFrom-Cpuset '0-2,12-14'))) 'probe: overlap detection is live' 'disjoint'
+            Assert-True (-not (Test-CpusetDisjoint (ConvertFrom-Cpuset '0-2,12-14') $runnerSet)) 'the old three-core pin 0-2,12-14 overlaps the runner set' 'disjoint'
             Assert-True ($null -eq (ConvertFrom-Cpuset '3-24')) 'a cpuset past the host CPU count does not parse' 'parsed'
 
             $postgresFiles = @(
