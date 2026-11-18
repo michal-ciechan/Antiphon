@@ -35,16 +35,24 @@ function Invoke-NCBothWays([scriptblock]$Body, [string]$Golden = '') {
 # produced when it was removed (scripts/fixtures/nightly/core-golden/<name>.json), serialised as
 # Invoke-NCBothWays serialises. Each listed witness must appear in the golden text.
 function Assert-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @()) {
+    $g = Test-NCGolden $Name $Body $Witnesses
+    Assert-NC $g.Ok $Name ('actual ' + $g.Actual + ' expected ' + $g.Expected)
+}
+
+# Assert-NCGolden's comparison without the assertion, for a check that also compares other parts.
+function Test-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @(), [string]$Normalize = '') {
     $core = Test-NightlyCoreAvailable
     $actual = ''
     try { $actual = (& $Body) | ConvertTo-Json -Depth 14 -Compress } catch { $actual = 'throw: ' + $_.Exception.Message }
+    # A run-specific directory (results root) is written as <root>, so the golden does not depend on it.
+    if ($Normalize) { $actual = $actual.Replace($Normalize.Replace('\', '\\'), '<root>').Replace($Normalize, '<root>') }
     $goldenPath = Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Name + '.json')
     # A new golden is written only on request (NC_GOLDEN_WRITE=<name>) and then still has to be reviewed.
     if ($env:NC_GOLDEN_WRITE -ceq $Name) { [IO.File]::WriteAllText($goldenPath, $actual, [Text.UTF8Encoding]::new($false)) }
     $expected = [IO.File]::ReadAllText($goldenPath, [Text.Encoding]::UTF8)
     $ok = $core -and $actual -ceq $expected
     foreach ($witness in $Witnesses) { if (-not $expected.Contains($witness)) { $ok = $false } }
-    Assert-NC $ok $Name ('actual ' + $actual + ' expected ' + $expected)
+    return [pscustomobject]@{ Ok = [bool]$ok; Actual = $actual; Expected = $expected }
 }
 
 function Get-NCFixtureNodes([int]$Take) {
@@ -136,6 +144,51 @@ function New-D13StateRecord {
     return ('TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = ' + $Uid + ' }, DisplayName = ' + $Method + ', Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = ' + $TypeName + ', MethodName = ' + $Method + ', MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, ' + $state + ' ] } }')
 }
 
+function Test-NCSummaryWrite {
+    $bad = [Collections.Generic.List[string]]::new()
+    $nested = [ordered]@{ a = @(1, [long]2, $null, @()); b = [Collections.Generic.List[object]]::new() }
+    $nested.b.Add('x'); $nested.b.Add([ordered]@{ deep = @{ k = 'v' } })
+    $doc = [ordered]@{
+        version = 1; complete = $false; quality = @('a', 'b'); none = @(); one = @('only')
+        text = "q `" b \ n `n r `r t `t c $([char]1) u $([char]0x00e9) $([char]0x2028)"
+        dbl = 0.1 + 0.2; whole = 1.0; big = 1e20; tiny = 5e-324; neg = -2.5; nan = [double]::NaN
+        inf = [double]::PositiveInfinity; ninf = [double]::NegativeInfinity; flt = [single]1.5; fltWhole = [single]3
+        dec = [decimal]'1.10'; decWhole = [decimal]5; i8 = [byte]200; u32 = [uint32]7; u64 = [uint64]::MaxValue
+        i64 = [long]::MinValue; ch = [char]'x'; dbnull = [DBNull]::Value
+        pso = [pscustomobject]@{ z = 1; y = @(1, @(2)); x = $null; w = [pscustomobject]@{ v = 'in' } }
+        nested = $nested; tests = @([ordered]@{ testId = 'b'; db = [long]1 }, [ordered]@{ testId = 'a'; joined = $true })
+    }
+    $json = [Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($doc)
+    $expectedJson = ConvertTo-Json -InputObject $doc -Depth 50 -Compress
+    if ($json -cne $expectedJson) { $bad.Add('json ' + $json + ' expected ' + $expectedJson) }
+    foreach ($unsupported in @([ordered]@{ when = [datetime]'2026-01-02' }, @{ 1 = 'int key' })) {
+        $threw = $false
+        try { [void][Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($unsupported) } catch [ArgumentException] { $threw = $true } catch { $threw = $_.Exception.InnerException -is [ArgumentException] }
+        if (-not $threw) { $bad.Add('unsupported accepted') }
+    }
+    # Ties, culture order, a missing testId, custom objects and nulls; totals that leave Int64 (a sum, the
+    # negation of Int64.MinValue) and continue in Double, [long] of strings, doubles and nulls.
+    $max = [long]::MaxValue
+    $rows = @(
+        [ordered]@{ testId = 'b'; db = $max; host = 1; process = 0; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 },
+        [ordered]@{ testId = 'B'; db = [long]::MinValue; host = 0; process = 0; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 },
+        [ordered]@{ testId = 'a'; db = 5; host = '7'; process = 2.5; fs = $null; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 },
+        [pscustomobject]@{ testId = $([char]0x00e4); db = 12; host = 0; process = 0; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 },
+        [pscustomobject]@{ other = 1 },
+        [ordered]@{ testId = 'a'; db = $max; host = $max; process = $max; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 1 },
+        [ordered]@{ testId = 'c'; db = 12; host = 0; process = 0; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 },
+        [ordered]@{ testId = 'C'; db = -$max; host = -$max; process = 0; fs = 0; network = 0; fixture = 0; overlapMs = 0; remainderMs = 0 })
+    $tag = { param($items) (@($items | ForEach-Object { [string]$_.testId + '/' + [string]$_.db }) -join ',') }
+    $sorted = [Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId($rows)
+    $sortedPs = @($rows | Sort-Object { [string]$_.testId })
+    if ((& $tag $sorted) -cne (& $tag $sortedPs)) { $bad.Add('sort ' + (& $tag $sorted) + ' expected ' + (& $tag $sortedPs)) }
+    $ranked = [Antiphon.Nightly.TestPhaseSummaryWrite]::RankByTotal($sortedPs)
+    $rankedPs = @($sortedPs | Sort-Object { -1 * ([long]$_.db + [long]$_.host + [long]$_.process + [long]$_.fs + [long]$_.network + [long]$_.fixture + [long]$_.overlapMs + [long]$_.remainderMs) })
+    if ((& $tag $ranked) -cne (& $tag $rankedPs)) { $bad.Add('rank ' + (& $tag $ranked) + ' expected ' + (& $tag $rankedPs)) }
+    if (@([Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId(@())).Count -ne 0 -or @([Antiphon.Nightly.TestPhaseSummaryWrite]::RankByTotal(@())).Count -ne 0) { $bad.Add('empty') }
+    return [pscustomobject]@{ Ok = ($bad.Count -eq 0); Detail = ($(if ($bad.Count) { $bad -join '; ' } else { 'ok' })) }
+}
+
 function Test-NCDiagnosticsMatchFallback {
     . (Join-Path $PSScriptRoot 'fixtures/nightly/c1325-diagnostic-records.ps1')
     . (Join-Path $PSScriptRoot 'fixtures/nightly/c1375-diagnostic-records.ps1')
@@ -183,15 +236,18 @@ function Test-NCDiagnosticsMatchFallback {
                 asDiscovered = Get-NCOutcome { ConvertFrom-NightlyDiagnosticRecord -Record $record -State 'Discovered' -StateProperty $property }
             }
         }
-        $perLog = foreach ($path in $paths) {
+        [ordered]@{ records = @($perRecord) }
+    }
+    # ConvertFrom-NightlyDiagnosticLog has no PowerShell record loop left: whole logs against the golden it produced.
+    $logs = Test-NCGolden 'diagnosticLogs' {
+        @(foreach ($path in $paths) {
             [ordered]@{
                 execution = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution }
                 discovery = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
             }
-        }
-        [ordered]@{ records = @($perRecord); logs = @($perLog) }
-    }
-    Assert-NC ($r.Compiled -ceq $r.Fallback) 'diagnostics' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+        })
+    } @('discovery-count-mismatch', 'empty diagnostic') $root
+    Assert-NC ($r.Compiled -ceq $r.Fallback -and $logs.Ok) 'diagnostics' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length + '; logs golden ' + $logs.Ok + ' actual ' + $logs.Actual.Length + ' chars')
 
     $hashed = Join-Path $root 'nc-hash.bin'; [IO.File]::WriteAllBytes($hashed, [byte[]](0..255))
     $values = @($null, '', 'plain', '=SUM(A1)', '+1', '-2', '@x', 'say "hi"', $true, $false, [long]42, 3.5, [datetime]'2026-01-02T03:04:05')
@@ -217,7 +273,10 @@ function Test-NCDiagnosticsMatchFallback {
         $loop = $false; foreach ($test in $tests) { if ([bool]$test.incomplete) { $loop = $true } }
         $fastOk = $fastOk -and ([Antiphon.Nightly.TestPhaseSummaryFast]::AnyIncomplete($tests) -eq $loop)
     }
-    Assert-NC ($fastOk -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('fast ' + $fastOk + ' compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # TestPhaseSummaryWrite (no PowerShell copy): summary.json against ConvertTo-Json, the two sorts against
+    # Sort-Object, including the inputs a summary never carries (doubles, custom objects, Int64 overflow).
+    $write = Test-NCSummaryWrite
+    Assert-NC ($fastOk -and $write.Ok -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains($rowCore.Replace('"', '\"'))) 'summaryHelpers' ('fast ' + $fastOk + ' write ' + $write.Detail + ' compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 
     # Executed-chunk outcome rows (TestPhaseSummary.OutcomeRows/PassedCount): TRX-shaped rows through the
     # manifest writer's loop and envelope-shaped rows (JSON objects, dictionaries, nulls) through the item path.

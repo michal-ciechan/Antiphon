@@ -2,9 +2,10 @@
 // and the trx/chunk/suite fields Get-TestPhaseSummary reads from each reduced chunk document.
 //
 // Every record is still re-read from disk and its digest re-checked (a publication can be corrupted after it was
-// written). Each envelope is read with a strict reader that only answers when ConvertFrom-Json would give the same
-// values for the fields read here (plain strings, a whole-number sequence); for anything else it hands the text
-// back and the PowerShell caller runs ConvertFrom-Json on it as before, so its errors and readings are unchanged.
+// written). Each envelope is read with a strict reader that answers only when ConvertFrom-Json would give the same
+// values for the fields read here (plain strings, a whole-number sequence). Only our own writer produces these
+// files, so anything else is a break (malformed-record), and a chunk document it cannot read is skipped as an
+// unparseable one was.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -19,14 +20,13 @@ namespace Antiphon.Nightly
 {
     public static class TestPhaseJournalRead
     {
-        /// <summary>Where ReadPrefix stopped: the next sequence to read, a break reason, or a record whose text
-        /// the caller must read with ConvertFrom-Json (it then continues at Expected + 1).</summary>
+        /// <summary>Where ReadPrefix stopped: the sequence of the first missing record, or of the record that
+        /// broke the prefix (Corrupt) with its reason.</summary>
         public sealed class PrefixStep
         {
             public int Expected;
             public bool Corrupt;
             public string Reason = "";
-            public string PendingText;
         }
 
         private static readonly string[] EnvelopeFields =
@@ -42,8 +42,8 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Read-TestPhaseGenerationPrefix's loop from record number expected: adds each record object
-        /// (ConvertTo-TestPhaseRecordObject's shape) to loaded until the prefix ends, breaks (unreadable-record,
-        /// bad-digest, sequence-mismatch) or reaches a record the caller must parse itself.
+        /// (Kind, Sequence, FreshJson, SettledJson, the decoded keys, PublicationId) to loaded until the prefix ends
+        /// or breaks (unreadable-record, bad-digest, malformed-record, sequence-mismatch).
         /// </summary>
         public static PrefixStep ReadPrefix(string generationDir, int expected, bool deferred, List<object> loaded)
         {
@@ -69,7 +69,8 @@ namespace Antiphon.Nightly
                 int sequence = 0;
                 if (fields == null || !TryRecord(fields, out record, out sequence))
                 {
-                    step.PendingText = text;
+                    step.Corrupt = true;
+                    step.Reason = "malformed-record";
                     return step;
                 }
                 if (sequence != expected) { step.Corrupt = true; step.Reason = "sequence-mismatch"; return step; }
@@ -100,8 +101,8 @@ namespace Antiphon.Nightly
             return LanguagePrimitives.Equals(actual, hex, true, CultureInfo.InvariantCulture);
         }
 
-        // ConvertTo-TestPhaseRecordObject over the captured envelope fields; false where only ConvertFrom-Json and
-        // the PowerShell conversion give the exact answer (or its error).
+        // The record object over the captured envelope fields; false for an envelope our writer does not produce
+        // (a missing or non-whole sequence, a non-string field, invalid base64).
         private static bool TryRecord(Dictionary<string, object> fields, out PSObject record, out int sequence)
         {
             record = null;
@@ -141,7 +142,7 @@ namespace Antiphon.Nightly
             return false;
         }
 
-        // ConvertFrom-TestPhaseB64 ([string]$o.name); false when the base64 is invalid (the caller raises the error).
+        // ConvertFrom-TestPhaseB64 ([string]$o.name); false when the base64 is invalid.
         private static bool Key(Dictionary<string, object> fields, string name, out string value)
         {
             if (!Text(fields, name, out var text)) { value = null; return false; }
@@ -154,8 +155,8 @@ namespace Antiphon.Nightly
         /// <summary>
         /// The trx, chunk and suite of a reduced chunk document as Get-TestPhaseSummary reads them
         /// ([string]$chunkObj.trx when the property exists, [string]$chunkObj.chunk, [string]$chunkObj.suite), or
-        /// null when the caller must run ConvertFrom-Json on it (not one strict JSON object, or a value that is not a
-        /// plain string).
+        /// null for a document our writer does not produce (not one strict JSON object, or a value that is not a
+        /// plain string); the caller skips that row.
         /// </summary>
         public static string[] ChunkFields(string json)
         {
@@ -236,8 +237,9 @@ namespace Antiphon.Nightly
                                 if (s.StartsWith("/Date(", StringComparison.Ordinal)) return null;
                                 if (capture != null)
                                 {
-                                    // Possibly an ISO date-time, which ConvertFrom-Json turns into a DateTime.
-                                    if (s.Length >= 19 && s.Length <= 40 && s[0] >= '0' && s[0] <= '9' && s[10] == 'T') return null;
+                                    // Possibly an ISO date-time, which ConvertFrom-Json turns into a DateTime
+                                    // (yyyy-MM-ddT...; base64 keys never carry '-').
+                                    if (s.Length >= 19 && s.Length <= 40 && s[0] >= '0' && s[0] <= '9' && s[4] == '-' && s[7] == '-' && s[10] == 'T') return null;
                                     result[capture] = s;
                                 }
                                 break;

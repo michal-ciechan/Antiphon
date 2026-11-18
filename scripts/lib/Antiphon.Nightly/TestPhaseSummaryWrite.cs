@@ -1,7 +1,7 @@
 // Compiled parts of Write-TestPhaseSummaryFiles (test-phase-evidence.ps1): its two Sort-Object calls and the
 // ConvertTo-Json -Depth 50 -Compress of timing/summary.json. Each method returns exactly what the PowerShell
-// expression returned, or null when an input is outside what it reproduces; the caller then runs the original
-// PowerShell expression.
+// expression returned and throws ArgumentException for an input it does not reproduce (none that a summary
+// report carries: strings, numbers, booleans, nulls, dictionaries, arrays and custom objects).
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -18,7 +18,10 @@ namespace Antiphon.Nightly
         {
             public object Item;
             public object Key;
-            public long Total;
+            // RankByTotal's key: TotalLong unless the PowerShell arithmetic left Int64 (TotalIsDouble).
+            public long TotalLong;
+            public double TotalDouble;
+            public bool TotalIsDouble;
         }
 
         // Sort-Object (PowerShell 7) without -Stable/-Top/-Bottom sorts its List<OrderByPropertyEntry> in place
@@ -30,23 +33,33 @@ namespace Antiphon.Nightly
             public int Compare(Entry x, Entry y) => LanguagePrimitives.Compare(x.Key, y.Key, true, _culture);
         }
 
+        // LanguagePrimitives.Compare on two numbers: Int64 with Int64 as Int64, otherwise both as Double (the
+        // larger type of the pair).
         private sealed class TotalComparer : IComparer<Entry>
         {
-            public int Compare(Entry x, Entry y) => x.Total.CompareTo(y.Total);
+            public int Compare(Entry x, Entry y)
+            {
+                if (!x.TotalIsDouble && !y.TotalIsDouble) return x.TotalLong.CompareTo(y.TotalLong);
+                var a = x.TotalIsDouble ? x.TotalDouble : (double)x.TotalLong;
+                var b = y.TotalIsDouble ? y.TotalDouble : (double)y.TotalLong;
+                return a.CompareTo(b);
+            }
         }
 
+        // The pipeline input of $tests | Sort-Object: each element of an enumerable (not a string or a
+        // dictionary), else the value itself; nothing for null.
         private static List<Entry> Entries(object tests)
         {
-            if (tests == null) return null;
+            var entries = new List<Entry>();
+            if (tests == null) return entries;
             var baseObject = tests is PSObject ps ? ps.BaseObject : tests;
-            if (!(baseObject is object[] array)) return null;
-            var entries = new List<Entry>(array.Length);
-            foreach (var item in array)
+            if (baseObject is IEnumerable enumerable && !(baseObject is string) && !(baseObject is IDictionary))
             {
-                if (item == null) return null;
-                var inner = item is PSObject wrapped ? wrapped.BaseObject : item;
-                if (!(inner is IDictionary) || inner is PSCustomObject) return null;
-                entries.Add(new Entry { Item = item });
+                foreach (var item in enumerable) entries.Add(new Entry { Item = item });
+            }
+            else
+            {
+                entries.Add(new Entry { Item = tests });
             }
             return entries;
         }
@@ -58,12 +71,11 @@ namespace Antiphon.Nightly
             return result;
         }
 
-        /// <summary><c>@($tests | Sort-Object { [string]$_.testId })</c>; null when not reproduced.</summary>
+        /// <summary><c>@($tests | Sort-Object { [string]$_.testId })</c>.</summary>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static object[] SortByTestId(object tests)
         {
             var entries = Entries(tests);
-            if (entries == null) return null;
             foreach (var entry in entries) entry.Key = PsValue.Str(PsValue.Prop(entry.Item, "testId"));
             entries.Sort(new StringKeyComparer());
             return Items(entries);
@@ -72,113 +84,198 @@ namespace Antiphon.Nightly
         private static readonly string[] TotalFields = { "db", "host", "process", "fs", "network", "fixture", "overlapMs", "remainderMs" };
 
         /// <summary>
-        /// <c>@($tests | Sort-Object { -1 * ([long]$_.db + ... + [long]$_.remainderMs) })</c>; null when not
-        /// reproduced (a [long] cast that throws, or a sum or negation that leaves Int64, where PowerShell's
-        /// arithmetic turns to double).
+        /// <c>@($tests | Sort-Object { -1 * ([long]$_.db + ... + [long]$_.remainderMs) })</c>. A sum or negation
+        /// that leaves Int64 continues in Double, as PowerShell's arithmetic does; a value [long] cannot convert
+        /// throws ArgumentException.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static object[] RankByTotal(object tests)
         {
             var entries = Entries(tests);
-            if (entries == null) return null;
-            try
+            foreach (var entry in entries)
             {
-                foreach (var entry in entries)
+                long sum = 0;
+                double sumDouble = 0;
+                var isDouble = false;
+                var first = true;
+                foreach (var field in TotalFields)
                 {
-                    long sum = 0;
-                    foreach (var field in TotalFields)
-                    {
-                        var value = PsValue.Prop(entry.Item, field);
-                        if (value is PSObject ps) value = ps.BaseObject;
-                        long part;
-                        if (value is long l) part = l;
-                        else if (value is int i) part = i;
-                        else part = (long)LanguagePrimitives.ConvertTo(value, typeof(long), CultureInfo.InvariantCulture);
-                        sum = checked(sum + part);
-                    }
-                    entry.Total = checked(-1 * sum);
+                    var part = ToLong(PsValue.Prop(entry.Item, field), field);
+                    if (first) { sum = part; first = false; continue; }
+                    if (isDouble) { sumDouble += part; continue; }
+                    try { sum = checked(sum + part); }
+                    catch (OverflowException) { sumDouble = (double)sum + (double)part; isDouble = true; }
                 }
-            }
-            catch (Exception)
-            {
-                return null;
+                if (isDouble)
+                {
+                    entry.TotalIsDouble = true;
+                    entry.TotalDouble = -1.0 * sumDouble;
+                }
+                else if (sum == long.MinValue)
+                {
+                    entry.TotalIsDouble = true;
+                    entry.TotalDouble = -1.0 * (double)sum;
+                }
+                else
+                {
+                    entry.TotalLong = -sum;
+                }
             }
             entries.Sort(new TotalComparer());
             return Items(entries);
         }
 
+        // [long]$value
+        private static long ToLong(object value, string field)
+        {
+            if (value is PSObject ps) value = ps.BaseObject;
+            if (value is long l) return l;
+            if (value is int i) return i;
+            try { return (long)LanguagePrimitives.ConvertTo(value, typeof(long), CultureInfo.InvariantCulture); }
+            catch (Exception ex) when (ex is PSInvalidCastException || ex is InvalidCastException || ex is OverflowException || ex is FormatException)
+            {
+                throw new ArgumentException("phase summary: [long] cannot convert " + field + " (" + (value?.GetType().FullName ?? "null") + ")", ex);
+            }
+        }
+
         /// <summary>
         /// <c>ConvertTo-Json -InputObject $summary -Depth 50 -Compress</c> for a document of dictionaries with
-        /// string keys, arrays, strings, Int32/Int64, booleans and nulls; null for anything else (the caller
-        /// then serializes with ConvertTo-Json). Strings are escaped as Newtonsoft's StringEscapeHandling.Default.
+        /// string keys, custom objects, arrays, strings, numbers, booleans and nulls. Strings are escaped as
+        /// Newtonsoft's StringEscapeHandling.Default; numbers are written as Newtonsoft writes them. Anything else
+        /// throws ArgumentException.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static string SummaryJson(object summary)
         {
             var sb = new StringBuilder(1 << 16);
-            return Write(sb, summary, 0) ? sb.ToString() : null;
+            Write(sb, summary, 0);
+            return sb.ToString();
         }
 
+        private static ArgumentException Unsupported(string what) =>
+            new ArgumentException("phase summary JSON: " + what + " is not supported");
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        private static bool Write(StringBuilder sb, object value, int depth)
+        private static void Write(StringBuilder sb, object value, int depth)
         {
-            if (depth > 40) return false;
+            // ConvertTo-Json -Depth 50 turns a deeper object into its string; no summary comes near it.
+            if (depth > 40) throw Unsupported("nesting deeper than 40");
             if (value is PSObject ps)
             {
-                if (ps.BaseObject == null || ps.BaseObject is PSCustomObject) return false;
+                if (ps.BaseObject is PSCustomObject)
+                {
+                    WriteCustomObject(sb, ps, depth);
+                    return;
+                }
                 // ConvertTo-Json adds a wrapped value's extended (note, script, alias...) properties.
                 foreach (var property in ps.Properties)
-                    if (property.MemberType != PSMemberTypes.Property) return false;
+                    if (property.MemberType != PSMemberTypes.Property) throw Unsupported("a value with extended properties");
                 value = ps.BaseObject;
             }
             switch (value)
             {
                 case null:
+                case DBNull _:
                     sb.Append("null");
-                    return true;
+                    return;
                 case string s:
                     WriteString(sb, s);
-                    return true;
+                    return;
+                case char c:
+                    WriteString(sb, c.ToString());
+                    return;
                 case bool b:
                     sb.Append(b ? "true" : "false");
-                    return true;
+                    return;
                 case int i:
                     sb.Append(i.ToString(CultureInfo.InvariantCulture));
-                    return true;
+                    return;
                 case long l:
                     sb.Append(l.ToString(CultureInfo.InvariantCulture));
-                    return true;
+                    return;
+                case byte _:
+                case sbyte _:
+                case short _:
+                case ushort _:
+                case uint _:
+                case ulong _:
+                    sb.Append(((IFormattable)value).ToString(null, CultureInfo.InvariantCulture));
+                    return;
+                case double d:
+                    WriteFloat(sb, d, d.ToString("R", CultureInfo.InvariantCulture));
+                    return;
+                case float f:
+                    WriteFloat(sb, f, f.ToString("R", CultureInfo.InvariantCulture));
+                    return;
+                case decimal m:
+                    sb.Append(EnsureDecimalPlace(m.ToString(CultureInfo.InvariantCulture)));
+                    return;
                 case IDictionary dictionary:
                 {
                     sb.Append('{');
                     var first = true;
                     foreach (DictionaryEntry pair in dictionary)
                     {
-                        if (!(pair.Key is string key)) return false;
+                        if (!(pair.Key is string key)) throw Unsupported("a non-string dictionary key");
                         if (!first) sb.Append(',');
                         first = false;
                         WriteString(sb, key);
                         sb.Append(':');
-                        if (!Write(sb, pair.Value, depth + 1)) return false;
+                        Write(sb, pair.Value, depth + 1);
                     }
                     sb.Append('}');
-                    return true;
+                    return;
                 }
-                case IList list when value is object[] || value is ArrayList || value.GetType().IsGenericType:
+                case IEnumerable list:
                 {
                     sb.Append('[');
-                    for (var n = 0; n < list.Count; n++)
+                    var n = 0;
+                    foreach (var item in list)
                     {
-                        if (n > 0) sb.Append(',');
-                        if (!Write(sb, list[n], depth + 1)) return false;
+                        if (n++ > 0) sb.Append(',');
+                        Write(sb, item, depth + 1);
                     }
                     sb.Append(']');
-                    return true;
+                    return;
                 }
                 default:
-                    return false;
+                    throw Unsupported("a " + value.GetType().FullName);
             }
         }
+
+        // A [pscustomobject]: its properties in order, each value as ConvertTo-Json reads it (a property whose
+        // getter throws is null).
+        private static void WriteCustomObject(StringBuilder sb, PSObject ps, int depth)
+        {
+            sb.Append('{');
+            var first = true;
+            foreach (var property in ps.Properties)
+            {
+                object propertyValue = null;
+                try { propertyValue = property.Value; } catch (Exception) { }
+                if (!first) sb.Append(',');
+                first = false;
+                WriteString(sb, property.Name);
+                sb.Append(':');
+                Write(sb, propertyValue, depth + 1);
+            }
+            sb.Append('}');
+        }
+
+        // Newtonsoft JsonConvert.ToString(double/float): "R", ".0" after a whole number, and NaN/Infinity as
+        // strings (FloatFormatHandling.String).
+        private static void WriteFloat(StringBuilder sb, double value, string text)
+        {
+            if (double.IsNaN(value) || double.IsInfinity(value))
+            {
+                sb.Append('"').Append(text).Append('"');
+                return;
+            }
+            sb.Append(EnsureDecimalPlace(text));
+        }
+
+        private static string EnsureDecimalPlace(string text) =>
+            text.IndexOf('.') >= 0 || text.IndexOf('E') >= 0 || text.IndexOf('e') >= 0 ? text : text + ".0";
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         private static void WriteString(StringBuilder sb, string s)

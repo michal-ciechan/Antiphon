@@ -179,17 +179,15 @@ function Read-NightlyDiscoveryDocument {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing discovery {0}' -f $Path) }
     # The core parses the file's UTF-8 bytes into what ConvertFrom-Json gives (NightlyJson.ReadFile, nightly-core.ps1
-    # Read-NightlyJsonFile); it returns null for anything it cannot vouch for (empty or whitespace text included), and
-    # that goes to the ConvertFrom-Json path below for its own result or error. Called directly: nightly-common.ps1
-    # defines a different Read-NightlyJsonFile.
-    $obj = $null
-    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
-        $obj = [Antiphon.Nightly.NightlyJson]::ReadFile($Path, $false)
-    }
+    # Read-NightlyJsonFile). Called directly: nightly-common.ps1 defines a different Read-NightlyJsonFile. It returns
+    # null for anything it cannot vouch for: empty or whitespace text (re-read only then, for its own message), or a
+    # document our writer does not produce.
+    Assert-NightlyCoreAvailable 'Read-NightlyDiscoveryDocument'
+    $full = [IO.Path]::GetFullPath($Path)
+    $obj = [Antiphon.Nightly.NightlyJson]::ReadFile($full, $false)
     if ($null -eq $obj) {
-        $raw = [System.IO.File]::ReadAllText($Path)
-        if ([string]::IsNullOrWhiteSpace($raw)) { throw ('empty discovery {0}' -f $Path) }
-        $obj = $raw | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace([System.IO.File]::ReadAllText($full))) { throw ('empty discovery {0}' -f $Path) }
+        throw ('discovery-unreadable: {0}' -f $Path)
     }
     return (ConvertFrom-NightlyDiscoveryDocument -Object $obj -ExpectedFormat $script:NightlyDiscoveryFormat)
 }
@@ -528,63 +526,24 @@ function ConvertFrom-NightlyDiagnosticLog {
         }
         return $obj
     }
+    Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiagnosticLog'
     Test-NightlyPinnedDiagnosticVersions -Text $text
-    # Count raw markers independently of framing/acceptance ($discoveredCount, set in both
-    # branches below). Even an orphan or an ambiguous marker in display text must prevent
-    # a partial inventory.
-    $recognized = $false
+    # Compiled record loop (NightlyCore.cs, DiagScan.cs): the refusals in record order. It also counts the raw
+    # markers independently of framing/acceptance (even an orphan or an ambiguous marker in display text must
+    # prevent a partial inventory), so the text crosses into .NET once (AMSI scan above). Failure messages are
+    # attached here per record; they never refuse, so the order is unchanged.
     $nodes = [Collections.Generic.List[object]]::new()
-    $seen = @{}
-    if (Test-NightlyCoreAvailable) {
-        # Compiled record loop (NightlyCore.cs): same refusals in the same record order. Failure messages are
-        # attached here, as the loop below does per record; they never refuse, so the order is unchanged.
-        # DiagScan.cs also returns the raw marker count, so the text crosses into .NET once (AMSI scan above).
-        $parsed = [Antiphon.Nightly.DiagScan]::ParseRecords($text, $Kind, $Path)
-        $discoveredCount = [int]$parsed.DiscoveredCount
-        if ($parsed.Error) { throw $parsed.Error }
-        foreach ($failed in $parsed.Failed) {
-            $message = Get-NightlyDiagnosticFailureMessage -Record $failed.Record -StateProperty $failed.StateProperty
-            if ($null -ne $message) {
-                $failed.Node | Add-Member -NotePropertyName Message -NotePropertyValue $message
-            }
+    $parsed = [Antiphon.Nightly.DiagScan]::ParseRecords($text, $Kind, $Path)
+    $discoveredCount = [int]$parsed.DiscoveredCount
+    if ($parsed.Error) { throw $parsed.Error }
+    foreach ($failed in $parsed.Failed) {
+        $message = Get-NightlyDiagnosticFailureMessage -Record $failed.Record -StateProperty $failed.StateProperty
+        if ($null -ne $message) {
+            $failed.Node | Add-Member -NotePropertyName Message -NotePropertyValue $message
         }
-        $recognized = [bool]$parsed.Recognized
-        $nodes.AddRange([object[]]$parsed.Nodes)
-    } else {
-    $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count
-    foreach ($record in (Get-NightlyDiagnosticRecords -Text $text)) {
-        $stateProperty = Get-NightlyDiagnosticStateProperty -Record $record
-        $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $stateProperty
-        if ([string]::IsNullOrWhiteSpace($state)) {
-            if ($Kind -eq 'discovery') {
-                # Preserve the specific malformed-identity refusal when a
-                # truncated discovery record still carries a discovery header.
-                # This presence check can only refine a refusal: it never
-                # selects state, admits a node, or borrows the next record.
-                if ($record -cmatch '(?<![A-Za-z])DiscoveredTestNodeStateProperty \{') {
-                    $null = ConvertFrom-NightlyDiagnosticRecord -Record $record -State '' -StateProperty $stateProperty
-                }
-                throw ('malformed discovery record: missing state {0}' -f $Path)
-            }
-            # A framed TestNode with no known state is a failure. A log with no
-            # TestNode still throws unknown diagnostic format below.
-            if ($record -match 'TestNode \{ Uid = TestNodeUid') { $state = 'Failed' }
-            else { continue }
-        }
-        $recognized = $true
-        if ($Kind -eq 'discovery') {
-            if ($state -ne 'Discovered') { continue }
-        } elseif ($Kind -eq 'execution') {
-            if ($state -eq 'InProgress' -or $state -eq 'Discovered') { continue }
-        }
-        $node = ConvertFrom-NightlyDiagnosticRecord -Record $record -State $state -StateProperty $stateProperty
-        if ($seen.ContainsKey($node.Uid)) {
-            throw ('duplicate {0} uid {1}' -f $Kind, $node.Uid)
-        }
-        $seen[$node.Uid] = $true
-        $nodes.Add($node)
     }
-    }
+    $recognized = [bool]$parsed.Recognized
+    $nodes.AddRange([object[]]$parsed.Nodes)
     if (-not $recognized) {
         throw ('unknown diagnostic format {0}' -f $Path)
     }
@@ -1810,47 +1769,42 @@ function Get-NightlyReachableSkipTexts {
 # The three end-of-run expected-skip scans (source gaps, reason gaps, roster drift) read only tests/ and the
 # roster, never a chunk result. A nightly run starts them in the core (SkipScanTask.cs) as soon as the roster is
 # loaded and passes the scan to each function at the end of the run (-Scan); the first one waits for it (the
-# join). A stage the task did not finish runs its in-line body below, at its own place, so its error and the
-# warnings before it are the in-line ones. $null (no core, or no compiled method index): every function runs in
-# line. Nothing is kept across runs; the scan object lives in the run's own variable.
+# join). A stage that failed in the task rethrows its exception at its own function, in its own place. A caller
+# that passes no scan (scripts/test-expected-platform-skips.ps1) runs the in-line body. Nothing is kept across
+# runs; the scan object lives in the run's own variable.
 function Start-NightlyExpectedSkipScan {
     param([string]$RepoRoot, [string]$Platform, $Entries)
+    Assert-NightlyCoreAvailable 'Start-NightlyExpectedSkipScan'
     Wait-NightlyExpectedSkipScan -Task $script:NightlyExpectedSkipScanPending
-    try {
-        if (-not (Test-NightlyCoreAvailable)) { return $null }
-        $testsRoot = Join-Path $RepoRoot 'tests'
-        if (-not [System.IO.Path]::IsPathFullyQualified($testsRoot)) { return $null }
-        # Get-NightlyReachableSkipTexts' decision, taken here instead of at its first call: same core, same path.
-        $index = Initialize-NightlyCsMethodIndex -RepoRoot $RepoRoot
-        if (-not $index.NativeDecided) {
-            $index.NativeDecided = $true
-            $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList $testsRoot
-        }
-        if ($null -eq $index.Native) { return $null }
-        $platforms = [System.Collections.Generic.List[string]]::new()
-        $tests = [System.Collections.Generic.List[string]]::new()
-        $prefixes = [System.Collections.Generic.List[string]]::new()
-        foreach ($entry in @($Entries)) {
-            if ($null -eq $entry) { continue }
-            $platforms.Add([string]$entry.platform)
-            $tests.Add([string]$entry.test)
-            $prefixes.Add([string]$entry.reasonPrefix)
-        }
-        $foldKnown = -1
-        if ($null -ne $script:NightlyLiveClaudeRefusalFolds -and $script:NightlyLiveClaudeRefusalRoot -eq $RepoRoot) {
-            $foldKnown = $(if ([bool]$script:NightlyLiveClaudeRefusalFolds) { 1 } else { 0 })
-        }
-        $foldPath = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Shared' (Join-Path 'LiveClaude' 'LiveClaudeLaunchContext.cs')))
-        $driftPath = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.Tests' (Join-Path 'Scripts' 'WindowsUnitSkipRoster.cs')))
-        $task = [Antiphon.Nightly.NightlySkipScanTask]::Start($testsRoot, $driftPath, $foldPath, $foldKnown, $index.Native, $Platform, $platforms.ToArray(), $tests.ToArray(), $prefixes.ToArray())
-        $script:NightlyExpectedSkipScanPending = $task
-        return [pscustomobject]@{ Task = $task; RepoRoot = $RepoRoot; Platform = $Platform; Entries = $Entries }
-    } catch {
-        return $null
+    $testsRoot = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot 'tests'))
+    # The run's compiled method index (Get-NightlyReachableSkipTexts uses the same one), used by the task alone
+    # until the join.
+    $index = Initialize-NightlyCsMethodIndex -RepoRoot $RepoRoot
+    if ($null -eq $index.Native) {
+        $index.NativeDecided = $true
+        $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList $testsRoot
     }
+    $platforms = [System.Collections.Generic.List[string]]::new()
+    $tests = [System.Collections.Generic.List[string]]::new()
+    $prefixes = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in @($Entries)) {
+        if ($null -eq $entry) { continue }
+        $platforms.Add([string]$entry.platform)
+        $tests.Add([string]$entry.test)
+        $prefixes.Add([string]$entry.reasonPrefix)
+    }
+    $foldKnown = -1
+    if ($null -ne $script:NightlyLiveClaudeRefusalFolds -and $script:NightlyLiveClaudeRefusalRoot -eq $RepoRoot) {
+        $foldKnown = $(if ([bool]$script:NightlyLiveClaudeRefusalFolds) { 1 } else { 0 })
+    }
+    $foldPath = Join-Path $testsRoot (Join-Path 'Shared' (Join-Path 'LiveClaude' 'LiveClaudeLaunchContext.cs'))
+    $driftPath = Join-Path $testsRoot (Join-Path 'Antiphon.Tests' (Join-Path 'Scripts' 'WindowsUnitSkipRoster.cs'))
+    $task = [Antiphon.Nightly.NightlySkipScanTask]::Start($testsRoot, $driftPath, $foldPath, $foldKnown, $index.Native, $Platform, $platforms.ToArray(), $tests.ToArray(), $prefixes.ToArray())
+    $script:NightlyExpectedSkipScanPending = $task
+    return [pscustomobject]@{ Task = $task; RepoRoot = $RepoRoot; Platform = $Platform; Entries = $Entries }
 }
 
-# Waits for a started scan (it never throws: a stage's exception stays on the task for the in-line rerun).
+# Waits for a started scan (it never throws: a stage's exception stays on the task until its function rethrows it).
 function Wait-NightlyExpectedSkipScan {
     param($Task)
     if ($null -eq $Task) { return }
@@ -1858,8 +1812,9 @@ function Wait-NightlyExpectedSkipScan {
     if ([object]::ReferenceEquals($script:NightlyExpectedSkipScanPending, $Task)) { $script:NightlyExpectedSkipScanPending = $null }
 }
 
-# The finished scan when it was started for these arguments, else $null. Also waits for a scan an earlier run
-# never joined, so no scan still uses the compiled method index when an in-line body does.
+# The finished scan when it was started for these arguments, else $null (the caller runs its in-line body). Also
+# waits for a scan an earlier run never joined, so no scan still uses the compiled method index when an in-line
+# body does.
 function Receive-NightlyExpectedSkipScan {
     param($Scan, [string]$RepoRoot, $Platform, $Entries, [switch]$AnyPlatform)
     Wait-NightlyExpectedSkipScan -Task $script:NightlyExpectedSkipScanPending
@@ -1876,9 +1831,8 @@ function Get-NightlyExpectedSkipReasonGaps {
     param([string]$RepoRoot, [string]$Platform, $Entries = $null, $Scan = $null)
     $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Platform $Platform -Entries $Entries
     if ($null -ne $scanned) {
-        if ($scanned.ReasonGapsDone) { return $scanned.ReasonGaps }
-        # The task stopped part way through the method index: the in-line walk starts from a fresh one.
-        $script:NightlyCsMethodIndex = $null
+        if (-not $scanned.ReasonGapsDone) { throw $scanned.ReasonGapsError }
+        return $scanned.ReasonGaps
     }
     if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
     $gaps = New-Object System.Collections.Generic.List[string]
@@ -1900,7 +1854,8 @@ function Get-NightlyExpectedSkipReasonGaps {
 function Get-NightlyExpectedSkipRosterDrift {
     param([string]$RepoRoot, $Entries, $Scan = $null)
     $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Entries $Entries -AnyPlatform
-    if ($null -ne $scanned -and $scanned.DriftDone) {
+    if ($null -ne $scanned) {
+        if (-not $scanned.DriftDone) { throw $scanned.DriftError }
         return [pscustomobject]@{
             Overlap = $scanned.DriftOverlap
             Mismatches = $scanned.DriftMismatches
@@ -1958,7 +1913,10 @@ function Get-NightlyExpectedSkipSourceGaps {
     # A roster test whose class or method is absent from tests/. Not a coverage failure.
     param([string]$RepoRoot, [string]$Platform, $Entries = $null, $Scan = $null)
     $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Platform $Platform -Entries $Entries
-    if ($null -ne $scanned -and $scanned.SourceGapsDone) { return @($scanned.SourceGaps) }
+    if ($null -ne $scanned) {
+        if (-not $scanned.SourceGapsDone) { throw $scanned.SourceGapsError }
+        return @($scanned.SourceGaps)
+    }
     if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
     $wanted = @()
     foreach ($entry in @($Entries)) {

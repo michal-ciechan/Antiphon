@@ -18,11 +18,13 @@ $repo = Split-Path $PSScriptRoot -Parent
 # turns the loader off and runs the pinned PowerShell reader: the compiled
 # census bypasses Get-NightlyDiscoveryDispositionIndexed, and this pin does
 # not carry NightlyCore.cs. Core off matches the compiled census on this fixture.
+# The diagnostic parser has no PowerShell copy (it requires the core), so each
+# root's discovery.diag is parsed here, with this checkout's core, and handed in.
 $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = '9a58185b08b3b2bd79e926bdeacb7fe90da69416a291a32177053224cf007365'
+$script:PinnedInputDigest = '2c871e88acc81d27ebff9f9c9b7078121538327a02244392043dd48fcb682ad7'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
@@ -241,8 +243,9 @@ function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Age
 function Read-Census($root) {
     # A fresh runspace prevents script-level import guards from making a pinned
     # reader silently resolve functions from the candidate (or the reverse).
+    $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
     $reader = {
-        param($root)
+        param($root, $discovery)
         $previousCore = $env:ANTIPHON_NIGHTLY_CORE
         $env:ANTIPHON_NIGHTLY_CORE = 'off'
         try {
@@ -251,7 +254,6 @@ function Read-Census($root) {
             . "$root/scripts/lib/nightly-coverage.ps1"
             $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
             $policy = $policyRead.Object
-            $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
             $nodes = @($discovery.Nodes)
             $nodes += @(
                 @{ Uid='sentinel-c680'; ClassName='Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests'; Method='C680_LiveNudgeRefusesPermissionAndQuestionDialogs'; Categories=@('Integration') },
@@ -268,7 +270,7 @@ function Read-Census($root) {
     }
     $ps = [PowerShell]::Create()
     try {
-        [void]$ps.AddScript($reader.ToString()).AddArgument($root)
+        [void]$ps.AddScript($reader.ToString()).AddArgument($root).AddArgument($discovery)
         $output = $ps.Invoke()
         if ($ps.HadErrors) { throw 'isolated census reader failed' }
         return [string]$output[0]

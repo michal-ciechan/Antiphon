@@ -1146,57 +1146,21 @@ function New-TestPhaseEnvelopeText {
         $Reason, $Suite, $Chunk, $SettledSuite, $SettledChunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, $FreshJson, $SettledJson, [string]$Context.WriterEnvironment)
 }
 
-function ConvertTo-TestPhaseRecordObject {
-    param($Envelope)
-    $freshJson = ''
-    $settledJson = ''
-    if ($Envelope.PSObject.Properties.Name -contains 'rowJson' -and $null -ne $Envelope.rowJson) { $freshJson = [string]$Envelope.rowJson }
-    if ($Envelope.PSObject.Properties.Name -contains 'settledRowJson' -and $null -ne $Envelope.settledRowJson) { $settledJson = [string]$Envelope.settledRowJson }
-    return [pscustomobject]@{
-        Kind = [string]$Envelope.kind
-        Sequence = [int]$Envelope.sequence
-        FreshJson = $freshJson
-        SettledJson = $settledJson
-        FreshSuite = (ConvertFrom-TestPhaseB64 ([string]$Envelope.freshSuiteKey))
-        FreshChunk = (ConvertFrom-TestPhaseB64 ([string]$Envelope.freshChunkKey))
-        SettledSuite = (ConvertFrom-TestPhaseB64 ([string]$Envelope.settledSuiteKey))
-        SettledChunk = (ConvertFrom-TestPhaseB64 ([string]$Envelope.settledChunkKey))
-        HeaderRun = (ConvertFrom-TestPhaseB64 ([string]$Envelope.freshRun))
-        HeaderAttempt = (ConvertFrom-TestPhaseB64 ([string]$Envelope.freshAttempt))
-        HeaderSuite = (ConvertFrom-TestPhaseB64 ([string]$Envelope.freshHeaderSuite))
-        PublicationId = [string]$Envelope.publicationId
-    }
-}
-
 function Read-TestPhaseGenerationPrefix {
     param([string]$GenerationDir)
     # Every record is re-read from disk and its digest re-checked in the core (TestPhaseJournalRead.ReadPrefix),
-    # which stops at a break (unreadable-record, bad-digest, sequence-mismatch) or at a record whose envelope only
-    # ConvertFrom-Json reads exactly; that one is read here as before and the core continues after it.
+    # which reads the prefix up to the first missing record or the first break (unreadable-record, bad-digest,
+    # malformed-record, sequence-mismatch). Only our own writer produces these records.
     Assert-NightlyCoreAvailable 'Read-TestPhaseGenerationPrefix'
     $loaded = New-Object System.Collections.Generic.List[object]
-    $expected = 1
-    $corrupt = $false
-    $reason = ''
-    while ($true) {
-        $step = [Antiphon.Nightly.TestPhaseJournalRead]::ReadPrefix($GenerationDir, $expected, [bool]$script:NightlyDeferEvidenceWrites, $loaded)
-        $expected = $step.Expected
-        if ($step.Corrupt) { $corrupt = $true; $reason = [string]$step.Reason; break }
-        if ($null -eq $step.PendingText) { break }
-        $text = [string]$step.PendingText
-        $parsed = $null
-        try { $parsed = $text | ConvertFrom-Json } catch { $corrupt = $true; $reason = 'malformed-record'; break }
-        if ($null -eq $parsed -or [int]$parsed.sequence -ne $expected) { $corrupt = $true; $reason = 'sequence-mismatch'; break }
-        $loaded.Add((ConvertTo-TestPhaseRecordObject -Envelope $parsed))
-        $expected++
-    }
+    $step = [Antiphon.Nightly.TestPhaseJournalRead]::ReadPrefix($GenerationDir, 1, [bool]$script:NightlyDeferEvidenceWrites, $loaded)
     $last = 0
     if ($loaded.Count -gt 0) { $last = [int]$loaded[$loaded.Count - 1].Sequence }
     return [pscustomobject]@{
         Records = $loaded
-        NextSequence = $expected
-        Corrupt = [bool]$corrupt
-        Reason = $reason
+        NextSequence = $step.Expected
+        Corrupt = [bool]$step.Corrupt
+        Reason = [string]$step.Reason
         LastSequence = $last
     }
 }
@@ -2064,6 +2028,8 @@ function Complete-TestPhaseLaunch {
 
 function ConvertTo-TestPhaseSummaryRows {
     param($Planned, [string]$RunDirectory)
+    # The row loops are compiled (NightlyCore.cs TestPhaseSummary, TestPhaseJournalRead, TestPhaseSummaryFast).
+    Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseSummaryRows'
     $quality = New-Object System.Collections.Generic.List[string]
     $torn = 0
     $malformed = 0
@@ -2169,29 +2135,15 @@ function ConvertTo-TestPhaseSummaryRows {
                 $rowJson = [string]$entry.Json
                 if ($entryIndex -eq ($reduced.Entries.Count - 1)) { $rowJson = [string]$entry.Fresh }
                 if ([string]::IsNullOrWhiteSpace($rowJson)) { continue }
-                # Only trx, chunk and suite are read: the core takes them from a strict parse of the document and
-                # leaves anything else (not one strict JSON object, a non-string value) to ConvertFrom-Json.
-                $trxRel = ''
-                $chunkText = ''
-                $suiteText = ''
+                # Only trx, chunk and suite are read, from a strict parse of the document; a document the core
+                # cannot read (not one strict JSON object, a non-string value) is skipped like an unparseable one.
                 $fields = [Antiphon.Nightly.TestPhaseJournalRead]::ChunkFields($rowJson)
-                if ($null -ne $fields) {
-                    $trxRel = [string]$fields[0]
-                    $chunkText = [string]$fields[1]
-                    $suiteText = [string]$fields[2]
-                } else {
-                    $chunkObj = $null
-                    try { $chunkObj = ($rowJson | ConvertFrom-Json) } catch { $chunkObj = $null }
-                    if ($null -eq $chunkObj) { continue }
-                    if ($chunkObj.PSObject.Properties.Name -contains 'trx') { $trxRel = [string]$chunkObj.trx }
-                    if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
-                    $chunkText = [string]$chunkObj.chunk
-                    $suiteText = [string]$chunkObj.suite
-                }
+                if ($null -eq $fields) { continue }
+                $trxRel = [string]$fields[0]
                 if ([string]::IsNullOrWhiteSpace($trxRel)) { continue }
                 $fullTrx = [System.IO.Path]::GetFullPath((Join-Path $RunDirectory $trxRel))
-                $trxGroups[$fullTrx] = $chunkText
-                $trxSuites[$fullTrx] = $suiteText
+                $trxGroups[$fullTrx] = [string]$fields[1]
+                $trxSuites[$fullTrx] = [string]$fields[2]
             }
         }
     }
@@ -2210,49 +2162,18 @@ function ConvertTo-TestPhaseSummaryRows {
     }
     $trxRows = New-Object System.Collections.Generic.List[object]
     $trxFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Filter '*.trx' -File -ErrorAction SilentlyContinue)
-    # Compiled row loops (NightlyCore.cs TestPhaseSummary); the loops below are the fallback.
-    $core = Test-NightlyCoreAvailable
     foreach ($trx in $trxFiles) {
         if ((Get-TestPhasePathIdentity -Path $trx.FullName).Kind -ne 'regular') { continue }
         $trxRead = Read-TestPhaseTrxRows -Path $trx.FullName
         if ($null -eq $trxRead -or -not $trxRead.Complete -or $trxRead.Refused) { continue }
-        if ($core) {
-            $group = ''
-            if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
-            $suiteText = ''
-            if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
-            [Antiphon.Nightly.TestPhaseSummary]::TagRows(@($trxRead.Rows), $group, $suiteText)
-            $trxRows.AddRange([object[]]@($trxRead.Rows))
-            continue
-        }
-        foreach ($row in @($trxRead.Rows)) {
-            $group = ''
-            if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
-            $row | Add-Member -NotePropertyName GroupId -NotePropertyValue $group -Force
-            $suiteText = ''
-            if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
-            $row | Add-Member -NotePropertyName Suite -NotePropertyValue $suiteText -Force
-            $trxRows.Add($row)
-        }
+        $group = ''
+        if ($trxGroups.ContainsKey($trx.FullName)) { $group = [string]$trxGroups[$trx.FullName] }
+        $suiteText = ''
+        if ($trxSuites.ContainsKey($trx.FullName)) { $suiteText = [string]$trxSuites[$trx.FullName] }
+        [Antiphon.Nightly.TestPhaseSummary]::TagRows(@($trxRead.Rows), $group, $suiteText)
+        $trxRows.AddRange([object[]]@($trxRead.Rows))
     }
-    $nativeMap = @{}
-    if ($core) { $nativeMap = [Antiphon.Nightly.TestPhaseSummary]::MapNative($trxRows.ToArray()) }
-    else {
-    foreach ($row in $trxRows) {
-        $keys = @([string]$row.TestId)
-        foreach ($native in @(Get-TestPhaseNativeIds -Text ([string]$row.StdOut))) { $keys += [string]$native }
-        foreach ($key in $keys) {
-            if ([string]::IsNullOrWhiteSpace($key)) { continue }
-            if (-not $nativeMap.ContainsKey($key)) { $nativeMap[$key] = New-Object System.Collections.Generic.List[object] }
-            $list = $nativeMap[$key]
-            $already = $false
-            foreach ($existing in $list) {
-                if ([string]$existing.TestId -eq [string]$row.TestId -and [string]$existing.Path -eq [string]$row.Path) { $already = $true }
-            }
-            if (-not $already) { $list.Add($row) }
-        }
-    }
-    }
+    $nativeMap = [Antiphon.Nightly.TestPhaseSummary]::MapNative($trxRows.ToArray())
 
     $tests = New-Object System.Collections.Generic.List[object]
     $joinedTrx = @{}
@@ -2361,48 +2282,9 @@ function ConvertTo-TestPhaseSummaryRows {
             overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
         })
     }
-    if ($core) {
-        $unjoined = [Antiphon.Nightly.TestPhaseSummary]::UnjoinedTrxRows($trxRows.ToArray(), $joinedTrx, $completeTestIds)
-        $tests.AddRange([object[]]@($unjoined.Rows))
-        if ($unjoined.PassedWithoutPhase -and -not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
-    } else {
-    foreach ($row in $trxRows) {
-        $key = [string]$row.TestId + '|' + [string]$row.Path
-        if ($joinedTrx.ContainsKey($key)) { continue }
-        $nativeHit = $false
-        foreach ($native in @(Get-TestPhaseNativeIds -Text ([string]$row.StdOut))) {
-            if ($completeTestIds.ContainsKey([string]$native)) { $nativeHit = $true }
-        }
-        if ($nativeHit) { continue }
-        if ($completeTestIds.ContainsKey([string]$row.TestId)) { continue }
-        $outcome = [string]$row.Outcome
-        $incomplete = $false
-        $countsKnown = $false
-        if ($outcome -eq 'Passed') {
-            $outcome = 'unknown'
-            $incomplete = $true
-            if (-not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
-        }
-        $rowSuite = ''
-        if ($row.PSObject.Properties.Name -contains 'Suite') { $rowSuite = [string]$row.Suite }
-        $tests.Add([ordered]@{
-            testId = [string]$row.TestId
-            suite = [string]$rowSuite
-            className = ''
-            method = [string]$row.Name
-            duration = [string]$row.Duration
-            groupId = [string]$row.GroupId
-            outcome = [string]$outcome
-            trxOutcome = [string]$row.Outcome
-            phaseOutcome = ''
-            joined = $false
-            incomplete = [bool]$incomplete
-            countsKnown = [bool]$countsKnown
-            db = 0; host = 0; process = 0; fs = 0; network = 0; fixture = 0
-            overlapMs = 0; remainderMs = 0; droppedPhaseCount = 0
-        })
-    }
-    }
+    $unjoined = [Antiphon.Nightly.TestPhaseSummary]::UnjoinedTrxRows($trxRows.ToArray(), $joinedTrx, $completeTestIds)
+    $tests.AddRange([object[]]@($unjoined.Rows))
+    if ($unjoined.PassedWithoutPhase -and -not $quality.Contains('missing-phase-unknown')) { $quality.Add('missing-phase-unknown') }
     $shared = @()
     foreach ($fix in $fixtures) {
         $ex = $fix.exclusive
@@ -2420,13 +2302,7 @@ function ConvertTo-TestPhaseSummaryRows {
         if (-not $quality.Contains([string]$token)) { $quality.Add([string]$token) }
     }
     $complete = $quality.Count -eq 0
-    if ($core) {
-        if ([Antiphon.Nightly.TestPhaseSummaryFast]::AnyIncomplete($tests)) { $complete = $false }
-    } else {
-    foreach ($test in $tests) {
-        if ([bool]$test.incomplete) { $complete = $false }
-    }
-    }
+    if ([Antiphon.Nightly.TestPhaseSummaryFast]::AnyIncomplete($tests)) { $complete = $false }
     $spent = 0
     if ($null -ne $budget.Watch) { $spent = [int]$budget.Watch.ElapsedMilliseconds }
     return [pscustomobject]@{
@@ -2443,16 +2319,14 @@ function ConvertTo-TestPhaseSummaryRows {
 
 function Write-TestPhaseSummaryFiles {
     param($Planned, $Report, [string]$RunDirectory, [int]$Top)
+    # The sorts, summary.json and the tests.csv rows are compiled (TestPhaseSummaryWrite.cs, TestPhaseSummaryFast).
+    Assert-NightlyCoreAvailable 'Write-TestPhaseSummaryFiles'
     $timing = Get-TestPhaseTimingDirectory -RunDirectory $RunDirectory
     if (-not (Test-Path -LiteralPath $timing)) {
         New-Item -ItemType Directory -Path $timing -Force | Out-Null
     }
-    # Compiled sorts and JSON (TestPhaseSummaryWrite.cs) return null for an input they do not reproduce
-    # exactly; the PowerShell expression then runs as before.
-    $compiledWrite = Test-NightlyCoreAvailable
-    $orderedTests = $null
-    if ($compiledWrite) { $orderedTests = [Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId($Report.Tests) }
-    if ($null -eq $orderedTests) { $orderedTests = @($Report.Tests | Sort-Object { [string]$_.testId }) }
+    # @($Report.Tests | Sort-Object { [string]$_.testId })
+    $orderedTests = [Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId($Report.Tests)
     $aggregationBudget = Get-TestPhaseSummaryBudgetMilliseconds
     $aggregationSpent = 0
     if ($null -ne $Report -and $Report.PSObject.Properties.Name -contains 'SummaryAggregationBudgetMilliseconds' -and $null -ne $Report.SummaryAggregationBudgetMilliseconds) {
@@ -2475,50 +2349,21 @@ function Write-TestPhaseSummaryFiles {
     # Diagnostic summary only: avoid hundreds of thousands of PowerShell
     # recursive serializer calls for a complete native roster. Authority writers
     # retain their original canonical serializer and exact bytes.
-    $summaryJson = $null
-    if ($compiledWrite) { $summaryJson = [Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($summary) }
-    if ($null -eq $summaryJson) { $summaryJson = ConvertTo-Json -InputObject $summary -Depth 50 -Compress }
-    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text $summaryJson
+    # ConvertTo-Json -InputObject $summary -Depth 50 -Compress
+    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text ([Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($summary))
 
     $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]
     $headCells = @()
     foreach ($h in $headers) { $headCells += (ConvertTo-TestPhaseCsvCell -Value $h) }
     $lines.Add(($headCells -join ','))
-    $core = Test-NightlyCoreAvailable
-    if ($core) { $lines.AddRange([Antiphon.Nightly.TestPhaseSummaryFast]::Rows($orderedTests, [string[]]$headers)) }
-    else {
-    foreach ($test in $orderedTests) {
-        $cells = @(
-            (ConvertTo-TestPhaseCsvCell -Value $test.testId),
-            (ConvertTo-TestPhaseCsvCell -Value $test.duration),
-            (ConvertTo-TestPhaseCsvCell -Value $test.groupId),
-            (ConvertTo-TestPhaseCsvCell -Value $test.outcome),
-            (ConvertTo-TestPhaseCsvCell -Value $test.trxOutcome),
-            (ConvertTo-TestPhaseCsvCell -Value $test.phaseOutcome),
-            (ConvertTo-TestPhaseCsvCell -Value $test.joined),
-            (ConvertTo-TestPhaseCsvCell -Value $test.incomplete),
-            (ConvertTo-TestPhaseCsvCell -Value $test.db),
-            (ConvertTo-TestPhaseCsvCell -Value $test.host),
-            (ConvertTo-TestPhaseCsvCell -Value $test.process),
-            (ConvertTo-TestPhaseCsvCell -Value $test.fs),
-            (ConvertTo-TestPhaseCsvCell -Value $test.network),
-            (ConvertTo-TestPhaseCsvCell -Value $test.fixture),
-            (ConvertTo-TestPhaseCsvCell -Value $test.overlapMs),
-            (ConvertTo-TestPhaseCsvCell -Value $test.remainderMs),
-            (ConvertTo-TestPhaseCsvCell -Value $test.droppedPhaseCount)
-        )
-        $lines.Add(($cells -join ','))
-    }
-    }
-    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $lines.AddRange([Antiphon.Nightly.TestPhaseSummaryFast]::Rows($orderedTests, [string[]]$headers))
     Write-NightlyEvidenceLines (Join-Path $timing 'tests.csv') $lines.ToArray()
 
     $limit = $Top
     if ($limit -lt 1) { $limit = 1 }
-    $ranked = $null
-    if ($compiledWrite) { $ranked = [Antiphon.Nightly.TestPhaseSummaryWrite]::RankByTotal($orderedTests) }
-    if ($null -eq $ranked) { $ranked = @($orderedTests | Sort-Object { -1 * ([long]$_.db + [long]$_.host + [long]$_.process + [long]$_.fs + [long]$_.network + [long]$_.fixture + [long]$_.overlapMs + [long]$_.remainderMs) }) }
+    # @($orderedTests | Sort-Object { -1 * ([long]$_.db + ... + [long]$_.remainderMs) })
+    $ranked = [Antiphon.Nightly.TestPhaseSummaryWrite]::RankByTotal($orderedTests)
     $md = New-Object System.Collections.Generic.List[string]
     $md.Add('# Phase timing')
     $md.Add('')

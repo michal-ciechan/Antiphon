@@ -6,8 +6,8 @@
 // across runs: each run starts its own task and the results live only in that run's scan object.
 //
 // The task never faults. Each stage catches its own exception and reports itself not done; the PowerShell
-// function for that stage then runs its in-line body at the join, so a failure surfaces there with the in-line
-// message and in the in-line place, and warnings are appended in the same order as before.
+// function for that stage rethrows that exception at the join, so a failure surfaces in the function's own place
+// and the warnings before it are appended in the same order as before.
 //
 // The comparisons are PowerShell's, as in the functions: -ceq / -cne on strings are invariant-culture
 // (linguistic) comparisons; @{} keys are OrdinalIgnoreCase; [regex] patterns are case-sensitive; string
