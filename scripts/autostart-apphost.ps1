@@ -38,6 +38,7 @@ param(
 $ErrorActionPreference = 'Continue'
 
 . (Join-Path $PSScriptRoot 'lib/live-startup-timing.ps1')
+. (Join-Path $PSScriptRoot 'lib/dev-postgres-compose.ps1')
 $root      = Split-Path $PSScriptRoot -Parent      # scripts/ -> repo root
 $logDir    = Join-Path $root 'logs'
 $devScript = Join-Path $root 'dev-aspire.ps1'
@@ -85,13 +86,20 @@ if (-not $dockerOk) {
 Write-Log "Docker is responsive."
 
 # -- 3. Ensure Postgres (idempotent; restart:unless-stopped usually has it up) --
-docker compose -f $composeF up -d 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
+# Runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 (database moved to server2) keeps the
+# desktop Postgres stopped and brings up the other compose services only.
+$devPostgresSkipped = Test-DevPostgresSkipped (Get-DevPostgresSkipValue)
+$composeUp = Invoke-DevComposeUp -ComposeFile $composeF
+if ($devPostgresSkipped) { Write-Log $composeUp.Message }
+if ($composeUp.Exit -ne 0) {
     Write-Log "WARNING: 'docker compose up -d' failed; continuing (AppHost pre-flight retries it)."
-} else {
+} elseif (-not $devPostgresSkipped) {
     Write-Log "Postgres container ensured."
 }
 
+if ($devPostgresSkipped) {
+    Write-Log "Postgres status: desktop container not checked (ANTIPHON_SKIP_DEV_POSTGRES=1)."
+} else {
 # Wait for it to report healthy so the server does not race EF migrations.
 $pgDeadline = (Get-Date).AddSeconds(120)
 while ((Get-Date) -lt $pgDeadline) {
@@ -100,6 +108,7 @@ while ((Get-Date) -lt $pgDeadline) {
     Start-Sleep 5
 }
 Write-Log "Postgres status: $(docker ps --filter name=antiphon-postgres --format '{{.Status}}' 2>&1)"
+}
 
 # -- 4. Launch the stack ------------------------------------------------------
 # dev-aspire.ps1 backgrounds the AppHost (hidden) and exits once the dashboard is up.
