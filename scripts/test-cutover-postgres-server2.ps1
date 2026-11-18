@@ -575,7 +575,9 @@ function Invoke-C1407WindowRun {
         [string]$InspectFailAfterRestart = '',
         [string]$FailTargetRead = '',
         [string]$FailSourceRead = '',
-        [string]$InheritSkip = ''
+        [string]$InheritSkip = '',
+        [string]$SnapshotTargetInitial = 'server2',
+        [switch]$SnapshotTargetMissingDir
     )
     # Runbook G-1/G-6 knobs. The caller's own ANTIPHON_SKIP_DEV_POSTGRES never leaks into a run:
     # -InheritSkip is the only value the cutover child inherits.
@@ -599,6 +601,7 @@ function Invoke-C1407WindowRun {
         TailnetPort = 0
         Repository  = ''
         RestartEnv  = @()
+        SnapshotTargetAfter = $null
     }
     $fake = $null
     $api = $null
@@ -707,7 +710,23 @@ function Invoke-C1407WindowRun {
             -Secret $secret -DumpDirectory $dumpDir -Recipient $recipient -Identity $identity `
             -PendingFixture $fixture -CommandHost (Join-Path $fake.Dir 'pwsh') -Repository $repoUsed -TailnetPort $tailnetPort
         if ($ExtraArgs -and $ExtraArgs.Count -gt 0) { $window += $ExtraArgs }
+        # Backup retarget plan D-2: every rollback run gets its own snapshot-target file, so no case
+        # writes the desktop runner path. It starts as server2 (a passed backup proof).
+        $snapshotTarget = $null
+        if (@($ExtraArgs) -contains '-Rollback') {
+            $snapshotDir = Join-Path $dumpDir 'snapshot-runner'
+            if ($SnapshotTargetMissingDir) { $snapshotDir = Join-Path $dumpDir 'no-such-runner' }
+            else { New-Item -ItemType Directory -Path $snapshotDir -Force | Out-Null }
+            $snapshotTarget = Join-Path $snapshotDir 'snapshot-target'
+            if (-not $SnapshotTargetMissingDir) {
+                [System.IO.File]::WriteAllText($snapshotTarget, $SnapshotTargetInitial)
+            }
+            $window += @('-SnapshotTargetFile', $snapshotTarget)
+        }
         $ran = Invoke-C1407Cutover -Fake $fake -Arguments $window
+        if ($snapshotTarget -and (Test-Path -LiteralPath $snapshotTarget -PathType Leaf)) {
+            $result.SnapshotTargetAfter = [System.IO.File]::ReadAllText($snapshotTarget)
+        }
         $result.ExitCode = $ran.ExitCode
         $result.Text = $ran.Text
         $result.Lines = @(Read-C1407ArgvLines $fake)
@@ -2210,8 +2229,74 @@ function Test-W36 {
     else { Write-Fail 'W-36' ($reasons -join ' || ') }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36')
-$script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36')
+function Test-C1407SnapshotReset {
+    param($Run, [string]$Label)
+    if (-not $Run.Ready) { return "$Label not-ready $($Run.Error)" }
+    if ($Run.SnapshotTargetAfter -cne 'desktop') { return "$Label snapshot-target='$($Run.SnapshotTargetAfter)'" }
+    if (-not (Test-C1407TextHas $Run 'PHASE 6: snapshot target reset to desktop')) { return "$Label missing-reset-line" }
+    return $null
+}
+
+function Test-W37 {
+    # Backup retarget plan W-5 (Backup plan review): every phase 6 rollback that moves AppHost back
+    # writes desktop into snapshot-target, also after a passed server2 backup proof (server2 there).
+    # A refused rollback changes nothing, so the word stays.
+    $reasons = @()
+    $equal = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '4' -TargetCount '4' -ExtraArgs @('-Rollback')
+    $reasons += @(Test-C1407RollbackProceeds -Run $equal -Label 'equal')
+    $reasons += @(Test-C1407SnapshotReset -Run $equal -Label 'equal')
+    $accepted = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '3' -TargetCount '9' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $reasons += @(Test-C1407RollbackProceeds -Run $accepted -Label 'accept')
+    $reasons += @(Test-C1407SnapshotReset -Run $accepted -Label 'accept')
+    $down = Invoke-C1407WindowRun -SkipApi -SkipTcp -FailTargetRead '1' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $reasons += @(Test-C1407RollbackProceeds -Run $down -Label 'target-down')
+    $reasons += @(Test-C1407SnapshotReset -Run $down -Label 'target-down')
+    $failed = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '4' -TargetCount '4' -FailRestart '1' -ExtraArgs @('-Rollback')
+    if (-not $failed.Ready) { $reasons += "restart-failed not-ready $($failed.Error)" }
+    else {
+        if ($failed.ExitCode -eq 0) { $reasons += 'restart-failed exit=0' }
+        if ($failed.SnapshotTargetAfter -cne 'desktop') { $reasons += "restart-failed snapshot-target='$($failed.SnapshotTargetAfter)'" }
+    }
+    $refused = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '3' -TargetCount '9' -ExtraArgs @('-Rollback')
+    if (-not $refused.Ready) { $reasons += "refused not-ready $($refused.Error)" }
+    else {
+        if ($refused.ExitCode -eq 0) { $reasons += 'refused exit=0' }
+        if ($refused.SnapshotTargetAfter -cne 'server2') { $reasons += "refused snapshot-target='$($refused.SnapshotTargetAfter)'" }
+    }
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($reasons.Count -eq 0) { Write-Pass 'W-37' }
+    else { Write-Fail 'W-37' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $equal.Text)) }
+}
+
+function Test-W38 {
+    # Backup retarget plan W-5: a snapshot-target write that fails does not stop the rollback restart,
+    # but the run ends non-zero with the manual write.
+    $run = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '4' -TargetCount '4' -SnapshotTargetMissingDir -ExtraArgs @('-Rollback')
+    $reasons = @()
+    if (-not $run.Ready) { $reasons += "not-ready $($run.Error)" }
+    else {
+        if ($run.ExitCode -ne 2) { $reasons += "exit=$($run.ExitCode)" }
+        $sawRemove = $false
+        $sawRestart = $false
+        foreach ($line in @($run.Lines)) {
+            $parts = @($line.Split([char]9))
+            if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet' -and (@($parts) -contains 'remove')) { $sawRemove = $true }
+            if (Test-C1407Field -Line $line -Token '-ExpectedServerSha') { $sawRestart = $true }
+        }
+        if (-not $sawRemove -or -not $sawRestart) { $reasons += 'rollback-not-finished' }
+        if (-not (Test-C1407TextHas $run 'untouched desktop volume')) { $reasons += 'missing-exit-check' }
+        if (-not (Test-C1407TextHas $run 'PHASE 6 failed: AppHost is back on the desktop volume, but the snapshot target was not reset.')) {
+            $reasons += 'missing-refusal'
+        }
+        if (-not (Test-C1407TextHas $run 'Write desktop into ')) { $reasons += 'missing-manual-write' }
+        if ($null -ne $run.SnapshotTargetAfter) { $reasons += 'snapshot-target-created' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-38' }
+    else { Write-Fail 'W-38' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38')
+$script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38')
 function Invoke-C1407Case {
     param([string]$Name)
     if (($env:OS -eq 'Windows_NT') -and ($script:C1407PosixWindow -contains $Name)) {
