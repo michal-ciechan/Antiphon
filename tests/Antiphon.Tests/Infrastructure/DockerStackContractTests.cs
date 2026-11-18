@@ -969,11 +969,9 @@ public sealed class DockerStackContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24()
     {
-        var result = RemoteScriptContractSupport.LinuxShellResult("""
-            cd "$repo"
-            out=$(bash scripts/c1893-runner-hold.sh 870a93d21f2b18c85a8b0905ab689b28e3099813)
-            printf 'C1893 exit=%s out=%s\n' "$?" "$out"
-            """, "repo");
+        var result = RemoteScriptContractSupport.LinuxShellResult(
+            "cd \"$repo\"\nout=$(bash " + HoldScript + " 870a93d21f2b18c85a8b0905ab689b28e3099813)\n" +
+            "printf 'C1893 exit=%s out=%s\\n' \"$?\" \"$out\"\n", "repo");
         HoldResults(result.Output).ShouldBe(["exit=0 out=HOLD"]);
     }
 
@@ -1061,6 +1059,8 @@ public sealed class DockerStackContractTests
             new HoldTree(Base: "SessionRunner__HostStats__HistoryEnabled: false", Temp: ""))
             .ShouldBe(["exit=0 out=RELEASED", "exit=0 out=HOLD", "exit=0 out=HOLD"]);
 
+    // A whole-path literal, so the derived impact index maps the script to this class.
+    private const string HoldScript = "scripts/c1893-runner-hold.sh";
     private const string HoldPath = "SessionRunner__HostStats__HistoryPath: /state/host-load";
     private const string HoldDisable = "SessionRunner__HostStats__HistoryEnabled: \"false\"";
 
