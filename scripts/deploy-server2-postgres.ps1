@@ -12,7 +12,9 @@
     POSTGRES_PASSWORD. This script never prints the password.
     -WhatIf accepts only a bind inside 100.64.0.0/10. -Execute still requires
     that bind to equal the single line of tailscale ip -4.
-    The image must be postgres:16@sha256:<64 hex> or postgres@sha256:<64 hex>.
+    The image must be postgres:16@sha256:<64 hex>, postgres@sha256:<64 hex>,
+    or an exact 16.N patch tag with a digest: postgres:16.14@sha256:<64 hex>
+    (or postgres:16.14-trixie@sha256:<64 hex>).
     The production compose runs only as project antiphon-server2-postgres.
     The drill compose runs only as project antiphon-server2-postgres-drill.
     The drill commands take or locate the encrypted B1 snapshot, time the
@@ -74,6 +76,8 @@ function Test-Server2PostgresImage {
     if ($Image -match '(?i)alpine') { return 'image-alpine' }
     if ($Image -match '^postgres:16@sha256:[0-9a-f]{64}$') { return '' }
     if ($Image -match '^postgres@sha256:[0-9a-f]{64}$') { return '' }
+    # Runbook G-2: an exact 16.N patch tag (Debian trixie default or -trixie) may sit beside the digest.
+    if ($Image -cmatch '^postgres:16\.(0|[1-9][0-9]*)(-trixie)?@sha256:[0-9a-f]{64}$') { return '' }
     return 'image-floating'
 }
 
