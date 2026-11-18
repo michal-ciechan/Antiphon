@@ -2447,7 +2447,12 @@ function Write-TestPhaseSummaryFiles {
     if (-not (Test-Path -LiteralPath $timing)) {
         New-Item -ItemType Directory -Path $timing -Force | Out-Null
     }
-    $orderedTests = @($Report.Tests | Sort-Object { [string]$_.testId })
+    # Compiled sorts and JSON (TestPhaseSummaryWrite.cs) return null for an input they do not reproduce
+    # exactly; the PowerShell expression then runs as before.
+    $compiledWrite = Test-NightlyCoreAvailable
+    $orderedTests = $null
+    if ($compiledWrite) { $orderedTests = [Antiphon.Nightly.TestPhaseSummaryWrite]::SortByTestId($Report.Tests) }
+    if ($null -eq $orderedTests) { $orderedTests = @($Report.Tests | Sort-Object { [string]$_.testId }) }
     $aggregationBudget = Get-TestPhaseSummaryBudgetMilliseconds
     $aggregationSpent = 0
     if ($null -ne $Report -and $Report.PSObject.Properties.Name -contains 'SummaryAggregationBudgetMilliseconds' -and $null -ne $Report.SummaryAggregationBudgetMilliseconds) {
@@ -2470,7 +2475,10 @@ function Write-TestPhaseSummaryFiles {
     # Diagnostic summary only: avoid hundreds of thousands of PowerShell
     # recursive serializer calls for a complete native roster. Authority writers
     # retain their original canonical serializer and exact bytes.
-    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text (ConvertTo-Json -InputObject $summary -Depth 50 -Compress)
+    $summaryJson = $null
+    if ($compiledWrite) { $summaryJson = [Antiphon.Nightly.TestPhaseSummaryWrite]::SummaryJson($summary) }
+    if ($null -eq $summaryJson) { $summaryJson = ConvertTo-Json -InputObject $summary -Depth 50 -Compress }
+    Write-TestPhaseTextAtomic -Path (Join-Path $timing 'summary.json') -Text $summaryJson
 
     $headers = @('testId','duration','groupId','outcome','trxOutcome','phaseOutcome','joined','incomplete','db','host','process','fs','network','fixture','overlapMs','remainderMs','droppedPhaseCount')
     $lines = New-Object System.Collections.Generic.List[string]
@@ -2508,7 +2516,9 @@ function Write-TestPhaseSummaryFiles {
 
     $limit = $Top
     if ($limit -lt 1) { $limit = 1 }
-    $ranked = @($orderedTests | Sort-Object { -1 * ([long]$_.db + [long]$_.host + [long]$_.process + [long]$_.fs + [long]$_.network + [long]$_.fixture + [long]$_.overlapMs + [long]$_.remainderMs) })
+    $ranked = $null
+    if ($compiledWrite) { $ranked = [Antiphon.Nightly.TestPhaseSummaryWrite]::RankByTotal($orderedTests) }
+    if ($null -eq $ranked) { $ranked = @($orderedTests | Sort-Object { -1 * ([long]$_.db + [long]$_.host + [long]$_.process + [long]$_.fs + [long]$_.network + [long]$_.fixture + [long]$_.overlapMs + [long]$_.remainderMs) }) }
     $md = New-Object System.Collections.Generic.List[string]
     $md.Add('# Phase timing')
     $md.Add('')
