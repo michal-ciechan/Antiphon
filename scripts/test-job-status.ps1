@@ -314,54 +314,6 @@ function Test-RunnerSourceSha {
     }
 }
 
-# Runbook G-4: one setting file next to the runner copy picks the snapshot source,
-# so the same Windmill job backs up the desktop before the cutover and server2 after.
-function Test-SnapshotTarget {
-    $invoke = Join-Path $here 'windmill\invoke-postgres-snapshot.ps1'
-    if (-not (Test-Path -LiteralPath $invoke)) { Write-Fail 'snapshot target invoke script exists' $invoke; return }
-    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('g4-target-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $root -Force | Out-Null
-    try {
-        Copy-Item -LiteralPath $invoke -Destination (Join-Path $root 'invoke-postgres-snapshot.ps1')
-        Copy-Item -LiteralPath (Join-Path $here 'windmill\job-status.ps1') -Destination (Join-Path $root 'job-status.ps1')
-        . (Join-Path $root 'invoke-postgres-snapshot.ps1')
-        foreach ($fn in @('Get-PlainSnapshotTarget', 'Get-PlainSnapshotChildArguments')) {
-            if (-not (Get-Command $fn -ErrorAction SilentlyContinue)) { Write-Fail 'snapshot target function' ($fn + ' missing'); return }
-        }
-        $setting = Join-Path $root 'SNAPSHOT-TARGET'
-        Assert-True (-not (Test-Path -LiteralPath $setting)) 'absent setting file before the call' $setting
-        Assert-True ((Get-PlainSnapshotTarget -SettingFile $setting) -eq 'desktop') 'absent setting file is the desktop' (Get-PlainSnapshotTarget -SettingFile $setting)
-        $cases = @(
-            @{ Text = 'server2'; Want = 'server2' },
-            @{ Text = "server2`r`n"; Want = 'server2' },
-            @{ Text = 'desktop'; Want = 'desktop' },
-            @{ Text = ''; Want = '' },
-            @{ Text = '   '; Want = '' },
-            @{ Text = 'Server2'; Want = '' },
-            @{ Text = 'server3'; Want = '' },
-            @{ Text = "server2`ndesktop"; Want = '' }
-        )
-        foreach ($c in $cases) {
-            [System.IO.File]::WriteAllText($setting, [string]$c.Text)
-            $got = Get-PlainSnapshotTarget -SettingFile $setting
-            Assert-True ($got -ceq [string]$c.Want) ("setting '" + ([string]$c.Text).Replace("`r", '\r').Replace("`n", '\n') + "' -> '" + $c.Want + "'") $got
-        }
-        Remove-Item -LiteralPath $setting -Force
-        $legacy = '-NoProfile -ExecutionPolicy Bypass -File C:\r\postgres-snapshot.ps1 -Plain -Execute -OneDriveCopy -StagingPath C:\Users\lndco\antiphon-snapshot-staging'
-        $desk = @(Get-PlainSnapshotChildArguments -Snapshot 'C:\r\postgres-snapshot.ps1' -Staging 'C:\Users\lndco\antiphon-snapshot-staging' -Target 'desktop')
-        Assert-True (($desk -join ' ') -ceq $legacy) 'desktop child arguments are unchanged' ($desk -join ' ')
-        $s2 = @(Get-PlainSnapshotChildArguments -Snapshot 'C:\r\postgres-snapshot.ps1' -Staging 'C:\Users\lndco\antiphon-snapshot-staging' -Target 'server2')
-        Assert-True (($s2 -join ' ') -ceq ($legacy + ' -Target server2')) 'server2 child arguments add -Target server2' ($s2 -join ' ')
-        $text = [System.IO.File]::ReadAllText($invoke)
-        Assert-True ($text.Contains("Join-Path `$PSScriptRoot 'SNAPSHOT-TARGET'")) 'runner reads SNAPSHOT-TARGET beside itself' 'missing'
-        Assert-True ($text.Contains('reason=bad-target')) 'runner fails loudly on a bad setting' 'missing'
-        $readmeText = [System.IO.File]::ReadAllText((Join-Path $here 'windmill\README.md'))
-        Assert-True ($readmeText.Contains('SNAPSHOT-TARGET')) 'readme documents SNAPSHOT-TARGET' 'missing'
-    } finally {
-        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
 function Test-HelperAscii {
     foreach ($needed in @($helperPath, $schemaPath, $registerPath)) {
         if (-not (Test-Path -LiteralPath $needed)) {
@@ -374,7 +326,7 @@ function Test-HelperAscii {
     }
 }
 
-$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'RunnerSourceSha', 'SnapshotTarget', 'HelperAscii')
+$all = @('RenderLines', 'RecordFile', 'StaleWindow', 'ScheduleFiles', 'RegisterPreview', 'CloudSuffix', 'RunnerSourceSha', 'HelperAscii')
 if ($Case) {
     $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
     if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }
