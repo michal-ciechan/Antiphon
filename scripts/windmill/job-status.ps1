@@ -86,15 +86,22 @@ function Format-SnapshotSize {
 }
 
 function New-PlainBackupCloudRecord {
-    param([int64]$Bytes, [string]$OneDrive = '')
+    param([int64]$Bytes, [string]$OneDrive = '', [string]$Target = '')
     $size = Format-SnapshotSize $Bytes
+    # -Target names the source database (backup retarget plan 2026-11-18).
+    # Without it the line is unchanged.
+    $source = ''
+    if (-not [string]::IsNullOrEmpty($Target)) {
+        if ($Target -cnotmatch '^[a-z0-9]{1,16}$') { return $null }
+        $source = ' src=' + $Target
+    }
     if ($OneDrive -eq 'ok') {
-        return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail ($size + ' +cloud')
+        return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail ($size + ' +cloud' + $source)
     }
     if ($OneDrive -eq 'missing' -or $OneDrive -eq 'failed') {
-        return New-JobStatusRecord -Job 'db-backup' -Icon 'WARN' -Status 'warn' -Detail ($size + ' no cloud copy')
+        return New-JobStatusRecord -Job 'db-backup' -Icon 'WARN' -Status 'warn' -Detail ($size + ' no cloud copy' + $source)
     }
-    return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail $size
+    return New-JobStatusRecord -Job 'db-backup' -Icon 'OK' -Status 'ok' -Detail ($size + $source)
 }
 
 function ConvertFrom-SnapshotUtcStamp {
