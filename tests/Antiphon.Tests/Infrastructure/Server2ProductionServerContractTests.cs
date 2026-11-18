@@ -90,10 +90,21 @@ public sealed class Server2ProductionServerContractTests
         server.ShouldContain("runner-state:/runner-state:ro");
         server.ShouldContain("work:/work");
         server.ShouldContain("server-session-runner:");
-        text.ShouldNotContain(".exe");
+        sidecar.ShouldNotContain(".exe");
+        sidecar.ShouldNotContain(".cmd");
+        sidecar.Contains("C:\\", StringComparison.Ordinal).ShouldBeFalse();
+        sidecar.Contains("C:/", StringComparison.Ordinal).ShouldBeFalse();
         text.ShouldNotContain(".cmd");
         text.Contains("C:\\", StringComparison.Ordinal).ShouldBeFalse();
-        text.Contains("C:/", StringComparison.Ordinal).ShouldBeFalse();
+        text.Replace("\r\n", "\n").Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.Contains("C:/", StringComparison.Ordinal) || line.Contains(".exe", StringComparison.Ordinal))
+            .ShouldBe(new[]
+            {
+                "PhoneHomeRunner__Runners__desktop-win__RunnerWorkspace: C:/Antiphon/runner/work",
+                "PhoneHomeRunner__Runners__desktop-win__RunnerRepository: C:/Antiphon/runner/work/repos/antiphon",
+                "PhoneHomeRunner__Runners__desktop-win__RawExeAllowList__0: \"C:/Program Files/PowerShell/7/pwsh.exe\"",
+            });
     }
 
     [Test]
@@ -653,6 +664,8 @@ public sealed class Server2ProductionServerContractTests
         "ANTIPHON_PUBLIC_ORIGIN=https://example.invalid\n" +
         "PHONE_HOME_SHARED_SECRET=fixture-secret-1775\n" +
         "PHONE_HOME_HOST_WORKSPACE_ROOT=/work\n" +
+        "PHONE_HOME_DESKTOP_WIN_SHARED_SECRET=fixture-desktop-win-secret\n" +
+        "PHONE_HOME_DESKTOP_WIN_HOME=C:/Users/fixture\n" +
         "KEYRING_CERT_FILE=" + cert + "\n" +
         "KEYRING_KEY_FILE=" + key + "\n" +
         "OPERATOR_TOKEN_FILE=" + token + "\n";
