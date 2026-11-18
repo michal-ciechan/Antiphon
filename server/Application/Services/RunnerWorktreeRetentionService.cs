@@ -683,7 +683,7 @@ public sealed class RunnerWorktreeRetentionService
             run.Candidates++;
             if (outcome == WorktreeResidueCandidateOutcome.Held)
                 run.Held++;
-            var row = Row(run, LaneTemp, outcome, reason, null, root + "/" + candidate.Name,
+            var row = Row(run, LaneTemp, outcome, reason, null, (candidate.Root ?? root).TrimEnd('/') + "/" + candidate.Name,
                 "temp:" + candidate.Family + ";bytes=" + candidate.Bytes, runnerId);
             row.OperationId = request.RequestId;
             row.DirectoryRemoved = outcome == WorktreeResidueCandidateOutcome.Removed ? true : null;
