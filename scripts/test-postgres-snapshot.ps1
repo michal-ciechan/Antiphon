@@ -2225,6 +2225,315 @@ function Test-PlainPublishPruneOrder {
     }
 }
 
+
+# Backup retarget (plan 2026-11-18-postgres-backup-retarget-plan.md): -Target
+# desktop|server2. The server2 fake logs each docker argv as one line and
+# answers only through the antiphon-server2 context.
+$script:Server2Container = 'antiphon-server2-postgres-postgres-1'
+$script:Server2ImageId = 'sha256:8a4b045886180c64f518ca6a4b0791b15fb997f3b3b619bd5ee141914668db55'
+
+function Install-SnapshotServer2Fake {
+    param($Fixture)
+    if ($env:OS -eq 'Windows_NT') { throw 'the server2 docker fake runs on the Linux witness host' }
+    $docker = @'
+#!/bin/sh
+printf '%s\n' "docker $*" >> "$CARD1405_TOOL_MARKER"
+scenario="${CARD1831_S2_SCENARIO:-good}"
+state="${CARD1405_DOCKER_STATE:-/tmp/card1831-s2-state}"
+bytes="${CARD1405_DUMP_BYTES:-1048576}"
+if [ "$1" = "--context" ]; then
+    shift
+    shift
+fi
+cmd="$1"
+shift
+target=""
+for arg in "$@"; do
+    target="$arg"
+done
+running=true
+project=antiphon-server2-postgres
+volume=antiphon-server2-postgres_pgdata
+dest=/var/lib/postgresql/data
+case "$scenario" in
+    drill-project) project=antiphon-server2-postgres-drill ;;
+    drill-volume) volume=antiphon-server2-postgres-drill_pgdata ;;
+    wrong-dest) dest=/data ;;
+    stopped) running=false ;;
+esac
+image_env='"Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/16/bin","LANG=en_US.utf8","PG_MAJOR=16","PG_VERSION=16.14-1.pgdg13+1","PGDATA=/var/lib/postgresql/data"]'
+source_json='{"Id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","Name":"/antiphon-server2-postgres-postgres-1","Image":"sha256:8a4b045886180c64f518ca6a4b0791b15fb997f3b3b619bd5ee141914668db55","State":{"Running":'"$running"'},"Config":{"Labels":{"com.docker.compose.project":"'"$project"'","com.docker.compose.service":"postgres"},'"$image_env"'},"HostConfig":{"NetworkMode":"antiphon-server2-postgres_default"},"Mounts":[{"Type":"volume","Name":"'"$volume"'","Destination":"'"$dest"'"}],"NetworkSettings":{"Networks":{"antiphon-server2-postgres_default":{"Aliases":["postgres"]}}}}'
+scratch_json='{"Id":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","Name":"/antiphon-postgres-drill","Image":"sha256:8a4b045886180c64f518ca6a4b0791b15fb997f3b3b619bd5ee141914668db55","State":{"Running":true},"Config":{"Labels":{"antiphon.snapshot-drill":"1"},'"$image_env"'},"HostConfig":{"NetworkMode":"none"},"Mounts":[{"Type":"volume","Name":"antiphon-postgres-drill-pgdata","Destination":"/var/lib/postgresql/data"}],"NetworkSettings":{"Networks":{}}}'
+case "$cmd" in
+    context)
+        printf '%s\n' "${CARD1405_DOCKER_ENDPOINT-ssh://fake@server2}"
+        exit 0
+        ;;
+    inspect)
+        if [ "$target" = "antiphon-server2-postgres-postgres-1" ]; then
+            printf '%s\n' "$source_json"
+            exit 0
+        fi
+        if [ "$target" = "antiphon-postgres-drill" ] || [ "$target" = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" ]; then
+            if [ -f "$state" ]; then
+                printf '%s\n' "$scratch_json"
+                exit 0
+            fi
+        fi
+        exit 1
+        ;;
+    run)
+        case " $*" in
+            *' -d '*)
+                : > "$state"
+                printf '%s\n' 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+                ;;
+        esac
+        exit 0
+        ;;
+    exec)
+        case " $*" in
+            *'--version'*)
+                printf '%s\n' 'postgres (PostgreSQL) 16.14 (Debian 16.14-1.pgdg13+1)'
+                exit 0
+                ;;
+            *'pg_restore'*'--list'*)
+                printf '%s\n' '3000; 0 12345 TABLE DATA public cards antiphon' '3001; 0 12346 TABLE DATA public agents antiphon'
+                exit 0
+                ;;
+            *' wc '*)
+                printf '%s\n' "$bytes /tmp/antiphon-snapshot.dump"
+                exit 0
+                ;;
+            *' psql '*)
+                printf '%s\n' '139'
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+    cp)
+        case "$target" in
+            *:*) exit 0 ;;
+        esac
+        "$CARD1405_PWSH" -NoProfile -Command "[System.IO.File]::WriteAllBytes('$target', (New-Object byte[] $bytes))" || exit 1
+        exit 0
+        ;;
+    volume)
+        sub="$1"
+        vol_file="${state}.volumes"
+        case "$sub" in
+            inspect)
+                if [ -f "$vol_file" ]; then
+                    while IFS= read -r line || [ -n "$line" ]; do
+                        if [ "$line" = "$target" ]; then
+                            printf '{"Name":"%s","Labels":{"antiphon.snapshot-drill":"1"}}\n' "$target"
+                            exit 0
+                        fi
+                    done < "$vol_file"
+                fi
+                exit 1
+                ;;
+            create)
+                printf '%s\n' "$target" >> "$vol_file"
+                exit 0
+                ;;
+        esac
+        exit 0
+        ;;
+esac
+exit 0
+'@
+    $encoding = New-Object System.Text.UTF8Encoding $false
+    $dockerPath = Join-Path $Fixture.Bin 'docker'
+    [System.IO.File]::WriteAllText($dockerPath, $docker.Replace("`r`n", "`n"), $encoding)
+    Set-SnapshotHarnessMode $dockerPath '755'
+}
+
+function Invoke-Server2Case {
+    param($Fixture, [string[]]$Arguments, [hashtable]$Env = @{})
+    Remove-Item -LiteralPath $Fixture.Marker -Force -ErrorAction SilentlyContinue
+    $environment = @{
+        CARD1405_DOCKER_STATE = (Join-Path $Fixture.Root 'docker-state')
+        CARD1405_DUMP_BYTES = '1048576'
+    }
+    foreach ($key in @($Env.Keys)) { $environment[[string]$key] = [string]$Env[$key] }
+    return Invoke-Snapshot -Fixture $Fixture -Arguments $Arguments -ExtraEnv $environment
+}
+
+function Get-Server2DockerLines {
+    param($Result)
+    return @(([string]$Result.Tools) -split "`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Test-TargetDesktopUnchanged {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $base = @('-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        foreach ($variant in @(@{ Name = 'TargetDesktopUnchanged default'; Extra = @() }, @{ Name = 'TargetDesktopUnchanged desktop'; Extra = @('-Target', 'desktop') })) {
+            $name = [string]$variant.Name
+            $plan = Invoke-Snapshot -Fixture $fx -Arguments ($base + @($variant.Extra))
+            Assert-True ($plan.Exit -eq 0) "$name exits 0" "exit=$($plan.Exit) $($plan.Err) $($plan.Out)"
+            Assert-True ($plan.Out -match 'step dump: docker exec antiphon-postgres pg_dump') "$name dumps the desktop container" $plan.Out
+            Assert-True ($plan.Out -notmatch 'step source:') "$name prints no source step" $plan.Out
+            Assert-True ($plan.Out -notmatch '--context') "$name names no docker context" $plan.Out
+            Assert-True ($plan.Out -match 'SNAPSHOT plan exit=0 reason=ok') "$name plan is ok" $plan.Out
+            Assert-NoDocker $plan $name
+            Assert-True (-not (Test-Path -LiteralPath $dest)) "$name writes nothing" $dest
+        }
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetServer2Plan {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $plan = Invoke-Snapshot -Fixture $fx -Arguments @('-WhatIf', '-Plain', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        Assert-True ($plan.Exit -eq 0) 'TargetServer2Plan exits 0' "exit=$($plan.Exit) $($plan.Err) $($plan.Out)"
+        Assert-True ($plan.Out -match 'step source: target=server2 container=antiphon-server2-postgres-postgres-1 context=antiphon-server2') 'TargetServer2Plan names the source' $plan.Out
+        Assert-True ($plan.Out -match 'docker exec antiphon-server2-postgres-postgres-1 pg_dump') 'TargetServer2Plan dumps the server2 container' $plan.Out
+        Assert-True ($plan.Out -notmatch 'docker exec antiphon-postgres ') 'TargetServer2Plan does not dump the desktop container' $plan.Out
+        Assert-True ($plan.Out -notmatch 'ssh://') 'TargetServer2Plan prints no ssh endpoint' $plan.Out
+        Assert-True ($plan.Out.IndexOf('@') -lt 0) 'TargetServer2Plan prints no user@host' $plan.Out
+        Assert-True ($plan.Out -notmatch 'postgres://') 'TargetServer2Plan prints no connection string' $plan.Out
+        Assert-True ($plan.Out -match 'SNAPSHOT plan exit=0 reason=ok') 'TargetServer2Plan plan is ok' $plan.Out
+        Assert-NoDocker $plan 'TargetServer2Plan'
+        $bad = Invoke-Snapshot -Fixture $fx -Arguments @('-WhatIf', '-Plain', '-Target', 'Server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        Assert-True ($bad.Exit -ne 0) 'TargetServer2Plan refuses a cased target word' "exit=$($bad.Exit) $($bad.Out)"
+        Assert-True ($bad.Out -notmatch 'step dump:') 'TargetServer2Plan cased target prints no dump step' $bad.Out
+        Assert-NoDocker $bad 'TargetServer2Plan cased target'
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetServer2ContextOnEveryCall {
+    $fx = New-Fixture
+    try {
+        Install-SnapshotServer2Fake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        $run = Invoke-Server2Case $fx @('-Execute', '-Plain', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        Assert-True ($run.Exit -eq 0) 'TargetServer2ContextOnEveryCall exits 0' "exit=$($run.Exit) $($run.Err) $($run.Out)"
+        $lines = Get-Server2DockerLines $run
+        Assert-True ($lines.Count -ge 6) 'TargetServer2ContextOnEveryCall calls docker' ("count=$($lines.Count)")
+        $loose = @($lines | Where-Object { $_ -notmatch '^docker --context antiphon-server2 ' })
+        Assert-True ($loose.Count -eq 0) 'every docker call names the antiphon-server2 context' ($loose -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ' context inspect antiphon-server2 ' }).Count -eq 1) 'TargetServer2ContextOnEveryCall inspects the named context' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ' exec antiphon-server2-postgres-postgres-1 pg_dump ' }).Count -eq 1) 'TargetServer2ContextOnEveryCall dumps the server2 container once' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match ' exec antiphon-server2-postgres-postgres-1 pg_restore --list ' }).Count -eq 2) 'TargetServer2ContextOnEveryCall lists the dump twice' ($lines -join ' | ')
+        Assert-True (@($lines | Where-Object { $_ -match 'antiphon-postgres ' -or $_ -match 'antiphon-postgres$' }).Count -eq 0) 'TargetServer2ContextOnEveryCall never names the desktop container' ($lines -join ' | ')
+        $dumps = @(Get-ChildItem -LiteralPath $dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^antiphon-[0-9]{8}T[0-9]{6}Z\.dump$' })
+        Assert-True ($dumps.Count -eq 1) 'TargetServer2ContextOnEveryCall publishes into the fixture destination' ("count=$($dumps.Count)")
+        $statusPath = Join-Path $dest 'snapshot-status.json'
+        $json = ''
+        if (Test-Path -LiteralPath $statusPath) { $json = [System.IO.File]::ReadAllText($statusPath) }
+        Assert-True ($json -match '"exit":0') 'TargetServer2ContextOnEveryCall status exit 0' $json
+        Assert-True ($json -match '"target":"server2","serverVersion":"16.14"') 'TargetServer2ContextOnEveryCall status names target and version' $json
+        $blob = $run.Out + "`n" + $run.Err
+        Assert-True ($blob -notmatch 'ssh://' -and $blob -notmatch 'fake@server2') 'TargetServer2ContextOnEveryCall prints no endpoint' $blob
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetServer2RefusesTcp {
+    $fx = New-Fixture
+    try {
+        Install-SnapshotServer2Fake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        $runArgs = @('-Execute', '-Plain', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        $cases = @(
+            @{ Name = 'tcp context'; Reason = 'docker-context'; Env = @{ CARD1405_DOCKER_ENDPOINT = 'tcp://10.0.0.1:2375' } },
+            @{ Name = 'ssh DOCKER_HOST'; Reason = 'docker-host'; Env = @{ DOCKER_HOST = 'ssh://x' } },
+            @{ Name = 'unix DOCKER_HOST'; Reason = 'docker-host'; Env = @{ DOCKER_HOST = 'unix:///var/run/docker.sock' } }
+        )
+        foreach ($case in $cases) {
+            $name = 'TargetServer2RefusesTcp ' + [string]$case.Name
+            $result = Invoke-Server2Case $fx $runArgs $case.Env
+            Assert-True ($result.Exit -eq 4) "$name exits 4" "exit=$($result.Exit) $($result.Err) $($result.Out)"
+            Assert-True ($result.Out -match ('reason=' + [regex]::Escape([string]$case.Reason))) "$name reason" $result.Out
+            Assert-True ([string]$result.Tools -notmatch ' exec ') "$name runs no exec" ([string]$result.Tools)
+            Assert-True ($result.Out -notmatch '10\.0\.0\.1' -and $result.Out -notmatch 'ssh://') "$name hides the endpoint" $result.Out
+            $dumps = @(Get-ChildItem -LiteralPath $dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.dump$' })
+            Assert-True ($dumps.Count -eq 0) "$name publishes nothing" ("count=$($dumps.Count)")
+        }
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetServer2SourceMismatch {
+    $fx = New-Fixture
+    try {
+        Install-SnapshotServer2Fake $fx
+        $dest = Join-Path $fx.Root 'backups'
+        $runArgs = @('-Execute', '-Plain', '-Target', 'server2', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        foreach ($scenario in @('drill-project', 'drill-volume', 'wrong-dest', 'stopped')) {
+            $name = 'TargetServer2SourceMismatch ' + $scenario
+            $result = Invoke-Server2Case $fx $runArgs @{ CARD1831_S2_SCENARIO = $scenario }
+            Assert-True ($result.Exit -eq 9) "$name exits 9" "exit=$($result.Exit) $($result.Err) $($result.Out)"
+            Assert-True ($result.Out -match 'SNAPSHOT fail exit=9 reason=source-mismatch') "$name reason" $result.Out
+            Assert-True ([string]$result.Tools -notmatch 'pg_dump') "$name dumps nothing" ([string]$result.Tools)
+            Assert-True ([string]$result.Tools -match 'inspect --format \{\{json \.\}\} antiphon-server2-postgres-postgres-1') "$name reads the source facts" ([string]$result.Tools)
+            $dumps = @(Get-ChildItem -LiteralPath $dest -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\.dump$' })
+            Assert-True ($dumps.Count -eq 0) "$name publishes nothing" ("count=$($dumps.Count)")
+        }
+    } finally { Remove-Fixture $fx }
+}
+
+function Test-TargetStatusFields {
+    if (-not (Test-Path -LiteralPath $scriptPath)) { Write-Fail 'TargetStatusFields script exists' $scriptPath; return }
+    . $scriptPath
+    $cmd = Get-Command Write-SnapshotPlainStatus -ErrorAction SilentlyContinue
+    if (-not $cmd -or -not $cmd.Parameters.ContainsKey('Target') -or -not $cmd.Parameters.ContainsKey('ServerVersion')) {
+        Write-Fail 'TargetStatusFields writer' 'Write-SnapshotPlainStatus -Target/-ServerVersion missing'
+        return
+    }
+    $dir = Join-Path ([System.IO.Path]::GetTempPath()) ('card1831-target-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        $final = Join-Path $dir 'snapshot-status.json'
+        $cases = @(
+            @{ Name = 'plain version'; Target = 'server2'; Version = '16.14'; Expect = '"target":"server2","serverVersion":"16.14"' },
+            @{ Name = 'debian text'; Target = 'server2'; Version = '16.14 (Debian 16.14-1.pgdg13+1)'; Expect = '"target":"server2","serverVersion":"16.14"' },
+            @{ Name = 'postgres --version line'; Target = 'server2'; Version = 'postgres (PostgreSQL) 16.14 (Debian 16.14-1.pgdg13+1)'; Expect = '"target":"server2","serverVersion":"16.14"' },
+            @{ Name = 'junk'; Target = 'server2'; Version = 'not a version'; Expect = '"target":"server2","serverVersion":"unknown"' },
+            @{ Name = 'three part'; Target = 'server2'; Version = '16.14.1'; Expect = '"target":"server2","serverVersion":"unknown"' },
+            @{ Name = 'desktop'; Target = 'desktop'; Version = '16.14'; Expect = '"target":"desktop","serverVersion":"16.14"' }
+        )
+        foreach ($case in $cases) {
+            $name = 'TargetStatusFields ' + [string]$case.Name
+            $wrote = Write-SnapshotPlainStatus -Dir $dir -Utc '20261118T075000Z' -Code 0 -Bytes 1234 -Sha256Prefix 'abcdef123456' -DurationSec 7 -Tables 4 -Target ([string]$case.Target) -ServerVersion ([string]$case.Version)
+            Assert-True ($wrote -eq $true) "$name writes" "wrote=$wrote"
+            $json = ''
+            if (Test-Path -LiteralPath $final) { $json = [System.IO.File]::ReadAllText($final) }
+            Assert-True ($json.EndsWith([string]$case.Expect + '}')) "$name fields at the end" $json
+            Assert-True ($json -match '"mode":"plain"') "$name keeps mode" $json
+        }
+        $defaulted = Write-SnapshotPlainStatus -Dir $dir -Utc '20261118T075000Z' -Code 0 -Bytes 1234 -Sha256Prefix 'abcdef123456' -DurationSec 7 -Tables 4
+        $json = [System.IO.File]::ReadAllText($final)
+        Assert-True ($defaulted -eq $true -and $json -match '"target":"desktop","serverVersion":"unknown"') 'TargetStatusFields default is desktop and unknown' $json
+        $refused = Write-SnapshotPlainStatus -Dir $dir -Utc '20261118T075000Z' -Code 0 -Bytes 1 -Sha256Prefix 'abcdef123456' -DurationSec 1 -Tables 1 -Target 'server3' -ServerVersion '16.14'
+        Assert-True ($refused -eq $false) 'TargetStatusFields refuses an unknown target' "wrote=$refused"
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-TargetServer2RefusesContainer {
+    $fx = New-Fixture
+    try {
+        $dest = Join-Path $fx.Root 'backups'
+        $base = @('-WhatIf', '-Plain', '-Destination', $dest, '-SyncRoot', $fx.Sync, '-StagingPath', $fx.Stage)
+        foreach ($name in @('antiphon-postgres', 'antiphon-postgres-drill', 'antiphon-server2-postgres-postgres-1')) {
+            $label = 'TargetServer2RefusesContainer ' + $name
+            $plan = Invoke-Snapshot -Fixture $fx -Arguments ($base + @('-Target', 'server2', '-Container', $name))
+            Assert-True ($plan.Exit -eq 2) "$label exits 2" "exit=$($plan.Exit) $($plan.Err) $($plan.Out)"
+            Assert-True ($plan.Out -match 'reason=ambiguous-mode') "$label reason" $plan.Out
+            Assert-True ($plan.Out -notmatch 'step dump:') "$label prints no dump step" $plan.Out
+            Assert-NoDocker $plan $label
+        }
+        $desktop = Invoke-Snapshot -Fixture $fx -Arguments ($base + @('-Target', 'desktop', '-Container', 'antiphon-postgres'))
+        Assert-True ($desktop.Exit -eq 0 -and $desktop.Out -match 'reason=ok') 'TargetServer2RefusesContainer desktop -Container stays ok' "exit=$($desktop.Exit) $($desktop.Err) $($desktop.Out)"
+        Assert-True ($desktop.Out -match 'step dump: docker exec antiphon-postgres pg_dump') 'TargetServer2RefusesContainer desktop dumps the named container' $desktop.Out
+    } finally { Remove-Fixture $fx }
+}
+
 $all = @(
     'WhatIfPlan', 'MissingRecipient', 'RecipientInsideDestination',
     'DrillRefusesProduction', 'DrillPlan', 'Retention',
@@ -2239,7 +2548,9 @@ $all = @(
     'PublishRejectsEncryptFailure', 'MissingAge', 'WindowsAclRules',
     'PlainOffByDefault', 'PlainPlan', 'PlainInsideOneDrive', 'PlainMissingOneDrive', 'PlainAclOpen',
     'PlainRetention', 'PlainVerifyBeforePrune', 'PlainStatusNoSecret', 'PlainDrillRefused',
-    'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder'
+    'PlainOneDriveCopy', 'PlainOneDrivePlan', 'PlainOneDriveLink', 'PlainPublishPruneOrder',
+    'TargetDesktopUnchanged', 'TargetServer2Plan', 'TargetServer2ContextOnEveryCall', 'TargetServer2RefusesTcp',
+    'TargetServer2SourceMismatch', 'TargetStatusFields', 'TargetServer2RefusesContainer'
 )
 $script:SnapshotPosixFakeCases = @(
     'DrillRefusesIdPrefix', 'DrillRefusesAlias', 'DrillRefusesUnlabelled',
@@ -2248,7 +2559,8 @@ $script:SnapshotPosixFakeCases = @(
     'DrillRefusesOwnVolume', 'DrillRefusesForeignVolume', 'DrillRefusesVolumeMismatch', 'DrillRefusesPgHost',
     'StagingPreservesOperatorFiles', 'DrillRemovesScratch',
     'DrillRefusesTaintedReuse', 'DrillReusesImageEnvScratch', 'DockerDaemonPinned',
-    'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure'
+    'DrillPicksExactSnapshot', 'PublishRejectsEncryptFailure',
+    'TargetServer2ContextOnEveryCall', 'TargetServer2RefusesTcp', 'TargetServer2SourceMismatch'
 )
 function Invoke-SnapshotCase {
     param([string]$Name)
