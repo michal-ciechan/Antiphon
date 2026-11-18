@@ -77,8 +77,8 @@ try {
             Assert-True ($script:C1609LiveProofReason -ceq 'proof') 'bad proof retains diagnosis'
         }
         config {
-            [Environment]::SetEnvironmentVariable('ANTIPHON_RETIRE_CONTROL_WINDOW_MS',$null)
-            Assert-True ($null -eq [Environment]::GetEnvironmentVariable('ANTIPHON_RETIRE_CONTROL_WINDOW_MS')) 'key must be absent'
+            Remove-Item -LiteralPath Env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS -ErrorAction SilentlyContinue
+            Assert-True (-not [Environment]::GetEnvironmentVariables().Contains('ANTIPHON_RETIRE_CONTROL_WINDOW_MS')) 'key must be absent'
             Assert-True ((Get-C1609ControlWindowMs) -eq 8000) 'absent default must be 8000'
             $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='';Assert-True ((Get-C1609ControlWindowMs) -eq 8000) 'empty default'
             $env:ANTIPHON_RETIRE_CONTROL_WINDOW_MS='7000';Assert-True ((Get-C1609ControlWindowMs) -eq 7000) 'configured window'
