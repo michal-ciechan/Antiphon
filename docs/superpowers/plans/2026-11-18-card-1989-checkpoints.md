@@ -50,7 +50,31 @@ V-6: inspect whether renewals can share a bundle without changing proof semantic
 | CP-4 | S1-S2 | n/a | guards | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case guards` | R-1 | 1 PASS, zero failures | n/a | 1 | true |
 | CP-5 | S1-S2 | n/a | config | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case config` | V-4 | 1 PASS, zero failures | n/a | 1 | true |
 | CP-6 | S1-S2 | n/a | receipt | `pwsh -NoProfile -File scripts/test-c1989-control-window.ps1 -Case receipt` | V-5 | 1 PASS, two protocol exchanges, zero failures | n/a | 1 | true |
-| CP-7 | S1-S2 | n/a | live-budget | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Build -Class VolumeRetirementHostProofTests -Method Final_live_check_bounds_the_configurable_desktop_budget` | R-2 | 1 fresh TRX result, zero failures | n/a | 15 | true |
+| CP-7 | S1-S2 | n/a | host-proof | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Build -Class VolumeRetirementHostProofTests` | R-2 | 19 fresh TRX results, zero failures | n/a | 15 | true |
+| CP-8 | S2 | n/a | adjacent-contracts | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class '(ClaudeTokenRefreshOptInTests*)\|(DockerStackContractTests*)\|(HostJqFixtureClosureTests*)\|(RetiredTempContainerScriptTests*)\|(RollingVolumeRecycleScriptTests*)'` | R-2 | every named class nonzero, zero failures | n/a | 3 | true |
+| CP-9 | S2 | n/a | remote-bridge | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RemoteScriptContractTests -Method '(Custody_containment_is_routed*)\|(Temp_retire_requires*)\|(C849_Cache_cases_use_only*)'` | R-2 | 3 fresh TRX results, zero failures | n/a | 2 | true |
+| CP-10 | S2 | n/a | host-jq | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class HostJqPrerequisiteScriptTests -Method '(C1058_Receipt_formatter*)\|(C1058_Proof_is_buffered*)\|(C1025_Check_qualifies*)'` | R-2 | each named method nonzero, zero failures | n/a | 2 | true |
+| CP-11 | S2 | n/a | exchange-content | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class VolumeRetirementContentTests -Method Exchange_*` | R-2 | 8 fresh TRX results, zero failures | n/a | 3 | true |
+| CP-12 | S2 | n/a | effect-fence | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class VolumeRetirementReceiptTests -Method '(One_repository_measured*)\|(Control_observation_older*)\|(Every_delete_rechecks*)'` | R-2 | 3 fresh TRX results, zero failures | n/a | 3 | true |
+| CP-13 | S2 | n/a | publication-control | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class VolumeRetirementPublicationTests -Method '(Salvage_withdrawn_after_staging*)\|(Head_rolled_back_after_staging*)\|(Origin_unreachable_after_staging*)\|(Final_origin_binding_refresh*)'` | R-2 | 4 fresh TRX results, zero failures | n/a | 4 | true |
+| CP-14 | S2 | n/a | apply-guards | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class VolumeRetirementApplyGateTests` | R-2 | every method, zero failures | n/a | 3 | true |
+| CP-15 | S2 | n/a | wrappers | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class VolumeRetirementWrapperTests` | R-2 | 7 fresh TRX results, zero failures | n/a | 3 | true |
+| CP-16 | S2 | n/a | retired-host | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class RetiredTempContainerHostTests -Method C994_Each_removal_rechecks_live_proofs` | R-2 | 1 fresh TRX result, zero failures | n/a | 2 | true |
+| CP-17 | S2 | n/a | ref-publication | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class C0824BranchDeletionRecycleAuditTests` | R-2 | 3 fresh TRX results, zero failures | n/a | 3 | true |
+| CP-18 | S2 | n/a | bound-land-wait | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class C1364BoundLandWaitProofTests -Method C1364_Wrapper_*` | R-2 | 3 fresh TRX results, zero failures | n/a | 2 | true |
+| CP-19 | S2 | n/a | layering | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class C1729LayeringGuardTests` | R-3 | zero violations, listed 162 | n/a | 2 | true |
+| CP-20 | S2 | n/a | derived-index | `pwsh -NoProfile -File scripts/test-c1989-affected.ps1 -Class DerivedImpactIndexTests -Method committed_index_matches_the_builder` | R-3 | 1 fresh TRX result, zero failures | n/a | 2 | true |
+
+The native-output adapter builds once at CP-7, records committed source and DLL
+SHA-256, and refuses reuse at a different SHA or after a DLL change. Each row
+emits a fresh TRX with counts; checkpoint command-row buildSource is honestly
+notApplicable, with the additional native build binding in `.antiphon/c1989-native`.
+All 16 derived impacted classes are represented. The large adjacent classes have
+method-scoped selections under the operator's SHORT-only override; the named
+invariants are origin publication, final control binding, receipt and effect
+fences, wrapper admission, helper custody, and unchanged bridge routing. No whole
+Slow class or Unit lane is selected. No classification, selector or pin inputs are
+edited, so the operator's explicit override omits the broad guard union.
 
 Native Windows execution is not claimed. Changed logic is portable PowerShell,
 with no new OS branch or production factory. Production script remains ASCII and
