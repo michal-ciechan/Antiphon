@@ -150,6 +150,7 @@ case "$response" in C1609_CONTROL_RESPONSE*) exit 0;; *) exit 3;; esac
                 # Fixed fixture leaves, never an arbitrary recursive cleanup.
                 foreach($name in @('evidence-False','evidence-True')){
                     $dir=Join-Path $root $name
+                    if(-not [IO.Directory]::Exists($dir)){continue}
                     foreach($leaf in @('coordinator-exchanges.jsonl','coordinator-controls.jsonl','remote-output.txt')){[IO.File]::Delete((Join-Path $dir $leaf))}
                     $exchange=Join-Path $dir ('exchange-'+('a'*32))
                     $inv=Join-Path $exchange ('inventory-'+('b'*32))
