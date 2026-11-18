@@ -52,7 +52,12 @@ proposed tie-break. No assertions or timeouts have been relaxed. New witnesses
 must be committed and fail for their named reason on unchanged production
 source before any fix. The whole Unit lane remains nightly/rc-owned.
 
-## Execution blocker
+## Execution authorization
+
+The caller reopened the task and explicitly authorized checkpoint-owned
+`bin-<name>/` outputs. Direct builds remain native. Each created isolated output
+must be removed by its exact literal path before the final report. The earlier
+blocker below is retained as history and is resolved.
 
 The task brief forbids custom build output directories, while requiring the
 checkpoint tool. Its TUnit importer accepts only `<project> -> bin-<name>/`
@@ -69,7 +74,7 @@ authorized; it is not a claim that execution was authorized or performed.
 
 ### Checkpoints
 
-| ID | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S0 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-red/ | c1896-red | `/*/*/C1677TempSweepTests/(Unregistered_random_and_process_names_aggregate_by_prefix\|Entry_limit_admits_one_largest_entry_per_family_before_second_turn\|Entry_over_remaining_byte_budget_does_not_starve_a_fitting_family)` | V-1,V-2,V-3 | all listed, 0 failed after fix; before fix expect five assertion failures | 5 | 15 |
 | CP-2 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-green/ | c1896-green | `/*/*/C1677TempSweepTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 5 | 3 |
