@@ -162,7 +162,13 @@ function Test-NCDiagnosticsMatchFallback {
         @('first-three', ($header + (@($records)[0..2] -join "`n"))),
         @('duplicate', ($header + $D13FailureRecord + "`n" + $D13FailureRecord)),
         @('no-version', ($D13FailureRecord)),
-        @('c1375', ($header + (& $decode $c1375[0].Record) + "`n" + (& $decode $c1375[1].Record))))
+        @('c1375', ($header + (& $decode $c1375[0].Record) + "`n" + (& $decode $c1375[1].Record))),
+        # Raw discovered-marker count (DiagScan.cs) at the text's edges and back to back; leading Unicode
+        # whitespace and a zero-width space before the JSON/text decision; whitespace-only text.
+        @('marker-edges', ('DiscoveredTestNodeStateProperty {' + $header + $D13FailureRecord + "`nDiscoveredTestNodeStateProperty {DiscoveredTestNodeStateProperty {")),
+        @('lead-space', ((" `t" + [char]0x2003 + [char]0x00A0 + [char]0x0085) + $header + $D13FailureRecord)),
+        @('zwsp-json', (" " + [char]0x200B + '{"Nodes":[]}')),
+        @('blank', (" `r`n" + [char]0x3000)))
     $paths = foreach ($log in $logs) {
         $path = Join-Path $root ('nc-' + $log[0] + '.diag'); [IO.File]::WriteAllText($path, $log[1]); $path
     }

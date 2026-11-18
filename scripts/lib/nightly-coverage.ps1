@@ -511,8 +511,13 @@ function ConvertFrom-NightlyDiagnosticLog {
     # Accepts golden JSON first; otherwise TestNodeUid { Value = ... } plus state properties.
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing diagnostic {0}' -f $Path) }
     $text = [System.IO.File]::ReadAllText($Path)
-    if ([string]::IsNullOrWhiteSpace($text)) { throw ('empty diagnostic {0}' -f $Path) }
-    $trimmed = $text.Trim()
+    # Never hand the whole text to a .NET method as an argument: PowerShell 7.4+ passes every method
+    # argument to AMSI, a scan of the whole diag per call (~0.6 s for 9 MB). TrimStart() returns the same
+    # string (no copy) when nothing leads; empty after it is IsNullOrWhiteSpace (both char.IsWhiteSpace),
+    # and trailing whitespace cannot change the culture-sensitive StartsWith that Trim() fed before. That
+    # StartsWith skips collation-ignorable characters (U+200B, U+0085...), so a first-character test is not it.
+    $trimmed = $text.TrimStart()
+    if ($trimmed.Length -eq 0) { throw ('empty diagnostic {0}' -f $Path) }
     if ($trimmed.StartsWith('{')) {
         $obj = $text | ConvertFrom-Json
         if ($Kind -eq 'discovery') {
@@ -524,17 +529,18 @@ function ConvertFrom-NightlyDiagnosticLog {
         return $obj
     }
     Test-NightlyPinnedDiagnosticVersions -Text $text
-    # Count raw markers independently of framing/acceptance. Even an orphan or
-    # an ambiguous marker in display text must prevent a partial inventory.
-    if (Test-NightlyCoreAvailable) { $discoveredCount = [Antiphon.Nightly.NightlyDiagnostics]::DiscoveredMarkerCount($text) }
-    else { $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count }
+    # Count raw markers independently of framing/acceptance ($discoveredCount, set in both
+    # branches below). Even an orphan or an ambiguous marker in display text must prevent
+    # a partial inventory.
     $recognized = $false
     $nodes = [Collections.Generic.List[object]]::new()
     $seen = @{}
     if (Test-NightlyCoreAvailable) {
         # Compiled record loop (NightlyCore.cs): same refusals in the same record order. Failure messages are
         # attached here, as the loop below does per record; they never refuse, so the order is unchanged.
-        $parsed = [Antiphon.Nightly.NightlyDiagnostics]::ParseRecords($text, $Kind, $Path)
+        # DiagScan.cs also returns the raw marker count, so the text crosses into .NET once (AMSI scan above).
+        $parsed = [Antiphon.Nightly.DiagScan]::ParseRecords($text, $Kind, $Path)
+        $discoveredCount = [int]$parsed.DiscoveredCount
         if ($parsed.Error) { throw $parsed.Error }
         foreach ($failed in $parsed.Failed) {
             $message = Get-NightlyDiagnosticFailureMessage -Record $failed.Record -StateProperty $failed.StateProperty
@@ -545,6 +551,7 @@ function ConvertFrom-NightlyDiagnosticLog {
         $recognized = [bool]$parsed.Recognized
         $nodes.AddRange([object[]]$parsed.Nodes)
     } else {
+    $discoveredCount = [regex]::Matches($text, 'DiscoveredTestNodeStateProperty \{').Count
     foreach ($record in (Get-NightlyDiagnosticRecords -Text $text)) {
         $stateProperty = Get-NightlyDiagnosticStateProperty -Record $record
         $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $stateProperty
