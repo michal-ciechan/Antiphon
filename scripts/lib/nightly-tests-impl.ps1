@@ -700,7 +700,6 @@ function Resolve-NightlyChunkDiscoverySeconds {
 function Add-NightlyOwnerObservation {
     param($Verdict, $Run)
     if ($null -eq $Verdict -or $null -eq $Run) { return }
-    $names = @($Run.PSObject.Properties.Name)
     $map = @(
         @('RootStartedAtUtc', 'rootStartedAtUtc'),
         @('rootStartedAtUtc', 'rootStartedAtUtc'),
@@ -733,11 +732,27 @@ function Add-NightlyOwnerObservation {
         @('Descendants', 'descendants'),
         @('descendants', 'descendants')
     )
+    # The indexer is the same case-insensitive member lookup as -contains over the names, without listing them.
+    $runProperties = $Run.PSObject.Properties
+    $verdictProperties = $Verdict.PSObject.Properties
     foreach ($pair in $map) {
-        if (-not ($names -contains $pair[0])) { continue }
-        $existing = @($Verdict.PSObject.Properties.Name)
-        if ($existing -contains $pair[1]) { continue }
-        $Verdict | Add-Member -NotePropertyName $pair[1] -NotePropertyValue $Run.($pair[0])
+        if ($null -eq $runProperties[$pair[0]]) { continue }
+        if ($null -ne $verdictProperties[$pair[1]]) { continue }
+        $verdictProperties.Add([System.Management.Automation.PSNoteProperty]::new($pair[1], $Run.($pair[0])))
+    }
+}
+
+function New-NightlyChunkDirectory([string]$Path) {
+    # New-Item -ItemType Directory -Force without the cmdlet's cost: creates the directory and its parents. As the
+    # cmdlet did, it says nothing when a file is in the way, and reports any other failure without stopping the
+    # chunk (unless errors stop the caller).
+    try { [void][System.IO.Directory]::CreateDirectory($Path) } catch {
+        $failure = $_
+        $blocked = $Path
+        try {
+            while (-not [string]::IsNullOrEmpty($blocked) -and -not [System.IO.File]::Exists($blocked)) { $blocked = [System.IO.Path]::GetDirectoryName($blocked) }
+        } catch { $blocked = '' }
+        if ([string]::IsNullOrEmpty($blocked)) { Write-Error -ErrorRecord $failure }
     }
 }
 
@@ -1122,8 +1137,13 @@ function Prepare-NightlySuiteExecution {
     $chunkIndex = 0
     $suiteTerminalNodes = @()
     $executionVariables = @{}
+    # Get-Variable -ValueOnly -ErrorAction SilentlyContinue without the cmdlet's cost: the value as it is (not
+    # enumerated), and no value at all for a name that is not set.
+    $executionVariableGet = $ExecutionContext.SessionState.PSVariable
     foreach ($executionName in @('suiteId','suite','label','mode','isNative','chunks','profileExclusions','suiteHost','suiteDiscoveryNodes','profileDiscovery','profileDiscoveryPath','suiteDiscoveryIndex','suiteCensus','suiteDiscoverySeconds','suiteTerminalNodes','chunkIndex','phaseAssembly','phaseAssemblyDigest','phaseCostDigest')) {
-        $executionVariables[$executionName] = Get-Variable -Name $executionName -ValueOnly -ErrorAction SilentlyContinue
+        $executionVariable = $executionVariableGet.Get($executionName)
+        if ($null -eq $executionVariable) { $executionVariables[$executionName] = [System.Management.Automation.Internal.AutomationNull]::Value }
+        else { $executionVariables[$executionName] = $executionVariable.Value }
     }
     return [pscustomobject]@{ id=$suiteId; chunks=@($chunks); nodes=@($suiteDiscoveryNodes); exclusions=@($profileExclusions); Variables=$executionVariables; Completed=$false }
 }
@@ -1208,7 +1228,7 @@ function Invoke-NightlyScheduledChunk {
             $suiteHost = Resolve-NightlyTestHost -RepoRoot $RepoRoot -Assembly $exeName
         }
         $execDiagDir = Join-Path $LogRoot ('{0}-{1}-execution' -f $suiteId, $chunk.id)
-        New-Item -ItemType Directory -Path $execDiagDir -Force | Out-Null
+        New-NightlyChunkDirectory $execDiagDir
         $chunkClasses = @()
         if ($chunk.classes -and @($chunk.classes).Count -gt 0) { $chunkClasses = @($chunk.classes) }
         $groupFilter = ''
@@ -1266,14 +1286,15 @@ function Invoke-NightlyScheduledChunk {
         if (-not $cleaned) { throw 'owned-child still running' }
     }
 
-    if (Test-Path -LiteralPath $logPath) {
+    if (Test-NightlyPathExists $logPath) {
         $stamp = 'C487_INVOCATION=' + $invocationId
         $rawLog = [System.IO.File]::ReadAllText($logPath)
         if ($rawLog -notmatch [regex]::Escape($invocationId)) {
             [System.IO.File]::WriteAllText($logPath, ($stamp + [Environment]::NewLine + $rawLog))
         }
     } else {
-        Set-Content -LiteralPath $logPath -Value ('C487_INVOCATION=' + $invocationId) -Encoding UTF8
+        # Set-Content -Encoding UTF8 (pwsh 7: no BOM, one line): a failure is reported and the chunk goes on.
+        try { [System.IO.File]::WriteAllText($logPath, ('C487_INVOCATION=' + $invocationId + [Environment]::NewLine)) } catch { Write-Error -ErrorRecord $_ }
     }
     $fresh = Test-NightlyFreshEvidence -Path $logPath -RunDirectory $LogRoot -NotBeforeUtc $startedAt -InvocationId $invocationId
     $row = [ordered]@{
@@ -1307,7 +1328,7 @@ function Invoke-NightlyScheduledChunk {
                 Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf
             }
         }
-        if ((Test-Path -LiteralPath $trxPath) -and -not (Test-Path -LiteralPath $discPath)) {
+        if ((Test-NightlyPathExists $trxPath) -and -not (Test-NightlyPathExists $discPath)) {
             try {
                 $diagDir = Join-Path $LogRoot ('{0}-{1}-discovery' -f $suiteId, $chunk.id)
                 $discLog = Join-Path $LogRoot ('{0}-{1}-discovery.log' -f $suiteId, $chunk.id)
@@ -1461,7 +1482,7 @@ function Invoke-NightlyScheduledChunk {
     if ($run.TimedOut) {
         $timingPhase = 'timeout'
         $timingWhy = 'timeout'
-    } elseif ($isNative -and -not (Test-Path -LiteralPath $trxPath)) {
+    } elseif ($isNative -and -not (Test-NightlyPathExists $trxPath)) {
         $timingWhy = 'missing-trx'
     } elseif ($suiteId -eq 'client' -and -not (Test-Path -LiteralPath $jsonPath)) {
         $timingWhy = 'missing-client-json'
@@ -1496,26 +1517,33 @@ function Invoke-NightlyScheduledChunk {
     $suiteResults += $row
     } finally {
         if($isNative){[void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -State Idle)}
+        # Get-Variable -ValueOnly -ErrorAction SilentlyContinue without the cmdlet's cost (as at suite start).
         foreach ($executionName in @($ExecutionSuiteState.Variables.Keys)) {
-            $ExecutionSuiteState.Variables[$executionName] = Get-Variable -Name $executionName -ValueOnly -ErrorAction SilentlyContinue
+            $executionVariable = $executionVariableSet.Get($executionName)
+            if ($null -eq $executionVariable) { $ExecutionSuiteState.Variables[$executionName] = [System.Management.Automation.Internal.AutomationNull]::Value }
+            else { $ExecutionSuiteState.Variables[$executionName] = $executionVariable.Value }
         }
-        $ExecutionSuiteState.nodes = @($suiteDiscoveryNodes)
+        # The same nodes as @($suiteDiscoveryNodes); the array itself when it is one, not a copy per chunk.
+        if ($suiteDiscoveryNodes -is [object[]]) { $ExecutionSuiteState.nodes = $suiteDiscoveryNodes }
+        else { $ExecutionSuiteState.nodes = @($suiteDiscoveryNodes) }
     }
 }
 
 function Complete-NightlySuiteExecution {
     param($CompletionSuiteState)
+    # Set-Variable's local-scope set (the caller's scope: this runs dot-sourced) without the cmdlet's cost.
+    $completionVariableSet = $ExecutionContext.SessionState.PSVariable
     foreach ($completionName in @($CompletionSuiteState.Variables.Keys)) {
-        Set-Variable -Name $completionName -Value $CompletionSuiteState.Variables[$completionName]
+        $completionVariableSet.Set($completionName, $CompletionSuiteState.Variables[$completionName])
     }
     if ($isNative -and @($suiteDiscoveryNodes).Count -gt 0) {
         $unionNodes = [Collections.Generic.List[object]]::new()
         if ($null -ne $profileDiscovery -and -not [string]::IsNullOrWhiteSpace($profileDiscoveryPath)) {
             $unionEntry = Get-NightlyDiscoveryIndexEntry -Index $suiteDiscoveryIndex -Path $profileDiscoveryPath
             $unionView = Get-NightlyDiscoveryIndexView -Entry $unionEntry -ProfileExclusions $profileExclusions -ProfileAware:$profileAware
-            for ($unionIndex = 0; $unionIndex -lt $unionView.Nodes.Count; $unionIndex++) {
-                if (-not $unionView.Excluded[$unionIndex]) { $unionNodes.Add($unionView.Nodes[$unionIndex]) }
-            }
+            Assert-NightlyCoreAvailable 'Complete-NightlySuiteExecution'
+            # The view's nodes that are not excluded, in discovery order (SuiteCompletionParts.IncludedNodes).
+            $unionNodes.AddRange([Antiphon.Nightly.SuiteCompletionParts]::IncludedNodes($unionView.Nodes, $unionView.Excluded))
         } else {
             foreach ($dn in @($suiteDiscoveryNodes)) {
                 if (Test-NightlyDiscoveryExcluded -Node $dn -ProfileExclusions $profileExclusions -ProfileAware:$profileAware) { continue }

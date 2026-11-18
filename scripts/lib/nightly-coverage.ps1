@@ -827,38 +827,17 @@ function Get-NightlyExpectedSkipRosterDigest {
 function Get-NightlyExpectedSkipStaleWarnings {
     param([string]$Platform, $Entries, [string[]]$KnownTestIdentities = $null)
     if ($null -eq $KnownTestIdentities) { return @() }
-    $knownTests = [System.Collections.Generic.Dictionary[string,bool]]::new([System.StringComparer]::Ordinal)
-    foreach ($knownId in @($KnownTestIdentities)) {
-        $knownText = [string]$knownId
-        if (-not [string]::IsNullOrWhiteSpace($knownText)) { $knownTests[$knownText] = $true }
-    }
-    $warnings = New-Object System.Collections.Generic.List[string]
-    foreach ($entry in @($Entries)) {
-        if ($null -eq $entry) { continue }
-        if ([string]$entry.platform -cne $Platform) { continue }
-        $entryTest = [string]$entry.test
-        if (-not $knownTests.ContainsKey($entryTest)) {
-            [void]$warnings.Add('stale-roster:' + $entryTest)
-        }
-    }
-    return $warnings.ToArray()
+    Assert-NightlyCoreAvailable 'Get-NightlyExpectedSkipStaleWarnings'
+    # 'stale-roster:<test>' per platform entry (-ceq) whose test is not a known identity (ordinal), in roster
+    # order (SuiteCompletionParts.StaleWarnings).
+    return [Antiphon.Nightly.SuiteCompletionParts]::StaleWarnings($Platform, $Entries, $KnownTestIdentities)
 }
 
 function Get-NightlyDiscoveryKnownIdentities {
     param($Nodes)
-    $ids = New-Object System.Collections.Generic.List[string]
-    foreach ($node in @($Nodes)) {
-        if ($null -eq $node) { continue }
-        $className = ''
-        $method = ''
-        # The indexer is the same case-insensitive member lookup as -contains over the names, without listing them.
-        $properties = $node.PSObject.Properties
-        if ($null -ne $properties['ClassName']) { $className = [string]$node.ClassName }
-        if ($null -ne $properties['Method']) { $method = [string]$node.Method }
-        if ([string]::IsNullOrWhiteSpace($className) -or [string]::IsNullOrWhiteSpace($method)) { continue }
-        [void]$ids.Add($className + '.' + $method)
-    }
-    return $ids.ToArray()
+    Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryKnownIdentities'
+    # ClassName.Method per node that has both as non-blank properties (SuiteCompletionParts.KnownIdentities).
+    return [Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(@($Nodes))
 }
 
 function ConvertFrom-NightlyCsStringLiteral {
