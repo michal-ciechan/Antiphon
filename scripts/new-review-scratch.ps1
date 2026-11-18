@@ -1,7 +1,9 @@
 #requires -Version 7.0
 # CARD-1896: create an owned container for review/master scratch clones.
-# Clone into a child (for example master). This never registers an existing tree
-# or grants deletion: the runner rechecks ownership, age, processes and live Git.
+# Clone into a child (for example master). remove-review-scratch.ps1 refuses that
+# standalone clone and keeps the container; it only removes a linked worktree child.
+# This never registers an existing tree or grants deletion: the runner rechecks
+# ownership, age, processes and live Git.
 param(
     [Parameter(Mandatory)][Guid]$TaskId,
     [Parameter(Mandatory)][string]$OwnerWorktree,
