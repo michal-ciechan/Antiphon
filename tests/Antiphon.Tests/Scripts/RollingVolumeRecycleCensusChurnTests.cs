@@ -17,7 +17,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RollingVolumeRecycleCensusChurnTests
 {
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1099_Fixture_census_skips_a_vanished_foreign_container()
     {
         C1008HostFixture.RequireNativeLinux();

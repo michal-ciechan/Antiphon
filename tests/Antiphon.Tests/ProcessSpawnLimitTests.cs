@@ -127,10 +127,13 @@ public class ProcessSpawnLimitTests
         typeof(Antiphon.Tests.Infrastructure.LandingGitTests),
     ];
 
-    // CARD-1984: a floor, not a census. The limiter is method-level. S1 is HostJq; later slices append families.
+    // CARD-1984: a floor, not a census. The limiter is method-level. S1 is HostJq; S2 adds the Rolling trio.
     private static readonly Type[] ScriptModelClasses =
     [
         typeof(Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests),
+        typeof(Antiphon.Tests.Scripts.RollingProductionMountTests),
+        typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleCensusChurnTests),
+        typeof(Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests),
     ];
 
     [Test]

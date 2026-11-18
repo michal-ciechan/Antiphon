@@ -109,7 +109,7 @@ public sealed class RollingProductionMountTests
             actual[key].Diagnosis.ShouldBe(diagnosis, label + ": " + key);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C994_Compose_model_preserves_service_specific_mounts() => Prove("c994-model-targets", (_, good, add) => {
         foreach (var service in new[] { "state-init", "session-runner" }) {
             var bad = good.DeepClone().AsObject();
@@ -135,7 +135,7 @@ public sealed class RollingProductionMountTests
         }
     });
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C994_Named_volume_identity_and_topology_are_exact() => Prove("c994-volume-mount c994-volume-owner", (_, good, add) => {
         foreach (var field in new[] { "Name", "Source", "Destination", "Type", "RW", "missing-RW", "string-RW", "duplicate", "owner", "role", "generation", "anonymous", "mountpoint" }) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["owned"]![0]!["Mounts"]!.AsArray(); var mount = mounts[0]!.AsObject();
@@ -158,7 +158,7 @@ public sealed class RollingProductionMountTests
         add("unordered", true, reordered);
     });
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C994_Bind_sources_are_canonical_and_typed() => Prove("c994-bind-proof", (f, good, add) => {
         foreach (var variant in new[] { "source", "target", "rw", "missing", "extra", "directory-for-file", "symlink", "ancestor", "file-for-directory", "readlink", "stat", "no-sudo", "provider-missing" }) {
             var bad = good.DeepClone().AsObject(); var mounts = bad["owned"]![0]!["Mounts"]!.AsArray();
@@ -207,7 +207,7 @@ public sealed class RollingProductionMountTests
         }
     });
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C994_Secrets_match_read_only_files() => Prove("c994-secret-proof", (_, good, add) => {
         foreach (var variant in new[] { "source", "target", "external", "rw", "missing-rw", "string-rw", "missing", "duplicate" }) {
             var bad = good.DeepClone().AsObject(); var model = bad["model"]!; var mounts = bad["owned"]![0]!["Mounts"]!.AsArray();
@@ -229,7 +229,7 @@ public sealed class RollingProductionMountTests
         add("short-target", true, shortTarget);
     });
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public Task C994_Tmpfs_configuration_survives_exit() => Prove("c994-tmpfs-proof", (_, good, add) => {
         foreach (var variant in new[] { "running", "inspected", "mount-encoding", "missing", "contradiction", "extra", "readonly", "options", "impostor", "state-init-tmpfs", "duplicate-config", "malformed-options" }) {
             var bad = good.DeepClone().AsObject(); var container = bad["owned"]![0]!;
@@ -251,7 +251,7 @@ public sealed class RollingProductionMountTests
         }
     });
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_Previous_generation_roster_is_derived_from_its_compose()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -330,7 +330,7 @@ public sealed class RollingProductionMountTests
 
     // Names the c1008_compose_model target guard. A missing service-secret target defaults to
     // the source name. Reverting that guard, or the declaration allowed list, refuses this fixture.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_V218_compose_model_accepts_the_host_shape()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -354,7 +354,7 @@ public sealed class RollingProductionMountTests
 
     // Names the c1008_previous_model declaration allowed list. external:false is the v2.18.1
     // declaration shape; external:true and an unknown bind stay RecycleGenerationUnknown.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_V218_previous_model_accepts_the_host_shape()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -378,7 +378,7 @@ public sealed class RollingProductionMountTests
 
     // An explicit relative target is mounted at /run/secrets/<target>. "elsewhere" is not the
     // roster destination, so both filters refuse before any caller can recycle.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_Relative_secret_target_is_refused()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -388,7 +388,7 @@ public sealed class RollingProductionMountTests
     }
 
     // A relative target equal to the secret's own name is the Compose default destination.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_Relative_secret_target_equal_to_its_name_is_accepted()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -398,7 +398,7 @@ public sealed class RollingProductionMountTests
     }
 
     // Absolute targets stay on the base-commit rule: the path must be /run/secrets/<source>.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_Absolute_secret_target_keeps_the_base_rule()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -416,7 +416,7 @@ public sealed class RollingProductionMountTests
     }
 
     // Explicit null, empty, and non-string targets are refusals. A missing key is not this case.
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1105_Malformed_secret_target_is_refused()
     {
         C1008HostFixture.RequireNativeLinux();

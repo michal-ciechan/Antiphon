@@ -651,7 +651,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Option_manifest_is_strict()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -757,7 +757,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Documentation_and_transport_pins_match()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -777,7 +777,7 @@ public sealed class RollingVolumeRecycleScriptTests
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Refusal_receipts_do_not_leak_secrets()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -878,7 +878,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // receipt never authorizes apply; the operation token and the Ready preview do.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1040,7 +1040,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // still refuse, and missing current tooling still refuses apply.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Cross_sha_cleanup_image_binds_the_retired_temp()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1186,7 +1186,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // lets an apply without the operation token through the gate.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Older_retirement_receipt_is_ignored()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1250,7 +1250,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // not authorize an apply without the operation token.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1594_Disagreeing_cross_sha_images_refuse()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1344,7 +1344,7 @@ public sealed class RollingVolumeRecycleScriptTests
     [Arguments("review-evidence-antiphon")]
     [Arguments("review-evidence-backup")]
     [Arguments("antiphon-symlink")]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public void C1594_Antiphon_evidence_gitdir(string variant)
     {
         C1008HostFixture.RequireNativeLinux();
@@ -1647,7 +1647,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // The hang stub ignores SIGTERM, so a client-only timeout leaves it running.
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1008_Preview_helper_removal_is_owned()
     {
         C1008HostFixture.RequireNativeLinux();
@@ -2560,7 +2560,7 @@ public sealed class RollingVolumeRecycleScriptTests
     // compare ignores an off-runner land, and c1008_tasks_wait clears, expires with the waited suffix
     // or refuses an invalid bound before any read. sleep is stubbed; the polls are counted.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public void C1353_Host_census_passes_off_runner_lands_and_waits_for_bound_lands()
     {
         var report = LinuxShell(C1353HostCensusScript());
@@ -2740,7 +2740,7 @@ public sealed class RollingVolumeRecycleScriptTests
         => await C1361CensusProbes.Counts();
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C1371_Post_removal_count_drift_does_not_abort()
         => await C1361CensusProbes.PostRemoval();
 
