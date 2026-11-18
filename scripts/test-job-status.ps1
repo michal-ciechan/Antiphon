@@ -524,9 +524,9 @@ function Test-TargetRollbackRestoresDesktop {
         function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = 'SNAPSHOT ok exit=0 reason=ok'; Err = '' } }
         function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
         function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
-        $status = Join-Path $root 'snapshot-status.json'
-        Set-Content -LiteralPath $status -Value '{"utc":"20261118T075000Z","exit":0,"bytes":750000000,"mode":"plain","oneDrive":"ok","target":"desktop","serverVersion":"16.14"}' -Encoding ASCII
-        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath $status
+        $statusPath = Join-Path $root 'snapshot-status.json'
+        Set-Content -LiteralPath $statusPath -Value '{"utc":"20261118T075000Z","exit":0,"bytes":750000000,"mode":"plain","oneDrive":"ok","target":"desktop","serverVersion":"16.14"}' -Encoding ASCII
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath $statusPath
         $args0 = ''
         if ($script:TargetChildCalls.Count -ge 1) { $args0 = [string]$script:TargetChildCalls[0] }
         Assert-True ($script:TargetChildCalls.Count -eq 1) 'TargetRollbackRestoresDesktop job runs one child' ("calls=$($script:TargetChildCalls.Count)")
