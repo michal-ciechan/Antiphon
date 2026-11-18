@@ -31,6 +31,7 @@
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbBakedImages.cs" Link="TestHelpers\TestDbBakedImages.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbClonePool.cs" Link="TestHelpers\TestDbClonePool.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbContainerOwnership.cs" Link="TestHelpers\TestDbContainerOwnership.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFailureEvidence.cs" Link="TestHelpers\TestDbFailureEvidence.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFixture.cs" Link="TestHelpers\TestDbFixture.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFixtureLifecycle.cs" Link="TestHelpers\TestDbFixtureLifecycle.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbServerSettings.cs" Link="TestHelpers\TestDbServerSettings.cs" />
