@@ -9,6 +9,9 @@ namespace Antiphon.Tests.TestHelpers;
 /// only when no port is bound, the test process changes no environment variable or directory,
 /// and no child uses the shared checkout as its working directory and writes there. A
 /// checkout-cwd child that writes the checkout stays on <see cref="ProcessSpawnLimit"/>.
+/// No file written in this process is exec'd: a concurrent spawn holds a forked copy of the
+/// write handle until its own exec, and the exec of that file then fails with ETXTBSY. Create
+/// executables with <see cref="FixtureExecutable"/> (CARD-1984 review B-1, 2026-11-18).
 /// Classify by what is spawned, never by name. Assembly-local like
 /// <see cref="ProcessSpawnLimit"/>; it runs beside the strict lane and is not shared across
 /// test projects. Width is read once, when this type initializes.
