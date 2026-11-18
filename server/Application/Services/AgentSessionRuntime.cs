@@ -2669,22 +2669,29 @@ public sealed partial class AgentSessionRuntime
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = at.UtcDateTime;
-
-            var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId);
-            if (session is not null)
-                session.LastSeenAt = now;
-
-            var attempt = await db.RunAttempts
-                .Where(a => a.AgentSessionId == sessionId
-                    && a.Phase == RunPhase.StreamingTurn
-                    && a.CompletedAt == null)
-                .OrderByDescending(a => a.AttemptNumber)
-                .FirstOrDefaultAsync();
-            if (attempt is not null)
-                attempt.LastEventAt = now;
-
-            if (session is not null || attempt is not null)
-                await db.SaveChangesAsync();
+            var streaming = (int)RunPhase.StreamingTurn;
+            // The comment is the command tag. It has to be the first character, so this
+            // raw string is dedented to column 0.
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+            -- rt.activity.write
+            WITH target AS (
+                SELECT "Id" FROM "RunAttempts"
+                WHERE "AgentSessionId" = {sessionId}
+                  AND "Phase" = {streaming}
+                  AND "CompletedAt" IS NULL
+                ORDER BY "AttemptNumber" DESC
+                LIMIT 1
+            ),
+            touch_attempt AS (
+                UPDATE "RunAttempts" AS attempt
+                SET "LastEventAt" = {now}
+                FROM target
+                WHERE attempt."Id" = target."Id"
+            )
+            UPDATE "AgentSessions"
+            SET "LastSeenAt" = {now}
+            WHERE "Id" = {sessionId}
+            """);
         }
         catch (Exception ex)
         {
@@ -2695,8 +2702,7 @@ public sealed partial class AgentSessionRuntime
     /// <summary>
     /// CARD-0679 D-3: true when this session's activity has not been written within
     /// <see cref="AgentSessionSettings.ActivityWriteMinIntervalMs"/>, and records <paramref name="at"/>
-    /// as its last write. One output chunk used to cost two queries and a save; a phone-home burst
-    /// of them was the pump's main database load.
+    /// as its last write. One claimed write is a single statement (CARD-1987).
     /// </summary>
     private bool ClaimActivityWrite(Guid sessionId, DateTimeOffset at)
     {
