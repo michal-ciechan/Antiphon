@@ -1769,6 +1769,17 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.",
           "owner": "CARD-1514"
+        },
+        {
+          "suite": "antiphon",
+          "class": "ScriptModelSpawnLaneTests",
+          "methods": [
+            "Probe_A_overlaps_probe_B",
+            "Probe_B_overlaps_probe_A"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the probes must run at the same time to prove ScriptModelSpawnLimit is at least 2 wide, and CARD-1984 D-3 makes the lane 1 wide on Windows, so the second probe cannot start until the first gives up. W-1 pins the Windows width of 1. The case remains required on Linux.",
+          "owner": "CARD-1514"
         }
       ]
     }

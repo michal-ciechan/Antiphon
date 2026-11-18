@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Shouldly;
 using TUnit.Core;
 
@@ -95,14 +96,18 @@ public class ScriptModelSpawnLaneTests
 
     private static int ProbeGaveUp;
 
+    // W-2 needs width 2 or more, which only Linux has (D-3; rc run a6278259 chunk antiphon-all-group-134
+    // timed out on Windows). The rc profile excludes both probes on Windows.
     [Test]
     [Timeout(150_000)]
     [ParallelLimiter<ScriptModelSpawnLimit>]
+    [NativeLinuxOnly("Linux-only by construction: the probes must run at the same time to prove ScriptModelSpawnLimit is at least 2 wide, and CARD-1984 D-3 makes the lane 1 wide on Windows, so the second probe cannot start until the first gives up. W-1 pins the Windows width of 1. The case remains required on Linux.")]
     public async Task Probe_A_overlaps_probe_B() => await Overlap(ProbeA, ProbeB);
 
     [Test]
     [Timeout(150_000)]
     [ParallelLimiter<ScriptModelSpawnLimit>]
+    [NativeLinuxOnly("Linux-only by construction: the probes must run at the same time to prove ScriptModelSpawnLimit is at least 2 wide, and CARD-1984 D-3 makes the lane 1 wide on Windows, so the second probe cannot start until the first gives up. W-1 pins the Windows width of 1. The case remains required on Linux.")]
     public async Task Probe_B_overlaps_probe_A() => await Overlap(ProbeB, ProbeA);
 
     private static async Task Overlap(TaskCompletionSource<long> mine, TaskCompletionSource<long> peer)
