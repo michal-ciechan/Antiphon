@@ -433,10 +433,11 @@
     },
     {
       "path": "server/Application/Exceptions/ServiceUnavailableException.cs",
-      "classes": 27,
+      "classes": 28,
       "reason": "cap",
-      "owed": 2,
+      "owed": 3,
       "first": [
+        "PhoneHomeDirectoryTests",
         "PhoneHomePendingInventoryTests",
         "StandingSessionSelectionTests"
       ]
@@ -475,18 +476,18 @@
     },
     {
       "path": "server/Application/Interfaces/ISessionRunnerDirectory.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "TaskPlatformPlacementTests",
         "CodexCliObservationTests",
         "DispatchConcurrencyPipelineTests",
         "DispatchHoldVisibilityTests",
         "GhostSeatReleaseTests",
         "HostBudgetServiceTests",
         "DelegateBranchDeliveryTests",
-        "SourceLandingAdmissionTests",
-        "AgentSessionRuntimeBoundedReadTests"
+        "SourceLandingAdmissionTests"
       ]
     },
     {
@@ -1404,9 +1405,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentSession.cs",
-      "classes": 277,
+      "classes": 276,
       "reason": "cap",
-      "owed": 252,
+      "owed": 251,
       "first": [
         "PhoneHomeSessionRoutingTests",
         "SessionDeliveryProfileTests",
@@ -1799,9 +1800,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 106,
+      "classes": 107,
       "reason": "cap",
-      "owed": 81,
+      "owed": 82,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
@@ -5679,6 +5680,7 @@
         "ProjectDeletionTests",
         "ProjectReadinessTests",
         "ProjectSetupServiceTests",
+        "RoutingBindingCacheTests",
         "StandingSessionSelectionTests",
         "WorkflowEngineTests"
       ]
@@ -5755,12 +5757,12 @@
         "GatedCommitServiceTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeDeferredKillTests",
-        "PhoneHomeDirectoryTests",
         "PhoneHomeImmediateSendTests",
         "PhoneHomeQueuedTurnTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeSessionRoutingTests",
         "PhoneHomeStrandedQueueTests",
+        "RoutingBindingCacheTests",
         "RoutingExhaustedPlacementTests",
         "SessionMessageQueueDeliveredSpillRecoveryTests",
         "SessionMessageQueueDeliveryVerificationTests",
@@ -6049,6 +6051,7 @@
         "PhoneHomeReconciliationTests",
         "PhoneHomeSessionRoutingTests",
         "PhoneHomeTaskCreateTests",
+        "RoutingBindingCacheTests",
         "RoutingExhaustedPlacementTests",
         "RunnerCatalogueTests",
         "RunnerGrokCredentialProbeDispatcherTests",
@@ -6058,7 +6061,6 @@
         "SessionRuntimeActionTemporaryBlockTests",
         "TaskParkPublicationTests",
         "TaskPlatformDispatchTests",
-        "TaskPlatformPlacementTests",
         "TaskSupervisionVisibilityTests",
         "TerminalRunnerSeatReleaseTests",
         "WindowsGrokRoutingPolicyTests"
@@ -12776,6 +12778,12 @@
       ]
     },
     {
+      "path": "server/Domain/Agents/RunnerBindingInvalidation.cs",
+      "classes": [
+        "RoutingBindingCacheTests"
+      ]
+    },
+    {
       "path": "server/Domain/Entities/Agent.cs",
       "classes": [
         "AgentBundleAttachmentTests",
@@ -14167,6 +14175,7 @@
       "path": "server/Domain/Entities/RunAttempt.cs",
       "classes": [
         "AgentSessionCancelledTurnTests",
+        "AgentSessionRuntimeActivityTests",
         "AgentSessionServiceIntegrationTests",
         "Card1619ExitConsumerTests",
         "Card1619ExitPersistenceTests",
@@ -14949,6 +14958,7 @@
         "PhoneHomeSessionRoutingTests",
         "PhoneHomeStandingLaunchTests",
         "PhoneHomeStrandedQueueTests",
+        "RoutingBindingCacheTests",
         "TaskParkRunnerIdentityTests",
         "TerminalRunnerSeatReleaseTests"
       ]
@@ -15270,6 +15280,12 @@
       "path": "server/Infrastructure/Data/RetirementCommandJournal.cs",
       "classes": [
         "WorktreeResidueRecoveryTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Data/RunnerBindingWriteInterceptor.cs",
+      "classes": [
+        "RoutingBindingCacheTests"
       ]
     },
     {
@@ -23316,6 +23332,7 @@
     {
       "path": "tests/Antiphon.Tests/Application/PhoneHomeStrandedQueueTests.cs",
       "classes": [
+        "AgentSessionRuntimeActivityTests",
         "PhoneHomeOutageMentionTests",
         "PhoneHomePendingInventoryTests",
         "PhoneHomeSchedulePreviewTests"
@@ -25292,6 +25309,7 @@
         "OutputDistillationDeliveryTests",
         "PostLandMutationCleanupTests",
         "PostLandMutationWorkflowTests",
+        "RoutingBindingCacheTests",
         "SpecialistStartIntentTests",
         "TaskCeilingHoldTests",
         "TaskParkRunnerIdentityTests",
@@ -25982,6 +26000,7 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/QueryBudget.cs",
       "classes": [
+        "AgentSessionRuntimeActivityTests",
         "AgentSessionRuntimeTests",
         "BootReplyWatchdogTests",
         "DbCommandMetricsTests"
