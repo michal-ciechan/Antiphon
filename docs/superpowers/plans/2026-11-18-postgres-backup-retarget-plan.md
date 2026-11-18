@@ -7,6 +7,12 @@ It ran only these:
 - Anonymous Docker Hub and registry metadata reads, to get the image pin.
 - The two runner routes.
 
+Amendment, Docs task `36161193`, 2026-11-18, on subject tip `aff936777756af49d305ba76718458aca881eced`. It answers the round 1 Review `dc055ca9c85c6435e22cf34c1ccfba5ca938fbb5`:
+- The blocker: every phase 6 rollback writes `desktop` back (W-5, V-15, CP-15).
+- The advisories: V-4 local `DOCKER_HOST`, V-14 for the `-Container` refusal, R-3 case names, the D-5 fact fields, and D-6's dump directory.
+- The single-owner rule (§ Collisions).
+The design is otherwise unchanged.
+
 The operator's standing authority of 2026-11-18 covers this work: the fast-tracked move, decision 6 "retarget the daily backup to server2 in the same window", Merge verification SHORT, and mutation waived. No go-ahead was needed.
 
 ## Outcome in one paragraph
@@ -25,13 +31,13 @@ The cutover window flips the word, runs one manual snapshot, and restores that d
 
 | # | Brief / card assumption | Master `e229fb4d3` | Consequence |
 |---|---|---|---|
-| G-1 | The wrapper names the container and volume at `scripts/windmill/invoke-postgres-snapshot.ps1:57,67` | **No.** The invoke wrapper names no container or volume. `:57` is `function Invoke-PlainSnapshotChild`, and `:66-68` start the child with `-Plain -Execute -OneDriveCopy -StagingPath`. The child takes the defaults `[string]$Container = 'antiphon-postgres'` (`scripts/postgres-snapshot.ps1:54`) and `[string]$SourceVolume = 'antiphon_pgdata'` (`:69`). The 11-17 citation was taken at an older SHA | The selection belongs in `postgres-snapshot.ps1`. The wrapper only passes the target word |
+| G-1 | The wrapper names the container and volume at `scripts/windmill/invoke-postgres-snapshot.ps1:57,67` | **No.** The invoke wrapper names no container or volume. `:57` is `function Invoke-PlainSnapshotChild`, and `:67-69` start the child with `-Plain -Execute -OneDriveCopy -StagingPath`. The child takes the defaults `[string]$Container = 'antiphon-postgres'` (`scripts/postgres-snapshot.ps1:54`) and `[string]$SourceVolume = 'antiphon_pgdata'` (`:69`). The 11-17 citation was taken at an older SHA | The selection belongs in `postgres-snapshot.ps1`. The wrapper only passes the target word |
 | G-2 | `docs/investigations/2026-11-10-first-database-dump.md` and `2026-11-10-backup-runner-refresh.md` are "on master" | **Not on master.** They are at `8e1811543` on `origin/feat/card-task-52146b44` and at `b91c22df1` on `origin/feat/card-task-b28fd575`. I read both from those commits | Cite them by commit. Landing them is out of scope |
-| G-3 | "The existing throwaway postgres:16 restore proof" | It was a **manual** step on 11-10 (`8e1811543`): a `postgres:16` container on `127.0.0.1:38147`, 93.5 s, exit 0, 139 public tables, then `docker rm -f -v`. In the script, `-Plain -RestoreDrill` is refused with `plain-drill-unsupported` (`scripts/postgres-snapshot.ps1:1910-1913`). The age drill `Invoke-SnapshotDrill` (`:1161`) lists the dump through `docker run -v <desktop stage>:/work:ro` (`:1262-1266`). Over a remote context that bind mounts a **server2** path, so it cannot work unchanged | S3 adds a plain drill that copies the dump into the scratch container (D-6) |
+| G-3 | "The existing throwaway postgres:16 restore proof" | It was a **manual** step on 11-10 (`8e1811543`): a `postgres:16` container on `127.0.0.1:38147`, 93.5 s, exit 0, 139 public tables, then `docker rm -f -v`. In the script, `-Plain -RestoreDrill` is refused with `plain-drill-unsupported` (`scripts/postgres-snapshot.ps1:1910-1913`). The age drill `Invoke-SnapshotDrill` (`:1161`) lists the dump through `docker run -v <desktop stage>:/work:ro` (`:1275-1279`). Over a remote context that bind mounts a **server2** path, so it cannot work unchanged | S3 adds a plain drill that copies the dump into the scratch container (D-6) |
 | G-4 | The job can "dump FROM server2 via docker exec over ssh" | The plain path refuses any non-`unix://`/`npipe://` endpoint unless `-AllowRemoteDocker` (`:734-756`). That switch allows **any** remote endpoint, tcp:// included, and only prints a warning | Add a narrow `ssh://`-only acceptance for `-Target server2` (D-3). `-AllowRemoteDocker` stays unused |
 | G-5 | server2 container name | Compose project `antiphon-server2-postgres`, service `postgres` (`docker-compose.server2-postgres.yml:7-10`), so the container is `antiphon-server2-postgres-postgres-1`. It is already on the production refusal list (`scripts/postgres-snapshot.ps1:83-91`), with the volume `antiphon-server2-postgres_pgdata` (`docker-compose.server2-postgres.yml:47`) | The names are fixed literals for `-Target server2` |
 | G-6 | Database and role | Desktop and server2 both use `POSTGRES_DB: antiphon` and `POSTGRES_USER: antiphon` (`docker-compose.server2-postgres.yml:24-26`). The publish runs `pg_dump -U antiphon -d antiphon` inside the container (`:1710-1713`) and needs no password (local socket inside the container) | No secret moves. No connection string anywhere |
-| G-7 | Telegram and OneDrive can run anywhere | `Send-JobStatusLine` runs `dotnet run C:\src\ClaudeBot\scripts\tg-send.cs` (`scripts/windmill/job-status.ps1:143-175`). OneDrive is `C:\Users\lndco\OneDrive` (`:1811`). Both are desktop-only | The job stays on the desktop worker (D-1) |
+| G-7 | Telegram and OneDrive can run anywhere | `Send-JobStatusLine` runs `dotnet run C:\src\ClaudeBot\scripts\tg-send.cs` (`scripts/windmill/job-status.ps1:143-175`). OneDrive is `C:\Users\lndco\OneDrive` (`:1812`). Both are desktop-only | The job stays on the desktop worker (D-1) |
 | G-8 | The second verify is local | After the publish it `docker cp`s the published file **back into the source container** and lists it again (`:1753-1766`). Against server2 that is a 0.7 GB upload | Accepted. Keep it (D-4) |
 | G-9 | Desktop settings | `docker-compose.dev.yml:16-27`: `image: postgres:16`, `shared_preload_libraries=pg_stat_statements`, `pg_stat_statements.track=top`, `pg_stat_statements.max=5000`, `container_name: antiphon-postgres`. The CARD-1406 compose (`docker-compose.server2-postgres.yml:11-19`) has the same three `-c` settings, plus `mem_limit: 4g` and `cpus: 4.0` | The settings match. CPU isolation is decision 3 of the move, not this plan |
 | G-10 | Image pin format | `deploy-server2-postgres.ps1` accepts only `postgres:16@sha256:<64>` or `postgres@sha256:<64>`, and refuses alpine (`scripts/deploy-server2-postgres.ps1:71-78`) | Pin via `postgres:16@sha256:<index digest>` (§ Version rule) |
@@ -84,7 +90,7 @@ Registry facts, read 2026-11-18 from the Docker Hub tag API and the registry, an
 - **D-3. The server2 path uses the Docker context `antiphon-server2` and accepts only an `ssh://` endpoint.**
   - When `$script:SnapshotDockerContext` is set, every docker call in `Invoke-SnapshotNative` gets `--context antiphon-server2`.
   - The daemon check inspects that named context. It refuses `docker-context` unless the endpoint is `ssh://`.
-  - `DOCKER_HOST` set to anything stays refused (`docker-host`), because it would override the context.
+  - With `-Target server2`, `DOCKER_HOST` set to any value is refused (`docker-host`), because it would override the context. That includes a local `unix://` or `npipe://` value, which is the Docker Desktop case. `-Target desktop` keeps today's rule, which accepts a local `DOCKER_HOST` (`:743-744`).
   - The endpoint is never printed (existing rule, `:732-733`).
   - Rejected:
     - **(a) `-AllowRemoteDocker`.** It admits plaintext `tcp://`.
@@ -99,9 +105,14 @@ Registry facts, read 2026-11-18 from the Docker Hub tag API and the registry, an
   - It must carry the label `com.docker.compose.project=antiphon-server2-postgres`.
   - It must mount `antiphon-server2-postgres_pgdata` at `/var/lib/postgresql/data`.
   - Otherwise it refuses with `reason=source-mismatch` (exit 9, the existing refusal family).
+  - Today the fact object holds only the drill label, volume names without a destination, and no running state or image id (`:856-900`). S1 adds four fields to the same `docker inspect` read and leaves the existing fields unchanged:
+    - `Running` (`.State.Running`).
+    - `ComposeProject` (label `com.docker.compose.project`).
+    - `VolumeMounts` as `<name>:<destination>` pairs.
+    - `ImageId` (`.Image`, which D-7 uses).
   - This catches a context that points at the runner container's nested dockerd, the drill project or the Windmill DB. An empty cluster fails `Test-SnapshotPlainVerified` (no TABLE DATA, below 1 MiB) as `verify-failed`, exit 5.
 - **D-6. Add a plain restore drill: `-Plain -RestoreDrill -Target server2`.** It replaces the `plain-drill-unsupported` refusal for that target only. The desktop target still refuses, so the desktop never runs a drill.
-  - It reuses `Invoke-SnapshotDrill`'s guards: label, id prefix, production names and volumes, and the source mount. Without age it stages the newest local `antiphon-<utc>.dump`.
+  - It reuses `Invoke-SnapshotDrill`'s guards: label, id prefix, production names and volumes, and the source mount. Without age, it stages the newest `antiphon-<utc>.dump` (`$script:SnapshotPlainDumpPattern`, `:79`) from the plain destination `C:\Users\lndco\antiphon-backups` (`$script:SnapshotPlainDestination`, `:80`, or `-Destination` when given). That is the folder the publish writes into.
   - It does **not** use the `-v <stage>:/work:ro` list (G-3). It `docker cp`s the file into the labelled scratch container, then runs `pg_restore --list` and `pg_restore --exit-on-error` inside it.
   - It counts public tables with `psql -tAc` against the **scratch database only**, and prints `drill=1 bytes=<n> tables=<n> seconds=<n>`. It removes the container and volume unless `-KeepScratch`.
   - The scratch names stay `antiphon-postgres-drill`, `antiphon_drill` and `antiphon-postgres-drill-pgdata`, with `--network none`.
@@ -131,7 +142,8 @@ Files:
   - Add the D-5 source fact check in `Invoke-SnapshotPlainMode`.
   - The plan text prints `step source: target=server2 container=antiphon-server2-postgres-postgres-1 context=antiphon-server2`. It never prints the endpoint.
   - `Write-SnapshotPlainStatus` gets the `target` and `serverVersion` fields.
-  - `-Target server2` with `-Container` given explicitly refuses with `ambiguous-mode`.
+  - `-Target server2` with `-Container` given explicitly refuses with `ambiguous-mode` (V-14). This holds even when the name is the server2 container. Read `-Container`'s binding at script scope, because inside a function `$PSBoundParameters` is that function's own.
+  - `Get-SnapshotContainerFact` gains the four D-5 fields.
 - `scripts/test-postgres-snapshot.ps1`: the new cases below.
 
 ### S2. Wrapper target file and status line
@@ -139,6 +151,8 @@ Files:
 Files:
 - `scripts/windmill/invoke-postgres-snapshot.ps1`:
   - Add `Get-SnapshotTarget` (reads `snapshot-target` next to `$PSScriptRoot`, enum check).
+  - Add `Set-SnapshotTarget -Word desktop|server2`. It refuses any other word and writes the word ASCII with no BOM. It then reads the file back through `Get-SnapshotTarget`, prints `SNAPSHOT TARGET <word>`, and returns that word, or `''` on a mismatch.
+  - The operator flips (W-3) and rolls back (W-5) only through this helper, dot-sourced from the runner copy: `powershell -NoProfile -Command ". C:\Users\lndco\antiphon-snapshot-runner\invoke-postgres-snapshot.ps1; Set-SnapshotTarget desktop"`. The wrapper's dot-source guard (`if ($MyInvocation.InvocationName -eq '.') { return }`) keeps the job from running.
   - Pass `-Target`.
   - Parse the child reason.
   - Add `src=` to the line.
@@ -153,8 +167,8 @@ Files: `scripts/postgres-snapshot.ps1` (`Invoke-SnapshotPlainDrill`, which share
 ### S4. Docs
 
 Files:
-- `scripts/windmill/README.md` § Daily plain Postgres snapshot: the target file, the context prerequisite, and the flip.
-- `docs/docker-stack.md`: one paragraph in the CARD-1406 section that links this plan and gives the image pin.
+- `scripts/windmill/README.md` § Daily plain Postgres snapshot: the target file, the context prerequisite, the flip, and the rollback step. The rollback step reads: every cutover phase 6 rollback that returns production to the desktop volume runs `Set-SnapshotTarget desktop` and checks it prints `SNAPSHOT TARGET desktop`, whether or not W-3 and W-4 succeeded (W-5).
+- `docs/docker-stack.md`: one paragraph in the CARD-1406 section that links this plan and gives the image pin. Add it beside 801355c0's G-2 image sentence, and do not restore the older two-form-only image wording.
 
 ### Files touched (closed list)
 
@@ -171,9 +185,21 @@ All PowerShell stays ASCII-only and parseable by Windows PowerShell 5.1 (daemon-
 
 ### Collisions
 
-- Of the 150 most recent `origin/*` branches, none changes these script files relative to master (checked 2026-11-18).
+- **Single owner (amendment).** This plan is the only owner of `scripts/postgres-snapshot.ps1` and `scripts/windmill/invoke-postgres-snapshot.ps1`. The same holds for the target, drill and status parts of `scripts/test-postgres-snapshot.ps1`, `scripts/test-job-status.ps1`, `scripts/windmill/job-status.ps1` and `scripts/windmill/README.md`.
+  - The in-flight Code task `801355c0` (CARD-1844, "Postgres move gaps A") lands G-1 and G-2 only, and does not touch the two snapshot scripts.
+  - The move runbook's G-4 fix text is superseded by this plan. That text is at `2e8907ee07fe42e5baaf2fd726d998f655c73087` in `docs/investigations/2026-11-18-postgres-move-runbook.md`, gap table row G-4. It says to pass `-Container antiphon-server2-postgres-postgres-1` with `DOCKER_HOST=ssh://…` and `-AllowRemoteDocker`, or to run the job on a server2 worker. D-1, D-2 and D-3 reject all of those.
+  - The runbook's T-15 and T+45–55 rows say "until G-4 lands" and "once it targets server2". Read both as "this plan's code plus the P-3 runner refresh".
+  - Observed 2026-11-18 (`git ls-remote`): `feat/card-task-801355c0` is at `e1031dbc71c2c723a9b4c85415d0b4758430cb46`. Above G-1 (`579980a074`), it already carries runbook-G-4 commits: `830d7e92b8` (red witnesses in both harnesses) and `e1031dbc71` (`postgres-snapshot.ps1`, the invoke wrapper, `README.md`, `docker-stack.md`).
+  - Those commits implement the superseded mechanism:
+    - A process `DOCKER_HOST=ssh://mc@server2`, not the named context.
+    - A missing `SNAPSHOT-TARGET` means `desktop`, which fails open against D-2 and O-2.
+    - No D-5 source check.
+    - `-Target server2 -RestoreDrill` refused, against D-6.
+    - The reason `bad-target`, not `target-invalid`.
+  - Under this rule those two commits must not land. This plan's Code starts from master, not from them. Dropping them from `801355c0` before its Review or land is the orchestrator's call: re-cut at `579980a074`, or revert. If both landed, every file of S1–S4 would collide.
+- Apart from `801355c0` above, none of the 150 most recent `origin/*` branches changes these script files relative to master (checked 2026-11-18).
 - CARD-1974/1975 (F-1/F-2) touch `scripts/cutover-postgres-server2.ps1` and its tests only. That is no overlap.
-- CARD-1844 S1/S2 touch `bootstrap-check.ps1` and `scripts/lib/*`. That is no overlap.
+- CARD-1844 S1/S2 touch `bootstrap-check.ps1` and `scripts/lib/*`. That is no overlap. CARD-1844 G-2 (`801355c0`) edits `docs/docker-stack.md` and `scripts/deploy-server2-postgres.ps1`. This plan does not edit `deploy-server2-postgres.ps1`, and S4 adds its paragraph beside the G-2 sentence. The pin `postgres:16@sha256:95206741…` satisfies both the master acceptor and the G-2 acceptor.
 - CARD-1831 is in Review. Its branch is already landed on master (`82feba880`…`f0155042e`). This follow-up is a new card on new commits and does not reopen CARD-1831's subject branch.
 - `tests/Antiphon.Tests/Scripts/PosixHarnessToolTests.cs:52-80` pins `SnapshotCases(windows)` to existing case names and runs them through `test-postgres-snapshot.ps1 -Case`. New cases do not change that list, so it is unaffected. A renamed case would break it, so cases are added only, never renamed.
 
@@ -187,7 +213,7 @@ All PowerShell stays ASCII-only and parseable by Windows PowerShell 5.1 (daemon-
 
 ## Verification design
 
-Red first: each V-n case is committed and run red before its slice's fix (S1 → V-1..V-6, S2 → V-7..V-10, S3 → V-11..V-13). Cases that run a docker fake reuse the harness's POSIX `sh` fake (`Install-SnapshotFake`, `test-postgres-snapshot.ps1:377`). They join `$script:SnapshotPosixFakeCases` (Linux only, SKIP on Windows, which is the existing pattern). Pure-function cases run on both platforms.
+Red first: each V-n case is committed and run red before its slice's fix (S1 → V-1..V-6 and V-14, S2 → V-7..V-10 and V-15, S3 → V-11..V-13). Cases that run a docker fake reuse the harness's POSIX `sh` fake (`Install-SnapshotFake`, `test-postgres-snapshot.ps1:377`). They join `$script:SnapshotPosixFakeCases` (Linux only, SKIP on Windows, which is the existing pattern). Pure-function cases run on both platforms.
 
 - **V-1 `TargetDesktopUnchanged`** (S1, both OS). `-Plain -WhatIf` with no `-Target` and with `-Target desktop`:
   - Prints `step dump: docker exec antiphon-postgres pg_dump`.
@@ -205,12 +231,14 @@ Red first: each V-n case is committed and run red before its slice's fix (S1 →
   - `-Plain -Execute -Target server2` exits 0.
   - **Every** logged docker argv starts with `--context antiphon-server2`.
   - The published file lands in the fixture destination.
-- **V-4 `TargetServer2RefusesTcp`** (S1, POSIX fake). Two refusals:
-  - The context endpoint is `tcp://10.0.0.1:2375`. The result is `reason=docker-context`, with no `exec` logged.
+- **V-4 `TargetServer2RefusesTcp`** (S1, POSIX fake). Three refusals, each with no `exec` logged:
+  - The context endpoint is `tcp://10.0.0.1:2375`. The result is `reason=docker-context`.
   - `DOCKER_HOST=ssh://x` is set. The result is `reason=docker-host`.
-- **V-5 `TargetServer2SourceMismatch`** (S1, POSIX fake). Three variants each give `SNAPSHOT fail exit=9 reason=source-mismatch`, with no `pg_dump` logged:
+  - `DOCKER_HOST=unix:///var/run/docker.sock` is set (a local value that `-Target desktop` accepts). The result is `reason=docker-host`.
+- **V-5 `TargetServer2SourceMismatch`** (S1, POSIX fake). Four variants each give `SNAPSHOT fail exit=9 reason=source-mismatch`, with no `pg_dump` logged:
   - The project label is `antiphon-server2-postgres-drill`.
   - The mount is `antiphon-server2-postgres-drill_pgdata`.
+  - The right volume is mounted at `/data`, not `/var/lib/postgresql/data`.
   - The container is not running.
 - **V-6 `TargetStatusFields`** (S1, both OS). `Write-SnapshotPlainStatus` with target `server2` and version `16.14` writes `"target":"server2","serverVersion":"16.14"`. A version text `16.14 (Debian 16.14-1.pgdg13+1)` is reduced to `16.14`, and junk becomes `unknown`.
 - **V-7 `TargetFileValues`** (S2, test-job-status, both OS). `Get-SnapshotTarget` on a temp dir:
@@ -235,15 +263,32 @@ Red first: each V-n case is committed and run red before its slice's fix (S1 →
   - The scratch container named `antiphon-server2-postgres-postgres-1`.
   - The scratch volume `antiphon-server2-postgres_pgdata`.
   - The scratch database `antiphon`.
+- **V-14 `TargetServer2RefusesContainer`** (S1, both OS). `-Plain -WhatIf -Target server2` gives `reason=ambiguous-mode` and prints no `step dump:` line in each of these cases:
+  - `-Container antiphon-postgres`.
+  - `-Container antiphon-postgres-drill`.
+  - `-Container antiphon-server2-postgres-postgres-1`, the server2 name itself.
+
+  With `-Target desktop -Container antiphon-postgres`, the result is still `reason=ok`. Red before S1: `-Target` is an unknown parameter.
+- **V-15 `TargetRollbackRestoresDesktop`** (S2, test-job-status, both OS). This is the W-5 witness. On a temp runner dir:
+  - `Set-SnapshotTarget server2`, then `Set-SnapshotTarget desktop`. The file bytes are exactly `desktop` (ASCII, no BOM). `Get-SnapshotTarget` returns `desktop`. The output has `SNAPSHOT TARGET desktop`.
+  - `Set-SnapshotTarget desktop` on a file that already holds `desktop` gives the same bytes and the same output. This is the rollback case where W-3 never flipped.
+  - `Set-SnapshotTarget Desktop`, `server3` or `''` returns `''` and leaves the file bytes unchanged.
+  - The wrapper path is run with the child replaced by a recorder, after a `server2` then `desktop` write. The recorded child arguments carry `-Target desktop` and no `server2`.
+  - Red before S2: `Set-SnapshotTarget` does not exist.
 - **R-1.** The existing plain-path cases nearest the change stay green, each as its own short row:
   - `PlainPublishPruneOrder` (publish order and retention).
   - `DockerDaemonPinned` (endpoint refusal).
   - `PlainStatusNoSecret` (status file).
   - `PlainDrillRefused` (the desktop drill refusal V-12 keeps).
+  - `DrillRefusesIdPrefix`. S3's plain drill shares the guard prefix of `Invoke-SnapshotDrill`, and this case covers that prefix.
 
   The full harness (764 assertions, 523 s on server2) is not a Merge row under the SHORT rule. Review runs it once on the final tip, and the rc run owns it after that.
-- **R-2.** `test-job-status.ps1` full harness green: 77 existing plus V-7..V-10. It runs in 9 s, so it stays a single row.
-- **R-3.** The `PosixHarnessToolTests` snapshot pair stays green. It is not run as a row: it runs the same `-Case` names covered by R-1, and its C# list is unchanged. Review confirms the list by diff.
+- **R-2.** `test-job-status.ps1` full harness green: 77 existing plus V-7..V-10 and V-15. It runs in 9 s, so it stays a single row.
+- **R-3.** The `PosixHarnessToolTests` snapshot pair stays green. It is not run as a row. Its `SnapshotCases` list (`tests/Antiphon.Tests/Scripts/PosixHarnessToolTests.cs:64-68`) runs different case names from R-1:
+  - On Windows: `StagingRefusesLink` and `WindowsAclRules`.
+  - On Linux: `StagingRefusesLink`, `StagingRefusesForeignRoot` and `DrillRefusesIdPrefix`.
+
+  `DrillRefusesIdPrefix` is also an R-1 row (CP-16). The staging cases and `WindowsAclRules` run in Review's one-off full-harness run. The C# list is unchanged and no case is renamed. Review confirms both by diff.
 
 No PC-n is named. Mutation is waived (operator 2026-11-12) and is not discharged.
 
@@ -261,7 +306,7 @@ Lane: server2 (the runner default `globalRunnerId=server2`). No `-Runner`, no `-
 | CP-4 | S1 | n/a | snapshot-target | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case TargetServer2RefusesTcp` | V-4 | 0 failed, exit 0 | n/a | 1 |
 | CP-5 | S1 | n/a | snapshot-target | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case TargetServer2SourceMismatch` | V-5 | 0 failed, exit 0 | n/a | 1 |
 | CP-6 | S1 | n/a | snapshot-target | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case TargetStatusFields` | V-6 | 0 failed, exit 0 | n/a | 1 |
-| CP-7 | S2 | n/a | job-status | `pwsh -NoProfile -File scripts/test-job-status.ps1` | V-7, V-8, V-9, V-10, R-2 | 0 failed, exit 0 | n/a | 2 |
+| CP-7 | S2 | n/a | job-status | `pwsh -NoProfile -File scripts/test-job-status.ps1` | V-7, V-8, V-9, V-10, V-15, R-2 | 0 failed, exit 0 | n/a | 2 |
 | CP-8 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillServer2` | V-11 | 0 failed, exit 0 | n/a | 1 |
 | CP-9 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillDesktopRefused` | V-12 | 0 failed, exit 0 | n/a | 1 |
 | CP-10 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillRefusesProduction` | V-13 | 0 failed, exit 0 | n/a | 1 |
@@ -269,6 +314,9 @@ Lane: server2 (the runner default `globalRunnerId=server2`). No `-Runner`, no `-
 | CP-12 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case DockerDaemonPinned` | R-1 | 0 failed, exit 0 | n/a | 1 |
 | CP-13 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainStatusNoSecret` | R-1 | 0 failed, exit 0 | n/a | 1 |
 | CP-14 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillRefused` | R-1 | 0 failed, exit 0 | n/a | 1 |
+| CP-15 | S2 | n/a | job-status | `pwsh -NoProfile -File scripts/test-job-status.ps1 -Case TargetRollbackRestoresDesktop` | V-15 (W-5 rollback write-back) | 0 failed, exit 0 | n/a | 1 |
+| CP-16 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case DrillRefusesIdPrefix` | R-1 | 0 failed, exit 0 | n/a | 1 |
+| CP-17 | S1 | n/a | snapshot-target | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case TargetServer2RefusesContainer` | V-14 | 0 failed, exit 0 | n/a | 1 |
 
 Code adds the exact assertion counts to Expect when it commits each case. The harness prints `<n> passed, <m> failed`.
 
@@ -281,7 +329,7 @@ Owed off-row:
 Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md#performance-standards):
 
 - **Rows.**
-  - CP-1..CP-6 and CP-8..CP-10 are single cases: pwsh start plus one fixture, under 1 min each.
+  - CP-1..CP-6, CP-8..CP-10 and CP-15..CP-17 are single cases: pwsh start plus one fixture, under 1 min each.
   - CP-7 is the whole job-status harness. It measured 9 s on server2 (77 passed, master `e229fb4d3`, one sample). The estimate is 2 min, well above 2× that.
   - Measured on server2 under a build slot, 2026-11-18, master `e229fb4d3`, one sample each:
     - One case (`PlainPublishPruneOrder`, 18 assertions): 16 s wall.
@@ -290,7 +338,7 @@ Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md
 - **Phases.** Each row is pwsh start (~1–2 s), then fixture creation in a temp dir, then the case. There is no build, Docker, network or database.
 - **Shared setup.** None is needed. Each case builds its own temp fixture. The `sh` docker fake is installed per case, as the existing cases do.
 - **Timeouts.** The harness has no internal timeout. The checkpoint row deadline is derived from `EstimatedMinutes`, about 2× the measured p95. The C# `PosixHarnessToolTests` per-case 90 s bound is unchanged.
-- **Ordinary floor.** 15 minutes summed (14 rows). It runs as three After groups (S1, S2, S3/all) on server2. Nothing runs on the desktop during the live run.
+- **Ordinary floor.** 18 minutes summed (17 rows). It runs as three After groups (S1, S2, S3/all) on server2. Nothing runs on the desktop during the live run.
 
 ## Prerequisites (operator, before the window)
 
@@ -302,7 +350,7 @@ Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md
 - **P-3.** The runner refresh happens once the code lands, any time before the window. It is a file copy only, with no dump.
   - Copy the reviewed `postgres-snapshot.ps1`, `invoke-postgres-snapshot.ps1` and `job-status.ps1` into `C:\Users\lndco\antiphon-snapshot-runner`.
   - Write `SOURCE-SHA` = sha256 of the copied `postgres-snapshot.ps1`.
-  - Write `snapshot-target` = `desktop` (ASCII, no BOM).
+  - Write `snapshot-target` = `desktop` with `Set-SnapshotTarget desktop` (ASCII, no BOM). It must print `SNAPSHOT TARGET desktop`.
   - Verify with a dot-sourced `Resolve-PlainSnapshotScript` and `Get-SnapshotTarget`, as `b91c22df1` did.
   - The 07:50 run after that must still print `src=desktop` OK.
 
@@ -311,7 +359,7 @@ Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md
 - **W-0.** Before the window, read-only: read the desktop `snapshot-status.json` and the Windmill run history for 11-11..today (G-12).
 - **W-1.** Run the Windows PowerShell 5.1 parse of the three scripts in the runner directory (owed off-row).
 - **W-2.** On server2, run `docker image inspect` of the production container's image. It must show `PG_VERSION=16.14-1.pgdg13+1` and `LANG=en_US.utf8`, not alpine. Also run `docker exec antiphon-server2-postgres-postgres-1 postgres --version` and confirm `16.14`.
-- **W-3.** **Flip:** write `server2` into `C:\Users\lndco\antiphon-snapshot-runner\snapshot-target`. **Manual snapshot:** run the same entry the schedule runs, via Windmill "Run now" on `u/lndcobra/antiphon_postgres_snapshot` (or the same `powershell -File …\invoke-postgres-snapshot.ps1` over the bridge). Expect:
+- **W-3.** **Flip:** run `Set-SnapshotTarget server2` (S2, dot-sourced from the runner copy). It writes `server2` into `C:\Users\lndco\antiphon-snapshot-runner\snapshot-target` and must print `SNAPSHOT TARGET server2`. From this point W-5 applies to every rollback. **Manual snapshot:** run the same entry the schedule runs, via Windmill "Run now" on `u/lndcobra/antiphon_postgres_snapshot` (or the same `powershell -File …\invoke-postgres-snapshot.ps1` over the bridge). Expect:
   - `SNAPSHOT ok exit=0`.
   - `ONEDRIVE COPY oneDrive=ok`.
   - `DB backup: OK <size> +cloud src=server2` and `telegram=0`.
@@ -321,8 +369,17 @@ Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md
   - `drill=1` with `tables=` equal to the cutover's verified table count. `pg_restore` exits 0.
   - The scratch container and volume are gone afterwards. Check with `docker --context antiphon-server2 ps -a --filter label=antiphon.snapshot-drill` → empty.
   - Record the restore seconds.
-- **W-5.** If W-3 or W-4 fails, the window's rollback (cutover phase 6) restarts `antiphon-postgres`. Write `desktop` back into `snapshot-target`. The next 07:50 run then proves `src=desktop`.
-- **W-6.** The next scheduled 07:50 run must print `src=server2` OK, and the 08:00 stale check must print `JOB STATUS fresh`. The orchestrator confirms this from the job output the following morning.
+- **W-5. Rollback write-back (amended, unconditional).** Cutover phase 6 can run for several reasons:
+  - W-3 or W-4 failed.
+  - Phase 4 or phase 5 failed.
+  - The operator rolls back after W-3 and W-4 **succeeded**.
+
+  In every case, once phase 6 has restarted `antiphon-postgres` and AppHost against the desktop volume, the operator runs `Set-SnapshotTarget desktop` (S2) before the window closes. It must print `SNAPSHOT TARGET desktop`. W-3's flip is a persistent file write, so without this step the next 07:50 dumps server2 while production is the desktop volume again.
+  - The write is idempotent. It also runs when W-3 never flipped, and it then leaves `desktop` unchanged (V-15).
+  - The same write applies if the window is abandoned after W-3 but before phase 4 stops `antiphon-postgres`. Production never left the desktop volume in that case.
+  - If phase 6 itself stops before AppHost is back on the desktop volume (stop gate 6, a failed read), production has not moved back. Leave the word as it is, and record the word and the phase 6 exit in the window log.
+  - The next 07:50 run must print `src=desktop` OK, and the 08:00 stale check must print `JOB STATUS fresh`.
+- **W-6.** If no rollback ran, the next scheduled 07:50 run must print `src=server2` OK, and the 08:00 stale check must print `JOB STATUS fresh`. The orchestrator confirms this from the job output the following morning.
 
 ## Operator decisions (yes/no, with recommendation)
 
