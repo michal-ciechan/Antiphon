@@ -67,6 +67,22 @@ services:
       PhoneHomeRunner__Runners__server2__ChildCodexHome: /state/codex
       PhoneHomeRunner__Runners__server2__ClaudeAuthProbeEnabled: "true"
       PhoneHomeRunner__Runners__server2__CodexAuthProbeEnabled: "true"
+      PhoneHomeRunner__Runners__desktop-win__Enabled: "true"
+      PhoneHomeRunner__Runners__desktop-win__AllowDelegatedTasks: "true"
+      PhoneHomeRunner__Runners__desktop-win__DisplayName: desktop-win
+      PhoneHomeRunner__Runners__desktop-win__CallbackOrigin: "${ANTIPHON_PUBLIC_ORIGIN:?ANTIPHON_PUBLIC_ORIGIN is required}"
+      PhoneHomeRunner__Runners__desktop-win__SharedSecret: "${PHONE_HOME_DESKTOP_WIN_SHARED_SECRET:?PHONE_HOME_DESKTOP_WIN_SHARED_SECRET is required}"
+      PhoneHomeRunner__Runners__desktop-win__HostWorkspaceRoot: "${PHONE_HOME_HOST_WORKSPACE_ROOT:?PHONE_HOME_HOST_WORKSPACE_ROOT is required}"
+      PhoneHomeRunner__Runners__desktop-win__RunnerWorkspace: C:/Antiphon/runner/work
+      PhoneHomeRunner__Runners__desktop-win__RunnerRepository: C:/Antiphon/runner/work/repos/antiphon
+      PhoneHomeRunner__Runners__desktop-win__RawExeAllowList__0: "C:/Program Files/PowerShell/7/pwsh.exe"
+      PhoneHomeRunner__Runners__desktop-win__MaxCapacity: "2"
+      PhoneHomeRunner__Runners__desktop-win__ChildGrokHome: "${PHONE_HOME_DESKTOP_WIN_HOME:?PHONE_HOME_DESKTOP_WIN_HOME is required}/.grok"
+      PhoneHomeRunner__Runners__desktop-win__ChildClaudeHome: "${PHONE_HOME_DESKTOP_WIN_HOME:?PHONE_HOME_DESKTOP_WIN_HOME is required}/.claude"
+      PhoneHomeRunner__Runners__desktop-win__ChildCodexHome: "${PHONE_HOME_DESKTOP_WIN_HOME:?PHONE_HOME_DESKTOP_WIN_HOME is required}/.codex"
+      PhoneHomeRunner__Runners__desktop-win__ClaudeAuthProbeEnabled: "true"
+      PhoneHomeRunner__Runners__desktop-win__CodexAuthProbeEnabled: "true"
+      HostLoadHistory__DirectRunnerKey: server2-direct
       Delegation__ApiBaseUrl: "${ANTIPHON_PUBLIC_ORIGIN:?ANTIPHON_PUBLIC_ORIGIN is required}"
       Git__WorkspacePath: /work/repos
       Git__WorktreeBasePath: /work/worktrees

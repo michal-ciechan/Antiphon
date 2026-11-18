@@ -27,6 +27,7 @@ param(
 )
 
 $script:ServerProject = 'antiphon-server2-server'
+$script:DesktopWinEnvKeys = @('PHONE_HOME_DESKTOP_WIN_SHARED_SECRET', 'PHONE_HOME_DESKTOP_WIN_HOME')
 $script:ServerContainer = 'antiphon-server2-server-server-1'
 $script:GateBaseUrl = 'http://127.0.0.1:17400'
 $script:GateConfig = '/var/tmp/antiphon-server2-server.gate.config'
@@ -135,6 +136,13 @@ function Get-ServerComposeRefusal {
             'AntiphonMessaging__ClientId: "antiphon-server2-server"',
             'AntiphonMessaging__ExpectedClusterId: "${ANTIPHON_MESSAGING_EXPECTED_CLUSTER_ID:-}"',
             'PhoneHomeRunner__Enabled: "true"',
+            'PhoneHomeRunner__Runners__desktop-win__Enabled: "true"',
+            'PhoneHomeRunner__Runners__desktop-win__AllowDelegatedTasks: "true"',
+            'PHONE_HOME_DESKTOP_WIN_SHARED_SECRET:?PHONE_HOME_DESKTOP_WIN_SHARED_SECRET is required',
+            'PHONE_HOME_DESKTOP_WIN_HOME:?PHONE_HOME_DESKTOP_WIN_HOME is required',
+            'PhoneHomeRunner__Runners__desktop-win__RunnerWorkspace: C:/Antiphon/runner/work',
+            'PhoneHomeRunner__Runners__desktop-win__RawExeAllowList__0: "C:/Program Files/PowerShell/7/pwsh.exe"',
+            'HostLoadHistory__DirectRunnerKey: server2-direct',
             'Delegation__CheckInterpreterEnabled: "true"',
             'Delegation__DiagnoseEnabled: "true"',
             'Delegation__OutputDistillerEnabled: "true"',
@@ -333,6 +341,12 @@ function Invoke-ServerDeploy {
             Write-ServerResult 'fail' 2 'hangfire-storage'
             return
         }
+        foreach ($key in $script:DesktopWinEnvKeys) {
+            if ([string]::IsNullOrWhiteSpace([string]$envMap[$key])) {
+                Write-ServerResult 'fail' 2 'env-missing'
+                return
+            }
+        }
     } elseif (-not $planOnly) {
         Write-ServerResult 'fail' 2 'env-missing'
         return
@@ -344,7 +358,7 @@ function Invoke-ServerDeploy {
         return
     }
 
-    foreach ($key in @('ANTIPHON_PUBLIC_ORIGIN', 'PHONE_HOME_SHARED_SECRET', 'PHONE_HOME_HOST_WORKSPACE_ROOT', 'KEYRING_CERT_FILE', 'KEYRING_KEY_FILE', 'OPERATOR_TOKEN_FILE')) {
+    foreach ($key in (@('ANTIPHON_PUBLIC_ORIGIN', 'PHONE_HOME_SHARED_SECRET', 'PHONE_HOME_HOST_WORKSPACE_ROOT', 'KEYRING_CERT_FILE', 'KEYRING_KEY_FILE', 'OPERATOR_TOKEN_FILE') + $script:DesktopWinEnvKeys)) {
         if ([string]::IsNullOrWhiteSpace([string]$envMap[$key])) {
             Write-ServerResult 'fail' 2 'env-missing'
             return
