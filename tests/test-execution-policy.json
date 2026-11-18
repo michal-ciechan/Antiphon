@@ -1790,6 +1790,36 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the deploy script runs bash and docker on the Linux host, and the witness sets a Unix file mode and puts a fake docker on PATH. The case remains required on Linux.",
           "owner": "CARD-1744"
+        },
+        {
+          "suite": "antiphon",
+          "class": "BuildSlotScriptTests",
+          "methods": [
+            "C1981_LeaseTempDirConfinesSdkScratch"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the build-slot lease confines the child SDK scratch to a private /tmp/aslot-<8 hex> TMPDIR and removes that directory with the lease. Windows %TEMP% stays unchanged. The case remains required on Linux.",
+          "owner": "CARD-1981"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1981LeaseTempDriverTests",
+          "methods": [
+            "C1981_dotnet_child_tmpdir_is_removed_with_the_lease"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: a checkpoint-tool dotnet child must see /tmp/aslot-<8 hex> as TMPDIR, and the lease removes that directory and the six-character SDK scratch. The case remains required on Linux.",
+          "owner": "CARD-1981"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1981LeaseTempDriverTests",
+          "methods": [
+            "C1981_lease_dispose_does_not_follow_a_replaced_symlink"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: dispose must not follow a symlink that replaced the /tmp/aslot-<8 hex> lease directory. The case remains required on Linux.",
+          "owner": "CARD-1981"
         }
       ]
     }
