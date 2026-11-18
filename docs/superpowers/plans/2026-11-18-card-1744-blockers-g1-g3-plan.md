@@ -15,6 +15,14 @@ Live reads: `GET /api/runner-defaults` → revision 2, `globalRunnerId=server2`,
 What I did not do: no build, no test, no deploy, no restart, no setting change, no card move, no
 database connection, no secret read.
 
+**Amendment 1 (2026-11-18, Docs task `2f24f3cc`):** fixes the four blockers from Review `1a877722`
+round 1 (`docs/superpowers/reviews/2026-11-18-card-1744-blockers-g1-g3-plan-review.md` at
+`caa7271127f2deae8cf417db7ea1b0e0a46bca03`). B-1: D-5, W-1 and W-3 require
+`AllowDelegatedTasks: "true"` and no `StandingAgentId`. B-2: S1 and W-2 put the two-key check
+before the `-WhatIf` return. B-3: D-3 allows `server2-direct`. B-4: CP-4, CP-6 and CP-9 name real
+classes, and the floors are recounted from the `[Test]` and `[Arguments]` attributes at `997f9b8d9`.
+Nothing else in the design changed. O-5 to O-9 are unchanged.
+
 ## Verdict
 
 - **G-2 is much smaller than the investigation assumed.** Create-time platform placement already
@@ -81,9 +89,13 @@ database connection, no secret read.
   (desktop only).
 - **D-3 (G-2 host load): a configurable direct-runner load key.** New setting
   `HostLoadHistory:DirectRunnerKey` (default `"desktop"`, so the desktop topology is byte-for-byte unchanged).
-  - **Validation:** `^[a-z0-9][a-z0-9-]{0,63}$`. It must not equal a configured phone-home runner id,
-    `local`, or any id other than the default `desktop`.
-  - **Production:** the compose sets `server2-direct`.
+  - **Validation:** `^[a-z0-9][a-z0-9-]{0,63}$`. Refuse `local`. Refuse any configured phone-home
+    runner id, ordinal-ignore-case, taken from `PhoneHomeRunnerCatalog.Configured`. That list covers
+    the map keys, including disabled entries, and the legacy `AllowedRunnerId`. In production it
+    holds `server2` and `desktop-win`. Every other matching value is legal, and the
+    default is `desktop`.
+  - **Production:** the compose sets `server2-direct`. That is a legal non-default value: it is not
+    `local`, and it is not a phone-home runner id.
   - **Mechanics:** one injected singleton `HostLoadRunnerKeys` with `Canonical(string id)` replaces
     the static `HostLoadCounterCache.Canonical` at its 12 call sites. It also replaces the two
     literal folds in `AgentTaskPipelineStatusService.cs:287` and `:296` (the catalogue `desktop` row)
@@ -104,8 +116,9 @@ database connection, no secret read.
   - `PHONE_HOME_DESKTOP_WIN_HOME`: the desktop user's profile in drive-rooted forward-slash form, for
     example `C:/Users/<operator>`, from which the three child homes derive.
 
-  Both use the `:?` form, and `deploy-server2-server.ps1` adds both to its required-key list. An
-  entry with no connected runner is just unavailable, which is harmless.
+  Both use the `:?` form. `deploy-server2-server.ps1` refuses an env file that lacks either key, on
+  `-WhatIf` as well as `-Execute` (S1, W-2). An entry with no connected runner is just unavailable,
+  which is harmless.
   - *Rejected: an optional entry behind `DESKTOP_WIN_ENABLED`.* Cutover without `desktop-win` loses
     the Windows lane silently. Fail closed at deploy time instead.
   - No user name or fleet location is written into the compose.
@@ -113,6 +126,11 @@ database connection, no secret read.
 
   | Key | Value |
   |---|---|
+  | `Enabled` | `"true"` |
+  | `AllowDelegatedTasks` | `"true"`: required (see below) |
+  | `StandingAgentId` | **not set** |
+  | `DisplayName` | `desktop-win` |
+  | `SharedSecret` | `${PHONE_HOME_DESKTOP_WIN_SHARED_SECRET:?...}` (D-4) |
   | `RunnerWorkspace` | `C:/Antiphon/runner/work` |
   | `RunnerRepository` | `C:/Antiphon/runner/work/repos/antiphon` |
   | `MaxCapacity` | `2` (today's desktop capacity is 2) |
@@ -121,6 +139,18 @@ database connection, no secret read.
   | `CallbackOrigin` | `${ANTIPHON_PUBLIC_ORIGIN}` |
   | `HostWorkspaceRoot` | `${PHONE_HOME_HOST_WORKSPACE_ROOT}` (T-7) |
   | Auth probes | `ClaudeAuthProbeEnabled`/`CodexAuthProbeEnabled` `"true"` |
+
+  These are the same 14 keys as the existing `server2` entry (`docker-compose.server2-server.yml:56-69`),
+  plus `RawExeAllowList__0`: 15 `PhoneHomeRunner__Runners__desktop-win__*` lines.
+  - **Why `AllowDelegatedTasks` and no `StandingAgentId` (Review B-1).**
+    - `PhoneHomeRunnerEntry.AllowDelegatedTasks` defaults to false and `StandingAgentId` to empty
+      (`PhoneHomeRunnerSettings.cs:186-189`).
+    - `ValidateMapped` refuses that pair (`:386-387`).
+    - A `StandingAgentId` would silence the validator, but `AllowsDelegatedTasks` would then be
+      false. The S2 scan (D-2) would skip `desktop-win`, and an unpinned Windows task would 409,
+      which falsifies D-1 and W-4.
+    - So the entry is a pool: the flag is `"true"` and there is no standing agent. Code must not
+      add a `StandingAgentId` to make W-3 pass.
 
   W-1 asserts the bound list: the config binder may keep the default Linux entries after index 0
   (UNOBSERVED). Extra absolute Linux paths are harmless on Windows, but the witness records which happens.
@@ -185,7 +215,7 @@ Standing operator defaults O-1 to O-4 apply unchanged. O-4 is implemented by D-7
 
 | Slice | Gap | Files | Tests (red first) |
 |---|---|---|---|
-| S1 | G-1 | `docker-compose.server2-server.yml` (+16 `PhoneHomeRunner__Runners__desktop-win__*` lines, + `HostLoadHistory__DirectRunnerKey: server2-direct` for S3); `scripts/deploy-server2-server.ps1` (`:347` key list, `Test-ServerCompose` needs list `:120-160`); `docs/docker-stack.md` `:2164` key list + D-9 note | New `tests/Antiphon.Tests/Infrastructure/C1744G1DesktopWinComposeTests.cs` (W-1..W-3); existing `Server2ProductionServerContractTests` fixtures gain the two keys |
+| S1 | G-1 | `docker-compose.server2-server.yml` (+15 `PhoneHomeRunner__Runners__desktop-win__*` lines, the full D-5 entry with `AllowDelegatedTasks: "true"` and no `StandingAgentId`, + `HostLoadHistory__DirectRunnerKey: server2-direct` for S3); `scripts/deploy-server2-server.ps1`: (a) in the env-file branch (`:307-335`), after the `dev-password` and `hangfire-storage` checks and **before** `if ($planOnly) { return }` (`:341-344`), refuse `env-missing` exit 2 when `PHONE_HOME_DESKTOP_WIN_SHARED_SECRET` or `PHONE_HOME_DESKTOP_WIN_HOME` is blank; (b) add the same two keys to the execute key list (`:347`) so the two lists stay in sync; (c) `Test-ServerCompose` needs list `:120-160`. `-WhatIf` with no `-EnvFile` stays exit 0 (the no-file refusal at `:336-338` stays `-not $planOnly` only); `docs/docker-stack.md` `:2164` key list + D-9 note | New `tests/Antiphon.Tests/Infrastructure/C1744G1DesktopWinComposeTests.cs` (W-1..W-3); existing `Server2ProductionServerContractTests` fixtures gain the two keys |
 | S2 | G-2 scan | `server/Application/Services/AgentTaskService.cs` `SelectPlatformCandidateAsync` loop `:2209-2212` only | New `tests/Antiphon.Tests/Application/C1744G2PlacementTests.cs` (W-4 pin, W-5 red) |
 | S3 | G-2 load | `server/Application/Settings/HostLoadHistorySettings.cs` (+`DirectRunnerKey`, Validate); new `server/Infrastructure/HostLoad/HostLoadRunnerKeys.cs`; `HostLoadRegistration.cs`; `HostLoadCounterCache.cs`, `HostLoadCapacityReader.cs`, `HostLoadHistoryService.cs`, `HostLoadIngestPump.cs`, `HostLoadIngestService.cs`, `HostLoadTaskWindowObserver.cs` (Canonical call sites); `server/Application/Services/AgentTaskPipelineStatusService.cs:287,296` | New `tests/Antiphon.Tests/Application/C1744G2HostLoadKeyTests.cs` (W-6, W-7 red; W-8 default unchanged) |
 | S4 | G-3 | new `scripts/lib/windows-phone-home-env.ps1`; `scripts/start-windows-phone-home-runner.ps1` (use the helper; behaviour unchanged); `scripts/autostart-session-runner.ps1` (optional `phone-home.json`); ASCII-only | New `scripts/test-windows-phone-home-runner.ps1` `-Case` harness (W-9..W-11), runnable on Linux pwsh (pure functions; no Scheduled Task call) |
@@ -200,9 +230,9 @@ G-2), or two in parallel.
 
 | W | Slice | Test | Red at base because |
 |---|---|---|---|
-| W-1 | S1 | `C1744G1DesktopWinComposeTests.G1_compose_declares_desktop_win_with_drive_rooted_paths`: parses the compose; all D-5 keys present; paths drive-rooted forward-slash; secret and home are `:?` | entry absent |
-| W-2 | S1 | `G1_deploy_whatif_refuses_without_desktop_win_keys`: env file missing either key → `env-missing` exit 2, no docker call (same seam as `Execute_refusals_stop_before_docker`) | key list has 6 entries |
-| W-3 | S1 | `G1_compose_binds_valid_phone_home_settings`: binds the compose `server` env (with fake values) into `PhoneHomeRunnerSettings` and runs its validator: 0 failures for `desktop-win`; records the bound `RawExeAllowList` | entry absent |
+| W-1 | S1 | `C1744G1DesktopWinComposeTests.G1_compose_declares_desktop_win_with_drive_rooted_paths`: parses the compose; all D-5 keys present, including `Enabled: "true"` and `AllowDelegatedTasks: "true"`; no `PhoneHomeRunner__Runners__desktop-win__StandingAgentId` key; paths drive-rooted forward-slash; secret and home are `:?` | entry absent |
+| W-2 | S1 | `G1_deploy_whatif_refuses_without_desktop_win_keys`: `-WhatIf -EnvFile <file>` where the file is otherwise valid (0600, outside the repo, non-dev password, `HANGFIRE_STORAGE=InMemory`, all six existing keys) and omits one new key at a time → `SERVER2-SERVER fail exit=2 reason=env-missing`, no docker call (same seam and fake docker marker as `Execute_refusals_stop_before_docker`). The same file with both keys → `plan` exit 0. `WhatIf_prints_the_plan_and_calls_no_docker` (no `-EnvFile`) stays exit 0 unchanged | the WhatIf path returns at `:341-344` before any key list is read, so it exits 0 `plan` |
+| W-3 | S1 | `G1_compose_binds_valid_phone_home_settings`: binds the compose `server` env (with fake values) into `PhoneHomeRunnerSettings` and runs its validator: 0 failures for `desktop-win`; asserts the bound entry has `Enabled == true`, `AllowDelegatedTasks == true` and `StandingAgentId == Guid.Empty`; records the bound `RawExeAllowList` | entry absent |
 | W-4 | S2 | `C1744G2PlacementTests.Windows_task_selects_desktop_win_when_local_is_linux`: matrix `desktop`=linux, `desktop-win`=windows, `server2`=linux, global default `server2`; unpinned `RequiredPlatform.Windows` Worktree Code task → `RunnerId=desktop-win`, source Fallback, reason `platform_match` | green at base (pin of T-1; stated, not a red witness) |
 | W-5 | S2 | `Fallback_scan_skips_runner_without_delegated_tasks`: `desktop-win` eligible windows but `AllowDelegatedTasks=false` → 409 `RunnerPlatformProblems.Unavailable`, no row | scan ignores the flag (T-2) |
 | W-6 | S3 | `C1744G2HostLoadKeyTests.Direct_key_change_starts_a_new_cursor`: seeded cursor `desktop` with store A; `DirectRunnerKey=server2-direct`; batch for `local` with store B → inserted > 0, cursor row `server2-direct` | conflict thrown (T-4) |
@@ -225,19 +255,63 @@ operator forbids desktop load during the live Full run, and nothing here needs W
 | CP-1 | S1-red | tests/Antiphon.Tests -> bin-c1744g1r/ | g1-red | `/*/*/(C1744G1*)/*` | W-1..W-3 | red: 3 failed, 0 passed | 3 | 15 |
 | CP-2 | S1 | tests/Antiphon.Tests -> bin-c1744g1/ | g1-green | `/*/*/(C1744G1*)\|(Server2ProductionServerContractTests*)/*` | W-1..W-3, existing contract | 0 failed | 18 | 12 |
 | CP-3 | S2-red | tests/Antiphon.Tests -> bin-c1744g2pr/ | g2p-red | `/*/*/(C1744G2PlacementTests*)/*` | W-4, W-5 | 1 failed (W-5), 1 passed (W-4) | 2 | 12 |
-| CP-4 | S2 | tests/Antiphon.Tests -> bin-c1744g2p/ | g2p-green | `/*/*/(C1744G2PlacementTests*)\|(TaskPlatformPlacementTests*)\|(RunnerDefaultTests*)/*` | W-4, W-5, existing placement | 0 failed | 17 | 12 |
+| CP-4 | S2 | tests/Antiphon.Tests -> bin-c1744g2p/ | g2p-green | `/*/*/(C1744G2PlacementTests*)\|(TaskPlatformPlacementTests*)\|(RunnerDefaultsWireTests*)\|(OutboundConversionPublicCreateTests*)\|(RunnerDefaultSettingsTests*)\|(RunnerDefaultPlacementTests*)\|(RunnerDefaultMigrationTests*)/*` | W-4, W-5, existing placement, the whole `RunnerDefaultTests.cs` file | 0 failed | 43 | 12 |
 | CP-5 | S3-red | tests/Antiphon.Tests -> bin-c1744g2lr/ | g2l-red | `/*/*/(C1744G2HostLoadKeyTests*)/*` | W-6..W-8 | 2 failed (W-6, W-7), 1 passed | 3 | 12 |
-| CP-6 | S3 | tests/Antiphon.Tests -> bin-c1744g2l/ | g2l-green | `/*/*/(C1744G2HostLoadKeyTests*)\|(C1514HostLoad*)\|(AgentTaskPipelineStatusTests*)\|(HostBudgetPipelineTests*)/*` | W-6..W-8, existing host-load + pipeline | 0 failed | 3 | 14 |
+| CP-6 | S3 | tests/Antiphon.Tests -> bin-c1744g2l/ | g2l-green | `/*/*/(C1744G2HostLoadKeyTests*)\|(C1514HostLoad*)\|(AgentTaskPipelineStatusTests*)/*` | W-6..W-8, existing host-load + pipeline (including the `HostBudgetPipelineTests.cs` partial) | 0 failed | 121 | 14 |
 | CP-7 | S4-red | n/a | g3-red | `pwsh -NoProfile -File scripts/test-windows-phone-home-runner.ps1` | W-9..W-11 | exit 1, output contains `FAIL` | n/a | 2 |
 | CP-8 | S4 | n/a | g3-green | `pwsh -NoProfile -File scripts/test-windows-phone-home-runner.ps1` | W-9..W-11 | exit 0, `failed=0` | n/a | 2 |
-| CP-9 | S5 | tests/Antiphon.Tests -> bin-c1744doc/ | docs | `/*/*/(DockerStackDocumentationTests*)/*` | S5 | 0 failed | 1 | 12 |
+| CP-9 | S5 | tests/Antiphon.Tests -> bin-c1744doc/ | docs | `/*/*/(DockerStackDocumentationTests*)/*` | S5 | 0 failed | 19 | 12 |
 
-Filter roster check: `C1744G1*` and `C1744G2PlacementTests*`/`C1744G2HostLoadKeyTests*` match no
-existing class (grep: no `C1744` class at base). `TaskPlatformPlacementTests*`,
-`Server2ProductionServerContractTests*` and `AgentTaskPipelineStatusTests*` match one class name
-each. `AgentTaskPipelineStatusTests` is declared 6 times as partial; it is one class.
-`C1514HostLoad*` deliberately takes the C1514 host-load family. Code must count the families
-before the first green run and replace each Min of 3 with the observed count.
+Filter roster check (amendment 1, counted at `997f9b8d9` from `[Test]` and `[Arguments(` attributes;
+a `[Test]` with k `Arguments` runs k cases):
+- `C1744G1*` and `C1744G2PlacementTests*`/`C1744G2HostLoadKeyTests*` match no existing class (grep:
+  no `C1744` class at base). The new classes hold 3, 2 and 3 tests.
+- CP-2: `Server2ProductionServerContractTests` has 15 `[Test]`, no `Arguments`. 15 + 3 = **18**.
+- CP-4 names the five classes `tests/Antiphon.Tests/Application/RunnerDefaultTests.cs` declares.
+  There is no class `RunnerDefaultTests`. `RunnerDefault*` would miss
+  `OutboundConversionPublicCreateTests` and would also take `RunnerDefaultGuidanceTests` from
+  `TaskPlatformGuidanceTests.cs`, so each class is named exactly.
+
+  | Class | `[Test]` | Cases |
+  |---|---|---|
+  | `TaskPlatformPlacementTests` | 15 | 15 |
+  | `RunnerDefaultsWireTests` | 5 | 5 |
+  | `OutboundConversionPublicCreateTests` | 1 | 1 |
+  | `RunnerDefaultSettingsTests` | 6 | 6 |
+  | `RunnerDefaultPlacementTests` | 9 | 9 |
+  | `RunnerDefaultMigrationTests` | 5 | 5 |
+  | `C1744G2PlacementTests` (new: W-4, W-5) | 2 | 2 |
+  | **CP-4 Min** | | **43** |
+
+- CP-6. `(HostBudgetPipelineTests*)` was dropped: `HostBudgetPipelineTests.cs` declares
+  `partial class AgentTaskPipelineStatusTests`, which the filter already names. Nested helper
+  classes (`C557Seed`, `TempWorkspace`, `BlockingPushGit` and others) hold no tests.
+  `AgentTaskPipelineEndpointTests` (4 tests, in `AgentTaskPipelineStatusTests.cs`) does not match
+  and is not part of the row.
+
+  | Class / file | `[Test]` | Cases |
+  |---|---|---|
+  | `AgentTaskPipelineStatusTests` in `AgentTaskPipelineStatusTests.cs` | 26 | 35 |
+  | `AgentTaskPipelineStatusTests` in `AgentTaskPipelineStatusC557Tests.cs` | 19 | 19 |
+  | `AgentTaskPipelineStatusTests` in `AgentTaskPipelineStatusC1076Tests.cs` | 4 | 9 |
+  | `AgentTaskPipelineStatusTests` in `HostBudgetPipelineTests.cs` | 4 | 4 |
+  | `AgentTaskPipelineStatusTests` in `AgentTaskPipelineStatusC100Tests.cs` | 1 | 1 |
+  | `AgentTaskPipelineStatusTests` in `AgentTaskPipelineStatusC1329Tests.cs` | 1 | 1 |
+  | `C1514HostLoadHistoryTests` | 12 | 22 |
+  | `C1514HostLoadMigrationTests` | 4 | 9 |
+  | `C1514HostLoadRecommendationTests` | 5 | 5 |
+  | `C1514HostLoadApiTests` | 4 | 4 |
+  | `C1514HostLoadScriptTests` | 4 | 4 |
+  | `C1514HostLoadAggregateTests` | 3 | 3 |
+  | `C1514HostLoadScenarioTests` | 2 | 2 |
+  | `C1744G2HostLoadKeyTests` (new: W-6..W-8) | 3 | 3 |
+  | **CP-6 Min** | 92 | **121** |
+
+  The other `C1514HostLoad*` types (`Fixture`, `World`, `CrashCases`, `SqlProbe`, `Scenario`,
+  `ProgressExecutor`) hold no tests. No class in CP-4 or CP-6 has a skip or platform attribute.
+- CP-9: `DockerStackDocumentationTests` has 19 `[Test]`, no `Arguments`. S5 adds no test: **19**.
+- If Code adds a test to a named class, it raises that row's Min by the added cases. It never
+  lowers one. A run that executes fewer than Min is red, even with 0 failed.
 
 ## Existing tests affected
 
@@ -248,8 +322,10 @@ before the first green run and replace each Min of 3 with the observed count.
 - Affected classes, all re-run in CP-2/4/6/9:
   - `Server2ProductionServerContractTests`: env fixtures gain the two keys for `WhatIf_prints_the_plan_and_calls_no_docker`, `Execute_refusals_stop_before_docker` and `Execute_drains_large_compose_output_without_echoing_a_secret`.
   - `TaskPlatformPlacementTests` (`Matrix()` has no phone-home policy, which D-2 keeps).
-  - `RunnerDefaultTests`.
-  - `C1514HostLoad*`, `AgentTaskPipelineStatusTests`, `HostBudgetPipelineTests`.
+  - The five classes in `RunnerDefaultTests.cs`: `RunnerDefaultsWireTests`,
+    `OutboundConversionPublicCreateTests`, `RunnerDefaultSettingsTests`, `RunnerDefaultPlacementTests`
+    and `RunnerDefaultMigrationTests`.
+  - `C1514HostLoad*`, and `AgentTaskPipelineStatusTests`, which includes the `HostBudgetPipelineTests.cs` partial.
   - `DockerStackDocumentationTests`.
 - Impacted-classes table (CARD-1782, `tests/impacted-classes.json`), checked at base:
   - No kind globs any production file this plan edits.
@@ -297,7 +373,7 @@ before the first green run and replace each Min of 3 with the observed count.
    no runner (`GET /api/agent-tasks?...`, read-only), then dispatch them or cancel and re-create them.
 4. **The window** (parent runbook, plus:)
    - The server2 env file gains `PHONE_HOME_DESKTOP_WIN_SHARED_SECRET` and `PHONE_HOME_DESKTOP_WIN_HOME`;
-     `-WhatIf` must pass first (W-2).
+     `-WhatIf -EnvFile <that file>` must pass first; it refuses a missing key (W-2).
    - Stop the phase-1 runner (Ctrl+C).
    - Write `C:\Antiphon\runner\phone-home.json` (`runnerId desktop-win`, `serverOrigin` = public
      origin, `capacity 2`, `root C:\Antiphon\runner`).
@@ -329,7 +405,8 @@ first green run (docs/test-performance-standards.md):
 - **Timeouts:** per-test timeouts are the class defaults. For the harness: 60 s per case, about 2x
   a measured p95 to set at Code. Shared setup: one schema per test; no new fixture.
 - **No row is near 30 min.** If CP-6's `C1514HostLoad*` family runs past 10 min on server2, Code
-  splits it to `(C1514HostLoadHistoryTests*)|(C1514HostLoadApiTests*)` and records why.
+  splits it to `(C1514HostLoadHistoryTests*)|(C1514HostLoadApiTests*)` and records why. Each split row
+  then takes its Min from the CP-6 roster table, and the split rows together still cover all 121 cases.
 
 ## Unobserved
 
