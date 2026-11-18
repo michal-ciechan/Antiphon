@@ -1248,6 +1248,7 @@ GET    /api/diagnostics/startup              bounded live startup timings, run i
 GET    /api/version                          build-time git SHA (CARD-0179) plus `capabilities` (CARD-0495 `land-v2`); /health stays the literal Healthy body
 POST   /api/diagnostics/bundle               Report-bug zip (application/zip); best-effort members + errors.txt
 GET    /api/diagnostics/session-state        CARD-0701 process/cache counters, live/unknown counts, sanitized pool flags (no transcript text)
+GET    /api/diagnostics/db-rate              CARD-1987 query rate, gaps, call sites, transaction rates (minutes 1-1440, default 60)
 POST   /api/operator/dashboard-sessions      one-time Hangfire dashboard login link; needs X-Antiphon-Operator-Token (CARD-0658)
 GET    /api/operator/dashboard-login?nonce=  redeems the link once; sets the /hangfire session cookie, 302 to /hangfire
 ```
