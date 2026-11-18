@@ -39,22 +39,8 @@ function New-FFReplay {
     $phase = [Diagnostics.Stopwatch]::StartNew()
     $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
     $listing = Join-Path $PSScriptRoot 'fixtures/nightly/c1410-antiphon-listing.txt'
-    $nodes = [Collections.Generic.List[object]]::new()
-    foreach ($line in [IO.File]::ReadAllLines($listing)) {
-        if (-not $line -or $line.StartsWith('#')) { continue }
-        $fields = $line.Split('|'); $i = 0
-        foreach ($entry in $fields[2].Split(',')) {
-            $eq = $entry.IndexOf('=')
-            if ($eq -ge 0) { $method = $entry.Substring(0,$eq); $count = [int]$entry.Substring($eq+1) }
-            else { $method = 'M' + $i.ToString('0000'); $count = [int]$entry }
-            $i++
-            for ($k = 0; $k -lt $count; $k++) {
-                $n = New-FFNode $fields[0] $method ($fields[0] + '.' + $method + '.' + $k)
-                if ($fields[1] -ceq 'S') { $n.Categories = @('Slow') }
-                $nodes.Add($n)
-            }
-        }
-    }
+    # 19,012 New-FFNode objects (same shape, same bare-name rule), built in C#.
+    $nodes = [AntiphonFixture.FFText]::ReplayNodes($listing)
     $phases.fixtureSeconds = $phase.Elapsed.TotalSeconds
     $phase.Restart()
     $ex = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows)
@@ -476,9 +462,9 @@ function Get-FFArgument([object[]]$Arguments, [string]$Name) {
 }
 # Fake-runner output is written per test node (19,012 in the full replay), so the
 # per-node formatting lives in C#. Bytes match the former PowerShell writers.
-if (-not ('AntiphonFixture.FFText' -as [type])) {
-Add-Type -TypeDefinition @'
+$ffTextSource = @'
 using System.Collections;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Management.Automation;
@@ -542,9 +528,78 @@ public static class FFText {
         foreach (byte b in hash) { sb.Append(b.ToString("x2", CultureInfo.InvariantCulture)); }
         return sb.ToString();
     }
+    // Get-NightlyBareClassIdentity (nightly-coverage.ps1).
+    static string Bare(string name) {
+        if (string.IsNullOrWhiteSpace(name)) { return name; }
+        int open = name.IndexOf('(');
+        if (open > 0 && name.EndsWith(")", System.StringComparison.Ordinal)) { return name.Substring(0, open); }
+        return name;
+    }
+    // New-FFNode $Class $Method $Uid: the same [pscustomobject] (property order and value types).
+    public static PSObject Node(string cls, string method, string uid, object[] categories) {
+        string bare = Bare(cls);
+        int dot = bare.LastIndexOf('.');
+        PSObject o = new PSObject();
+        o.Properties.Add(new PSNoteProperty("ClassName", cls));
+        o.Properties.Add(new PSNoteProperty("Namespace", bare.Substring(0, dot)));
+        o.Properties.Add(new PSNoteProperty("Type", cls.Substring(dot + 1)));
+        o.Properties.Add(new PSNoteProperty("Method", method));
+        o.Properties.Add(new PSNoteProperty("Uid", uid));
+        o.Properties.Add(new PSNoteProperty("Categories", categories));
+        o.Properties.Add(new PSNoteProperty("Excluded", false));
+        return o;
+    }
+    // New-FFReplay's listing parse: class|S-or-other|method=count,count,... lines; '#' lines and
+    // empty lines skipped; a bare count names its methods M0000, M0001, ... by entry position.
+    public static List<object> ReplayNodes(string listingPath) {
+        List<object> nodes = new List<object>();
+        foreach (string line in File.ReadAllLines(listingPath)) {
+            if (string.IsNullOrEmpty(line) || line.StartsWith("#")) { continue; }
+            string[] fields = line.Split('|');
+            bool slow = fields.Length > 1 && string.Equals(fields[1], "S", System.StringComparison.Ordinal);
+            int i = 0;
+            foreach (string entry in fields[2].Split(',')) {
+                int eq = entry.IndexOf('=');
+                string method; int count;
+                if (eq >= 0) { method = entry.Substring(0, eq); count = (int)LanguagePrimitives.ConvertTo(entry.Substring(eq + 1), typeof(int), CultureInfo.InvariantCulture); }
+                else { method = "M" + i.ToString("0000"); count = (int)LanguagePrimitives.ConvertTo(entry, typeof(int), CultureInfo.InvariantCulture); }
+                i++;
+                for (int k = 0; k < count; k++) {
+                    object[] categories = slow ? new object[] { "Slow" } : new object[0];
+                    nodes.Add(Node(fields[0], method, fields[0] + "." + method + "." + k.ToString(CultureInfo.InvariantCulture), categories));
+                }
+            }
+        }
+        return nodes;
+    }
 }
 }
 '@
+# Compiled once per source text and PowerShell/.NET version into a DLL cached under %TEMP% (each
+# failed-first case is its own process). Concurrent first runs each build a private file and move it
+# into place; a lost race keeps the winner's identical file.
+if (-not ('AntiphonFixture.FFText' -as [type])) {
+    $ffTextLoaded = $false
+    try {
+        $ffKeyBytes = [Text.Encoding]::UTF8.GetBytes($ffTextSource + "`n" + $PSVersionTable.PSVersion.ToString() + "`n" + [Environment]::Version.ToString())
+        $ffSha = [Security.Cryptography.SHA256]::Create()
+        try { $ffKey = [BitConverter]::ToString($ffSha.ComputeHash($ffKeyBytes)).Replace('-', '').Substring(0, 24) } finally { $ffSha.Dispose() }
+        $ffCacheDir = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-ff-fixture'
+        $ffDll = Join-Path $ffCacheDir ('AntiphonFixture.FFText-' + $ffKey + '.dll')
+        if (-not [IO.File]::Exists($ffDll)) {
+            [void][IO.Directory]::CreateDirectory($ffCacheDir)
+            $ffTemp = Join-Path $ffCacheDir ('build-' + [guid]::NewGuid().ToString('N') + '.dll')
+            try {
+                Add-Type -TypeDefinition $ffTextSource -OutputAssembly $ffTemp -OutputType Library
+                try { [IO.File]::Move($ffTemp, $ffDll) } catch { if (-not [IO.File]::Exists($ffDll)) { throw } }
+            } finally {
+                if ([IO.File]::Exists($ffTemp)) { try { [IO.File]::Delete($ffTemp) } catch { } }
+            }
+        }
+        if (-not ('AntiphonFixture.FFText' -as [type])) { Add-Type -Path $ffDll }
+        $ffTextLoaded = [bool]('AntiphonFixture.FFText' -as [type])
+    } catch { $ffTextLoaded = [bool]('AntiphonFixture.FFText' -as [type]) }
+    if (-not $ffTextLoaded) { Add-Type -TypeDefinition $ffTextSource }
 }
 function Write-FFDiagnostic([string]$Directory, [object[]]$Nodes, [string]$State = 'Passed') {
     [AntiphonFixture.FFText]::Diagnostic($Directory, $Nodes, $State)
@@ -1015,10 +1070,11 @@ function New-FFLoopHistory($Fixture) {
         $members=@($Fixture.history.members | Where-Object {$_.suite -ceq $suite.id})
         $trx=Join-Path $dir ($suite.id+'-old.trx')
         # First node of each bare class, built once per suite (the full replay has 19,012 nodes).
-        $firstByClass=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-        if($members.Count -gt 0){foreach($node in $suite.nodes){$bare=Get-NightlyBareClassIdentity $node.ClassName;if(-not $firstByClass.ContainsKey($bare)){$firstByClass[$bare]=$node}}}
+        # IndexByBare: ordinal bare-name keys, each list in input order, so [0] is the first node.
+        $byClass=$null
+        if($members.Count -gt 0){Assert-NightlyCoreAvailable 'New-FFLoopHistory';$byClass=[Antiphon.Nightly.NightlyClassNames]::IndexByBare($suite.nodes)}
         $failures=@(foreach ($member in $members) {
-            $n=$null;[void]$firstByClass.TryGetValue([string]$member.className,[ref]$n)
+            $n=$null;$list=$null;if($byClass.TryGetValue([string]$member.className,[ref]$list)){$n=$list[0]}
             [pscustomobject]@{Id=$n.Uid;ClassName=$n.ClassName;MethodName=$n.Method;Outcome='Failed'}
         })
         Write-C487Trx $trx $failures
@@ -1057,6 +1113,18 @@ function Invoke-FFActualLoop {
 $NightlySeams=@{
     HostPlatform={'windows'}
     E2EPrerequisites={return [pscustomobject]@{Ok=$true;Rows=@()}}
+    # The real probes (Get-ToolchainFloorVersionText), run once per process instead of once per arm.
+    ToolchainVersions={
+        param($tool)
+        if($null -eq $global:FFToolchainText){$global:FFToolchainText=@{}}
+        if(-not $global:FFToolchainText.ContainsKey([string]$tool)){
+            $text=''
+            if($tool -eq 'git'){$text=((& git --version 2>$null) | Out-String)}
+            elseif($tool -eq 'dotnet-sdk'){$text=((& dotnet --list-sdks 2>$null) | Out-String)}
+            $global:FFToolchainText[[string]$tool]=$text
+        }
+        return $global:FFToolchainText[[string]$tool]
+    }
     StartProcess={
         param($FilePath,$ArgumentList,$WorkingDirectory,$TimeoutMilliseconds,$Environment)
         $sid='';$cid=''
