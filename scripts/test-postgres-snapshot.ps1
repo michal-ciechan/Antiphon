@@ -3,7 +3,7 @@
 .SYNOPSIS
     CARD-1405 witness for scripts/postgres-snapshot.ps1.
 
-    No Docker, no production database, no OneDrive path. -Case runs one case;
+    No Docker, no production database, no OneDrive path. -Case runs one case or a comma list;
     the default runs every case. ASCII-only.
 #>
 param([string]$Case = '')
@@ -2364,9 +2364,13 @@ function Invoke-SnapshotCase {
     & ('Test-{0}' -f $Name)
 }
 if ($Case) {
-    $fn = Get-Command -Name ('Test-{0}' -f $Case) -ErrorAction SilentlyContinue
-    if (-not $fn) { Write-Host "unknown case $Case"; exit 2 }
-    Invoke-SnapshotCase $Case
+    # A comma list runs those cases in order (short checkpoint rows); every name must exist.
+    $named = @($Case -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    foreach ($one in $named) {
+        $fn = Get-Command -Name ('Test-{0}' -f $one) -ErrorAction SilentlyContinue
+        if (-not $fn) { Write-Host "unknown case $one"; exit 2 }
+    }
+    foreach ($one in $named) { Invoke-SnapshotCase $one }
 } else {
     foreach ($id in $all) { Invoke-SnapshotCase $id }
 }
