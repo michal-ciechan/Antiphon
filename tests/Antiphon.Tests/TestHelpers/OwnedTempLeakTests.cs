@@ -11,6 +11,7 @@ namespace Antiphon.Tests.TestHelpers;
 /// </summary>
 [Category("Unit")]
 [Timeout(45_000)]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class OwnedTempLeakTests
 {
     private bool _hookOwnsCleanup;
@@ -144,6 +145,62 @@ public sealed class OwnedTempLeakTests
         }
     }
 
+    [Test]
+    public void Review_scratch_remove_refuses_a_symlinked_foreign_worktree()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var repo = InitRepo(parent);
+            var outside = Path.Combine(parent, "outside-wt");
+            Git(repo, "worktree", "add", "-q", "--detach", outside, "HEAD");
+            var readme = Path.Combine(outside, "README");
+            var (task, owner) = OwnerUnder(parent);
+            var container = RunScript(0, "scripts/new-review-scratch.ps1",
+                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            Directory.CreateSymbolicLink(Path.Combine(container, "link"), outside);
+            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            File.Exists(readme).ShouldBeTrue("foreign worktree must stay");
+            File.ReadAllText(readme).ShouldBe("seed\n");
+            exit.Code.ShouldNotBe(0);
+            exit.Text.ShouldContain("Refusing reparse point inside the scratch container");
+            Directory.Exists(container).ShouldBeTrue();
+            Directory.Exists(outside).ShouldBeTrue();
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
+    [Test]
+    public void Review_scratch_remove_refuses_a_dirty_nested_worktree()
+    {
+        var parent = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var repo = InitRepo(parent);
+            var (task, owner) = OwnerUnder(parent);
+            var container = RunScript(0, "scripts/new-review-scratch.ps1",
+                "-TaskId", task.ToString(), "-OwnerWorktree", owner, "-TempRoot", parent).Trim();
+            var nested = Path.Combine(container, "sub", "wt");
+            Git(repo, "worktree", "add", "-q", "--detach", nested, "HEAD");
+            var dirty = Path.Combine(nested, "uncommitted.txt");
+            File.WriteAllText(dirty, "keep-me\n");
+            var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
+            File.Exists(dirty).ShouldBeTrue("uncommitted file must stay");
+            File.ReadAllText(dirty).ShouldBe("keep-me\n");
+            exit.Code.ShouldNotBe(0);
+            exit.Text.ShouldContain("Refusing nested git metadata inside the scratch container");
+            Directory.Exists(container).ShouldBeTrue();
+            Git(repo, "worktree", "list", "--porcelain").ShouldContain(nested);
+        }
+        finally
+        {
+            OwnedTempRoot.Release(parent);
+        }
+    }
+
     [After(Test)]
     public void Owned_roots_are_gone()
     {
@@ -200,5 +257,46 @@ public sealed class OwnedTempLeakTests
             if (File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
                 return dir.FullName;
         throw new DirectoryNotFoundException("Could not locate Antiphon.sln.");
+    }
+
+    private static string InitRepo(string parent)
+    {
+        var repo = Path.Combine(parent, "repo-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(repo);
+        Git(repo, "init", "-q", "-b", "main");
+        Git(repo, "config", "user.email", "card-1981@example.invalid");
+        Git(repo, "config", "user.name", "card-1981");
+        File.WriteAllText(Path.Combine(repo, "README"), "seed\n");
+        Git(repo, "add", "README");
+        Git(repo, "commit", "-q", "-m", "seed");
+        return repo;
+    }
+
+    private static string Git(string cwd, params string[] args)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = cwd,
+        };
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
+            psi.Environment.Remove(key);
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+        using var process = Process.Start(psi) ?? throw new InvalidOperationException("git did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(40_000))
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            throw new TimeoutException("git " + string.Join(' ', args));
+        }
+        var text = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"git {string.Join(' ', args)} -> {process.ExitCode}: {text}");
+        return text;
     }
 }
