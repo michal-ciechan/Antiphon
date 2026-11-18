@@ -48,13 +48,16 @@ of the checkpoint tool and derived-index driver are accounted auxiliary builds.
 - R-4: impacted public contract snapshots remain unchanged.
 - R-5: land graph `-Check`, nightly pin recomputation, OS inventory, evidence diff
   over the full task range and conflict-free merge-tree against fetched master.
+- R-6: the three assembly-local process-spawn limiter rosters remain valid.
+- R-7: derived-index, policy, classification, mechanical and platform guards stay
+  valid after regenerating the changed capped-reference listing.
 
-The anticipated four-file source diff selects `contracts` and
-`test-lane-category` in `tests/impacted-classes.json`, and the two touched test
-classes. No capped/owed classes or Windows-only work. Re-evaluate the actual range
-at completion. No classification/selector/pin inputs are changed, so the brief's
-SHORT TESTS override omits the broad guard union. Whole Unit and slow classes stay
-with nightly/rc. No required manual live operation; inspect fresh TRX for every
+The actual range selects `contracts`, `spawn-limit-rosters` (the new limiter
+annotation) and `test-lane-category`, plus the two touched test classes. No
+capped/owed classes or Windows-only work. Derived-index regeneration changed one
+capped-reference listing, so the brief's conditional guard union is required:
+CP-3, CP-9 and CP-10 cover it, reusing the same build. The three nightly pins stay
+unchanged. Whole Unit and slow classes stay with nightly/rc. No required manual live operation; inspect fresh TRX for every
 intended method/case and validate clean-source receipts.
 
 PC-1/missing, PC-1/empty, PC-1/whitespace (each verb): restore terminating
@@ -69,7 +72,11 @@ SourceLanding Mutation; deliberate mutations are waived for this Code task.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1-S2 | tests/Antiphon.Tests -> bin-c1976-proof/ | defect-witnesses | `/*/*/(C1960WorkspaceSlotsScriptTests*)\|(C1960QuarantineReleaseRouteTests*)/(Token_file_errors_exit_2_before_any_request*)\|(Release_log_waits_for_runner_and_records_actual_outcome*)` | V-1, V-2 | 9 cases, 0 failed/skipped after S2; expected red before S2 | 9 | 15 | true |
 | CP-2 | S1-S2 | CP-1 | touched-classes | `/*/*/(C1960WorkspaceSlotsScriptTests*)\|(C1960QuarantineReleaseRouteTests*)/*` | V-1, V-2, R-1, R-2 | every method and case, 0 failed/skipped | 27 | 3 | true |
-| CP-3 | S1-S2 | CP-1 | category-layering | `/*/*/(TestLaneCategoryGuardTests*)\|(C1729LayeringGuardTests*)/*` | R-3 | 12 cases, 0 failed/skipped | 12 | 2 | true |
+| CP-3 | S1-S2 | CP-1 | category-layering-spawn | `/*/*/(TestLaneCategoryGuardTests*)\|(C1729LayeringGuardTests*)\|(ProcessSpawnLimitTests*)/*` | R-3, R-6 | every method/case, 0 failed/skipped | 69 | 2 | true |
 | CP-4 | S2 | n/a | client-bundle | `npm --prefix client run build` | R-4 prerequisite | exit 0 | n/a | 3 | true |
 | CP-5 | S2 | tests/Antiphon.E2E -> bin-c1976-contract/ | contracts | `/*/*/ContractSnapshotTests/*` | R-4 | 5 methods, 0 failed/skipped | 5 | 8 | true |
 | CP-6 | S2 | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin/Release/net10.0/Antiphon.LandGraphAudit.dll` | R-5 | exit 0, approved; native auxiliary tool built first | n/a | 5 | true |
+| CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1976-runner/ | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | R-6 | both methods, 0 failed/skipped | 2 | 8 | true |
+| CP-8 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1976-pty/ | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | R-6 | both methods, 0 failed/skipped | 2 | 6 | true |
+| CP-9 | S1-S2 | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-7 | all named classes, 0 failed/skipped | 8 | 4 | true |
+| CP-10 | S1-S2 | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-7 | every method/case, 0 failed/skipped | 1 | 4 | true |
