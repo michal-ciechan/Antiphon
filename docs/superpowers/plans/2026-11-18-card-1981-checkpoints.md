@@ -32,6 +32,9 @@ is the sum of `EstimatedMinutes` (28).
 ## Unlisted runs
 
 - Red witness run of the two S1 tests, before this plan existed: red-first proof.
+- Red run of CP-4 and CP-5 at `5398ff1867635444544e392d7e4e5ed225213221`, before
+  the remover refused links and nested git. Both failed: the foreign README and
+  the uncommitted file were deleted. The other eight class methods passed.
 - One green re-run of `OwnedTempLeakTests` before the S2 commit: the class hook
   had been rewritten and CP-1 repeats that selection on a cold output.
 - Builds of `tests/Antiphon.Resilience.Tests`, `tests/Antiphon.GitInProcess.Tests`,
@@ -55,7 +58,11 @@ is the sum of `EstimatedMinutes` (28).
   test leaves it.
 - V-4: `remove-review-scratch.ps1` deletes one marked container, keeps a
   container with no marker, and keeps the container when `git worktree remove`
-  fails. Never `--force`.
+  fails. Never `--force`. It refuses a symlink or other reparse point, including
+  a child that links a foreign worktree, and it refuses a `.git` below the
+  top-level children, including a dirty nested worktree. The foreign worktree
+  and the uncommitted file stay. A standalone clone child is refused and the
+  container stays; this script does not delete that clone.
 - R-1: the family table has 20 families, including `c459`, `c487-tw`,
   `c487-reg`, `antiphon-c448`, `antiphon-c1150`, `antiphon-remote-prep-ws`,
   `rh` and `antiphon-owned`. Each new pattern is pinned to a producer literal.
@@ -73,6 +80,8 @@ Every PC stays pending for method-scoped SourceLanding Mutation. Restart: none.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S2 | tests/Antiphon.Tests -> bin-c1981-proof/ | leak-witnesses | `/*/*/OwnedTempLeakTests/*` | V-1, V-2, V-3, V-4 | 8 methods, 0 failed/skipped | 8 | 15 | true |
+| CP-1 | S1-S2 | tests/Antiphon.Tests -> bin-c1981-proof/ | leak-witnesses | `/*/*/OwnedTempLeakTests/*` | V-1, V-2, V-3, V-4 | 10 methods, 0 failed/skipped | 10 | 15 | true |
 | CP-2 | S1-S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1981-families/ | family-registry | `/*/*/C1677TempFamilyRegistryTests/*` | R-1 | 3 methods, 0 failed/skipped | 3 | 8 | true |
 | CP-3 | S2 | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check -ToolPath tools/Antiphon.LandGraphAudit/bin/Release/net10.0/Antiphon.LandGraphAudit.dll` | R-2 | exit 0 | n/a | 5 | true |
+| CP-4 | repair | tests/Antiphon.Tests -> bin-c1981-proof/ | symlink-witness | `/*/*/OwnedTempLeakTests/Review_scratch_remove_refuses_a_symlinked_foreign_worktree` | V-4 | 1 method, 0 failed/skipped | 1 | 5 | true |
+| CP-5 | repair | tests/Antiphon.Tests -> bin-c1981-proof/ | nested-witness | `/*/*/OwnedTempLeakTests/Review_scratch_remove_refuses_a_dirty_nested_worktree` | V-4 | 1 method, 0 failed/skipped | 1 | 5 | true |
