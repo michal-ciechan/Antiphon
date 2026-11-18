@@ -67,7 +67,7 @@ namespace Antiphon.Nightly
                 var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(buffer, start, length - start),
                     new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false, MaxDepth = 1024 });
                 if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
-                var root = (PSObject)ReadValue(ref reader, "", omitted);
+                var root = (PSObject)ReadValue(ref reader, "", omitted, true);
                 if (reader.Read()) return null;
                 return root;
             }
@@ -80,10 +80,45 @@ namespace Antiphon.Nightly
             finally { if (buffer != null) ArrayPool<byte>.Shared.Return(buffer); }
         }
 
+        /// <summary>
+        /// Read-QualificationSidecar's Newtonsoft read (DateParseHandling.None, through ConvertFrom-QualificationJToken)
+        /// for text that is one strict JSON object: note-property objects, object[] arrays, Int64 (BigInteger past
+        /// Int64) or Double numbers, strings kept as strings. Null whenever Newtonsoft could read the text
+        /// differently (comments, trailing commas or content, a leading U+FEFF, an empty or case-insensitively
+        /// repeated property name, a non-finite number, nesting deeper than maxDepth): the caller then runs its own
+        /// Newtonsoft read.
+        /// </summary>
+        public static PSObject ParseText(string text, int maxDepth)
+        {
+            if (string.IsNullOrEmpty(text) || text[0] == (char)0xFEFF) return null;
+            try
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+                var reader = new Utf8JsonReader(bytes,
+                    new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false, MaxDepth = maxDepth });
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
+                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), false);
+                if (reader.Read()) return null;
+                return HasNonFinite(root) ? null : root;
+            }
+            catch (GiveUp) { return null; }
+            catch (JsonException) { return null; }
+            catch (InvalidOperationException) { return null; }
+            catch (FormatException) { return null; }
+        }
+
+        private static bool HasNonFinite(object value)
+        {
+            if (value is double d) return double.IsNaN(d) || double.IsInfinity(d);
+            if (value is object[] items) { foreach (var item in items) if (HasNonFinite(item)) return true; return false; }
+            if (value is PSObject ps) { foreach (var p in ps.Properties) if (HasNonFinite(p.Value)) return true; }
+            return false;
+        }
+
         private static bool StartsWithBom(byte[] b, int at, int length) =>
             length - at >= 3 && b[at] == 0xEF && b[at + 1] == 0xBB && b[at + 2] == 0xBF;
 
-        private static object ReadValue(ref Utf8JsonReader reader, string at, HashSet<string> omitted)
+        private static object ReadValue(ref Utf8JsonReader reader, string at, HashSet<string> omitted, bool dates)
         {
             switch (reader.TokenType)
             {
@@ -101,7 +136,7 @@ namespace Antiphon.Nightly
                             reader.Read();
                             var child = at.Length == 0 ? name : at + "." + name;
                             if (omitted.Count != 0 && omitted.Contains(child)) { reader.Skip(); continue; }
-                            result.Properties.Add(new PSNoteProperty(name, ReadValue(ref reader, child, omitted)));
+                            result.Properties.Add(new PSNoteProperty(name, ReadValue(ref reader, child, omitted, dates)));
                         }
                     }
                 case JsonTokenType.StartArray:
@@ -112,12 +147,13 @@ namespace Antiphon.Nightly
                         {
                             reader.Read();
                             if (reader.TokenType == JsonTokenType.EndArray) return items.ToArray();
-                            items.Add(ReadValue(ref reader, element, omitted));
+                            items.Add(ReadValue(ref reader, element, omitted, dates));
                         }
                     }
                 case JsonTokenType.String:
                     {
                         var text = reader.GetString();
+                        if (!dates) return text;
                         // ConvertFrom-Json's reader also reads Microsoft "\/Date(ticks)\/" strings as dates.
                         if (text.StartsWith("/Date(", StringComparison.Ordinal)) throw new GiveUp();
                         if (text.Length >= 19 && text.Length <= 40 && text[0] >= '0' && text[0] <= '9' && text[10] == 'T'

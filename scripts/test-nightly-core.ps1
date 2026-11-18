@@ -197,6 +197,76 @@ function Test-NCDiagnosticsMatchFallback {
         }
     }
     Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('"passedCount":2')) 'outcomeRows' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    Test-NCEvidenceRecordsMatchFallback
+}
+
+# TestPhaseRecords.cs and NightlyJson.ParseText: the timing sidecar read (density guard and the Newtonsoft
+# read), the journal envelope and the owner observation, each against its PowerShell body.
+function Test-NCEvidenceRecordsMatchFallback {
+    $dir = Join-Path $root 'nc-records'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $sidecars = [ordered]@{
+        plain = '{"suite":"antiphon","chunk":"all-group-1","trxMissing":false,"queueWaitSeconds":1.5,"buildSeconds":3,"startedAt":"2026-11-18T01:02:03.4567890Z","slowest":[{"name":"A","seconds":0.25},{"name":"B","seconds":1}],"why":null,"empty":{},"list":[]}'
+        numbers = '{"big":123456789012345678901234567890,"neg":-0,"exp":1E2,"tiny":5e-324,"long":9223372036854775807,"text":"tab\there \u00e9 \"q\""}'
+        comment = "{ /* note */ `"a`": 1 }"
+        trailing = '{"a":1,}'
+        caseDup = '{"a":1,"A":2}'
+        dup = '{"a":1,"a":2}'
+        nested = '{"a":{"b":{"c":[1,[2,[3]],{"d":true}]}}}'
+        dense = '{"x":[' + ((1..4100) -join ',') + ']}'
+        rootArray = '[1,2]'
+        bom = ([string][char]0xFEFF) + '{"a":1}'
+    }
+    foreach ($name in $sidecars.Keys) { [IO.File]::WriteAllText((Join-Path $dir ($name + '.json')), $sidecars[$name], [Text.UTF8Encoding]::new($false)) }
+    $script:NCRecordArm = 0
+    $verdicts = @(
+        [pscustomobject]@{ RootExitedAtUtc = '2026-11-18T01:00:00Z'; RootStartedAtUtc = [datetime]'2026-11-18T00:59:00'; JobEmpty = 'false'; DrainMilliseconds = '12.5'; ExecutionMilliseconds = 40; ChildrenExited = 1; OutputDrained = $true; RemainingProcessCount = '2'
+            MissedDescendantPids = @('7', 9, ' '); Descendants = @([pscustomobject]@{ Pid = '7'; Image = 'dotnet' }, $null, [pscustomobject]@{ pid = 12.5; ProcessName = ' '; StartedAtUtc = 's'; ExitedAtUtc = [datetime]'2026-01-02T03:04:05' }) }
+        [pscustomobject]@{ jobEmpty = $true; DescendantIdentities = @('41:2026-11-18T00:00:00Z', 'bad', '42:x'); DescendantImages = @('a', ''); DescendantExitedAtUtc = @($null, 'e2'); missedDescendantPids = 42 }
+        [pscustomobject]@{ Descendants = @([pscustomobject]@{ Pid = 'abc' }) }
+        [pscustomobject]@{ unrelated = 1 }
+        $null
+    )
+    $r = Invoke-NCBothWays {
+        $script:NCRecordArm++
+        $sidecarRows = foreach ($name in $sidecars.Keys) {
+            $value = $null; $err = ''
+            try { $value = Read-QualificationSidecar -Path (Join-Path $dir ($name + '.json')) -DeadlineMilliseconds 60000 } catch { $err = $_.Exception.GetType().Name }
+            [ordered]@{ name = $name; err = $err; json = ($value | ConvertTo-Json -Depth 20 -Compress); types = (@(Get-NCValueTypes $value) -join ',') }
+        }
+        $densities = foreach ($text in @('', 'a,b:c', ((1..10) -join ','), ('{' + ((1..6) -join ':') + '}'))) {
+            if ($script:NightlyCoreAvailable) { [Antiphon.Nightly.TestPhaseRecords]::Dense($text, 5, $null, 0) } else { Test-QualificationSidecarDense -Text $text -Limit 5 -Watch $null -DeadlineMilliseconds 0 }
+        }
+        $context = [pscustomobject]@{ Generation = 'a' * 32; TimingRoot = 'C:\t "x"\timing'; WriterEnvironment = $null }
+        $envelopes = @(
+            New-TestPhaseEnvelopeText -Kind 'chunk' -Sequence 12 -PublicationId 'p1' -Context $context -Reason '' -Suite 'antiphon' -Chunk 'all-group-1' -SettledSuite 'antiphon' -SettledChunk 'all-group-1' -HeaderRun 'r' -HeaderAttempt '1' -HeaderSuite 'antiphon' -FreshJson '{"a":"\u00e9"}' -SettledJson ''
+            New-TestPhaseEnvelopeText -Kind 'gap' -Sequence 1 -PublicationId '' -Context $context -Reason "why`n" -Suite '' -Chunk '' -SettledSuite '' -SettledChunk '' -HeaderRun '' -HeaderAttempt '' -HeaderSuite '' -FreshJson '' -SettledJson '')
+        $owners = foreach ($i in 0..($verdicts.Count - 1)) {
+            foreach ($ids in @(@('antiphon', 'all-group-1', 'run-1', '2'), @('Session-Runner', 'Chunk.A', 'bad id', ''), @('bad suite', 'c', 'r', '1'))) {
+                $timing = Join-Path $dir ('owner-' + $script:NCRecordArm + '-' + $i + '-' + $ids[0].Replace(' ', '_'))
+                [void][IO.Directory]::CreateDirectory($timing)
+                $saved = $script:QualificationTimingRoot; $script:QualificationTimingRoot = $timing
+                try { Write-TestPhaseOwnerObservation -Verdict $verdicts[$i] -LogRoot $dir -Suite $ids[0] -Chunk $ids[1] -RunId $ids[2] -Attempt $ids[3] }
+                finally { $script:QualificationTimingRoot = $saved }
+                @(Get-ChildItem -LiteralPath $timing -File | ForEach-Object { $_.Name + '=' + [IO.File]::ReadAllText($_.FullName) }) -join '|'
+            }
+        }
+        [ordered]@{ sidecars = @($sidecarRows); densities = @($densities); envelopes = $envelopes; owners = @($owners) }
+    }
+    $ok = $r.Core -and $r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('System.Numerics.BigInteger') -and $r.Fallback.Contains('missedDescendantPids') -and $r.Fallback.Contains('owner-Session-Runner-Chunk.A-run-0.json') -and $r.Fallback.Contains('object,a:,System.Int64')
+    Assert-NC $ok 'evidenceRecords' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+}
+
+# The .NET type of every value in a read sidecar, depth first, so a parse that matches only as JSON still fails.
+function Get-NCValueTypes($Value) {
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [System.Management.Automation.PSCustomObject] -or ($Value -is [psobject] -and $Value.PSObject.BaseObject -is [System.Management.Automation.PSCustomObject])) {
+        'object'
+        foreach ($p in $Value.PSObject.Properties) { $p.Name + ':'; Get-NCValueTypes $p.Value }
+        return
+    }
+    if ($Value -is [array]) { 'array' + $Value.Count; foreach ($item in $Value) { Get-NCValueTypes $item }; return }
+    $Value.GetType().FullName
 }
 
 function Test-NCVerdictsMatchFallback {
@@ -543,7 +613,7 @@ function Test-NCJsonFilesMatchFallback {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 27 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; $expected = 28 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

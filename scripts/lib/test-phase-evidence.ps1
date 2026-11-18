@@ -1164,6 +1164,10 @@ function New-TestPhaseEnvelopeText {
         [string]$FreshJson,
         [string]$SettledJson
     )
+    if (Test-NightlyCoreAvailable) {
+        return [Antiphon.Nightly.TestPhaseRecords]::Envelope($Kind, $Sequence, $PublicationId, [string]$Context.Generation, [string]$Context.TimingRoot,
+            $Reason, $Suite, $Chunk, $SettledSuite, $SettledChunk, $HeaderRun, $HeaderAttempt, $HeaderSuite, $FreshJson, $SettledJson, [string]$Context.WriterEnvironment)
+    }
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append('{')
     [void]$sb.Append('"version":1')
@@ -3202,13 +3206,22 @@ function Read-QualificationSidecar {
     if ($null -eq $read -or $read.Refused -or -not $read.Complete -or $null -eq $read.Bytes) { return $null }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     $text = [Text.Encoding]::UTF8.GetString($read.Bytes)
-    if (Test-QualificationSidecarDense -Text $text -Limit 4000 -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds) { return $null }
+    $core = Test-NightlyCoreAvailable
+    if ($core) {
+        if ([Antiphon.Nightly.TestPhaseRecords]::Dense($text, 4000, $Watch, $DeadlineMilliseconds)) { return $null }
+    } elseif (Test-QualificationSidecarDense -Text $text -Limit 4000 -Watch $Watch -DeadlineMilliseconds $DeadlineMilliseconds) { return $null }
     if ($Watch.ElapsedMilliseconds -ge $DeadlineMilliseconds) { return $null }
     if (-not ('Newtonsoft.Json.JsonConvert' -as [type])) {
         $dll = Join-Path $PSHome 'Newtonsoft.Json.dll'
         if (Test-Path -LiteralPath $dll) { Add-Type -Path $dll }
     }
     if ('Newtonsoft.Json.JsonConvert' -as [type]) {
+        if ($core) {
+            # Strict JSON read the way the Newtonsoft path below reads it (NightlyJson.ParseText); anything it
+            # cannot vouch for (null) still takes that path.
+            $parsed = [Antiphon.Nightly.NightlyJson]::ParseText($text, 60)
+            if ($null -ne $parsed) { return $parsed }
+        }
         $settings = New-Object Newtonsoft.Json.JsonSerializerSettings
         $settings.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
         $token = [Newtonsoft.Json.JsonConvert]::DeserializeObject($text, $settings)
@@ -3257,6 +3270,21 @@ function ConvertTo-TestPhaseOwnerImage {
 
 function Write-TestPhaseOwnerObservation {
     param($Verdict, [string]$LogRoot, [string]$Suite, [string]$Chunk, [string]$RunId = '', [string]$Attempt = '')
+    if (Test-NightlyCoreAvailable) {
+        try {
+            # The document (or null: nothing to write) from TestPhaseRecords.OwnerDocument; naming, the
+            # existing-file refusal and the write stay here.
+            $doc = [Antiphon.Nightly.TestPhaseRecords]::OwnerDocument($Verdict, $Suite, $Chunk, $RunId, $Attempt)
+            if ($null -eq $doc) { return }
+            $dir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+            $path = Join-Path $dir ('owner-' + $Suite + '-' + $Chunk + '-' + [string]$doc['runId'] + '-' + [string]$doc['attempt'] + '.json')
+            if ((Get-TestPhasePathIdentity -Path $path).Kind -eq 'regular') { return }
+            Write-TestPhaseTextAtomic -Path $path -Text (ConvertTo-TestPhaseJsonText -Value $doc)
+        } catch {
+            # Owner stamps are diagnostic. A write failure must not change the verdict.
+        }
+        return
+    }
     try {
         if ($null -eq $Verdict) { return }
         $names = @(
