@@ -181,9 +181,9 @@ All PowerShell stays ASCII-only and parseable by Windows PowerShell 5.1 (daemon-
 
 - Migrations, public DTOs or routes, operation labels, remote script functions, statement budgets: **none**. The CARD-1782 impacted-classes table has no row for these files.
 - Script harnesses:
-  - Every existing `test-postgres-snapshot.ps1` case must stay green unchanged (R-1). The default `-Target desktop` keeps them on today's path.
+  - Every existing `test-postgres-snapshot.ps1` case must stay green unchanged (R-1). The default `-Target desktop` keeps them on today's path. Baseline on master `e229fb4d3`: 764 passed, 0 failed.
   - `PlainStatusNoSecret` and `PlainOneDriveCopy` read `snapshot-status.json`. The two new fields are added at the end, and those cases check fields by name.
-  - `test-job-status.ps1` keeps its 70 assertions (R-2). The OK line gains ` src=desktop` only when a target is passed, and the stale check path is untouched.
+  - `test-job-status.ps1` keeps its 77 assertions (R-2; 77 passed, 0 failed on master `e229fb4d3`). The OK line gains ` src=desktop` only when a target is passed, and the stale check path is untouched.
 
 ## Verification design
 
@@ -235,8 +235,14 @@ Red first: each V-n case is committed and run red before its slice's fix (S1 →
   - The scratch container named `antiphon-server2-postgres-postgres-1`.
   - The scratch volume `antiphon-server2-postgres_pgdata`.
   - The scratch database `antiphon`.
-- **R-1.** `test-postgres-snapshot.ps1` full harness green: every existing case plus V-1..V-6 and V-11..V-13.
-- **R-2.** `test-job-status.ps1` full harness green: 70 existing plus V-7..V-10.
+- **R-1.** The existing plain-path cases nearest the change stay green, each as its own short row:
+  - `PlainPublishPruneOrder` (publish order and retention).
+  - `DockerDaemonPinned` (endpoint refusal).
+  - `PlainStatusNoSecret` (status file).
+  - `PlainDrillRefused` (the desktop drill refusal V-12 keeps).
+
+  The full harness (764 assertions, 523 s on server2) is not a Merge row under the SHORT rule. Review runs it once on the final tip, and the rc run owns it after that.
+- **R-2.** `test-job-status.ps1` full harness green: 77 existing plus V-7..V-10. It runs in 9 s, so it stays a single row.
 - **R-3.** The `PosixHarnessToolTests` snapshot pair stays green. It is not run as a row: it runs the same `-Case` names covered by R-1, and its C# list is unchanged. Review confirms the list by diff.
 
 No PC-n is named. Mutation is waived (operator 2026-11-12) and is not discharged.
@@ -259,7 +265,10 @@ Lane: server2 (the runner default `globalRunnerId=server2`). No `-Runner`, no `-
 | CP-8 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillServer2` | V-11 | 0 failed, exit 0 | n/a | 1 |
 | CP-9 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillDesktopRefused` | V-12 | 0 failed, exit 0 | n/a | 1 |
 | CP-10 | S3 | n/a | snapshot-drill | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillRefusesProduction` | V-13 | 0 failed, exit 0 | n/a | 1 |
-| CP-11 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1` | R-1 | 0 failed, exit 0 | n/a | 6 |
+| CP-11 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainPublishPruneOrder` | R-1 | 18 passed, 0 failed, exit 0 | n/a | 1 |
+| CP-12 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case DockerDaemonPinned` | R-1 | 0 failed, exit 0 | n/a | 1 |
+| CP-13 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainStatusNoSecret` | R-1 | 0 failed, exit 0 | n/a | 1 |
+| CP-14 | all | n/a | snapshot-regression | `pwsh -NoProfile -File scripts/test-postgres-snapshot.ps1 -Case PlainDrillRefused` | R-1 | 0 failed, exit 0 | n/a | 1 |
 
 Code adds the exact assertion counts to Expect when it commits each case. The harness prints `<n> passed, <m> failed`.
 
@@ -273,12 +282,15 @@ Per [docs/testing-and-build.md#performance-standards](../../testing-and-build.md
 
 - **Rows.**
   - CP-1..CP-6 and CP-8..CP-10 are single cases: pwsh start plus one fixture, under 1 min each.
-  - CP-7 is one 70+ assertion harness. The 11-10 Windows run is the only evidence; its duration is UNOBSERVED. Estimate 2 min.
-  - CP-11 is the full snapshot harness. Baseline on master `e229fb4d3`, server2 runner under a build slot, 2026-11-18: <!--CP11-->.
+  - CP-7 is the whole job-status harness. It measured 9 s on server2 (77 passed, master `e229fb4d3`, one sample). The estimate is 2 min, well above 2× that.
+  - Measured on server2 under a build slot, 2026-11-18, master `e229fb4d3`, one sample each:
+    - One case (`PlainPublishPruneOrder`, 18 assertions): 16 s wall.
+    - The full snapshot harness: 523 s (764 passed). That is about 11 s per case on average, so 1 min per row is about 4× the single-case sample.
+  - The full harness exceeds the SHORT Merge rule. It is a one-off Review run (budget 18 min, about 2× 523 s), not a row.
 - **Phases.** Each row is pwsh start (~1–2 s), then fixture creation in a temp dir, then the case. There is no build, Docker, network or database.
 - **Shared setup.** None is needed. Each case builds its own temp fixture. The `sh` docker fake is installed per case, as the existing cases do.
 - **Timeouts.** The harness has no internal timeout. The checkpoint row deadline is derived from `EstimatedMinutes`, about 2× the measured p95. The C# `PosixHarnessToolTests` per-case 90 s bound is unchanged.
-- **Ordinary floor.** 17 minutes summed. It runs as three After groups (S1, S2, S3/all) on server2. Nothing runs on the desktop during the live run.
+- **Ordinary floor.** 15 minutes summed (14 rows). It runs as three After groups (S1, S2, S3/all) on server2. Nothing runs on the desktop during the live run.
 
 ## Prerequisites (operator, before the window)
 
