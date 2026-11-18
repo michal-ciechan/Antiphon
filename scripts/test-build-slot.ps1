@@ -856,6 +856,72 @@ exit $code
     Assert-C487 -Cond (Test-C1048Lease -Result $r) -Name 'C1048 Pwsh releases lease' -Detail ($r.Calls -join ' | ')
 }
 
+function Get-C1981SixCharTemps {
+    # .NET attributes only. Get-Item on every /tmp entry is too slow for this witness.
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in [IO.Directory]::EnumerateDirectories('/tmp')) {
+        $name = [IO.Path]::GetFileName($dir)
+        if ($name -cnotmatch '^[A-Za-z0-9]{6}$') { continue }
+        try { $attrs = [IO.File]::GetAttributes($dir) } catch { continue }
+        if (($attrs -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        $names.Add($name)
+    }
+    return @($names)
+}
+
+function Remove-C1981ExactSdkDir {
+    param([string]$Sdk)
+    if ([string]::IsNullOrWhiteSpace($Sdk)) { return }
+    $underLease = $Sdk -cmatch '^/tmp/aslot-[0-9a-f]{8}/[A-Za-z0-9]{6}$'
+    $topLevel = $Sdk -cmatch '^/tmp/[A-Za-z0-9]{6}$'
+    if (-not $underLease -and -not $topLevel) { return }
+    if (-not (Test-Path -LiteralPath $Sdk)) { return }
+    $item = Get-Item -LiteralPath $Sdk -Force
+    if ($item.LinkType) { return }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return }
+    if (-not $item.PSIsContainer) { return }
+    if (@([IO.Directory]::EnumerateFileSystemEntries($Sdk)).Count -ne 0) { return }
+    [IO.Directory]::Delete($Sdk)
+}
+
+function Test-C1981_LeaseTempDirConfinesSdkScratch {
+    # CARD-1981. The wrapped child must see a private /tmp/aslot-<8 hex> TMPDIR, TEMP and TMP
+    # stay off that path, the parent environment is unchanged, and both the simulated SDK
+    # directory and the lease directory are gone. Parent /tmp gains no 6-character directory.
+    $fx = New-C589Case -Name 'c1981-lease'
+    $parentBefore = [string][Environment]::GetEnvironmentVariable('TMPDIR', 'Process')
+    $before = @(Get-C1981SixCharTemps)
+    $env:C1981_TMP_WITNESS = '1'
+    $sdk = ''
+    try {
+        $r = Invoke-C589Wrapper -Fx $fx -WrapperArgs @('-Label', 'c1981-lease', '--', 'dotnet', 'build')
+        $parentAfter = [string][Environment]::GetEnvironmentVariable('TMPDIR', 'Process')
+        $after = @(Get-C1981SixCharTemps)
+        $beforeSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        foreach ($name in $before) { [void]$beforeSet.Add([string]$name) }
+        $added = New-Object System.Collections.Generic.List[string]
+        foreach ($name in $after) { if (-not $beforeSet.Contains([string]$name)) { $added.Add([string]$name) } }
+        $tmpdir = Get-C589LoggedValue -Result $r -Prefix 'ENV TMPDIR'
+        $temp = Get-C589LoggedValue -Result $r -Prefix 'ENV TEMP'
+        $tmp = Get-C589LoggedValue -Result $r -Prefix 'ENV TMP'
+        $sdk = Get-C589LoggedValue -Result $r -Prefix 'SDKDIR'
+        $leaseShape = ($tmpdir -cmatch '^/tmp/aslot-[0-9a-f]{8}$') -and ($tmpdir.Length -lt 60)
+        $tempOff = ($temp -cnotmatch '^/tmp/aslot-[0-9a-f]{8}$') -and ($tmp -cnotmatch '^/tmp/aslot-[0-9a-f]{8}$')
+        $sdkGone = $false
+        if ($sdk -cmatch '^/') { $sdkGone = -not (Test-Path -LiteralPath $sdk) }
+        $leaseGone = $false
+        if ($leaseShape) { $leaseGone = -not (Test-Path -LiteralPath $tmpdir) }
+        Assert-C487 -Cond ($r.Exit -eq 0 -and $leaseShape) -Name 'C1981 LeaseTempDirConfinesSdkScratch child TMPDIR is a short owned lease path' -Detail ('exit={0} tmpdir={1}' -f $r.Exit, $tmpdir)
+        Assert-C487 -Cond $tempOff -Name 'C1981 LeaseTempDirConfinesSdkScratch TEMP and TMP stay off the lease path' -Detail ('TEMP={0} TMP={1}' -f $temp, $tmp)
+        Assert-C487 -Cond ($parentBefore -ceq $parentAfter) -Name 'C1981 LeaseTempDirConfinesSdkScratch parent TMPDIR is unchanged' -Detail ('before={0} after={1}' -f $parentBefore, $parentAfter)
+        Assert-C487 -Cond ($sdkGone -and $leaseGone) -Name 'C1981 LeaseTempDirConfinesSdkScratch the sdk scratch and the lease directory are gone' -Detail ('sdk={0} exists={1} lease={2}' -f $sdk, (Test-Path -LiteralPath $sdk), $tmpdir)
+        Assert-C487 -Cond ($added.Count -eq 0) -Name 'C1981 LeaseTempDirConfinesSdkScratch parent /tmp gains no six-character directory' -Detail ($added -join ',')
+    } finally {
+        Remove-Item Env:C1981_TMP_WITNESS -ErrorAction SilentlyContinue
+        Remove-C1981ExactSdkDir -Sdk $sdk
+    }
+}
+
 $script:C589ExpectedRows = 39 + 16 + 50 + 5 + $(if ($IsLinux) { 3 } else { 0 }) + $(if ($IsWindows) { 23 } else { 0 })
 
 foreach ($required in @($script:Wrapper, $script:Lib)) {

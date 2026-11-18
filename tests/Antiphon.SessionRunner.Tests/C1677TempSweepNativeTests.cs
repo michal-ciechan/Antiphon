@@ -314,6 +314,102 @@ public sealed class C1677TempSweepNativeTests
         File.ReadAllText(outside + "/canary.txt").ShouldBe("canary");
     }
 
+    [Test]
+    [NativeLinuxOnly("CARD-1981 the SDK temp leak was observed on Linux only")]
+    public async Task C1981_dotnet_sdk_empty_accepts_only_the_exact_shape(CancellationToken ct)
+    {
+        // The exact empty mode-0700 uid-1654 directory is the only candidate. A file, a non-empty
+        // directory, mode 0755, a foreign owner, age under 1 hour, a symlink, and an owner that
+        // merely equals a non-1654 runner are kept. The family stays off unless its flag is set.
+        const UnixFileMode Mode0700 = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        const UnixFileMode Mode0755 = Mode0700 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead | UnixFileMode.OtherExecute;
+        using var s = new Scratch();
+        var exact = Empty(s, "Ab12Cd", Mode0700, TimeSpan.FromHours(2));
+        var filled = Empty(s, "Bb12Cd", Mode0700, TimeSpan.FromHours(2));
+        File.WriteAllText(filled + "/keep.txt", "keep");
+        s.Age(filled, TimeSpan.FromHours(2));
+        var loose = Empty(s, "Cb12Cd", Mode0755, TimeSpan.FromHours(2));
+        var foreign = Empty(s, "Db12Cd", Mode0700, TimeSpan.FromHours(2));
+        var young = Empty(s, "Eb12Cd", Mode0700, TimeSpan.FromMinutes(30));
+        var outside = s.Root + "/outside";
+        Directory.CreateDirectory(outside);
+        File.WriteAllText(outside + "/keep.txt", "keep");
+        Directory.CreateSymbolicLink(s.Tmp + "/Fb12Cd", outside);
+        var file = s.Tmp + "/Hb12Cd";
+        File.WriteAllBytes(file, []);
+        File.SetUnixFileMode(file, Mode0700);
+        s.Age(file, TimeSpan.FromHours(2));
+        s.Owner = path => path.EndsWith("/Db12Cd", StringComparison.Ordinal) ? 1000 : Uid;
+
+        var enabled = new PhoneHomeTempSweepRequest(TempSweepModes.DryRun, Guid.NewGuid(), 1, 200, 21_474_836_480,
+            new Dictionary<string, bool> { ["dotnet-sdk-empty"] = true });
+        var dry = await s.Sweep().SweepAsync(enabled, ct);
+        dry.Candidates.ShouldContain(c => c.Name == "Ab12Cd", "the exact empty 0700 uid-1654 directory is not a candidate");
+        var accepted = Single(dry, "Ab12Cd");
+        accepted.Verdict.ShouldBe(TempSweepCodes.WouldRemove, accepted.Reason + " " + accepted.Detail);
+        accepted.Family.ShouldBe("dotnet-sdk-empty");
+        Directory.Exists(exact).ShouldBeTrue();
+        Kept(dry, "Bb12Cd", TempSweepCodes.UnprovenContent, "not-empty");
+        Kept(dry, "Cb12Cd", TempSweepCodes.UnprovenContent, "mode");
+        Kept(dry, "Db12Cd", TempSweepCodes.ForeignOwner, null);
+        Kept(dry, "Eb12Cd", TempSweepCodes.TooYoung, null);
+        Kept(dry, "Fb12Cd", TempSweepCodes.Symlink, null);
+        Kept(dry, "Hb12Cd", TempSweepCodes.UnprovenContent, "not-a-directory");
+        File.ReadAllText(outside + "/keep.txt").ShouldBe("keep");
+        Directory.Exists(loose).ShouldBeTrue();
+        Directory.Exists(foreign).ShouldBeTrue();
+        Directory.Exists(young).ShouldBeTrue();
+        File.Exists(file).ShouldBeTrue();
+
+        var executed = await s.Sweep().SweepAsync(enabled with { Mode = TempSweepModes.Execute }, ct);
+        Single(executed, "Ab12Cd").Verdict.ShouldBe(TempSweepCodes.Removed);
+        Directory.Exists(exact).ShouldBeFalse();
+        File.Exists(filled + "/keep.txt").ShouldBeTrue();
+
+        var sameUid = Empty(s, "Gb12Cd", Mode0700, TimeSpan.FromHours(2));
+        var runnerUid = new RunnerTempSweep(s.Tmp, RunnerTempSweep.RegisteredFamilies, new FakeHolderScan(), _ => 1000, 1000,
+            s.Clock, new TempSweepLimits(), _ => false);
+        var uid = await runnerUid.SweepAsync(enabled, ct);
+        var uidCandidate = Single(uid, "Gb12Cd");
+        uidCandidate.Verdict.ShouldBe(TempSweepCodes.Kept);
+        uidCandidate.Reason.ShouldBe(TempSweepCodes.ForeignOwner);
+        uidCandidate.Detail.ShouldBe("uid");
+        Directory.Exists(sameUid).ShouldBeTrue();
+
+        var omitted = Empty(s, "Ib12Cd", Mode0700, TimeSpan.FromHours(49));
+        var defaults = await s.Sweep().SweepAsync(Request(), ct);
+        var disabled = Single(defaults, "Ib12Cd");
+        disabled.Verdict.ShouldBe(TempSweepCodes.Kept);
+        disabled.Reason.ShouldBe(TempSweepCodes.FamilyDisabled);
+        Directory.Exists(omitted).ShouldBeTrue();
+
+        var family = RunnerTempSweep.RegisteredFamilies.Single(item => item.Id == "dotnet-sdk-empty");
+        family.Pattern.ShouldBe("^[A-Za-z0-9]{6}\\z");
+        family.DefaultEnabled.ShouldBeFalse();
+        family.MinAgeHours.ShouldBe(1);
+        family.Producer.ShouldBeNull();
+        family.Sample.ShouldBe("Ab12Cd");
+    }
+
+    private static string Empty(Scratch scratch, string name, UnixFileMode mode, TimeSpan age)
+    {
+        var path = scratch.Tmp + "/" + name;
+        Directory.CreateDirectory(path);
+        File.SetUnixFileMode(path, mode);
+        scratch.Age(path, age);
+        return path;
+    }
+
+    private static void Kept(PhoneHomeTempSweepResponse response, string name, string reason, string? detail)
+    {
+        var candidate = Single(response, name);
+        candidate.Verdict.ShouldBe(TempSweepCodes.Kept, candidate.Reason + " " + candidate.Detail);
+        candidate.Reason.ShouldBe(reason, candidate.Detail);
+        if (detail is not null)
+            candidate.Detail.ShouldBe(detail);
+    }
+
     private static int ProcStatusEffectiveUid()
     {
         var line = File.ReadLines("/proc/self/status").Single(l => l.StartsWith("Uid:", StringComparison.Ordinal));
