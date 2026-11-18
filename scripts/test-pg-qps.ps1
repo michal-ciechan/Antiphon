@@ -86,17 +86,27 @@ try {
     $run = Invoke-Child "docker" $runArgs "" @{ POSTGRES_PASSWORD = $password }
     if ($run.Exit -ne 0) { throw ("container start failed " + (Hide $run.Err)) }
     $ready = $false
+    $stable = 0
     for ($i = 0; $i -lt 60; $i++) {
-        $probe = Invoke-Child "docker" ("exec " + $name + " pg_isready -U antiphon -d antiphon") "" $null
-        if ($probe.Exit -eq 0) { $ready = $true; break }
+        $probe = Invoke-Psql "SELECT 1;"
+        if ($probe.Exit -eq 0 -and $probe.Out.Trim() -eq "1") {
+            $stable = $stable + 1
+            if ($stable -ge 2) { $ready = $true; break }
+        }
+        else { $stable = 0 }
         Start-Sleep -Seconds 1
     }
     if (-not $ready) {
         $logs = Invoke-Child "docker" ("logs " + $name) "" $null
         throw ("postgres did not become ready " + (Hide $logs.Err) + " " + (Hide $logs.Out))
     }
-    $ext = Invoke-Psql "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
-    if ($ext.Exit -ne 0) { throw ("extension create failed " + (Hide $ext.Err)) }
+    $ext = $null
+    for ($i = 0; $i -lt 5; $i++) {
+        $ext = Invoke-Psql "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+        if ($ext.Exit -eq 0) { break }
+        Start-Sleep -Seconds 1
+    }
+    if ($null -eq $ext -or $ext.Exit -ne 0) { throw ("extension create failed " + (Hide $ext.Err)) }
     $phase.Stop()
     Write-Output ("PHASE container ms=" + [int]$phase.ElapsedMilliseconds)
 
