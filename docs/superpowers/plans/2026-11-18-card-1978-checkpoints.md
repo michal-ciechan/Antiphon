@@ -43,14 +43,16 @@ first-row EstimatedMinutes 15 is the brief's required cold-build allowance, not 
 new test timeout or measured p95. Run red once then green once. Preserve per-case
 exit results and checkpoint wall/admission timings. No repeated green proof needed.
 
-The requested compiled rows are pending a blocking output-policy decision:
-the brief prohibits custom build output directories, while PlanTableImporter and
-ManifestValidator require every TUnit checkpoint build to use bin-<name>/.
-No compiled row may be represented as passed by a command-only receipt. On approval,
-extend this closed table before running V-2/R-2 with exact impacted filters, serial
-rows under ten minutes, first compiled row EstimatedMinutes 15, and no row-timeout
-override. Direct bootstrap builds keep native output. Read /proc/loadavg before each
-driver, admit below 16, poll every 30 seconds, and set ANTIPHON_LINUX_COMPILER_POLICY=0.
+The reopened task explicitly permits checkpoint-owned bin-<name>/ outputs. Direct
+bootstrap builds keep native output. Final rows below share one isolated build;
+CP-2 EstimatedMinutes 15 is the existing cold-build allowance (see CARD-1958
+Debug 32f24400), not a widened test timeout. No row-timeout override. The slower
+derived-index and receipt methods are split into bounded selections. Estimates
+are provisional, not measured p95: collect build, slot and execution costs once;
+no green repetitions. Read /proc/loadavg before each driver, admit below 16, poll
+every 30 seconds, and set ANTIPHON_LINUX_COMPILER_POLICY=0. Retain checkpoint
+outputs until receipt inspection, then remove the exact literal owned path and
+verify its absence plus clean git status.
 
 ### Checkpoints
 
@@ -60,9 +62,22 @@ Run through the checkpoint tool with --expected-source-sha set to committed HEAD
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | all | n/a | placement-receipt | `pwsh -NoProfile -File scripts/test-checkpoint-placement-skip.ps1 -Label c1978` | V-1,R-1 | six synthetic receipt cases, 0 assertion failures | n/a | 15 | true |
+| CP-2 | Final | tests/Antiphon.Tests -> bin-c1978-final-a/ | rc-probe-closure | `/*/*/(RcBridgeProbePlatformTests*)\|(LinuxOnlyExpectedSkipClosureTests*)/*` | V-2,R-2 | 7 pass; 1 rostered Linux placement skip | 7 | 15 | true |
+| CP-3 | Final | CP-2 | classification-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2,R-3 | all listed, 0 failed/skipped | 78 | 3 | true |
+| CP-4 | Final | CP-2 | platform-admission | `/*/*/WindowsUnitPlatformAdmissionTests*/*` | R-2 | 6 pass; 1 rostered Linux placement skip | 6 | 3 | true |
+| CP-5 | Final | CP-2 | derived-builder | `/*/*/DerivedImpactIndexTests/(committed_index_matches_the_builder*)\|(regenerate_script_reports_changed_then_unchanged*)\|(merge_process_names_the_regenerate_step*)\|(solution_build_produces_the_regenerate_driver*)\|(declaration_diff_selects_the_new_tests_class*)\|(type_edge_on_a_fixture_diff_selects_the_lease_class*)\|(one_hop_path_selects_the_temp_family_class*)` | R-2 | all listed, 0 failed/skipped | 7 | 4 | true |
+| CP-6 | Final | CP-2 | derived-selectors | `/*/*/DerivedImpactIndexTests/(dotted_script_name_selects_the_lease_class*)\|(a_path_with_26_classes_is_capped*)\|(solution_file_selects_no_derived_class*)\|(migration_only_diff_keeps_hand_classes_and_the_derive_set*)\|(schema_2_is_still_refused*)\|(merge_subset_on_a_derived_hit_emits_the_fixed_classes*)\|(tool_only_diff_selects_the_budget_method*)` | R-2 | all listed, 0 failed/skipped | 7 | 4 | true |
+| CP-7 | Final | CP-2 | derived-replay | `/*/*/DerivedImpactIndexTests/s1_replay_matches_declaration_and_index_edges*` | R-2 | all listed, 0 failed/skipped | 1 | 4 | true |
+| CP-8 | Final | CP-2 | derived-merge | `/*/*/DerivedImpactIndexTests/merge_subset_matches_the_hand_selector*` | R-2 | all listed, 0 failed/skipped | 1 | 4 | true |
+| CP-9 | Final | CP-2 | derived-platform | `/*/*/DerivedImpactIndexTests/(index_bytes_stay_lf_when_the_newline_source_is_crlf*)\|(capped_real_paths_keep_the_specific_class*)\|(windows_only_classes_stay_out_of_linux_filters*)\|(reviewer_census_classes_are_windows_only*)\|(undeclared_class_with_an_os_token_stays_on_both_lanes*)\|(linux_only_methods_stay_off_the_windows_filter*)\|(has_windows_specifics_stays_on_both_lanes*)\|(class_level_linux_only_stays_off_the_windows_filter*)\|(override_list_forces_an_undeclared_class_onto_windows*)\|(override_file_names_exist_and_are_undeclared*)\|(parser_agrees_with_platform_taxonomy_derive*)` | R-2 | all listed, 0 failed/skipped | 11 | 4 | true |
+| CP-10 | Final | CP-2 | privacy-callers | `/*/*/(CardFilePrivacyGitTests*)\|(CardFilePrivacyPathTests*)/*` | R-2 | 14 pass; 6 rostered Windows junction skips | 14 | 3 | true |
+| CP-11 | Final | CP-2 | receipt-source | `/*/*/RunCheckpointSourceScriptTests/(C1035*)\|(C835*)` | R-2 | all listed, 0 failed/skipped | 6 | 4 | true |
+| CP-12 | Final | CP-2 | receipt-allowance | `/*/*/RunCheckpointSourceScriptTests/C1958_Receipt_skip_allowance_is_closed*` | R-2 | all listed, 0 failed/skipped | 19 | 3 | true |
+| CP-13 | Final | CP-2 | release-impact | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-2 | all listed, 0 failed/skipped | 11 | 3 | true |
 
-V-2/R-2 and M-1 for compiled rows remain incomplete until the output decision is
-resolved and those rows are added and executed. The Unit lane stays nightly/rc.
+CP-1 is already green on its committed repair. Run CP-2..CP-13 with --after Final
+as one serial run, keeping outputs until final inspection. The Unit lane stays
+nightly/rc. No full assembly is required: the impact selection is bounded.
 
 ## Continuation state
 
@@ -78,15 +93,19 @@ The full-range selector names CardFilePrivacyGitTests, CardFilePrivacyPathTests,
 LinuxOnlyExpectedSkipClosureTests, RcBridgeProbePlatformTests,
 RunCheckpointSourceScriptTests, TestLaneCategoryGuardTests, and
 WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates.
-No capped or owed classes were reported. Re-evaluate after index regeneration.
-The brief's full named guard union is also pending because the roster is a
-classification input. Do not run whole slow classes: split required methods into
-rows under ten minutes, with explicit nonzero counts.
+The regenerated index also selects DerivedImpactIndexTests and
+ReleaseImpactEnvelopeTests. No capped or owed classes were reported. The table
+covers that full-range selection and the brief's named guard union. Each selected
+class is covered in full across bounded rows; inspect fresh per-method counts.
 
 The card-wide Linux SkipTestException source-census witness remains unimplemented.
 Existing unrostered off-Windows skips include AgentPinPathTests.V01_canonical_cwd_uses_windows_separators_and_drops_trailing_slash
 and ScriptHarnessSharingTests.Held_reader_accepts_shim_sentinel_append. A global
 all-sites-equal-WindowsOnly assertion would therefore be red for more than this
 card's RcBridge defect. Do not silently roster those methods or claim the narrow
-receipt regression establishes that global invariant. Complete/disposition that
-acceptance work in the continuation before Final Review.
+receipt regression establishes that global invariant. The reopening instruction
+explicitly permits omitting the repository-wide runtime census under SHORT when
+it requires whole slow classes. That census is omitted, not passed: discovering
+all runtime skip sites requires unrelated slow/native classes. The existing roster
+closure witness remains included in CP-4. Windows native probe execution remains
+nightly/rc placement work; this Linux task proves its declared omission.
