@@ -223,6 +223,11 @@ delete current.services['session-runner'].environment[key];
 // CARD-1906 adds a separately verified OFF setting; retain the historical slot-only comparison.
 assert.equal(current.services['session-runner'].environment.ANTIPHON_LINUX_COMPILER_POLICY, '0');
 delete current.services['session-runner'].environment.ANTIPHON_LINUX_COMPILER_POLICY;
+// CARD-1406 pins every runner service off the host Postgres cpuset; retain the historical comparison.
+for (const service of Object.keys(current.services)) {
+  assert.equal(current.services[service].cpuset, '3-11,15-23', service + ' carries the CARD-1406 runner cpuset');
+  delete current.services[service].cpuset;
+}
 assert.deepEqual(current, base, 'default render changed outside the new false flag');
 assert.equal(matrices, 16);
 console.log(`PASS matrices=16 refusals=${refusals} missing-file=1 base-equivalence=1`);

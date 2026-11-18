@@ -14,6 +14,8 @@ Orchestrator decision on review advisory A-1 (2026-11-18): Postgres takes three 
 - R-2 (review A-2). The C# contract classes that read the edited runner compose and `docs/docker-stack.md` stay green.
 - V-4 (operator, on the host daemon, not a checkpoint). `docker inspect` `HostConfig.CpusetCpus` is `0-2,12-14` for `antiphon-server2-postgres-postgres-1` and `3-11,15-23` for `antiphon-runner-session-runner-1` and `antiphon-runner-build-slots-1`, then the parent plan's quiet and loaded p95 samples on the empty cluster.
 
+Two daemon-free fixtures compare the current runner render with a historical SHA: `scripts/fixtures/c1906-compiler-policy-compose.mjs` (`RunnerLinuxCompilerPolicyTests.Saved_values_render_and_survive_each_named_phase_independently`) and `scripts/fixtures/c346-workspace-slot-compose.mjs`. Both were already red at the S1 commit (runner compose equal to master `f4d783033`): CARD-1893 S0 (`ea4209a16`) added `SessionRunner__HostStats__HistoryEnabled: "false"` and neither fixture strips it. S2 makes both assert and strip the CARD-1406 runner cpuset, so the cpuset is not a second cause; the HistoryEnabled red stays inherited and is not repaired here. Evidence is the direct `node <fixture> --models-only` / `node <fixture>` probe at S1 and at S2 (unlisted, reason: inherited-red proof without a second Antiphon.Tests build), which must show HistoryEnabled as the only difference at both.
+
 No PC-n is named. Mutation execution is waived (operator 2026-11-12) and is not discharged.
 
 ### Checkpoints
