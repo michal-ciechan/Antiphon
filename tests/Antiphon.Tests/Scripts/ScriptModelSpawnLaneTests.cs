@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.Checkpoints;
@@ -11,7 +12,8 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1984. W-1 pins the width formula, W-2 proves the lane overlaps, W-3 pins the family
-/// floor, W-4 walks compiled bodies, and W-5 rejects a fixed temp path.
+/// floor, W-4 walks compiled bodies, and W-5 rejects a fixed temp path. Round 2 (review B-1):
+/// W-10 rejects an executable written in process, and W-11 rejects a checkout-writing driver.
 /// </summary>
 [Category("Unit")]
 public class ScriptModelSpawnLaneTests
@@ -192,6 +194,379 @@ public class ScriptModelSpawnLaneTests
             using var process = Process.Start(new ProcessStartInfo("true") { UseShellExecute = false });
             _ = process;
         }
+    }
+
+    // W-10 (round 2, review B-1). A Process.Start anywhere in this process forks a copy of every open
+    // descriptor that lives until that child's exec, and Linux refuses to exec a file that is open for
+    // writing anywhere (ETXTBSY). A wide-lane method must not write a file in process that a child then
+    // execs; FixtureExecutable creates executables from a child instead. A walked body is a finding when
+    // it writes in process and, in the same body, sets a unix mode, names a chmod, or calls a mode
+    // helper, or when a "#!" literal or a string-returning "#!" builder reaches an in-process write
+    // before any FixtureExecutable call. FixtureExecutable itself is not walked.
+    [Test]
+    public void Wide_lane_methods_write_no_executable_in_process()
+    {
+        var findings = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var method in WideLaneMethods())
+        {
+            foreach (var finding in InProcessExecutableWrites(method))
+                findings.Add(finding);
+        }
+
+        findings.ShouldBeEmpty(string.Join(Environment.NewLine, findings));
+    }
+
+    [Test]
+    [Arguments(nameof(ExecutableWriteFixture.Write_mode_then_start))]
+    [Arguments(nameof(ExecutableWriteFixture.Write_then_child_chmod))]
+    [Arguments(nameof(ExecutableWriteFixture.Write_shebang))]
+    [Arguments(nameof(ExecutableWriteFixture.Write_built_script_then_start))]
+    [Arguments(nameof(ExecutableWriteFixture.Copy_then_mode_helper))]
+    [Arguments(nameof(ExecutableWriteFixture.Write_shebang_async))]
+    public void In_process_executable_write_is_a_finding(string name)
+    {
+        InProcessExecutableWrites(FixtureMethod(typeof(ExecutableWriteFixture), name)).ShouldNotBeEmpty(name);
+    }
+
+    [Test]
+    [Arguments(nameof(ExecutableWriteFixture.Materialize_then_start))]
+    [Arguments(nameof(ExecutableWriteFixture.Write_then_interpret))]
+    [Arguments(nameof(ExecutableWriteFixture.Materialize_built_script_and_write_data))]
+    public void Out_of_process_or_interpreted_script_is_not_a_finding(string name)
+    {
+        InProcessExecutableWrites(FixtureMethod(typeof(ExecutableWriteFixture), name)).ShouldBeEmpty(name);
+    }
+
+    // Walked, never run.
+    private static class ExecutableWriteFixture
+    {
+        public static void Write_mode_then_start(string path)
+        {
+            File.WriteAllText(path, "exit 0\n");
+            File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32("755", 8));
+            using var process = Process.Start(new ProcessStartInfo(path) { UseShellExecute = false });
+        }
+
+        public static void Write_then_child_chmod(string path)
+        {
+            File.WriteAllText(path, "exit 0\n");
+            using var chmod = Process.Start(new ProcessStartInfo("chmod") { UseShellExecute = false, ArgumentList = { "0755", path } });
+        }
+
+        public static void Write_shebang(string path) => File.WriteAllText(path, "#!/usr/bin/bash\nexit 0\n");
+
+        public static void Write_built_script_then_start(string path)
+        {
+            File.WriteAllText(path, Script());
+            using var process = Process.Start(new ProcessStartInfo(path) { UseShellExecute = false });
+        }
+
+        public static void Copy_then_mode_helper(string source, string path)
+        {
+            File.Copy(source, path);
+            MakeExecutable(path);
+        }
+
+        public static async Task Write_shebang_async(string path) => await File.WriteAllTextAsync(path, "#!/bin/sh\nexit 0\n");
+
+        public static void Materialize_then_start(string path)
+        {
+            FixtureExecutable.Write(path, "#!/usr/bin/bash\nexit 0\n");
+            using var process = Process.Start(new ProcessStartInfo(path) { UseShellExecute = false });
+        }
+
+        public static void Write_then_interpret(string path)
+        {
+            File.WriteAllText(path, "exit 0\n");
+            using var process = Process.Start(new ProcessStartInfo("/usr/bin/bash") { UseShellExecute = false, ArgumentList = { path } });
+        }
+
+        public static void Materialize_built_script_and_write_data(string root)
+        {
+            FixtureExecutable.Write(Path.Combine(root, "tool"), Script());
+            File.WriteAllText(Path.Combine(root, "state.json"), "{}");
+        }
+
+        private static string Script() => "#!/usr/bin/bash\nexit 0\n";
+
+        private static void MakeExecutable(string path) => File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32("755", 8));
+    }
+
+    // W-11 (round 2). C1008WrapperFixture runs the real scripts/deploy-server2.ps1 -Rolling with the shared
+    // checkout as its working directory, and that script writes .antiphon/rolling-server2/c727<hex> there,
+    // so its callers keep the strict lane (D-5).
+    private static readonly string[] CheckoutWriters = ["C1008WrapperFixture"];
+
+    [Test]
+    public void Wide_lane_methods_reach_no_checkout_writer()
+    {
+        var findings = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var method in WideLaneMethods())
+        {
+            foreach (var writer in ReachedCheckoutWriters(method))
+                findings.Add(method.DeclaringType!.Name + "." + method.Name + " reaches " + writer);
+        }
+
+        findings.ShouldBeEmpty(string.Join(Environment.NewLine, findings));
+    }
+
+    [Test]
+    public void Checkout_writer_reach_is_a_finding()
+    {
+        ReachedCheckoutWriters(FixtureMethod(typeof(CheckoutWriterFixture), nameof(CheckoutWriterFixture.Reach))).ShouldNotBeEmpty();
+    }
+
+    private static class CheckoutWriterFixture
+    {
+        public static async Task Reach()
+        {
+            using var wrapper = new C1008WrapperFixture();
+            await wrapper.Run("retire-temp");
+        }
+    }
+
+    private static MethodBase FixtureMethod(Type type, string name)
+    {
+        var method = type.GetMethod(name, BindingFlags.Public | BindingFlags.Static);
+        method.ShouldNotBeNull(name);
+        return method;
+    }
+
+    private static IEnumerable<MethodInfo> WideLaneMethods()
+    {
+        foreach (var name in Families)
+        {
+            var type = typeof(ScriptModelSpawnLaneTests).Assembly.GetType("Antiphon.Tests.Scripts." + name);
+            if (type is null)
+                continue;
+            foreach (var method in type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
+            {
+                if (method.GetCustomAttribute<TestAttribute>() is not null
+                    && LimiterNames(method).SequenceEqual([nameof(ScriptModelSpawnLimit)]))
+                    yield return method;
+            }
+        }
+    }
+
+    internal static List<string> InProcessExecutableWrites(MethodBase root)
+    {
+        var findings = new List<string>();
+        var helpers = new Dictionary<(Module Module, int Token), (bool ModeHelper, bool ScriptBuilder)>();
+        foreach (var body in ReachedBodies(root))
+        {
+            var writes = new List<string>();
+            var marks = new List<string>();
+            var pending = false;
+            foreach (var operand in Operands(body))
+            {
+                if (operand is string literal)
+                {
+                    if (literal.StartsWith("#!", StringComparison.Ordinal))
+                        pending = true;
+                    if (IsChmodLiteral(literal))
+                        marks.Add("names chmod");
+                    continue;
+                }
+
+                if (operand is not MethodBase called)
+                    continue;
+                if (IsFixtureExecutable(called.DeclaringType))
+                {
+                    pending = false;
+                }
+                else if (IsInProcessWrite(called))
+                {
+                    writes.Add(called.DeclaringType!.Name + "." + called.Name);
+                    if (pending)
+                        marks.Add("writes a \"#!\" script");
+                    pending = false;
+                }
+                else if (IsModeSetter(called))
+                {
+                    marks.Add("sets a unix mode");
+                }
+                else if (InWalkScope(called))
+                {
+                    var helper = Helper(called, helpers);
+                    if (helper.ModeHelper)
+                        marks.Add("calls mode helper " + called.Name);
+                    if (helper.ScriptBuilder)
+                        pending = true;
+                }
+            }
+
+            if (writes.Count > 0 && marks.Count > 0)
+            {
+                findings.Add((body.DeclaringType?.FullName ?? "?") + "." + body.Name + ": "
+                    + string.Join(", ", writes.Distinct()) + " in process and " + string.Join(", ", marks.Distinct()));
+            }
+        }
+
+        return findings;
+    }
+
+    internal static List<string> ReachedCheckoutWriters(MethodBase root)
+    {
+        var reached = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var body in ReachedBodies(root))
+        {
+            foreach (var operand in Operands(body))
+            {
+                var type = operand switch
+                {
+                    Type named => named,
+                    MemberInfo member => member.DeclaringType,
+                    _ => null,
+                };
+                for (var current = type; current is not null; current = current.DeclaringType)
+                {
+                    if (CheckoutWriters.Contains(current.Name, StringComparer.Ordinal))
+                        reached.Add(current.Name);
+                }
+            }
+        }
+
+        return [.. reached];
+    }
+
+    private static (bool ModeHelper, bool ScriptBuilder) Helper(
+        MethodBase method, Dictionary<(Module Module, int Token), (bool ModeHelper, bool ScriptBuilder)> cache)
+    {
+        if (cache.TryGetValue((method.Module, method.MetadataToken), out var known))
+            return known;
+        var own = new Stack<MethodBase>();
+        own.Push(method);
+        EnqueueCompilerMethods(method, own);
+        bool mode = false, shebang = false;
+        foreach (var part in own)
+        {
+            foreach (var operand in Operands(part))
+            {
+                if (operand is string literal && literal.StartsWith("#!", StringComparison.Ordinal))
+                    shebang = true;
+                else if (operand is MethodBase called && IsModeSetter(called))
+                    mode = true;
+            }
+        }
+
+        var result = (mode, shebang && method is MethodInfo { ReturnType: var returns } && returns == typeof(string));
+        cache[(method.Module, method.MetadataToken)] = result;
+        return result;
+    }
+
+    private static IEnumerable<MethodBase> ReachedBodies(MethodBase root)
+    {
+        var pending = new Stack<MethodBase>();
+        var seen = new HashSet<(Module Module, int Token)>();
+        pending.Push(root);
+        EnqueueCompilerMethods(root, pending);
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            if (!seen.Add((current.Module, current.MetadataToken)) || IsFixtureExecutable(current.DeclaringType))
+                continue;
+            var body = current.GetMethodBody();
+            if (body is null)
+                continue;
+            yield return current;
+            foreach (var member in ProcessSpawnLimitTests.ReferencedMembers(current, body))
+            {
+                if (member is MethodBase called && InWalkScope(called))
+                {
+                    pending.Push(called);
+                    EnqueueCompilerMethods(called, pending);
+                }
+            }
+        }
+    }
+
+    private static readonly Dictionary<short, OpCode> OpCodeByValue = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode))
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(opCode => opCode.Value);
+
+    /// <summary>The string literals and the members a body's IL names, in IL order.</summary>
+    private static IEnumerable<object> Operands(MethodBase method)
+    {
+        var il = method.GetMethodBody()?.GetILAsByteArray();
+        if (il is null)
+            yield break;
+        var typeArguments = method.DeclaringType is { IsGenericType: true } declaring ? declaring.GetGenericArguments() : null;
+        var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            short value = il[offset++];
+            if (value == 0xFE)
+                value = unchecked((short)(0xFE00 | il[offset++]));
+            if (!OpCodeByValue.TryGetValue(value, out var opCode))
+                throw new InvalidOperationException($"{method.DeclaringType?.Name}.{method.Name}: unknown IL opcode 0x{value:X4} at {offset - 1}");
+            var operandSize = opCode.OperandType switch
+            {
+                OperandType.InlineNone => 0,
+                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                OperandType.InlineVar => 2,
+                OperandType.InlineI8 or OperandType.InlineR => 8,
+                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, offset),
+                _ => 4,
+            };
+            if (opCode.OperandType == OperandType.InlineString)
+            {
+                yield return method.Module.ResolveString(BitConverter.ToInt32(il, offset));
+            }
+            else if (opCode.OperandType is OperandType.InlineMethod or OperandType.InlineField or OperandType.InlineType or OperandType.InlineTok)
+            {
+                MemberInfo? member = null;
+                try { member = method.Module.ResolveMember(BitConverter.ToInt32(il, offset), typeArguments, methodArguments); }
+                catch (ArgumentException) { }
+                if (member is not null)
+                    yield return member;
+            }
+
+            offset += operandSize;
+        }
+    }
+
+    private static readonly HashSet<string> FileWrites = new(StringComparer.Ordinal)
+    {
+        "WriteAllText", "WriteAllTextAsync", "WriteAllBytes", "WriteAllBytesAsync", "WriteAllLines", "WriteAllLinesAsync",
+        "AppendAllText", "AppendAllTextAsync", "AppendAllLines", "AppendAllLinesAsync", "AppendText", "Create", "CreateText",
+        "OpenWrite", "Copy", "Replace",
+    };
+
+    private static readonly HashSet<string> FileInfoWrites = new(StringComparer.Ordinal)
+    {
+        "Create", "CreateText", "OpenWrite", "AppendText", "CopyTo",
+    };
+
+    private static bool IsInProcessWrite(MethodBase method)
+    {
+        var owner = method.DeclaringType;
+        if (owner == typeof(File))
+            return FileWrites.Contains(method.Name);
+        if (owner == typeof(FileInfo))
+            return FileInfoWrites.Contains(method.Name);
+        return method is ConstructorInfo && (owner == typeof(FileStream) || owner == typeof(StreamWriter));
+    }
+
+    private static bool IsModeSetter(MethodBase method) =>
+        (method.DeclaringType == typeof(File) && method.Name == "SetUnixFileMode")
+        || (method.DeclaringType == typeof(FileSystemInfo) && method.Name == "set_UnixFileMode")
+        || (method.DeclaringType == typeof(FileStreamOptions) && method.Name == "set_UnixCreateMode");
+
+    private static bool IsChmodLiteral(string literal) =>
+        literal == "chmod" || literal.EndsWith("/chmod", StringComparison.Ordinal) || literal.StartsWith("chmod ", StringComparison.Ordinal);
+
+    private static bool IsFixtureExecutable(Type? type)
+    {
+        for (var current = type; current is not null; current = current.DeclaringType)
+        {
+            if (current == typeof(FixtureExecutable))
+                return true;
+        }
+
+        return false;
     }
 
     [Test]
