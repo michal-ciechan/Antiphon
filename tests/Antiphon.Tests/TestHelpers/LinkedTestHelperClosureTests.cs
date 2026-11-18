@@ -23,7 +23,65 @@ public sealed class LinkedTestHelperClosureTests
     [Test]
     public void every_linked_antiphon_tests_file_has_its_helper_types_linked()
     {
-        var testsRoot = Path.Combine(RepoRoot, "tests", "Antiphon.Tests") + Path.DirectorySeparatorChar;
+        var scan = Scan(RepoRoot);
+        scan.IndexedTestDbFixtureLifecycle.ShouldBeTrue("type census found the helper files");
+        scan.Linking.ShouldContain(
+            "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+            "census found the linking projects");
+        scan.Missing.Distinct().ShouldBeEmpty(
+            "linked helper types missing from their project: " + string.Join("; ", scan.Missing.Distinct()));
+    }
+
+    [Test]
+    public void differently_named_helper_file_is_reported()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "card1996-closure-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "Antiphon.sln"), "");
+            var helper = Path.Combine(root, "tests", "Antiphon.Tests", "TestHelpers");
+            Directory.CreateDirectory(helper);
+            File.WriteAllText(
+                Path.Combine(helper, "UsesCrossFileType.cs"),
+                "namespace Antiphon.Tests.TestHelpers;\n" +
+                "public sealed class UsesCrossFileType\n" +
+                "{\n" +
+                "    public static int Read() => HiddenHelper.Value;\n" +
+                "}\n");
+            File.WriteAllText(
+                Path.Combine(helper, "NotTheTypeName.cs"),
+                "namespace Antiphon.Tests.TestHelpers;\n" +
+                "public static class HiddenHelper\n" +
+                "{\n" +
+                "    public static int Value => 1;\n" +
+                "}\n");
+            var mirror = Path.Combine(root, "tests", "Mirror.Tests");
+            Directory.CreateDirectory(mirror);
+            File.WriteAllText(
+                Path.Combine(mirror, "Mirror.Tests.csproj"),
+                "<Project><ItemGroup><Compile Include=\"..\\Antiphon.Tests\\TestHelpers\\UsesCrossFileType.cs\" /></ItemGroup></Project>\n");
+
+            var missing = Scan(root).Missing;
+            missing.ShouldContain(
+                item => item.Contains("HiddenHelper", StringComparison.Ordinal)
+                    && item.Contains("NotTheTypeName.cs", StringComparison.Ordinal),
+                "a type declared in a differently named TestHelpers file must be reported when a mirror links only the using file");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private readonly record struct ClosureScan(
+        IReadOnlyList<string> Linking,
+        IReadOnlyList<string> Missing,
+        bool IndexedTestDbFixtureLifecycle);
+
+    private static ClosureScan Scan(string repoRoot)
+    {
+        var testsRoot = Path.Combine(repoRoot, "tests", "Antiphon.Tests") + Path.DirectorySeparatorChar;
         var typeFiles = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in SourceFiles(testsRoot, "*.cs"))
         {
@@ -31,25 +89,24 @@ public sealed class LinkedTestHelperClosureTests
             if (Declarations(file).Contains(name))
                 typeFiles[name] = file;
         }
-        typeFiles.ShouldContainKey("TestDbFixtureLifecycle", "type census found the helper files");
 
         var linking = new List<string>();
         var missing = new List<string>();
-        foreach (var project in SourceFiles(RepoRoot, "*.csproj"))
+        foreach (var project in SourceFiles(repoRoot, "*.csproj"))
         {
             if (project.StartsWith(testsRoot, StringComparison.Ordinal))
                 continue;
             var projectDir = Path.GetDirectoryName(project)!;
             var includes = XDocument.Load(project).Descendants()
-                .Where(e => e.Name.LocalName == "Compile")
-                .Select(e => (string?)e.Attribute("Include"))
-                .Where(i => i is not null && !i.Contains('*') && !i.Contains("$(", StringComparison.Ordinal))
-                .Select(i => Path.GetFullPath(Path.Combine(projectDir, i!.Replace('\\', '/'))))
+                .Where(element => element.Name.LocalName == "Compile")
+                .Select(element => (string?)element.Attribute("Include"))
+                .Where(include => include is not null && !include.Contains('*') && !include.Contains("$(", StringComparison.Ordinal))
+                .Select(include => Path.GetFullPath(Path.Combine(projectDir, include!.Replace('\\', '/'))))
                 .ToHashSet(StringComparer.Ordinal);
-            var linked = includes.Where(i => i.StartsWith(testsRoot, StringComparison.Ordinal)).ToArray();
+            var linked = includes.Where(include => include.StartsWith(testsRoot, StringComparison.Ordinal)).ToArray();
             if (linked.Length == 0)
                 continue;
-            var rel = Relative(project);
+            var rel = Relative(repoRoot, project);
             linking.Add(rel);
 
             var compiled = includes.Concat(SourceFiles(projectDir + Path.DirectorySeparatorChar, "*.cs")).Where(File.Exists);
@@ -60,13 +117,12 @@ public sealed class LinkedTestHelperClosureTests
                 {
                     if (own.Contains(id.Value) || !typeFiles.TryGetValue(id.Value, out var owner) || includes.Contains(owner))
                         continue;
-                    missing.Add($"{rel}: {Relative(file)} uses {id.Value}; link {Relative(owner)}");
+                    missing.Add($"{rel}: {Relative(repoRoot, file)} uses {id.Value}; link {Relative(repoRoot, owner)}");
                 }
             }
         }
 
-        linking.ShouldContain("tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "census found the linking projects");
-        missing.Distinct().ShouldBeEmpty("linked helper types missing from their project: " + string.Join("; ", missing.Distinct()));
+        return new ClosureScan(linking, missing, typeFiles.ContainsKey("TestDbFixtureLifecycle"));
     }
 
     private static string Code(string file) => Strings.Replace(Comments.Replace(File.ReadAllText(file), " "), "\"\"");
@@ -88,7 +144,7 @@ public sealed class LinkedTestHelperClosureTests
         }
     }
 
-    private static string Relative(string path) => Path.GetRelativePath(RepoRoot, path).Replace('\\', '/');
+    private static string Relative(string repoRoot, string path) => Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
 
     private static string RepoRoot
     {
