@@ -178,9 +178,19 @@ function ConvertFrom-NightlyDiscoveryDocument {
 function Read-NightlyDiscoveryDocument {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing discovery {0}' -f $Path) }
-    $raw = [System.IO.File]::ReadAllText($Path)
-    if ([string]::IsNullOrWhiteSpace($raw)) { throw ('empty discovery {0}' -f $Path) }
-    $obj = $raw | ConvertFrom-Json
+    # The core parses the file's UTF-8 bytes into what ConvertFrom-Json gives (NightlyJson.ReadFile, nightly-core.ps1
+    # Read-NightlyJsonFile); it returns null for anything it cannot vouch for (empty or whitespace text included), and
+    # that goes to the ConvertFrom-Json path below for its own result or error. Called directly: nightly-common.ps1
+    # defines a different Read-NightlyJsonFile.
+    $obj = $null
+    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
+        $obj = [Antiphon.Nightly.NightlyJson]::ReadFile($Path, $false)
+    }
+    if ($null -eq $obj) {
+        $raw = [System.IO.File]::ReadAllText($Path)
+        if ([string]::IsNullOrWhiteSpace($raw)) { throw ('empty discovery {0}' -f $Path) }
+        $obj = $raw | ConvertFrom-Json
+    }
     return (ConvertFrom-NightlyDiscoveryDocument -Object $obj -ExpectedFormat $script:NightlyDiscoveryFormat)
 }
 
