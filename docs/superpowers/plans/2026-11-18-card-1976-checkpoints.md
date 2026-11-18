@@ -50,13 +50,15 @@ of the checkpoint tool and derived-index driver are accounted auxiliary builds.
   over the full task range and conflict-free merge-tree against fetched master.
 - R-6: the three assembly-local process-spawn limiter rosters remain valid.
 - R-7: derived-index, policy, classification, mechanical and platform guards stay
-  valid after regenerating the changed capped-reference listing.
+  valid after regenerating the changed capped-reference listing; the adjacent
+  release-impact envelope retains fail-closed source/index qualification.
 
 The actual range selects `contracts`, `spawn-limit-rosters` (the new limiter
 annotation) and `test-lane-category`, plus the two touched test classes. No
 capped/owed classes or Windows-only work. Derived-index regeneration changed one
 capped-reference listing, so the brief's conditional guard union is required:
-CP-3, CP-9 and CP-10 cover it, reusing the same build. The three nightly pins stay
+CP-3, CP-9 and CP-10 cover it, reusing the same build. The generated-index diff
+also selects `ReleaseImpactEnvelopeTests`, included in CP-10. The three nightly pins stay
 unchanged. Whole Unit and slow classes stay with nightly/rc. No required manual live operation; inspect fresh TRX for every
 intended method/case and validate clean-source receipts.
 
@@ -79,4 +81,4 @@ SourceLanding Mutation; deliberate mutations are waived for this Code task.
 | CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1976-runner/ | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | R-6 | both methods, 0 failed/skipped | 2 | 8 | true |
 | CP-8 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1976-pty/ | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | R-6 | both methods, 0 failed/skipped | 2 | 6 | true |
 | CP-9 | S1-S2 | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-7 | all named classes, 0 failed/skipped | 8 | 4 | true |
-| CP-10 | S1-S2 | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-7 | every method/case, 0 failed/skipped | 1 | 4 | true |
+| CP-10 | S1-S2 | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)/*` | R-7 | every method/case in both classes, 0 failed/skipped | 12 | 4 | true |

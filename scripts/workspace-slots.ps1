@@ -95,11 +95,12 @@ if (-not (Test-Path -LiteralPath $path)) {
     [Console]::Error.WriteLine("Operator token file not found at $path. The server creates it at startup; run this as the account the server runs under.")
     exit 2
 }
-$token = ([string](Get-Content -LiteralPath $path -Raw)).Trim()
-if ([string]::IsNullOrEmpty($token)) {
+$token = Get-Content -LiteralPath $path -Raw
+if ([string]::IsNullOrWhiteSpace($token)) {
     [Console]::Error.WriteLine("Operator token file at $path is empty.")
     exit 2
 }
+$token = $token.Trim()
 $headers['X-Antiphon-Operator-Token'] = $token
 
 if ([string]::IsNullOrWhiteSpace($Requester)) {
