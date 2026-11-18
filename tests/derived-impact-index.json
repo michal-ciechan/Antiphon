@@ -3528,6 +3528,12 @@
       ]
     },
     {
+      "path": "scripts/c1893-runner-hold.sh",
+      "classes": [
+        "DockerStackContractTests"
+      ]
+    },
+    {
       "path": "scripts/c590-command.ps1",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
