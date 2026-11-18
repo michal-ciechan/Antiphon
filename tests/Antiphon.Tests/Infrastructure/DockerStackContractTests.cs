@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -902,6 +903,230 @@ public sealed class DockerStackContractTests
         run.ShouldBeGreaterThan(Math.Max(copy, guard), stage + " runs the floor guard after both copies");
         body.Contains("test \"$(command -v git)\" = /usr/local/bin/git", StringComparison.Ordinal)
             .ShouldBeTrue(stage + " checks that the guard sees the pinned Git");
+    }
+
+    // CARD-1893 S1 (TestDesign 2026-11-17, amended by CARD-1985): the standing server2 runner keeps
+    // host-load history on the runner-state volume, with a literal binding identity; the temp runner
+    // keeps history off; state-init makes the directory private; and the section 7.0 hold check is a
+    // script that reads the rollout commit, never the working tree.
+    [Test]
+    public void C1893_S1_Standing_runner_sets_absolute_history_path()
+    {
+        var text = Text("docker-compose.server2-runner.yml");
+        HasLine(Server2Runner(), "SessionRunner__HostStats__HistoryPath: /state/host-load").ShouldBeTrue();
+        Env(Server2Runner(), "SessionRunner__HostStats__HistoryPath").ShouldNotContain("${");
+        var broker = DockerStackDocuments.Service(text, "build-slots");
+        EnvironmentKeys(broker).ShouldBe(
+        [
+            "ASPNETCORE_URLS", "SessionRunner__BuildSlotsOnly", "SessionRunner__BuildSlots__MaxConcurrent",
+            "SessionRunner__BuildSlots__MaxCpuCount", "SessionRunner__BuildSlots__MinAvailableMemoryMb",
+            "SessionRunner__BuildSlots__HolderLiveness", "SessionRunner__BuildSlots__RenewGraceSeconds",
+            "SessionRunner__BuildSlots__RenewEverySeconds",
+        ], ignoreOrder: true);
+        broker.ShouldNotContain("SessionRunner__HostStats__");
+    }
+
+    // CARD-1985 A-1: the S0 stop-gap line is gone, so the standing runner does not keep history off
+    // while every S1 path check passes.
+    [Test]
+    public void C1893_S1_Standing_runner_does_not_disable_history()
+    {
+        Server2Runner().ShouldNotContain("SessionRunner__HostStats__HistoryEnabled");
+    }
+
+    [Test]
+    public void C1893_S1_Standing_runner_identity_literals()
+    {
+        var runner = Server2Runner();
+        HasLine(runner, "SessionRunner__HostStats__PhysicalHostKey: server2").ShouldBeTrue();
+        HasLine(runner, "SessionRunner__HostStats__BindingRevision: \"1\"").ShouldBeTrue();
+        HasLine(runner, "SessionRunner__HostStats__AuthorityId: server2-build-slots").ShouldBeTrue();
+        Env(runner, "SessionRunner__HostStats__SourceEpoch").ShouldMatch(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+        foreach (var key in new[] { "PhysicalHostKey", "BindingRevision", "AuthorityId", "SourceEpoch" })
+            Env(runner, "SessionRunner__HostStats__" + key).ShouldNotContain("${", customMessage: key);
+    }
+
+    [Test]
+    public void C1893_S1_Temp_runner_disables_history()
+    {
+        var temp = DockerStackDocuments.Service(Text("docker-compose.server2-runner.temp.yml"), "session-runner");
+        HasLine(temp, "SessionRunner__HostStats__HistoryEnabled: \"false\"").ShouldBeTrue();
+        temp.ShouldNotContain("HistoryPath");
+    }
+
+    [Test]
+    public void C1893_S1_Init_state_creates_host_load_and_chmod_0700()
+    {
+        var init = Text("docker/stack/init-state.sh").Replace("\r\n", "\n");
+        var loop = init[init.IndexOf("for d in \\\n", StringComparison.Ordinal)..init.IndexOf("\ndo\n", StringComparison.Ordinal)];
+        loop.ShouldContain(" /runner-state/host-load");
+        init.Split('\n').ShouldContain("chmod 0700 /runner-state/host-load");
+        HasLine(Server2Runner(), "- runner-state:/state").ShouldBeTrue();
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_check_prints_HOLD_on_rc_2026_11_24()
+    {
+        var result = RemoteScriptContractSupport.LinuxShellResult("""
+            cd "$repo"
+            out=$(bash scripts/c1893-runner-hold.sh 870a93d21f2b18c85a8b0905ab689b28e3099813)
+            printf 'C1893 exit=%s out=%s\n' "$?" "$out"
+            """, "repo");
+        HoldResults(result.Output).ShouldBe(["exit=0 out=HOLD"]);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_releases_when_both_exact_lines_are_present() =>
+        Hold(new HoldTree(Base: HoldPath, Temp: HoldDisable)).ShouldBe(["exit=0 out=RELEASED"]);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_stays_when_only_the_standing_path_is_present() =>
+        Hold(new HoldTree(Base: HoldPath, Temp: "")).ShouldBe(["exit=0 out=HOLD"]);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_stays_when_only_the_temp_disable_is_present() =>
+        Hold(new HoldTree(Base: "", Temp: HoldDisable)).ShouldBe(["exit=0 out=HOLD"]);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_stays_when_the_lines_are_misspelled_or_unquoted() =>
+        Hold(
+            new HoldTree(Base: HoldPath, Temp: "SessionRunner__HostStats__HistoryEnabled: false"),
+            new HoldTree(Base: HoldPath, Temp: "SessionRunner__HostStats__HistoryEnabled: \"False\""),
+            new HoldTree(Base: HoldPath + "/", Temp: HoldDisable),
+            new HoldTree(Base: HoldDisable, Temp: HoldPath))
+            .ShouldBe(["exit=0 out=HOLD", "exit=0 out=HOLD", "exit=0 out=HOLD", "exit=0 out=HOLD"]);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_prints_NOT_AFFECTED_when_the_ancestor_is_absent() =>
+        Hold(new HoldTree(Base: HoldPath, Temp: HoldDisable, Orphan: true)).ShouldBe(["exit=0 out=NOT-AFFECTED"]);
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_exits_nonzero_when_the_argument_does_not_resolve()
+    {
+        var result = Hold(new HoldTree(Base: HoldPath, Temp: HoldDisable, Commit: new string('0', 40))).Single();
+        result.ShouldStartWith("exit=");
+        result.ShouldNotStartWith("exit=0 ");
+        result.ShouldEndWith(" out=");
+    }
+
+    // CARD-1985 A-1(c): a base that still turns history off holds even with both S1 lines.
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_stays_when_the_base_still_disables_history() =>
+        Hold(
+            new HoldTree(Base: HoldPath + "\n      " + HoldDisable, Temp: HoldDisable),
+            new HoldTree(Base: HoldPath + "\n      SessionRunner__HostStats__HistoryEnabled: false", Temp: HoldDisable))
+            .ShouldBe(["exit=0 out=HOLD", "exit=0 out=HOLD"]);
+
+    // Plan section 7.0, S0 clause, kept for rollout SHAs that carry S0 but not S1: a base that turns
+    // history off and sets no path releases only while the temp file leaves history alone (CARD-1985 A-2).
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void C1893_S1_Hold_keeps_the_s0_release_only_while_temp_leaves_history_alone() =>
+        Hold(
+            new HoldTree(Base: HoldDisable, Temp: ""),
+            new HoldTree(Base: HoldDisable, Temp: "SessionRunner__HostStats__HistoryEnabled: \"true\""),
+            new HoldTree(Base: "SessionRunner__HostStats__HistoryEnabled: false", Temp: ""))
+            .ShouldBe(["exit=0 out=RELEASED", "exit=0 out=HOLD", "exit=0 out=HOLD"]);
+
+    private const string HoldPath = "SessionRunner__HostStats__HistoryPath: /state/host-load";
+    private const string HoldDisable = "SessionRunner__HostStats__HistoryEnabled: \"false\"";
+
+    private sealed record HoldTree(string Base, string Temp, bool Orphan = false, string? Commit = null);
+
+    // One throwaway repository per call. It borrows this checkout's object store through alternates,
+    // so the collector commit 9cf3e491705247bc03814e6afed77a6534805dfd resolves without a fetch.
+    // Each tree is a synthetic child of the collector (or an orphan) holding only the two compose
+    // files. The working tree always holds the releasing shape while the commit does not, and the
+    // reverse, so a check that read the working tree instead of the commit would answer wrong.
+    private static List<string> Hold(params HoldTree[] trees)
+    {
+        static string Compose(string runnerId, string line) =>
+            "services:\n  session-runner:\n    environment:\n      PhoneHome__RunnerId: " + runnerId + "\n" +
+            (line.Length == 0 ? "" : "      " + line + "\n");
+        static string Quote(string text) => "'" + text.Replace("'", "'\\''") + "'";
+        var script = new System.Text.StringBuilder("""
+            set -eu
+            fx=$(mktemp -d)
+            trap 'rm -rf "$fx"' EXIT
+            git init -q "$fx"
+            common=$(cd "$repo" && git rev-parse --path-format=absolute --git-common-dir)
+            printf '%s/objects\n' "$common" > "$fx/.git/objects/info/alternates"
+            cd "$fx"
+            export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
+            export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
+            collector=9cf3e491705247bc03814e6afed77a6534805dfd
+            git cat-file -e "$collector^{commit}"
+            check() {
+              printf '%s' "$1" > docker-compose.server2-runner.yml
+              printf '%s' "$2" > docker-compose.server2-runner.temp.yml
+              b=$(git hash-object -w docker-compose.server2-runner.yml)
+              t=$(git hash-object -w docker-compose.server2-runner.temp.yml)
+              tree=$(printf '100644 blob %s\tdocker-compose.server2-runner.yml\n100644 blob %s\tdocker-compose.server2-runner.temp.yml\n' "$b" "$t" | git mktree)
+              if [ "$3" = orphan ]; then commit=$(git commit-tree "$tree" -m fixture)
+              else commit=$(git commit-tree "$tree" -p "$collector" -m fixture); fi
+              [ -n "$4" ] && commit=$4
+              printf '%s' "$5" > docker-compose.server2-runner.yml
+              printf '%s' "$6" > docker-compose.server2-runner.temp.yml
+              set +e
+              out=$(bash "$repo/scripts/c1893-runner-hold.sh" "$commit")
+              status=$?
+              set -e
+              printf 'C1893 exit=%s out=%s\n' "$status" "$(printf '%s' "$out" | tr '\n' '|')"
+            }
+
+            """);
+        foreach (var tree in trees)
+        {
+            var releasing = tree.Base == HoldPath && tree.Temp == HoldDisable;
+            script.Append("check ")
+                .Append(Quote(Compose("server2", tree.Base))).Append(' ')
+                .Append(Quote(Compose("server2-temp", tree.Temp))).Append(' ')
+                .Append(tree.Orphan ? "orphan" : "child").Append(' ')
+                .Append(Quote(tree.Commit ?? "")).Append(' ')
+                .Append(Quote(Compose("server2", releasing ? "" : HoldPath))).Append(' ')
+                .Append(Quote(Compose("server2-temp", releasing ? "" : HoldDisable))).Append('\n');
+        }
+
+        var result = RemoteScriptContractSupport.LinuxShellResult(script.ToString(), "repo");
+        result.Exit.ShouldBe(0, "fixture setup");
+        return HoldResults(result.Output);
+    }
+
+    private static List<string> HoldResults(string output) =>
+        output.Replace("\r\n", "\n").Split('\n')
+            .Where(line => line.StartsWith("C1893 ", StringComparison.Ordinal))
+            .Select(line => line["C1893 ".Length..])
+            .ToList();
+
+    private static bool HasLine(string text, string line) =>
+        System.Text.RegularExpressions.Regex.IsMatch(text.Replace("\r\n", "\n"),
+            "^ +" + System.Text.RegularExpressions.Regex.Escape(line) + "$",
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+
+    private static List<string> EnvironmentKeys(string service)
+    {
+        var keys = new List<string>();
+        var inEnvironment = false;
+        foreach (var line in service.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (line == "    environment:") { inEnvironment = true; continue; }
+            if (!inEnvironment) continue;
+            if (!line.StartsWith("      ", StringComparison.Ordinal)) break;
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith('#')) continue;
+            keys.Add(trimmed[..trimmed.IndexOf(':')]);
+        }
+
+        return keys;
     }
 
     private static void NoAptGit(string dockerfile, string exempt)
