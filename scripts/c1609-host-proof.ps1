@@ -263,7 +263,8 @@ function Select-C1986DependencyAdvertisement {
             if(-not $cover.ContainsKey($oid)){throw 'commit-graph'}
             $rank=$cover[$oid]
             if($commits.Remove($oid)){[void]$selected.Add($rootRows[$rank].Substring(41))}
-            foreach($parent in $ids|Select-Object -Skip 1){
+            for($parentIndex=1;$parentIndex -lt $ids.Length;$parentIndex++){
+                $parent=$ids[$parentIndex]
                 if(-not $cover.ContainsKey($parent) -or $rank -lt $cover[$parent]){$cover[$parent]=$rank}
             }
         }
