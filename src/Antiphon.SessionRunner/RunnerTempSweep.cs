@@ -108,7 +108,8 @@ public sealed class RunnerTempSweep
     private static readonly string[] DeniedPrefixes = ["antiphon-pty-", "CoreFxPipe_", "dotnet-diagnostic-", ".X", "systemd-"];
 
     private static readonly Regex HexRun = new("[0-9a-f]{8,}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex DigitRun = new("[0-9]{5,}", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex DigitRun = new(@"(?<![A-Za-z0-9])[0-9]+(?![A-Za-z0-9])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex RandomName = new(@"^(?:MSBuildTemp)?[A-Za-z0-9]{6}\z", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly string _tempRoot;
     private readonly IReadOnlyList<TempFamily> _families;
@@ -142,6 +143,11 @@ public sealed class RunnerTempSweep
     internal static RunnerTempSweep CreateDefault(string retiringRoot, string tempRoot) =>
         new(tempRoot, RegisteredFamilies, new ProcWorkspaceSlotProcessProbe(), TempSweepNative.LstatUid,
             TempSweepNative.EffectiveUid(), TimeProvider.System, new TempSweepLimits(), DefaultMirrorPresent, retiringRoot);
+
+    // CARD-1896 composition surface, introduced with its red production-factory witness.
+    internal static RunnerTempSweep CreateForRunner(string retiringRoot, string tempRoot,
+        SessionRunnerSettings settings, SessionRunnerRuntime runtime, RunnerWorkspaceService workspace) =>
+        CreateDefault(retiringRoot, tempRoot);
 
     public string TempRoot => _tempRoot;
 
@@ -288,10 +294,15 @@ public sealed class RunnerTempSweep
             eligible.Add(new Facts(name, path, family, walk.IsFile, walk.Bytes, newest));
         }
 
-        // Oldest first; the bounds and the holder scan apply right before each action.
+        // Each family gets one turn per round. Large entries lead each round and each
+        // family's queue; age/name break ties deterministically. Refusals never spend a slot.
         var removedBytes = 0L;
-        var bounded = false;
-        foreach (var facts in eligible.OrderBy(f => f.Newest).ThenBy(f => f.Name, StringComparer.Ordinal))
+        var ordered = eligible.GroupBy(f => f.Family.Id, StringComparer.Ordinal)
+            .SelectMany(group => group.OrderByDescending(f => f.Bytes).ThenBy(f => f.Newest)
+                .ThenBy(f => f.Name, StringComparer.Ordinal).Select((facts, round) => (facts, round)))
+            .OrderBy(item => item.round).ThenByDescending(item => item.facts.Bytes)
+            .ThenBy(item => item.facts.Newest).ThenBy(item => item.facts.Name, StringComparer.Ordinal);
+        foreach (var (facts, _) in ordered)
         {
             ct.ThrowIfCancellationRequested();
             if (Stopwatch.GetElapsedTime(started) > _limits.TimeBudget)
@@ -299,9 +310,8 @@ public sealed class RunnerTempSweep
                 Keep(Candidate(facts, TempSweepCodes.Kept, TempSweepCodes.TickBudget));
                 continue;
             }
-            if (bounded || acted.Count >= maxEntries || removedBytes + facts.Bytes > maxBytes)
+            if (acted.Count >= maxEntries || facts.Bytes > maxBytes - removedBytes)
             {
-                bounded = true;
                 Keep(Candidate(facts, TempSweepCodes.Kept, TempSweepCodes.TickBound));
                 continue;
             }
@@ -362,6 +372,8 @@ public sealed class RunnerTempSweep
     /// <summary>The reported prefix: hex and digit runs folded, then each control character escaped as <c>\xNN</c>.</summary>
     internal static string Normalize(string name)
     {
+        if (RandomName.IsMatch(name))
+            return name.StartsWith("MSBuildTemp", StringComparison.Ordinal) ? "MSBuildTemp<random>" : "<random>";
         var value = DigitRun.Replace(HexRun.Replace(name, "<hex>"), "<n>");
         if (HasControl(value))
             value = string.Concat(value.Select(c => char.IsControl(c) ? "\\x" + ((int)c).ToString("x2", System.Globalization.CultureInfo.InvariantCulture) : c.ToString()));
