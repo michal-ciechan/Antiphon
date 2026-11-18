@@ -12,8 +12,10 @@ using Microsoft.Extensions.Options;
 namespace Antiphon.Server.Infrastructure.HostLoad;
 
 /// <summary>Observes durable event snapshots; notification loss and process restart do not lose work.</summary>
-public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoadHistorySettings> settings, TimeProvider time)
+public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoadHistorySettings> settings, TimeProvider time,
+    HostLoadRunnerKeys? keys = null)
 {
+    private readonly HostLoadRunnerKeys _keys = keys ?? HostLoadRunnerKeys.Default;
     public async Task<int> ReconcileAsync(CancellationToken ct)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -70,7 +72,7 @@ public sealed class HostLoadTaskWindowObserver(AppDbContext db, IOptions<HostLoa
 
     private HostLoadBinding? ResolveHost(string runner, DateTimeOffset at)
     {
-        var matches = settings.Value.Bindings.Where(b => HostLoadCounterCache.Canonical(b.RunnerId) == HostLoadCounterCache.Canonical(runner)
+        var matches = settings.Value.Bindings.Where(b => _keys.Canonical(b.RunnerId) == _keys.Canonical(runner)
             && b.Primary && at >= b.From && (b.To is null || at < b.To)).ToArray();
         return matches.Length == 1 ? matches[0] : null;
     }

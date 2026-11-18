@@ -19,8 +19,9 @@ namespace Antiphon.Server.Infrastructure.HostLoad;
 
 public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirectory directory,
     IOptions<HostLoadHistorySettings> settings, IHostLoadCapacityReader capacity, HostLoadRecommendation recommendation,
-    HostLoadShadowCache shadows, TimeProvider time)
+    HostLoadShadowCache shadows, TimeProvider time, HostLoadRunnerKeys? keys = null)
 {
+    private readonly HostLoadRunnerKeys _keys = keys ?? HostLoadRunnerKeys.Default;
     private sealed record Cursor(string Query, string Snapshot, long MaxId, DateTimeOffset At, long Id);
     public async Task<HostLoadCurrentDto> CurrentAsync(string hostId, Guid? projectId, AgentTaskRole? role, CancellationToken ct)
     {
@@ -168,13 +169,13 @@ public sealed class HostLoadHistoryService(AppDbContext db, ISessionRunnerDirect
 
     private string Known(string host)
     {
-        var canonical = HostLoadCounterCache.Canonical(host);
-        if (!directory.KnownRunnerIds.Select(HostLoadCounterCache.Canonical).Contains(canonical, StringComparer.Ordinal)) throw new NotFoundException("Host", host);
+        var canonical = _keys.Canonical(host);
+        if (!directory.KnownRunnerIds.Select(_keys.Canonical).Contains(canonical, StringComparer.Ordinal)) throw new NotFoundException("Host", host);
         return canonical;
     }
     private HostLoadBinding? Binding(string runner, DateTimeOffset at)
     {
-        var bindings = settings.Value.Bindings.Where(b => HostLoadCounterCache.Canonical(b.RunnerId) == runner
+        var bindings = settings.Value.Bindings.Where(b => _keys.Canonical(b.RunnerId) == runner
             && at >= b.From && (b.To is null || at < b.To)).ToArray();
         return bindings.Length == 1 ? bindings[0] : null;
     }

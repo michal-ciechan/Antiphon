@@ -69,6 +69,7 @@ public sealed class AgentTaskPipelineStatusService
     private readonly PhoneHomeRunnerDirectory? _directory;
     private readonly RunnerDefaultSettingsService? _runnerDefaults;
     private readonly HostLoadShadowCache? _hostLoad;
+    private readonly HostLoadRunnerKeys _runnerKeys;
 
     public AgentTaskPipelineStatusService(
         AppDbContext db,
@@ -92,8 +93,7 @@ public sealed class AgentTaskPipelineStatusService
         _directory = directory;
         _runnerDefaults = runnerDefaults;
         _hostLoad = hostLoad;
-        // Accepted so a caller can name the direct key. The projection still reads the desktop literal.
-        _ = runnerKeys;
+        _runnerKeys = runnerKeys ?? HostLoadRunnerKeys.Default;
     }
 
     public Task<AgentTaskPipelineDto> GetAsync(CancellationToken ct) =>
@@ -288,7 +288,7 @@ public sealed class AgentTaskPipelineStatusService
                 .Select(h => new HostLimitSummaryDto(h.HostId,
                     h.HostId == "local" ? localInFlight : remoteOccupancy.GetValueOrDefault(h.HostId),
                     h.Effective, h.Configured, h.Declared, h.Source)
-                { Scope = "fleet", Load = _hostLoad?.Get(h.HostId == "local" ? "desktop" : h.HostId) }).ToArray(),
+                { Scope = "fleet", Load = _hostLoad?.Get(_runnerKeys.Canonical(h.HostId)) }).ToArray(),
             TaskScope = scope.Kind switch
             {
                 PipelineScopeKind.Project => "project",
@@ -297,7 +297,7 @@ public sealed class AgentTaskPipelineStatusService
             },
             HostSummaryScope = "fleet",
             ConcurrencyScopes = ProjectScopes(policies, policyScopes, open),
-            Runners = runners.Select(r => r with { Load = _hostLoad?.Get(r.RunnerId) }).ToArray(),
+            Runners = runners.Select(r => r with { Load = _hostLoad?.Get(_runnerKeys.Canonical(r.RunnerId)) }).ToArray(),
             RunnerDefaults = defaults,
         };
     }
