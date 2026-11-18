@@ -69,7 +69,7 @@ param(
     [string]$VerificationProbe = '',
     [string]$ProbeSourceContainer = '',
     [string]$ProbeTargetContainer = '',
-    # CARD-1980: the witness passes a per-table bound. The fingerprint does not apply it yet.
+    # CARD-1980: per-table bound for the gate 6 content fingerprint. 1200 seconds is 20 minutes.
     [ValidateRange(1, 7200)]
     [int]$ContentStatementTimeoutSeconds = 1200
 )
@@ -556,31 +556,48 @@ function Test-CutoverProbeContainerName {
     return $true
 }
 
-function Invoke-CutoverPsql {
+function Get-CutoverSessionOptions {
+    # CARD-1982: the same session on both sides. A restore target with different defaults must not false-mismatch.
+    return '-c TimeZone=UTC -c extra_float_digits=1 -c bytea_output=hex -c IntervalStyle=postgres -c DateStyle=ISO'
+}
+
+function Invoke-CutoverPsqlOutcome {
     param([string]$Target, [string]$Sql)
+    $empty = [pscustomobject]@{ Text = $null; TimedOut = $false }
     $dir = $DumpDirectory
     if ($script:CutoverProbeActive) { $dir = $script:CutoverProbeDump }
-    if ([string]::IsNullOrWhiteSpace($dir)) { return $null }
+    if ([string]::IsNullOrWhiteSpace($dir)) { return $empty }
     $file = Join-Path $dir ('cutover-query-' + [guid]::NewGuid().ToString('N') + '.sql')
     Set-Content -LiteralPath $file -Value $Sql -Encoding ascii
+    $options = Get-CutoverSessionOptions
     try {
         if ($script:CutoverProbeActive) {
             $container = ''
             if ($Target -eq 'source') { $container = $script:CutoverProbeSource }
             elseif ($Target -eq 'target') { $container = $script:CutoverProbeTarget }
-            if (-not (Test-CutoverProbeContainerName $container)) { return $null }
-            $raw = Get-Content -LiteralPath $file -Raw | & docker exec -i $container psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
+            if (-not (Test-CutoverProbeContainerName $container)) { return $empty }
+            $raw = Get-Content -LiteralPath $file -Raw | & docker exec -e ('PGOPTIONS=' + $options) -i $container psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
         } elseif ($Target -eq 'source') {
-            $raw = Get-Content -LiteralPath $file -Raw | & docker exec -i antiphon-postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
+            $raw = Get-Content -LiteralPath $file -Raw | & docker exec -e ('PGOPTIONS=' + $options) -i antiphon-postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1 2>&1 | Out-String
         } else {
-            $remote = "cd '$Server2ComposeDir' && docker compose -p antiphon-server2-postgres exec -T postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1"
+            $remote = "cd '$Server2ComposeDir' && docker compose -p antiphon-server2-postgres exec -T -e PGOPTIONS='$options' postgres psql -U antiphon -d antiphon -At -v ON_ERROR_STOP=1"
             $raw = Get-Content -LiteralPath $file -Raw | & ssh $Server2SshHost $remote 2>&1 | Out-String
         }
-        if ($LASTEXITCODE -ne 0) { return $null }
-        return $raw.Trim()
+        $text = ''
+        if ($null -ne $raw) { $text = [string]$raw }
+        $timedOut = $false
+        if ($LASTEXITCODE -ne 0 -and $text.IndexOf('statement timeout', [System.StringComparison]::Ordinal) -ge 0) { $timedOut = $true }
+        if ($LASTEXITCODE -ne 0) { return [pscustomobject]@{ Text = $null; TimedOut = $timedOut } }
+        return [pscustomobject]@{ Text = $text.Trim(); TimedOut = $false }
     } finally {
         Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Invoke-CutoverPsql {
+    param([string]$Target, [string]$Sql)
+    $outcome = Invoke-CutoverPsqlOutcome -Target $Target -Sql $Sql
+    return $outcome.Text
 }
 
 function Get-CutoverSha256Text {
@@ -701,7 +718,8 @@ function Invoke-CutoverVerifyKeys {
         if ([string]::IsNullOrWhiteSpace($key) -or $key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
             Fail-Cutover ('REFUSED: phase 3 primary key missing for ' + $table + '. Row text was not printed.')
         }
-        $probe = 'SELECT count(*)::text || '' '' || min("' + $key + '")::text || '' '' || max("' + $key + '")::text FROM "' + $table + '"'
+        # Cast before the aggregate. PostgreSQL 16 has no min or max for uuid, json, or jsonb (CARD-1979).
+        $probe = 'SELECT count(*)::text || '' '' || min(("' + $key + '")::text) || '' '' || max(("' + $key + '")::text) FROM "' + $table + '"'
         Assert-CutoverEqual -Label ('key ' + $table) -SourceText (Invoke-CutoverPsql -Target source -Sql $probe) -TargetText (Invoke-CutoverPsql -Target target -Sql $probe)
     }
 }
@@ -713,13 +731,40 @@ function Get-CutoverContentFingerprintSql {
     return 'SELECT count(*)::text || '' '' || COALESCE(md5(string_agg(md5(row_to_json(t)::text), '''' ORDER BY md5(row_to_json(t)::text))), md5('''')) FROM ' + $Ident + ' t'
 }
 
+function Get-CutoverStatementTimeoutSql {
+    $seconds = [int]$ContentStatementTimeoutSeconds
+    return "SET statement_timeout TO '" + $seconds.ToString([System.Globalization.CultureInfo]::InvariantCulture) + "s';"
+}
+
+function Remove-CutoverSetTags {
+    param([string]$Text)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $rows = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "`n")) {
+        $item = $line.Trim().Trim("`r")
+        if ($item -eq 'SET') { continue }
+        if ($item.Length -eq 0) { continue }
+        [void]$rows.Add($item)
+    }
+    return [string]::Join("`n", [string[]]$rows.ToArray())
+}
+
 function Get-CutoverContentFingerprint {
     param([string]$Target, [string]$Ident)
     $fpSql = Get-CutoverContentFingerprintSql -Ident $Ident
     if ($null -eq $fpSql) { return $null }
-    $fp = Invoke-CutoverPsql -Target $Target -Sql $fpSql
-    if ($null -eq $fp) { return $null }
-    return $fp.Trim()
+    $bounded = (Get-CutoverStatementTimeoutSql) + "`n" + $fpSql
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $outcome = Invoke-CutoverPsqlOutcome -Target $Target -Sql $bounded
+    $watch.Stop()
+    $elapsed = $watch.Elapsed.TotalSeconds.ToString('0.000', [System.Globalization.CultureInfo]::InvariantCulture)
+    if ($outcome.TimedOut) {
+        Fail-Cutover ('REFUSED: stop gate 6: content fingerprint timed out for ' + $Ident + ' after ' + $elapsed + 's. Neither data directory is removed.')
+    }
+    if ($null -eq $outcome.Text) { return $null }
+    $text = (Remove-CutoverSetTags $outcome.Text).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    return $text
 }
 
 function Test-CutoverNewHasExtraRows {
