@@ -38,6 +38,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     public SaveChangesInterceptor? LandCutInterceptor { get; set; }
     /// <summary>CARD-0672: the land service's delegation settings (the yield budget among them).</summary>
     public DelegationSettings LandSettings { get; set; } = new();
+    /// <summary>The land service's Git settings, read per land; the default is the product's (5 s sibling inspection).</summary>
+    public GitSettings LandGitSettings { get; set; } = new();
     public Microsoft.Extensions.Logging.ILogger<AgentTaskLandService> Logger { get; set; } = NullLogger<AgentTaskLandService>.Instance;
 
     public async Task InitializeAsync(bool reversibleTip = false)
@@ -332,7 +334,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), GitOverride ?? Fixture.Git, Boundary,
-            gitSettings: Options.Create(new GitSettings()),
+            gitSettings: Options.Create(LandGitSettings),
             leaseWaiters: Services.GetService<RepositoryLeaseWaiters>());
     }
 

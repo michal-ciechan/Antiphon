@@ -251,6 +251,8 @@ internal sealed class LandingGitFixture : IAsyncDisposable
         }
         public Func<IReadOnlyList<string>, Task>? BeforeObservedCommand { get; set; }
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? BeforeCommand { get; set; }
+        /// <summary>Runs before <see cref="BeforeCommand"/> in <see cref="RunAsync(string, IReadOnlyList{string}, CancellationToken)"/> with the caller's token.</summary>
+        public Func<string, IReadOnlyList<string>, CancellationToken, Task>? BeforeCommandAsync { get; set; }
         public Func<string, IReadOnlyList<string>, LandingGitResult, Task>? AfterCommand { get; set; }
         public Func<string, Task>? BeforeUnregister { get; set; }
         public Func<string, Task>? AfterUnregister { get; set; }
@@ -332,6 +334,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
             }
             Trace.Add(arguments.ToArray());
             Commands.Add((repository, arguments.ToArray()));
+            if (BeforeCommandAsync is not null) await BeforeCommandAsync(repository, arguments, ct);
             if (BeforeCommand is not null && await BeforeCommand(repository, arguments) is { } injected) return injected;
             if (BeforeObservedCommand is not null) await BeforeObservedCommand(arguments);
             LandingEvidence.Write(taskId, "git_start", new { repository, arguments });
