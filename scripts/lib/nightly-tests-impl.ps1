@@ -1839,6 +1839,7 @@ function Invoke-AntiphonNightlyTests {
     $reasons = @()
     $expectedSkipWarnings = @()
     $expectedSkipRoster = @()
+    $expectedSkipScan = $null
     $toleratedSkipRows = @()
     $harnessHangReason = ''
     $nativeActiveMax = 0
@@ -2113,6 +2114,8 @@ function Invoke-AntiphonNightlyTests {
             $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
             if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
                 $expectedSkipRoster = @(Get-NightlyExpectedSkipRoster -Path $rosterFile)
+                # The end-of-run skip scans read only tests/ and the roster: they run while the chunks do.
+                $expectedSkipScan = Start-NightlyExpectedSkipScan -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster
             }
             . Invoke-NightlyDispatchCoordinator -DispatchSuites $selectedSuites -DispatchHistory $dispatchInput.History -DispatchHistoryDigest $dispatchInput.Digest -DispatchPreviousRun $dispatchInput.PreviousRun -DispatchFallbackReason $dispatchInput.FallbackReason
 
@@ -2150,15 +2153,15 @@ function Invoke-AntiphonNightlyTests {
     $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
     $testsProject = Join-Path $RepoRoot (Join-Path 'tests' 'Antiphon.Tests')
     if ((Test-Path -LiteralPath $rosterFile -PathType Leaf) -and (Test-Path -LiteralPath $testsProject -PathType Container) -and @($expectedSkipRoster).Count -gt 0) {
-        foreach ($gap in @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster)) {
+        foreach ($gap in @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster -Scan $expectedSkipScan)) {
             $gapWarning = 'stale-roster:' + [string]$gap
             if ($expectedSkipWarnings -notcontains $gapWarning) { $expectedSkipWarnings += $gapWarning }
         }
-        foreach ($reasonGap in @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster)) {
+        foreach ($reasonGap in @(Get-NightlyExpectedSkipReasonGaps -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster -Scan $expectedSkipScan)) {
             $reasonWarning = 'skip-reason:' + [string]$reasonGap
             if ($expectedSkipWarnings -notcontains $reasonWarning) { $expectedSkipWarnings += $reasonWarning }
         }
-        $rosterDrift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $RepoRoot -Entries $expectedSkipRoster
+        $rosterDrift = Get-NightlyExpectedSkipRosterDrift -RepoRoot $RepoRoot -Entries $expectedSkipRoster -Scan $expectedSkipScan
         foreach ($driftId in @($rosterDrift.Mismatches)) {
             $driftText = [string]$driftId
             if ([string]::IsNullOrWhiteSpace($driftText)) { continue }
@@ -2166,6 +2169,9 @@ function Invoke-AntiphonNightlyTests {
             if ($expectedSkipWarnings -notcontains $driftWarning) { $expectedSkipWarnings += $driftWarning }
         }
     }
+    # A scan whose results were not wanted (the condition above is false) is still waited for here; one left by
+    # an exception before this point never faults and is waited for by the next scan or in-line walk.
+    if ($null -ne $expectedSkipScan) { Wait-NightlyExpectedSkipScan -Task $expectedSkipScan.Task }
 
     $coverageScope = 'Full'
     if ($Profile -eq 'rc' -and $platform -eq 'linux') {

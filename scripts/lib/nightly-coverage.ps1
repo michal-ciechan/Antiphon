@@ -1796,9 +1796,79 @@ function Get-NightlyReachableSkipTexts {
     return $texts.ToArray()
 }
 
+# The three end-of-run expected-skip scans (source gaps, reason gaps, roster drift) read only tests/ and the
+# roster, never a chunk result. A nightly run starts them in the core (SkipScanTask.cs) as soon as the roster is
+# loaded and passes the scan to each function at the end of the run (-Scan); the first one waits for it (the
+# join). A stage the task did not finish runs its in-line body below, at its own place, so its error and the
+# warnings before it are the in-line ones. $null (no core, or no compiled method index): every function runs in
+# line. Nothing is kept across runs; the scan object lives in the run's own variable.
+function Start-NightlyExpectedSkipScan {
+    param([string]$RepoRoot, [string]$Platform, $Entries)
+    Wait-NightlyExpectedSkipScan -Task $script:NightlyExpectedSkipScanPending
+    try {
+        if (-not (Test-NightlyCoreAvailable)) { return $null }
+        $testsRoot = Join-Path $RepoRoot 'tests'
+        if (-not [System.IO.Path]::IsPathFullyQualified($testsRoot)) { return $null }
+        # Get-NightlyReachableSkipTexts' decision, taken here instead of at its first call: same core, same path.
+        $index = Initialize-NightlyCsMethodIndex -RepoRoot $RepoRoot
+        if (-not $index.NativeDecided) {
+            $index.NativeDecided = $true
+            $index.Native = New-Object Antiphon.Nightly.NightlyCsMethodIndex -ArgumentList $testsRoot
+        }
+        if ($null -eq $index.Native) { return $null }
+        $platforms = [System.Collections.Generic.List[string]]::new()
+        $tests = [System.Collections.Generic.List[string]]::new()
+        $prefixes = [System.Collections.Generic.List[string]]::new()
+        foreach ($entry in @($Entries)) {
+            if ($null -eq $entry) { continue }
+            $platforms.Add([string]$entry.platform)
+            $tests.Add([string]$entry.test)
+            $prefixes.Add([string]$entry.reasonPrefix)
+        }
+        $foldKnown = -1
+        if ($null -ne $script:NightlyLiveClaudeRefusalFolds -and $script:NightlyLiveClaudeRefusalRoot -eq $RepoRoot) {
+            $foldKnown = $(if ([bool]$script:NightlyLiveClaudeRefusalFolds) { 1 } else { 0 })
+        }
+        $foldPath = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Shared' (Join-Path 'LiveClaude' 'LiveClaudeLaunchContext.cs')))
+        $driftPath = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.Tests' (Join-Path 'Scripts' 'WindowsUnitSkipRoster.cs')))
+        $task = [Antiphon.Nightly.NightlySkipScanTask]::Start($testsRoot, $driftPath, $foldPath, $foldKnown, $index.Native, $Platform, $platforms.ToArray(), $tests.ToArray(), $prefixes.ToArray())
+        $script:NightlyExpectedSkipScanPending = $task
+        return [pscustomobject]@{ Task = $task; RepoRoot = $RepoRoot; Platform = $Platform; Entries = $Entries }
+    } catch {
+        return $null
+    }
+}
+
+# Waits for a started scan (it never throws: a stage's exception stays on the task for the in-line rerun).
+function Wait-NightlyExpectedSkipScan {
+    param($Task)
+    if ($null -eq $Task) { return }
+    $Task.Join()
+    if ([object]::ReferenceEquals($script:NightlyExpectedSkipScanPending, $Task)) { $script:NightlyExpectedSkipScanPending = $null }
+}
+
+# The finished scan when it was started for these arguments, else $null. Also waits for a scan an earlier run
+# never joined, so no scan still uses the compiled method index when an in-line body does.
+function Receive-NightlyExpectedSkipScan {
+    param($Scan, [string]$RepoRoot, $Platform, $Entries, [switch]$AnyPlatform)
+    Wait-NightlyExpectedSkipScan -Task $script:NightlyExpectedSkipScanPending
+    if ($null -eq $Scan) { return $null }
+    Wait-NightlyExpectedSkipScan -Task $Scan.Task
+    if ([string]$Scan.RepoRoot -cne $RepoRoot) { return $null }
+    if (-not $AnyPlatform -and [string]$Scan.Platform -cne [string]$Platform) { return $null }
+    if (-not [object]::ReferenceEquals($Scan.Entries, $Entries)) { return $null }
+    return $Scan.Task
+}
+
 function Get-NightlyExpectedSkipReasonGaps {
     # The named method's reachable skip text must equal reasonPrefix. Existence stays on Get-NightlyExpectedSkipSourceGaps.
-    param([string]$RepoRoot, [string]$Platform, $Entries = $null)
+    param([string]$RepoRoot, [string]$Platform, $Entries = $null, $Scan = $null)
+    $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Platform $Platform -Entries $Entries
+    if ($null -ne $scanned) {
+        if ($scanned.ReasonGapsDone) { return $scanned.ReasonGaps }
+        # The task stopped part way through the method index: the in-line walk starts from a fresh one.
+        $script:NightlyCsMethodIndex = $null
+    }
     if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
     $gaps = New-Object System.Collections.Generic.List[string]
     foreach ($entry in @($Entries)) {
@@ -1817,7 +1887,14 @@ function Get-NightlyExpectedSkipReasonGaps {
 }
 
 function Get-NightlyExpectedSkipRosterDrift {
-    param([string]$RepoRoot, $Entries)
+    param([string]$RepoRoot, $Entries, $Scan = $null)
+    $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Entries $Entries -AnyPlatform
+    if ($null -ne $scanned -and $scanned.DriftDone) {
+        return [pscustomobject]@{
+            Overlap = $scanned.DriftOverlap
+            Mismatches = $scanned.DriftMismatches
+        }
+    }
     $path = Join-Path $RepoRoot (Join-Path 'tests' (Join-Path 'Antiphon.Tests' (Join-Path 'Scripts' 'WindowsUnitSkipRoster.cs')))
     $reasonsById = @{}
     if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -1838,7 +1915,7 @@ function Get-NightlyExpectedSkipRosterDrift {
                 $reason = ConvertFrom-NightlyCsStringLiteral -Raw $match.Groups[5].Value
             }
             if (-not $reasonsById.ContainsKey($id)) {
-                $reasonsById[$id] = New-Object System.Collections.Generic.List[string]
+                $reasonsById[$id] = [System.Collections.Generic.List[string]]::new()
             }
             [void]$reasonsById[$id].Add($reason)
         }
@@ -1868,7 +1945,9 @@ function Get-NightlyExpectedSkipRosterDrift {
 
 function Get-NightlyExpectedSkipSourceGaps {
     # A roster test whose class or method is absent from tests/. Not a coverage failure.
-    param([string]$RepoRoot, [string]$Platform, $Entries = $null)
+    param([string]$RepoRoot, [string]$Platform, $Entries = $null, $Scan = $null)
+    $scanned = Receive-NightlyExpectedSkipScan -Scan $Scan -RepoRoot $RepoRoot -Platform $Platform -Entries $Entries
+    if ($null -ne $scanned -and $scanned.SourceGapsDone) { return @($scanned.SourceGaps) }
     if ($null -eq $Entries) { $Entries = @(Get-NightlyExpectedSkipRoster) }
     $wanted = @()
     foreach ($entry in @($Entries)) {
