@@ -1015,7 +1015,10 @@ public sealed class HostJqPrerequisiteScriptTests
         }
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    // CARD-1984 round 2: runs alone. Its "all" shape runs five phases in one wrapper pwsh, which took
+    // 17.4 s with no wide-lane sibling against C1008WrapperFixture's 30 s deadline, and exceeded that
+    // deadline beside six wide-lane HostJq siblings at host load 22.
+    [Test, ParallelLimiter<ProcessSpawnLimit>, NotInParallel]
     public async Task C1025_Preflight_is_fresh_for_each_entry()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
