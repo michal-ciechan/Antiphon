@@ -2073,10 +2073,12 @@ function Test-PlainOneDriveLink {
         $child = Join-Path (Join-Path $sync 'Backups') 'antiphon-postgres'
         $outside = Join-Path $case 'outside'
         New-Item -ItemType Directory -Path $child, $outside -Force | Out-Null
-        $target = Join-Path $outside 'escaped.dump'
-        Set-Content -LiteralPath $target -Value 'OUTSIDE-DUMP' -Encoding ASCII
+        # postgres-snapshot.ps1 is dot-sourced above, so $Target is its
+        # ValidateSet parameter; this path needs a name of its own.
+        $escapedDump = Join-Path $outside 'escaped.dump'
+        Set-Content -LiteralPath $escapedDump -Value 'OUTSIDE-DUMP' -Encoding ASCII
         $dumpLink = Join-Path $child 'antiphon-20261101T000000Z.dump'
-        New-Item -ItemType SymbolicLink -Path $dumpLink -Target $target | Out-Null
+        New-Item -ItemType SymbolicLink -Path $dumpLink -Target $escapedDump | Out-Null
         foreach ($day in 2..8) {
             $name = 'antiphon-202611{0:d2}T000000Z.dump' -f $day
             Set-Content -LiteralPath (Join-Path $child $name) -Value ('old' + $day) -Encoding ASCII
@@ -2088,7 +2090,7 @@ function Test-PlainOneDriveLink {
         Assert-PlainLinkRefused $result $before $after 'symlinked dump file' $localFile
         Assert-True (Test-Path -LiteralPath $dumpLink) 'symlinked dump file remains' $dumpLink
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $child $localName))) 'symlinked dump writes no new cloud file' $child
-        Assert-True ((Get-Content -LiteralPath $target -Raw) -match 'OUTSIDE-DUMP') 'symlinked dump leaves the outside bytes' $target
+        Assert-True ((Get-Content -LiteralPath $escapedDump -Raw) -match 'OUTSIDE-DUMP') 'symlinked dump leaves the outside bytes' $escapedDump
     } finally {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
