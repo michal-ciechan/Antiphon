@@ -1169,8 +1169,9 @@ public sealed class RemoteWorkspacePreparerTests
             new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
         public ServiceProvider Provider { get; private set; } = null!;
         public RecordingLaunchSink Sink { get; } = new();
-        public string WorkspacePath { get; } =
-            Directory.CreateTempSubdirectory("antiphon-remote-prep-ws").FullName;
+        public string WorkspacePath { get; private set; } = "";
+        private string? _worktreeBase;
+        private int _disposed;
         public string RunnerId => Host.AllowedRunnerId;
         public DateTime Now => Clock.GetUtcNow().UtcDateTime;
         public RemoteWorkspacePreparer Preparer => Provider.GetRequiredService<RemoteWorkspacePreparer>();
@@ -1187,6 +1188,9 @@ public sealed class RemoteWorkspacePreparerTests
             Action<IServiceCollection>? configureHost = null)
         {
             var rig = new Rig { _tweak = tweak, _recovered = recovered, _configure = configure, _runnerSettings = runnerSettings };
+            try
+            {
+            rig.WorkspacePath = Directory.CreateTempSubdirectory("antiphon-remote-prep-ws").FullName;
             if (transport is not null) rig.Clock = transport.Clock;
             rig._ownsTransport = transport is null;
             rig.Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -1200,6 +1204,12 @@ public sealed class RemoteWorkspacePreparerTests
                 rig.Host.Directory.MarkRecovered(rig.Live);
             rig.Provider = rig.BuildProvider();
             return rig;
+            }
+            catch
+            {
+                await rig.DisposeAsync();
+                throw;
+            }
         }
 
         public AppDbContext NewDb() =>
@@ -1408,9 +1418,10 @@ public sealed class RemoteWorkspacePreparerTests
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
             services.AddSingleton<DelegationWorkspaceResolver>();
+            _worktreeBase = Path.Combine(Path.GetTempPath(), $"antiphon-remote-prep-{Guid.NewGuid():N}");
             services.AddDelegationWorktreeGraph(new GitSettings
             {
-                WorktreeBasePath = Path.Combine(Path.GetTempPath(), $"antiphon-remote-prep-{Guid.NewGuid():N}"),
+                WorktreeBasePath = _worktreeBase,
             });
             services.AddSingleton<IRepositoryMutationLease>(Lease);
             var runnerSettings = new PhoneHomeRunnerSettings
@@ -1435,16 +1446,46 @@ public sealed class RemoteWorkspacePreparerTests
 
         public async ValueTask DisposeAsync()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
             foreach (var scope in _scopes)
                 scope.Dispose();
-            await Provider.DisposeAsync();
+            if (Provider is not null)
+                await Provider.DisposeAsync();
             if (_ownsTransport)
             {
-                await Peer.DisposeAsync();
-                await Host.DisposeAsync();
+                if (Peer is not null)
+                    await Peer.DisposeAsync();
+                if (Host is not null)
+                    await Host.DisposeAsync();
             }
-            await Schema.DisposeAsync();
-            try { Directory.Delete(WorkspacePath, recursive: true); } catch (IOException) { }
+            if (Schema is not null)
+                await Schema.DisposeAsync();
+            TryDeleteOwned(WorkspacePath, "antiphon-remote-prep-ws");
+            if (_worktreeBase is not null)
+                TryDeleteOwned(_worktreeBase, "antiphon-remote-prep-");
+        }
+
+        private static void TryDeleteOwned(string path, string prefix)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+                    return;
+                var full = Path.GetFullPath(path);
+                var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+                var name = Path.GetFileName(full);
+                if (!string.Equals(Path.GetDirectoryName(full), temp, StringComparison.Ordinal)
+                    || !name.StartsWith(prefix, StringComparison.Ordinal))
+                    return;
+                Directory.Delete(full, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
     }
 

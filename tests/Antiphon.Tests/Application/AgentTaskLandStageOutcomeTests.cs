@@ -833,11 +833,10 @@ public class AgentTaskLandStageOutcomeTests
 
     private sealed class TemporaryDirectory : IDisposable
     {
-        public string Path { get; } = Directory.CreateTempSubdirectory().FullName;
+        public string Path { get; }
 
         public TemporaryDirectory(string prefix)
         {
-            Directory.Delete(Path);
             Path = Directory.CreateTempSubdirectory(prefix).FullName;
         }
 
