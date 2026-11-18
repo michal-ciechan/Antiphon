@@ -734,20 +734,35 @@ internal sealed class BridgeQueueHarness : IAsyncDisposable
             await AfterDispose.DisposeAsync();
     }
 
-    /// <summary>CARD-1981. Deletes the harness temp root after cleanup. A throw from cleanup skips the delete.</summary>
+    /// <summary>CARD-1981. Deletes the harness temp root after cleanup, including when cleanup throws.</summary>
     internal static class TempRootCleanup
     {
         internal static async Task FinishAsync(string root, bool preserveDatabase, Func<Task> cleanup)
         {
-            await cleanup();
             try
             {
-                if (!preserveDatabase && Directory.Exists(root))
+                await cleanup();
+            }
+            finally
+            {
+                if (!preserveDatabase)
+                    TryDelete(root);
+            }
+        }
+
+        private static void TryDelete(string root)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(root) && Directory.Exists(root))
                     Directory.Delete(root, recursive: true);
             }
-            catch
+            catch (IOException)
             {
-                // Best-effort.
+                // Best-effort. A cleanup exception must still propagate.
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
     }

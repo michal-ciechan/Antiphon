@@ -3,8 +3,10 @@
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
-if (-not $ResultsDirectory) { $ResultsDirectory = Join-Path ([IO.Path]::GetTempPath()) ('rh-' + [guid]::NewGuid().ToString('N')) }
+$ownedResults = [string]::IsNullOrWhiteSpace($ResultsDirectory)
+if ($ownedResults) { $ResultsDirectory = Join-Path ([IO.Path]::GetTempPath()) ('rh-' + [guid]::NewGuid().ToString('N')) }
 [void][IO.Directory]::CreateDirectory($ResultsDirectory)
+try {
 $script:Errors = [Collections.Generic.List[string]]::new()
 function Note([bool]$Ok, [string]$Detail) { if (-not $Ok) { $script:Errors.Add($Detail) } }
 function New-Root([string]$Prefix) {
@@ -135,3 +137,6 @@ try {
     Assert-C487 ($script:Errors.Count -eq 0) ('RH ' + $Case + '.contract') ($script:Errors -join '; ')
 } catch { Assert-C487 $false ('RH ' + $Case + '.contract') $_.Exception.Message }
 Complete-C487Harness -ResultsDirectory $ResultsDirectory -ExpectedRows 1
+} finally {
+    if ($ownedResults) { Remove-Item -LiteralPath $ResultsDirectory -Recurse -Force -ErrorAction SilentlyContinue }
+}

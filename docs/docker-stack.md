@@ -1290,7 +1290,14 @@ must be absent. A workspace-slot owner remains protected while that slot exists,
 Only standalone clones with the runner's exact live origin are eligible: linked worktrees, unknown
 content, dirty/untracked work, hidden index flags, unpublished local/ref-log commits and audit failures
 are kept. Existing scratch worktrees need their owning repository's sanctioned removal path.
-Neither family is enabled by this change. Unregistered six-character random names, MSBuild random
+`scripts/remove-review-scratch.ps1 -Root <container> -TempRoot <temp>` removes one container
+that script created: the name, the temp parent and `.antiphon-scratch-owner` are required, and
+a child git worktree is removed with `git worktree remove` and never `--force`. A failed
+worktree remove leaves the container. CARD-1981 also registers the test producers `c459`,
+`c487-tw`, `c487-reg`, `antiphon-c448`, `antiphon-c1150`, `antiphon-remote-prep-ws`, `rh` and
+`antiphon-owned`. Until `TempSweep:Enabled` is turned on, orchestrator routine checks use the
+existing `WorkspaceDiskLow` attention row (85 percent, CARD-1794) as the disk-usage alarm.
+The review-clone and session-ansi families stay disabled. Unregistered six-character random names, MSBuild random
 names and decimal process IDs aggregate into stable prefix rows; this changes reporting only.
 
 Rows: Lane `RunnerTemp` in the tick's residue run (`Scope=runner-retention:server2`): one per family entry
