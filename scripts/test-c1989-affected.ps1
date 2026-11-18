@@ -32,8 +32,16 @@ if($binding.source -cne $sha -or $binding.assembly -cne (Get-FileHash $dll).Hash
 $results=Join-Path $root ([guid]::NewGuid().ToString('N'))
 Wait-Load
 $filter='/*/*/'+$Class+'/'+$Method
-& dotnet run --project tests/Antiphon.Tests --no-build -p:UseAppHost=false -- --timeout 570s --treenode-filter $filter --report-trx --report-trx-filename run.trx --results-directory $results
-$code=$LASTEXITCODE
+# Pass the slash/star selector literally. PowerShell's Unix native wildcard
+# expansion can traverse the filesystem before it ever starts dotnet.
+$start=[Diagnostics.ProcessStartInfo]::new('dotnet')
+$start.UseShellExecute=$false
+foreach($argument in @('run','--project','tests/Antiphon.Tests','--no-build','-p:UseAppHost=false','--',
+    '--timeout','570s','--treenode-filter',$filter,'--report-trx','--report-trx-filename','run.trx','--results-directory',$results)){
+    [void]$start.ArgumentList.Add($argument)
+}
+$process=[Diagnostics.Process]::Start($start)
+try{$process.WaitForExit();$code=$process.ExitCode}finally{$process.Dispose()}
 $trx=Join-Path $results 'run.trx'
 if(-not [IO.File]::Exists($trx)){throw 'fresh TRX missing'}
 [xml]$xml=Get-Content $trx -Raw
