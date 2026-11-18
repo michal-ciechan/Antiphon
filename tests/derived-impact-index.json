@@ -2083,9 +2083,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 72,
+      "classes": 73,
       "reason": "cap",
-      "owed": 47,
+      "owed": 48,
       "first": [
         "CheckpointLaunchCleanupTests",
         "PlanCoverageCensusTests",
@@ -2773,6 +2773,7 @@
         "DindRunnerContractTests",
         "DockerStackContractTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -2800,6 +2801,7 @@
         "DockerStackDocumentationTests",
         "HostJqPrerequisiteScriptTests",
         "HostStatsProbeParseTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3460,6 +3462,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3553,6 +3556,7 @@
         "ClaudeTokenRefreshOptInTests",
         "DockerStackContractTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3611,6 +3615,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3640,6 +3645,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3662,6 +3668,7 @@
         "CheckpointImportTests",
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3684,6 +3691,7 @@
     {
       "path": "scripts/fixtures/c1008-recycle-real-cases.mjs",
       "classes": [
+        "ProcessSpawnLimitTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleDockerTests"
       ]
@@ -3698,6 +3706,7 @@
         "CheckpointImportTests",
         "DockerStackDocumentationTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3756,6 +3765,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3777,6 +3787,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3804,6 +3815,7 @@
     {
       "path": "scripts/fixtures/c994-production-compose-model.mjs",
       "classes": [
+        "ProcessSpawnLimitTests",
         "RollingProductionMountTests"
       ]
     },
@@ -4009,7 +4021,8 @@
       "path": "scripts/server2-host-jq.sh",
       "classes": [
         "HostJqFixtureClosureTests",
-        "HostJqPrerequisiteScriptTests"
+        "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests"
       ]
     },
     {
@@ -4095,6 +4108,7 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -24157,7 +24171,9 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/HostJqPrerequisiteScriptTests.cs",
       "classes": [
-        "HostJqFixtureClosureTests"
+        "HostJqFixtureClosureTests",
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
       ]
     },
     {
@@ -24263,6 +24279,20 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RollingProductionMountTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleCensusChurnTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/RollingVolumeRecycleScriptTests.cs",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -24271,11 +24301,13 @@
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
         "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
+        "ScriptModelSpawnLaneTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementReceiptTests",
@@ -26202,6 +26234,17 @@
         "TaskProgressGitTests",
         "WorktreeBaseSelectionTests",
         "WorktreeResidueSweepTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/ScriptModelSpawnLimit.cs",
+      "classes": [
+        "HostJqPrerequisiteScriptTests",
+        "ProcessSpawnLimitTests",
+        "RollingProductionMountTests",
+        "RollingVolumeRecycleCensusChurnTests",
+        "RollingVolumeRecycleScriptTests",
+        "ScriptModelSpawnLaneTests"
       ]
     },
     {
