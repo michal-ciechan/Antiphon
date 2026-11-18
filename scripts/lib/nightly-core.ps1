@@ -6,8 +6,11 @@
 # process only loads it (the script tests start many PowerShell processes). Concurrent first runs take turns
 # on a lock file; the build uses its own artifacts directory, never the projects' obj folders. Windows
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
-# SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off: callers then keep their PowerShell
-# implementation, which returns the same values.
+# SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
+# (Assert-NightlyCoreAvailable: nightly-core-required). Only what such a process still runs keeps a PowerShell
+# path that returns the same values: nightly-run.ps1 and release-cut.ps1 under Windows PowerShell 5.1 and the
+# release selection worker in a script copy (ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256,
+# Get-NightlyParentProcess, Read-NightlyJsonFile, Read-NightlyTrxIdentities).
 
 function Get-NightlyCoreBuildIdentity {
     $projects = @(
@@ -26,7 +29,7 @@ function Get-NightlyCoreBuildIdentity {
                 $files.Add($rel)
             }
             # A project file without its source (a fixture's census copy of every .csproj) cannot build:
-            # use the PowerShell fallback without trying, instead of failing a build in every process.
+            # no core, without trying, instead of failing a build in every process.
             if (@($files | Where-Object { $_.EndsWith('.cs') }).Count -eq 0) { return $null }
             $files.Sort([StringComparer]::Ordinal)
             foreach ($rel in $files) {
@@ -173,13 +176,12 @@ function Read-NightlyJsonFile([string]$Path, [switch]$StripBom, [string[]]$Omit)
 }
 
 # "$Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8", streamed to the file with
-# System.Text.Json when the core is loaded (NightlyJson.WriteFile: same content, not the same bytes - non-ASCII text
-# unescaped, shortest number forms). A value it does not write (an arbitrary .NET object, nesting past -Depth) is
-# written by ConvertTo-Json.
+# System.Text.Json (NightlyJson.WriteFile: same content, not the same bytes - non-ASCII text unescaped, shortest
+# number forms). A value it does not write (an arbitrary .NET object, nesting past -Depth) or a path that is not
+# fully qualified is written by ConvertTo-Json.
 function Write-NightlyJsonFile([string]$Path, $Value, [int]$Depth = 8) {
-    if (($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) -and [IO.Path]::IsPathFullyQualified($Path)) {
-        if ([Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { return }
-    }
+    Assert-NightlyCoreAvailable 'Write-NightlyJsonFile'
+    if ([IO.Path]::IsPathFullyQualified($Path) -and [Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { return }
     $Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8
 }
 
@@ -191,7 +193,7 @@ if ($null -eq $script:NightlyDeferEvidenceWrites) { $script:NightlyDeferEvidence
 
 function Enable-NightlyDeferredEvidenceWrites {
     if ([string]$env:ANTIPHON_NIGHTLY_DEFERRED_WRITES -ieq 'off') { return }
-    if (-not (Test-NightlyCoreAvailable)) { return }
+    Assert-NightlyCoreAvailable 'Enable-NightlyDeferredEvidenceWrites'
     [Antiphon.Nightly.EvidenceFiles]::EnableWriteBehind()
     $script:NightlyDeferEvidenceWrites = $true
 }
