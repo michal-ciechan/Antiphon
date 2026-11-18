@@ -65,10 +65,13 @@ param(
     [string]$HoldUntil,
     [string]$ApiBase = 'http://localhost:17202',
     [string]$CommandHost = 'pwsh',
-    [ValidateSet('', 'sequences', 'rollback-rows')]
+    [ValidateSet('', 'sequences', 'rollback-rows', 'keys')]
     [string]$VerificationProbe = '',
     [string]$ProbeSourceContainer = '',
-    [string]$ProbeTargetContainer = ''
+    [string]$ProbeTargetContainer = '',
+    # CARD-1980: the witness passes a per-table bound. The fingerprint does not apply it yet.
+    [ValidateRange(1, 7200)]
+    [int]$ContentStatementTimeoutSeconds = 1200
 )
 
 $ErrorActionPreference = 'Stop'
@@ -688,6 +691,10 @@ function Invoke-CutoverVerify {
     Assert-CutoverEqual -Label 'extensions' -SourceText (Invoke-CutoverPsql -Target source -Sql $ext) -TargetText (Invoke-CutoverPsql -Target target -Sql $ext)
     $mig = 'SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY 1'
     Assert-CutoverEqual -Label 'migrations' -SourceText (Invoke-CutoverPsql -Target source -Sql $mig) -TargetText (Invoke-CutoverPsql -Target target -Sql $mig)
+    Invoke-CutoverVerifyKeys
+}
+
+function Invoke-CutoverVerifyKeys {
     foreach ($table in $script:KeyTables) {
         $keySql = "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey) WHERE i.indrelid = 'public.`"$table`"'::regclass AND i.indisprimary ORDER BY array_position(i.indkey, a.attnum) LIMIT 1"
         $key = Invoke-CutoverPsql -Target source -Sql $keySql
@@ -748,8 +755,8 @@ function Invoke-CutoverVerificationProbe {
     if ($Execute -or $Rollback -or $ConfirmWindow) {
         Fail-Cutover 'REFUSED: verification probe cannot run with -Execute, -Rollback or -ConfirmWindow.'
     }
-    if ($VerificationProbe -ne 'sequences' -and $VerificationProbe -ne 'rollback-rows') {
-        Fail-Cutover 'REFUSED: verification probe must be sequences or rollback-rows.'
+    if ($VerificationProbe -ne 'sequences' -and $VerificationProbe -ne 'rollback-rows' -and $VerificationProbe -ne 'keys') {
+        Fail-Cutover 'REFUSED: verification probe must be sequences, rollback-rows or keys.'
     }
     if (-not (Test-CutoverProbeContainerName $ProbeSourceContainer) -or -not (Test-CutoverProbeContainerName $ProbeTargetContainer)) {
         Fail-Cutover 'REFUSED: verification probe container names are not throwaway witness names.'
@@ -765,6 +772,10 @@ function Invoke-CutoverVerificationProbe {
     try {
         if ($VerificationProbe -eq 'sequences') {
             Invoke-CutoverVerifySequences
+            exit 0
+        }
+        if ($VerificationProbe -eq 'keys') {
+            Invoke-CutoverVerifyKeys
             exit 0
         }
         $extra = Test-CutoverNewHasExtraRows
