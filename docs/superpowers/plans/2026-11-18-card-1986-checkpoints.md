@@ -24,3 +24,4 @@ S1 commits witnesses before production changes and executes CP-1 through CP-4 re
 | CP-6 | S2 | CP-1 | coverage | `/*/*/VolumeRetirementHostProofTests/Fresh_graph_renewal_fetches_again_for_unchanged_advertisement` | independent renewal fetch | all listed, 0 failed | 1 | 1 | true |
 | CP-7 | S2 | CP-1 | salvage | `/*/*/VolumeRetirementPublicationTests/Salvage_withdrawn_after_staging_refuses_control` | real offline control refusal | all listed, 0 failed | 1 | 1 | true |
 | CP-8 | S2 | CP-1 | rewind | `/*/*/VolumeRetirementPublicationTests/Head_rolled_back_after_staging_refuses_control` | real offline control rewind | all listed, 0 failed | 1 | 1 | true |
+| CP-9 | S2 | CP-1 | narrowing | `/*/*/VolumeRetirementHostProofTests/C1986_Renewal_narrows_the_initial_full_origin_graph` | initial broad graph to bound renewal | all listed, 0 failed | 1 | 1 | true |
