@@ -2406,13 +2406,23 @@ owned build generations under
 `<git-common>/antiphon/land-verify/v1/<toolchain-key>/`, outside the disposable
 land worktree. The key binds the SDK selected in that worktree, OS, process
 architecture and explicit Debug configuration. `owner.json` binds repository and
-toolchain. A generation is marked building before use and ready only after the
-build and any selected tests succeed. Failure, cancellation or an interrupted
-write leaves it unusable; the next attempt creates a new generation and retains
-the old one. Foreign markers, unmarked existing roots and linked paths are
-retained with a `land_artifacts cold` diagnostic and a fresh owned temporary
-fallback. There is no recursive cache janitor. Setting reuse to `false` selects
-owned cold outputs for diagnosis. `Landing:BuildSlotMemoryFloorFallbackMinutes` and
+toolchain. Each land target has its own current generation in that root
+(CARD-1994): `current` for master, `current-rc` shared by every `rc/*` line, and
+a hashed `current-<hex>` for any other target, so alternating rc and master
+lands do not rebuild each other's outputs. A generation is marked building
+before use and ready as soon as the `dotnet build` child exits normally (exit 0,
+or exit 1 for a build error, since MSBuild writes only what compiled), before
+any test run; a failed build or test run therefore leaves it reusable and the
+next land builds incrementally. A build that was killed or crashed (any other
+exit status, cancellation, or a server stop mid-build) leaves it building; the
+next attempt reads that mark before scanning any file, marks the generation
+`quarantined` and creates a new one. Each prepare then prunes the root: it
+keeps the two newest set-aside generations and deletes older ones by exact path,
+never a generation a pointer names, a linked or foreign-owned entry, or anything
+outside the root; it runs under the land execution lock. Foreign markers,
+unmarked existing roots and linked paths are retained with a `land_artifacts
+cold` diagnostic and a fresh owned temporary fallback. Setting reuse to `false`
+selects owned cold outputs for diagnosis. `Landing:BuildSlotMemoryFloorFallbackMinutes` and
 `Landing:BuildSlotMemoryFloorFallbackMaxCpuCount` (CARD-1461, default off) bound the verifier's
 wait behind the runner's memory floor with an unleased capped build; the rule and the line it
 prints are in the desktop land verifier paragraph under Build slots in
