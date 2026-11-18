@@ -423,7 +423,7 @@ function Invoke-C1609RetirementCoordinator {
                             # Staging a large graph can outlive its last network read.
                             # Complete this very control request with fresh live refs,
                             # bound to the same approved inventory and proof set.
-                            $controlWatch=[Diagnostics.Stopwatch]::StartNew()
+                            $controlWatch=[Diagnostics.Stopwatch]::StartNew();$cleanupMs=0L
                             $script:C1609LiveProofReason=''
                             $control=@{schema=1;nonce=$exchange;purpose=$purpose;limitMs=$controlWindowMs;
                                 outcome='refused';step='inventory';reason='';origins=[Collections.Generic.List[object]]::new()}
@@ -434,15 +434,17 @@ function Invoke-C1609RetirementCoordinator {
                                     if($allow.schema -ne 1 -or $allow.projectId -cne $ProjectId -or $allow.origins -isnot [array]){throw 'control-origin'}
                                     $rows=@(Read-C1008PrivateOriginLines -Text ([IO.File]::ReadAllText((Join-Path $inventoryDirectory 'private-origins.txt'))))
                                     foreach($row in $rows){
-                                        $remaining=[Math]::Min($controlWindowMs-[int]$controlWatch.ElapsedMilliseconds,600000-[int]$networkMs-[int]$controlWatch.ElapsedMilliseconds)
+                                        $remaining=[Math]::Min($controlWindowMs-[int]($controlWatch.ElapsedMilliseconds-$cleanupMs),600000-[int]$networkMs-[int]$controlWatch.ElapsedMilliseconds)
                                         if($remaining -le 0){throw 'control-deadline'}
                                         $timing=@{};$control.origins.Add($timing)
                                         Assert-C1609LiveOriginProof -OriginUrl $row.Origin -RepoRelative $row.Repo -OperationId $Operation `
                                             -ProofFile (Join-Path $previousDirectory $row.ProofName) -ApprovedOrigins $allow.origins -NetworkBudgetMs $remaining -Timing $timing
+                                        # Scratch cleanup is outside the control budget.
+                                        $cleanupMs+=[long]$timing.cleanupMs
                                     }
                                 }
                                 $control.step='complete'
-                                if($controlWatch.ElapsedMilliseconds -gt $controlWindowMs){throw 'control-deadline'}
+                                if(($controlWatch.ElapsedMilliseconds-$cleanupMs) -gt $controlWindowMs){throw 'control-deadline'}
                                 $control.outcome='passed'
                             } catch {
                                 $reason=[string]$_.Exception.Message
@@ -452,8 +454,9 @@ function Invoke-C1609RetirementCoordinator {
                                 }
                                 throw
                             } finally {
-                                $control.elapsedMs=$controlWatch.ElapsedMilliseconds
-                                $networkMs += $control.elapsedMs
+                                $control.cleanupMs=0L;foreach($originTiming in $control.origins){$control.cleanupMs+=[long]$originTiming.cleanupMs}
+                                $control.elapsedMs=$controlWatch.ElapsedMilliseconds-$control.cleanupMs
+                                $networkMs += $controlWatch.ElapsedMilliseconds
                                 [IO.File]::AppendAllText((Join-Path $EvidenceRoot 'coordinator-controls.jsonl'),
                                     (($control|ConvertTo-Json -Depth 8 -Compress)+"`n"))
                             }

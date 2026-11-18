@@ -519,9 +519,22 @@ function Assert-C1609LiveScratchCustody {
 function Get-C1609ControlWindowMs {
     $value=[Environment]::GetEnvironmentVariable('ANTIPHON_RETIRE_CONTROL_WINDOW_MS')
     if([string]::IsNullOrEmpty($value)){return 8000}
-    # Leave two seconds for the host's 10-second read and three for its 11-second fence.
-    if($value -cnotmatch '^[1-8][0-9]{3}$' -or [int]$value -gt 8000){throw 'control-window'}
+    # Cap: leave two seconds for the host's 10-second read and three for its
+    # 11-second fence. Floor: one origin's steady controls measured on server2
+    # (bundle hash 0.9-1.4 s plus ls-remote 1.0-1.15 s, at most 2.55 s) must fit
+    # with margin; 1000 ms refused every successful proof (CARD-1989 Review c4d03262).
+    if($value -cnotmatch '^[3-8][0-9]{3}$' -or [int]$value -gt 8000){throw 'control-window'}
     return [int]$value
+}
+
+# Best-effort scratch removal, outside the control budget. Remove-Item -Recurse
+# took 0.4-1.1 s on an empty scratch on server2 and Directory.Delete 2 ms; the
+# cmdlet remains the fallback for read-only Git objects on Windows.
+function Remove-C1609LiveScratch {
+    param([string]$Scratch)
+    if(-not [IO.Directory]::Exists($Scratch)){return}
+    try{[IO.Directory]::Delete($Scratch,$true)}
+    catch{Remove-Item -LiteralPath $Scratch -Recurse -Force -ErrorAction SilentlyContinue}
 }
 
 function Invoke-C1609ControlStep {
@@ -635,14 +648,12 @@ function Assert-C1609LiveOriginProof {
         throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
     }
     finally {
-        $cleanupStarted=$watch.ElapsedMilliseconds
-        if([IO.Directory]::Exists($scratch)){Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue}
-        $Timing.steps.Add(@{step='cleanup';elapsedMs=($watch.ElapsedMilliseconds-$cleanupStarted);outcome='complete'})
+        # Charged control time ends with the last proof step; every step has
+        # already enforced the budget. Cleanup is recorded but never charged and
+        # never turns a successful proof into a refusal.
         $Timing.elapsedMs=$watch.ElapsedMilliseconds
-        if($Timing.outcome -ceq 'passed' -and $Timing.elapsedMs -gt $NetworkBudgetMs){
-            $Timing.outcome='refused';$Timing.step='cleanup';$Timing.reason='control-deadline'
-            $script:C1609LiveProofReason='control-deadline'
-            throw (Get-C1008HostLsRemoteDiagnosis -Repo $RepoRelative -Status 2)
-        }
+        try{Remove-C1609LiveScratch $scratch}catch{}
+        $Timing.cleanupMs=$watch.ElapsedMilliseconds-$Timing.elapsedMs
+        $Timing.steps.Add(@{step='cleanup';elapsedMs=$Timing.cleanupMs;outcome='complete'})
     }
 }
