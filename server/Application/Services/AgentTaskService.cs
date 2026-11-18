@@ -2210,6 +2210,8 @@ public sealed class AgentTaskService
                          .Where(id => !RunnerRequestIntent.IsDesktopAlias(id))
                          .OrderBy(id => id, StringComparer.Ordinal))
             {
+                if (_phoneHome?.IsRunnerBound(id) != true || !_phoneHome.AllowsDelegatedTasks(id))
+                    continue;
                 RunnerDescriptor? described;
                 try
                 {
