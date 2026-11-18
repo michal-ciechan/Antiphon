@@ -12,7 +12,7 @@ The V-n and R-n ids are the reviewed plan's. Each slice's V cases were committed
 
 - S1 (V-1..V-6, V-14): red at `ef486f0487` with the scripts at base, 45 passed, 42 failed; green at `60dffbe0ae`, 106 passed, 0 failed.
 - S2 (V-7..V-10, V-15): red at `737fda788c`, job-status 77 passed, 5 failed; green at `557fc0b137`, 140 passed, 0 failed.
-- S3 (V-11..V-13): red at `35a29991d6` with the S2 script, 29 passed, 21 failed (V-12 `PlainDrillDesktopRefused` is green by design: it pins the refusal the desktop keeps); green at `e153864341`, 50 passed, 0 failed.
+- S3 (V-11..V-13): red at `35a29991d6` with the S2 script, 29 passed, 21 failed (V-12 `PlainDrillDesktopRefused` is green by design: it pins the refusal the desktop keeps); green at `d037f383da`, 50 passed, 0 failed.
 
 S3 moves the age drill's guard prefix into `Invoke-SnapshotDrillScratch` unchanged. CP-16 (`DrillRefusesIdPrefix`) covers that prefix. A one-off unlisted run of `DrillRefusesIdPrefix`, `DrillRemovesScratch`, `DrillRefusesTaintedReuse`, `DrillPicksExactSnapshot`, `DrillReusesImageEnvScratch`, `DrillRefusesOwnVolume` and `DrillRefusesForeignVolume` passed 165, failed 0 at `e153864341`.
 
@@ -47,3 +47,10 @@ Lane: server2 (the runner default). No `-Runner`, no `-Platform`. Rows run seria
 ### Cost
 
 The ordinary floor is 32 minutes (the sum of EstimatedMinutes; CP-1 carries the cold first-row budget). Each case measured under 1 minute on server2 at a 1-minute load of 12 to 16. The job-status harness is about 10 s.
+
+### Receipts
+
+Both runs were at `b4c6d79cc91f4ae49ac0bfa16bc73a0550f49099`, serial, every row `slot=granted sourceState=clean buildSource=notApplicable`, verdict GREEN, `validate` printed `CHECKPOINT SOURCE VALID`:
+
+- `20261118-075153-813e` (`--after S1`, 12 rows): CP-1 14/0, CP-2 12/0, CP-3 11/0, CP-4 15/0, CP-5 20/0, CP-6 20/0, CP-11 18/0, CP-12 33/0, CP-13 16/0, CP-14 4/0, CP-16 10/0, CP-17 14/0 (passed/failed from each row's console).
+- `20261118-080435-7f77` (`--rows CP-7,CP-15,CP-8,CP-9,CP-10`): CP-7 140/0, CP-8 23/0, CP-9 12/0, CP-10 15/0, CP-15 24/0.
