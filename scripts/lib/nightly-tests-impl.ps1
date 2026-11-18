@@ -2253,6 +2253,9 @@ function Invoke-AntiphonNightlyTests {
     # dropped from its rows only when every row's list is identical; rows keep their counts and censusDigest.
     $suiteExclusions=[ordered]@{}
     foreach($exclusionGroup in @($suiteResults | Where-Object { $_.Contains('exclusions') } | Group-Object { [string]$_['id'] })){
+        # The element-by-element reference check runs in the core (ExclusionDedupe.cs): every row of a full
+        # run carries the same few hundred objects, so the interpreted loop was most of this pass.
+        Assert-NightlyCoreAvailable 'D5ExclusionDedupe'
         $groupRows=@($exclusionGroup.Group)
         $firstList=@($groupRows[0]['exclusions'])
         $firstText=$null
@@ -2260,9 +2263,7 @@ function Invoke-AntiphonNightlyTests {
         foreach($groupRow in $groupRows){
             $list=@($groupRow['exclusions'])
             if($list.Count -ne $firstList.Count){ $sameList=$false; break }
-            $sameRefs=$true
-            for($i=0;$i -lt $list.Count;$i++){ if(-not [object]::ReferenceEquals($list[$i],$firstList[$i])){ $sameRefs=$false; break } }
-            if($sameRefs){ continue }
+            if([Antiphon.Nightly.ExclusionDedupe]::SameElementReferences($list,$firstList)){ continue }
             if($null -eq $firstText){ $firstText=ConvertTo-Json -InputObject $firstList -Depth 8 -Compress }
             if((ConvertTo-Json -InputObject $list -Depth 8 -Compress) -cne $firstText){ $sameList=$false; break }
         }
