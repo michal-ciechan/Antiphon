@@ -236,6 +236,14 @@ const oldPath = root + '/docker-compose.server2-runner.yml';
 fs.writeFileSync(oldPath, cp.execFileSync('git', ['show',
   'd100f8fa2c679a5c74b6b235087308776a8f5d50:docker-compose.server2-runner.yml'], {cwd: repo}));
 const base = JSON.parse(bash('C1008_COMPOSE_DIR="$FIXTURE_ROOT" compose_host config --format json\n'));
+// CARD-1893 S0 (ea4209a16) adds exactly this one base session-runner line as an intentional
+// stop-gap; CARD-1985 retires it in CARD-1893 S1, which must delete this allowance with it.
+// Every other environment line still has to match the historical render.
+const s0HistoryKey = 'SessionRunner__HostStats__HistoryEnabled';
+assert.equal(current.services['session-runner'].environment[s0HistoryKey], 'false',
+  'CARD-1893 S0 HistoryEnabled stop-gap changed: CARD-1985 retires this allowance');
+assert.equal(Object.hasOwn(base.services['session-runner'].environment, s0HistoryKey), false);
+delete current.services['session-runner'].environment[s0HistoryKey];
 assert.equal(current.services['session-runner'].environment[key], '0');
 assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), false);
 delete current.services['session-runner'].environment[key];
