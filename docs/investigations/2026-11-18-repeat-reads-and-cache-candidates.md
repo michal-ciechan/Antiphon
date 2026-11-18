@@ -12,8 +12,8 @@ transcript text was read or printed.
   Counter snapshots at 06:23:30Z and 06:24:01Z (31.3 s apart). Census at ~06:22Z, about 20 minutes
   after the pg window, so it is the nearest available population, not the window's own.
 - CARD-1987 plan (`docs/superpowers/plans/2026-11-18-card-1987-query-rate-and-hot-path-caching-plan.md`
-  on `feat/card-task-fa6c783e`): **not pushed yet**. `git ls-remote` showed that branch at
-  `e229fb4d3`, the master tip, and the file does not exist there. No agreement/difference recorded.
+  on `feat/card-task-fa6c783e`): it was pushed while this note was being written. Read at
+  `7fc39b0f073c2dbaff23f5c812b1c941ca754613`; see "Against the CARD-1987 plan" at the end.
 
 ## Headline
 
@@ -148,3 +148,23 @@ EXISTS and `AgentSessionEvents` rows. The census was ~20 min after the window. T
 from one 31 s sample.
 
 Not done, noted: one fix idea per item is in the P-table; nothing was implemented.
+
+## Against the CARD-1987 plan (fa6c783e @ 7fc39b0f0)
+
+**Where we agree:**
+- Measure first (its M1-M3).
+- The delivery-evidence guard (its §3).
+- A second writer process is UNOBSERVED (its §1).
+- The runner-binding lookup is launch-stable routing that can be cached (its S1 ≈ my P6).
+
+**Where this note differs:**
+1. **Ranking axis.** The plan ranks by calls/s. Its S1 and S2 (~25.6 qps) remove cheap round trips.
+   The three statements that dominate **DB time** are absent from its slices: prompt-span.read
+   45.0 s, seed 44.5 s and identity 32.5 s per 10 min, ≈122 s of the ~147 s named.
+2. **Row 6 says "CARD-1888 owns it, re-measure".** The live counters say CARD-1888 does not cover it:
+   ~3,829 non-memo ingests ran 43,802 identity commands (≈11.4 per ingest, about 5,800 stored UUIDs
+   re-probed). Every seed or reconcile clears the memo (`SessionStateStore.cs:207`). P2a/P2b belong
+   in this card or a CARD-1888 follow-up, not "n/a".
+3. **M3 should add `prompt-span.` to `DbCommandMetrics.Prefixes` and the PromptCache outcome
+   counters** (this note's S1). Otherwise the largest DB-time consumer stays unattributed after the
+   plan's measurement slices.
