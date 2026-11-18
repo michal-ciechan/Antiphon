@@ -87,11 +87,11 @@ Several things did not change:
 
 | Test | Windows behaviour | Evidence |
 |---|---|---|
-| `Lane_width_is_six_on_a_24_core_linux_host` (13 cases) | pure `Resolve` arithmetic; passes on any host | passed in the same chunk |
-| `Script_model_families_use_the_wide_lane`, `Unlimited_script_model_methods_*` (W-3/W-4) | reflection and IL walks over attributes; no spawn | passed in the same chunk |
-| `Wide_lane_methods_write_no_executable_in_process`, `In_process_executable_write_is_a_finding`, `Out_of_process_or_interpreted_script_is_not_a_finding` (W-10) | IL walks. The `ExecutableWriteFixture` bodies that start `chmod`/`bash` are walked, never run (comment "Walked, never run.") | passed in the same chunk |
-| `Wide_lane_methods_reach_no_checkout_writer`, `Checkout_writer_reach_is_a_finding` (W-11) | IL walks over a stand-in type | passed in the same chunk |
-| `Wide_lane_sources_name_no_fixed_temp_path`, `Fixed_temp_literal_is_a_finding` (W-5) | source text scan | passed in the same chunk |
+| `Lane_width_is_six_on_a_24_core_linux_host` (13 cases) | pure `Resolve` arithmetic; passes on any host | not among the run's failures (only the two probes failed in the chunk); class row 36/36 on Linux |
+| `Script_model_families_use_the_wide_lane`, `Unlimited_script_model_methods_*` (W-3/W-4) | reflection and IL walks over attributes; no spawn | not among the run's failures (only the two probes failed in the chunk); class row 36/36 on Linux |
+| `Wide_lane_methods_write_no_executable_in_process`, `In_process_executable_write_is_a_finding`, `Out_of_process_or_interpreted_script_is_not_a_finding` (W-10) | IL walks. The `ExecutableWriteFixture` bodies that start `chmod`/`bash` are walked, never run (comment "Walked, never run.") | not among the run's failures (only the two probes failed in the chunk); class row 36/36 on Linux |
+| `Wide_lane_methods_reach_no_checkout_writer`, `Checkout_writer_reach_is_a_finding` (W-11) | IL walks over a stand-in type | not among the run's failures (only the two probes failed in the chunk); class row 36/36 on Linux |
+| `Wide_lane_sources_name_no_fixed_temp_path`, `Fixed_temp_literal_is_a_finding` (W-5) | source text scan | not among the run's failures (only the two probes failed in the chunk); class row 36/36 on Linux |
 | `ProcessSpawnLimitTests` script-model floor | attribute census; no width assertion on `ScriptModelSpawnLimit` | no `new ScriptModelSpawnLimit().Limit` exists in the tests |
 | `FixtureExecutable` callers (HostJq, RollingVolumeRecycleCensusChurn, RollingVolumeRecycleScript `C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt`, `LoadComposeV218` callers in RollingProductionMount and RemoteScriptContract) | each sits under a class-level or method-level `[NativeLinuxOnly]`, so none reaches `/usr/bin/install` on Windows | source census on this branch; the round-2 final review states the same |
 
