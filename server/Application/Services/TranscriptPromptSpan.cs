@@ -406,6 +406,11 @@ internal static class TranscriptPromptSpan
         private readonly Func<long> _nowMs;
         private long _chars;
 
+        internal readonly record struct Outcomes(
+            long Bypass, long Cold, long Hit, long Tail, long FullAfterProof, long TooLargeToStore);
+
+        internal Outcomes ReadOutcomes() => new(0, 0, 0, 0, 0, 0);
+
         internal PromptCache(
             int maxEntries, long maxEntryChars, long maxTotalChars, TimeSpan idle, Func<long> nowMs)
         {
