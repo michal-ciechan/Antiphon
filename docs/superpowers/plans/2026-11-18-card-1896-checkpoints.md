@@ -76,9 +76,9 @@ authorized; it is not a claim that execution was authorized or performed.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S0 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-red/ | c1896-red | `/*/*/C1677TempSweepTests/(Unregistered_random_and_process_names_aggregate_by_prefix\|Entry_limit_admits_one_largest_entry_per_family_before_second_turn\|Entry_over_remaining_byte_budget_does_not_starve_a_fitting_family)` | V-1,V-2,V-3 | all listed, 0 failed after fix; before fix expect five assertion failures | 5 | 15 |
+| CP-1 | S0 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-red/ | c1896-red | `/*/*/C1677TempSweepTests/(Unregistered_random_and_process_names_aggregate_by_prefix*)\|(Entry_limit_admits_one_largest_entry_per_family_before_second_turn*)\|(Entry_over_remaining_byte_budget_does_not_starve_a_fitting_family*)` | V-1,V-2,V-3 | all listed, 0 failed after fix; before fix expect five assertion failures | 5 | 15 |
 | CP-2 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1896-green/ | c1896-green | `/*/*/C1677TempSweepTests/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 5 | 3 |
-| CP-3 | S1 | CP-2 | c1896-adjacent | `/*/*/(C1677TempFamilyRegistryTests\|C1677TempSweepNativeTests\|C1677TempSweepDispatchTests)/*` | R-2,R-3,R-4 runner | all listed, 0 failed | 3 | 2 |
+| CP-3 | S1 | CP-2 | c1896-adjacent | `/*/*/(C1677TempFamilyRegistryTests*)\|(C1677TempSweepNativeTests*)\|(C1677TempSweepDispatchTests*)/*` | R-2,R-3,R-4 runner | all listed, 0 failed | 3 | 2 |
 
 This is the closed list for the authored witness slice, not a complete Final
 manifest. V-4/V-5 and the server part of R-4 require additional short rows once
