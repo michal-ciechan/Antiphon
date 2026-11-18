@@ -2254,9 +2254,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 573,
+      "classes": 574,
       "reason": "cap",
-      "owed": 548,
+      "owed": 549,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2334,9 +2334,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 67,
+      "classes": 68,
       "reason": "cap",
-      "owed": 42,
+      "owed": 43,
       "first": [
         "C1960QuarantineReleaseRouteTests",
         "C1964RecoveryPumpStallTests",
@@ -4986,7 +4986,8 @@
         "C1514HostLoadHistoryTests",
         "C1514HostLoadRecommendationTests",
         "C1514HostLoadScriptTests",
-        "C1744G2HostLoadKeyTests"
+        "C1744G2HostLoadKeyTests",
+        "C1744G2SessionRunnerLoadTests"
       ]
     },
     {
@@ -9224,7 +9225,8 @@
       "path": "server/Application/Services/HostLoadShadowCache.cs",
       "classes": [
         "C1514HostLoadApiTests",
-        "C1744G2HostLoadKeyTests"
+        "C1744G2HostLoadKeyTests",
+        "C1744G2SessionRunnerLoadTests"
       ]
     },
     {
@@ -12323,6 +12325,7 @@
       "path": "server/Application/Settings/HostLoadHistorySettings.cs",
       "classes": [
         "C1744G2HostLoadKeyTests",
+        "C1744G2SessionRunnerLoadTests",
         "EfCompiledQueryCacheTests"
       ]
     },
@@ -15861,7 +15864,8 @@
     {
       "path": "server/Infrastructure/HostLoad/HostLoadRunnerKeys.cs",
       "classes": [
-        "C1744G2HostLoadKeyTests"
+        "C1744G2HostLoadKeyTests",
+        "C1744G2SessionRunnerLoadTests"
       ]
     },
     {
