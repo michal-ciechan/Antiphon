@@ -383,7 +383,9 @@ public sealed class LandWarmArtifactsTests
         var masterAgain = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/master");
         masterAgain.Path.ShouldBe(master.Path);
         masterAgain.Complete();
-        artifacts.Prepare(common, "sdk", true, _ => { }).Path.ShouldBe(master.Path, "no target keeps the v1 pointer");
+        var noTarget = artifacts.Prepare(common, "sdk", true, _ => { });
+        noTarget.Path.ShouldBe(master.Path, "no target keeps the v1 pointer");
+        noTarget.Complete();
         var nextRc = artifacts.Prepare(common, "sdk", true, _ => { }, "refs/heads/rc/2026-11-19");
         nextRc.Path.ShouldBe(rc.Path, "successive rc lines share one lane");
         File.SetLastWriteTimeUtc(Path.Combine(rc.Path, "state"), DateTime.UtcNow.AddDays(-3));
