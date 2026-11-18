@@ -535,9 +535,8 @@ public sealed class TaskWorktreeRetirementTests
             var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
             var id = Guid.NewGuid();
             var shortId = id.ToString("N")[..8];
-            var root = Path.Combine(Path.GetTempPath(), "c459-" + shortId);
+            var root = RetirementScratch.Create(id);
             var tree = Path.Combine(root, "card-task-" + shortId);
-            Directory.CreateDirectory(tree);
             var now = DateTime.UtcNow;
             var task = new AgentTask
             {
@@ -579,8 +578,28 @@ public sealed class TaskWorktreeRetirementTests
 
         public async ValueTask DisposeAsync()
         {
+            var root = Task.RepoPath;
             await Db.DisposeAsync();
             await Schema.DisposeAsync();
+            RetirementScratch.Release(root);
+        }
+    }
+
+    /// <summary>CARD-1981. The c459 scratch directory. Release is the cleanup the owner owes.</summary>
+    internal static class RetirementScratch
+    {
+        internal static string Create(Guid id)
+        {
+            var shortId = id.ToString("N")[..8];
+            var root = Path.Combine(Path.GetTempPath(), "c459-" + shortId);
+            Directory.CreateDirectory(Path.Combine(root, "card-task-" + shortId));
+            return root;
+        }
+
+        internal static void Release(string root)
+        {
+            if (string.IsNullOrEmpty(root))
+                return;
         }
     }
 }
