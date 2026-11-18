@@ -26,7 +26,7 @@ public sealed class LandVerificationArtifacts
     internal string RootFor(string common, string toolchain) => Path.Combine(common, "antiphon", "land-verify",
         "v1", Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(toolchain))).ToLowerInvariant());
 
-    internal Generation Prepare(string common, string toolchain, bool reuse, Action<string> diagnostic)
+    internal Generation Prepare(string common, string toolchain, bool reuse, Action<string> diagnostic, string? target = null)
     {
         common = Path.TrimEndingDirectorySeparator(Path.GetFullPath(common));
         if (OperatingSystem.IsWindows()) common = common.ToLowerInvariant();

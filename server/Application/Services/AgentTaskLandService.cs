@@ -2086,7 +2086,11 @@ public sealed class AgentTaskLandService
     private static AgentTaskEvent Event(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
         new() { Id = Guid.NewGuid(), AgentTaskId = taskId, Type = type, Detail = detail, At = at };
 
-    internal sealed record ProcessResult(bool Ok, string StdOut, string StdErr);
+    internal sealed record ProcessResult(bool Ok, string StdOut, string StdErr)
+    {
+        /// <summary>CARD-1994: the child's own exit status; null when a fake did not record one.</summary>
+        public int? ExitCode { get; init; }
+    }
 }
 
 internal sealed record LandVerification(bool Ok, string Step, string Tail, string Description)
