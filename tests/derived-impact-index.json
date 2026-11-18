@@ -24442,6 +24442,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
