@@ -74,17 +74,8 @@ function Enable-TestPhaseExecutionEnvironment {
 
 function ConvertTo-TestPhaseCsvCell {
     param($Value)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseSummary]::Cell($Value) }
-    $text = ''
-    if ($null -ne $Value) { $text = [string]$Value }
-    $escaped = $text.Replace('"', '""')
-    if ($escaped.Length -gt 0) {
-        $lead = $escaped.Substring(0, 1)
-        if ($lead -eq '=' -or $lead -eq '+' -or $lead -eq '-' -or $lead -eq '@') {
-            $escaped = "'" + $escaped
-        }
-    }
-    return '"' + $escaped + '"'
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseCsvCell' }
+    return [Antiphon.Nightly.TestPhaseSummary]::Cell($Value)
 }
 
 function ConvertTo-TestPhaseMarkdownCell {
@@ -100,66 +91,15 @@ function ConvertTo-TestPhaseMarkdownCell {
 
 function ConvertTo-TestPhaseJsonString {
     param([string]$Text)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseJson]::String($Text) }
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.Append('"')
-    foreach ($ch in $Text.ToCharArray()) {
-        $code = [int]$ch
-        if ($ch -eq '"') { [void]$sb.Append('\"') }
-        elseif ($ch -eq '\') { [void]$sb.Append('\\') }
-        elseif ($ch -eq "`n") { [void]$sb.Append('\n') }
-        elseif ($ch -eq "`r") { [void]$sb.Append('\r') }
-        elseif ($code -lt 32) { [void]$sb.Append('\u' + $code.ToString('x4')) }
-        else { [void]$sb.Append($ch) }
-    }
-    [void]$sb.Append('"')
-    return $sb.ToString()
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseJsonString' }
+    return [Antiphon.Nightly.TestPhaseJson]::String($Text)
 }
 
-# Hand-built so a one-element array stays an array on Windows PowerShell 5.1.
+# Compact JSON (Antiphon.Nightly TestPhaseJson): a one-element array stays an array.
 function ConvertTo-TestPhaseJsonText {
     param($Value, [int]$Depth = 0)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.TestPhaseJson]::Text($Value, $Depth) }
-    if ($Depth -gt 24) { return 'null' }
-    if ($null -eq $Value) { return 'null' }
-    if ($Value -is [bool]) {
-        if ($Value) { return 'true' }
-        return 'false'
-    }
-    if ($Value -is [byte] -or $Value -is [int16] -or $Value -is [int32] -or $Value -is [int64] -or $Value -is [decimal] -or $Value -is [double] -or $Value -is [single]) {
-        return [System.Convert]::ToString($Value, [System.Globalization.CultureInfo]::InvariantCulture)
-    }
-    if ($Value -is [string]) { return (ConvertTo-TestPhaseJsonString -Text $Value) }
-    if ($Value -is [System.Collections.IDictionary]) {
-        $parts = New-Object System.Collections.Generic.List[string]
-        foreach ($key in @($Value.Keys)) {
-            $parts.Add((ConvertTo-TestPhaseJsonString -Text ([string]$key)) + ':' + (ConvertTo-TestPhaseJsonText -Value $Value[$key] -Depth ($Depth + 1)))
-        }
-        return '{' + ($parts.ToArray() -join ',') + '}'
-    }
-    $props = $Value.PSObject.Properties
-    $hasNote = $false
-    if ($null -ne $props) {
-        foreach ($prop in $props) {
-            if ($prop.MemberType -eq [System.Management.Automation.PSMemberTypes]::NoteProperty) { $hasNote = $true; break }
-        }
-    }
-    if ($hasNote) {
-        $parts = New-Object System.Collections.Generic.List[string]
-        foreach ($prop in $props) {
-            if ($prop.MemberType -ne [System.Management.Automation.PSMemberTypes]::NoteProperty) { continue }
-            $parts.Add((ConvertTo-TestPhaseJsonString -Text $prop.Name) + ':' + (ConvertTo-TestPhaseJsonText -Value $prop.Value -Depth ($Depth + 1)))
-        }
-        return '{' + ($parts.ToArray() -join ',') + '}'
-    }
-    if ($Value -is [System.Collections.IEnumerable]) {
-        $parts = New-Object System.Collections.Generic.List[string]
-        foreach ($item in $Value) {
-            $parts.Add((ConvertTo-TestPhaseJsonText -Value $item -Depth ($Depth + 1)))
-        }
-        return '[' + ($parts.ToArray() -join ',') + ']'
-    }
-    return (ConvertTo-TestPhaseJsonString -Text ([string]$Value))
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertTo-TestPhaseJsonText' }
+    return [Antiphon.Nightly.TestPhaseJson]::Text($Value, $Depth)
 }
 
 function Write-TestPhaseTextAtomic {
@@ -253,6 +193,7 @@ function Read-TestPhaseTrxRows {
         [int]$DeadlineMilliseconds = 200
     )
     $none = [pscustomobject]@{ Rows = @(); Complete = $false; Refused = $true }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Read-TestPhaseTrxRows' }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
     if ($null -eq $Watch -and $null -ne $script:TestPhaseTrxReadWatch) { $Watch = $script:TestPhaseTrxReadWatch }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
@@ -265,21 +206,7 @@ function Read-TestPhaseTrxRows {
     try {
         $read = [Antiphon.TestPhase.TrxTimingScanner]::Read($opened.Stream, $Watch, $DeadlineMilliseconds, 262144, 16384)
         if ($null -eq $read -or -not $read.Complete) { return $none }
-        if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) {
-            return [pscustomobject]@{ Rows = [Antiphon.Nightly.NightlyTrx]::TimingRows($read, $Path); Complete = $true; Refused = $false }
-        }
-        $rows = New-Object System.Collections.Generic.List[object]
-        foreach ($row in $read.Rows) {
-            $rows.Add([pscustomobject]@{
-                TestId = [string]$row.TestId
-                Outcome = [string]$row.Outcome
-                Name = [string]$row.Name
-                Duration = [string]$row.Duration
-                StdOut = [string]$row.StdOut
-                Path = $Path
-            })
-        }
-        return [pscustomobject]@{ Rows = @($rows.ToArray()); Complete = $true; Refused = $false }
+        return [pscustomobject]@{ Rows = [Antiphon.Nightly.NightlyTrx]::TimingRows($read, $Path); Complete = $true; Refused = $false }
     } catch {
         return $none
     } finally {
@@ -289,26 +216,8 @@ function Read-TestPhaseTrxRows {
 
 function Get-TestPhaseNativeIds {
     param([string]$Text)
-    if (Test-NightlyCoreAvailable) { return @([Antiphon.Nightly.TestPhaseSummary]::NativeIds($Text)) }
-    $ids = New-Object System.Collections.Generic.List[string]
-    if ([string]::IsNullOrEmpty($Text)) { return @() }
-    $marker = 'C1514_NATIVE '
-    foreach ($line in ($Text -split "`n")) {
-        $trim = $line.Trim().TrimEnd("`r")
-        if ($trim.StartsWith('ANTIPHON_TEST_PHASE_ID ', [StringComparison]::Ordinal)) {
-            $id = $trim.Substring('ANTIPHON_TEST_PHASE_ID '.Length).Trim()
-        } elseif ($trim.StartsWith($marker, [StringComparison]::Ordinal)) {
-            # Preserve the original probe's explicit identity witness.
-            $rest = $trim.Substring($marker.Length)
-            $space = $rest.IndexOf(' ')
-            if ($space -lt 1) { continue }
-            $id = $rest.Substring($space + 1).Trim()
-        } else { continue }
-        if (-not [string]::IsNullOrWhiteSpace($id) -and -not $ids.Contains($id)) {
-            $ids.Add($id)
-        }
-    }
-    return @($ids.ToArray())
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-TestPhaseNativeIds' }
+    return @([Antiphon.Nightly.TestPhaseSummary]::NativeIds($Text))
 }
 
 . (Join-Path $PSScriptRoot 'test-phase-paths.ps1')
@@ -404,7 +313,8 @@ function Read-TestPhaseBoundedBytes {
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     # Compiled for a real stopwatch; a scripted one (tests drive the budget through it) stays here.
-    if ($Watch -is [Diagnostics.Stopwatch] -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT -and (Test-NightlyCoreAvailable)) {
+    if ($Watch -is [Diagnostics.Stopwatch] -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Read-TestPhaseBoundedBytes' }
         return [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($Path, $MaxBytes, $DeadlineMilliseconds, $Watch)
     }
     $identity = Get-TestPhasePathIdentity -Path $Path
