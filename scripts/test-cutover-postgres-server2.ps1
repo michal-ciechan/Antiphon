@@ -239,17 +239,31 @@ case "$name" in
     if [ "$C1407_FAIL_DUMP" = "1" ] && has_text "$joined" 'pg_dump'; then
       exit 1
     fi
+    if [ "$C1407_FAIL_SOURCE_READ" = "1" ] && has_text "$joined" 'psql'; then
+      printf '%s\n' 'Error response from daemon: container antiphon-postgres is not running' >&2
+      exit 1
+    fi
     if has_text "$joined" 'psql'; then
       emit_sql "${C1407_SOURCE_COUNT:-3}"
     elif has_text "$joined" 'volume ls'; then
       printf '%s\n' 'antiphon_pgdata'
     elif has_text "$joined" 'inspect'; then
-      printf '%s\n' 'exited'
+      if [ -f "$trace.inspectfail" ]; then
+        exit 1
+      elif [ -f "$trace.revived" ]; then
+        printf '%s\n' 'running'
+      else
+        printf '%s\n' 'exited'
+      fi
     fi
     exit 0
     ;;
   ssh)
     joined=$(printf '%s ' "$@")
+    if [ "$C1407_FAIL_TARGET_READ" = "1" ] && has_text "$joined" 'psql'; then
+      printf '%s\n' 'ssh: connect to host server2 port 22: Connection refused' >&2
+      exit 255
+    fi
     if has_text "$joined" 'psql'; then
       emit_sql "${C1407_TARGET_COUNT:-3}"
     fi
@@ -278,6 +292,25 @@ case "$name" in
     done
     if [ "$restart_script" = 1 ] && [ -n "$C1407_RESTART_STDOUT" ]; then
       printf '%s\n' "$C1407_RESTART_STDOUT"
+    fi
+    if [ "$restart_script" = 1 ] && [ -n "$C1407_RESTART_ENV" ]; then
+      mode=sha
+      if [ "$stop_only" = 1 ]; then
+        mode=stoponly
+      fi
+      printf '%s\tskip=%s\n' "$mode" "${ANTIPHON_SKIP_DEV_POSTGRES-unset}" >> "$C1407_RESTART_ENV"
+    fi
+    # Runbook G-1: a real restart runs compose up -d, which starts the stopped desktop
+    # postgres again unless ANTIPHON_SKIP_DEV_POSTGRES=1 (dev-aspire.ps1 opt-out).
+    if [ "$restart_script" = 1 ] && [ "$sha_restart" = 1 ]; then
+      if [ "$C1407_RESTART_REVIVES" = "always" ]; then
+        : > "$trace.revived"
+      elif [ "$C1407_RESTART_REVIVES" = "unless-skip" ] && [ "${ANTIPHON_SKIP_DEV_POSTGRES-}" != "1" ]; then
+        : > "$trace.revived"
+      fi
+      if [ "$C1407_INSPECT_FAIL_AFTER_RESTART" = "1" ]; then
+        : > "$trace.inspectfail"
+      fi
     fi
     if [ "$stop_only" = 1 ] && [ -n "$C1407_STOPONLY_EXIT" ]; then
       exit "$C1407_STOPONLY_EXIT"
@@ -537,8 +570,25 @@ function Invoke-C1407WindowRun {
         [string]$FailComposeStart = '',
         [string]$FailClearHold = '',
         [string]$EnterMarker = '',
-        [string]$MaintenanceExit = ''
+        [string]$MaintenanceExit = '',
+        [string]$RestartRevives = '',
+        [string]$InspectFailAfterRestart = '',
+        [string]$FailTargetRead = '',
+        [string]$FailSourceRead = '',
+        [string]$InheritSkip = ''
     )
+    # Runbook G-1/G-6 knobs. The caller's own ANTIPHON_SKIP_DEV_POSTGRES never leaks into a run:
+    # -InheritSkip is the only value the cutover child inherits.
+    $knobs = [ordered]@{
+        C1407_RESTART_REVIVES            = $RestartRevives
+        C1407_INSPECT_FAIL_AFTER_RESTART = $InspectFailAfterRestart
+        C1407_FAIL_TARGET_READ           = $FailTargetRead
+        C1407_FAIL_SOURCE_READ           = $FailSourceRead
+        C1407_RESTART_ENV                = ''
+        ANTIPHON_SKIP_DEV_POSTGRES       = $InheritSkip
+    }
+    $prevKnobs = @{}
+    foreach ($key in $knobs.Keys) { $prevKnobs[$key] = [Environment]::GetEnvironmentVariable($key) }
     $result = @{
         ExitCode    = 99
         Text        = ''
@@ -548,6 +598,7 @@ function Invoke-C1407WindowRun {
         Error       = ''
         TailnetPort = 0
         Repository  = ''
+        RestartEnv  = @()
     }
     $fake = $null
     $api = $null
@@ -577,6 +628,12 @@ function Invoke-C1407WindowRun {
     $prevMaintExit = $env:C1407_MAINTENANCE_EXIT
     try {
         $fake = New-C1407SmartFake
+        $knobs['C1407_RESTART_ENV'] = Join-Path $fake.Dir 'restart-env.txt'
+        foreach ($key in $knobs.Keys) {
+            $value = [string]$knobs[$key]
+            if ([string]::IsNullOrEmpty($value)) { Remove-Item -LiteralPath ('Env:' + $key) -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($key, $value) }
+        }
         $env:C1407_TRACE = $fake.Trace
         $env:C1407_STDIN = $fake.Stdin
         $env:C1407_SOURCE_COUNT = $SourceCount
@@ -662,12 +719,19 @@ function Invoke-C1407WindowRun {
             }
         }
         $result.Stdin = $bodies
+        if (Test-Path -LiteralPath $knobs['C1407_RESTART_ENV']) {
+            $result.RestartEnv = @(Get-Content -LiteralPath $knobs['C1407_RESTART_ENV'] -ErrorAction SilentlyContinue)
+        }
         $result.Ready = $true
     } catch {
         $result.Error = $_.Exception.Message
     } finally {
         if ($tcp) { try { $tcp.Stop() } catch {} }
         Stop-C1407Api $api
+        foreach ($key in $prevKnobs.Keys) {
+            if ($null -eq $prevKnobs[$key]) { Remove-Item -LiteralPath ('Env:' + $key) -ErrorAction SilentlyContinue }
+            else { [Environment]::SetEnvironmentVariable($key, $prevKnobs[$key]) }
+        }
         if ($null -eq $prevTrace) { Remove-Item Env:C1407_TRACE -ErrorAction SilentlyContinue } else { $env:C1407_TRACE = $prevTrace }
         if ($null -eq $prevStdin) { Remove-Item Env:C1407_STDIN -ErrorAction SilentlyContinue } else { $env:C1407_STDIN = $prevStdin }
         if ($null -eq $prevSource) { Remove-Item Env:C1407_SOURCE_COUNT -ErrorAction SilentlyContinue } else { $env:C1407_SOURCE_COUNT = $prevSource }
@@ -2005,8 +2069,149 @@ function Test-W30 {
     else { Write-Fail 'W-30' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text) + ' ' + (Get-C1407SafeText $closed.Text)) }
 }
 
-$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30')
-$script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30')
+function Test-C1407TextHas {
+    param($Run, [string]$Needle)
+    return ($Run.Text.IndexOf($Needle, [System.StringComparison]::Ordinal) -ge 0)
+}
+
+function Test-C1407InspectAfterRestart {
+    param($Lines)
+    $items = @($Lines)
+    $restartAt = Test-C1407RestartIndex -Lines $items -Token '-ExpectedServerSha'
+    if ($restartAt -lt 0) { return $false }
+    for ($i = $restartAt + 1; $i -lt $items.Count; $i++) {
+        $line = [string]$items[$i]
+        if ($line.StartsWith("docker`t") -and (Test-C1407Field -Line $line -Token 'inspect') -and (Test-C1407Field -Line $line -Token 'antiphon-postgres')) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Test-C1407RollbackRefused {
+    param($Run, [string]$Label, [string]$Needle)
+    if (-not $Run.Ready) { return "$Label not-ready $($Run.Error)" }
+    $reasons = @()
+    if ($Run.ExitCode -eq 0) { $reasons += "$Label exit=0" }
+    if (-not (Test-C1407TextHas $Run $Needle)) { $reasons += "$Label missing-refusal $(Get-C1407SafeText $Run.Text)" }
+    foreach ($line in @($Run.Lines)) {
+        $parts = @($line.Split([char]9))
+        if ($parts.Count -ge 1 -and $parts[0] -eq 'dotnet') { $reasons += "$Label called-dotnet" }
+        if (Test-C1407Field -Line $line -Token '-ExpectedServerSha') { $reasons += "$Label restarted" }
+        if (Test-C1407Suffix -Line $line -Suffix 'set-apphost-maintenance.ps1') { $reasons += "$Label entered-maintenance" }
+    }
+    return ($reasons -join ' ')
+}
+
+function Test-W31 {
+    # Runbook G-1: the phase 4 restart runs with ANTIPHON_SKIP_DEV_POSTGRES=1. The fake restart starts
+    # the stopped desktop postgres again unless that opt-out is set, as compose up -d did before
+    # part A. The window reads antiphon-postgres after the restart and needs it exited.
+    $run = Invoke-C1407WindowRun -RestartRevives 'unless-skip'
+    $reasons = @()
+    if (-not $run.Ready) { $reasons += "not-ready $($run.Error)" }
+    else {
+        if ($run.ExitCode -ne 0) { $reasons += "exit=$($run.ExitCode)" }
+        $sha = @($run.RestartEnv | Where-Object { $_.StartsWith("sha`t") })
+        if ($sha.Count -ne 1) { $reasons += "sha-restarts=$($sha.Count)" }
+        elseif ($sha[0] -ne "sha`tskip=1") { $reasons += ('restart-env=' + $sha[0].Replace("`t", ' ')) }
+        $stop = @($run.RestartEnv | Where-Object { $_.StartsWith("stoponly`t") })
+        if ($stop.Count -ne 1 -or $stop[0] -ne "stoponly`tskip=unset") { $reasons += ('stoponly-env=' + (($stop -join ',').Replace("`t", ' '))) }
+        if (-not (Test-C1407InspectAfterRestart $run.Lines)) { $reasons += 'no-inspect-after-restart' }
+        if (-not (Test-C1407TextHas $run 'PHASE 5 desktop antiphon-postgres is exited after the restart.')) { $reasons += 'missing-exited-line' }
+        if (-not (Test-C1407TextHas $run 'OPERATOR: confirm one dispatch')) { $reasons += 'missing-operator-line' }
+        if ($run.Text.Contains('SENTINEL-1407-ARGV')) { $reasons += 'printed-sentinel' }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-31' }
+    else { Write-Fail 'W-31' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
+}
+
+function Test-W32 {
+    # Runbook G-1 fail closed: a restart that brings the desktop postgres back anyway (a launcher
+    # without the opt-out), or a state read that fails after the restart, ends the window non-zero
+    # with the manual stop command, and never prints the success line.
+    $reasons = @()
+    $cases = @(
+        @{ Label = 'running'; Revives = 'always'; InspectFail = ''; Needle = 'PHASE 5 failed: desktop antiphon-postgres is running after the restart' },
+        @{ Label = 'unreadable'; Revives = ''; InspectFail = '1'; Needle = 'PHASE 5 failed: desktop antiphon-postgres state could not be read after the restart' }
+    )
+    foreach ($case in $cases) {
+        $run = Invoke-C1407WindowRun -RestartRevives $case.Revives -InspectFailAfterRestart $case.InspectFail
+        $label = $case.Label
+        if (-not $run.Ready) { $reasons += "$label not-ready $($run.Error)"; continue }
+        if ($run.ExitCode -ne 2) { $reasons += "$label exit=$($run.ExitCode)" }
+        if (-not (Test-C1407TextHas $run $case.Needle)) { $reasons += "$label missing-refusal" }
+        $manual = 'docker compose -f "' + (Join-Path $run.Repository 'docker-compose.dev.yml') + '" stop postgres'
+        if (-not (Test-C1407TextHas $run $manual)) { $reasons += "$label missing-manual-stop" }
+        if (Test-C1407TextHas $run 'OPERATOR: confirm one dispatch') { $reasons += "$label printed-success" }
+        if (-not (Test-C1407TextHas $run 'PHASE 5 mechanical checks passed.')) { $reasons += "$label phase5-not-run" }
+        if ($reasons.Count -gt 0) { $reasons += (Get-C1407SafeText $run.Text) }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-32' }
+    else { Write-Fail 'W-32' ($reasons -join ' || ') }
+}
+
+function Test-W33 {
+    # Runbook G-1: a rollback restart must bring the desktop postgres up, so an opt-out inherited
+    # from the operator's environment is cleared for it, and the run says so.
+    $run = Invoke-C1407WindowRun -SkipApi -SkipTcp -SourceCount '4' -TargetCount '4' -InheritSkip '1' -ExtraArgs @('-Rollback')
+    $reasons = @()
+    $proceed = Test-C1407RollbackProceeds -Run $run -Label 'rollback'
+    if ($proceed) { $reasons += $proceed }
+    $sha = @($run.RestartEnv | Where-Object { $_.StartsWith("sha`t") })
+    if ($sha.Count -ne 1 -or $sha[0] -ne "sha`tskip=unset") { $reasons += ('restart-env=' + (($sha -join ',').Replace("`t", ' '))) }
+    if (-not (Test-C1407TextHas $run 'ANTIPHON_SKIP_DEV_POSTGRES was set in this process and is cleared for the rollback restart.')) {
+        $reasons += 'missing-cleared-line'
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-33' }
+    else { Write-Fail 'W-33' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
+}
+
+function Test-W34 {
+    # Runbook G-6: server2 down is the main reason to roll back. With -AcceptDataLossRollback an
+    # unreadable target no longer blocks the scripted rollback, and the run warns what is lost.
+    $run = Invoke-C1407WindowRun -SkipApi -SkipTcp -FailTargetRead '1' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $reasons = @()
+    $proceed = Test-C1407RollbackProceeds -Run $run -Label 'target-down'
+    if ($proceed) { $reasons += $proceed }
+    $needles = @(
+        'WARNING: PHASE 6: the server2 database could not be read.',
+        'every write made on server2 since phase 4',
+        'will be left behind'
+    )
+    foreach ($needle in $needles) {
+        if (-not (Test-C1407TextHas $run $needle)) { $reasons += "missing-warning '$needle'" }
+    }
+    if ($reasons.Count -eq 0) { Write-Pass 'W-34' }
+    else { Write-Fail 'W-34' (($reasons -join ' || ') + ' ' + (Get-C1407SafeText $run.Text)) }
+}
+
+function Test-W35 {
+    # Runbook G-6: without the switch an unreadable target still refuses, and the refusal names the
+    # switch that rolls back without the comparison.
+    $run = Invoke-C1407WindowRun -SkipApi -SkipTcp -FailTargetRead '1' -ExtraArgs @('-Rollback')
+    $needle = 'REFUSED: stop gate 6: the server2 database could not be read, so the rows only it holds are unknown. Pass -AcceptDataLossRollback to roll back without the comparison.'
+    $reason = Test-C1407RollbackRefused -Run $run -Label 'no-switch' -Needle $needle
+    if (-not $reason) { Write-Pass 'W-35' }
+    else { Write-Fail 'W-35' $reason }
+}
+
+function Test-W36 {
+    # Runbook G-6 guard: the switch covers only the server2 side. An unreadable desktop source still
+    # refuses, alone or with server2 also down, because the rollback would land on it.
+    $reasons = @()
+    $needle = 'REFUSED: stop gate 6: row comparison failed. Neither data directory is removed.'
+    $source = Invoke-C1407WindowRun -SkipApi -SkipTcp -FailSourceRead '1' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $reasons += @(Test-C1407RollbackRefused -Run $source -Label 'source-down' -Needle $needle)
+    $both = Invoke-C1407WindowRun -SkipApi -SkipTcp -FailSourceRead '1' -FailTargetRead '1' -ExtraArgs @('-Rollback', '-AcceptDataLossRollback')
+    $reasons += @(Test-C1407RollbackRefused -Run $both -Label 'both-down' -Needle $needle)
+    $reasons = @($reasons | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($reasons.Count -eq 0) { Write-Pass 'W-36' }
+    else { Write-Fail 'W-36' ($reasons -join ' || ') }
+}
+
+$all = @('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9', 'W10', 'W11', 'W12', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W27', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36')
+$script:C1407PosixWindow = @('W6', 'W11', 'W13', 'W14', 'W15', 'W16', 'W17', 'W18', 'W19', 'W20', 'W21', 'W22', 'W23', 'W24', 'W25', 'W26', 'W28', 'W29', 'W30', 'W31', 'W32', 'W33', 'W34', 'W35', 'W36')
 function Invoke-C1407Case {
     param([string]$Name)
     if (($env:OS -eq 'Windows_NT') -and ($script:C1407PosixWindow -contains $Name)) {
