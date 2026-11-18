@@ -1,3 +1,4 @@
+using Antiphon.Server.Domain.Agents;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,11 @@ public partial class AppDbContext : DbContext
     public AppDbContext(DbContextOptions<AppDbContext> options)
         : base(options)
     {
+    }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.AddInterceptors(RunnerBindingWriteInterceptor.Instance);
     }
 
     public DbSet<User> Users => Set<User>();
@@ -150,7 +156,10 @@ public partial class AppDbContext : DbContext
             throw new InvalidOperationException("Deferred task writes require the asynchronous identity fence.");
         RequireImmutablePipelineEvidence();
         SnapshotHostLoadEvents();
-        return base.SaveChanges(acceptAllChangesOnSuccess);
+        var bindingWrites = RunnerBindingWrites();
+        var saved = base.SaveChanges(acceptAllChangesOnSuccess);
+        NotifyBindingWrites(bindingWrites);
+        return saved;
     }
 
     internal sealed record ActionTaskFence(Guid TaskId, int Attempt, Guid SessionId, DateTime Generation);
@@ -160,8 +169,13 @@ public partial class AppDbContext : DbContext
     {
         RequireImmutablePipelineEvidence();
         SnapshotHostLoadEvents();
+        var bindingWrites = RunnerBindingWrites();
         if (RuntimeActionTaskFence is not { } fence)
-            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        {
+            var savedDirect = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            NotifyBindingWrites(bindingWrites);
+            return savedDirect;
+        }
         // Only the bound deferred-task scope opts in. Hold SQL locks over this save,
         // never over report preparation, parent delivery or other external effects.
         await using var transaction = Database.CurrentTransaction is null
@@ -177,7 +191,30 @@ public partial class AppDbContext : DbContext
             throw new DbUpdateConcurrencyException("Deferred runtime task identity changed before commit.");
         var saved = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        NotifyBindingWrites(bindingWrites);
         return saved;
+    }
+
+    private List<Guid> RunnerBindingWrites()
+    {
+        var ids = new List<Guid>();
+        foreach (var entry in ChangeTracker.Entries<AgentSession>())
+        {
+            if (entry.State != EntityState.Modified)
+                continue;
+            if (entry.Property(s => s.RunnerId).IsModified
+                || entry.Property(s => s.RunnerStoreId).IsModified
+                || entry.Property(s => s.RunnerCwd).IsModified)
+                ids.Add(entry.Entity.Id);
+        }
+
+        return ids;
+    }
+
+    private static void NotifyBindingWrites(List<Guid> ids)
+    {
+        foreach (var id in ids)
+            RunnerBindingInvalidation.Notify(id);
     }
 
     private void RequireImmutablePipelineEvidence()
