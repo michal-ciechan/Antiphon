@@ -130,9 +130,12 @@ try
         postgres.DisableJit);
     builder.Services.AddSingleton<SessionStateCommandMetrics>();
     builder.Services.AddSingleton<DbCommandMetrics>();
+    builder.Services.AddSingleton<DbCallSiteMetrics>();
     builder.Services.AddDbContext<AppDbContext>((services, options) =>
         options.AddInterceptors(services.GetRequiredService<SessionStateCommandMetrics>(),
-            services.GetRequiredService<DbCommandMetrics>()).UseNpgsql(
+            services.GetRequiredService<DbCommandMetrics>(),
+            services.GetRequiredService<DbCallSiteMetrics>(),
+            services.GetRequiredService<DbCallSiteMetrics>().Transactions).UseNpgsql(
             connectionString,
             npgsqlOptions =>
             {
@@ -714,6 +717,9 @@ try
     builder.Services.AddScoped<IStageExecutor, AgentExecutor>();
     builder.Services.AddScoped<IGitService, GitService>();
     builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.Configure<DbRateSettings>(builder.Configuration.GetSection(DbRateSettings.SectionName));
+    builder.Services.AddSingleton(sp => new DbRateWindow(sp.GetRequiredService<IOptions<DbRateSettings>>().Value.RetentionOrDefault));
+    builder.Services.AddHostedService<DbRateSampler>();
     var logicalDatabase = "default";
     if (!string.IsNullOrWhiteSpace(connectionString))
     {

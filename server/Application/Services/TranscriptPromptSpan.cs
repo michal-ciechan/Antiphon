@@ -137,38 +137,49 @@ internal static class TranscriptPromptSpan
         // An ambient transaction: no nested transaction, and no entry published from its snapshot.
         if (db.Database.CurrentTransaction is not null
             || db.Database.GetConnectionString() is not { } connection)
+        {
+            cache.NoteBypass();
             return (await ReadRowsAsync(db, sessionId, after: null, ReadTag, ct)).Rows;
+        }
 
         var key = new PromptCache.Key(connection, sessionId);
         var cached = cache.Lookup(key);
         if (cached is null)
         {
             // Cold: one statement is one snapshot, and the stamp is derived from its rows.
+            cache.NoteCold();
             var cold = await ReadRowsAsync(db, sessionId, after: null, ReadTag, ct);
             cache.Store(key, cold);
             return cold.Rows;
         }
 
         if ((await ReadStampAsync(db, sessionId, ct)).Stamp == cached.Stamp)
+        {
+            cache.NoteHit();
             return cached.Rows;
+        }
 
-        PromptCache.Entry fresh;
+        TailRead fresh;
         await using (var tx = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct))
         {
             fresh = await ReadTailOrAllAsync(db, sessionId, cached, ct);
             await tx.CommitAsync(ct);
         }
 
-        cache.Store(key, fresh);
-        return fresh.Rows;
+        if (fresh.Tail) cache.NoteTail();
+        else cache.NoteFullAfterProof();
+        cache.Store(key, fresh.Entry);
+        return fresh.Entry.Rows;
     }
+
+    private readonly record struct TailRead(PromptCache.Entry Entry, bool Tail);
 
     /// <summary>
     /// Inside the miss transaction. The tail is taken only when the proof, read in THIS snapshot
     /// (not the stamp that missed before the transaction), shows the cached rows are still the
     /// prompt rows at or below the cached anchor; otherwise the full projection, same snapshot.
     /// </summary>
-    private static async Task<PromptCache.Entry> ReadTailOrAllAsync(
+    private static async Task<TailRead> ReadTailOrAllAsync(
         AppDbContext db, Guid sessionId, PromptCache.Entry cached, CancellationToken ct)
     {
         if (cached.Stamp.MaxSequence is long anchor)
@@ -183,11 +194,11 @@ internal static class TranscriptPromptSpan
                 if (tail.Rows.Length > 0
                     && tail.Rows.Length == proof.Stamp.Count - cached.Stamp.Count
                     && tail.Ids[^1] == proof.Stamp.TopId)
-                    return cached.Append(tail);
+                    return new TailRead(cached.Append(tail), true);
             }
         }
 
-        return await ReadRowsAsync(db, sessionId, after: null, ReadTag, ct);
+        return new TailRead(await ReadRowsAsync(db, sessionId, after: null, ReadTag, ct), false);
     }
 
     private const string ReadTag = "prompt-span.read";
@@ -405,11 +416,25 @@ internal static class TranscriptPromptSpan
         private readonly long _idleMs;
         private readonly Func<long> _nowMs;
         private long _chars;
+        private long _bypass;
+        private long _cold;
+        private long _hit;
+        private long _tail;
+        private long _fullAfterProof;
+        private long _tooLarge;
+
+        internal void NoteBypass() => Interlocked.Increment(ref _bypass);
+        internal void NoteCold() => Interlocked.Increment(ref _cold);
+        internal void NoteHit() => Interlocked.Increment(ref _hit);
+        internal void NoteTail() => Interlocked.Increment(ref _tail);
+        internal void NoteFullAfterProof() => Interlocked.Increment(ref _fullAfterProof);
 
         internal readonly record struct Outcomes(
             long Bypass, long Cold, long Hit, long Tail, long FullAfterProof, long TooLargeToStore);
 
-        internal Outcomes ReadOutcomes() => new(0, 0, 0, 0, 0, 0);
+        internal Outcomes ReadOutcomes() => new(
+            Interlocked.Read(ref _bypass), Interlocked.Read(ref _cold), Interlocked.Read(ref _hit),
+            Interlocked.Read(ref _tail), Interlocked.Read(ref _fullAfterProof), Interlocked.Read(ref _tooLarge));
 
         internal PromptCache(
             int maxEntries, long maxEntryChars, long maxTotalChars, TimeSpan idle, Func<long> nowMs)
@@ -469,7 +494,10 @@ internal static class TranscriptPromptSpan
                 if (_slots.TryGetValue(key, out var previous))
                     Remove(previous);
                 if (entry.Chars > _maxEntryChars)
+                {
+                    Interlocked.Increment(ref _tooLarge);
                     return;
+                }
                 _slots[key] = _lru.AddFirst(new Slot(key, entry, now));
                 _chars += entry.Chars;
                 while (_lru.Last is { } oldest && (_slots.Count > _maxEntries || _chars > _maxTotalChars))
