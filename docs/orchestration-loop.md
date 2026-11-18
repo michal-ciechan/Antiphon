@@ -679,6 +679,25 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 <a id="land-graph-refresh"></a>
 11. **Land-graph digest mismatch: inherited warns, and the batch's own records refresh and never ask (operator, 2026-11-07; CARD-1753).** When a Merge or Review's base already carries a `LandVerificationBuildGraph` manifest/digest mismatch against the candidate — the mismatch predates the batch's own change — report it as a loud warning and continue past it; it is not a blocker and it is not a silent refresh. When `-Check` fails solely because the landing batch itself changed a selected build-definition record, the selected digest or count, or a target pin, run `scripts/land-graph-land-refresh.ps1` before `delegate.ps1 -Land`. That script refreshes once, commits only the land-graph files, re-runs `-Check` to exit 0, and never asks. Notify in the land report with the old and new digest, count, pins and changed records, and post a card note; a failed note is not a question and not a land block. A bare `-Update` outside that land path stays forbidden. Still hard-refuse, with no wait: a property or construct the audit rejects (for example `_PtyHostArtifactsArguments`), a malformed manifest, a refresh that would change records outside the batch's own changed files, and a `-Check` that still fails after the refresh. The runtime `LandVerificationPolicy` docs-only build skip and the unrecognized-build-graph build fallback above are unchanged by this rule, which governs only how Merge/Review report an inherited mismatch, not what the server decides at land time. The land-graph digest, the nightly `policyHash` (`tests/test-execution-policy.json`) and the live-lane `-PrintInputDigest` five-path pin are three separate identities; the "unchanged policy hash / input digest" requirement applies only to batches that must not touch policy, and a policy-registry edit legitimately moves them, with that edit's own slice updating its pins. See `docs/investigations/2026-11-05-investigate-land-graph-gate-value.md` on its branch: one demonstrated approval catch this week (two changed target pins) against eleven unrelated Merge batches that repeated one inherited mismatch.
 
+<a id="merge-verification-is-short-2026-11-18"></a>
+#### Merge verification is short (2026-11-18)
+
+A Merge verifies only: one build, each subject's own narrow witness rows (each under 10
+minutes), `land-graph -Check`, the pins recompute, the derived-index regeneration once, and
+`check-evidence-diff`. The 11-class guard union (the classification, lane-category and
+Linux-policy guards covering `tests/Shared/TestClassificationGuardTests.cs`,
+`tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`,
+`tests/Shared/NativeLinuxPolicyWitness.cs` and
+`tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs`, and the policy-hash
+inputs under [release-gates.md](release-gates.md)) runs only when a subject touches a
+classification, selector, pin or policy area: `tests/Antiphon.Tests/slow-tests-allowlist.txt`,
+`tests/linux-test-roster.json`, the files named above, or a path under
+`docs/release-gates.md`'s policy/profile scope. Run no whole slow class, no repeat or stress
+block, and never re-run a row that already hit its deadline with zero failures: record that
+row instead of repeating it. Stress evidence, a whole-class run and the guard union by default
+belong to the rc/nightly lane, not Merge. Poll the load gate every 30 seconds, and check it once
+per repeat block rather than once per row inside that block.
+
 #### Operator standing instructions (2026-10-23)
 
 The operator's wording is preserved here; [the numbered standards](test-performance-standards.md)

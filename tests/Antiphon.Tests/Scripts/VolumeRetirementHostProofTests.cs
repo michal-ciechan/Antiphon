@@ -17,6 +17,109 @@ public sealed class VolumeRetirementHostProofTests
     private const string Repo = "repos/school-revision";
 
     [Test]
+    [Arguments("forward")]
+    [Arguments("rewrite")]
+    [Arguments("delete")]
+    [Arguments("new")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Unrelated_origin_changes_preserve_renewal_and_live_proof(string change)
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U, "refs/heads/required");
+        await f.Publish(f.X, "refs/heads/unrelated");
+        var initial = await f.WriteProof([(f.U, "commit")]);
+        initial.Exit.ShouldBe(0, initial.Output);
+        if (change == "delete") await f.Git(f.Bare, "update-ref", "-d", "refs/heads/unrelated");
+        else if (change == "rewrite") await f.Git(f.Bare, "update-ref", "refs/heads/unrelated", f.A);
+        else
+        {
+            var next = await f.Commit("other task push", f.X, "other task bytes");
+            await f.Publish(next, change == "new" ? "refs/heads/new-task" : "refs/heads/unrelated");
+        }
+        var live = await f.WriteProof(previous: initial.File, finalCheck: true);
+        var renewed = await f.WriteProof([(f.U, "commit")], previous: initial.File, freshGraph: true);
+        (live.Exit, renewed.Exit).ShouldBe((0, 0), change + ": live=" + live.Output + "; renew=" + renewed.Output);
+        (await f.WriteProof(previous: renewed.File, finalCheck: true)).Exit.ShouldBe(0);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Depended_branch_fast_forward_preserves_proof()
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U, "refs/heads/required");
+        var initial = await f.WriteProof([(f.U, "commit")]);
+        initial.Exit.ShouldBe(0, initial.Output);
+        var next = await f.Commit("published descendant", f.U, "descendant bytes");
+        await f.Publish(next, "refs/heads/required");
+        var live = await f.WriteProof(previous: initial.File, finalCheck: true);
+        var renewed = await f.WriteProof([(f.U, "commit")], previous: initial.File, freshGraph: true);
+        (live.Exit, renewed.Exit).ShouldBe((0, 0), "ancestry preserves publication: " + live.Output + renewed.Output);
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Renewal_narrows_the_initial_full_origin_graph()
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        await f.Publish(f.U, "refs/heads/required");
+        await f.Publish(f.X, "refs/heads/unrelated");
+        var initial = await f.WriteProof();
+        initial.Exit.ShouldBe(0, initial.Output);
+        await f.Git(f.Bare, "update-ref", "refs/heads/unrelated", f.A);
+        var renewed = await f.WriteProof([(f.U, "commit")], previous: initial.File, freshGraph: true);
+        renewed.Exit.ShouldBe(0, renewed.Output);
+        await f.Git(f.Bare, "update-ref", "-d", "refs/heads/unrelated");
+        var live = await f.WriteProof(previous: renewed.File, finalCheck: true);
+        live.Exit.ShouldBe(0, live.Output);
+    }
+
+    [Test]
+    [Arguments("delete")]
+    [Arguments("rewrite")]
+    [Arguments("tag")]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Withdrawn_dependency_reports_ref_and_tips(string change)
+    {
+        using var f = await VolumeRetirementPublicationFixture.Create();
+        var reference = change == "tag" ? "refs/tags/release" : "refs/heads/required";
+        await f.Publish(f.U, "refs/heads/required");
+        if (change == "tag") await f.Publish(f.U, reference);
+        var initial = await f.WriteProof([(f.U, "commit")]);
+        initial.Exit.ShouldBe(0, initial.Output);
+        if (change == "delete") await f.Git(f.Bare, "update-ref", "-d", reference);
+        else await f.Git(f.Bare, "update-ref", reference, f.A);
+        var live = await f.WriteProof(previous: initial.File, finalCheck: true);
+        var renewed = await f.WriteProof([(f.U, "commit")], previous: initial.File, freshGraph: true);
+        foreach (var refused in new[] { live, renewed })
+        {
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain("RecycleOriginMoved reason=withdrawn-ref");
+            refused.Output.ShouldContain("ref=" + reference);
+            refused.Output.ShouldContain("old=" + f.U);
+            refused.Output.ShouldContain("new=" + (change == "delete" ? "deleted" : f.A));
+        }
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C1986_Result_boundary_preserves_withdrawal_diagnosis()
+    {
+        var root = Directory.CreateTempSubdirectory("c1986-result-").FullName;
+        try
+        {
+            var diagnosis = "RecycleOriginMoved reason=withdrawn-ref repo=repos/outer ref=refs/heads/required old=" + new string('a', 40) + " new=deleted";
+            var command = ". " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-command.ps1")) + "; " +
+                "$script:C1986OriginMovedDiagnosis=" + Quote(diagnosis) + "; " +
+                "Write-C590Result -EvidenceRoot " + Quote(root) + " -Accepted $false -Diagnosis 'RemoteResultMissing exit=2' -ExitCode 2";
+            var result = await Pwsh(command);
+            result.Exit.ShouldBe(2);
+            (await File.ReadAllTextAsync(Path.Combine(root, "c590-result.json"))).ShouldContain(diagnosis);
+        }
+        finally { DeleteOwned(root, "c1986-result-"); }
+    }
+
+    [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Publication_fixture_disposal_leaves_no_checkout_or_temp_residue()
     {

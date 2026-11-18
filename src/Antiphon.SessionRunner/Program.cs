@@ -94,7 +94,8 @@ builder.Services.AddSingleton<IPhoneHomeRuntimeSurface>(sp =>
         retention = new RunnerWorkspaceRetention(workspace, new ProcWorkspaceSlotProcessProbe());
         // CARD-1677 S2: /tmp, registered families only; it acts only on a server TempSweep request, which ships off
         // (RunnerWorktreeRetention:TempSweep:Enabled=false, Execute=false).
-        tempSweep = RunnerTempSweep.CreateDefault(retention.RetiringRoot);
+        tempSweep = RunnerTempSweep.CreateForRunner(retention.RetiringRoot, "/tmp",
+            sp.GetRequiredService<IOptions<SessionRunnerSettings>>().Value, runtime, workspace);
     }
     return new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve(), retention, tempSweep);
 });

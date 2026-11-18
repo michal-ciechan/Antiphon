@@ -145,6 +145,86 @@ public sealed class C1677TempSweepTests
     }
 
     [Test]
+    public async Task Unregistered_random_and_process_names_aggregate_by_prefix(CancellationToken ct)
+    {
+        // CARD-1896 V-1. Real six-character scratch suffixes and short process IDs escaped
+        // the old hex>=8 / digits>=5 folding and produced a residue row for every entry.
+        using var s = new Scratch();
+        string[] names = ["B0txQx", "ZNWW6w", "clr-debug-pipe-123-456-in", "clr-debug-pipe-789-321-in"];
+        foreach (var name in names)
+            s.Entry(name, TimeSpan.FromHours(200), files: 1, size: 7);
+
+        var response = await s.Sweep().SweepAsync(Request(), ct);
+
+        response.Candidates.ShouldBeEmpty();
+        response.Unregistered.Count.ShouldBe(2, "one report row per prefix, not per random suffix or PID");
+        foreach (var prefix in new[] { "<random>", "clr-debug-pipe-<n>-<n>-in" })
+        {
+            var row = response.Unregistered.Single(r => r.Prefix == prefix);
+            row.Count.ShouldBe(2);
+            row.Bytes.ShouldBe(14);
+            row.BytesComplete.ShouldBeTrue();
+        }
+        foreach (var name in names)
+            File.ReadAllBytes(s.Tmp + "/" + name + "/f0.bin").Length.ShouldBe(7);
+        s.Holders.Calls.ShouldBe(0, "unregistered entries never reach removal admission");
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Entry_limit_admits_one_largest_entry_per_family_before_second_turn(bool execute, CancellationToken ct)
+    {
+        // CARD-1896 V-2. Two older tiny entries must not starve either large family;
+        // neither may the largest family take its second turn before all families get one.
+        using var s = new Scratch();
+        var tinyOld = "rcspeed-" + Hex32();
+        var tinyLarge = "rcspeed-" + Hex32();
+        var largest = "c1514-" + Hex32();
+        var secondInFamily = "c1514-" + Hex32();
+        var otherFamily = "c487-probe-" + Hex32();
+        s.Entry(tinyOld, TimeSpan.FromHours(200), files: 1, size: 1);
+        s.Entry(tinyLarge, TimeSpan.FromHours(190), files: 1, size: 2);
+        s.Entry(largest, TimeSpan.FromHours(100), files: 1, size: 1000);
+        s.Entry(secondInFamily, TimeSpan.FromHours(90), files: 1, size: 900);
+        s.Entry(otherFamily, TimeSpan.FromHours(80), files: 1, size: 800);
+
+        var response = await s.Sweep().SweepAsync(Request(execute, maxEntries: 3), ct);
+
+        var verdict = execute ? TempSweepCodes.Removed : TempSweepCodes.WouldRemove;
+        response.Candidates.Where(c => c.Verdict == verdict).Select(c => c.Name)
+            .ShouldBe(new[] { largest, otherFamily, tinyLarge });
+        response.Removed.ShouldBe(3);
+        response.RemovedBytes.ShouldBe(1802);
+        foreach (var name in new[] { largest, otherFamily, tinyLarge })
+            Directory.Exists(s.Tmp + "/" + name).ShouldBe(!execute);
+        foreach (var name in new[] { tinyOld, secondInFamily })
+            KeptIntact(response, name, TempSweepCodes.TickBound, s.Tmp + "/" + name, files: 1);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Entry_over_remaining_byte_budget_does_not_starve_a_fitting_family(bool execute, CancellationToken ct)
+    {
+        // CARD-1896 V-3. A candidate too large for this tick remains intact; a later
+        // family that fits must still receive its turn within the same byte bound.
+        using var s = new Scratch();
+        var oversized = "c487-probe-" + Hex32();
+        var fitting = "c1514-" + Hex32();
+        var largePath = s.Entry(oversized, TimeSpan.FromHours(200), files: 1, size: 200);
+        var smallPath = s.Entry(fitting, TimeSpan.FromHours(100), files: 1, size: 80);
+
+        var response = await s.Sweep().SweepAsync(Request(execute, maxBytes: 100), ct);
+
+        KeptIntact(response, oversized, TempSweepCodes.TickBound, largePath, files: 1);
+        Single(response, fitting).Verdict.ShouldBe(execute ? TempSweepCodes.Removed : TempSweepCodes.WouldRemove);
+        response.Removed.ShouldBe(1);
+        response.RemovedBytes.ShouldBe(80);
+        Directory.Exists(smallPath).ShouldBe(!execute);
+    }
+
+    [Test]
     [Arguments("new-top-file")]
     [Arguments("new-nested-file")]
     public async Task Newest_file_write_decides_age(string shape, CancellationToken ct)

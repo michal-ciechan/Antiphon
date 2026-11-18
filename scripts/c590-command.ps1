@@ -49,6 +49,15 @@ function Write-C590Result {
         [int]$ExitCode = 0,
         [hashtable]$Extra
     )
+    # The retirement coordinator's older catch sites erase the proof exception.
+    # Preserve the closed diagnosis from this invocation before writing its final
+    # result. Never replace an accepted result or another specific refusal.
+    $originMoved=Get-Variable -Name C1986OriginMovedDiagnosis -Scope Script -ErrorAction SilentlyContinue
+    if(-not $Accepted -and $ExitCode -eq 2 -and
+        $Diagnosis -cmatch '^(RecycleGitAuditUnknown($| audit )|RemoteResultMissing exit=2$)' -and
+        $null -ne $originMoved -and [string]$originMoved.Value -cmatch '^RecycleOriginMoved reason=withdrawn-ref repo=[A-Za-z0-9._/-]+ ref=refs/[A-Za-z0-9._/-]+ old=[0-9a-f]{40} new=([0-9a-f]{40}|deleted)$'){
+        $Diagnosis=[string]$originMoved.Value
+    }
     New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
     $obj = [ordered]@{ accepted = $Accepted; diagnosis = $Diagnosis; exit = $ExitCode }
     if ($Extra) {

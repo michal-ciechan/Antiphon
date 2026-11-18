@@ -311,6 +311,28 @@ public sealed class TestDbFixtureLifecycleTests
         await lifecycle.DisposeAsync();
     }
 
+    /// <summary>
+    /// Profile-413 (rc run f2de5b30): a transient Npgsql failure surfaced only as the EF wrapper, with no inner
+    /// exception in the TRX. A context built from the fixture options writes the whole chain to the test output.
+    /// </summary>
+    [Test]
+    public async Task Transient_db_failure_writes_its_inner_exception_to_the_test_output()
+    {
+        var output = new StringWriter();
+        TestDbFailureEvidence.Out = output;
+        await using var db = new AppDbContext(TestDbFixtureLifecycle.BuildOptions(
+            "Host=127.0.0.1;Port=1;Database=profile413;Username=u;Password=p;Pooling=false;Timeout=5"));
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => db.AgentTasks.AnyAsync());
+
+        ex.Message.ShouldContain("likely due to a transient failure");
+        var inner = ex.InnerException.ShouldNotBeNull();
+        var text = output.ToString();
+        text.ShouldContain(TestDbFailureEvidence.Tag + " connection-open database=profile413");
+        text.ShouldContain(inner.GetType().FullName!);
+        text.ShouldContain(inner.Message);
+    }
+
     [Test]
     [Arguments("never-requested")]
     [Arguments("starting")]

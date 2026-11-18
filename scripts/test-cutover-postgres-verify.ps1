@@ -1,7 +1,8 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    CARD-1974 and CARD-1975 witnesses for cutover sequence and rollback checks.
+    CARD-1974, CARD-1975, CARD-1979, CARD-1980 and CARD-1982 witnesses
+    for cutover sequence, rollback, uuid key, timeout and session checks.
 
     Throwaway postgres:16 containers only. No production container, no named
     volume, no cutover window. ASCII-only for Windows PowerShell 5.1.
@@ -109,7 +110,7 @@ function Clear-WitnessResources {
 }
 
 function Start-WitnessPostgres {
-    param([string]$Name, [string]$User, [string]$Database)
+    param([string]$Name, [string]$User, [string]$Database, [string[]]$ServerArgs)
     if ($Name -notmatch '^c197[45]-[a-f0-9]{16}$') { throw 'unexpected container name' }
     $script:containers += $Name
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -121,7 +122,9 @@ function Start-WitnessPostgres {
     }
     $env:POSTGRES_PASSWORD = ([Convert]::ToBase64String($bytes) -replace '[^a-zA-Z0-9]', 'x')
     try {
-        $out = & docker run -d --name $Name --tmpfs /var/lib/postgresql/data --label antiphon.cutover-witness=card-1974 -e POSTGRES_PASSWORD -e POSTGRES_USER=$User -e POSTGRES_DB=$Database postgres:16 2>&1 | Out-String
+        $dockerArgs = @('run', '-d', '--name', $Name, '--tmpfs', '/var/lib/postgresql/data', '--label', 'antiphon.cutover-witness=card-1974', '-e', 'POSTGRES_PASSWORD', '-e', ('POSTGRES_USER=' + $User), '-e', ('POSTGRES_DB=' + $Database), 'postgres:16')
+        if ($null -ne $ServerArgs -and $ServerArgs.Count -gt 0) { $dockerArgs += $ServerArgs }
+        $out = & docker @dockerArgs 2>&1 | Out-String
         $code = $LASTEXITCODE
     } finally {
         Remove-Item Env:POSTGRES_PASSWORD -ErrorAction SilentlyContinue
@@ -195,9 +198,13 @@ function Get-WitnessContentCanonical {
 }
 
 function Invoke-WitnessProbe {
-    param([string]$Probe, [string]$Source, [string]$Target)
+    param([string]$Probe, [string]$Source, [string]$Target, [int]$TimeoutSeconds = 0)
     $cutover = Join-Path $PSScriptRoot 'cutover-postgres-server2.ps1'
-    $lines = @(& pwsh -NoProfile -File $cutover -VerificationProbe $Probe -ProbeSourceContainer $Source -ProbeTargetContainer $Target 2>&1 | ForEach-Object { $_.ToString() })
+    $argumentList = @('-NoProfile', '-File', $cutover, '-VerificationProbe', $Probe, '-ProbeSourceContainer', $Source, '-ProbeTargetContainer', $Target)
+    if ($TimeoutSeconds -gt 0) {
+        $argumentList += @('-ContentStatementTimeoutSeconds', ([string]$TimeoutSeconds))
+    }
+    $lines = @(& pwsh @argumentList 2>&1 | ForEach-Object { $_.ToString() })
     $code = $LASTEXITCODE
     if ($null -eq $code) { $code = 1 }
     return [pscustomobject]@{ ExitCode = [int]$code; Text = ([string]::Join("`n", [string[]]$lines)) }
@@ -548,6 +555,159 @@ function Test-F2EfUnreadable {
     Write-Pass 'F2-ef-unreadable'
 }
 
+$script:UuidKeyTables = @(
+    'TranscriptEntries',
+    'AgentTasks',
+    'SessionQueuedMessages',
+    'AgentTaskLandNotifications',
+    'AgentTaskEvents'
+)
+$script:UuidKeyOne = '3f2504e0-4f89-11d3-9a0c-0305e82c3301'
+$script:UuidKeyTwo = 'c9bf9e57-1685-4c89-bafb-ff5af830be8a'
+
+function Initialize-UuidKeyTables {
+    param([string]$Name)
+    foreach ($table in $script:UuidKeyTables) {
+        $create = 'CREATE TABLE public."' + $table + '" ("Id" uuid NOT NULL, "Payload" jsonb NOT NULL, CONSTRAINT "PK_' + $table + '" PRIMARY KEY ("Id"))'
+        Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $create | Out-Null
+        $insert = "INSERT INTO public.""" + $table + """ (""Id"", ""Payload"") VALUES ('" + $script:UuidKeyOne + "', '{""k"": 1}'), ('" + $script:UuidKeyTwo + "', '{""k"": 2}')"
+        Invoke-WitnessSqlOk -Name $Name -User antiphon -Database antiphon -Sql $insert | Out-Null
+    }
+}
+
+function Test-F3UuidKey {
+    $src = New-WitnessName 'c1975'
+    $tgt = New-WitnessName 'c1975'
+    Start-WitnessPostgres $src 'antiphon' 'antiphon'
+    Start-WitnessPostgres $tgt 'antiphon' 'antiphon'
+    Initialize-UuidKeyTables $src
+    Initialize-UuidKeyTables $tgt
+    $typed = Invoke-WitnessSqlOk -Name $src -User antiphon -Database antiphon -Sql "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'public.""TranscriptEntries""'::regclass AND a.attname = 'Id'"
+    if ($typed -ne 'uuid') { throw ('setup TranscriptEntries key was not uuid: ' + $typed) }
+    $raw = Invoke-WitnessSql -Name $src -User antiphon -Database antiphon -Sql 'SELECT max("Id") FROM public."TranscriptEntries"'
+    if ($raw.ExitCode -eq 0 -or $raw.Text.IndexOf('function max(uuid) does not exist', [System.StringComparison]::Ordinal) -lt 0) {
+        throw ('setup did not reproduce the missing max(uuid) aggregate: ' + (Limit-WitnessText $raw.Text))
+    }
+    $probe = Invoke-WitnessProbe -Probe 'keys' -Source $src -Target $tgt
+    $missing = @()
+    foreach ($table in $script:UuidKeyTables) {
+        $line = 'PHASE 3 match: key ' + $table
+        if ($probe.Text.IndexOf($line, [System.StringComparison]::Ordinal) -lt 0) { $missing += $table }
+    }
+    if ($probe.ExitCode -ne 0 -or $missing.Count -gt 0) {
+        Write-Fail 'F3-uuid-key' ('identical uuid-keyed pair was refused. raw=' + (Limit-WitnessText $raw.Text) + ' probe=' + (Limit-WitnessText $probe.Text))
+        return
+    }
+    Write-Pass 'F3-uuid-key'
+}
+
+function Wait-WitnessExclusiveLock {
+    param([string]$Name, [string]$Table, [int]$Attempts)
+    if ($Table -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw 'unexpected lock table' }
+    $sql = "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE c.relname = '" + $Table + "' AND l.granted AND l.mode = 'AccessExclusiveLock'"
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        $count = Invoke-WitnessSql -Name $Name -User antiphon -Database antiphon -Sql $sql
+        $text = ''
+        if ($null -ne $count.Text) { $text = $count.Text.Trim() }
+        if ($count.ExitCode -eq 0 -and $text -ne '0' -and -not [string]::IsNullOrWhiteSpace($text)) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+function Test-F6FingerprintTimeout {
+    $src = New-WitnessName 'c1975'
+    $tgt = New-WitnessName 'c1975'
+    Start-WitnessPostgres $src 'antiphon' 'antiphon'
+    Start-WitnessPostgres $tgt 'antiphon' 'antiphon'
+    $sql = @(
+        'CREATE TABLE public.bulk (id integer PRIMARY KEY, body text NOT NULL)',
+        "INSERT INTO public.bulk (id, body) VALUES (1, 'a'), (2, 'b')"
+    )
+    foreach ($name in @($src, $tgt)) {
+        foreach ($statement in $sql) {
+            Invoke-WitnessSqlOk -Name $name -User antiphon -Database antiphon -Sql $statement | Out-Null
+        }
+    }
+    $control = Invoke-WitnessProbe -Probe 'rollback-rows' -Source $src -Target $tgt -TimeoutSeconds 1
+    if ($control.ExitCode -ne 0 -or $control.Text.IndexOf('ROLLBACK ROWS clean', [System.StringComparison]::Ordinal) -lt 0) {
+        Write-Fail 'F6-fingerprint-timeout' ('small table was not clean under a one second bound exit=' + $control.ExitCode + ' ' + (Limit-WitnessText $control.Text))
+        return
+    }
+    & docker exec -d $src psql -U antiphon -d antiphon -v ON_ERROR_STOP=1 -c "BEGIN; LOCK TABLE public.bulk IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(20); COMMIT;" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'lock start failed' }
+    $held = Wait-WitnessExclusiveLock -Name $src -Table 'bulk' -Attempts 30
+    if (-not $held) { throw 'exclusive lock was not granted' }
+    $probe = Invoke-WitnessProbe -Probe 'rollback-rows' -Source $src -Target $tgt -TimeoutSeconds 1
+    $marker = 'timed out for public.bulk after '
+    $needle = 'REFUSED: stop gate 6: content fingerprint ' + $marker
+    if ($probe.ExitCode -eq 0 -or $probe.Text.IndexOf($needle, [System.StringComparison]::Ordinal) -lt 0 -or $probe.Text.IndexOf('Neither data directory is removed.', [System.StringComparison]::Ordinal) -lt 0) {
+        Write-Fail 'F6-fingerprint-timeout' ('locked fingerprint was not refused closed with the table and elapsed time exit=' + $probe.ExitCode + ' ' + (Limit-WitnessText $probe.Text))
+        return
+    }
+    $at = $probe.Text.IndexOf($marker, [System.StringComparison]::Ordinal)
+    $tail = $probe.Text.Substring($at + $marker.Length)
+    $stop = $tail.IndexOf('s.', [System.StringComparison]::Ordinal)
+    $elapsed = 0.0
+    $elapsedText = ''
+    if ($stop -gt 0) { $elapsedText = $tail.Substring(0, $stop) }
+    $parsed = [double]::TryParse($elapsedText, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$elapsed)
+    if (-not $parsed -or $elapsed -le 0 -or $elapsed -ge 15) {
+        Write-Fail 'F6-fingerprint-timeout' ('elapsed time was not a bound under the lock: ' + $elapsedText)
+        return
+    }
+    Write-Pass 'F6-fingerprint-timeout'
+}
+
+function Get-WitnessSequenceReadCount {
+    param([string]$Text)
+    $reads = 'PHASE 3 sequence reads: '
+    $readCount = 0
+    foreach ($row in @($Text -split "`n")) {
+        if ($row.StartsWith($reads, [System.StringComparison]::Ordinal)) {
+            $readCount = [int]$row.Substring($reads.Length).Trim()
+        }
+    }
+    return $readCount
+}
+
+function Test-F6SessionPin {
+    $src = New-WitnessName 'c1975'
+    $tgt = New-WitnessName 'c1975'
+    Start-WitnessPostgres -Name $src -User 'antiphon' -Database 'antiphon'
+    Start-WitnessPostgres -Name $tgt -User 'antiphon' -Database 'antiphon' -ServerArgs @('-c', 'TimeZone=America/New_York')
+    $srcTz = Invoke-WitnessSqlOk -Name $src -User antiphon -Database antiphon -Sql 'SHOW TimeZone'
+    $tgtTz = Invoke-WitnessSqlOk -Name $tgt -User antiphon -Database antiphon -Sql 'SHOW TimeZone'
+    if ($srcTz -eq $tgtTz) { throw ('setup time zones did not differ: ' + $srcTz) }
+    $sql = @(
+        'CREATE TABLE public.marks (id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, at timestamp with time zone NOT NULL, amount double precision NOT NULL)',
+        "INSERT INTO public.marks (at, amount) VALUES ('2026-11-17 10:00:00.123456+00', 1.5)"
+    )
+    foreach ($name in @($src, $tgt)) {
+        foreach ($statement in $sql) {
+            Invoke-WitnessSqlOk -Name $name -User antiphon -Database antiphon -Sql $statement | Out-Null
+        }
+    }
+    $probe = Invoke-WitnessProbe -Probe 'rollback-rows' -Source $src -Target $tgt
+    if ($probe.ExitCode -ne 0 -or $probe.Text.IndexOf('ROLLBACK ROWS clean', [System.StringComparison]::Ordinal) -lt 0) {
+        Write-Fail 'F6-session-pin' ('different TimeZone defaults refused an identical pair srcTz=' + $srcTz + ' tgtTz=' + $tgtTz + ' exit=' + $probe.ExitCode + ' ' + (Limit-WitnessText $probe.Text))
+        return
+    }
+    $seq = Invoke-WitnessProbe -Probe 'sequences' -Source $src -Target $tgt
+    if ($seq.ExitCode -ne 0 -or $seq.Text.IndexOf('PHASE 3 match: sequences', [System.StringComparison]::Ordinal) -lt 0 -or (Get-WitnessSequenceReadCount $seq.Text) -lt 1) {
+        Write-Fail 'F6-session-pin' ('sequence read did not match across TimeZone defaults exit=' + $seq.ExitCode + ' ' + (Limit-WitnessText $seq.Text))
+        return
+    }
+    $updated = Invoke-WitnessSqlOk -Name $tgt -User antiphon -Database antiphon -Sql "UPDATE public.marks SET at = at + interval '1 microsecond' WHERE id = 1"
+    if ($updated -ne 'UPDATE 1') { throw ('setup did not update one timestamptz row: ' + $updated) }
+    $changed = Invoke-WitnessProbe -Probe 'rollback-rows' -Source $src -Target $tgt
+    if ($changed.ExitCode -eq 0 -or $changed.Text.IndexOf($script:ExtraRowsNeedle, [System.StringComparison]::Ordinal) -lt 0) {
+        Write-Fail 'F6-session-pin' ('in-place timestamptz change was not refused exit=' + $changed.ExitCode + ' ' + (Limit-WitnessText $changed.Text))
+        return
+    }
+    Write-Pass 'F6-session-pin'
+}
+
 function Invoke-WitnessCase {
     param([string]$Name, [scriptblock]$Body)
     $script:containers = @()
@@ -571,7 +731,7 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
-$all = @('F1-mismatch', 'F1-unreadable', 'F1-match', 'F2-delete-insert', 'F2-identical', 'F2-unreadable', 'F2-ef-identical', 'F2-ef-update', 'F2-ef-delete-insert', 'F2-ef-unreadable')
+$all = @('F1-mismatch', 'F1-unreadable', 'F1-match', 'F2-delete-insert', 'F2-identical', 'F2-unreadable', 'F2-ef-identical', 'F2-ef-update', 'F2-ef-delete-insert', 'F2-ef-unreadable', 'F3-uuid-key', 'F6-fingerprint-timeout', 'F6-session-pin')
 $selected = @($all)
 if (-not [string]::IsNullOrWhiteSpace($Case)) { $selected = @($Case) }
 foreach ($name in $selected) {
@@ -589,6 +749,9 @@ foreach ($name in $selected) {
     elseif ($name -eq 'F2-ef-update') { Invoke-WitnessCase $name { Test-F2EfUpdate } }
     elseif ($name -eq 'F2-ef-delete-insert') { Invoke-WitnessCase $name { Test-F2EfDeleteInsert } }
     elseif ($name -eq 'F2-ef-unreadable') { Invoke-WitnessCase $name { Test-F2EfUnreadable } }
+    elseif ($name -eq 'F3-uuid-key') { Invoke-WitnessCase $name { Test-F3UuidKey } }
+    elseif ($name -eq 'F6-fingerprint-timeout') { Invoke-WitnessCase $name { Test-F6FingerprintTimeout } }
+    elseif ($name -eq 'F6-session-pin') { Invoke-WitnessCase $name { Test-F6SessionPin } }
 }
 
 Write-Host ("WITNESS passed=$script:passed failed=$script:failed")

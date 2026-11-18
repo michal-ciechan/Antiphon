@@ -24,6 +24,38 @@ public sealed class C1960WorkspaceSlotsScriptTests
     private const string DirId = "0123456789ab";
 
     [Test]
+    [Arguments("release", "missing")]
+    [Arguments("release", "empty")]
+    [Arguments("release", "whitespace")]
+    [Arguments("cold-reset", "missing")]
+    [Arguments("cold-reset", "empty")]
+    [Arguments("cold-reset", "whitespace")]
+    public async Task Token_file_errors_exit_2_before_any_request(string verb, string shape)
+    {
+        using var server = new StubApi((200, "{}"));
+        using var token = new TokenFile();
+        if (shape == "missing")
+            File.Delete(token.Path);
+        else
+            File.WriteAllText(token.Path, shape == "empty" ? "" : " \r\n\t ");
+        File.Exists(token.Path).ShouldBe(shape != "missing");
+        if (shape != "missing")
+            File.ReadAllText(token.Path).ShouldBe(shape == "empty" ? "" : " \r\n\t ");
+
+        string[] args = verb == "release"
+            ? [verb, "-Runner", "fixture-runner", "-DirId", DirId, "-Disposition", "Pushed", "-Reason", "published"]
+            : [verb, "-Runner", "fixture-runner", "-Reason", "qualification"];
+        var run = await RunAsync(server, token, args);
+
+        run.ExitCode.ShouldBe(2, run.Output);
+        server.Requests.ShouldBe(0, "an unavailable credential must stop before contacting the API");
+        run.Output.ShouldContain(shape == "missing"
+            ? "Operator token file not found at " + token.Path
+            : "Operator token file at " + token.Path + " is empty.");
+        run.Output.ShouldNotContain(token.Value, Case.Insensitive);
+    }
+
+    [Test]
     [Arguments("removed", 0)]
     [Arguments("refused", 1)]
     [Arguments("removal_failed", 1)]

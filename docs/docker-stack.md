@@ -813,6 +813,7 @@ detail. The coordinator console shows only the `DIAGNOSIS=` line.
 | `RecycleGitAuditUnknown reason=registry-missing detail=<registry>` | The registry is absent. Write it as above. |
 | `RecycleGitAuditUnknown reason=registry-invalid detail=<registry>` | The registry failed custody, canonical bytes or shape. Check `ls -l` and rewrite it with `jq -ncS`. |
 | `RecycleGitAuditUnknown reason=registry-project detail=<registry>` | The registry has no entry for this retirement's project id. Compare it with the `RECYCLE_PROJECT id=` line. |
+| `RecycleOriginMoved reason=withdrawn-ref repo=<repo> ref=<ref> old=<sha> new=<sha-or-deleted>` | Retryable publication change (CARD-1986). A depended ref disappeared or rewound, a tag moved, or a depended ref raced the final ancestry read. Start a fresh preview and apply with its new token after publication settles; never reuse the refused token. A fast-forward is accepted only after Git proves ancestry. Unrelated branch changes and new branches do not invalidate a proof bound to the audited objects. Local changes in the retiring volume still fail the independent inventory/audit checks. |
 | `RecycleGitAuditUnknown reason=unapproved-origin detail=<private-origins.txt>` | An inventory origin is not listed. `sed -n 's/^C1008_PRIVATE_ORIGIN .* origin=\([^ ]*\) .*/\1/p' <private-origins.txt> \| sort -u` lists the exact strings. Review each one before adding it. |
 | `RecycleGitAuditUnknown reason=proof-exchange stage=<stage>` | The registry passed and the desktop proof exchange failed. `request` means the host's proof-set check failed before it sent the request. `response` means no reply came within 600 s, or the desktop coordinator stopped. `binding` means the reply did not match the request or the inventory digest. `freshness` means the proof failed custody or age checks. `digest` means the proof set digest differed. `record` means the host could not persist the exchange. On the desktop, read `remote-output.txt` (`transport-exit`, `failure-line`, `failure-script`, `failure-reason`), `coordinator-exchanges.jsonl` and the `exchange-*` directories under `.antiphon/rolling-server2/<run-id>/`. `failure-script` is the throwing script's leaf name and `failure-reason` is the fixed token from that throw (`proof`, `protocol`, `git`, or `other`). |
 
@@ -1270,9 +1271,27 @@ when it is not denied (`antiphon-pty-hosts`, `antiphon-pty-*`, `CoreFxPipe_*`, `
 `systemd-*`, `node-compile-cache` and the CARD-0826 `IsDenied` names), not a symlink, owned with every
 descendant by the runner uid, within 100,000 entries and 1 GiB, its newest regular-file write older than
 `MinAgeHours` (48), and the fail-closed holder scan finds no process with a cwd or fd inside. At most
-`MaxEntriesPerTick` (200) entries and `MaxBytesPerTick` (20 GiB) go per tick, oldest first, through the
+`MaxEntriesPerTick` (200) entries and `MaxBytesPerTick` (20 GiB) go per tick, one entry per family per
+round, largest first within each family and round (oldest/name break ties). An entry larger than the
+remaining byte budget is kept while smaller fitting entries may proceed. Removal goes through the
 no-follow delete (an inner symlink is unlinked, never followed; a socket or FIFO keeps the entry). Every
 other name is reported as `unregistered` with its count and bytes per normalized prefix and never touched.
+
+CARD-1896 adds two separately disabled families with a **seven-day minimum**, even when the request's
+age is lower. `session-ansi` matches only `<32hex>.ansi.log` regular files in the runner's configured
+`SessionLogPath`. Tracked sessions, in-progress launches and process holders keep their logs. The final
+validation and unlink share the session launch gate. The residue row preserves the configured root.
+`review-clone` recognizes `antiphon-review-<8hex>` containers and legacy `review-<8hex>-master[0-9]`
+names, but a matching name alone grants no deletion authority. Create new review/master scratch
+containers with `scripts/new-review-scratch.ps1 -TaskId <guid> -OwnerWorktree <absolute-worktree>`
+and clone into a child such as `master`. The helper records `.antiphon-scratch-owner` and refuses
+existing containers; never retrofit a marker onto an old checkout. The owner and its retiring copies
+must be absent. A workspace-slot owner remains protected while that slot exists, including reuse.
+Only standalone clones with the runner's exact live origin are eligible: linked worktrees, unknown
+content, dirty/untracked work, hidden index flags, unpublished local/ref-log commits and audit failures
+are kept. Existing scratch worktrees need their owning repository's sanctioned removal path.
+Neither family is enabled by this change. Unregistered six-character random names, MSBuild random
+names and decimal process IDs aggregate into stable prefix rows; this changes reporting only.
 
 Rows: Lane `RunnerTemp` in the tick's residue run (`Scope=runner-retention:server2`): one per family entry
 (`would_remove`, `removed` or a kept reason, `Branch=temp:<family>;bytes=<n>`) and one per unregistered prefix

@@ -1963,9 +1963,25 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.DecisionPaths.cs",
-      "classes": 79,
+      "classes": 80,
       "reason": "cap",
-      "owed": 54,
+      "owed": 55,
+      "first": [
+        "CodexLaunchRefusalTests",
+        "CompactionContinuationStopTests",
+        "DelegateBranchDeliveryTests",
+        "GrokHerdrRealCliStubProxyCanaryTests",
+        "GrokRulesHttpAcceptanceTests",
+        "HerdrPaneChildKillTests",
+        "HerdrStatusPushTests",
+        "PtyConditionalReadTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
+      "classes": 80,
+      "reason": "cap",
+      "owed": 55,
       "first": [
         "CodexLaunchRefusalTests",
         "CompactionContinuationStopTests",
@@ -1979,9 +1995,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
-      "classes": 90,
+      "classes": 93,
       "reason": "cap",
-      "owed": 65,
+      "owed": 68,
       "first": [
         "ClaudeDialogInputGuardTests",
         "HerdrEventPumpTests",
@@ -1989,8 +2005,8 @@
         "RunnerStartupDiagnosticsTests",
         "SessionBufferBoundsTests",
         "SessionRunnerEventHubTests",
-        "GrokRulesRunnerRefusalTests",
-        "RunnerPlatformLaunchTests"
+        "C1677TempSweepNativeTests",
+        "GrokRulesRunnerRefusalTests"
       ]
     },
     {
@@ -2227,9 +2243,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 571,
+      "classes": 572,
       "reason": "cap",
-      "owed": 546,
+      "owed": 547,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2311,14 +2327,14 @@
       "reason": "cap",
       "owed": 42,
       "first": [
+        "C1960QuarantineReleaseRouteTests",
         "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeSpillTransportTests",
         "PhoneHomeTranscriptIncidentTests",
-        "RunnerCapacityEndpointTests",
-        "C0824DesktopLegacyReleaseSwitchTests"
+        "RunnerCapacityEndpointTests"
       ]
     },
     {
@@ -3517,6 +3533,7 @@
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
+        "VolumeRetirementHostProofTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
@@ -3950,6 +3967,14 @@
       "classes": [
         "ReleaseImpactScriptTests",
         "SelectorLineEndingAttributeTests"
+      ]
+    },
+    {
+      "path": "scripts/new-review-scratch.ps1",
+      "classes": [
+        "C1677TempFamilyRegistryTests",
+        "C1677TempSweepNativeTests",
+        "C1677TempSweepTests"
       ]
     },
     {
@@ -18407,7 +18432,8 @@
         "C1677TempSweepDispatchTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepServerTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1896TempSweepPolicyTests"
       ]
     },
     {
@@ -19663,6 +19689,36 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
+      "classes": [
+        "BlockedParkWireTests",
+        "Card1619LinuxStopIntentTests",
+        "Card1619RunnerExitTests",
+        "Card1653SocketDirTests",
+        "CodexBootWedgeProbeTests",
+        "CodexHerdrRealCliStubProxyCanaryTests",
+        "DelegationDispatchRecoveryBoundaryTests",
+        "GrokRulesFileLaunchTests",
+        "GrokRulesRunnerRefusalTests",
+        "HerdrAdoptionSweepTests",
+        "HerdrAttachTests",
+        "HerdrEventPumpTests",
+        "HerdrLaunchShapeTests",
+        "HerdrRunnerSessionTests",
+        "PhoneHomeBackpressureTests",
+        "PhoneHomeConnectionServiceTests",
+        "PtyHostAdoptionTests",
+        "RunnerCapacityCountTests",
+        "RunnerPlatformLaunchTests",
+        "RunnerSessionGenerationTests",
+        "RunnerStartupDiagnosticsTests",
+        "SessionBufferBoundsTests",
+        "SessionRunnerRuntimeTests",
+        "TranscriptAdoptionSafetyTests",
+        "TranscriptSinceReadTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
       "classes": [
         "BlockedParkWireTests",
@@ -19809,7 +19865,8 @@
         "C1677RetentionEngineTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepTests",
+        "C1896TempSweepPolicyTests"
       ]
     },
     {
@@ -20755,6 +20812,7 @@
         "C1677RetentionInventoryTests",
         "C1677RetentionNativeProcessTests",
         "C1677TempSweepDispatchTests",
+        "C1677TempSweepNativeTests",
         "C1677TempSweepTests"
       ]
     },
@@ -20762,6 +20820,12 @@
       "path": "tests/Antiphon.SessionRunner.Tests/C1677TempFamilyRegistryTests.cs",
       "classes": [
         "DerivedImpactIndexTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.SessionRunner.Tests/C1896TempSweepPolicyTests.cs",
+      "classes": [
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -24442,6 +24506,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
       ]
@@ -26436,6 +26501,12 @@
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbClonePool.cs",
       "classes": [
         "TestDbClonePoolTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/TestDbFailureEvidence.cs",
+      "classes": [
+        "TestDbFixtureLifecycleTests"
       ]
     },
     {
