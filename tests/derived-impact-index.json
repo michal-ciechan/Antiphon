@@ -1319,14 +1319,14 @@
       "reason": "cap",
       "owed": 106,
       "first": [
+        "WorktreeResidueRecoveryTests",
         "WorktreeRetirementRaceTests",
         "AdvisoryChangePolicyTests",
         "AgentReportStoreBudgetTests",
         "AgentSessionServiceIntegrationTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
-        "AgentTaskCheckSweepTests",
-        "AgentTaskDispatchFailureTests"
+        "AgentTaskCheckSweepTests"
       ]
     },
     {
@@ -12196,6 +12196,7 @@
         "AgentTaskLandSweepTests",
         "AgentTaskWorktreeBaseCreateTests",
         "AgentTaskWorktreeBaseResolverTests",
+        "AgentTaskWorktreeLockOutcomeTests",
         "CardFileGitFailureAcceptanceTests",
         "DelegationTestServicesTests",
         "DelegationWorktreeTests",
@@ -12210,7 +12211,6 @@
         "WorktreeBaseSelectionTests",
         "WorktreeDefaultCallerTests",
         "WorktreeManagerGitIntegrationTests",
-        "WorktreeResidueRecoveryTests",
         "WorktreeResidueSweepTests"
       ]
     },
