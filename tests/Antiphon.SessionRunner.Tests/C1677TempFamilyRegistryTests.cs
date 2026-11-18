@@ -32,7 +32,7 @@ public sealed class C1677TempFamilyRegistryTests
         // V-48 (G-108). Only the CLI-harness family (D-12) has no repository producer.
         var root = RepoRoot();
         var families = RunnerTempSweep.RegisteredFamilies;
-        families.Count.ShouldBe(10);
+        families.Count.ShouldBe(12);
         foreach (var family in families)
         {
             if (family.Id == RunnerTempSweep.ClaudeScratch)

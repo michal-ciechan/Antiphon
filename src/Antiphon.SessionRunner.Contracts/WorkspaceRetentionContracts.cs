@@ -139,7 +139,7 @@ public sealed record PhoneHomeTempSweepRequest(
 /// <summary>CARD-1677 S2. One registered-family entry and what the sweep did with it.</summary>
 public sealed record TempSweepCandidate(
     string Name, string Family, string Verdict, string? Reason = null, long Bytes = 0, DateTime? NewestWriteUtc = null,
-    IReadOnlyList<WorkspaceRetainHolder>? Holders = null, string? Detail = null);
+    IReadOnlyList<WorkspaceRetainHolder>? Holders = null, string? Detail = null, string? Root = null);
 
 /// <summary>CARD-1677 S2. Names that match no registered family, by normalized prefix: reported, never touched.</summary>
 public sealed record TempSweepUnregistered(string Prefix, int Count, long Bytes, bool BytesComplete);
