@@ -391,10 +391,10 @@ function Test-TargetFileValues {
         function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = ''; Err = '' } }
         function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
         function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
-        $job = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
-        $text = @($job.Lines) -join "`n"
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+        $text = @($jobRun.Lines) -join "`n"
         Assert-True ($text -match 'reason=target-invalid') 'TargetFileValues wrapper reports target-invalid' $text
-        Assert-True ([int]$job.Exit -eq 9) 'TargetFileValues wrapper exits 9' ("exit=$($job.Exit)")
+        Assert-True ([int]$jobRun.Exit -eq 9) 'TargetFileValues wrapper exits 9' ("exit=$($jobRun.Exit)")
     } finally {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -416,14 +416,14 @@ function Test-TargetInvalidSendsFail {
             function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 0; Out = ''; Err = '' } }
             function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
             function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
-            $job = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+            $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
             $name = 'TargetInvalidSendsFail ' + [string]$variant.Name
             Assert-True ($script:TargetChildCalls.Count -eq 0) "$name starts no child" ($script:TargetChildCalls -join ' | ')
             Assert-True ($script:TargetSent.Count -eq 1) "$name sends once" ("sent=$($script:TargetSent.Count)")
             $line = ''
             if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
             Assert-True ($line -ceq 'DB backup: FAIL exit 9 target-invalid src=none') "$name line" $line
-            Assert-True ([int]$job.Exit -eq 9) "$name exits 9" ("exit=$($job.Exit)")
+            Assert-True ([int]$jobRun.Exit -eq 9) "$name exits 9" ("exit=$($jobRun.Exit)")
             $record = Join-Path (Join-Path $root 'job-status') 'db-backup.json'
             $json = ''
             if (Test-Path -LiteralPath $record) { $json = [System.IO.File]::ReadAllText($record) }
@@ -479,11 +479,11 @@ function Test-FailLineCarriesReason {
         function Invoke-PlainSnapshotChild { param([string]$Snapshot, [string[]]$ArgumentList) [void]$script:TargetChildCalls.Add(($ArgumentList -join ' ')); return @{ Exit = 4; Out = "SNAPSHOT fail exit=4 reason=dump-failed`r`n"; Err = '' } }
         function Send-JobStatusLine { param([string]$Line, [string]$ChatId = '', [string]$SenderRoot = '') [void]$script:TargetSent.Add($Line); return 0 }
         function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
-        $job = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath (Join-Path $root 'snapshot-status.json')
         $line = ''
         if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
         Assert-True ($line -ceq 'DB backup: FAIL exit 4 dump-failed src=server2') 'FailLineCarriesReason wrapper line' $line
-        Assert-True ([int]$job.Exit -eq 4) 'FailLineCarriesReason wrapper exits 4' ("exit=$($job.Exit)")
+        Assert-True ([int]$jobRun.Exit -eq 4) 'FailLineCarriesReason wrapper exits 4' ("exit=$($jobRun.Exit)")
         Assert-True ($script:TargetChildCalls.Count -eq 1 -and $script:TargetChildCalls[0] -match '-Target server2$') 'FailLineCarriesReason child gets -Target server2' ($script:TargetChildCalls -join ' | ')
     } finally {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
@@ -526,7 +526,7 @@ function Test-TargetRollbackRestoresDesktop {
         function Resolve-PlainSnapshotScript { param([string[]]$Candidates, [string]$PinFile) return (Join-Path $root 'postgres-snapshot.ps1') }
         $status = Join-Path $root 'snapshot-status.json'
         Set-Content -LiteralPath $status -Value '{"utc":"20261118T075000Z","exit":0,"bytes":750000000,"mode":"plain","oneDrive":"ok","target":"desktop","serverVersion":"16.14"}' -Encoding ASCII
-        $job = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath $status
+        $jobRun = Invoke-PlainSnapshotJob -RunnerDir $root -RecordDir (Join-Path $root 'job-status') -StatusPath $status
         $args0 = ''
         if ($script:TargetChildCalls.Count -ge 1) { $args0 = [string]$script:TargetChildCalls[0] }
         Assert-True ($script:TargetChildCalls.Count -eq 1) 'TargetRollbackRestoresDesktop job runs one child' ("calls=$($script:TargetChildCalls.Count)")
@@ -536,7 +536,7 @@ function Test-TargetRollbackRestoresDesktop {
         $line = ''
         if ($script:TargetSent.Count -ge 1) { $line = [string]$script:TargetSent[0] }
         Assert-True ($line -ceq 'DB backup: OK 0.7 GB +cloud src=desktop') 'TargetRollbackRestoresDesktop ok line names desktop' $line
-        Assert-True ([int]$job.Exit -eq 0) 'TargetRollbackRestoresDesktop job exits 0' ("exit=$($job.Exit)")
+        Assert-True ([int]$jobRun.Exit -eq 0) 'TargetRollbackRestoresDesktop job exits 0' ("exit=$($jobRun.Exit)")
     } finally {
         Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
     }
