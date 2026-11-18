@@ -71,6 +71,39 @@ public sealed class C1981LeaseTempDriverTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    [NativeLinuxOnly("CARD-1981 the SDK temp leak was observed on Linux only")]
+    [Timeout(30_000)]
+    public void C1981_lease_dispose_does_not_follow_a_replaced_symlink()
+    {
+        var type = typeof(ProcessDriver).Assembly.GetType("Antiphon.Build.LeaseTempDirectory");
+        type.ShouldNotBeNull();
+        var created = type.GetMethod("TryCreate")!.Invoke(null, null);
+        created.ShouldNotBeNull();
+        var path = (string)created.GetType().GetProperty("DirectoryPath")!.GetValue(created)!;
+        LeasePath.IsMatch(path).ShouldBeTrue();
+        var outside = Path.Combine(TempDir(), "outside");
+        Directory.CreateDirectory(outside);
+        var kept = Path.Combine(outside, "keep.txt");
+        File.WriteAllText(kept, "keep");
+        File.Delete(Path.Combine(path, ".lease"));
+        Directory.Delete(path);
+        Directory.CreateSymbolicLink(path, outside);
+        try
+        {
+            ((IDisposable)created).Dispose();
+            File.ReadAllText(kept).ShouldBe("keep");
+            Directory.Exists(outside).ShouldBeTrue();
+            new DirectoryInfo(path).LinkTarget.ShouldBe(outside);
+        }
+        finally
+        {
+            var link = new DirectoryInfo(path);
+            if (link.Exists && link.LinkTarget is not null && LeasePath.IsMatch(path))
+                link.Delete();
+        }
+    }
+
     private static string Value(string stdout, string prefix)
     {
         var line = stdout.ReplaceLineEndings("\n").Split('\n').Single(item => item.StartsWith(prefix, StringComparison.Ordinal));

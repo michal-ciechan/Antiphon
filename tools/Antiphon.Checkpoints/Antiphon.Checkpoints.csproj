@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <Compile Include="../../scripts/lib/BuildDriverEnvironment.cs" Link="BuildDriverEnvironment.cs" />
+    <Compile Include="../../scripts/lib/LeaseTempDirectory.cs" Link="LeaseTempDirectory.cs" />
     <Compile Include="../../scripts/lib/PhaseJournalDiagnostic.cs" Link="PhaseJournalDiagnostic.cs" />
     <!-- CARD-1793: the tool's ProcessDriver .ps1 shims start pwsh; give them a process-private cache. -->
     <Compile Include="../../src/Antiphon.Hosting/PwshPrivateCache.cs" Link="PwshPrivateCache.cs" />

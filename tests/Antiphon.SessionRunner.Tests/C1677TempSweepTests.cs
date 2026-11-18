@@ -147,8 +147,9 @@ public sealed class C1677TempSweepTests
     [Test]
     public async Task Unregistered_random_and_process_names_aggregate_by_prefix(CancellationToken ct)
     {
-        // CARD-1896 V-1. Real six-character scratch suffixes and short process IDs escaped
-        // the old hex>=8 / digits>=5 folding and produced a residue row for every entry.
+        // CARD-1896 V-1, CARD-1981. Six-character names match dotnet-sdk-empty. That family
+        // stays off unless flagged, so they are kept as family_disabled and never walked.
+        // Short process IDs stay one unregistered prefix row.
         using var s = new Scratch();
         string[] names = ["B0txQx", "ZNWW6w", "clr-debug-pipe-123-456-in", "clr-debug-pipe-789-321-in"];
         foreach (var name in names)
@@ -156,18 +157,23 @@ public sealed class C1677TempSweepTests
 
         var response = await s.Sweep().SweepAsync(Request(), ct);
 
-        response.Candidates.ShouldBeEmpty();
-        response.Unregistered.Count.ShouldBe(2, "one report row per prefix, not per random suffix or PID");
-        foreach (var prefix in new[] { "<random>", "clr-debug-pipe-<n>-<n>-in" })
+        response.Candidates.Count.ShouldBe(2);
+        foreach (var name in new[] { "B0txQx", "ZNWW6w" })
         {
-            var row = response.Unregistered.Single(r => r.Prefix == prefix);
-            row.Count.ShouldBe(2);
-            row.Bytes.ShouldBe(14);
-            row.BytesComplete.ShouldBeTrue();
+            var row = response.Candidates.Single(c => c.Name == name);
+            row.Verdict.ShouldBe(TempSweepCodes.Kept);
+            row.Reason.ShouldBe(TempSweepCodes.FamilyDisabled);
+            row.Family.ShouldBe(RunnerTempSweep.DotnetSdkEmpty);
         }
+        response.Unregistered.Count.ShouldBe(1);
+        var pipes = response.Unregistered.Single();
+        pipes.Prefix.ShouldBe("clr-debug-pipe-<n>-<n>-in");
+        pipes.Count.ShouldBe(2);
+        pipes.Bytes.ShouldBe(14);
+        pipes.BytesComplete.ShouldBeTrue();
         foreach (var name in names)
             File.ReadAllBytes(s.Tmp + "/" + name + "/f0.bin").Length.ShouldBe(7);
-        s.Holders.Calls.ShouldBe(0, "unregistered entries never reach removal admission");
+        s.Holders.Calls.ShouldBe(0, "family_disabled returns before the holder scan");
     }
 
     [Test]

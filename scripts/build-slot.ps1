@@ -117,6 +117,9 @@ function Start-AntiphonWrappedCommand {
     }
     $compilerGrant = if ($null -ne $slot) { [int]$slot.MaxCpuCount } else { 0 }
     Set-AntiphonBuildDriverEnvironment -StartInfo $psi -Windows $IsWindows -MaxCpuCount $compilerGrant
+    if ($null -ne $script:leaseTemp) {
+        $psi.Environment['TMPDIR'] = [string]$script:leaseTemp.DirectoryPath
+    }
     $proc = [Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     try { [void]$proc.Start() }
@@ -128,8 +131,12 @@ function Start-AntiphonWrappedCommand {
 
 $code = 1
 $script:WrappedProcess = $null
+$script:leaseTemp = $null
 $environmentRestore = $null
 $capRestore = $null
+if ($command.Count -gt 0 -and [string]$command[0] -eq 'dotnet') {
+    $script:leaseTemp = New-AntiphonLeaseTemp
+}
 try {
     $environmentRestore = Enter-AntiphonBuildDriverEnvironment -Windows $IsWindows
     if ($null -ne $exportedMaxCpuCount) {
@@ -152,9 +159,26 @@ try {
             $scriptArgs = @('-NoProfile', '-NonInteractive', '-File', $resolved.Source) + $rest
             $code = Start-AntiphonWrappedCommand -FileName $pwshBinary -Arguments $scriptArgs
         } else {
-            & $command[0] @rest
-            $code = $LASTEXITCODE
-            if ($null -eq $code) { $code = $(if ($?) { 0 } else { 1 }) }
+            $savedTmpDir = $null
+            $restoreTmpDir = $false
+            if ($null -ne $script:leaseTemp) {
+                $savedTmpDir = [Environment]::GetEnvironmentVariable('TMPDIR')
+                $restoreTmpDir = $true
+                [Environment]::SetEnvironmentVariable('TMPDIR', [string]$script:leaseTemp.DirectoryPath)
+            }
+            try {
+                & $command[0] @rest
+                $code = $LASTEXITCODE
+                if ($null -eq $code) { $code = $(if ($?) { 0 } else { 1 }) }
+            } finally {
+                if ($restoreTmpDir) {
+                    if ($null -eq $savedTmpDir) {
+                        [Environment]::SetEnvironmentVariable('TMPDIR', [NullString]::Value)
+                    } else {
+                        [Environment]::SetEnvironmentVariable('TMPDIR', $savedTmpDir)
+                    }
+                }
+            }
         }
     }
 } finally {
@@ -165,6 +189,10 @@ try {
             try { $script:WrappedProcess.Kill($true) } catch { }
         }
         $script:WrappedProcess.Dispose()
+    }
+    if ($null -ne $script:leaseTemp) {
+        try { $script:leaseTemp.Dispose() } catch { }
+        $script:leaseTemp = $null
     }
     Exit-AntiphonBuildSlot -Lease $slot
 }

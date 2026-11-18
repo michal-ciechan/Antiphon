@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <Compile Include="../scripts/lib/BuildDriverEnvironment.cs" Link="Infrastructure/BuildDriverEnvironment.cs" />
+    <Compile Include="../scripts/lib/LeaseTempDirectory.cs" Link="Infrastructure/LeaseTempDirectory.cs" />
     <InternalsVisibleTo Include="Antiphon.Tests" />
     <InternalsVisibleTo Include="Antiphon.Observability.Tests" />
     <InternalsVisibleTo Include="Antiphon.GitInProcess.Tests" />
