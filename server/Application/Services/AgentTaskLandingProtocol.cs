@@ -47,7 +47,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
     internal Task<LandingVerification> VerifyPreparedAsync(PreparedLandingVerification ticket, Guid windowId, CancellationToken ct)
         => verifier.VerifyAsync(ticket.Identity.WorktreePath, ticket.Filter,
             new(ticket.Identity.TaskId, ticket.Identity.OperationId, ticket.Identity.RequestId,
-                CommonDirectory: ticket.Common, WindowId: windowId), ct);
+                CommonDirectory: ticket.Common, WindowId: windowId, TargetRef: ticket.Identity.TargetRef), ct);
 
     internal Task<LandingProtocolResult> ResumeAsync(AgentTask task, RepositoryLease lease,
         AgentTaskLandRequest request, PreparedLandingVerification ticket, LandingVerification verification, CancellationToken ct)
@@ -350,7 +350,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     if (deferVerification && request is not null)
                         return new(op, null, []) { Verification = (await CaptureTicketAsync(op, request, ct)).Ticket };
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
-                        new(op.TaskId, op.Id, request?.Id, CommonDirectory: common), ct);
+                        new(op.TaskId, op.Id, request?.Id, CommonDirectory: common, TargetRef: op.TargetFullRef), ct);
                     RecordBuildSlot(op, verification, request?.Id);
                     Require(verification.Passed, "verification_failed");
                     op.VerificationPassed = true;

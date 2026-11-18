@@ -1927,7 +1927,8 @@ public sealed class AgentTaskLandService
     internal delegate Task<ProcessResult> LandProcessRunner(string cwd, ILandingChildObserver? observer, CancellationToken ct, string file, string[] args);
 
     internal static async Task<LandVerification> VerifyWithObserverAsync(string worktree, string? filter,
-        ILandingChildObserver? observer, CancellationToken ct, IBuildSlotGate? buildSlots = null, LandProcessRunner? runProcess = null, string? artifactsPath = null)
+        ILandingChildObserver? observer, CancellationToken ct, IBuildSlotGate? buildSlots = null, LandProcessRunner? runProcess = null, string? artifactsPath = null,
+        Action<ProcessResult>? buildExited = null)
     {
         runProcess ??= (cwd, obs, token, file, args) => RunProcessAsync(cwd, obs, token, file, args);
         var unwrapped = runProcess;
@@ -1963,7 +1964,7 @@ public sealed class AgentTaskLandService
         }
         try
         {
-            var verified = await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess, artifactsPath);
+            var verified = await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess, artifactsPath, buildExited);
             return verified with { MemoryWait = slot?.MemoryWait };
         }
         finally
@@ -1974,7 +1975,8 @@ public sealed class AgentTaskLandService
     }
 
     private static async Task<LandVerification> VerifyUnderSlotAsync(string worktree, string? filter,
-        ILandingChildObserver? observer, CancellationToken ct, BuildSlotHold? slot, LandProcessRunner runProcess, string? artifactsPath)
+        ILandingChildObserver? observer, CancellationToken ct, BuildSlotHold? slot, LandProcessRunner runProcess, string? artifactsPath,
+        Action<ProcessResult>? buildExited)
     {
         // SDK artifacts isolate both bin and obj by project, outside the source checkout.
         // Unique owned outputs are retained; never recursively erase pre-existing bin-* paths.
@@ -1984,6 +1986,8 @@ public sealed class AgentTaskLandService
             ? ["build", "--artifacts-path", output, "--configuration", "Debug", "-maxcpucount:" + slot.MaxCpuCount]
             : ["build", "--artifacts-path", output, "--configuration", "Debug"];
         var build = await runProcess(worktree, observer, ct, "dotnet", buildArgs);
+        // CARD-1994: the build child returned an exit status (it was not cancelled or killed by this verifier).
+        buildExited?.Invoke(build);
         if (!build.Ok) return LandVerification.Failure("build", Tail(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
         var results = Infrastructure.Git.LandVerificationArtifacts.CreateResultsDirectory(output);
@@ -2037,7 +2041,7 @@ public sealed class AgentTaskLandService
         await Task.WhenAll(stdout, stderr);
         if (observer is not null) await observer.ExitedAsync(CancellationToken.None);
         try { observer?.Completed(); } catch (Exception) { /* Secondary observation only. */ }
-        return new ProcessResult(process.ExitCode == 0, await stdout, await stderr);
+        return new ProcessResult(process.ExitCode == 0, await stdout, await stderr) { ExitCode = process.ExitCode };
     }
 
     private static string Tail(ProcessResult result)
