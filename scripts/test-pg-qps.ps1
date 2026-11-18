@@ -58,6 +58,83 @@ function Invoke-Psql([string]$sql) {
     return Invoke-Child "docker" ("exec -i " + $name + " psql -X -A -t -U antiphon -d antiphon -v ON_ERROR_STOP=1") $sql $null
 }
 
+function Write-Int32BE([System.IO.Stream]$stream, [int]$n) {
+    $bytes = New-Object byte[] 4
+    $bytes[0] = [byte](($n -shr 24) -band 255)
+    $bytes[1] = [byte](($n -shr 16) -band 255)
+    $bytes[2] = [byte](($n -shr 8) -band 255)
+    $bytes[3] = [byte]($n -band 255)
+    $stream.Write($bytes, 0, 4)
+}
+
+function Read-Exact([System.Net.Sockets.NetworkStream]$stream, [int]$count) {
+    $buf = New-Object byte[] $count
+    $got = 0
+    while ($got -lt $count) {
+        $n = $stream.Read($buf, $got, $count - $got)
+        if ($n -le 0) { throw "socket eof" }
+        $got = $got + $n
+    }
+    return $buf
+}
+
+# psql's scanner drops comments, so a tagged workload has to be a simple-query
+# message. Trust is only on this container's localhost-published port.
+function Send-PgQuery([int]$port, [string]$sql) {
+    if ($port -le 0) { throw "no published port" }
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $client.ReceiveTimeout = 8000
+        $client.SendTimeout = 8000
+        $client.Connect("127.0.0.1", $port)
+        $stream = $client.GetStream()
+        $stream.ReadTimeout = 8000
+        $enc = [System.Text.Encoding]::UTF8
+        $params = $enc.GetBytes("user")
+        $params = $params + [byte]0 + $enc.GetBytes("antiphon") + [byte]0
+        $params = $params + $enc.GetBytes("database") + [byte]0 + $enc.GetBytes("antiphon") + [byte]0 + [byte]0
+        $ms = New-Object System.IO.MemoryStream
+        Write-Int32BE $ms 196608
+        $ms.Write($params, 0, $params.Length)
+        $body = $ms.ToArray()
+        Write-Int32BE $stream ($body.Length + 4)
+        $stream.Write($body, 0, $body.Length)
+        $err = ""
+        $ready = $false
+        while (-not $ready) {
+            $tagBuf = Read-Exact $stream 1
+            $lenBuf = Read-Exact $stream 4
+            $len = ([int]$lenBuf[0] -shl 24) -bor ([int]$lenBuf[1] -shl 16) -bor ([int]$lenBuf[2] -shl 8) -bor [int]$lenBuf[3]
+            $payload = Read-Exact $stream ($len - 4)
+            if ($tagBuf[0] -eq 69) { $err = $enc.GetString($payload) }
+            if ($tagBuf[0] -eq 82 -and $payload.Length -ge 4) {
+                $auth = ([int]$payload[0] -shl 24) -bor ([int]$payload[1] -shl 16) -bor ([int]$payload[2] -shl 8) -bor [int]$payload[3]
+                if ($auth -ne 0) { throw ("auth required code " + $auth) }
+            }
+            if ($tagBuf[0] -eq 90) { $ready = $true }
+        }
+        if ($err.Length -gt 0) { throw $err }
+        $q = $enc.GetBytes($sql) + [byte]0
+        $stream.WriteByte(81)
+        Write-Int32BE $stream ($q.Length + 4)
+        $stream.Write($q, 0, $q.Length)
+        $ready = $false
+        $err = ""
+        while (-not $ready) {
+            $tagBuf = Read-Exact $stream 1
+            $lenBuf = Read-Exact $stream 4
+            $len = ([int]$lenBuf[0] -shl 24) -bor ([int]$lenBuf[1] -shl 16) -bor ([int]$lenBuf[2] -shl 8) -bor [int]$lenBuf[3]
+            $payload = Read-Exact $stream ($len - 4)
+            if ($tagBuf[0] -eq 69) { $err = $enc.GetString($payload) }
+            if ($tagBuf[0] -eq 90) { $ready = $true }
+        }
+        if ($err.Length -gt 0) { throw $err }
+    }
+    finally {
+        $client.Close()
+    }
+}
+
 function New-Secret {
     $bytes = New-Object byte[] 18
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -82,14 +159,14 @@ try {
         $pull = Invoke-Child "docker" ("pull " + $Image) "" $null
         if ($pull.Exit -ne 0) { throw "image pull failed" }
     }
-    $runArgs = "run -d --name $name --tmpfs /var/lib/postgresql/data:rw,nosuid,size=512m -e POSTGRES_PASSWORD -e POSTGRES_USER=antiphon -e POSTGRES_DB=antiphon $Image -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top"
+    $runArgs = "run -d --name $name -p 127.0.0.1::5432 --tmpfs /var/lib/postgresql/data:rw,nosuid,size=512m -e POSTGRES_PASSWORD -e POSTGRES_USER=antiphon -e POSTGRES_DB=antiphon $Image -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=top"
     $run = Invoke-Child "docker" $runArgs "" @{ POSTGRES_PASSWORD = $password }
     if ($run.Exit -ne 0) { throw ("container start failed " + (Hide $run.Err)) }
     $ready = $false
     $stable = 0
     for ($i = 0; $i -lt 60; $i++) {
-        $probe = Invoke-Psql "SELECT 1;"
-        if ($probe.Exit -eq 0 -and $probe.Out.Trim() -eq "1") {
+        $probe = Invoke-Psql "SELECT current_setting('server_version_num');"
+        if ($probe.Exit -eq 0 -and $probe.Out.Trim() -match '^\d+$') {
             $stable = $stable + 1
             if ($stable -ge 2) { $ready = $true; break }
         }
@@ -107,6 +184,15 @@ try {
         Start-Sleep -Seconds 1
     }
     if ($null -eq $ext -or $ext.Exit -ne 0) { throw ("extension create failed " + (Hide $ext.Err)) }
+    $hbaBody = "local all all trust`nhost all all 0.0.0.0/0 trust`nhost all all ::/0 trust`n"
+    $hba = Invoke-Child "docker" ("exec -i " + $name + " tee /var/lib/postgresql/data/pg_hba.conf") $hbaBody $null
+    if ($hba.Exit -ne 0) { throw ("hba write failed " + (Hide $hba.Err)) }
+    $reload = Invoke-Psql "SELECT pg_reload_conf();"
+    if ($reload.Exit -ne 0) { throw ("reload failed " + (Hide $reload.Err)) }
+    $portLine = Invoke-Child "docker" ("port " + $name + " 5432") "" $null
+    $portMatch = [regex]::Match($portLine.Out, ':(\d+)')
+    if (-not $portMatch.Success) { throw "no published port" }
+    $script:pgPort = [int]$portMatch.Groups[1].Value
     $phase.Stop()
     Write-Output ("PHASE container ms=" + [int]$phase.ElapsedMilliseconds)
 
@@ -124,7 +210,7 @@ try {
     if ($text.Contains("-AsHashtable") -or $text.Contains("-Parallel") -or $text.Contains("ArgumentList")) { $syntaxClean = $false }
 
     $hostExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    function Invoke-Window([string]$sql) {
+    function Invoke-Window([string]$sql, [bool]$raw) {
         $signal = Join-Path ([System.IO.Path]::GetTempPath()) ("c1987-signal-" + [guid]::NewGuid().ToString("N"))
         $script:signals.Add($signal)
         $args = "-NoProfile -File `"$ScriptPath`" -Seconds 10 -Container $name -User antiphon -Database antiphon -Json -SignalFile `"$signal`""
@@ -146,7 +232,12 @@ try {
         }
         $signalled = Test-Path -LiteralPath $signal
         if ($signalled -and $sql.Length -gt 0) {
-            $ran = Invoke-Psql $sql
+            if ($raw) {
+                $ran = @{ Exit = 0; Err = "" }
+                try { Send-PgQuery $script:pgPort $sql }
+                catch { $ran = @{ Exit = 1; Err = $_.Exception.Message } }
+            }
+            else { $ran = Invoke-Psql $sql }
             if ($ran.Exit -ne 0) {
                 $proc.WaitForExit()
                 return @{ Exit = $proc.ExitCode; Out = $outTask.Result; Err = "workload failed " + (Hide $ran.Err); Signalled = $true }
@@ -167,10 +258,12 @@ try {
     }
 
     $w = [System.Diagnostics.Stopwatch]::StartNew()
+    # SELECT 1 and SELECT 2 are one pg_stat_statements query id, so the second tag
+    # is a different statement. The simple-query path keeps the leading comment.
     $sqlA = New-Object System.Text.StringBuilder
     for ($i = 0; $i -lt 50; $i++) { [void]$sqlA.AppendLine("-- rt.witness.a"); [void]$sqlA.AppendLine("SELECT 1;") }
-    for ($i = 0; $i -lt 20; $i++) { [void]$sqlA.AppendLine("-- rt.witness.b"); [void]$sqlA.AppendLine("SELECT 2;") }
-    $r1 = Invoke-Window $sqlA.ToString()
+    for ($i = 0; $i -lt 20; $i++) { [void]$sqlA.AppendLine("-- rt.witness.b"); [void]$sqlA.AppendLine("SELECT 1 FROM (SELECT 1) s;") }
+    $r1 = Invoke-Window $sqlA.ToString() $true
     $ok1 = $false
     $detail1 = "exit " + $r1.Exit
     if ($r1.Signalled -and $r1.Exit -eq 0 -and (Test-Clean $r1.Out)) {
