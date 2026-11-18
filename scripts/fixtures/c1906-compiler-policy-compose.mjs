@@ -236,14 +236,22 @@ const oldPath = root + '/docker-compose.server2-runner.yml';
 fs.writeFileSync(oldPath, cp.execFileSync('git', ['show',
   'd100f8fa2c679a5c74b6b235087308776a8f5d50:docker-compose.server2-runner.yml'], {cwd: repo}));
 const base = JSON.parse(bash('C1008_COMPOSE_DIR="$FIXTURE_ROOT" compose_host config --format json\n'));
-// CARD-1893 S0 (ea4209a16) adds exactly this one base session-runner line as an intentional
-// stop-gap; CARD-1985 retires it in CARD-1893 S1, which must delete this allowance with it.
-// Every other environment line still has to match the historical render.
-const s0HistoryKey = 'SessionRunner__HostStats__HistoryEnabled';
-assert.equal(current.services['session-runner'].environment[s0HistoryKey], 'false',
-  'CARD-1893 S0 HistoryEnabled stop-gap changed: CARD-1985 retires this allowance');
-assert.equal(Object.hasOwn(base.services['session-runner'].environment, s0HistoryKey), false);
-delete current.services['session-runner'].environment[s0HistoryKey];
+// CARD-1893 S1 adds the durable history path and the literal binding identity to the base
+// session-runner, and CARD-1985 retired the S0 HistoryEnabled stop-gap with it. Every other
+// environment line still has to match the historical render.
+assert.equal(Object.hasOwn(current.services['session-runner'].environment,
+  'SessionRunner__HostStats__HistoryEnabled'), false, 'CARD-1985: the S0 HistoryEnabled stop-gap is retired');
+for (const [name, value] of Object.entries({
+  SessionRunner__HostStats__HistoryPath: /^\/state\/host-load$/,
+  SessionRunner__HostStats__PhysicalHostKey: /^server2$/,
+  SessionRunner__HostStats__BindingRevision: /^1$/,
+  SessionRunner__HostStats__SourceEpoch: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  SessionRunner__HostStats__AuthorityId: /^server2-build-slots$/,
+})) {
+  assert.match(current.services['session-runner'].environment[name] ?? '', value, 'CARD-1893 S1 ' + name);
+  assert.equal(Object.hasOwn(base.services['session-runner'].environment, name), false);
+  delete current.services['session-runner'].environment[name];
+}
 assert.equal(current.services['session-runner'].environment[key], '0');
 assert.equal(Object.hasOwn(base.services['session-runner'].environment, key), false);
 delete current.services['session-runner'].environment[key];

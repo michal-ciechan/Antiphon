@@ -568,6 +568,34 @@ public sealed class DockerStackDocumentationTests
         http.ShouldContain("After the CARD-1744 move", Case.Sensitive, "c1779-http-move");
     }
 
+    // CARD-1893 S1: the server2 history paragraph names the durable path, the retired S0 line and the
+    // section 7.0 hold script with its fetch rule; ops-http names the temp opt-out.
+    [Test]
+    public void C1893_S1_Docs_name_the_hold_and_the_durable_path()
+    {
+        var text = Read("docs/docker-stack.md");
+        var section = Section(text, "### server2 host-load history and the runner hold (CARD-1893)",
+            "### Server2 load before builds");
+        foreach (var pin in new[]
+                 {
+                     "`SessionRunner__HostStats__HistoryPath: /state/host-load`",
+                     "`/runner-state/host-load`",
+                     "no `SessionRunner__HostStats__HistoryEnabled` line",
+                     "`SessionRunner__HostStats__HistoryEnabled: \"false\"`",
+                     "bash scripts/c1893-runner-hold.sh <40-hex rollout sha>",
+                     "Run `git fetch origin` in that checkout first; the script itself does not fetch.",
+                     "`-Phase deploy-temp`, `-Phase redeploy-old` or `-Phase all`",
+                     "`HOLD` means do not run the phase",
+                     "`NOT-AFFECTED`",
+                 })
+            section.ShouldContain(pin, Case.Sensitive);
+
+        var http = Read("docs/ops-http.md");
+        http.ShouldContain("The server2 temp runner (`server2-temp`) sets `HistoryEnabled` to `\"false\"` and sets no `HistoryPath`",
+            Case.Sensitive);
+        http.ShouldContain("`/state/host-load`", Case.Sensitive);
+    }
+
     /// <summary>
     /// Prose wraps. Asserting a phrase against the raw bytes makes the guard fail the moment a
     /// paragraph is rewrapped, which says nothing about whether the doc still means what it must,
