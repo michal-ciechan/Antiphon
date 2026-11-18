@@ -783,6 +783,9 @@ function Invoke-Dotnet {
         $script:phaseDiagnosticRoot = [Antiphon.Checkpoints.PhaseJournalDiagnostic]::ConfiguredRoot($psi)
     }
     Set-AntiphonBuildDriverEnvironment -StartInfo $psi
+    if ($null -ne $script:leaseTemp) {
+        $psi.Environment['TMPDIR'] = [string]$script:leaseTemp.DirectoryPath
+    }
     $logPath = Join-Path $resultsDirectory ($Phase + '.log')
     $stream = Open-CheckpointSafeCreate $logPath $resultsDirectory
     $writer = [System.IO.StreamWriter]::new($stream)
@@ -1246,7 +1249,10 @@ function Invoke-ConfinedCheckpointBuild {
 $trxPath = Join-Path $resultsDirectory 'run.trx'
 $script:trxPath = $trxPath
 $phaseError = $null
+$script:leaseTemp = $null
 try {
+    # CARD-1981: one Linux directory for this slot. Graph evaluation keeps the ambient temp.
+    $script:leaseTemp = New-AntiphonLeaseTemp
     # (3) Build, unless this row reuses an earlier row's output. The grant's -maxcpucount applies to
     # the build only: the --no-build run below starts no MSBuild nodes.
     $buildState = 'reused'
@@ -1340,6 +1346,10 @@ try {
     $script:sourceEnd = $null
     $script:sourceReason = 'source_unknown'
 } finally {
+    if ($null -ne $script:leaseTemp) {
+        try { $script:leaseTemp.Dispose() } catch { }
+        $script:leaseTemp = $null
+    }
     Exit-AntiphonBuildSlot -Lease $slot
 }
 if ($null -ne $phaseError) {

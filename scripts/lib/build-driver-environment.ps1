@@ -33,6 +33,25 @@ function Enter-AntiphonBuildDriverEnvironment {
     return $restore
 }
 
+function New-AntiphonLeaseTemp {
+    # CARD-1981. Linux only. A compile or stat failure returns null and the build keeps the ambient temp.
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { return $null }
+    try {
+        $type = $null
+        foreach ($assembly in [AppDomain]::CurrentDomain.GetAssemblies()) {
+            $found = $assembly.GetType('Antiphon.Build.LeaseTempDirectory', $false)
+            if ($null -ne $found) { $type = $found; break }
+        }
+        if ($null -eq $type) {
+            Add-Type -Path (Join-Path $PSScriptRoot 'LeaseTempDirectory.cs')
+            $type = [Antiphon.Build.LeaseTempDirectory]
+        }
+        return $type::TryCreate()
+    } catch {
+        return $null
+    }
+}
+
 function Exit-AntiphonBuildDriverEnvironment {
     param([hashtable]$Restore)
     if ($Restore) {

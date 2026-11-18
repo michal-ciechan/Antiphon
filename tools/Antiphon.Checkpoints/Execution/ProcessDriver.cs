@@ -73,6 +73,36 @@ public sealed class ProcessDriver : IConfinedDriver
     private static string WorkingDirectoryOf(DriverRequest request) =>
         string.IsNullOrWhiteSpace(request.WorkingDirectory) ? Environment.CurrentDirectory : request.WorkingDirectory;
 
+    // CARD-1981. One private TMPDIR per dotnet child, including a shimmed child.
+    // Graph evaluation, version, and the slot hold process stay on the ambient temp.
+    // An explicit request TMPDIR is left as the caller set it.
+    private static bool OwnsLeaseTemp(DriverRequest request)
+    {
+        if (!request.FileName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (request.Environment is not null)
+        {
+            foreach (var key in request.Environment.Keys)
+            {
+                if (key.Equals("TMPDIR", StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+        }
+        if (request.Arguments.Count > 0)
+        {
+            var first = request.Arguments[0];
+            if (first.Equals("msbuild", StringComparison.OrdinalIgnoreCase)
+                || first.Equals("--version", StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        foreach (var argument in request.Arguments)
+        {
+            if (argument.Equals("hold", StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return true;
+    }
+
     public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
     {
         var arguments = request.Arguments;
@@ -116,6 +146,14 @@ public sealed class ProcessDriver : IConfinedDriver
             if (logReason is not null || logStream is null)
                 return new DriverResult(ExitCodes.Invalid, "", "refused: " + logReason);
             log = new StreamWriter(logStream) { AutoFlush = true };
+        }
+
+        Antiphon.Build.LeaseTempHandle? leaseTemp = null;
+        if (OwnsLeaseTemp(request))
+        {
+            leaseTemp = Antiphon.Build.LeaseTempDirectory.TryCreate();
+            if (leaseTemp is not null)
+                psi.Environment["TMPDIR"] = leaseTemp.DirectoryPath;
         }
 
         var outputGate = new object();
@@ -170,6 +208,8 @@ public sealed class ProcessDriver : IConfinedDriver
         }
         finally
         {
+            try { leaseTemp?.Dispose(); }
+            catch (Exception) { }
             if (baseline is not null)
             {
                 settlement = BuildConfinement.Settle(baseline);

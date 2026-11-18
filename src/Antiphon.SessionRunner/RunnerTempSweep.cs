@@ -9,7 +9,8 @@ namespace Antiphon.SessionRunner;
 /// CARD-1677 S2. One registered temp family: an exact regex anchored by <c>^</c> and <c>\z</c> (never <c>$</c>, which also
 /// matches before a final line feed) over a top-level temp name (or, with
 /// <see cref="Container"/>, over <c>&lt;container&gt;/&lt;child&gt;</c> at depth 2), and the repository file whose
-/// <see cref="Literal"/> creates it. <see cref="Producer"/> is null only for the CLI harness family (D-12).
+/// <see cref="Literal"/> creates it. <see cref="Producer"/> is null only for the CLI harness family (D-12)
+/// and the .NET SDK empty-directory family (CARD-1981).
 /// </summary>
 public sealed record TempFamily(
     string Id, string Pattern, string? Producer, string? Literal, string Sample,
@@ -54,6 +55,8 @@ public sealed class RunnerTempSweep
     public const string ClaudeContainer = "claude-1654";
     public const string ReviewClone = "review-clone";
     public const string SessionAnsi = "session-ansi";
+    public const string DotnetSdkEmpty = "dotnet-sdk-empty";
+    private const int DotnetSdkEmptyUid = 1654;
 
     /// <summary>
     /// The shipped family table (plan §3.5). The <c>pty-test-root</c> alternation equals
@@ -128,6 +131,10 @@ public sealed class RunnerTempSweep
         new(SessionAnsi, "^[0-9a-f]{32}\\.ansi\\.log\\z",
             "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs", "$\"{_sessionId:N}.ansi.log\"",
             "0123456789abcdef0123456789abcdef.ansi.log", DefaultEnabled: false, MinAgeHours: 168, FilesOnly: true),
+        // CARD-1981. The SDK 10.0.404 RestoringCommand leaves one empty mode-0700 directory
+        // named with six [A-Za-z0-9] characters. No repository file creates it. Off unless flagged.
+        new(DotnetSdkEmpty, "^[A-Za-z0-9]{6}\\z", null, null, "Ab12Cd",
+            DefaultEnabled: false, MinAgeHours: 1),
     ];
 
     private static readonly string[] DeniedExact =
@@ -356,6 +363,15 @@ public sealed class RunnerTempSweep
                 Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, walk.Reason, walk.Bytes, walk.Newest, Detail: walk.Detail, Root: root));
                 return;
             }
+            if (family.Id == DotnetSdkEmpty)
+            {
+                var sdk = SdkEmptyRefusal(path, walk);
+                if (sdk is not null)
+                {
+                    Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, sdk.Value.Reason, walk.Bytes, walk.Newest, Detail: sdk.Value.Detail, Root: root));
+                    return;
+                }
+            }
             if (family.FilesOnly && !walk.IsFile)
             {
                 Keep(new TempSweepCandidate(name, family.Id, TempSweepCodes.Kept, TempSweepCodes.UnprovenContent, Root: root));
@@ -496,6 +512,36 @@ public sealed class RunnerTempSweep
         }
         var owner = _ownerUid(path);
         return owner is null ? TempSweepCodes.OwnerUnknown : owner != _runnerUid ? TempSweepCodes.ForeignOwner : null;
+    }
+
+    private (string Reason, string Detail)? SdkEmptyRefusal(string path, WalkResult walk)
+    {
+        if (walk.IsFile)
+            return (TempSweepCodes.UnprovenContent, "not-a-directory");
+        if (!OperatingSystem.IsLinux())
+            return (TempSweepCodes.UnprovenContent, "mode");
+        try
+        {
+            var mode = File.GetUnixFileMode(path);
+            if (((int)mode & 0x1FF) != 0x1C0)
+                return (TempSweepCodes.UnprovenContent, "mode");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return (TempSweepCodes.UnprovenContent, "mode");
+        }
+        if (_ownerUid(path) != DotnetSdkEmptyUid)
+            return (TempSweepCodes.ForeignOwner, "uid");
+        try
+        {
+            if (Directory.EnumerateFileSystemEntries(path).Any())
+                return (TempSweepCodes.UnprovenContent, "not-empty");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (TempSweepCodes.UnprovenContent, "not-empty");
+        }
+        return null;
     }
 
     private sealed record WalkResult(string? Reason, long Bytes, DateTime? Newest, bool IsFile, string? Detail = null);

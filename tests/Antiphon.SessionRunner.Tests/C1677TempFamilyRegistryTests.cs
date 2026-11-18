@@ -29,13 +29,16 @@ public sealed class C1677TempFamilyRegistryTests
     [Test]
     public async Task Every_family_producer_still_contains_its_prefix()
     {
-        // V-48 (G-108). Only the CLI-harness family (D-12) has no repository producer.
+        // V-48 (G-108). The CLI-harness family (D-12) and the SDK empty-directory family
+        // (CARD-1981) have no repository producer. Both stay off unless flagged.
         var root = RepoRoot();
         var families = RunnerTempSweep.RegisteredFamilies;
-        families.Count.ShouldBe(20);
+        // CARD-1981 S2 replay: master already had 20 families (slice 1). This slice adds
+        // dotnet-sdk-empty, so the shipped table is 21.
+        families.Count.ShouldBe(21);
         foreach (var family in families)
         {
-            if (family.Id == RunnerTempSweep.ClaudeScratch)
+            if (family.Id is RunnerTempSweep.ClaudeScratch or RunnerTempSweep.DotnetSdkEmpty)
             {
                 family.Producer.ShouldBeNull();
                 family.DefaultEnabled.ShouldBeFalse();

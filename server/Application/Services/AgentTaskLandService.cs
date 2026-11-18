@@ -1962,13 +1962,23 @@ public sealed class AgentTaskLandService
             if (slot.Outcome == BuildSlotHoldOutcome.Timeout)
                 return LandVerification.Failure("build-slot", $"build_slot_timeout position={slot.QueuePosition}") with { MemoryWait = slot.MemoryWait };
         }
+        Antiphon.Build.LeaseTempHandle? leaseTemp = null;
         try
         {
+            if (buildSlots is not null)
+            {
+                leaseTemp = Antiphon.Build.LeaseTempDirectory.TryCreate();
+                if (leaseTemp is not null)
+                    Antiphon.Build.LeaseTempDirectory.Ambient.Value = leaseTemp.DirectoryPath;
+            }
             var verified = await VerifyUnderSlotAsync(worktree, filter, observer, ct, slot, runProcess, artifactsPath, buildExited);
             return verified with { MemoryWait = slot?.MemoryWait };
         }
         finally
         {
+            Antiphon.Build.LeaseTempDirectory.Ambient.Value = null;
+            try { leaseTemp?.Dispose(); }
+            catch (Exception) { }
             if (slot is not null)
                 await buildSlots!.ReleaseAsync(slot, Report, CancellationToken.None);
         }
@@ -2021,6 +2031,12 @@ public sealed class AgentTaskLandService
             CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in args) start.ArgumentList.Add(arg);
         new Antiphon.Build.BuildDriverEnvironment().Apply(start);
+        if (string.Equals(file, "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            var leaseDir = Antiphon.Build.LeaseTempDirectory.Ambient.Value;
+            if (!string.IsNullOrEmpty(leaseDir))
+                start.Environment["TMPDIR"] = leaseDir;
+        }
         if (observer is not null) await observer.BeforeStartAsync(ct);
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {file}.");
         var stdout = process.StandardOutput.ReadToEndAsync();
