@@ -684,7 +684,22 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 
 A Merge verifies only: one build, each subject's own narrow witness rows (each under 10
 minutes), `land-graph -Check`, the pins recompute, the derived-index regeneration once, and
-`check-evidence-diff`. The 11-class guard union (the classification, lane-category and
+`check-evidence-diff`. The one build is the subject's own test project, except when the batch
+touches `tests/Antiphon.Tests/TestHelpers/**` or any csproj that Compile-includes a file under
+`tests/Antiphon.Tests` (CARD-1996). Then the one build is `dotnet build Antiphon.sln` once,
+leased through `scripts/build-slot.ps1`, in the worktree's native default output, with
+`ANTIPHON_LINUX_COMPILER_POLICY=0`. `--no-restore` is allowed only when restore is already warm.
+That solution build compiles every mirror that links those files:
+`tests/Antiphon.Resilience.Tests`, `tests/Antiphon.GitInProcess.Tests`,
+`tests/Antiphon.Observability.Tests`, `tests/Antiphon.SessionRunner.Tests`,
+`tests/Antiphon.Checkpoints.LifecycleHost`, and
+`scripts/regenerate-derived-impact-index` when its csproj links them. Building each of those
+projects once is the same obligation when a full solution build is the wrong scope. A build of
+`tests/Antiphon.Tests` alone does not. The one-by-one `<Compile Include>` lists stay. A
+`TestHelpers` glob is not safe: each mirror links a different subset, and a glob pulls helpers
+that do not compile there. The native output directory is the warm cache; this rule adds no
+second one. The narrow witness for the link census is `/*/*/LinkedTestHelperClosureTests/*`.
+The 11-class guard union (the classification, lane-category and
 Linux-policy guards covering `tests/Shared/TestClassificationGuardTests.cs`,
 `tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`,
 `tests/Shared/NativeLinuxPolicyWitness.cs` and
@@ -697,6 +712,14 @@ block, and never re-run a row that already hit its deadline with zero failures: 
 row instead of repeating it. Stress evidence, a whole-class run and the guard union by default
 belong to the rc/nightly lane, not Merge. Poll the load gate every 30 seconds, and check it once
 per repeat block rather than once per row inside that block.
+
+#### Merge brief template (helper closure, CARD-1996)
+
+Paste this into the Merge goal when the batch diff touches `tests/Antiphon.Tests/TestHelpers/**`
+or any csproj that Compile-includes a file under `tests/Antiphon.Tests`. It replaces "one build"
+of `tests/Antiphon.Tests` for that batch:
+
+> The one build is `dotnet build Antiphon.sln` once, leased with `scripts/build-slot.ps1`, in the worktree's native default output, with `ANTIPHON_LINUX_COMPILER_POLICY=0`. Pass `--no-restore` only when restore is already warm. That build compiles every mirror that links Antiphon.Tests files: `tests/Antiphon.Resilience.Tests`, `tests/Antiphon.GitInProcess.Tests`, `tests/Antiphon.Observability.Tests`, `tests/Antiphon.SessionRunner.Tests`, `tests/Antiphon.Checkpoints.LifecycleHost`, and `scripts/regenerate-derived-impact-index` when its csproj links those files. Building each of those projects once is the same obligation if a full solution build is the wrong scope. A build of `tests/Antiphon.Tests` alone does not satisfy it. Leave the one-by-one Compile lists; do not replace them with a TestHelpers glob. Also run `/*/*/LinkedTestHelperClosureTests/*`.
 
 #### Operator standing instructions (2026-10-23)
 
@@ -3048,7 +3071,7 @@ Completion notes of profile-v1 tasks are durable obligations (see
 [session-runtime-invariants.md](session-runtime-invariants.md)); dispatch from the header's
 `next=`, never re-read the body.
 
-The first Code and the first Review of a card always run `Final`. Per-task Final is the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. An
+The first Code and the first Review of a card always run `Final`. Per-task Final is the plan's closed checkpoint rows, the touched and named classes, the batched guards (policy sweep, mechanical contract, TaskPlatformGuidanceTests, layering rows), evidence-diff, merge-tree, and the red/green plus mutant evidence. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop. A Merge batch is not that per-task Final lane. When its diff touches `tests/Antiphon.Tests/TestHelpers/**` or a csproj that Compile-includes a file under `tests/Antiphon.Tests`, its one build is `Antiphon.sln` once, or each linking mirror project once, as [Merge verification is short](#merge-verification-is-short-2026-11-18) states (CARD-1996). An
 omitted `-VerificationRound` is `Final`. `Interim` is explicit only: the card's role policy must
 allow it, and the request names `-VerificationSubject` (the original landing owner),
 `-VerificationBaselineOutcome` (a full-scope Review outcome) and `-VerificationSelectionFile`
