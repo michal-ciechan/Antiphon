@@ -196,10 +196,11 @@ public static class SessionRunnerEndpoints
             if (directory.Resolve(runnerId) is not PhoneHomeRunnerClient runner)
                 return Results.Conflict(new { error = "workspace_slot_runner_not_phone_home", detail = "Workspace slots are a phone-home runner feature." });
             var request = new PhoneHomeWorkspaceSlotQuarantineReleaseRequest(dirId, body.Disposition, RecordedReason(reason, requester));
+            var answer = await runner.ReleaseWorkspaceSlotQuarantineAsync(request, ct);
             loggers.CreateLogger("WorkspaceSlotQuarantineRelease").LogWarning(
-                "Workspace slot quarantine {DirId} on runner {RunnerId} released {Disposition} by {Requester} ({Reason})",
-                dirId, runnerId, request.Disposition, requester, reason);
-            return Results.Ok(await runner.ReleaseWorkspaceSlotQuarantineAsync(request, ct));
+                "Workspace slot quarantine {DirId} on runner {RunnerId} release {Disposition} by {Requester} ({Reason}) outcome={Outcome}",
+                dirId, runnerId, request.Disposition, requester, reason, answer.Outcome);
+            return Results.Ok(answer);
         }).WithTags("SessionRunners");
 
         // CARD-0824 review f4c293bc D-1. The operator's way out of workspace_slot_release_stuck: records the release

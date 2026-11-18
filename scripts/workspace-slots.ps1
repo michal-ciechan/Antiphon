@@ -92,12 +92,12 @@ if ([string]::IsNullOrWhiteSpace($path)) {
     $path = Join-Path (Join-Path $env:LOCALAPPDATA 'Antiphon') 'operator-token'
 }
 if (-not (Test-Path -LiteralPath $path)) {
-    Write-Error "Operator token file not found at $path. The server creates it at startup; run this as the account the server runs under."
+    [Console]::Error.WriteLine("Operator token file not found at $path. The server creates it at startup; run this as the account the server runs under.")
     exit 2
 }
-$token = (Get-Content -LiteralPath $path -Raw).Trim()
+$token = ([string](Get-Content -LiteralPath $path -Raw)).Trim()
 if ([string]::IsNullOrEmpty($token)) {
-    Write-Error "Operator token file at $path is empty."
+    [Console]::Error.WriteLine("Operator token file at $path is empty.")
     exit 2
 }
 $headers['X-Antiphon-Operator-Token'] = $token
