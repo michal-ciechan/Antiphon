@@ -23,7 +23,12 @@ public sealed class RoutingSessionRunnerClient : ISessionRunnerClient
 
     private readonly ISessionRunnerDirectory _directory;
 
-    public RoutingSessionRunnerClient(ISessionRunnerDirectory directory) => _directory = directory;
+    public RoutingSessionRunnerClient(ISessionRunnerDirectory directory, TimeProvider? clock = null)
+    {
+        _directory = directory;
+        // Accepted so the TTL witness can supply a clock. Route does not read it yet.
+        _ = clock;
+    }
 
     public Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct) =>
         _directory.Local.GetCapabilitiesAsync(ct);
