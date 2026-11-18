@@ -251,9 +251,14 @@ before the first green run and replace each Min of 3 with the observed count.
   - `RunnerDefaultTests`.
   - `C1514HostLoad*`, `AgentTaskPipelineStatusTests`, `HostBudgetPipelineTests`.
   - `DockerStackDocumentationTests`.
-- Impacted-classes table (CARD-1782, `tests/impacted-classes.json`): S1 and S3 must add rows that
-  map `docker-compose.server2-server.yml` and `server/Infrastructure/HostLoad/**` to the C1744G1 and
-  C1744G2 classes, if the table keys on those paths. Code checks the table's schema first.
+- Impacted-classes table (CARD-1782, `tests/impacted-classes.json`), checked at base:
+  - No kind globs any production file this plan edits.
+  - The only host-load kinds are:
+    - `timing-labels`, glob `tests/Antiphon.Tests/**/C1514HostLoad*.cs` → `TestTimingOperationLabelTests`;
+    - `task-load-window`, glob `C1514HostLoadFixture.cs` → `C1514TaskLoadWindowTests`.
+  - The new `C1744G2*` files match neither glob, so no row is needed.
+  - Do not edit `C1514HostLoad*` test files. If Code must edit one, add `TestTimingOperationLabelTests`
+    to CP-6.
 
 ## Collisions with in-flight work
 
