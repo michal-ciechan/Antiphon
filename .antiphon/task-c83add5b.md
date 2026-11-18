@@ -33,7 +33,7 @@ A batch that edits one of those linked files so it uses a new type does not trig
 
 ## Review evidence
 
-subjectTaskId: 4a4a5995 (owner Code task; full GUID is with the caller)
+subjectTaskId: 4a4a5995-60c8-4ba2-bb89-861702328f8a
 reviewedSourceSha: 59d09644e3915a3a97b1d59a0e6e335bf7a3468d
 reviewedSourceClean: true
 ordinaryScopeCompleted: Full
