@@ -1780,6 +1780,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the probes must run at the same time to prove ScriptModelSpawnLimit is at least 2 wide, and CARD-1984 D-3 makes the lane 1 wide on Windows, so the second probe cannot start until the first gives up. W-1 pins the Windows width of 1. The case remains required on Linux.",
           "owner": "CARD-1514"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C1744G1DesktopWinComposeTests",
+          "methods": [
+            "G1_deploy_whatif_refuses_without_desktop_win_keys"
+          ],
+          "platform": "windows",
+          "reason": "Linux-only by construction: the deploy script runs bash and docker on the Linux host, and the witness sets a Unix file mode and puts a fake docker on PATH. The case remains required on Linux.",
+          "owner": "CARD-1744"
         }
       ]
     }
