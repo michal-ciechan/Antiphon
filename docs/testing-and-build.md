@@ -418,6 +418,12 @@ pwsh -File scripts/test-duration-tripwire.ps1 -Trx path\to\run.trx
 
 The allowlist is `tests/Antiphon.Tests/slow-tests-allowlist.txt` (exact simple or fully-qualified class names, case-insensitive). A class marked `Slow` must be registered there by fully-qualified name when it is added: `TestClassificationGuardTests.Registry_matches_compiled_metadata` fails with a first line `missing classes:` that names every Slow class absent from that file. A row for a class that is not Slow is `unmarked-registered` and fails the same guard. Every test class is tagged `Unit` xor `Integration` (`TestLaneCategoryGuardTests`).
 
+A `Slow`-registered class is waived from a Merge's own verification: Merge runs only its subject's
+narrow witness rows, never a waived whole-class row. See
+[Merge verification is short (2026-11-18)](orchestration-loop.md#merge-verification-is-short-2026-11-18)
+for the full Merge verification scope. Code-stage repeat/stress blocks are capped at 10 runs of a
+class that fits the 570 s `wait --max-wait` cap and 5 runs of a set that does not.
+
 For this Antiphon.Tests registry, `## ` header comments belong only at the top.
 Each fully-qualified class row must immediately follow its own single-`#`,
 nonempty, qualifying reason comment. Blank lines may separate complete pairs;

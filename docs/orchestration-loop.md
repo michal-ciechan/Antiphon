@@ -639,6 +639,25 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 
 10. **Test performance (operator, 2026-10-23).** Apply [test performance standards](test-performance-standards.md). Dispatch a Debug task, with exact selection, source/host/run identity and timing evidence, for any row, batch, selection or run expected or observed over 30 minutes; a retry alone is insufficient. Routine speedups and preflights need no further permission. After establishing ownership and retaining evidence, an orchestrator may stop an abandoned/uncreditable qualification through its supported stop path and join cleanup without asking; this grants no authority to kill another session or bypass custody. Before the next full rc run, require instrumentation ready to record per-test time, exact batch membership and phase attribution (CARD-1514). Destructive/one-way/secret/publish/promote/tag actions retain their existing authorization requirements.
 
+<a id="merge-verification-is-short-2026-11-18"></a>
+#### Merge verification is short (2026-11-18)
+
+A Merge verifies only: one build, each subject's own narrow witness rows (each under 10
+minutes), `land-graph -Check`, the pins recompute, the derived-index regeneration once, and
+`check-evidence-diff`. The 11-class guard union (the classification, lane-category and
+Linux-policy guards covering `tests/Shared/TestClassificationGuardTests.cs`,
+`tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`,
+`tests/Shared/NativeLinuxPolicyWitness.cs` and
+`tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs`, and the policy-hash
+inputs under [release-gates.md](release-gates.md)) runs only when a subject touches a
+classification, selector, pin or policy area: `tests/Antiphon.Tests/slow-tests-allowlist.txt`,
+`tests/linux-test-roster.json`, the files named above, or a path under
+`docs/release-gates.md`'s policy/profile scope. Run no whole slow class, no repeat or stress
+block, and never re-run a row that already hit its deadline with zero failures: record that
+row instead of repeating it. Stress evidence, a whole-class run and the guard union by default
+belong to the rc/nightly lane, not Merge. Poll the load gate every 30 seconds, and check it once
+per repeat block rather than once per row inside that block.
+
 #### Operator standing instructions (2026-10-23)
 
 The operator's wording is preserved here; [the numbered standards](test-performance-standards.md)
