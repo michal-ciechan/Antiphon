@@ -25238,6 +25238,15 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/FixtureExecutable.cs",
+      "classes": [
+        "HostJqPrerequisiteScriptTests",
+        "RollingVolumeRecycleCensusChurnTests",
+        "RollingVolumeRecycleScriptTests",
+        "ScriptModelSpawnLaneTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/FixtureFileDiagnostics.cs",
       "classes": [
         "CheckpointRecoveryWindowsTests"
