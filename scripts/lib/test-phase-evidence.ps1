@@ -555,6 +555,8 @@ function Write-TestPhasePlannedManifest {
         $DiscoveryIndex = $null,
         [string]$DiscoveryPath = ''
     )
+    Assert-NightlyCoreAvailable 'Write-TestPhasePlannedManifest'
+    $allPlanned = New-Object System.Collections.Generic.List[string]
     $entry = [pscustomobject]@{
         Document = [pscustomobject]@{ Nodes = @($DiscoveryNodes) }
         InProgress = @()
@@ -580,10 +582,9 @@ function Write-TestPhasePlannedManifest {
         } else {
             $classes = @()
             foreach ($c in @($group.classes)) { $classes += [string]$c }
-            foreach ($uid in @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $classes)) {
-                $ids.Add([string]$uid)
-            }
+            [Antiphon.Nightly.PlannedManifestCheck]::AddStrings($ids, @(Get-NightlyDiscoveryIndexRequiredUids -View $view -RequiredClasses $classes))
         }
+        $allPlanned.AddRange($ids)
         $bases = @{}
         foreach ($className in @($group.classes)) {
             $key = [string]$className
@@ -616,26 +617,12 @@ function Write-TestPhasePlannedManifest {
             sharedManifestOrder = $true
         }
     }
-    $union = @{}
-    $duplicate = $false
-    foreach ($row in $groupRows) {
-        foreach ($id in @($row.plannedTestIds)) {
-            if ($union.ContainsKey([string]$id)) { $duplicate = $true }
-            $union[[string]$id] = $true
-        }
-    }
-    $missing = @()
-    foreach ($id in @($view.RequiredUids)) {
-        if (-not $union.ContainsKey([string]$id)) { $missing += [string]$id }
-    }
-    # Preserve PowerShell's existing case-insensitive membership semantics without
-    # scanning the entire discovered roster once for every planned UID.
-    $requiredSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::InvariantCultureIgnoreCase)
-    foreach ($req in @($view.RequiredUids)) { [void]$requiredSet.Add([string]$req) }
-    $extra = @()
-    foreach ($id in @($union.Keys)) {
-        if (-not $requiredSet.Contains([string]$id)) { $extra += [string]$id }
-    }
+    # Union of planned UIDs (OrdinalIgnoreCase, as the former @{}), missing in RequiredUids order, extra
+    # against an InvariantCultureIgnoreCase set, extra in first-planned order (compiled).
+    $partition = [Antiphon.Nightly.PlannedManifestCheck]::Check($allPlanned, @($view.RequiredUids))
+    $duplicate = [bool]$partition.Duplicate
+    $missing = $partition.Missing
+    $extra = $partition.Extra
     $manifest = [ordered]@{
         version = 1
         runId = [string]$RunId

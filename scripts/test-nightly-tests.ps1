@@ -688,8 +688,9 @@ function Assert-C1044Rejects {
 function Test-C1044_MultilineDiscovery {
     $expected = @(Get-C1044ExpectedNodes)
     $expectedDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
-        required = @($expected | Where-Object { $_.Type -ne 'Manual' } | ForEach-Object { $_.Uid } | Sort-Object)
-        excluded = @($expected | Where-Object { $_.Type -eq 'Manual' } | ForEach-Object { $_.Uid } | Sort-Object)
+        # The census digest's UID order is the compiled SortCensusUids (OrdinalIgnoreCase, Ordinal tie-break).
+        required = [Antiphon.Nightly.PlannedManifestCheck]::SortCensusUids([string[]]@($expected | Where-Object { $_.Type -ne 'Manual' } | ForEach-Object { $_.Uid }))
+        excluded = [Antiphon.Nightly.PlannedManifestCheck]::SortCensusUids([string[]]@($expected | Where-Object { $_.Type -eq 'Manual' } | ForEach-Object { $_.Uid }))
     }))
     foreach ($variant in @('LF', 'CRLF')) {
         $newline = $(if ($variant -eq 'LF') { "`n" } else { "`r`n" })

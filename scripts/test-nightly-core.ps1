@@ -803,9 +803,52 @@ function Test-NCPlannerPartsGolden {
         } @('"cap":3', '"unsafe":["","Alpha"]', '"unsafe":["Ru","Run"]')
     } finally { [Globalization.CultureInfo]::CurrentCulture = $saved }
 }
+
+# PlannedManifestCheck.cs. The planned-manifest partition (duplicates differing only by case, missing in
+# RequiredUids order, one non-ASCII extra, an InvariantCultureIgnoreCase-only match) against the bytes the
+# PowerShell copy wrote; and the compiled census digest order (OrdinalIgnoreCase) over culture-equal and
+# non-ASCII UIDs against the census fallback's [Array]::Sort order.
+function Test-NCPlannedManifestMatchesFallback {
+    $sh = [string][char]0xAD; $tr = [string][char]0x130; $ss = [string][char]0xDF; $uu = [string][char]0xDC; $ee = [string][char]0xE9
+    $node = { param($uid, $cls) [pscustomobject]@{ Uid = $uid; ClassName = $cls; Type = ($cls -split '\.')[-1]; Namespace = 'Ns'; Method = 'M'; Categories = @() } }
+    $group = { param($id, $classes, $uids) $g = [ordered]@{ id = $id; classes = $classes; seconds = 3; groupFilter = '/*/' + $id }
+        if ($null -ne $uids) { $g.nodes = @($uids | ForEach-Object { [pscustomobject]@{ Uid = $_ } }) }; [pscustomobject]$g }
+    $nodes = @((& $node 'Ns.C.A' 'Ns.C'), (& $node 'Ns.C.b' 'Ns.C'), (& $node ('Ns.C.' + $uu) 'Ns.C'), (& $node 'Ns.C.a' 'Ns.C'),
+        (& $node 'Ns.D.x' 'Ns.D'), (& $node ('Ns.D.' + $tr) 'Ns.D'), (& $node 'Ns.D.a' 'Ns.D'), (& $node 'Ns.Ex.q' 'Ns.Ex'))
+    $rules = @([pscustomobject]@{ Class = 'Ns.Ex'; Methods = @(); Reason = 'r'; Owner = 'o' })
+    $scenarios = [ordered]@{
+        exact = @((& $group 'g1' @('Ns.C') $null), (& $group 'g2' @('Ns.D') $null))
+        dupCase = @((& $group 'g1' @('Ns.C') $null), (& $group 'g2' @('Ns.D') @('Ns.D.x', ('Ns.D.' + $tr), 'Ns.D.a', 'ns.c.b')))
+        missing = @((& $group 'g1' @('Ns.C') @('Ns.C.A', ('Ns.C.' + $uu))), (& $group 'g2' @('Ns.D') $null))
+        extra = @((& $group 'g1' @('Ns.C') $null), (& $group 'g2' @('Ns.D') @('Ns.D.x', ('Ns.D.' + $tr), 'Ns.D.a', ('Ns.Zz.' + $ee))))
+        invariantOnly = @((& $group 'g1' @('Ns.C') @('Ns.C.A', 'Ns.C.b', ('Ns.C.' + $uu), ('Ns.D.a' + $sh))), (& $group 'g2' @('Ns.D') @('Ns.D.x', ('Ns.D.' + $tr))))
+    }
+    $saved = $script:QualificationTimingRoot
+    try {
+        Assert-NCGolden 'plannedManifest' {
+            $texts = [ordered]@{}
+            foreach ($name in $scenarios.Keys) {
+                $dir = Join-Path $root ('planned-' + $name)
+                $script:QualificationTimingRoot = Join-Path $dir 'timing'
+                [void](Write-TestPhasePlannedManifest -LogRoot $dir -RunId 'r' -Attempt '1' -Suite 'antiphon' -SourceDigest 's' -AssemblyDigest 'a' -PolicyDigest 'p' -CostFileDigest 'c' -AssemblyId 'x' -Groups $scenarios[$name] -DiscoveryNodes $nodes -ProfileExclusions $rules)
+                $texts[$name] = [IO.File]::ReadAllText((Join-Path $script:QualificationTimingRoot 'groups-planned-antiphon.json'), [Text.Encoding]::UTF8)
+            }
+            $texts
+        } @('requiredPartitionExact\":true', 'missingIds\":[\"Ns.C.b\"]', 'extraIds\":[\"Ns.Zz.')
+    } finally { $script:QualificationTimingRoot = $saved }
+    $alpha = @('a', 'A', 'b', 'Z', '-', '_', '.', $sh, $tr, 'i', 'I', $ss, 'ss', $uu, ('u' + [char]0x308), $ee, 'E', '1', '10')
+    $rng = [Random]::new(11)
+    $tieNodes = @(for ($i = 0; $i -lt 1500; $i++) {
+        $s = ''; for ($k = $rng.Next(1, 5); $k -gt 0; $k--) { $s += $alpha[$rng.Next($alpha.Count)] }
+        & $node ('Ns.' + $s) $(if ($i % 4 -eq 0) { 'Ns.Ex' } else { 'Ns.C' })
+    })
+    $r = Invoke-NCBothWays { Get-NightlyDiscoveryCensus -DiscoveryNodes $tieNodes -ProfileExclusions $rules -ProfileAware }
+    Assert-NC ($r.Compiled -ceq $r.Fallback) 'censusTies' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; $expected = 32 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCPlannedManifestMatchesFallback; $expected = 34 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

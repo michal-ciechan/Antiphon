@@ -923,11 +923,14 @@ function Get-NightlyDiscoveryCensus {
     # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
     $exclusionIndex = $null
     if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    $digest = $null
     if (Test-NightlyCoreAvailable) {
         $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
-        foreach ($row in $rows.Required) { $required.Add($row) }
-        foreach ($row in $rows.Excluded) { $excluded.Add($row) }
-        foreach ($uid in $rows.Duplicates) { $duplicates.Add($uid) }
+        $required.AddRange([object[]]$rows.Required)
+        $excluded.AddRange([object[]]$rows.Excluded)
+        $duplicates.AddRange([object[]]$rows.Duplicates)
+        # Sorted-UID digest (OrdinalIgnoreCase, Ordinal tie-break), compiled.
+        $digest = [Antiphon.Nightly.PlannedManifestCheck]::CensusDigest([object[]]$rows.Required, [object[]]$rows.Excluded)
         $DiscoveryNodes = @()
     }
     foreach ($n in @($DiscoveryNodes)) {
@@ -948,10 +951,18 @@ function Get-NightlyDiscoveryCensus {
         }
         if ($d.Disposition -eq 'required') { $required.Add($row) } else { $excluded.Add($row) }
     }
-    $digest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
-        required = @(@(foreach ($r in $required) { $r.uid }) | Sort-Object)
-        excluded = @(@(foreach ($r in $excluded) { $r.uid }) | Sort-Object)
-    }))
+    if ($null -eq $digest) {
+        # Same order as PlannedManifestCheck.SortCensusUids: census UIDs are unique OrdinalIgnoreCase, so
+        # OrdinalIgnoreCase alone is total here and its Ordinal tie-break never applies.
+        [string[]]$requiredUids = @(foreach ($r in $required) { [string]$r.uid })
+        [string[]]$excludedUids = @(foreach ($r in $excluded) { [string]$r.uid })
+        [Array]::Sort($requiredUids, [StringComparer]::OrdinalIgnoreCase)
+        [Array]::Sort($excludedUids, [StringComparer]::OrdinalIgnoreCase)
+        $digest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
+            required = @($requiredUids)
+            excluded = @($excludedUids)
+        }))
+    }
     return [pscustomobject]@{
         Ok = ($duplicates.Count -eq 0 -and $required.Count -gt 0)
         Required = $required.ToArray()
