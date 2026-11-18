@@ -133,16 +133,10 @@ function Get-NightlyIsTestProjectPaths {
     param([string]$RepoRoot)
     $root = ConvertTo-NightlyCanonicalPath -Path $RepoRoot
     $ignored = @(Get-NightlyGitIgnoredDirectories -Root $root)
-    if (Test-NightlyCoreAvailable) {
-        # Compiled walk that prunes bin/obj/bin-* and git-ignored directories instead of listing them
-        # (NightlyCore.cs NightlyRepository).
-        $fullNames = @([Antiphon.Nightly.NightlyRepository]::CandidateProjectFiles($root, [string[]]$ignored))
-    } else {
-        $fullNames = @(Get-ChildItem -Path $root -Filter '*.csproj' -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-        $comparison = [StringComparison]::Ordinal
-        if ([IO.Path]::DirectorySeparatorChar -eq [char]92) { $comparison = [StringComparison]::OrdinalIgnoreCase }
-        $fullNames = @($fullNames | Where-Object { $f = $_; -not @($ignored | Where-Object { $f.StartsWith($_, $comparison) }).Count })
-    }
+    Assert-NightlyCoreAvailable 'Get-NightlyIsTestProjectPaths'
+    # Compiled walk that prunes bin/obj/bin-* and git-ignored directories instead of listing them
+    # (NightlyCore.cs NightlyRepository).
+    $fullNames = @([Antiphon.Nightly.NightlyRepository]::CandidateProjectFiles($root, [string[]]$ignored))
     $hits = @()
     foreach ($full in $fullNames) {
         $relParts = $full.Substring($root.Length).Split([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
@@ -499,59 +493,22 @@ function New-NightlyProfileExclusionIndex {
       then one method lookup. Same verdicts as Test-NightlyProfileNodeExcluded.
     #>
     param([object[]]$Exclusions)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.ProfileExclusionIndex]::new($Exclusions) }
-    $rows = [Collections.Generic.List[object]]::new()
-    foreach ($row in @($Exclusions)) {
-        if ([string]::IsNullOrWhiteSpace([string]$row.Class)) { continue }
-        $rows.Add($row)
-    }
-    return [pscustomobject]@{
-        Rows = $rows.ToArray()
-        Classes = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
-    }
+    Assert-NightlyCoreAvailable 'New-NightlyProfileExclusionIndex'
+    return [Antiphon.Nightly.ProfileExclusionIndex]::new($Exclusions)
 }
 
 function Test-NightlyProfileExclusionIndexed {
     param($Index, $Node)
     if ($null -eq $Node) { return $false }
-    if (Test-NightlyCoreAvailable) { return $Index.Excluded($Node) }
-    $entry = Get-NightlyProfileExclusionEntry -Index $Index -ClassName ([string]$Node.ClassName) -Type ([string]$Node.Type)
-    if ($null -eq $entry) { return $false }
-    return ($entry.All -or $entry.Methods.Contains([string]$Node.Method))
+    # The index is the compiled ProfileExclusionIndex (New-NightlyProfileExclusionIndex requires the core).
+    return $Index.Excluded($Node)
 }
 
 function Get-NightlyProfileExclusionEntry {
     <# The exclusion rows matching one class, merged: null when none match (no node of the class is excluded),
        otherwise All (a whole-class row), the excluded Methods, and the matching Rows in policy order. #>
     param($Index, [string]$ClassName, [string]$Type)
-    if (Test-NightlyCoreAvailable) { return $Index.Entry($ClassName, $Type) }
-    $className = $ClassName
-    $type = $Type
-    $key = $className + [char]0 + $type
-    $entry = $null
-    if (-not $Index.Classes.TryGetValue($key, [ref]$entry)) {
-        $simple = Get-NightlyClassNameFromIdentity -ClassName $className
-        if ([string]::IsNullOrWhiteSpace($simple)) { $simple = $type }
-        $all = $false
-        $methods = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-        $matched = [Collections.Generic.List[object]]::new()
-        foreach ($row in $Index.Rows) {
-            $cls = [string]$row.Class
-            $match = [string]::Equals($cls, $simple, [StringComparison]::OrdinalIgnoreCase) -or
-                     [string]::Equals($cls, $className, [StringComparison]::OrdinalIgnoreCase)
-            if (-not $match) { continue }
-            $matched.Add($row)
-            # As in Test-NightlyProfileNodeExcluded: @() of an absent list is one empty entry, not none.
-            $rowMethods = @($row.Methods)
-            if ($rowMethods.Count -eq 0) { $all = $true; continue }
-            foreach ($m in $rowMethods) { [void]$methods.Add([string]$m) }
-        }
-        $entry = $null
-        # Every matching row sets All or adds at least one method, so a null entry means no row matches.
-        if ($all -or $methods.Count -gt 0) { $entry = [pscustomobject]@{ All = $all; Methods = $methods; Rows = $matched.ToArray() } }
-        $Index.Classes[$key] = $entry
-    }
-    return $entry
+    return $Index.Entry($ClassName, $Type)
 }
 
 function Test-NightlyProfileNodeExcluded {
