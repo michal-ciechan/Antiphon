@@ -1,9 +1,13 @@
+using System.Text.RegularExpressions;
+
 namespace Antiphon.Server.Application.Settings;
 
 public sealed class HostLoadHistorySettings
 {
     public const string SectionName = "HostLoadHistory";
     public bool Enabled { get; set; } = true;
+    /// <summary>Cursor and shadow key for the direct runner. <c>desktop</c> keeps the current topology.</summary>
+    public string DirectRunnerKey { get; set; } = "desktop";
     public int PollIntervalMs { get; set; } = 5000;
     public int IngestQueueCapacityPerRunner { get; set; } = 2;
     public int RawRetentionDays { get; set; } = 7;
@@ -19,7 +23,20 @@ public sealed class HostLoadHistorySettings
             || b.RunnerId.Length > 64 || b.PhysicalHostKey.Length > 128 || b.SourceEpoch == Guid.Empty || b.Revision < 1
             || (b.To is not null && b.To <= b.From)))
             throw new InvalidOperationException("HostLoadHistory binding is invalid.");
+        ValidateDirectRunnerKey(DirectRunnerKey);
     }
+
+    public static void ValidateDirectRunnerKey(string? key)
+    {
+        if (string.Equals(key, "local", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("HostLoadHistory:DirectRunnerKey refuses local.");
+        if (string.IsNullOrEmpty(key) || !DirectRunnerKeyPattern.IsMatch(key))
+            throw new InvalidOperationException("HostLoadHistory:DirectRunnerKey is invalid.");
+    }
+
+    private static readonly Regex DirectRunnerKeyPattern = new(
+        "^[a-z0-9][a-z0-9-]{0,63}$",
+        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
 }
 public sealed class HostLoadBinding
 {
