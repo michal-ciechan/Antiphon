@@ -1025,6 +1025,14 @@ runner, physical key, revision, source epoch, primary flag and half-open validit
 interval. Only one collector is primary for a physical host/epoch. Raw retention
 is seven days, hourly/terminal-task retention 90 days; open windows remain.
 
+On server2 (CARD-1893) the standing runner sets `HistoryPath` to `/state/host-load` on its
+runner-state volume, `PhysicalHostKey` `server2`, `BindingRevision` `1`, a literal
+`SourceEpoch` GUID and `AuthorityId` `server2-build-slots` in
+`docker-compose.server2-runner.yml`; the server binding repeats the key, revision and epoch.
+The server2 temp runner (`server2-temp`) sets `HistoryEnabled` to `"false"` and sets no `HistoryPath`,
+so it opens no spool and gets no cursor row. Rollouts of a collector-bearing SHA follow the runner
+hold in [docker-stack.md](docker-stack.md) (`scripts/c1893-runner-hold.sh`).
+
 The actual shared broker exposes additive `GET /build-slots/host-load`, including
 in `BuildSlotsOnly` mode. Configure its physical key/authority ID under the same
 HostStats section. Missing identity remains unknown. A runner with inherited
