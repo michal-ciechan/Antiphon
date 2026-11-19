@@ -3,13 +3,20 @@
 # ASCII-only. No network or live-run operations; current policy is read-only.
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
 . (Join-Path $PSScriptRoot 'nightly-policy.ps1')
-. (Join-Path $PSScriptRoot 'nightly-stopped-run-seed.ps1')
 
-$script:NightlyHistoryLinkCache = $null
-
+# Stopped-run seeds are read, checked and built by the core (Antiphon.Nightly/StoppedSeedFiles.cs, StoppedSeed in
+# DispatchSchedule.cs); the history link checks share its process cache (HistoryLinkCache.Current).
 function Reset-NightlyHistoryLinkCache {
     if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Reset-NightlyHistoryLinkCache' }
-    $script:NightlyHistoryLinkCache = [Antiphon.Nightly.HistoryLinkCache]::new()
+    [Antiphon.Nightly.HistoryLinkCache]::Reset()
+}
+
+# A failure's reason: the refusal text, also when it was thrown by a core method (MethodInvocationException).
+function Get-NightlyRefusalText {
+    param($ErrorRecord)
+    $failure = $ErrorRecord.Exception
+    if ($failure -is [Management.Automation.MethodInvocationException] -and $null -ne $failure.InnerException) { $failure = $failure.InnerException }
+    return $failure.Message
 }
 
 function Initialize-NightlyHistoryIdentity {
@@ -34,7 +41,7 @@ function Get-NightlyHistoryNodeIdentity {
     # or a regular file with more than one name is a link. Elsewhere: lstat. Forcing the Windows attribute test
     # on a non-Windows host still takes dev/ino from that host, so a replaced ancestor changes the cached id.
     if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyHistoryNodeIdentity' }
-    return [Antiphon.Nightly.HistoryNodeIdentity]::Read($Path, ($script:NightlyHistoryForceWindowsIdentity -eq $true))
+    return [Antiphon.Nightly.HistoryNodeIdentity]::Read($Path, [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows)
 }
 
 function Assert-NightlyHistoryNoLink {
@@ -43,9 +50,9 @@ function Assert-NightlyHistoryNoLink {
     # parent are classified once and cached. The path itself and its immediate parent are read on every call.
     # Only directories are cached: replacing one changes its identity (or makes it a link).
     # Rewriting a regular file also changes that file's identity and is not a link.
-    if ($null -eq $script:NightlyHistoryLinkCache) { Reset-NightlyHistoryLinkCache }
-    $check = $script:NightlyHistoryLinkCache.Check($Path, ($script:NightlyHistoryForceWindowsIdentity -eq $true))
-    if ($null -ne $check.Refusal) { throw $check.Refusal }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Assert-NightlyHistoryNoLink' }
+    $refusal = [Antiphon.Nightly.HistoryLinkCache]::Refusal($Path)
+    if ($null -ne $refusal) { throw $refusal }
 }
 
 function Assert-NightlyHistoryFileStable {
@@ -560,11 +567,11 @@ function Initialize-NightlyDispatchHistory {
         $isSeed=($probe.PSObject.Properties.Name -ccontains 'seedKind')
         if($isSeed){
             if(-not $AcceptCrossCandidateSeed){throw 'seed-acknowledgement-required'}
-            $history=Read-NightlyStoppedRunSeed @read
+            $history=[Antiphon.Nightly.StoppedSeedFiles]::Read($Path,$ExpectedDigest)
             if(-not $SeedSourceCandidateId -or $history.sourceCandidateId -cne $SeedSourceCandidateId){throw 'seed-source-candidate-mismatch'}
             $now=Get-NightlyUtcNow
             foreach($time in @($history.createdAtUtc,$history.sourceObservedAtUtc)){
-                $stamp=ConvertTo-NightlySeedUtc $time
+                $stamp=[Antiphon.Nightly.StoppedSeed]::Utc($time)
                 if($null -eq $stamp -or $stamp.UtcDateTime -lt $now.AddDays(-14) -or $stamp.UtcDateTime -gt $now.AddMinutes(5)){throw 'seed-stale'}
             }
             $previous=$history
@@ -594,7 +601,7 @@ function Initialize-NightlyDispatchHistory {
         }
         return [pscustomobject]@{History=$history;PreviousRun=$previous;Digest=$digest;Path=$copy;FallbackReason=''}
     } catch {
-        $reason=$_.Exception.Message
+        $reason=Get-NightlyRefusalText $_
         if($reason -cne 'history-not-requested'){Write-Warning -WarningAction Continue ('failed-first fallback: '+$reason)}
         return [pscustomobject]@{History=$null;PreviousRun=$null;Digest='';Path=$Path;FallbackReason=$reason}
     }
@@ -622,86 +629,24 @@ function Resolve-NightlyPriorFailures {
     }
     if($History.seedKind -ceq 'operator-seed-from-stopped-run'){
         if($QualificationMode -cne 'Full'){throw 'seed-ordering-only'}
-        Assert-NightlyStoppedSeedContent $History
+        try { [Antiphon.Nightly.StoppedSeed]::AssertContent($History) } catch { throw (Get-NightlyRefusalText $_) }
     }else{Assert-NightlyHistorySchema $History}
-    $excludedUids=[Collections.Generic.List[object]]::new()
-    $unresolved=[Collections.Generic.List[object]]::new()
-    foreach ($u in @($History.unresolved)) { $unresolved.Add($u) }
-    $matches=[Collections.Generic.List[object]]::new()
-    $bySuite=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-    foreach ($suite in $Suites) {
-        if ($bySuite.ContainsKey([string]$suite.id)) { throw 'history-identity-conflict: current suite' }
-        if (-not (Test-NightlyCoreAvailable)) { throw 'nightly-core-unavailable: Resolve-NightlyPriorFailures needs PowerShell 7 and the compiled core' }
-        $index=[Antiphon.Nightly.NightlyClassNames]::IndexByBare($suite.nodes)
-        $chunkIndex=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
-        $allChunks=[Collections.Generic.List[object]]::new()
-        foreach ($chunk in @($suite.chunks)) {
-            if ($null -eq $chunk.classes -or @($chunk.classes).Count -eq 0) { $allChunks.Add($chunk); continue }
-            foreach ($class in @($chunk.classes)) {
-                if (-not $chunkIndex.ContainsKey([string]$class)) { $chunkIndex.Add([string]$class,[Collections.Generic.List[object]]::new()) }
-                $chunkIndex[[string]$class].Add($chunk)
-            }
-        }
-        $exclusions=@($suite.exclusions)
-        if ($QualificationMode -ceq 'PriorFailureSweep') { $exclusions=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $exclusionProfile -SuiteId $suite.id -Platform $platform) }
-        # Test-NightlyProfileNodeExcluded resolved once per class (the census index; same verdicts).
-        $exclusionIndex=[Antiphon.Nightly.ProfileExclusionIndex]::new($exclusions)
-        $bySuite.Add([string]$suite.id,[pscustomobject]@{Suite=$suite;Nodes=$index;Chunks=$chunkIndex;AllChunks=$allChunks;Exclusions=$exclusions;ExclusionIndex=$exclusionIndex})
-    }
-    foreach ($member in @($History.members)) {
-        $reason=''; $required=@(); $chunks=@()
-        if (-not $bySuite.ContainsKey([string]$member.suite)) { $reason='current-suite-missing' }
-        else {
-            $entry=$bySuite[[string]$member.suite]
-            $suite=$entry.Suite
-            $nodes=@()
-            if ($entry.Nodes.ContainsKey([string]$member.className)) { $nodes=@($entry.Nodes[[string]$member.className].ToArray()) }
-            $exclusionIndex=$entry.ExclusionIndex
-            $required=@(foreach ($n in $nodes) { if (-not $exclusionIndex.Excluded($n)) { $n } })
-            if ($QualificationMode -ceq 'PriorFailureSweep') {
-                foreach ($n in $nodes) {
-                    foreach ($row in @($entry.Exclusions)) {
-                        if (Test-NightlyProfileNodeExcluded -Node $n -Exclusions @($row)) {
-                            $excludedUids.Add([pscustomobject]@{suite=[string]$member.suite;uid=[string]$n.Uid;className=[string]$member.className;method=[string]$n.Method;reason=[string]$row.Reason;owner=[string]$row.Owner})
-                            break
-                        }
-                    }
-                }
-            }
-            if ($nodes.Count -eq 0) { $reason='current-class-missing' }
-            elseif ($required.Count -eq 0) { $reason='entirely-excluded-class' }
-            else {
-                $needed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                foreach ($n in $required) { [void]$needed.Add([string]$n.Uid) }
-                $covered=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                $candidateChunks=@($entry.AllChunks.ToArray())
-                if ($entry.Chunks.ContainsKey([string]$member.className)) { $candidateChunks += $entry.Chunks[[string]$member.className].ToArray() }
-                foreach ($chunk in $candidateChunks) {
-                    $assigned=@($required)
-                    if ($null -ne $chunk.nodes -and @($chunk.nodes).Count -gt 0) {
-                        $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                        foreach ($n in @($chunk.nodes)) { [void]$ids.Add([string]$n.Uid) }
-                        $assigned=@($required | Where-Object { $ids.Contains([string]$_.Uid) })
-                    } elseif (@($chunk.classes).Count -gt 0 -and @($chunk.classes) -cnotcontains $member.className) { $assigned=@() }
-                    if ($assigned.Count -gt 0) {
-                        $chunks += [string]$chunk.id
-                        foreach ($n in $assigned) { [void]$covered.Add([string]$n.Uid) }
-                    }
-                }
-                if ($needed.Count -eq 0 -or -not $needed.SetEquals($covered)) { $reason='current-class-unplanned' }
-            }
-        }
-        if ($reason) {
-            $oldChunks=@($member.observations | ForEach-Object { $_.chunk } | Select-Object -Unique)
-            $unresolved.Add([ordered]@{suite=[string]$member.suite;className=[string]$member.className;chunk=($oldChunks -join ',');reason=$reason;exclusionProfile=$exclusionProfile;evidence=@()})
-        } else {
-            $matches.Add([pscustomobject]@{suite=[string]$member.suite;className=[string]$member.className;chunks=@($chunks);requiredUids=@(Get-NightlyHistoryOrdinalStrings @($required.Uid))})
-        }
-    }
+    # The member mapping is compiled (Antiphon.Nightly/PriorFailures.cs): each member's required tests (its class's
+    # current nodes less the profile's exclusions) and the chunks that run them, or its unresolved reason.
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Resolve-NightlyPriorFailures' }
+    $exclusionsBySuite=$null
     if ($QualificationMode -ceq 'PriorFailureSweep') {
-        if ($unresolved.Count -gt 0) { throw ('prior-failure-sweep-unresolved: '+($unresolved.ToArray() | ConvertTo-Json -Depth 10 -Compress)) }
+        $exclusionsBySuite=@{}
+        foreach ($suite in $Suites) { $exclusionsBySuite[[string]$suite.id]=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $exclusionProfile -SuiteId $suite.id -Platform $platform) }
+    }
+    try { $map=[Antiphon.Nightly.PriorFailures]::Map($History,$Suites,$exclusionsBySuite,$exclusionProfile) }
+    catch { throw $_.Exception.GetBaseException().Message }
+    $unresolved=@($map.unresolved)
+    $mappedMembers=@($map.members)
+    if ($QualificationMode -ceq 'PriorFailureSweep') {
+        if ($unresolved.Count -gt 0) { throw ('prior-failure-sweep-unresolved: '+(ConvertTo-Json -InputObject $unresolved -Depth 10 -Compress)) }
         if (-not $History.membershipComplete) { throw 'historical-membership-unavailable' }
-        if ($matches.Count -eq 0) { throw 'empty-history' }
+        if ($mappedMembers.Count -eq 0) { throw 'empty-history' }
     } else {
         foreach ($u in $unresolved) { Write-Warning -WarningAction Continue ('UNRESOLVED PRIOR FAILURE '+($u | ConvertTo-Json -Depth 10 -Compress)) }
     }
@@ -710,5 +655,5 @@ function Resolve-NightlyPriorFailures {
         $policyDigest=$policy.Hash
         if ((Get-NightlyHistoryDigest $policy.Path) -cne $policyFileDigest) { throw 'partial-exclusion-profile-mismatch: policy changed' }
     }
-    return [pscustomobject]@{members=@($matches.ToArray());unresolved=@($unresolved.ToArray());exclusionProfile=$exclusionProfile;policyDigest=$policyDigest;exclusionPolicyFileDigest=$policyFileDigest;exclusionPlatform=$platform;excludedUids=@($excludedUids.ToArray() | Sort-Object -Property suite,uid -CaseSensitive)}
+    return [pscustomobject]@{members=$mappedMembers;unresolved=$unresolved;exclusionProfile=$exclusionProfile;policyDigest=$policyDigest;exclusionPolicyFileDigest=$policyFileDigest;exclusionPlatform=$platform;excludedUids=@($map.excludedUids)}
 }

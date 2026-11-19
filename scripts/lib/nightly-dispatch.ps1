@@ -1,95 +1,19 @@
 #requires -Version 5.1
 # Diagnostic scheduling only. Canonical chunks remain the planner's own objects.
+# Get-NightlyPreviousRunKind, Resolve-NightlyPreviousRunOrder and New-NightlyDispatchSchedule are compiled
+# (Antiphon.Nightly/DispatchSchedule.cs): the same objects, reasons and orders, without the PowerShell bodies.
 function Get-NightlyPreviousRunKind {
     param($Record)
-    # operator-seed is only the builder's content: exact seedKind, chunks and failedTests,
-    # and not a dispatchProgress record. A marker stamped on a normal record stays previous-run.
-    if($null -eq $Record){return 'previous-run'}
-    $names=@($Record.PSObject.Properties.Name)
-    $normal=($names -ccontains 'suites') -or ($names -ccontains 'liveness') -or ($names -ccontains 'schemaVersion')
-    $chunks=$null;$failed=$null
-    if($names -ccontains 'chunks'){$chunks=$Record.chunks}
-    if($names -ccontains 'failedTests'){$failed=$Record.failedTests}
-    $seedShape=(-not $normal) -and ($chunks -is [array]) -and ($failed -is [array]) -and ($chunks.Count -gt 0)
-    if(-not $seedShape){return 'previous-run'}
-    $marker=''
-    if($names -ccontains 'seedKind' -and $null -ne $Record.seedKind){$marker=[string]$Record.seedKind}
-    if([string]::IsNullOrWhiteSpace($marker)){return 'seed-marker-missing'}
-    if($marker -cne 'operator-seed-from-stopped-run'){return 'seed-foreign-kind'}
-    return 'operator-seed'
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyPreviousRunKind' }
+    return [Antiphon.Nightly.DispatchSchedule]::PreviousRunKind($Record)
 }
 
+# A preference for a NEW complete attempt, never execution resume: failed and unfinished rows first, each lane
+# rotated after its last observed pass. A stopped-run seed orders by its own rules (StoppedSeed in the core).
 function Resolve-NightlyPreviousRunOrder {
     param([object[]]$Entries, $PreviousRun, [string]$CandidateSha, [datetime]$NowUtc)
-    $previousKind=Get-NightlyPreviousRunKind $PreviousRun
-    if($previousKind -ceq 'operator-seed'){return Resolve-NightlyStoppedSeedOrder $Entries $PreviousRun}
-    if($previousKind -ceq 'seed-foreign-kind'){return [pscustomobject]@{entries=@($Entries);reason='operator-seed-kind-foreign';lanes=@()}}
-    if($previousKind -ceq 'seed-marker-missing'){return [pscustomobject]@{entries=@($Entries);reason='previous-run-plan-digest-missing';lanes=@()}}
-    # This is a preference for a NEW complete attempt, never execution resume.
-    # Missing rows are unfinished. Rotate each lane after its last observed pass,
-    # wrapping earlier holes back into the unfinished partition.
-    $reason='previous-run-missing'
-    $lanes=[Collections.Generic.List[object]]::new()
-    try {
-        if ($null -eq $PreviousRun) { throw $reason }
-        $livenessText=''
-        if ($PreviousRun.PSObject.Properties.Name -ccontains 'liveness' -and $null -ne $PreviousRun.liveness) { $livenessText=[string]$PreviousRun.liveness }
-        if ([string]::IsNullOrWhiteSpace($livenessText)) { throw 'previous-run-liveness-missing' }
-        if ($livenessText -cne 'closed') { throw 'previous-run-liveness-unknown' }
-        $reason='previous-run-schema'
-        $schemaText=''
-        if ($PreviousRun.PSObject.Properties.Name -ccontains 'schemaVersion' -and $null -ne $PreviousRun.schemaVersion) { $schemaText=[string]$PreviousRun.schemaVersion }
-        if ([string]::IsNullOrWhiteSpace($schemaText)) { throw 'previous-run-schema-missing' }
-        if ($schemaText -cne '1') { throw $reason }
-        if ($PreviousRun.suites -isnot [array]) { throw $reason }
-        $shaText=''
-        if ($PreviousRun.PSObject.Properties.Name -ccontains 'sha' -and $null -ne $PreviousRun.sha) { $shaText=[string]$PreviousRun.sha }
-        if ([string]::IsNullOrWhiteSpace($shaText)) { throw 'previous-run-candidate-missing' }
-        if ($shaText -cnotmatch '^[a-f0-9]{40}$') { throw $reason }
-        if ($shaText -cne $CandidateSha) { throw 'previous-run-candidate-mismatch' }
-        $completed=[datetimeoffset]::MinValue
-        if($PreviousRun.completedAt -is [datetime]){$completed=[datetimeoffset]$PreviousRun.completedAt}
-        elseif (-not [datetimeoffset]::TryParse([string]$PreviousRun.completedAt,[ref]$completed)) { throw $reason }
-        if ($completed.UtcDateTime -gt $NowUtc.ToUniversalTime().AddMinutes(5) -or $completed.UtcDateTime -lt $NowUtc.ToUniversalTime().AddDays(-7)) { throw 'previous-run-stale' }
-        $known=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach($entry in $Entries){if(-not $known.Add($entry.suite+[char]0+$entry.chunk)){throw 'canonical-chunk-duplicate'}}
-        $states=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-        $lastPassed=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-        foreach($row in $PreviousRun.suites){
-            $key=[string]$row.id+[char]0+[string]$row.chunk
-            if(-not $known.Contains($key)){throw 'previous-run-roster-mismatch'}
-            if($states.ContainsKey($key)){throw 'previous-run-duplicate'}
-            $state='unfinished'
-            if($row.timedOut -eq $true -or $row.result -cin @('FAIL','Failed','TIMEOUT','Error') -or ($null -ne $row.exitCode -and [int]$row.exitCode -ne 0)){$state='failed'}
-            elseif($row.result -cin @('pass','Passed','PASS') -and $null -ne $row.exitCode -and [int]$row.exitCode -eq 0 -and $row.skipped -ne $true -and $row.coverageComplete -ne $false){$state='passed';$lastPassed[[string]$row.id]=[string]$row.chunk}
-            elseif($row.result -cnotin @('unstarted','incomplete','cancelled','Skipped','skip','pass','Passed','PASS')){throw 'previous-run-state'}
-            $states.Add($key,$state)
-        }
-        $failed=[Collections.Generic.List[object]]::new();$unfinished=[Collections.Generic.List[object]]::new();$passed=[Collections.Generic.List[object]]::new()
-        foreach($entry in $Entries){$key=$entry.suite+[char]0+$entry.chunk;if($entry.priorFailure -ne $true -and $states.ContainsKey($key) -and $states[$key] -ceq 'passed'){$passed.Add($entry)}}
-        # A lane's entries in order, grouped once. InvariantCulture is the comparison -ceq makes.
-        $laneRows=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::InvariantCulture)
-        foreach($entry in $Entries){
-            $laneKey=[string]$entry.suite
-            if(-not $laneRows.ContainsKey($laneKey)){$laneRows[$laneKey]=[Collections.Generic.List[object]]::new()}
-            $laneRows[$laneKey].Add($entry)
-        }
-        foreach($lane in @($Entries.suite|Select-Object -Unique)){
-            $rows=@();if($laneRows.ContainsKey([string]$lane)){$rows=$laneRows[[string]$lane].ToArray()};$last=-1
-            if($lastPassed.ContainsKey($lane)){for($i=0;$i -lt $rows.Count;$i++){if($rows[$i].chunk -ceq $lastPassed[$lane]){$last=$i;break}}}
-            $lanes.Add([pscustomobject]@{suite=$lane;lastPassedChunk=$(if($last -ge 0){$rows[$last].chunk}else{$null})})
-            for($offset=1;$offset -le $rows.Count;$offset++){
-                $entry=$rows[($last+$offset)%$rows.Count];$key=$entry.suite+[char]0+$entry.chunk
-                if($entry.priorFailure -eq $true -or ($states.ContainsKey($key) -and $states[$key] -ceq 'failed')){$failed.Add($entry)}
-                elseif(-not $states.ContainsKey($key) -or $states[$key] -ceq 'unfinished'){$unfinished.Add($entry)}
-            }
-        }
-        $ordered=@($failed.ToArray())+@($unfinished.ToArray())+@($passed.ToArray())
-        $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach($entry in $ordered){if(-not $seen.Add($entry.suite+[char]0+$entry.chunk)){throw 'previous-run-not-permutation'}}
-        if($ordered.Count -ne $Entries.Count -or -not $seen.SetEquals($known)){throw 'previous-run-not-permutation'}
-        return [pscustomobject]@{entries=$ordered;reason='previous-run-order';lanes=$lanes.ToArray()}
-    } catch { return [pscustomobject]@{entries=@($Entries);reason=$_.Exception.Message;lanes=@()} }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Resolve-NightlyPreviousRunOrder' }
+    return [Antiphon.Nightly.DispatchSchedule]::PreviousRunOrder($Entries, $PreviousRun, $CandidateSha, $NowUtc)
 }
 
 function New-NightlyDispatchSchedule {
@@ -98,56 +22,11 @@ function New-NightlyDispatchSchedule {
         [bool]$PreparationComplete = $true, [string]$RunId = '', [string]$Attempt = '',
         $PreviousRun = $null, [string]$CandidateSha = '', [datetime]$NowUtc = [datetime]::UtcNow,
         [string]$HistoryFallbackReason = '')
-    $dispatchRows = [Collections.Generic.List[object]]::new()
-    $dispatchKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $dispatchCanonical = [Collections.Generic.List[object]]::new()
-    foreach ($dispatchSuite in $PreparedSuites) {
-        foreach ($dispatchChunk in @($dispatchSuite.chunks)) {
-            $dispatchKey = ([string]$dispatchSuite.id) + [char]0 + ([string]$dispatchChunk.id)
-            if (-not $dispatchKeys.Add($dispatchKey)) { throw 'duplicate-canonical-chunk' }
-            $dispatchPriority = $false
-            foreach ($dispatchMember in $PriorityMembers) {
-                if ($dispatchMember.suite -ceq $dispatchSuite.id -and @($dispatchMember.chunks) -ccontains ([string]$dispatchChunk.id)) { $dispatchPriority = $true; break }
-            }
-            $dispatchCanonical.Add([ordered]@{suite=[string]$dispatchSuite.id;chunk=$dispatchChunk})
-            $dispatchRows.Add([pscustomobject]@{suite=[string]$dispatchSuite.id;chunk=[string]$dispatchChunk.id;canonicalOrdinal=$dispatchRows.Count;dispatchOrdinal=$dispatchRows.Count;priorFailure=$dispatchPriority;SuiteState=$dispatchSuite;ChunkRef=$dispatchChunk})
-        }
-    }
-    # Stable partition of references. Do not repack, copy or renumber a chunk.
-    $dispatchOrdered = @($dispatchRows.ToArray() | Where-Object priorFailure) + @($dispatchRows.ToArray() | Where-Object { -not $_.priorFailure })
-    $previousOrder=$null
-    if($null -ne $PreviousRun){
-        $previousOrder=Resolve-NightlyPreviousRunOrder $dispatchRows.ToArray() $PreviousRun $CandidateSha $NowUtc
-        $dispatchOrdered=@($previousOrder.entries)
-    }
-    $dispatchSeen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    for ($dispatchOrdinal = 0; $dispatchOrdinal -lt $dispatchOrdered.Count; $dispatchOrdinal++) {
-        $dispatchRow = $dispatchOrdered[$dispatchOrdinal]
-        $dispatchRow.dispatchOrdinal = $dispatchOrdinal
-        if (-not $dispatchSeen.Add($dispatchRow.suite + [char]0 + $dispatchRow.chunk)) { throw 'dispatch-not-permutation' }
-    }
-    if ($dispatchOrdered.Count -ne $dispatchRows.Count -or -not $dispatchSeen.SetEquals($dispatchKeys)) { throw 'dispatch-not-permutation' }
-    $dispatchBytes = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $dispatchCanonical.ToArray() -Depth 30 -Compress))
-    $dispatchHash = [Security.Cryptography.SHA256]::Create()
-    try { $dispatchDigest = [BitConverter]::ToString($dispatchHash.ComputeHash($dispatchBytes)).Replace('-','').ToLowerInvariant() }
-    finally { $dispatchHash.Dispose() }
-    if($null -ne $PreviousRun -and (Get-NightlyPreviousRunKind $PreviousRun) -ceq 'previous-run'){
-        $recordedDigest=''
-        if($PreviousRun.PSObject.Properties.Name -ccontains 'canonicalPlanDigest' -and $null -ne $PreviousRun.canonicalPlanDigest){$recordedDigest=[string]$PreviousRun.canonicalPlanDigest}
-        $digestReason=''
-        if([string]::IsNullOrWhiteSpace($recordedDigest)){$digestReason='previous-run-plan-digest-missing'}
-        elseif($recordedDigest -cnotmatch '^[a-f0-9]{64}$'){$digestReason='previous-run-plan-digest-malformed'}
-        elseif($recordedDigest -cne $dispatchDigest){$digestReason='previous-run-plan-mismatch'}
-        if($digestReason){
-            $dispatchOrdered=@($dispatchRows.ToArray())
-            for($i=0;$i -lt $dispatchOrdered.Count;$i++){$dispatchOrdered[$i].dispatchOrdinal=$i}
-            $previousOrder=[pscustomobject]@{reason=$digestReason;lanes=@()}
-        }
-    }
-    $schedule=[pscustomobject]@{PreparedSuites=@($PreparedSuites);format='antiphon-nightly-dispatch-v1';runId=$RunId;attempt=$Attempt;historyDigest=$HistoryDigest;canonicalPlanDigest=$dispatchDigest;preparationComplete=$PreparationComplete;unresolved=@($Unresolved);entries=@($dispatchOrdered)}
-    if($previousOrder){$schedule|Add-Member -NotePropertyName orderingReason -NotePropertyValue $previousOrder.reason;$schedule|Add-Member -NotePropertyName lanes -NotePropertyValue $previousOrder.lanes}
-    if($HistoryFallbackReason){$schedule|Add-Member -NotePropertyName historyFallbackReason -NotePropertyValue $HistoryFallbackReason}
-    return $schedule
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'New-NightlyDispatchSchedule' }
+    $build = [Antiphon.Nightly.DispatchSchedule]::Build($PreparedSuites, $PriorityMembers, $HistoryDigest, $Unresolved,
+        $PreparationComplete, $RunId, $Attempt, $PreviousRun, $CandidateSha, $NowUtc, $HistoryFallbackReason)
+    if ($build.Error) { throw $build.Error }
+    return $build.Schedule
 }
 
 function Write-NightlyDispatchSchedule {

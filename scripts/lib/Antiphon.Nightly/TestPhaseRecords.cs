@@ -199,7 +199,7 @@ namespace Antiphon.Nightly
         /// control characters, U+0085, U+2028 and U+2029. Everything else, apostrophes and non-ASCII included, is
         /// written as is.
         /// </summary>
-        private static void AppendJsonString(StringBuilder sb, string s)
+        internal static void AppendJsonString(StringBuilder sb, string s)
         {
             const char bs = (char)0x5C;
             sb.Append('"');

@@ -430,6 +430,21 @@ function New-FFGlobalFixture {
     Write-FFJson (Join-Path $root 'anchors.json') $anchors
     return [pscustomobject]@{suites=$all.ToArray();replay=$replay;history=$history;resolved=$resolved;schedule=$schedule;anchors=$anchors}
 }
+# canonicalPlanDigest is the SHA-256 of the core's compact JSON of the canonical rows. Every value kind a chunk can
+# hold is written: an equal plan built again digests equally, and a changed nested value changes the digest.
+function Test-FFCanonicalDigestBytes($Suites) {
+    $shape={param($Method)
+        $noted=[psobject]7; Add-Member -InputObject $noted -NotePropertyName Extra -NotePropertyValue 1
+        [pscustomobject]@{id='shape';text=('q"b\s'+[char]10+[char]0+[char]0x2028+[char]0xe9+[char]0xd800);wrapped=[psobject]'w';classes=@([psobject]'A.B')
+            n=@([int]-3,[long]9007199254740993,1.0,2.5,1e20,-0.0,[double]::NaN,[float]1.1,[decimal]1.50,[char]'x',[DayOfWeek]::Monday)
+            h=[ordered]@{b=1;a=@(@(1,'x'),[pscustomobject]@{k=$null})};noted=$noted;when=[datetime]'2026-11-19T10:11:12.5Z'
+            nodes=@([pscustomobject]@{Uid='u';ClassName='A.X';Method=$Method;Categories=@('OptIn')})}
+    }
+    $digest={param($Method) (New-NightlyDispatchSchedule -PreparedSuites (@($Suites)+@([pscustomobject]@{id='digest-shape';chunks=@(& $shape $Method)}))).canonicalPlanDigest}
+    $first=& $digest 'M'
+    return ($first -cmatch '^[a-f0-9]{64}$' -and (& $digest 'M') -ceq $first -and (& $digest 'N') -cne $first)
+}
+
 function Test-GlobalReplayPriority {
     $fx = New-FFGlobalFixture
     $schedule = $fx.schedule
@@ -449,7 +464,7 @@ function Test-GlobalReplayPriority {
     foreach($m in $fx.resolved.members){foreach($id in $m.chunks){if(@($priority|Where-Object {$_.suite -ceq $m.suite -and $_.chunk -ceq $id}).Count -ne 1){$splits=$false}}}
     Assert-FF $splits 'allSplits'
     $plain=New-NightlyDispatchSchedule -PreparedSuites $fx.suites
-    Assert-FF ($plain.canonicalPlanDigest -ceq $schedule.canonicalPlanDigest -and ($plain.entries.canonicalOrdinal -join ',') -ceq ($plain.entries.dispatchOrdinal -join ',')) 'canonicalDigest'
+    Assert-FF ($plain.canonicalPlanDigest -ceq $schedule.canonicalPlanDigest -and ($plain.entries.canonicalOrdinal -join ',') -ceq ($plain.entries.dispatchOrdinal -join ',') -and (Test-FFCanonicalDigestBytes $fx.suites)) 'canonicalDigest'
     $unknown=New-NightlyDispatchSchedule -PreparedSuites $fx.suites -Unresolved @([ordered]@{suite='antiphon';className='Retired.Class';reason='current-class-missing'})
     Assert-FF ($unknown.unresolved.Count -eq 1 -and $unknown.entries.Count -eq $plain.entries.Count) 'unresolved'
     Assert-FF (Test-FFRefusal {New-NightlyDispatchSchedule -PreparedSuites @($fx.suites[0],$fx.suites[0])} 'duplicate-canonical-chunk') 'duplicate'

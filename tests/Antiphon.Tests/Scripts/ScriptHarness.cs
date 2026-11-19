@@ -18,6 +18,28 @@ internal static class ScriptHarness
             result => Validate(result, prefix, caseName, expectedRows, requiredRows));
     }
 
+    /// <summary>
+    /// One case of a batch run (a harness given a comma-separated -Case list runs each case in turn in one process):
+    /// the case's block, from "C487 CASE BEGIN name" to "C487 CASE END name EXIT code", is validated as a run of that
+    /// case alone would be, with that exit code.
+    /// </summary>
+    internal static void ValidateBatchCase(ScriptHarnessResult result, string prefix, string caseName, int expectedRows,
+        IReadOnlyList<string> requiredRows)
+    {
+        var output = (result.Stdout + "\n" + result.Stderr).ReplaceLineEndings("\n");
+        var begin = output.IndexOf("C487 CASE BEGIN " + caseName + "\n", StringComparison.Ordinal);
+        begin.ShouldBeGreaterThanOrEqualTo(0, $"{caseName} never started in the batch\n{output}");
+        var endMarker = "C487 CASE END " + caseName + " EXIT ";
+        var end = output.IndexOf(endMarker, begin, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(begin, $"{caseName} never finished in the batch\n{output}");
+        var codeStart = end + endMarker.Length;
+        var codeEnd = output.IndexOf('\n', codeStart);
+        var code = output[codeStart..(codeEnd < 0 ? output.Length : codeEnd)].Trim();
+        int.TryParse(code, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var exitCode)
+            .ShouldBeTrue($"{caseName} exit code '{code}'\n{output}");
+        Validate(new ScriptHarnessResult(exitCode, output[begin..end], ""), prefix, caseName, expectedRows, requiredRows);
+    }
+
     private static void Validate(ScriptHarnessResult result, string prefix, string caseName, int expectedRows,
         IReadOnlyList<string> requiredRows)
     {

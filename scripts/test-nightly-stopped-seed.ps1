@@ -1,11 +1,37 @@
 #requires -Version 5.1
 param([string]$Case='', [string]$ResultsDirectory='')
 $ErrorActionPreference='Stop'
+# Several cases, comma-separated: each runs as its own invocation of this script in this process, in a fresh script
+# scope with its own results directory, so they share only the pwsh start and the parsed libraries. A case's output
+# sits between its C487 CASE BEGIN and END lines; END carries the exit code the case's harness ended with.
+if($Case.Contains(',')){
+    $batchRoot=$ResultsDirectory
+    if([string]::IsNullOrWhiteSpace($batchRoot)){$batchRoot=Join-Path ([IO.Path]::GetTempPath()) ('ss-batch-'+[guid]::NewGuid().ToString('N'))}
+    [void][IO.Directory]::CreateDirectory($batchRoot)
+    $failedCases=0
+    foreach($one in $Case.Split(',')){
+        Write-Host ('C487 CASE BEGIN '+$one)
+        $global:LASTEXITCODE=0
+        try{& $PSCommandPath -Case $one -ResultsDirectory (Join-Path $batchRoot $one);$code=$LASTEXITCODE}
+        catch{Write-Host ('FAIL SS '+$one+'.contract escaped: '+(Get-NightlyRefusalText $_));$code=1}
+        if($code -ne 0){$failedCases++}
+        Write-Host ('C487 CASE END '+$one+' EXIT '+$code)
+    }
+    Write-Host ('C487 BATCH: '+$failedCases+' failed')
+    exit ([int]($failedCases -gt 0))
+}
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-failure-history.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-dispatch.ps1')
-. (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
+# Only these cases run executor code (its outcome, its launch packer, its public entry); the others need none of it.
+if($Case -cin @('ScheduleConservesAllChunks','PublicHopsForwardAcknowledgement','RealPackerRegroupKeepsFailedFirst','RealPackerFailedMethodFollows')){
+    . (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
+}
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
+# The seed code is the core's, and its link cache, Windows identity seam and read barrier live for the process: each
+# case starts with them cleared, as a process of its own would.
+Assert-NightlyCoreAvailable 'test-nightly-stopped-seed'
+[Antiphon.Nightly.HistoryLinkCache]::Reset();[Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$false;[Antiphon.Nightly.StoppedSeedFiles]::ReadBarrier=$null
 $root=New-C487Root $ResultsDirectory
 $watch=[Diagnostics.Stopwatch]::StartNew()
 $run=Join-Path $root 'synthetic-run'
@@ -159,7 +185,7 @@ function Write-MergeSeed {
     if($null -eq $Evidence -or @($Evidence).Count -eq 0){$Evidence=New-Object object[] 0}
     $payload=[ordered]@{sourceObservedAtUtc=$Observed;chunks=$Chunks;failedTests=$Failed;evidence=$Evidence}
     $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId=$RunId;sourceCandidateId=$Candidate;sourceSha=$Sha;createdAtUtc=$Created;payload=($payload|ConvertTo-Json -Depth 30 -Compress);contentHash=''}
-    $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+    $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
     $utf8=New-Object System.Text.UTF8Encoding $false
     [IO.File]::WriteAllText($Path,($envelope|ConvertTo-Json -Depth 35),$utf8)
 }
@@ -186,20 +212,23 @@ function Invoke-MergeNightlySeeds {
         $text=& pwsh -NoProfile -File $scriptPath @($argv.ToArray()) 2>&1 | Out-String
         return [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}
     }
-    # The same script and arguments in a fresh runspace of this process, without a pwsh start (about 1 s) per call.
-    # The runspace has its own session state, so the script sees none of this harness's functions or variables, and
-    # every path of the script ends in exit 0, 2 or 3, which $LASTEXITCODE reports as the process exit code would.
-    # An error that escapes the script is code 1, as pwsh -File reports it. The -Cli cases keep the CLI covered.
+    # The same script and arguments in a runspace of this process, without a pwsh start (about 1 s) per call. The
+    # runspace has its own session state, so the script sees none of this harness's functions or variables; each call
+    # is a new script scope in it, so calls share nothing but the parsed libraries. Every path of the script ends in
+    # exit 0, 2 or 3, which $LASTEXITCODE reports as the process exit code would. An error that escapes the script is
+    # code 1, as pwsh -File reports it. The -Cli calls keep the CLI covered end to end.
+    if($null -eq $script:MergeRunspace){$script:MergeRunspace=[runspacefactory]::CreateRunspace();$script:MergeRunspace.Open()}
     $ps=[powershell]::Create()
+    $ps.Runspace=$script:MergeRunspace
     try{
-        [void]$ps.AddScript('param([string]$Script,[string[]]$Arguments) $text=& $Script @Arguments *>&1 | Out-String; [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}')
+        [void]$ps.AddScript('param([string]$Script,[string[]]$Arguments) $global:LASTEXITCODE=0; $text=& $Script @Arguments *>&1 | Out-String; [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}')
         [void]$ps.AddArgument($scriptPath)
         [void]$ps.AddArgument([string[]]$argv.ToArray())
         $result=@($ps.Invoke())
         if($result.Count -eq 0){return [pscustomobject]@{Code=1;Text='merge produced no result'}}
         return [pscustomobject]@{Code=[int]$result[-1].Code;Text=[string]$result[-1].Text}
     }catch{
-        return [pscustomobject]@{Code=1;Text=$_.Exception.Message}
+        return [pscustomobject]@{Code=1;Text=(Get-NightlyRefusalText $_)}
     }finally{$ps.Dispose()}
 }
 function Read-MergeReport([string]$Path){return ([IO.File]::ReadAllText($Path)|ConvertFrom-Json)}
@@ -243,11 +272,17 @@ try {
     if($Case -in @('CumulativeMergeProvenDrop','CumulativeMergeUnfixedGreen','CumulativeMergeCherryPick','CumulativeMergeFixPresentAtFailure')){
         . (Join-Path $PSScriptRoot 'lib/test-selection.ps1')
     }
-    $before=@(Snapshot)
     $seedPath=Join-Path $root 'seed.json'
-    if(-not (Get-Command Export-NightlyStoppedRunSeed -ErrorAction SilentlyContinue)){throw 'stopped-run builder missing'}
-    $built=Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $seedPath -PassThru
-    $after=@(Snapshot)
+    # The common export of the fixture run and its read-only snapshots, for every case but those that build their own
+    # layouts and seeds.
+    $ownSeeds=@('StoppedTimingRootAndRefusals','ChunkUnfinishedTolerance','LinkCacheRefusesReplacement','SkipRowsCountAsCompleted',
+        'SummaryPrefixTamper','ScaleExportBound','RealPackerRegroupKeepsFailedFirst','RealPackerFailedMethodFollows',
+        'RealShapeFailedMethodBand','UnfinishedRunLaneResume')
+    if($Case -cnotin $ownSeeds -and $Case -cnotlike 'CumulativeMerge*'){
+        $before=@(Snapshot)
+        $built=[Antiphon.Nightly.StoppedSeedFiles]::Export($run,$seedPath,'','','','')
+        $after=@(Snapshot)
+    }
     $suites=@(foreach($id in @('antiphon','session-runner','pty-host','agents-pty','e2e')){
         $prefix='Synthetic.'+$id.Replace('-','_')+'.'
         $chunks=@(foreach($name in @('Passed','Never','Red','Torn','New')){
@@ -268,9 +303,9 @@ try {
     }
     switch($Case){
         'BuilderReadOnly' {
-            $doc=Read-NightlyStoppedRunSeed $seedPath
+            $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($seedPath,'')
             $bad=Join-Path $run 'forbidden.json';$refused=$false
-            try {Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $bad}catch{$refused=$_.Exception.Message -like '*output-inside-source*'}
+            try {[void][Antiphon.Nightly.StoppedSeedFiles]::Export($run,$bad,'','','','')}catch{$refused=(Get-NightlyRefusalText $_) -like '*output-inside-source*'}
             $probePath=Join-Path $run 'owner.json';$probeBytes=[IO.File]::ReadAllBytes($probePath);$probeTime=[IO.File]::GetLastWriteTimeUtc($probePath)
             $probeBefore=@(Snapshot);$changed=[byte[]]$probeBytes.Clone();$changed[0]=$changed[0] -bxor 1
             try{
@@ -305,7 +340,7 @@ try {
             Check ($null -eq $received.History -and $received.FallbackReason -eq 'seed-hash-mismatch' -and (Schedule $received).entries[0].chunk -eq 'new-Passed') $received.FallbackReason
         }
         'TimeoutIsFailure' {
-            $seed=Read-NightlyStoppedRunSeed $seedPath
+            $seed=[Antiphon.Nightly.StoppedSeedFiles]::Read($seedPath,'')
             Check (@($seed.failedTests).Count -eq 6 -and @($seed.failedTests|Where-Object {$_.outcome -eq 'Timeout' -and $_.className -eq 'Synthetic.pty_host.Red' -and $_.method -eq 'Run' -and $_.chunk -eq 'all-group-2'}).Count -eq 1 -and @($seed.failedTests|Where-Object outcome -eq 'Aborted').Count -eq 1) 'Failed/Error/Timeout/Aborted must retain class, method, suite and old chunk'
         }
         'ScheduleConservesAllChunks' {
@@ -337,12 +372,12 @@ try {
         }
         'InvalidSeedFallsBack' {
             $old=[IO.File]::ReadAllText($seedPath)|ConvertFrom-Json
-            $old.createdAtUtc=$now.AddDays(-15).ToString('o');$old.contentHash=Get-NightlyStoppedSeedHash $old
+            $old.createdAtUtc=$now.AddDays(-15).ToString('o');$old.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($old)
             $stale=Join-Path $root 'stale.json';Write-Seed $old $stale
             $received=Ingress -Path $stale -Accept
             $ancient=[IO.File]::ReadAllText($seedPath)|ConvertFrom-Json
             $body=$ancient.payload|ConvertFrom-Json;$body.sourceObservedAtUtc=$now.AddDays(-15).ToString('o')
-            $ancient.payload=$body|ConvertTo-Json -Depth 35 -Compress;$ancient.contentHash=Get-NightlyStoppedSeedHash $ancient
+            $ancient.payload=$body|ConvertTo-Json -Depth 35 -Compress;$ancient.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($ancient)
             $ancientPath=Join-Path $root 'ancient.json';Write-Seed $ancient $ancientPath
             $oldSource=Ingress -Path $ancientPath -Accept
             $malformed=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($malformed,'{')
@@ -402,7 +437,7 @@ try {
             $after=Snapshot-Tree @($layout.Run,$layout.Timing)
             $doc=$null;$torn=$false
             if($exitOk){
-                $doc=Read-NightlyStoppedRunSeed $out
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                 $torn=(@($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'profile-4' -and @($_.classes) -ccontains 'Synthetic.antiphon.Torn'}).Count -eq 1 -and $doc.sourceRunId -ceq $runId)
             }
             $plansInRun=@(Get-ChildItem -LiteralPath $layout.Run -Filter 'groups-planned*.json' -File).Count
@@ -416,8 +451,8 @@ try {
             $explicitOut=Join-Path $root 'explicit-seed.json'
             $explicitOk=$false
             try {
-                [void](Export-NightlyStoppedRunSeed -RunDirectory $explicit.Run -OutputPath $explicitOut -TimingRoot $explicit.Timing -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
-                $explicitDoc=Read-NightlyStoppedRunSeed $explicitOut
+                [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($explicit.Run,$explicitOut,'','rc-synthetic-old',$sha,$explicit.Timing))
+                $explicitDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($explicitOut,'')
                 $explicitOk=($explicitDoc.sourceRunId -ceq $runId -and @($explicitDoc.chunks).Count -gt 0)
             } catch { $explicitOk=$false }
             $auto=New-SeedSiblingLayout (Join-Path $root 'auto-logs') $runId '2026-10-30-0824-d47848cc'
@@ -425,8 +460,8 @@ try {
             $autoOut=Join-Path $root 'auto-seed.json'
             $autoOk=$false
             try {
-                [void](Export-NightlyStoppedRunSeed -RunDirectory $auto.Run -OutputPath $autoOut -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
-                $autoDoc=Read-NightlyStoppedRunSeed $autoOut
+                [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($auto.Run,$autoOut,'','rc-synthetic-old',$sha,''))
+                $autoDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($autoOut,'')
                 $autoOk=($autoDoc.sourceRunId -ceq $runId)
             } catch { $autoOk=$false }
             function Refuse-Timing([scriptblock]$Arrange,[string]$Like){
@@ -434,8 +469,8 @@ try {
                 $lay=New-SeedSiblingLayout (Join-Path $root ('refuse-'+$id)) $runId '2026-10-30-0824-d47848cc'
                 & $Arrange $lay
                 $msg=''
-                try { [void](Export-NightlyStoppedRunSeed -RunDirectory $lay.Run -OutputPath (Join-Path $root ('refuse-'+$id+'.json')) -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru) }
-                catch { $msg=$_.Exception.Message }
+                try { [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($lay.Run,(Join-Path $root ('refuse-'+$id+'.json')),'','rc-synthetic-old',$sha,'')) }
+                catch { $msg=(Get-NightlyRefusalText $_) }
                 return ($msg -like $Like)
             }
             $outside=Refuse-Timing { param($lay)
@@ -460,8 +495,8 @@ try {
             Move-Item -LiteralPath $directLay.Timing -Destination $realTiming
             New-Item -ItemType SymbolicLink -Path $directLay.Timing -Target $realTiming | Out-Null
             $directMsg=''
-            try { Resolve-NightlyStoppedTimingRoot $directLay.Run $directLay.Timing $runId | Out-Null }
-            catch { $directMsg=$_.Exception.Message }
+            try { [Antiphon.Nightly.StoppedSeedFiles]::TimingRoot($directLay.Run,$directLay.Timing,$runId) | Out-Null }
+            catch { $directMsg=(Get-NightlyRefusalText $_) }
             $directOk=($directMsg -like '*evidence-link*')
             Check ($explicitOk -and $autoOk -and $outside -and $symlink -and $other -and $directOk) ('explicit='+$explicitOk+' auto='+$autoOk+' outside='+$outside+' symlink='+$symlink+' other='+$other+' direct='+$directMsg)
         }
@@ -473,28 +508,28 @@ try {
             try {
                 $lockedOut=Join-Path $root 'locked-seed.json'
                 try {
-                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $lockedOut -PassThru)
-                    $lockedDoc=Read-NightlyStoppedRunSeed $lockedOut
+                    [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$lockedOut,'','','',''))
+                    $lockedDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($lockedOut,'')
                     $row=@($lockedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
                     $lockedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
                     $lockedDetail=[string]$row.unfinishedReason
-                } catch { $lockedDetail=$_.Exception.Message }
+                } catch { $lockedDetail=(Get-NightlyRefusalText $_) }
             } finally { $lock.Dispose() }
             $trx=Join-Path $run 'antiphon-all-group-2.trx'
             $trxBytes=[IO.File]::ReadAllBytes($trx)
-            $script:NightlySeedReadBarrier={ param($Path) if($Path -ceq $trx){ [IO.File]::AppendAllText($Path,' ') } }
+            [Antiphon.Nightly.StoppedSeedFiles]::ReadBarrier={ param($Path) if($Path -ceq $trx){ [IO.File]::AppendAllText($Path,' ') } }
             $changedOk=$false;$changedDetail=''
             try {
                 $changedOut=Join-Path $root 'changed-seed.json'
                 try {
-                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $changedOut -PassThru)
-                    $changedDoc=Read-NightlyStoppedRunSeed $changedOut
+                    [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$changedOut,'','','',''))
+                    $changedDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($changedOut,'')
                     $row=@($changedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
                     $kept=@($changedDoc.failedTests|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'}).Count
                     $changedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*trx*' -and $kept -eq 0)
                     $changedDetail=[string]$row.unfinishedReason+' kept='+$kept
-                } catch { $changedDetail=$_.Exception.Message }
-            } finally { $script:NightlySeedReadBarrier=$null; [IO.File]::WriteAllBytes($trx,$trxBytes) }
+                } catch { $changedDetail=(Get-NightlyRefusalText $_) }
+            } finally { [Antiphon.Nightly.StoppedSeedFiles]::ReadBarrier=$null; [IO.File]::WriteAllBytes($trx,$trxBytes) }
             $passed=Join-Path $run 'antiphon-all-group-1.trx'
             $passedText=[IO.File]::ReadAllText($passed)
             $open=$passedText.Replace('<ResultSummary outcome="Completed"><Counters total="1" executed="1" /></ResultSummary>','')
@@ -502,12 +537,12 @@ try {
             try {
                 [IO.File]::WriteAllText($passed,$open)
                 $openOut=Join-Path $root 'open-seed.json'
-                [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $openOut -PassThru)
-                $openDoc=Read-NightlyStoppedRunSeed $openOut
+                [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$openOut,'','','',''))
+                $openDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($openOut,'')
                 $row=@($openDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
                 $openOk=(-not $row.completed)
                 $openDetail='completed='+[string]$row.completed
-            } catch { $openDetail=$_.Exception.Message }
+            } catch { $openDetail=(Get-NightlyRefusalText $_) }
             finally { [IO.File]::WriteAllText($passed,$passedText) }
             $denied=Join-Path $run 'antiphon-all-group-2.timing.json'
             $script:NightlySeedPlatformSeam=$null
@@ -523,12 +558,12 @@ try {
                 if($deniedRestore){
                     $deniedOut=Join-Path $root 'denied-seed.json'
                     try {
-                        [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $deniedOut -PassThru)
-                        $deniedDoc=Read-NightlyStoppedRunSeed $deniedOut
+                        [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$deniedOut,'','','',''))
+                        $deniedDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($deniedOut,'')
                         $row=@($deniedDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
                         $deniedOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
                         $deniedDetail=[string]$row.unfinishedReason+' branch='+$script:NightlySeedDenialBranch
-                    } catch { $deniedDetail=$_.Exception.Message }
+                    } catch { $deniedDetail=(Get-NightlyRefusalText $_) }
                 } else {
                     $deniedOk=($script:NightlySeedDenialBranch -ceq 'windows-acl' -and [int]$script:NightlySeedCustodyNotApplicable -ge 1 -and $script:NightlySeedCustodyNote -ceq $script:SeedCustodyNotApplicableLine)
                     $deniedDetail='not-applicable count='+[int]$script:NightlySeedCustodyNotApplicable
@@ -556,12 +591,12 @@ try {
                     if($script:NightlySeedDenialBranch -cne 'windows-acl'){ throw 'windows-branch-not-selected' }
                     if(-not $windowsRestore){ throw 'windows-custody-not-applied' }
                     $windowsOut=Join-Path $root 'windows-denied-seed.json'
-                    [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $windowsOut -PassThru)
-                    $windowsDoc=Read-NightlyStoppedRunSeed $windowsOut
+                    [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$windowsOut,'','','',''))
+                    $windowsDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($windowsOut,'')
                     $row=@($windowsDoc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-2'})[0]
                     $windowsOk=(-not $row.completed -and [string]$row.unfinishedReason -like '*timing*')
                     $windowsDetail=[string]$row.unfinishedReason
-                } catch { $windowsOk=$false; $windowsDetail=$_.Exception.Message }
+                } catch { $windowsOk=$false; $windowsDetail=(Get-NightlyRefusalText $_) }
                 finally { if($windowsRestore){ & $windowsRestore }; $script:NightlySeedPlatformSeam=$null }
                 $script:NightlySeedWindowsBranchRan=$false
                 $naBefore=[int]$script:NightlySeedCustodyNotApplicable
@@ -571,7 +606,7 @@ try {
                     $captured=@(Enter-SeedUnreadableTiming $denied 6>&1)
                     foreach($item in $captured){ if([string]$item -ceq $script:SeedCustodyNotApplicableLine){ $naPrinted=$true } }
                     $naRestore=$captured | Where-Object { $_ -is [scriptblock] } | Select-Object -First 1
-                } catch { $naThrew=$true; $naDetail=$_.Exception.Message }
+                } catch { $naThrew=$true; $naDetail=(Get-NightlyRefusalText $_) }
                 finally { if($naRestore){ & $naRestore }; $script:NightlySeedPlatformSeam=$null }
                 $naOk=(-not $naThrew -and $naPrinted -and $script:NightlySeedWindowsBranchRan -and [int]$script:NightlySeedCustodyNotApplicable -eq ($naBefore+1) -and $script:NightlySeedCustodyNote -ceq $script:SeedCustodyNotApplicableLine)
                 if(-not $naThrew){ $naDetail='printed='+$naPrinted+' count='+[int]$script:NightlySeedCustodyNotApplicable }
@@ -579,8 +614,8 @@ try {
             $tamper=New-SeedSiblingLayout (Join-Path $root 'tamper-logs') 'd47848cce896471db1cc8ca346707cad' '2026-10-30-0824-d47848cc'
             Write-SeedSummary $tamper.Run $tamper.Timing 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' $sha
             $tamperMsg=''
-            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $tamper.Run -OutputPath (Join-Path $root 'tamper-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru) }
-            catch { $tamperMsg=$_.Exception.Message }
+            try { [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($tamper.Run,(Join-Path $root 'tamper-seed.json'),'','rc-synthetic-old',$sha,'')) }
+            catch { $tamperMsg=(Get-NightlyRefusalText $_) }
             $tamperOk=($tamperMsg -like '*seed-timing-run-mismatch*' -or $tamperMsg -like '*seed-plan-run-mismatch*' -or $tamperMsg -like '*seed-summary*')
             Check ($lockedOk -and $changedOk -and $openOk -and $deniedOk -and $tamperOk -and $windowsOk -and $naOk) ('locked='+$lockedDetail+'; changed='+$changedDetail+'; open='+$openDetail+'; denied='+$deniedDetail+'; tamper='+$tamperMsg+'; windows='+$windowsDetail+'; na='+$naDetail)
         }
@@ -588,8 +623,8 @@ try {
             $fileLink=Join-Path $run 'linked-file.txt'
             New-Item -ItemType SymbolicLink -Path $fileLink -Target (Join-Path $run 'owner.json') | Out-Null
             $fileMsg=''
-            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath (Join-Path $root 'file-link-seed.json') -PassThru) }
-            catch { $fileMsg=$_.Exception.Message }
+            try { [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,(Join-Path $root 'file-link-seed.json'),'','','','')) }
+            catch { $fileMsg=(Get-NightlyRefusalText $_) }
             finally { Remove-Item -LiteralPath $fileLink -Force }
             $parent=Join-Path $root 'link-parent'
             $real=Join-Path $parent 'real-run'
@@ -600,8 +635,8 @@ try {
             $linkedRun=Join-Path $parent 'linked-run'
             New-Item -ItemType SymbolicLink -Path $linkedRun -Target $real | Out-Null
             $parentMsg=''
-            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $linkedRun -OutputPath (Join-Path $root 'parent-link-seed.json') -PassThru) }
-            catch { $parentMsg=$_.Exception.Message }
+            try { [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($linkedRun,(Join-Path $root 'parent-link-seed.json'),'','','','')) }
+            catch { $parentMsg=(Get-NightlyRefusalText $_) }
             $swap=Join-Path $root 'swap-dir'
             [void][IO.Directory]::CreateDirectory($swap)
             $leaf=Join-Path $swap 'a.txt'
@@ -612,7 +647,7 @@ try {
             New-Item -ItemType SymbolicLink -Path $swap -Target $held | Out-Null
             $swapMsg=''
             try { Assert-NightlyHistoryFileStable (Join-Path $swap 'a.txt') }
-            catch { $swapMsg=$_.Exception.Message }
+            catch { $swapMsg=(Get-NightlyRefusalText $_) }
             Check ($fileMsg -like '*evidence-link*' -and $parentMsg -like '*evidence-link*' -and $swapMsg -like '*evidence-link*') ('file='+$fileMsg+'; parent='+$parentMsg+'; swap='+$swapMsg)
         }
         'DigestGuardLeavesSeedOrder' {
@@ -716,11 +751,11 @@ try {
             function Write-PackSeed($Rows,$Failed){
                 $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
                 $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-packer';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
-                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
                 $script:packSeedN++
                 $path=Join-Path $root ('pack-seed-'+$script:packSeedN+'.json')
                 [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
-                return Read-NightlyStoppedRunSeed $path
+                return [Antiphon.Nightly.StoppedSeedFiles]::Read($path,'')
             }
             function New-Suite($Groups){
                 # A group with 'methods' is a split chunk like the real packer's: its own disjoint node list.
@@ -809,11 +844,11 @@ try {
             function Write-BandSeed($Rows,$Failed){
                 $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
                 $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-method';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
-                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
                 $script:bandN++
                 $path=Join-Path $root ('band-seed-'+$script:bandN+'.json')
                 [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
-                return Read-NightlyStoppedRunSeed $path
+                return [Antiphon.Nightly.StoppedSeedFiles]::Read($path,'')
             }
             function New-BandChunk([string]$Id,[string]$Class,[string[]]$Methods,[bool]$OmitNodes){
                 $chunk=[pscustomobject]@{id=$Id;classes=@($Class)}
@@ -951,10 +986,10 @@ try {
             function Write-ProbeSeed($Rows,$Failed){
                 $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($Rows);failedTests=@($Failed)}
                 $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-packer-method';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
-                $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+                $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
                 $path=Join-Path $root 'packer-method-seed.json'
                 [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
-                return Read-NightlyStoppedRunSeed $path
+                return [Antiphon.Nightly.StoppedSeedFiles]::Read($path,'')
             }
             $oldMethods=@(0..319|ForEach-Object { 'M'+$_.ToString('000') })
             $oldMethods[200]='M200(case)'
@@ -1096,10 +1131,10 @@ try {
             if($total -ne 841){throw ('shape total '+$total)}
             $payload=[ordered]@{sourceObservedAtUtc=$stamp;chunks=@($seedRows.ToArray());failedTests=@($failed.ToArray())}
             $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='synthetic-shape';sourceCandidateId='rc-synthetic-old';sourceSha=('c'*40);createdAtUtc=$stamp;payload=($payload|ConvertTo-Json -Depth 20 -Compress);contentHash=''}
-            $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+            $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
             $path=Join-Path $root 'shape-seed.json'
             [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
-            $doc=Read-NightlyStoppedRunSeed $path
+            $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($path,'')
             $resolved=Resolve-NightlyPriorFailures $doc $preparedSuites Full
             $schedule=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
             $again=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
@@ -1178,7 +1213,7 @@ try {
             $evidence=@([ordered]@{path='timing-unfinished/groups-planned-antiphon.json';sha256=('d'*64)})
             $payload=[ordered]@{sourceObservedAtUtc=$newTorn;chunks=@($seedRows.ToArray());failedTests=@($failed.ToArray());evidence=$evidence}
             $envelope=[ordered]@{format='antiphon-nightly-stopped-seed-v1';seedKind='operator-seed-from-stopped-run';sourceRunId='a074ff9a-shape';sourceCandidateId='rc-synthetic-unfinished';sourceSha=('c'*40);createdAtUtc=$now.AddHours(-1).ToString('o');payload=($payload|ConvertTo-Json -Depth 30 -Compress);contentHash=''}
-            $envelope.contentHash=Get-NightlyStoppedSeedHash $envelope
+            $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
             $path=Join-Path $root 'unfinished-seed.json'
             [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 35))
             $received=Initialize-NightlyDispatchHistory -Path $path -CandidateSha ('b'*40) -AcceptCrossCandidateSeed -SeedSourceCandidateId 'rc-synthetic-unfinished'
@@ -1206,8 +1241,8 @@ try {
                 $text=$original.Replace('</TestDefinitions>',$skipDefinition).Replace('</Results>',('<UnitTestResult testId="2" outcome="'+$Outcome+'" /></Results>')).Replace('<ResultSummary outcome="Completed">',('<ResultSummary outcome="'+$Summary+'">'))
                 [IO.File]::WriteAllText($trx,$text)
                 $out=Join-Path $root ('skip-'+$Name+'.json')
-                [void](Export-NightlyStoppedRunSeed -RunDirectory $run -OutputPath $out -PassThru)
-                $doc=Read-NightlyStoppedRunSeed $out
+                [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($run,$out,'','','',''))
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                 return @($doc.chunks|Where-Object {$_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-1'})[0]
             }
             try {
@@ -1224,7 +1259,7 @@ try {
             $layout=New-SeedSiblingLayout (Join-Path $root 'prefix-logs') $runId '2026-10-30-0824-d47848cc'
             Write-SeedSummary $layout.Run $layout.Timing $runId $sha
             $summaryPath=Join-Path $layout.Run 'summary.json'
-            $prefix=Read-NightlyStoppedSummaryPrefix $summaryPath
+            $prefix=[Antiphon.Nightly.StoppedSeedFiles]::SummaryPrefix($summaryPath)
             $bytes=[IO.File]::ReadAllBytes($summaryPath)
             # CutBeforeBulk returns the opening quote of the depth-1 bulk key.
             # A flip there hides the key, so the prefix reader parses the tail.
@@ -1245,12 +1280,12 @@ try {
             [IO.File]::WriteAllBytes($summaryPath,$decoy)
             $decoyOk=$false;$decoyDetail=''
             try {
-                [void](Export-NightlyStoppedRunSeed -RunDirectory $layout.Run -OutputPath (Join-Path $root 'decoy-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+                [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($layout.Run,(Join-Path $root 'decoy-seed.json'),'','rc-synthetic-old',$sha,''))
                 $decoyOk=$true;$decoyDetail='accepted'
-            } catch { $decoyDetail=$_.Exception.Message }
+            } catch { $decoyDetail=(Get-NightlyRefusalText $_) }
             [IO.File]::WriteAllBytes($summaryPath,$bytes)
             $state=@{done=$false}
-            $script:NightlySeedReadBarrier={
+            [Antiphon.Nightly.StoppedSeedFiles]::ReadBarrier={
                 param($Path)
                 if($state.done){return}
                 $state.done=$true
@@ -1259,13 +1294,13 @@ try {
                 [IO.File]::WriteAllBytes($summaryPath,$live)
             }.GetNewClosure()
             $tamperDetail=''
-            try { [void](Export-NightlyStoppedRunSeed -RunDirectory $layout.Run -OutputPath (Join-Path $root 'prefix-tamper-seed.json') -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru); $tamperDetail='accepted' }
-            catch { $tamperDetail=$_.Exception.Message }
-            finally { $script:NightlySeedReadBarrier=$null }
+            try { [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($layout.Run,(Join-Path $root 'prefix-tamper-seed.json'),'','rc-synthetic-old',$sha,'')); $tamperDetail='accepted' }
+            catch { $tamperDetail=(Get-NightlyRefusalText $_) }
+            finally { [Antiphon.Nightly.StoppedSeedFiles]::ReadBarrier=$null }
             Check ($decoyOk -and $tamperDetail -like '*seed-summary-tampered*') ('decoy='+$decoyDetail+'; tamper='+$tamperDetail+'; cut='+$prefix.Length)
         }
         'WindowsAncestorSwapRefused' {
-            $script:NightlyHistoryForceWindowsIdentity=$true
+            [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$true
             try {
                 function New-Leaf([string]$Name){
                     Reset-NightlyHistoryLinkCache
@@ -1283,7 +1318,7 @@ try {
                 [void][IO.Directory]::CreateDirectory((Join-Path $real.Grand 'mid'))
                 [IO.File]::WriteAllText($real.Leaf,'FORGED')
                 $dirMsg=''
-                try { Assert-NightlyHistoryFileStable $real.Leaf } catch { $dirMsg=$_.Exception.Message }
+                try { Assert-NightlyHistoryFileStable $real.Leaf } catch { $dirMsg=(Get-NightlyRefusalText $_) }
                 $linked=New-Leaf 'win-link'
                 $linkHeld=Join-Path $root 'win-link-held'
                 $forged=Join-Path $root 'win-link-forged'
@@ -1292,9 +1327,9 @@ try {
                 [IO.File]::WriteAllText((Join-Path $forged 'mid/leaf.txt'),'FORGED')
                 New-Item -ItemType SymbolicLink -Path $linked.Grand -Target $forged | Out-Null
                 $linkMsg=''
-                try { Assert-NightlyHistoryFileStable $linked.Leaf } catch { $linkMsg=$_.Exception.Message }
+                try { Assert-NightlyHistoryFileStable $linked.Leaf } catch { $linkMsg=(Get-NightlyRefusalText $_) }
                 Check ($dirMsg -like '*evidence-link*' -and $linkMsg -like '*evidence-link*') ('dir='+$dirMsg+'; link='+$linkMsg)
-            } finally { $script:NightlyHistoryForceWindowsIdentity=$false; Reset-NightlyHistoryLinkCache }
+            } finally { [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$false; Reset-NightlyHistoryLinkCache }
         }
         'ScaleExportBound' {
             $runId='d47848cce896471db1cc8ca346707cad'
@@ -1327,10 +1362,10 @@ try {
             for($i=$timingCount;$i -lt 1700;$i++){[IO.File]::WriteAllText((Join-Path $timing ('pad-'+$i.ToString('0000')+'.txt')),'x')}
             $out=Join-Path $root 'scale-seed.json'
             $export=[Diagnostics.Stopwatch]::StartNew()
-            [void](Export-NightlyStoppedRunSeed -RunDirectory $runDir -OutputPath $out -SourceCandidateId 'rc-synthetic-old' -SourceSha $sha -PassThru)
+            [void]([Antiphon.Nightly.StoppedSeedFiles]::Export($runDir,$out,'','rc-synthetic-old',$sha,''))
             $export.Stop()
             $seconds=$export.Elapsed.TotalSeconds
-            $doc=Read-NightlyStoppedRunSeed $out
+            $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
             $rows=@($doc.chunks).Count
             # Provisional n=1 on this host: export 13.175s. Bound is 27s, 2x that sample.
             Check ($seconds -le 27 -and $rows -gt 0 -and $doc.sourceRunId -ceq $runId) ('exportSeconds='+$seconds+'; boundSeconds=27; measuredSampleSeconds=13.175; runFiles=3300; timingFiles=1700; summaryBytes='+(Get-Item -LiteralPath (Join-Path $runDir 'summary.json')).Length+'; chunks='+$rows)
@@ -1355,10 +1390,10 @@ try {
                 (New-MergeFail 'antiphon' 'g1' $alpha 'M2(canceled)' 'Failed')
             ) @([ordered]@{path='newer.json';sha256=('cd'*32)})
             $out=Join-Path $root 'union-merged.json';$reportPath=Join-Path $root 'union-report.json'
-            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath -Cli
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath
             $doc=$null;$report=$null;$lead='';$methods='';$chunks=''
             if($merged.Code -eq 0){
-                $doc=Read-NightlyStoppedRunSeed $out
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                 $report=Read-MergeReport $reportPath
                 $chunks=(@($doc.chunks|ForEach-Object {[string]$_.chunk}) -join ',')
                 $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
@@ -1381,7 +1416,7 @@ try {
             $refused=Invoke-MergeNightlySeeds -Seeds @($bad) -OutputPath $badOut -ReportPath $badReport -Cli
             $refusedOk=($refused.Code -eq 2 -and -not [IO.File]::Exists($badOut) -and -not [IO.File]::Exists($badReport))
             $strictOut=Join-Path $root 'union-strict.json';$strictReport=Join-Path $root 'union-strict-report.json'
-            $strict=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $strictOut -ReportPath $strictReport -Strict -Cli
+            $strict=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $strictOut -ReportPath $strictReport -Strict
             $strictDoc=$null
             if([IO.File]::Exists($strictOut)){$strictDoc=Read-MergeReport $strictReport}
             $strictOk=($strict.Code -eq 3 -and $null -ne $strictDoc -and [int]$strictDoc.unplacedCount -gt 0 -and (@($strictDoc.identities|Where-Object {[string]$_.method -ceq 'M3'})[0].placed) -eq $false)
@@ -1413,7 +1448,7 @@ try {
             $out=Join-Path $root 'proven-merged.json';$reportPath=Join-Path $root 'proven-report.json'
             $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Decision $decision -Repo $repo -OutputPath $out -ReportPath $reportPath
             $doc=$null;$report=$null;$methods=''
-            if($merged.Code -eq 0){$doc=Read-NightlyStoppedRunSeed $out;$report=Read-MergeReport $reportPath;$methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')}
+            if($merged.Code -eq 0){$doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'');$report=Read-MergeReport $reportPath;$methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')}
             $m1=Find-MergeIdentity $report 'M1';$pending=Find-MergeIdentity $report 'Mpending'
             $ok=($merged.Code -eq 0 -and $methods -ceq 'Mpending' -and [string]$m1.status -ceq 'proven' -and $m1.placed -eq $false -and [string]$m1.provingRun -ceq 'run-newer' -and [string]$m1.provingSha -ceq $tipSha -and [string]$m1.containingCommit -ceq $fixSha -and [string]$pending.status -ceq 'fixed-pending-proof' -and $pending.placed -eq $true -and [string]$pending.containingCommit -ceq $fixSha -and $null -eq $pending.provingRun)
             Check $ok ('code='+$merged.Code+'; methods='+$methods+'; m1='+[string]$m1.status+'/'+[string]$m1.containingCommit+'; pending='+[string]$pending.status+'; tip='+$tipSha+'; fix='+$fixSha+'; text='+$merged.Text)
@@ -1440,7 +1475,7 @@ try {
             $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Decision $decision -Repo $repo -OutputPath $out -ReportPath $reportPath
             $methods='';$status='';$containing=''
             if($merged.Code -eq 0){
-                $doc=Read-NightlyStoppedRunSeed $out
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                 $report=Read-MergeReport $reportPath
                 $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
                 $row=Find-MergeIdentity $report 'M1'
@@ -1476,7 +1511,7 @@ try {
             $picked=Invoke-MergeNightlySeeds -Seeds $pickSeeds -Decision $decision -Repo $repo -OutputPath $pickOut -ReportPath $pickReport
             $pickStatus='';$pickCommit='';$pickMethods=''
             if($picked.Code -eq 0){
-                $pickDoc=Read-NightlyStoppedRunSeed $pickOut
+                $pickDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($pickOut,'')
                 $pickMethods=(@($pickDoc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
                 $pickRow=Find-MergeIdentity (Read-MergeReport $pickReport) 'M1'
                 $pickStatus=[string]$pickRow.status;$pickCommit=[string]$pickRow.containingCommit
@@ -1486,7 +1521,7 @@ try {
             $prose=Invoke-MergeNightlySeeds -Seeds $proseSeeds -Decision $decision -Repo $repo -OutputPath $proseOut -ReportPath $proseReport
             $proseStatus='';$proseMethods='';$proseCommit=''
             if($prose.Code -eq 0){
-                $proseDoc=Read-NightlyStoppedRunSeed $proseOut
+                $proseDoc=[Antiphon.Nightly.StoppedSeedFiles]::Read($proseOut,'')
                 $proseMethods=(@($proseDoc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
                 $proseRow=Find-MergeIdentity (Read-MergeReport $proseReport) 'M1'
                 $proseStatus=[string]$proseRow.status;$proseCommit=[string]$proseRow.containingCommit
@@ -1508,7 +1543,7 @@ try {
             $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -Proven @('antiphon|Fixture.Alpha|M1:run-newer') -OutputPath $out -ReportPath $reportPath
             $methods='';$status='';$provingRun='';$provingSha=''
             if($merged.Code -eq 0){
-                $doc=Read-NightlyStoppedRunSeed $out
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                 $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
                 $row=Find-MergeIdentity (Read-MergeReport $reportPath) 'M1'
                 $status=[string]$row.status;$provingRun=[string]$row.provingRun;$provingSha=[string]$row.provingSha
@@ -1542,14 +1577,14 @@ try {
             $second=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out2 -ReportPath $report2
             $doc=$null;$hash1='';$hash2='';$created='';$same=$false
             if($first.Code -eq 0 -and $second.Code -eq 0){
-                $doc=Read-NightlyStoppedRunSeed $out1
+                $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out1,'')
                 $env1=[IO.File]::ReadAllText($out1)|ConvertFrom-Json
                 $env2=[IO.File]::ReadAllText($out2)|ConvertFrom-Json
                 $hash1=[string]$env1.contentHash;$hash2=[string]$env2.contentHash
-                $created=(ConvertTo-NightlySeedUtc $doc.createdAtUtc).ToString('o')
+                $created=([Antiphon.Nightly.StoppedSeed]::Utc($doc.createdAtUtc)).ToString('o')
                 $same=(Test-MergeFileBytes $out1 $out2) -and (Test-MergeFileBytes $report1 $report2)
             }
-            $expectedCreated=(ConvertTo-NightlySeedUtc $newerCreated).ToString('o')
+            $expectedCreated=([Antiphon.Nightly.StoppedSeed]::Utc($newerCreated)).ToString('o')
             Check ($first.Code -eq 0 -and $second.Code -eq 0 -and $same -and $hash1 -ceq $hash2 -and $hash1 -cmatch '^[a-f0-9]{64}$' -and $created -ceq $expectedCreated -and $null -ne $doc) ('first='+$first.Code+'; second='+$second.Code+'; same='+$same+'; hash='+$hash1+'; created='+$created+'; expected='+$expectedCreated+'; text='+$first.Text+$second.Text)
         }
         'CumulativeMergeLaunchDefaults' {
@@ -1599,7 +1634,7 @@ try {
                 $merged=Invoke-MergeNightlySeeds -Seeds $Seeds -Decision $DecisionPath -Repo $repo -Proven $Proven -OutputPath $out -ReportPath $reportPath
                 $status='';$methods='';$flag=$false;$proving='';$containing=''
                 if($merged.Code -eq 0){
-                    $doc=Read-NightlyStoppedRunSeed $out
+                    $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($out,'')
                     $methods=(@($doc.failedTests|ForEach-Object {[string]$_.method}) -join ',')
                     $row=Find-MergeIdentity (Read-MergeReport $reportPath) 'M1'
                     $status=[string]$row.status
@@ -1652,6 +1687,7 @@ try {
         }
         default {throw 'unknown case'}
     }
-} catch {Check $false $_.Exception.Message}
+} catch {Check $false (Get-NightlyRefusalText $_)}
 [IO.File]::WriteAllText((Join-Path $root 'performance.json'),([ordered]@{case=$Case;wallSeconds=$watch.Elapsed.TotalSeconds;fixture='one synthetic directory per method';IO='included in body, per-call attribution unknown';database='not-used';HTTP='not-used';CLI='harness process only';buildSlot='recorded by parent';remainder='unknown'}|ConvertTo-Json))
+if($null -ne $script:MergeRunspace){$script:MergeRunspace.Dispose()}
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows 1

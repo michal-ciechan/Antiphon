@@ -14,6 +14,15 @@ param([Parameter(Mandatory=$true)][string]$RunDirectory,
       [string]$TimingRoot='',
       [switch]$PassThru)
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot 'lib/nightly-failure-history.ps1')
-try {Export-NightlyStoppedRunSeed @PSBoundParameters}
-catch {Write-Error $_.Exception.Message;exit 2}
+# One compiled call (lib/Antiphon.Nightly/StoppedSeedFiles.cs Export). A refusal is reported with exit code 2.
+try {
+    . (Join-Path $PSScriptRoot 'lib/nightly-core.ps1')
+    Assert-NightlyCoreAvailable 'export-nightly-stopped-run-seed'
+    $seed=[Antiphon.Nightly.StoppedSeedFiles]::Export($RunDirectory,$OutputPath,$SourceRunId,$SourceCandidateId,$SourceSha,$TimingRoot)
+} catch {
+    $failure=$_.Exception
+    if($failure -is [Management.Automation.MethodInvocationException] -and $null -ne $failure.InnerException){$failure=$failure.InnerException}
+    Write-Error $failure.Message;exit 2
+}
+if($PassThru){return $seed}
+Write-Host ('SEED '+$seed.Path+' SHA256 '+$seed.Digest)

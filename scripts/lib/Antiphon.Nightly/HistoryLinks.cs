@@ -1,6 +1,6 @@
 // The failure history's evidence link check, compiled: Get-NightlyHistoryNodeIdentity and
 // Assert-NightlyHistoryNoLink (nightly-failure-history.ps1), the stopped-run seed export's walk and its summary-prefix
-// cut (nightly-stopped-run-seed.ps1). These were an Add-Type block compiled in every process that read history, with
+// cut (StoppedSeedFiles.cs). These were an Add-Type block compiled in every process that read history, with
 // the check itself in PowerShell: about 3 ms a path, 15 s of a seed export over a 5,000-entry run directory.
 //
 // A node's identity (HistoryNodeIdentity.Read):
@@ -134,6 +134,12 @@ namespace Antiphon.Nightly
 
     public static class HistoryNodeIdentity
     {
+        /// <summary>
+        /// Tests: read nodes with the Windows attribute test on a non-Windows host (the WindowsAncestorSwapRefused case).
+        /// Every check and walk in the process uses it.
+        /// </summary>
+        public static bool ForceWindows { get; set; }
+
         private const uint ReadAttributes = 0x80;
         private const uint ShareAll = 7;
         private const uint OpenExisting = 3;
@@ -323,6 +329,15 @@ namespace Antiphon.Nightly
 
         private readonly Dictionary<string, HistoryNodeId> _directories = new Dictionary<string, HistoryNodeId>(StringComparer.Ordinal);
 
+        /// <summary>The process's cache: every history read and the seed export check through it.</summary>
+        public static HistoryLinkCache Current { get; private set; } = new HistoryLinkCache();
+
+        /// <summary>A fresh process cache (each seed export starts with one).</summary>
+        public static void Reset() => Current = new HistoryLinkCache();
+
+        /// <summary>Assert-NightlyHistoryNoLink: the path's refusal through the process cache, or null.</summary>
+        public static string Refusal(string path) => Current.Check(path, HistoryNodeIdentity.ForceWindows).Refusal;
+
         /// <summary>The directories cached so far.</summary>
         public int Count => _directories.Count;
 
@@ -437,57 +452,67 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>Read-NightlyStoppedSummaryPrefix's cut: where the summary's bulk rows begin.</summary>
+    /// <summary>The summary prefix's cut (StoppedSeedFiles.SummaryPrefix): where the summary's bulk rows begin.</summary>
     public static class HistorySummaryPrefix
     {
         /// <summary>
         /// The offset of the first top-level "timingChunks", "suiteTimeline" or "suites" key's opening quote in
         /// <paramref name="data"/>, or -1 when none is there yet.
         /// </summary>
-        public static int CutBeforeBulk(byte[] data)
+        public static int CutBeforeBulk(byte[] data) => new Scanner().Feed(data, data.Length, 0);
+
+        /// <summary>
+        /// CutBeforeBulk over a file read in blocks: Feed each block in order (with its offset in the file) and stop at
+        /// the first non-negative result, without scanning the earlier blocks again.
+        /// </summary>
+        public sealed class Scanner
         {
-            int depth = 0;
-            bool inString = false, escape = false, wantKey = false, readingKey = false;
-            int keyStart = -1;
-            var key = new List<byte>();
-            for (int i = 0; i < data.Length; i++)
+            private int _depth;
+            private bool _inString, _escape, _wantKey, _readingKey;
+            private int _keyStart = -1;
+            private readonly List<byte> _key = new List<byte>();
+
+            public int Feed(byte[] block, int count, int offset)
             {
-                byte b = data[i];
-                if (inString)
+                for (int i = 0; i < count; i++)
                 {
-                    if (escape) { escape = false; if (readingKey) key.Add(b); continue; }
-                    if (b == (byte)'\\') { escape = true; continue; }
-                    if (b == (byte)'"')
+                    byte b = block[i];
+                    if (_inString)
                     {
-                        inString = false;
-                        if (readingKey)
+                        if (_escape) { _escape = false; if (_readingKey) _key.Add(b); continue; }
+                        if (b == (byte)'\\') { _escape = true; continue; }
+                        if (b == (byte)'"')
                         {
-                            readingKey = false;
-                            string text = Encoding.UTF8.GetString(key.ToArray());
-                            if (depth == 1 && (text == "timingChunks" || text == "suiteTimeline" || text == "suites")) return keyStart;
-                            key.Clear();
+                            _inString = false;
+                            if (_readingKey)
+                            {
+                                _readingKey = false;
+                                string text = Encoding.UTF8.GetString(_key.ToArray());
+                                if (_depth == 1 && (text == "timingChunks" || text == "suiteTimeline" || text == "suites")) return _keyStart;
+                                _key.Clear();
+                            }
+                            continue;
                         }
+                        if (_readingKey) _key.Add(b);
                         continue;
                     }
-                    if (readingKey) key.Add(b);
-                    continue;
+                    if (b == (byte)'"')
+                    {
+                        _inString = true;
+                        if (_depth == 1 && _wantKey) { _readingKey = true; _keyStart = offset + i; _key.Clear(); _wantKey = false; }
+                        continue;
+                    }
+                    if (b == (byte)'{' || b == (byte)'[')
+                    {
+                        _depth++;
+                        if (b == (byte)'{' && _depth == 1) _wantKey = true;
+                        continue;
+                    }
+                    if (b == (byte)'}' || b == (byte)']') { _depth--; continue; }
+                    if (b == (byte)',' && _depth == 1) { _wantKey = true; }
                 }
-                if (b == (byte)'"')
-                {
-                    inString = true;
-                    if (depth == 1 && wantKey) { readingKey = true; keyStart = i; key.Clear(); wantKey = false; }
-                    continue;
-                }
-                if (b == (byte)'{' || b == (byte)'[')
-                {
-                    depth++;
-                    if (b == (byte)'{' && depth == 1) wantKey = true;
-                    continue;
-                }
-                if (b == (byte)'}' || b == (byte)']') { depth--; continue; }
-                if (b == (byte)',' && depth == 1) { wantKey = true; }
+                return -1;
             }
-            return -1;
         }
     }
 }
