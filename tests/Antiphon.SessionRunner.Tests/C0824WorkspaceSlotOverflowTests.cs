@@ -140,7 +140,7 @@ public sealed class C0824WorkspaceSlotOverflowTests
         Directory.Exists(scratch.Slot("ws-06")).ShouldBeFalse();
         List<string[]> removes;
         lock (scratch.Argv)
-            removes = scratch.Argv.Skip(mark).Where(argv => argv.Length > 2 && argv[1] == "worktree" && argv[2] == "remove").ToList();
+            removes = scratch.Argv.Skip(mark).Where(argv => argv.Length > 4 && argv[1] == "-c" && argv[2] == "core.longpaths=true" && argv[3] == "worktree" && argv[4] == "remove").ToList();
         removes.Count.ShouldBe(2);
         removes[0].Last().ShouldBe(scratch.Slot("ws-06"));
         removes[1].Last().ShouldBe(scratch.Slot("ws-05"));
@@ -213,7 +213,7 @@ public sealed class C0824WorkspaceSlotOverflowTests
 
         List<string[]> removes;
         lock (scratch.Argv)
-            removes = scratch.Argv.Skip(mark).Where(argv => argv.Length > 2 && argv[1] == "worktree" && argv[2] == "remove").ToList();
+            removes = scratch.Argv.Skip(mark).Where(argv => argv.Length > 4 && argv[1] == "-c" && argv[2] == "core.longpaths=true" && argv[3] == "worktree" && argv[4] == "remove").ToList();
         removes.ShouldBeEmpty("no worktree remove ran on the idle slot");
         Directory.Exists(path).ShouldBeTrue("the idle slot directory stays");
         Tree(path).ShouldBe(before, "the late work is untouched");
