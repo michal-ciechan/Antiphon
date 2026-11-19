@@ -22,6 +22,7 @@ namespace Antiphon.Nightly
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
         private static WriteBehindFileSystem buffered;
         private static readonly List<string> retainedFailures = new List<string>();
+        private static readonly List<string> retainedFailedPaths = new List<string>();
         private static bool exitHooked;
 
         /// <summary>True between EnableWriteBehind and DisableWriteBehind.</summary>
@@ -41,6 +42,7 @@ namespace Antiphon.Nightly
             {
                 if (buffered != null) return;
                 retainedFailures.Clear();
+                retainedFailedPaths.Clear();
                 buffered = new WriteBehindFileSystem(new FileSystem());
                 if (!exitHooked)
                 {
@@ -59,7 +61,7 @@ namespace Antiphon.Nightly
             Flush();
             lock (Gate) buffered = null;
             try { fs.Dispose(); }
-            catch (AggregateException ex) { Retain(Describe(ex)); }
+            catch (AggregateException ex) { Retain(ex); }
             return TakeFailures();
         }
 
@@ -70,7 +72,7 @@ namespace Antiphon.Nightly
             lock (Gate) fs = buffered;
             if (fs == null) return new string[0];
             try { fs.Flush(); return new string[0]; }
-            catch (AggregateException ex) { return Retain(Describe(ex)); }
+            catch (AggregateException ex) { return Retain(ex); }
         }
 
         /// <summary>Waits until one path's queued write is on disk; returns that path's failures and keeps them.</summary>
@@ -80,7 +82,7 @@ namespace Antiphon.Nightly
             lock (Gate) fs = buffered;
             if (fs == null || string.IsNullOrEmpty(path)) return new string[0];
             try { fs.Flush(System.IO.Path.GetFullPath(path)); return new string[0]; }
-            catch (AggregateException ex) { return Retain(Describe(ex)); }
+            catch (AggregateException ex) { return Retain(ex); }
         }
 
         /// <summary>Waits until one path's queued write has finished. A failure stays stored.</summary>
@@ -92,13 +94,26 @@ namespace Antiphon.Nightly
             fs.Wait(System.IO.Path.GetFullPath(path));
         }
 
-        /// <summary>True when this path has a failed deferred write that has not been cleared.</summary>
+        /// <summary>
+        /// True when this path has a failed deferred write that has not been cleared.
+        /// Flush(path) moves the failure out of the queue and into the retained list; the path stays failed,
+        /// and a later successful write of the same path does not clear it.
+        /// </summary>
         public static bool PathFailed(string path)
         {
+            if (string.IsNullOrEmpty(path)) return false;
+            string full;
+            try { full = System.IO.Path.GetFullPath(path); }
+            catch { return false; }
             WriteBehindFileSystem fs;
             lock (Gate) fs = buffered;
-            if (fs == null || string.IsNullOrEmpty(path)) return false;
-            return fs.HasFailure(System.IO.Path.GetFullPath(path));
+            if (fs != null && fs.HasFailure(full)) return true;
+            lock (Gate)
+            {
+                foreach (string kept in retainedFailedPaths)
+                    if (string.Equals(kept, full, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>Retained failures plus failures still stored on the queue. Does not clear either.</summary>
@@ -127,30 +142,47 @@ namespace Antiphon.Nightly
             {
                 string[] copy = retainedFailures.ToArray();
                 retainedFailures.Clear();
+                retainedFailedPaths.Clear();
                 return copy;
             }
         }
 
-        private static string[] Retain(string[] described)
+        private static string[] Retain(AggregateException ex)
         {
-            if (described == null || described.Length == 0) return new string[0];
+            if (ex == null) return new string[0];
+            var described = new List<string>();
+            var paths = new List<string>();
+            foreach (Exception inner in ex.InnerExceptions)
+            {
+                var write = inner as WriteBehindException;
+                if (write == null)
+                {
+                    described.Add(inner.Message);
+                    continue;
+                }
+                string message = write.InnerException == null ? write.Message : write.InnerException.Message;
+                described.Add(write.Path + ": " + message);
+                if (!string.IsNullOrEmpty(write.Path)) paths.Add(write.Path);
+            }
+            if (described.Count == 0) return new string[0];
             lock (Gate)
             {
                 foreach (string item in described)
                     if (!string.IsNullOrEmpty(item)) retainedFailures.Add(item);
+                foreach (string path in paths)
+                {
+                    string full;
+                    try { full = System.IO.Path.GetFullPath(path); }
+                    catch { full = path; }
+                    bool seen = false;
+                    foreach (string kept in retainedFailedPaths)
+                    {
+                        if (string.Equals(kept, full, StringComparison.OrdinalIgnoreCase)) { seen = true; break; }
+                    }
+                    if (!seen) retainedFailedPaths.Add(full);
+                }
             }
-            return described;
-        }
-
-        private static string[] Describe(AggregateException ex)
-        {
-            var failed = new List<string>();
-            foreach (Exception inner in ex.InnerExceptions)
-            {
-                var write = inner as WriteBehindException;
-                failed.Add(write == null ? inner.Message : write.Path + ": " + write.InnerException.Message);
-            }
-            return failed.ToArray();
+            return described.ToArray();
         }
 
         // ---- Reads and checks: queued content first --------------------------------------------------------
