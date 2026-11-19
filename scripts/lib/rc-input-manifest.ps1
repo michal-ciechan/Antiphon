@@ -57,7 +57,7 @@ function Add-RcInventoryInput {
 }
 
 function Read-RcInputInventory {
-    param([string]$RepositoryRoot, [string]$Sha, $DerivedIndex)
+    param([string]$RepositoryRoot, [string]$Sha, $DerivedIndex, [switch]$SkipUnresolvedBroadening)
     if ($Sha -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $folded=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -229,7 +229,8 @@ function Read-RcInputInventory {
         }
     }
     # Any unresolved closure broadens all suites. It can never become a negative dependency proof.
-    if ($unresolved.Count) { foreach ($suite in $suites.Values) { foreach ($path in $paths) { Add-RcInventoryInput $suite $tree $path 'unresolved-conservative-all-inputs' } } }
+    # -SkipUnresolvedBroadening is the census seam: the reader check must see ownership without that mask.
+    if ((-not $SkipUnresolvedBroadening) -and $unresolved.Count) { foreach ($suite in $suites.Values) { foreach ($path in $paths) { Add-RcInventoryInput $suite $tree $path 'unresolved-conservative-all-inputs' } } }
     foreach ($suite in $suites.Values) {
         $suite.inputs=@(foreach ($path in (Get-TestSelectionSorted @($suite.inputMap.Keys))) { $suite.inputMap[$path] })
         $suite.Remove('inputMap')
