@@ -1594,6 +1594,65 @@ function Complete-NightlySuiteExecution {
     $CompletionSuiteState.Completed = $true
 }
 
+# CARD-2005. The run calls this to finish summary.json: D-5 keeps each suite's exclusion
+# list once, dispatchProgress points at summary.suites, and Write-NightlyJsonFile streams
+# the document. A full run's summary is tens of MB. There is no second writer.
+function Write-NightlyRunSummary {
+    param(
+        $summary,
+        $suiteResults,
+        $dispatchSchedule,
+        [string]$Sha,
+        $completedAt,
+        [string]$summaryPath,
+        [string]$LogRoot
+    )
+    # D-5: every chunk row records its suite's exclusions, and with one census per suite the lists are the
+    # same - most of a full run's summary. Each suite's list is kept once, in suiteExclusions[<suite id>], and
+    # dropped from its rows only when every row's list is identical; rows keep their counts and censusDigest.
+    $suiteExclusions=[ordered]@{}
+    foreach($exclusionGroup in @($suiteResults | Where-Object { $_.Contains('exclusions') } | Group-Object { [string]$_['id'] })){
+        # The element-by-element reference check runs in the core (ExclusionDedupe.cs): every row of a full
+        # run carries the same few hundred objects, so the interpreted loop was most of this pass.
+        Assert-NightlyCoreAvailable 'D5ExclusionDedupe'
+        $groupRows=@($exclusionGroup.Group)
+        $firstList=@($groupRows[0]['exclusions'])
+        $firstText=$null
+        $sameList=$true
+        foreach($groupRow in $groupRows){
+            $list=@($groupRow['exclusions'])
+            if($list.Count -ne $firstList.Count){ $sameList=$false; break }
+            if([Antiphon.Nightly.ExclusionDedupe]::SameElementReferences($list,$firstList)){ continue }
+            if($null -eq $firstText){ $firstText=ConvertTo-Json -InputObject $firstList -Depth 8 -Compress }
+            if((ConvertTo-Json -InputObject $list -Depth 8 -Compress) -cne $firstText){ $sameList=$false; break }
+        }
+        if($sameList){
+            $suiteExclusions[$exclusionGroup.Name]=$firstList
+            foreach($groupRow in $groupRows){ $groupRow.Remove('exclusions') }
+        }
+    }
+    if($suiteExclusions.Count -gt 0){ $summary.suiteExclusions=$suiteExclusions }
+    # Bound by the exported summary digest. This diagnostic snapshot can order a
+    # later complete attempt; it never supplies pass credit or skips a launch.
+    if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
+        # The snapshot's chunk rows are not written a second time (CARD-2005): they are summary.suites' rows that
+        # have a chunk, and the reader rebuilds them (Get-NightlySummaryDispatchProgress, nightly-failure-history.ps1).
+        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suitesFromSummary=$true}
+    }
+    try {
+        $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
+        $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
+        $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
+        if ((Test-NightlyEvidencePath $phasePlanned) -or (Test-NightlyEvidencePath $phaseIndex)) {
+            Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
+        }
+    } catch {
+        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
+    }
+    # Streamed by the core (Write-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB.
+    Write-NightlyJsonFile -Path $summaryPath -Value $summary -Depth 8
+}
+
 function Invoke-AntiphonNightlyTests {
     param(
         [string]$RepoRoot = '',
@@ -2086,50 +2145,8 @@ function Invoke-AntiphonNightlyTests {
         suites = $suiteResults
         invocationId = $invocationId
     }
-    # D-5: every chunk row records its suite's exclusions, and with one census per suite the lists are the
-    # same - most of a full run's summary. Each suite's list is kept once, in suiteExclusions[<suite id>], and
-    # dropped from its rows only when every row's list is identical; rows keep their counts and censusDigest.
-    $suiteExclusions=[ordered]@{}
-    foreach($exclusionGroup in @($suiteResults | Where-Object { $_.Contains('exclusions') } | Group-Object { [string]$_['id'] })){
-        # The element-by-element reference check runs in the core (ExclusionDedupe.cs): every row of a full
-        # run carries the same few hundred objects, so the interpreted loop was most of this pass.
-        Assert-NightlyCoreAvailable 'D5ExclusionDedupe'
-        $groupRows=@($exclusionGroup.Group)
-        $firstList=@($groupRows[0]['exclusions'])
-        $firstText=$null
-        $sameList=$true
-        foreach($groupRow in $groupRows){
-            $list=@($groupRow['exclusions'])
-            if($list.Count -ne $firstList.Count){ $sameList=$false; break }
-            if([Antiphon.Nightly.ExclusionDedupe]::SameElementReferences($list,$firstList)){ continue }
-            if($null -eq $firstText){ $firstText=ConvertTo-Json -InputObject $firstList -Depth 8 -Compress }
-            if((ConvertTo-Json -InputObject $list -Depth 8 -Compress) -cne $firstText){ $sameList=$false; break }
-        }
-        if($sameList){
-            $suiteExclusions[$exclusionGroup.Name]=$firstList
-            foreach($groupRow in $groupRows){ $groupRow.Remove('exclusions') }
-        }
-    }
-    if($suiteExclusions.Count -gt 0){ $summary.suiteExclusions=$suiteExclusions }
-    # Bound by the exported summary digest. This diagnostic snapshot can order a
-    # later complete attempt; it never supplies pass credit or skips a launch.
-    if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
-        # The snapshot's chunk rows are not written a second time (CARD-2005): they are summary.suites' rows that
-        # have a chunk, and the reader rebuilds them (Get-NightlySummaryDispatchProgress, nightly-failure-history.ps1).
-        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suitesFromSummary=$true}
-    }
-    try {
-        $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
-        $phasePlanned = Join-Path $phaseDir 'groups-planned.json'
-        $phaseIndex = Join-Path $phaseDir 'groups-planned-index.json'
-        if ((Test-NightlyEvidencePath $phasePlanned) -or (Test-NightlyEvidencePath $phaseIndex)) {
-            Invoke-TestPhaseRunSummary -RunDirectory $LogRoot -Top 50
-        }
-    } catch {
-        Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
-    }
-    # Streamed by the core (Write-NightlyJsonFile, nightly-core.ps1): a full run's summary is tens of MB.
-    Write-NightlyJsonFile -Path $summaryPath -Value $summary -Depth 8
+    # D-5, dispatchProgress and the streamed summary.json write. The run and the CARD-2005 witness call this.
+    Write-NightlyRunSummary -summary $summary -suiteResults $suiteResults -dispatchSchedule $dispatchSchedule -Sha $Sha -completedAt $completedAt -summaryPath $summaryPath -LogRoot $LogRoot
     Write-NightlyRunLine ('wrote {0}' -f $summaryPath)
 
     $exit = 0
