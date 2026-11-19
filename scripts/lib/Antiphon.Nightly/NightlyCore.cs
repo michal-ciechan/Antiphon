@@ -118,24 +118,19 @@ namespace Antiphon.Nightly
         {
             public long Length;
             public long WriteTicks;
-            public ulong Dev;
-            public ulong Ino;
+            public CacheIdentity Identity;
             public bool Identified;
             public string Hash;
         }
 
-        // Device (or volume) plus inode (or file index). A timestamp-preserving replacement keeps
-        // the length and last-write time and still changes this identity. Unreadable, missing,
-        // linked or directory nodes are not an identity the cache may trust.
-        private static bool TryFileIdentity(string path, out ulong dev, out ulong ino)
+        // FileIdInfo's 128-bit id when Windows can read it, otherwise device (or volume) plus inode
+        // (or the 64-bit file index). A timestamp-preserving replacement keeps the length and
+        // last-write time and still changes this identity. Unknown, unreadable, missing, linked or
+        // directory nodes are not an identity the cache may trust, and unknown is never equal.
+        private static bool TryFileIdentity(string path, out CacheIdentity identity)
         {
-            dev = 0;
-            ino = 0;
-            var id = HistoryNodeIdentity.Read(path, false);
-            if (id == null || id.Missing || id.Unreadable || id.Linked || id.Directory) return false;
-            dev = id.Dev;
-            ino = id.Ino;
-            return true;
+            identity = CacheFileIdentity.Read(path);
+            return identity != null && identity.Known;
         }
 
         private static readonly object HashGate = new object();
@@ -144,10 +139,12 @@ namespace Antiphon.Nightly
         /// <summary>
         /// FileSha256 for build outputs hashed repeatedly in one process (the suite test assembly is hashed for
         /// discovery, for the phase manifest and for every in-process invocation). A cached digest is reused only
-        /// while the file keeps the length, last-write time and file identity (device or volume, plus inode or
-        /// file index) it had when hashed. Identity is required: a timestamp-preserving replacement keeps the
-        /// length and last-write time and would otherwise return the previous content hash. The stored value is
-        /// that identity's content hash. A file whose identity cannot be read is never cached. The entry is
+        /// while the file keeps the length, last-write time and file identity it had when hashed. On Windows
+        /// that identity is FileIdInfo's 128-bit id when the query works, and the 64-bit file index otherwise.
+        /// Elsewhere it is device plus inode. Identity is required: a timestamp-preserving replacement keeps the
+        /// length and last-write time and would otherwise return the previous content hash. A different id does
+        /// not hit. The stored value is that identity's content hash. A file whose identity cannot be read is
+        /// never cached, and an unknown identity is never treated as equal. The entry is
         /// cached only when the write time was already more than NightlyTestSources.RacySeconds old (git's
         /// racy-clean rule).
         /// </summary>
@@ -157,22 +154,22 @@ namespace Antiphon.Nightly
             if (!before.Exists) return FileSha256(path);
             var length = before.Length;
             var ticks = before.LastWriteTimeUtc.Ticks;
-            var identified = TryFileIdentity(path, out var dev, out var ino);
+            var identified = TryFileIdentity(path, out var identity);
             lock (HashGate)
             {
                 if (identified && Hashes.TryGetValue(path, out var hit) && hit.Identified
-                    && hit.Length == length && hit.WriteTicks == ticks && hit.Dev == dev && hit.Ino == ino)
+                    && hit.Length == length && hit.WriteTicks == ticks && CacheIdentity.Same(hit.Identity, identity))
                     return hit.Hash;
             }
             var hash = FileSha256(path);
             var after = new System.IO.FileInfo(path);
-            var still = TryFileIdentity(path, out var devAfter, out var inoAfter);
+            var still = TryFileIdentity(path, out var identityAfter);
             var settled = after.Exists && after.Length == length && after.LastWriteTimeUtc.Ticks == ticks
-                && identified && still && devAfter == dev && inoAfter == ino
+                && identified && still && CacheIdentity.Same(identity, identityAfter)
                 && (DateTime.UtcNow - after.LastWriteTimeUtc).TotalSeconds > NightlyTestSources.RacySeconds;
             lock (HashGate)
             {
-                if (settled) Hashes[path] = new HashEntry { Length = length, WriteTicks = ticks, Dev = dev, Ino = ino, Identified = true, Hash = hash };
+                if (settled) Hashes[path] = new HashEntry { Length = length, WriteTicks = ticks, Identity = identity, Identified = true, Hash = hash };
                 else Hashes.Remove(path);
             }
             return hash;

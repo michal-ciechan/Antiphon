@@ -7,7 +7,9 @@
 //   Windows: one handle query on the node itself (CreateFile with FILE_FLAG_OPEN_REPARSE_POINT, so never a link's
 //     target, then GetFileInformationByHandle). Missing on ERROR_FILE_NOT_FOUND or ERROR_PATH_NOT_FOUND, unreadable
 //     on any other error. A reparse point is a link, and so is a regular file with more than one name (a hard link:
-//     the NumberOfLinks test Get-Item's LinkType makes). The volume serial plus the file index is the identity.
+//     the NumberOfLinks test Get-Item's LinkType makes). Link checks keep the volume serial plus the 64-bit file
+//     index. The hash cache (CacheFileIdentity) prefers FileIdInfo's 128-bit id and falls back to that index.
+//     Unknown is never an identity.
 //   Elsewhere: lstat. S_IFLNK is a link, and so is a regular file whose nlink is above 1; dev plus ino is the identity.
 //   forceWindows on a non-Windows host (the WindowsAncestorSwapRefused case): the Windows attribute test from
 //     File.GetAttributes, with the identity and the link tests (which Get-Item's LinkType made there) from lstat.
@@ -32,6 +34,88 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Antiphon.Nightly
 {
+    public enum CacheIdentityKind
+    {
+        Unknown = 0,
+        FileIndex64 = 1,
+        FileId128 = 2,
+    }
+
+    /// <summary>
+    /// Identity the hash cache may store. FileId128 is FileIdInfo's 16-byte id plus its volume.
+    /// FileIndex64 is the 64-bit file index (or Linux dev/ino) fallback. Unknown is never equal.
+    /// </summary>
+    public sealed class CacheIdentity
+    {
+        public CacheIdentityKind Kind { get; private set; }
+        public ulong Volume { get; private set; }
+        public ulong Index { get; private set; }
+        public byte[] FileId { get; private set; }
+        public bool Known => Kind != CacheIdentityKind.Unknown;
+
+        public static CacheIdentity Unknown() => new CacheIdentity { Kind = CacheIdentityKind.Unknown };
+
+        public static CacheIdentity FromFileIndex(ulong volume, ulong index) =>
+            new CacheIdentity { Kind = CacheIdentityKind.FileIndex64, Volume = volume, Index = index };
+
+        public static CacheIdentity FromFileId(ulong volume, byte[] fileId)
+        {
+            if (fileId == null || fileId.Length != CacheFileIdentity.FileIdBytes) return Unknown();
+            var copy = new byte[CacheFileIdentity.FileIdBytes];
+            Buffer.BlockCopy(fileId, 0, copy, 0, CacheFileIdentity.FileIdBytes);
+            return new CacheIdentity { Kind = CacheIdentityKind.FileId128, Volume = volume, FileId = copy };
+        }
+
+        public static bool Same(CacheIdentity left, CacheIdentity right)
+        {
+            if (left == null || right == null) return false;
+            if (left.Kind == CacheIdentityKind.Unknown || right.Kind == CacheIdentityKind.Unknown) return false;
+            if (left.Kind != right.Kind || left.Volume != right.Volume) return false;
+            if (left.Kind == CacheIdentityKind.FileId128) return SameBytes(left.FileId, right.FileId);
+            return left.Index == right.Index;
+        }
+
+        private static bool SameBytes(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != CacheFileIdentity.FileIdBytes || right.Length != left.Length) return false;
+            for (int i = 0; i < left.Length; i++) if (left[i] != right[i]) return false;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Windows cache identity. A successful FileIdInfo query wins. Otherwise the 64-bit index from
+    /// GetFileInformationByHandle. Neither query, or a file id that is not 16 bytes, is unknown when
+    /// the 64-bit query also failed. TestOverride is the Linux witness seam; production leaves it null.
+    /// </summary>
+    public static class CacheFileIdentity
+    {
+        public const int FileIdBytes = 16;
+
+        public static CacheIdentity TestOverride { get; set; }
+
+        public static CacheIdentity Decide(bool fileIdInfoOk, ulong volumeSerial, byte[] fileId,
+            bool byHandleOk, uint volumeSerial32, ulong fileIndex)
+        {
+            if (fileIdInfoOk)
+            {
+                var id = CacheIdentity.FromFileId(volumeSerial, fileId);
+                if (id.Known) return id;
+            }
+            if (byHandleOk) return CacheIdentity.FromFileIndex(volumeSerial32, fileIndex);
+            return CacheIdentity.Unknown();
+        }
+
+        public static CacheIdentity Read(string path)
+        {
+            var forced = TestOverride;
+            if (forced != null) return forced;
+            var id = HistoryNodeIdentity.Read(path, false);
+            if (id == null || id.Missing || id.Unreadable || id.Linked || id.Directory) return CacheIdentity.Unknown();
+            return id.CacheId ?? CacheIdentity.Unknown();
+        }
+    }
+
     /// <summary>A node's identity, as Get-NightlyHistoryNodeIdentity returns it.</summary>
     public sealed class HistoryNodeId
     {
@@ -41,6 +125,7 @@ namespace Antiphon.Nightly
         public ulong Dev { get; internal set; }
         public ulong Ino { get; internal set; }
         public bool Unreadable { get; internal set; }
+        public CacheIdentity CacheId { get; internal set; }
 
         internal static HistoryNodeId MissingNode() => new HistoryNodeId { Missing = true };
 
@@ -81,6 +166,20 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleInfo info);
 
+        // FILE_INFO_BY_HANDLE_CLASS.FileIdInfo. The 128-bit id is the cache identity when this query works.
+        private const int FileIdInfoClass = 18;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdInfoData
+        {
+            public ulong VolumeSerialNumber;
+            public ulong FileIdLow;
+            public ulong FileIdHigh;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileIdInfoData info, uint size);
+
         /// <summary>Get-NightlyHistoryNodeIdentity.</summary>
         public static HistoryNodeId Read(string path, bool forceWindows)
         {
@@ -103,8 +202,36 @@ namespace Antiphon.Nightly
                     Ino = ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow,
                 };
                 if (!id.Linked && !id.Directory && info.NumberOfLinks > 1) id.Linked = true;
+                if (!id.Linked && !id.Directory) id.CacheId = WindowsCacheId(handle, info, id.Ino);
                 return id;
             }
+        }
+
+        // FileIdInfo when the query is available, otherwise the 64-bit index. A failed query is not zero-equal.
+        private static CacheIdentity WindowsCacheId(SafeFileHandle handle, ByHandleInfo info, ulong fileIndex)
+        {
+            bool fileIdOk = false;
+            ulong volume = 0;
+            byte[] fileId = null;
+            try
+            {
+                if (GetFileInformationByHandleEx(handle, FileIdInfoClass, out var fileIdInfo, (uint)Marshal.SizeOf<FileIdInfoData>()))
+                {
+                    fileIdOk = true;
+                    volume = fileIdInfo.VolumeSerialNumber;
+                    fileId = new byte[16];
+                    WriteUInt64Le(fileId, 0, fileIdInfo.FileIdLow);
+                    WriteUInt64Le(fileId, 8, fileIdInfo.FileIdHigh);
+                }
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
+            return CacheFileIdentity.Decide(fileIdOk, volume, fileId, true, info.VolumeSerialNumber, fileIndex);
+        }
+
+        private static void WriteUInt64Le(byte[] bytes, int at, ulong value)
+        {
+            for (int i = 0; i < 8; i++) bytes[at + i] = (byte)(value >> (8 * i));
         }
 
         private static HistoryNodeId Failed(int error) =>
@@ -124,7 +251,7 @@ namespace Antiphon.Nightly
             if (kind == KindLink) linked = true;
             if (kind == KindDirectory) directory = true;
             if (!linked && !directory && stat.Nlink > 1) linked = true;
-            return new HistoryNodeId { Linked = linked, Directory = directory, Dev = stat.Dev, Ino = stat.Ino };
+            return NodeFromStat(linked, directory, stat.Dev, stat.Ino);
         }
 
         private static HistoryNodeId ReadLstat(string path)
@@ -134,9 +261,17 @@ namespace Antiphon.Nightly
                 return Marshal.GetLastWin32Error() == 2 ? HistoryNodeId.MissingNode() : HistoryNodeId.UnreadableNode();
             }
             uint kind = stat.Mode & KindMask;
-            var id = new HistoryNodeId { Linked = kind == KindLink, Directory = kind == KindDirectory, Dev = stat.Dev, Ino = stat.Ino };
+            var id = NodeFromStat(kind == KindLink, kind == KindDirectory, stat.Dev, stat.Ino);
             // A directory's nlink counts its subdirectories. A file's above 1 is a hard link.
             if (!id.Linked && !id.Directory && stat.Nlink > 1) id.Linked = true;
+            if (id.Linked) id.CacheId = null;
+            return id;
+        }
+
+        private static HistoryNodeId NodeFromStat(bool linked, bool directory, ulong dev, ulong ino)
+        {
+            var id = new HistoryNodeId { Linked = linked, Directory = directory, Dev = dev, Ino = ino };
+            if (!linked && !directory) id.CacheId = CacheIdentity.FromFileIndex(dev, ino);
             return id;
         }
     }
