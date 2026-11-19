@@ -290,9 +290,13 @@ public static class Program
 
         var windowsHost = windows ?? OperatingSystem.IsWindows();
         var passMs = measuredPass ?? EvaluationBudget.MeasuredLoadedPassP95Milliseconds;
-        var copyDefault = windowsHost
-            ? EvaluationBudget.MeasuredCopyP95Milliseconds
-            : EvaluationBudget.MeasuredLinuxCopyP95Milliseconds;
+        // Omitted --windows shares the production clock. An explicit value still
+        // selects that operating system's measured constant.
+        var copyDefault = windows is null
+            ? EvaluationBudget.HostCopyP95Milliseconds
+            : windowsHost
+                ? EvaluationBudget.MeasuredCopyP95Milliseconds
+                : EvaluationBudget.MeasuredLinuxCopyP95Milliseconds;
         var copyMs = measuredCopy ?? copyDefault;
         var passSeconds = EvaluationBudget.PassSeconds(passMs, windowsHost);
         var copySeconds = EvaluationBudget.CopySeconds(copyMs, windowsHost);
