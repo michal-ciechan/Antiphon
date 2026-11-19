@@ -305,6 +305,15 @@ function Assert-NightlyCoreAvailable([string]$Caller) {
     if (-not (Test-NightlyCoreAvailable)) { throw ('nightly-core-required ' + $Caller) }
 }
 
+# A failure's reason: the refusal text, also when a core method threw it (PowerShell wraps that in a
+# MethodInvocationException whose message names the method).
+function Get-NightlyRefusalText {
+    param($ErrorRecord)
+    $failure = $ErrorRecord.Exception
+    if ($failure -is [Management.Automation.MethodInvocationException] -and $null -ne $failure.InnerException) { $failure = $failure.InnerException }
+    return $failure.Message
+}
+
 function Disable-NightlyDeferredEvidenceWrites {
     if (-not $script:NightlyDeferEvidenceWrites) { return }
     $script:NightlyDeferEvidenceWrites = $false

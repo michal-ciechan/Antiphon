@@ -145,10 +145,10 @@ try {
     # The reader adds suites in memory. The file itself must not already carry them.
     $onDiskNames = @($parsed.dispatchProgress.PSObject.Properties.Name)
     if ($onDiskNames -contains 'suites') { Fail-C2005 'dispatchProgress embeds a second suites array' }
-    if (-not (Get-Command Get-NightlySummaryDispatchProgress -ErrorAction SilentlyContinue)) {
+    if (-not (Test-NightlyCoreAvailable) -or -not ('Antiphon.Nightly.PriorFailureHistory' -as [type])) {
         Fail-C2005 'dispatch progress reader missing'
     }
-    $progress = Get-NightlySummaryDispatchProgress -Summary $parsed
+    $progress = [Antiphon.Nightly.PriorFailureHistory]::SummaryDispatchProgress($parsed)
     $progressRows = @($progress.suites)
     if ($progressRows.Count -ne 1274) { Fail-C2005 ('dispatchProgress rows ' + $progressRows.Count) }
     $counts = @{}

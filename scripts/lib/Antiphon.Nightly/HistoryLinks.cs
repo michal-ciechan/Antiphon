@@ -1,5 +1,5 @@
-// The failure history's evidence link check, compiled: Get-NightlyHistoryNodeIdentity and
-// Assert-NightlyHistoryNoLink (nightly-failure-history.ps1), the stopped-run seed export's walk and its summary-prefix
+// The failure history's evidence link check, compiled: a node's identity and the link check (PriorFailureHistory and
+// the scripts call HistoryLinkCache.AssertNoLink), the stopped-run seed export's walk and its summary-prefix
 // cut (StoppedSeedFiles.cs). These were an Add-Type block compiled in every process that read history, with
 // the check itself in PowerShell: about 3 ms a path, 15 s of a seed export over a 5,000-entry run directory.
 //
@@ -116,7 +116,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>A node's identity, as Get-NightlyHistoryNodeIdentity returns it.</summary>
+    /// <summary>A node's identity: missing, unreadable, a link, a directory, and its device and file ids.</summary>
     public sealed class HistoryNodeId
     {
         public bool Missing { get; internal set; }
@@ -186,7 +186,7 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out FileIdInfoData info, uint size);
 
-        /// <summary>Get-NightlyHistoryNodeIdentity.</summary>
+        /// <summary>The node's identity, read on the node itself (never a link's target).</summary>
         public static HistoryNodeId Read(string path, bool forceWindows)
         {
             if (OperatingSystem.IsWindows()) return ReadWindows(path);
@@ -335,13 +335,20 @@ namespace Antiphon.Nightly
         /// <summary>A fresh process cache (each seed export starts with one).</summary>
         public static void Reset() => Current = new HistoryLinkCache();
 
-        /// <summary>Assert-NightlyHistoryNoLink: the path's refusal through the process cache, or null.</summary>
+        /// <summary>The link check through the process cache: the path's refusal, or null.</summary>
         public static string Refusal(string path) => Current.Check(path, HistoryNodeIdentity.ForceWindows).Refusal;
+
+        /// <summary>The link check through the process cache: throws the refusal (evidence-link, evidence-unreadable).</summary>
+        public static void AssertNoLink(string path)
+        {
+            var refusal = Refusal(path);
+            if (refusal != null) throw new NightlyRefusal(refusal);
+        }
 
         /// <summary>The directories cached so far.</summary>
         public int Count => _directories.Count;
 
-        /// <summary>ConvertTo-NightlyHistoryFull: the full path, without a trailing separator unless it is a root.</summary>
+        /// <summary>The full path, without a trailing separator unless it is a root.</summary>
         public static string FullPath(string path)
         {
             var full = Path.GetFullPath(path);
@@ -350,7 +357,7 @@ namespace Antiphon.Nightly
             return full;
         }
 
-        /// <summary>Assert-NightlyHistoryNoLink.</summary>
+        /// <summary>The link check of one path: from the root down, ancestors cached, the path and its parent read.</summary>
         public HistoryLinkCheck Check(string path, bool forceWindows)
         {
             var chain = Chain(FullPath(path));

@@ -6,7 +6,8 @@ if ($script:AntiphonNightlyTestsImplLoaded) { return }
 $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
-. (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
+. (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
 . (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
 . (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
@@ -1572,7 +1573,7 @@ function Write-NightlyRunSummary {
     # later complete attempt; it never supplies pass credit or skips a launch.
     if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
         # The snapshot's chunk rows are not written a second time (CARD-2005): they are summary.suites' rows that
-        # have a chunk, and the reader rebuilds them (Get-NightlySummaryDispatchProgress, nightly-failure-history.ps1).
+        # have a chunk, and the reader rebuilds them (PriorFailureHistory.SummaryDispatchProgress in the core).
         $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suitesFromSummary=$true}
     }
     try {
@@ -1772,7 +1773,8 @@ function Invoke-AntiphonNightlyTests {
     }
     $LogRoot = ConvertTo-NightlyCanonicalPath -Path $LogRoot
     New-Item -ItemType Directory -Path $LogRoot -Force | Out-Null
-    $dispatchInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -OwnedDirectory $LogRoot -CandidateSha $Sha
+    $dispatchInput=[Antiphon.Nightly.PriorFailureHistory]::InitializeDispatch($PriorFailuresPath,$PriorFailuresDigest,$LogRoot,$Sha,[bool]$AcceptCrossCandidateSeed,$SeedSourceCandidateId,(Get-NightlyUtcNow))
+    if ($dispatchInput.Warning) { Write-Warning -WarningAction Continue $dispatchInput.Warning }
     $summaryPath = Join-Path $LogRoot 'summary.json'
     $invocationId = $RunId
     $TimingRoot = [string](Resolve-QualificationTimingRoot -TimingRoot $TimingRoot -LogRoot $LogRoot -RunId $RunId)

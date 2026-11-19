@@ -201,7 +201,7 @@ namespace Antiphon.Nightly
             return false;
         }
 
-        /// <summary>Resolve-NightlyPriorFailures' node index: <c>@($nodes)</c> grouped by the bare
+        /// <summary>The prior-failure resolver's node index: <c>@($nodes)</c> grouped by the bare
         /// <c>[string]$n.ClassName</c> (ordinal keys), each list in input order.</summary>
         public static Dictionary<string, List<object>> IndexByBare(object nodes)
         {

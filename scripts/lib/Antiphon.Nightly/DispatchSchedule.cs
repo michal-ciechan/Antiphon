@@ -613,7 +613,7 @@ namespace Antiphon.Nightly
             return lanes;
         }
 
-        /// <summary>Get-NightlyHistoryOrdinalStrings: distinct, ordinal-sorted [string]s.</summary>
+        /// <summary>Distinct [string]s, sorted ordinally.</summary>
         internal static string[] OrdinalStrings(List<object> values)
         {
             var set = new HashSet<string>(StringComparer.Ordinal);
@@ -743,7 +743,7 @@ namespace Antiphon.Nightly
             if (Utc(PsValue.Prop(seed, "sourceObservedAtUtc")) == null) throw new NightlyRefusal("seed-timestamp-missing");
         }
 
-        /// <summary>Assert-NightlyHistoryClass of [string]$value.</summary>
+        /// <summary>A dotted class identity ([string]$value): refuses history-class-identity.</summary>
         private static void AssertClass(object value)
         {
             if (!ClassPattern.IsMatch(PsValue.Str(value))) throw new NightlyRefusal("history-class-identity");

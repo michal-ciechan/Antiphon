@@ -729,7 +729,7 @@ namespace Antiphon.Nightly
             if (check.Refusal != null) throw new NightlyRefusal(check.Refusal);
         }
 
-        /// <summary>Get-NightlyHistoryDigest: lower-case hex SHA-256 of the file (shared for read and write).</summary>
+        /// <summary>Lower-case hex SHA-256 of the file (opened shared for read and write).</summary>
         internal static string Sha(string path)
         {
             using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))

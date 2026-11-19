@@ -21,7 +21,8 @@ if($Case.Contains(',')){
     exit ([int]($failedCases -gt 0))
 }
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
-. (Join-Path $PSScriptRoot 'lib/nightly-failure-history.ps1')
+. (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
+. (Join-Path $PSScriptRoot 'lib/nightly-policy.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-dispatch.ps1')
 # Only these cases run executor code (its outcome, its launch packer, its public entry); the others need none of it.
 if($Case -cin @('ScheduleConservesAllChunks','PublicHopsForwardAcknowledgement','RealPackerRegroupKeepsFailedFirst','RealPackerFailedMethodFollows')){
@@ -265,7 +266,7 @@ function Invoke-MergeChunkOrder($Doc,$Chunks,$Now){
         if($seen.Add($key)){[void]$suiteNodes.Add([pscustomobject]@{Uid=$key;ClassName=$class;Method='Run';Type='T';Categories=@()})}
     }
     $suite=@([pscustomobject]@{id='antiphon';chunks=@($Chunks);nodes=@($suiteNodes.ToArray());exclusions=@()})
-    $resolved=Resolve-NightlyPriorFailures $Doc $suite Full
+    $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($Doc,$suite,'Full',$null,$null)
     return New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $Now
 }
 try {
@@ -294,11 +295,11 @@ try {
         [pscustomobject]@{id=$id;chunks=$chunks;nodes=$nodes;exclusions=@()}
     })
     function Ingress($Path=$seedPath,[switch]$Accept,[string]$Source='rc-synthetic-old'){
-        Initialize-NightlyDispatchHistory -Path $Path -CandidateSha ('b'*40) -AcceptCrossCandidateSeed:$Accept -SeedSourceCandidateId $Source
+        [Antiphon.Nightly.PriorFailureHistory]::InitializeDispatch($Path,'','',('b'*40),[bool]$Accept,$Source,(Get-NightlyUtcNow))
     }
     function Schedule($InputRecord){
         $members=@();$unresolved=@()
-        if($InputRecord.History){$resolved=Resolve-NightlyPriorFailures $InputRecord.History $suites Full;$members=@($resolved.members);$unresolved=@($resolved.unresolved)}
+        if($InputRecord.History){$resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($InputRecord.History,$suites,'Full',$null,$null);$members=@($resolved.members);$unresolved=@($resolved.unresolved)}
         New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers $members -Unresolved $unresolved -PreviousRun $InputRecord.PreviousRun -CandidateSha ('b'*40) -NowUtc $now
     }
     switch($Case){
@@ -318,7 +319,7 @@ try {
             $inputRecord=Ingress -Accept;$schedule=Schedule $inputRecord
             $ids=@($schedule.entries.chunk)
             $unmapped=$inputRecord.History.PSObject.Copy()
-            $resolved=Resolve-NightlyPriorFailures $unmapped $suites Full
+            $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($unmapped,$suites,'Full',$null,$null)
             # The pure order must actually use known ages, independently of canonical position.
             $hours=@{'antiphon'=1;'session-runner'=5;'pty-host'=2;'agents-pty'=4;'e2e'=3}
             foreach($row in $inputRecord.History.chunks){if($row.chunk -match '(group|split)-2$'){$row.lastRunAtUtc=$now.AddHours(-$hours[$row.suite]).ToString('o')}}
@@ -383,7 +384,7 @@ try {
             $malformed=Join-Path $root 'malformed.json';[IO.File]::WriteAllText($malformed,'{')
             $bad=Ingress -Path $malformed -Accept
             $good=Ingress -Accept
-            $rankedBefore=Resolve-NightlyPriorFailures $good.History $suites Full
+            $rankedBefore=[Antiphon.Nightly.PriorFailureHistory]::Resolve($good.History,$suites,'Full',$null,$null)
             $wanted=@(foreach($s in $suites){foreach($c in @($s.chunks)){$s.id+'/'+$c.id}})
             foreach($s in $suites){foreach($c in $s.chunks){$c.classes=@('Synthetic.Gone.Class')}}
             $unmapped=New-NightlyDispatchSchedule -PreparedSuites $suites -PriorityMembers @($rankedBefore.members) -Unresolved @($rankedBefore.unresolved) -PreviousRun $good.PreviousRun -CandidateSha ('b'*40) -NowUtc $now
@@ -641,12 +642,12 @@ try {
             [void][IO.Directory]::CreateDirectory($swap)
             $leaf=Join-Path $swap 'a.txt'
             [IO.File]::WriteAllText($leaf,'stable')
-            Assert-NightlyHistoryNoLink $swap
+            [Antiphon.Nightly.HistoryLinkCache]::AssertNoLink($swap)
             $held=Join-Path $root 'swap-real'
             Move-Item -LiteralPath $swap -Destination $held
             New-Item -ItemType SymbolicLink -Path $swap -Target $held | Out-Null
             $swapMsg=''
-            try { Assert-NightlyHistoryFileStable (Join-Path $swap 'a.txt') }
+            try { [Antiphon.Nightly.HistoryLinkCache]::AssertNoLink((Join-Path $swap 'a.txt')) }
             catch { $swapMsg=(Get-NightlyRefusalText $_) }
             Check ($fileMsg -like '*evidence-link*' -and $parentMsg -like '*evidence-link*' -and $swapMsg -like '*evidence-link*') ('file='+$fileMsg+'; parent='+$parentMsg+'; swap='+$swapMsg)
         }
@@ -661,7 +662,7 @@ try {
             $kept=Schedule $inputRecord
             $cross=New-NightlyDispatchSchedule -PreparedSuites $suites -PreviousRun $seed -CandidateSha ('c'*40) -NowUtc $now
             $bare=$seed.PSObject.Copy();$bare.PSObject.Properties.Remove('seedKind')
-            $ranked=Resolve-NightlyPriorFailures $seed $suites Full
+            $ranked=[Antiphon.Nightly.PriorFailureHistory]::Resolve($seed,$suites,'Full',$null,$null)
             $members=@($ranked.members)
             $canonicalOrder=@(foreach($s in $suites){foreach($c in @($s.chunks)){$s.id+'/'+$c.id}})
             function Test-Original($Schedule){
@@ -709,7 +710,7 @@ try {
                 )
                 exclusions=@()
             })
-            $regroupMembers=@((Resolve-NightlyPriorFailures $seed $regrouped Full).members)
+            $regroupMembers=@(([Antiphon.Nightly.PriorFailureHistory]::Resolve($seed,$regrouped,'Full',$null,$null)).members)
             $regroup=New-NightlyDispatchSchedule -PreparedSuites $regrouped -PriorityMembers $regroupMembers -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
             $same=@([pscustomobject]@{id=$hit.suite;chunks=@([pscustomobject]@{id=$hit.chunk;classes=@($hit.classes);nodes=@()});nodes=@();exclusions=@()})
             $sameSchedule=New-NightlyDispatchSchedule -PreparedSuites $same -PreviousRun $seed -CandidateSha ('b'*40) -NowUtc $now
@@ -772,7 +773,7 @@ try {
             }
             function Order-Plan($Doc,$Groups){
                 $prepared=New-Suite $Groups
-                $resolved=Resolve-NightlyPriorFailures $Doc $prepared Full
+                $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($Doc,$prepared,'Full',$null,$null)
                 return New-NightlyDispatchSchedule -PreparedSuites $prepared -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $now
             }
             $oldCounts=@{$alpha=1700;$beta=100;$gamma=100}
@@ -873,7 +874,7 @@ try {
                     }
                 }
                 $suite=@([pscustomobject]@{id='antiphon';chunks=@($Chunks);nodes=@($suiteNodes.ToArray());exclusions=@()})
-                $resolved=Resolve-NightlyPriorFailures $Doc $suite Full
+                $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($Doc,$suite,'Full',$null,$null)
                 return New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $Doc -CandidateSha ('b'*40) -NowUtc $now
             }
             function ConvertTo-BandIds($Schedule){return (@($Schedule.entries|ForEach-Object {$_.chunk}) -join ',')}
@@ -1036,7 +1037,7 @@ try {
             $suiteNodes=New-Object System.Collections.Generic.List[object]
             foreach($node in @($newNodes)){[void]$suiteNodes.Add($node)}
             $suite=@([pscustomobject]@{id='antiphon';chunks=$suiteChunks;nodes=@($suiteNodes.ToArray());exclusions=@()})
-            $resolved=Resolve-NightlyPriorFailures $doc $suite Full
+            $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($doc,$suite,'Full',$null,$null)
             $schedule=New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
             $again=New-NightlyDispatchSchedule -PreparedSuites $suite -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
             $ids=@($schedule.entries.chunk)
@@ -1135,7 +1136,7 @@ try {
             $path=Join-Path $root 'shape-seed.json'
             [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 12))
             $doc=[Antiphon.Nightly.StoppedSeedFiles]::Read($path,'')
-            $resolved=Resolve-NightlyPriorFailures $doc $preparedSuites Full
+            $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($doc,$preparedSuites,'Full',$null,$null)
             $schedule=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
             $again=New-NightlyDispatchSchedule -PreparedSuites $preparedSuites -PriorityMembers @($resolved.members) -PreviousRun $doc -CandidateSha ('b'*40) -NowUtc $now
             $ids=@($schedule.entries.chunk)
@@ -1216,10 +1217,10 @@ try {
             $envelope.contentHash=[Antiphon.Nightly.StoppedSeedFiles]::ContentHash($envelope)
             $path=Join-Path $root 'unfinished-seed.json'
             [IO.File]::WriteAllText($path,($envelope|ConvertTo-Json -Depth 35))
-            $received=Initialize-NightlyDispatchHistory -Path $path -CandidateSha ('b'*40) -AcceptCrossCandidateSeed -SeedSourceCandidateId 'rc-synthetic-unfinished'
+            $received=[Antiphon.Nightly.PriorFailureHistory]::InitializeDispatch($path,'','',('b'*40),$true,'rc-synthetic-unfinished',(Get-NightlyUtcNow))
             if($null -eq $received.History){throw ('ingress '+$received.FallbackReason)}
             $prepared=@($laneSuites.ToArray())
-            $resolved=Resolve-NightlyPriorFailures $received.History $prepared Full
+            $resolved=[Antiphon.Nightly.PriorFailureHistory]::Resolve($received.History,$prepared,'Full',$null,$null)
             $schedule=New-NightlyDispatchSchedule -PreparedSuites $prepared -PriorityMembers @($resolved.members) -PreviousRun $received.PreviousRun -CandidateSha ('b'*40) -NowUtc $now
             $ids=(@($schedule.entries.chunk) -join ',')
             # Contract: failed-method chunks; every lane's interrupted chunks (lane order, from the lane's
@@ -1303,13 +1304,13 @@ try {
             [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$true
             try {
                 function New-Leaf([string]$Name){
-                    Reset-NightlyHistoryLinkCache
+                    [Antiphon.Nightly.HistoryLinkCache]::Reset()
                     $grand=Join-Path $root $Name
                     $mid=Join-Path $grand 'mid'
                     [void][IO.Directory]::CreateDirectory($mid)
                     $leaf=Join-Path $mid 'leaf.txt'
                     [IO.File]::WriteAllText($leaf,'real')
-                    Assert-NightlyHistoryNoLink $leaf
+                    [Antiphon.Nightly.HistoryLinkCache]::AssertNoLink($leaf)
                     return [pscustomobject]@{Grand=$grand;Leaf=$leaf}
                 }
                 $real=New-Leaf 'win-grand'
@@ -1318,7 +1319,7 @@ try {
                 [void][IO.Directory]::CreateDirectory((Join-Path $real.Grand 'mid'))
                 [IO.File]::WriteAllText($real.Leaf,'FORGED')
                 $dirMsg=''
-                try { Assert-NightlyHistoryFileStable $real.Leaf } catch { $dirMsg=(Get-NightlyRefusalText $_) }
+                try { [Antiphon.Nightly.HistoryLinkCache]::AssertNoLink($real.Leaf) } catch { $dirMsg=(Get-NightlyRefusalText $_) }
                 $linked=New-Leaf 'win-link'
                 $linkHeld=Join-Path $root 'win-link-held'
                 $forged=Join-Path $root 'win-link-forged'
@@ -1327,9 +1328,9 @@ try {
                 [IO.File]::WriteAllText((Join-Path $forged 'mid/leaf.txt'),'FORGED')
                 New-Item -ItemType SymbolicLink -Path $linked.Grand -Target $forged | Out-Null
                 $linkMsg=''
-                try { Assert-NightlyHistoryFileStable $linked.Leaf } catch { $linkMsg=(Get-NightlyRefusalText $_) }
+                try { [Antiphon.Nightly.HistoryLinkCache]::AssertNoLink($linked.Leaf) } catch { $linkMsg=(Get-NightlyRefusalText $_) }
                 Check ($dirMsg -like '*evidence-link*' -and $linkMsg -like '*evidence-link*') ('dir='+$dirMsg+'; link='+$linkMsg)
-            } finally { [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$false; Reset-NightlyHistoryLinkCache }
+            } finally { [Antiphon.Nightly.HistoryNodeIdentity]::ForceWindows=$false; [Antiphon.Nightly.HistoryLinkCache]::Reset() }
         }
         'ScaleExportBound' {
             $runId='d47848cce896471db1cc8ca346707cad'
@@ -1676,7 +1677,7 @@ try {
             $reportPath=Join-Path $root 'print-report.json'
             $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath -Cli
             $fileDigest=''
-            if([IO.File]::Exists($out)){$fileDigest=Get-NightlyHistoryDigest $out}
+            if([IO.File]::Exists($out)){$fileDigest=[Antiphon.Nightly.PriorFailureHistory]::Digest($out)}
             $note='A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.'
             $mergePath=Join-Path $PSScriptRoot 'merge-nightly-seeds.ps1'
             $scriptText=[IO.File]::ReadAllText($mergePath)

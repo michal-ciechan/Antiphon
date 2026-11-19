@@ -9,7 +9,8 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # itself rather than relying on every caller to remember. A caller that dot-sources
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
-. (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
+. (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
+. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
 . (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside
@@ -572,8 +573,12 @@ function Invoke-AntiphonNightlyRunCore {
             $historyRoot=Join-Path (Join-Path $StateRoot 'history') $RunId
             if(Test-NightlyPathContained -Inner $historyRoot -Outer $CheckoutRoot){Write-Warning 'failed-first fallback: history-copy-inside-checkout'}
             else {
-                $historyInput=Initialize-NightlyDispatchHistory -Path $PriorFailuresPath -ExpectedDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -OwnedDirectory $historyRoot
-                if($historyInput.History){$PriorFailuresPath=$historyInput.Path;$PriorFailuresDigest=$historyInput.Digest}
+                # The history intake is compiled (PriorFailureHistory.InitializeDispatch); without the core there is none.
+                if(Test-NightlyCoreAvailable){
+                    $historyInput=[Antiphon.Nightly.PriorFailureHistory]::InitializeDispatch($PriorFailuresPath,$PriorFailuresDigest,$historyRoot,'',[bool]$AcceptCrossCandidateSeed,$SeedSourceCandidateId,(Get-NightlyUtcNow))
+                    if($historyInput.Warning){Write-Warning -WarningAction Continue $historyInput.Warning}
+                    if($historyInput.History){$PriorFailuresPath=$historyInput.Path;$PriorFailuresDigest=$historyInput.Digest}
+                }else{Write-Warning -WarningAction Continue 'failed-first fallback: nightly-core-required'}
             }
         }
         if (-not $NoSync) {

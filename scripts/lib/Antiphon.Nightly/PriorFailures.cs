@@ -1,9 +1,9 @@
-// Resolve-NightlyPriorFailures' mapping (nightly-failure-history.ps1), compiled: each prior-failure member (a suite and
+// The prior-failure resolver's mapping (PriorFailureHistory.Resolve): each prior-failure member (a suite and
 // class from validated history or a stopped-run seed) is mapped onto the current plan. The class's current nodes,
 // less the profile's excluded ones, are its required tests; every chunk that runs one of them is the member's chunk
 // list, and the required tests must all be covered. A member that cannot be mapped is unresolved, with the reason
 // (current-suite-missing, current-class-missing, entirely-excluded-class or current-class-unplanned) and its old chunks.
-// The PowerShell function keeps the mode checks, the sweep's policy reads, the warnings and the result object.
+// PriorFailureHistory.Resolve keeps the mode checks, the sweep's policy rows, the warnings and the result object.
 using System;
 using System.Collections;
 using System.Collections.Generic;

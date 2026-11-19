@@ -98,7 +98,8 @@ function Invoke-NightlyDispatchCoordinator {
     }
     if ($dispatchBarrier) {
         if($DispatchHistory){
-            $resolvedHistory=Resolve-NightlyPriorFailures $DispatchHistory $dispatchPrepared.ToArray() Full
+            $resolvedHistory=[Antiphon.Nightly.PriorFailureHistory]::Resolve($DispatchHistory,$dispatchPrepared.ToArray(),'Full',$null,$null)
+            foreach($dispatchWarning in @($resolvedHistory.warnings)){Write-Warning -WarningAction Continue $dispatchWarning}
             $DispatchPriorityMembers=@($resolvedHistory.members);$DispatchUnresolved=@($resolvedHistory.unresolved)
         }
         $dispatchSchedule = New-NightlyDispatchSchedule -PreparedSuites $dispatchPrepared.ToArray() -PriorityMembers $DispatchPriorityMembers -Unresolved $DispatchUnresolved -HistoryDigest $DispatchHistoryDigest -RunId $invocationId -Attempt ([string]$Attempt) -PreviousRun $DispatchPreviousRun -CandidateSha $Sha -NowUtc (Get-NightlyUtcNow)
