@@ -26,6 +26,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\Shared\NativeLinuxOnlyAttribute.cs" Link="TestSupport\NativeLinuxOnlyAttribute.cs" />
+    <Compile Include="..\Shared\NativeWindowsGate.cs" Link="TestSupport\NativeWindowsGate.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitness.cs" Link="TestSupport\NativeLinuxPolicyWitness.cs" />
     <Compile Include="..\Shared\NativeLinuxPolicyWitnessTests.cs" Link="TestSupport\NativeLinuxPolicyWitnessTests.cs" />
     <EmbeddedResource Include="..\Shared\NativeLinuxOnlyAttribute.cs">
