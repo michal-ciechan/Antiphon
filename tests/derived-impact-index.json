@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 332,
+      "classes": 333,
       "reason": "allowlist"
     },
     {
@@ -756,9 +756,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskService.cs",
-      "classes": 206,
+      "classes": 207,
       "reason": "cap",
-      "owed": 181,
+      "owed": 182,
       "first": [
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
@@ -1413,9 +1413,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 424,
+      "classes": 425,
       "reason": "cap",
-      "owed": 399,
+      "owed": 400,
       "first": [
         "AgentTaskLandNotificationRecoveryTests",
         "CapacityRecoveryTaskTests",
@@ -2053,9 +2053,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 131,
+      "classes": 132,
       "reason": "cap",
-      "owed": 106,
+      "owed": 107,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
@@ -6798,6 +6798,15 @@
         "PoolClaudeEffortTests",
         "PtyDeliveryCeilingsTests",
         "ReceiptFailureDeliveryTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/AgentTaskGetPollMetrics.cs",
+      "classes": [
+        "AgentTaskGetPollMetricsTests",
+        "ClaudeComposerCaptureProbeTests",
+        "ClaudePasteLossCanaryTests",
+        "FakeVsRealClipParityTests"
       ]
     },
     {
