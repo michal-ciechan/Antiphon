@@ -120,14 +120,23 @@ switch ($Case) {
             Note (($fallbackConsumers -join ';') -ceq '*') 'committed-map-fallback-star'
             Note ($fallback[0].reason -ceq 'unmatched-path-fallback') 'committed-map-fallback-reason'
         }
-        $readers=@(Get-TestSelectionSorted @('tests/Antiphon.E2E/Antiphon.E2E.csproj','tests/Antiphon.Tests/Antiphon.Tests.csproj'))
-        $docs=@($committedMap.roots | Where-Object { $_.path -ceq 'docs/**' })
-        Note ($docs.Count -eq 1) 'committed-map-docs-root'
-        if ($docs.Count -eq 1) {
-            $docsConsumers=@(Get-TestSelectionSorted @($docs[0].consumers))
-            Note (($docsConsumers -join ';') -ceq ($readers -join ';')) 'committed-map-docs-readers'
-            Note ($docs[0].reason -ceq 'repository-reader-non-code') 'committed-map-docs-reason'
-            Note ($docsConsumers -cnotcontains '*') 'committed-map-docs-not-star'
+        foreach ($path in @('docs/**','**/*.md','scripts/**','docker/**','.claude/**','**/docker-compose*.yml','**/Dockerfile*','client/**')) {
+            $reader=@($committedMap.roots | Where-Object { $_.path -ceq $path })
+            Note ($reader.Count -eq 1) "committed-map-reader:$path"
+            if ($reader.Count -eq 1) {
+                $readerConsumers=@(Get-TestSelectionSorted @($reader[0].consumers))
+                Note (($readerConsumers -join ';') -ceq '*') "committed-map-reader-star:$path"
+                Note ($reader[0].reason -ceq 'repository-reader-non-code') "committed-map-reader-reason:$path"
+            }
+        }
+        foreach ($path in @('antiphon.areas.json','.editorconfig','.github/**','tests/derived-impact-index.json','tests/impacted-classes.json')) {
+            $forced=@($committedMap.roots | Where-Object { $_.path -ceq $path })
+            Note ($forced.Count -eq 1) "committed-map-forced:$path"
+            if ($forced.Count -eq 1) {
+                $forcedConsumers=@(Get-TestSelectionSorted @($forced[0].consumers))
+                Note (($forcedConsumers -join ';') -ceq '*') "committed-map-forced-star:$path"
+                Note ($forced[0].reason -ceq 'forced-full-root') "committed-map-forced-reason:$path"
+            }
         }
         $build=@($committedMap.roots | Where-Object { $_.path -ceq '**/Directory.Build.*' })
         Note ($build.Count -eq 1) 'committed-map-build-root'
