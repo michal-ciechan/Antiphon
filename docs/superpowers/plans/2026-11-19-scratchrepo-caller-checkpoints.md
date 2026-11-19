@@ -15,7 +15,7 @@ The same filter then passed once, unlisted, on the helper-copy commit `e1b4074ce
 - V-1. `Copied_delegate_loads_the_caller_helper_before_the_server_call`: the scratch copy of `delegate.ps1 -Status` reaches the loopback stub with `X-Antiphon-Caller: delegate.ps1` and exits 0.
 - V-2. `RegisteredCallerScriptTests`: the checkout copies of the four scripts still send their registered labels, and an unregistered label is refused.
 - R-1. Policy sweep.
-- R-2. Guard, tripwire, native Linux, mechanical contract, platform guidance, layering, and lane. `WindowsUnitPlatformAdmissionTests` stays off this Linux receipt.
+- R-2. Guard, tripwire, native Linux, mechanical contract, platform guidance, layering, and lane. `WindowsUnitPlatformAdmissionTests` stays off this Linux receipt. The floor is 34: `TaskPlatformGuidanceTests` has five tests. `RunnerDefaultGuidanceTests` shares that file and is outside this filter.
 - R-3. Slow-registry merge.
 - R-4. Derived-impact index, including the new witness class on the scratch-repo edge.
 - R-5. Land graph, evidence diff, pin digest, and merge-tree.
@@ -27,7 +27,7 @@ The same filter then passed once, unlisted, on the helper-copy commit `e1b4074ce
 | CP-1 | S1 | tests/Antiphon.E2E -> bin-c2004scr-a/ | c2004scr-witness | `/*/*/DelegationScratchCallerTests/*` | V-1 | 0 failed, 0 skipped, executed 1 | 1 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | S1 | tests/Antiphon.Tests -> bin-c2004scr-b/ | c2004scr-caller | `/*/*/RegisteredCallerScriptTests/*` | V-2 | 0 failed, 0 skipped, executed 5 | 5 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | S1 | CP-2 | c2004scr-policy | `/*/*/TestClassificationPolicyTests/*` | R-1 | 0 failed, 0 skipped, executed at least 42 | 42 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-4 | S1 | CP-2 | c2004scr-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | 0 failed, 0 skipped, executed at least 38 | 38 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-4 | S1 | CP-2 | c2004scr-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | 0 failed, 0 skipped, executed at least 34 | 34 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | S1 | CP-2 | c2004scr-slow | `/*/*/SlowTestRegistryMergeTests/*` | R-3 | 0 failed, 0 skipped, executed 5 | 5 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | S1 | CP-2 | c2004scr-index | `/*/*/DerivedImpactIndexTests/*` | R-4 | 0 failed, 0 skipped, executed at least 27 | 27 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | S1 | n/a | c2004scr-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-5 | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
