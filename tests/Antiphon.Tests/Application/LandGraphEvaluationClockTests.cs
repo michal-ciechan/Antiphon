@@ -59,6 +59,41 @@ public sealed partial class LandGraphEvaluationTests
         observed.Pass2Ran.ShouldBeFalse();
     }
 
+    // CARD-1991: an unchanged graph still evaluates. The production copy clock must
+    // admit an 8 s copy (twice the 2026-11-19 Linux p95, which lands on 8 s).
+    [Test]
+    public void UnchangedDigestEightSecondCopyStaysApproved()
+    {
+        var clock = new ManualPhaseClock();
+        var output = new StringWriter();
+        var timeouts = 0;
+        var pass2Ran = false;
+        var code = AuditPhases.Run("Antiphon.sln", output, clock, TimeSpan.FromSeconds(45), EvaluationBudget.CopyTimeout,
+            () => { clock.Advance(TimeSpan.FromSeconds(1)); return 0; },
+            () => { clock.Advance(TimeSpan.FromSeconds(8)); return 0; },
+            () => { pass2Ran = true; clock.Advance(TimeSpan.FromSeconds(1)); return 0; },
+            () => timeouts++);
+        code.ShouldBe(0, output.ToString());
+        timeouts.ShouldBe(0);
+        pass2Ran.ShouldBeTrue(output.ToString());
+        ApprovedLines(output).ShouldBe(1);
+        output.ToString().ShouldNotContain("exceeded", Case.Sensitive);
+    }
+
+    [Test]
+    [Timeout(180_000)]
+    public async Task RealGraphChangeStillRefusesCheck()
+    {
+        await using var repo = await UpdatedScriptRepoAsync(new() { ["App/App.csproj"] = SdkProject("") });
+        await File.AppendAllTextAsync(repo.Full("App/App.csproj"), "<!-- CARD-1991 -->\n");
+        await AuditRepo.GitAsync(repo.Root, "add", "App/App.csproj");
+        await AuditRepo.GitAsync(repo.Root, "-c", "user.name=c1991", "-c", "user.email=c1991@antiphon.test", "commit", "-qm", "change the project");
+        var check = await RunScriptAsync(repo.Root, "-Check");
+        check.ExitCode.ShouldBe(1, check.Text);
+        check.Text.ShouldContain("manifest does not match the selected graph", Case.Sensitive);
+        check.Text.ShouldNotContain("approved", Case.Sensitive);
+    }
+
     [Test]
     public void RefusingEvaluatorIsNotApproved()
     {
