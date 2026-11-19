@@ -10,10 +10,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// C488: a hosted reconcile is the second recovery path for a wakeup lost after the
-/// queue row linked. At the production base this is red because that row does not
-/// wake the flush. A claimed attempt, a future hold and a dropped completion wakeup
-/// stay unwoken.
+/// C488: a hosted reconcile wakes a linked Pending row that has never been attempted.
+/// A claimed attempt, a future hold and a dropped completion wakeup stay unwoken.
 /// </summary>
 [Category("Integration")]
 public sealed class LinkedUnattemptedQueueWakeTests
