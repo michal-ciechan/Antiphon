@@ -104,6 +104,17 @@ public sealed class C1744G3PhoneHomeSupervisionTests
             "C1744G3 autostart-refused-script.stub");
 
     [Test]
+    public Task Autostart_absent_config_reaches_run_daemon_direct() =>
+        ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1",
+            "C1744G3",
+            "autostart-script-direct",
+            3,
+            "C1744G3 autostart-script-direct.exit",
+            "C1744G3 autostart-script-direct.stub",
+            "C1744G3 autostart-script-direct.log");
+
+    [Test]
     public Task AppHost_launchers_refuse_while_phase2_config_exists() =>
         ScriptHarness.RunHarnessCaseAsync(
             "test-windows-phone-home-runner.ps1",
