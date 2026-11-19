@@ -999,6 +999,42 @@ function Test-NCProfileLaunchGroupsGolden {
     Assert-NCGolden 'profile-launch-groups' { Get-NCLaunchGroupsGolden } @('"scenario":"split"', '"methodFilter":"/*/N.Big/LandHeavyTests/(', '-split-', '"error":"profile-discovery-namespace-required"', 'props":"id,classes,exactFilter,nodes,seconds"')
 }
 
+# DiscoveryWriter.cs (Write-NightlyDiscoveryDocument): the written bytes against UTF-8 (no BOM) of ConvertTo-Json
+# -Depth 12, which Write-NightlyAtomicJson writes, for the same document: every string escape class, surrogate
+# pairs and lone surrogates, categories, excluded nodes, fixture nodes, an empty document, both the create and the
+# replace branch, and a value the compiled writer does not claim (still ConvertTo-Json).
+function Test-NCDiscoveryWriterMatchesConvertToJson {
+    $c = { param([int]$n) [string][char]$n }
+    $weird = @('"q"', 'back\slash', ('t' + (& $c 9) + 'n' + (& $c 10) + 'r' + (& $c 13)), ('b' + (& $c 8) + 'f' + (& $c 12)), ('nul' + (& $c 0) + (& $c 1) + (& $c 31)),
+        ('del' + (& $c 127) + (& $c 0x80)), ('nel' + (& $c 0x85) + 'ls' + (& $c 0x2028) + 'ps' + (& $c 0x2029)), ('caf' + (& $c 0xE9)), ('pair' + (& $c 0xD83D) + (& $c 0xDE00)),
+        ('hi' + (& $c 0xD800)), ('lo' + (& $c 0xDC00)), '/<>&''', '', 'Slow')
+    $nodes = @(for ($i = 0; $i -lt $weird.Count; $i++) {
+        $w = $weird[$i]
+        [pscustomobject]@{ Uid = ('u' + $i + $w); Assembly = $w; Namespace = ('N.' + $w); Type = ('T' + $w); Method = ('M' + $w); Signature = $w
+            State = $(if ($i % 3 -eq 0) { '' } else { $w }); Excluded = ($i % 2 -eq 0); Categories = @($weird | Select-Object -Skip $i -First (1 + ($i % 3))) }
+    })
+    $docs = [ordered]@{
+        weird = (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash ('h' + (& $c 9) + '"'))
+        fixture = (ConvertTo-NightlyDiscoveryDocument -Nodes @(Get-NCFixtureNodes 300) -AssemblyHash 'fixture-hash')
+        empty = (ConvertTo-NightlyDiscoveryDocument -Nodes @() -AssemblyHash 'h')
+        unclaimed = [ordered]@{ format = 'f'; count = 5; nodes = @() }
+    }
+    $bad = [Collections.Generic.List[string]]::new()
+    $utf8 = [Text.UTF8Encoding]::new($false)
+    foreach ($name in $docs.Keys) {
+        $path = Join-Path $root ('discovery-writer-' + $name + '.json')
+        $expected = $utf8.GetBytes(($docs[$name] | ConvertTo-Json -Depth 12))
+        foreach ($round in 'create', 'replace') {
+            Write-NightlyDiscoveryDocument -Path $path -Document $docs[$name]
+            if (-not [Linq.Enumerable]::SequenceEqual([byte[]]$expected, [byte[]][IO.File]::ReadAllBytes($path))) { $bad.Add($name + ' ' + $round) }
+        }
+        $claimed = $null -ne [Antiphon.Nightly.DiscoveryWriter]::Prepare($docs[$name])
+        if ($claimed -ne ($name -cne 'unclaimed')) { $bad.Add($name + ' claimed=' + $claimed) }
+    }
+    if (@(Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Name -like 'discovery-writer-*' -and $_.Name -notlike '*.json' }).Count -gt 0) { $bad.Add('temporary file left') }
+    Assert-NC ($bad.Count -eq 0) 'discoveryWriter' ($bad -join '; ')
+}
+
 # PlannedManifestCheck.cs. The planned-manifest partition (duplicates differing only by case, missing in
 # RequiredUids order, one non-ASCII extra, an InvariantCultureIgnoreCase-only match) against the bytes the
 # PowerShell copy wrote; and the compiled census digest order (OrdinalIgnoreCase) over culture-equal and
@@ -1102,7 +1138,7 @@ function Test-NCDiscoveryViewKey {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 36 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCDiscoveryWriterMatchesConvertToJson; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 37 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

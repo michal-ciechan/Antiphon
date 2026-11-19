@@ -455,7 +455,10 @@ function Write-NightlyDiscoveryDocument {
         [string]$Path,
         $Document
     )
-    Write-NightlyAtomicJson -Path $Path -Object $Document
+    Assert-NightlyCoreAvailable 'Write-NightlyDiscoveryDocument'
+    # Compiled text (Antiphon.Nightly/DiscoveryWriter.cs): the same ConvertTo-Json -Depth 12 bytes through the
+    # same atomic replace; a document holding any other value still goes through ConvertTo-Json.
+    Write-NightlyAtomicJson -Path $Path -Object $Document -DiscoveryDocument
 }
 
 function Get-NightlyLatestDiagnosticLog {

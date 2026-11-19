@@ -396,17 +396,27 @@ function Remove-NightlyFileQuietly([string]$Path) {
 function Write-NightlyAtomicJson {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)]$Object
+        [Parameter(Mandatory = $true)]$Object,
+        # Write-NightlyDiscoveryDocument, after asserting the compiled core: Antiphon.Nightly/DiscoveryWriter.cs
+        # makes the same text for the document ConvertTo-NightlyDiscoveryDocument builds and writes it to the
+        # temporary file itself (the text never crosses back as a method argument); it declines any other value.
+        [switch]$DiscoveryDocument
     )
-    $json = $Object | ConvertTo-Json -Depth 12
+    $prepared = $null
+    if ($DiscoveryDocument) { $prepared = [Antiphon.Nightly.DiscoveryWriter]::Prepare($Object) }
+    if ($null -eq $prepared) { $json = $Object | ConvertTo-Json -Depth 12 }
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-NightlyPathExists $dir)) {
         [void][System.IO.Directory]::CreateDirectory($dir)
     }
     $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     $bak = $Path + '.bak'
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($tmp, $json, $utf8)
+    if ($null -ne $prepared) {
+        [Antiphon.Nightly.DiscoveryWriter]::WriteFile($tmp, $prepared)
+    } else {
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($tmp, $json, $utf8)
+    }
     if (Test-NightlyPathExists $Path) {
         [System.IO.File]::Replace($tmp, $Path, $bak)
         Remove-NightlyFileQuietly $bak
