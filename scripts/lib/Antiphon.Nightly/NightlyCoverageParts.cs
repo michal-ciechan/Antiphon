@@ -55,9 +55,11 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Get-NightlyLatestDiagnosticLog for an existing directory: the newest .diag file, else the newest file, by
-        /// LastWriteTimeUtc; on equal times the first in directory order (as Sort-Object -Descending kept the
-        /// listing order). Hidden and system files are skipped, as Get-ChildItem without -Force skips them. ""
-        /// when there is no such file or the directory cannot be listed (Get-ChildItem -ErrorAction
+        /// LastWriteTimeUtc. Equal timestamps take the ordinally first full path. The removed body
+        /// (95d43ee27da2 nightly-coverage.ps1) listed with Get-ChildItem, which on NTFS is name order and omits
+        /// Hidden and System, then Sort-Object LastWriteTimeUtc -Descending, which keeps that order for equal
+        /// times, so a.diag wins a tie with b.diag. Directory enumeration order is not that listing on Linux.
+        /// "" when there is no such file or the directory cannot be listed (Get-ChildItem -ErrorAction
         /// SilentlyContinue listed nothing).
         /// </summary>
         public static string LatestDiagnosticLog(string directory)
@@ -68,15 +70,24 @@ namespace Antiphon.Nightly
                 foreach (var file in new DirectoryInfo(directory).GetFiles())
                 {
                     if ((file.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
-                    if (newestAny == null || file.LastWriteTimeUtc > newestAny.LastWriteTimeUtc) newestAny = file;
+                    if (PreferLatest(file, newestAny)) newestAny = file;
                     if (string.Equals(file.Extension, ".diag", StringComparison.OrdinalIgnoreCase)
-                        && (newestDiag == null || file.LastWriteTimeUtc > newestDiag.LastWriteTimeUtc)) newestDiag = file;
+                        && PreferLatest(file, newestDiag)) newestDiag = file;
                 }
                 if (newestDiag != null) return newestDiag.FullName;
                 return newestAny == null ? "" : newestAny.FullName;
             }
             catch (IOException) { return ""; }
             catch (UnauthorizedAccessException) { return ""; }
+        }
+
+        // Equal LastWriteTimeUtc: the ordinally smaller full path. Same directory prefix, so this is name order.
+        private static bool PreferLatest(FileInfo candidate, FileInfo current)
+        {
+            if (current == null) return true;
+            var byTime = candidate.LastWriteTimeUtc.CompareTo(current.LastWriteTimeUtc);
+            if (byTime != 0) return byTime > 0;
+            return string.Compare(candidate.FullName, current.FullName, StringComparison.Ordinal) < 0;
         }
     }
 }

@@ -63,7 +63,7 @@ function Assert-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses
 }
 
 # Assert-NCGolden's comparison without the assertion, for a check that also compares other parts.
-function Test-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @(), [string]$Normalize = '') {
+function Test-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @(), [string]$Normalize = '', [switch]$NeutralPathSeparators) {
     $core = Test-NightlyCoreAvailable
     $actual = ''
     try { $actual = (& $Body) | ConvertTo-Json -Depth 14 -Compress } catch { $actual = 'throw: ' + $_.Exception.Message }
@@ -72,10 +72,19 @@ function Test-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses =
     $goldenPath = Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Name + '.json')
     # A new golden is written only on request (NC_GOLDEN_WRITE=<name>) and then still has to be reviewed.
     if ($env:NC_GOLDEN_WRITE -ceq $Name) { [IO.File]::WriteAllText($goldenPath, $actual, [Text.UTF8Encoding]::new($false)) }
-    $expected = [IO.File]::ReadAllText($goldenPath, [Text.Encoding]::UTF8)
-    $ok = $core -and $actual -ceq $expected
-    foreach ($witness in $Witnesses) { if (-not $expected.Contains($witness)) { $ok = $false } }
-    return [pscustomobject]@{ Ok = [bool]$ok; Actual = $actual; Expected = $expected }
+    $expectedRaw = [IO.File]::ReadAllText($goldenPath, [Text.Encoding]::UTF8)
+    $comparedActual = $actual
+    $comparedExpected = $expectedRaw
+    # The diagnostic golden stores Windows paths as <root>\\nc-....diag (JSON's escaped separator).
+    # A Linux run has <root>/nc-....diag. Only that placeholder separator is folded; filenames and
+    # every other character, including the four path names, stay in the comparison.
+    if ($NeutralPathSeparators) {
+        $comparedActual = $comparedActual.Replace('<root>\\', '<root>/')
+        $comparedExpected = $comparedExpected.Replace('<root>\\', '<root>/')
+    }
+    $ok = $core -and $comparedActual -ceq $comparedExpected
+    foreach ($witness in $Witnesses) { if (-not $expectedRaw.Contains($witness)) { $ok = $false } }
+    return [pscustomobject]@{ Ok = [bool]$ok; Actual = $comparedActual; Expected = $comparedExpected }
 }
 
 function Get-NCFixtureNodes([int]$Take) {
@@ -275,7 +284,7 @@ function Test-NCDiagnosticsMatchFallback {
                 discovery = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
             }
         })
-    } @('discovery-count-mismatch', 'empty diagnostic') $root
+    } @('discovery-count-mismatch', 'empty diagnostic') $root -NeutralPathSeparators
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $logs.Ok) 'diagnostics' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length + '; logs golden ' + $logs.Ok + ' actual ' + $logs.Actual.Length + ' chars')
 
     $hashed = Join-Path $root 'nc-hash.bin'; [IO.File]::WriteAllBytes($hashed, [byte[]](0..255))
@@ -379,6 +388,27 @@ function Test-NCEvidenceRecordsMatchFallback {
     Test-NCCoveragePartsMatchFallback
 }
 
+# FileAttributes.Hidden is a Windows attribute. On Linux SetAttributes(Hidden) leaves Attributes Normal,
+# so a file created as hidden stays visible and would win by timestamp. The probe uses one exact file.
+function Test-NCHiddenAttributePersists([string]$Parent) {
+    $dir = Join-Path $Parent 'hidden-capability'
+    $file = Join-Path $dir 'probe.diag'
+    [void][IO.Directory]::CreateDirectory($dir)
+    $persisted = $false
+    try {
+        [IO.File]::WriteAllText($file, 'probe')
+        try { [IO.File]::SetAttributes($file, [IO.FileAttributes]::Hidden) } catch { return $false }
+        $persisted = (([IO.File]::GetAttributes($file) -band [IO.FileAttributes]::Hidden) -ne 0)
+    } finally {
+        if ([IO.File]::Exists($file)) {
+            try { [IO.File]::SetAttributes($file, [IO.FileAttributes]::Normal) } catch { }
+            [IO.File]::Delete($file)
+        }
+        if ([IO.Directory]::Exists($dir)) { [IO.Directory]::Delete($dir) }
+    }
+    return $persisted
+}
+
 # NightlyCoverageParts.cs: the roster digest, the present-row count of the coverage verdict and the latest
 # diagnostic log, each against its PowerShell body (and the refusals the compiled path hands back to it).
 function Test-NCCoveragePartsMatchFallback {
@@ -400,6 +430,13 @@ function Test-NCCoveragePartsMatchFallback {
         upperExt = @(@('A.DIAG', -10), @('b.log', 0))
         hidden = @(@('a.diag', -10), @('h.diag', 0, 'hidden'))
     }
+    # Windows still builds the hidden file and the golden requires hidden=a.diag (Get-ChildItem without
+    # -Force skips Hidden). Skip that case only when this host cannot persist the attribute.
+    $hiddenSupported = Test-NCHiddenAttributePersists $root
+    if (-not $hiddenSupported) {
+        [void]$cases.Remove('hidden')
+        Write-Host 'NOTE NC CoreMatchesFallback.coverageParts.hidden skipped: FileAttributes.Hidden did not persist; the Windows golden still requires hidden=a.diag'
+    }
     $base = [datetime]::UtcNow.AddHours(-1)
     foreach ($name in $cases.Keys) {
         $d = Join-Path $logs $name
@@ -410,7 +447,8 @@ function Test-NCCoveragePartsMatchFallback {
         }
     }
     $rows = @([pscustomobject]@{ Identity = 'a'; Outcome = 'NotExecuted' }, $null, [pscustomobject]@{ Identity = 'b'; Outcome = 'Passed' })
-    Assert-NCGolden 'coverageParts' {
+    $coverageWitnesses = @('throw:expected-skip roster reasonClass Platform', 'diagNewest=b.diag', 'diagTie=a.diag', 'hidden=a.diag')
+    $g = Test-NCGolden 'coverageParts' {
         $digests = foreach ($roster in $rosters) { try { Get-NightlyExpectedSkipRosterDigest -Entries $roster } catch { 'throw:' + $_.Exception.Message } }
         $latest = foreach ($name in $cases.Keys) {
             $found = Get-NightlyLatestDiagnosticLog -Directory (Join-Path $logs $name)
@@ -424,7 +462,21 @@ function Test-NCCoveragePartsMatchFallback {
             }
         }
         [ordered]@{ digests = @($digests); latest = @($latest); verdicts = @($verdicts) }
-    } @('throw:expected-skip roster reasonClass Platform', 'diagNewest=b.diag', 'diagTie=a.diag', 'hidden=a.diag')
+    } $coverageWitnesses
+    $expected = $g.Expected
+    $actual = $g.Actual
+    $witnessOk = $true
+    foreach ($witness in $coverageWitnesses) { if (-not $g.Expected.Contains($witness)) { $witnessOk = $false } }
+    if (-not $hiddenSupported) {
+        # The live latest array has no hidden row. Drop only that one golden field. The witness list still
+        # requires the Windows text hidden=a.diag to remain in the golden file.
+        $stripped = $expected.Replace(',"hidden=a.diag"', '')
+        if ($stripped -ceq $expected -or $actual.Contains('"hidden=')) { $match = $false }
+        else { $expected = $stripped; $match = ($actual -ceq $stripped) }
+    } else {
+        $match = ($actual -ceq $expected)
+    }
+    Assert-NC ((Test-NightlyCoreAvailable) -and $witnessOk -and $match) 'coverageParts' ('actual ' + $actual + ' expected ' + $expected)
     Test-NCActiveChunkGolden
 }
 
