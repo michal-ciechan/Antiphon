@@ -230,6 +230,56 @@ public sealed class LandWarmArtifactsTests
         reacquired.ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// CARD-1995: a later land of the same target that does not change the project the last
+    /// build named is refused without another build, and the refusal keeps the saved error.
+    /// </summary>
+    [Test]
+    public async Task C1995_KnownBrokenTargetRefusesWithoutAnotherBuild()
+    {
+        await using var h = new LandingSafetyHarness();
+        const string marker = "C1995-KEEP-THIS-LINE";
+        const string early = "C1995-DROP-THIS-EARLY-LINE";
+        var lines = new List<string> { early };
+        for (var i = 0; i < 45; i++) lines.Add("noise " + i);
+        lines.Add("error CS0103: The name 'Missing' does not exist in the current context [tests/Failing/Failing.csproj]");
+        lines.Add(marker);
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = string.Join("\n", lines) };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        var target = await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <Compile Include="Broken.cs" />
+              </ItemGroup>
+            </Project>
+            """);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "feature.txt"), "unrelated edit\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "unrelated");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(1, "the same broken target was not built again");
+        await using var db = h.CreateContext();
+        var operations = await db.AgentTaskLandings.Where(o => o.TaskId == h.Fixture.TaskId)
+            .OrderBy(o => o.CreatedAt).ToListAsync();
+        operations.Count.ShouldBe(2);
+        operations[0].TargetBeforeSha.ShouldBe(target);
+        operations[1].TargetBeforeSha.ShouldBe(target);
+        operations[1].LastReason.ShouldBe("target_build_broken");
+        var refused = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == h.Fixture.TaskId && e.Type == AgentTaskEventType.LandRefused)
+            .OrderBy(e => e.At).ToListAsync();
+        refused.Last().Detail.ShouldContain(marker);
+        refused.Last().Detail.ShouldNotContain(early);
+    }
+
     [Test]
     public async Task C1380_CancellationQuarantinesCacheAndReleasesBothLocks()
     {
@@ -417,6 +467,7 @@ public sealed class LandWarmArtifactsTests
         public List<string> ResultPaths { get; } = [];
         public List<string> TestArtifactPaths { get; } = [];
         public bool BuildOk { get; set; } = true;
+        public string BuildStdErr { get; set; } = "compiler failed";
         public int? BuildExitCode { get; set; }
         public bool RecordExit { get; set; } = true;
         public bool WriteReport { get; set; } = true;
@@ -431,7 +482,7 @@ public sealed class LandWarmArtifactsTests
                 BuildPaths.Add(output);
                 OnBuild?.Invoke();
                 ct.ThrowIfCancellationRequested();
-                return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : "compiler failed")
+                return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : BuildStdErr)
                     { ExitCode = RecordExit ? BuildExitCode ?? (BuildOk ? 0 : 1) : null });
             }
             var resultsIndex = Array.IndexOf(args, "--results-directory");
