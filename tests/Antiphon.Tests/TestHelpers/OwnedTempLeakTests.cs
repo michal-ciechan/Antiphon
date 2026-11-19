@@ -161,7 +161,8 @@ public sealed class OwnedTempLeakTests
             Directory.CreateSymbolicLink(Path.Combine(container, "link"), outside);
             var exit = RunScriptRaw("scripts/remove-review-scratch.ps1", "-Root", container, "-TempRoot", parent);
             File.Exists(readme).ShouldBeTrue("foreign worktree must stay");
-            File.ReadAllText(readme).ShouldBe("seed\n");
+            // Git for Windows checks the committed blob out as CRLF. The bytes must still be the seed.
+            File.ReadAllText(readme).Replace("\r\n", "\n").ShouldBe("seed\n");
             exit.Code.ShouldNotBe(0);
             exit.Text.ShouldContain("Refusing reparse point inside the scratch container");
             Directory.Exists(container).ShouldBeTrue();
@@ -193,7 +194,9 @@ public sealed class OwnedTempLeakTests
             exit.Code.ShouldNotBe(0);
             exit.Text.ShouldContain("Refusing nested git metadata inside the scratch container");
             Directory.Exists(container).ShouldBeTrue();
-            Git(repo, "worktree", "list", "--porcelain").ShouldContain(nested);
+            // git worktree list prints '/' on Windows, including when the temp path is the long form.
+            NormalizeWorktreePorcelain(Git(repo, "worktree", "list", "--porcelain"))
+                .ShouldContain(FullSlashPath(nested));
         }
         finally
         {
@@ -270,6 +273,26 @@ public sealed class OwnedTempLeakTests
         Git(repo, "add", "README");
         Git(repo, "commit", "-q", "-m", "seed");
         return repo;
+    }
+
+    private static string FullSlashPath(string path) =>
+        Path.GetFullPath(path).Replace('\\', '/');
+
+    private static string NormalizeWorktreePorcelain(string porcelain)
+    {
+        var lines = porcelain.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            const string prefix = "worktree ";
+            if (!lines[i].StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+            var raw = lines[i][prefix.Length..];
+            if (raw.Length == 0)
+                continue;
+            lines[i] = prefix + Path.GetFullPath(raw).Replace('\\', '/');
+        }
+
+        return string.Join('\n', lines);
     }
 
     private static string Git(string cwd, params string[] args)
