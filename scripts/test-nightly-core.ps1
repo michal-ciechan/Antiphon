@@ -1046,6 +1046,86 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
     Assert-NC ($bad.Count -eq 0) 'discoveryWriter' ($bad -join '; ')
 }
 
+# HistoryLinks.cs (Get-NightlyHistoryNodeIdentity, Assert-NightlyHistoryNoLink, the stopped-run seed walk); no
+# PowerShell copy is kept. Identities: one file read twice is one identity, two files differ, a hard link's two
+# names share one, the file index fills its low 32 bits (BY_HANDLE_FILE_INFORMATION read at the right offsets).
+# Refusals: a hard link (both names), file and directory symbolic links, a junction on Windows, a cached directory
+# replaced by another. The walk, whose reads for a directory above the parallel threshold run in parallel, must
+# give what checking each entry in turn gives: the same entries in the same order, and the same first refusal.
+function Test-NCHistoryLinks {
+    $bad = [Collections.Generic.List[string]]::new()
+    $tree = Join-Path $root 'history-links'
+    foreach ($dir in 'many', 'sub/deeper', 'empty') { [void][IO.Directory]::CreateDirectory((Join-Path $tree $dir)) }
+    [IO.File]::WriteAllText((Join-Path $tree 'a.txt'), 'a')
+    [IO.File]::WriteAllText((Join-Path $tree 'sub/b.txt'), 'b')
+    [IO.File]::WriteAllText((Join-Path $tree 'sub/deeper/c.txt'), 'c')
+    for ($i = 0; $i -lt 200; $i++) { [IO.File]::WriteAllText((Join-Path $tree ('many/f' + $i.ToString('000') + '.txt')), [string]$i) }
+    $id = { param([string]$Rel) [Antiphon.Nightly.HistoryNodeIdentity]::Read((Join-Path $tree $Rel), $false) }
+    $refusal = { param([string]$Rel) [Antiphon.Nightly.HistoryLinkCache]::new().Check((Join-Path $tree $Rel), $false).Refusal }
+    # Each entry checked in turn, breadth first, after the root itself (as the seed export checks it first).
+    $oneByOne = {
+        $cache = [Antiphon.Nightly.HistoryLinkCache]::new()
+        [void]$cache.Check($tree, $false)
+        $seen = [Collections.Generic.List[string]]::new()
+        $queue = [Collections.Generic.Queue[string]]::new()
+        $queue.Enqueue($tree)
+        while ($queue.Count -gt 0) {
+            foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($queue.Dequeue())) {
+                $one = $cache.Check($entry, $false)
+                if ($null -ne $one.Refusal) { $seen.Add('refused ' + $one.Refusal); return ($seen -join '|') }
+                $full = [Antiphon.Nightly.HistoryLinkCache]::FullPath($entry)
+                if ($one.Leaf.Directory -and -not $one.Leaf.Linked) { $queue.Enqueue($full) } else { $seen.Add($full) }
+            }
+        }
+        return ($seen -join '|')
+    }
+    $walked = {
+        $cache = [Antiphon.Nightly.HistoryLinkCache]::new()
+        [void]$cache.Check($tree, $false)
+        $walk = $cache.Walk([string[]]@($tree), $false)
+        $text = @($walk.Files | ForEach-Object { $_.FullName })
+        if ($null -ne $walk.Refusal) { $text += ('refused ' + $walk.Refusal) }
+        return ($text -join '|')
+    }
+    $clean = & $oneByOne
+    if ((& $walked) -cne $clean -or ($clean -split '\|').Count -ne 203 -or $clean -like '*refused*') { $bad.Add('walk clean') }
+    $a1 = & $id 'a.txt'; $a2 = & $id 'a.txt'; $b = & $id 'sub/b.txt'; $dir = & $id 'sub'; $gone = & $id 'sub/none.txt'
+    if ($a1.Dev -ne $a2.Dev -or $a1.Ino -ne $a2.Ino -or $a1.Ino -eq $b.Ino -or $a1.Linked -or $a1.Directory -or $a1.Missing) { $bad.Add('identity file') }
+    if (($a1.Ino -band [uint64]4294967295) -eq 0 -or ($b.Ino -band [uint64]4294967295) -eq 0) { $bad.Add('identity index low bits') }
+    if (-not $dir.Directory -or $dir.Linked -or -not $gone.Missing -or $gone.Linked -or $gone.Unreadable) { $bad.Add('identity dir/missing') }
+    # A hard link: both names refused, one identity; the walk stops at the first name it meets, as checking in turn does.
+    New-Item -ItemType HardLink -Path (Join-Path $tree 'many/f100-hard.txt') -Target (Join-Path $tree 'many/f100.txt') | Out-Null
+    $h1 = & $id 'many/f100.txt'; $h2 = & $id 'many/f100-hard.txt'
+    if (-not $h1.Linked -or -not $h2.Linked -or $h1.Dev -ne $h2.Dev -or $h1.Ino -ne $h2.Ino) { $bad.Add('hard link identity') }
+    if ((& $refusal 'many/f100.txt') -cne 'evidence-link' -or (& $refusal 'many/f100-hard.txt') -cne 'evidence-link') { $bad.Add('hard link check') }
+    $hard = & $oneByOne
+    if ((& $walked) -cne $hard -or $hard -notlike '*|refused evidence-link') { $bad.Add('walk hard link: ' + ($hard -split '\|').Count) }
+    [IO.File]::Delete((Join-Path $tree 'many/f100-hard.txt'))
+    # Symbolic links (a file, a directory) and, on Windows, a junction.
+    $links = [ordered]@{ 'sub/file-link.txt' = 'File'; 'sub/dir-link' = 'Directory' }
+    if ($IsWindows) { $links['sub/junction'] = 'Junction' }
+    foreach ($rel in $links.Keys) {
+        $path = Join-Path $tree $rel
+        if ($links[$rel] -ceq 'File') { New-Item -ItemType SymbolicLink -Path $path -Target (Join-Path $tree 'a.txt') | Out-Null }
+        elseif ($links[$rel] -ceq 'Directory') { New-Item -ItemType SymbolicLink -Path $path -Target (Join-Path $tree 'empty') | Out-Null }
+        else { New-Item -ItemType Junction -Path $path -Target (Join-Path $tree 'empty') | Out-Null }
+        $linked = & $id $rel
+        $one = & $oneByOne
+        if (-not $linked.Linked -or (& $refusal $rel) -cne 'evidence-link' -or (& $walked) -cne $one -or $one -notlike '*|refused evidence-link') { $bad.Add($links[$rel] + ' link') }
+        if ($links[$rel] -ceq 'File') { [IO.File]::Delete($path) } else { [IO.Directory]::Delete($path) }
+    }
+    # A cached directory replaced by another (not a link): the parent's recheck sees the new identity.
+    $cache = [Antiphon.Nightly.HistoryLinkCache]::new()
+    $before = $cache.Check((Join-Path $tree 'sub/deeper/c.txt'), $false).Refusal
+    [IO.Directory]::Move((Join-Path $tree 'sub/deeper'), (Join-Path $tree 'sub/deeper-held'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $tree 'sub/deeper'))
+    [IO.File]::WriteAllText((Join-Path $tree 'sub/deeper/c.txt'), 'forged')
+    $after = $cache.Check((Join-Path $tree 'sub/deeper/c.txt'), $false).Refusal
+    if ($null -ne $before -or $after -cne 'evidence-link') { $bad.Add('swap before=' + $before + ' after=' + $after) }
+    if ((& $walked) -cne (& $oneByOne)) { $bad.Add('walk after swap') }
+    Assert-NC ($bad.Count -eq 0) 'historyLinks' ($bad -join '; ')
+}
+
 # PlannedManifestCheck.cs. The planned-manifest partition (duplicates differing only by case, missing in
 # RequiredUids order, one non-ASCII extra, an InvariantCultureIgnoreCase-only match) against the bytes the
 # PowerShell copy wrote; and the compiled census digest order (OrdinalIgnoreCase) over culture-equal and
@@ -1149,7 +1229,7 @@ function Test-NCDiscoveryViewKey {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCDiscoveryWriterMatchesConvertToJson; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 37 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCDiscoveryWriterMatchesConvertToJson; Test-NCHistoryLinks; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 38 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

@@ -73,7 +73,7 @@ function Read-NightlyStoppedSummaryPrefix {
             $n=$fs.Read($buf,0,$buf.Length)
             if($n -le 0){break}
             $ms.Write($buf,0,$n)
-            $cut=[Antiphon.NightlyHistory.SummaryPrefix]::CutBeforeBulk($ms.ToArray())
+            $cut=[Antiphon.Nightly.HistorySummaryPrefix]::CutBeforeBulk($ms.ToArray())
             if($cut -ge 0){break}
         }
         $all=$ms.ToArray()
@@ -231,22 +231,15 @@ function Export-NightlyStoppedRunSeed {
         $inputs[$full]=$digest
         return $text
     }
-    # Walk the run directory and, when plans live beside it, that timing sibling.
-    # One lstat covers each cached ancestor; each entry rechecks only itself and its parent.
-    $files=[Collections.Generic.List[object]]::new()
-    $pending=[Collections.Generic.Queue[string]]::new()
-    $pending.Enqueue($root)
-    if($timingFull){$pending.Enqueue($timingFull)}
-    while($pending.Count -gt 0){
-        $dir=$pending.Dequeue()
-        foreach($entry in [IO.Directory]::EnumerateFileSystemEntries($dir)){
-            Assert-NightlyHistoryNoLink $entry
-            $full=ConvertTo-NightlyHistoryFull $entry
-            $info=Get-NightlyHistoryNodeIdentity $full
-            if($info.Directory -and -not $info.Linked){$pending.Enqueue($full)}
-            else {$files.Add([pscustomobject]@{FullName=$full;Name=[IO.Path]::GetFileName($full);DirectoryName=[IO.Path]::GetDirectoryName($full);Extension=[IO.Path]::GetExtension($full)})}
-        }
-    }
+    # Walk the run directory and, when plans live beside it, that timing sibling (HistoryLinkCache.Walk, compiled):
+    # breadth first, each entry checked as Assert-NightlyHistoryNoLink checks it, its own and its parent's identity
+    # read every time and a cached ancestor once. One directory's reads run in parallel; the checks then run in
+    # entry order, so the refusal is the first a one-by-one walk meets.
+    $walkRoots=@($root)
+    if($timingFull){$walkRoots+=$timingFull}
+    $walk=$script:NightlyHistoryLinkCache.Walk([string[]]$walkRoots,($script:NightlyHistoryForceWindowsIdentity -eq $true))
+    if($null -ne $walk.Refusal){throw $walk.Refusal}
+    $files=$walk.Files
     $planRoot=$(if($timingFull){$timingFull}else{$root})
     $plans=@($files|Where-Object {$_.DirectoryName -ceq $planRoot -and $_.Name -clike 'groups-planned-*.json' -and $_.Name -cne 'groups-planned-index.json'}|Sort-Object FullName)
     if($plans.Count -eq 0){$plans=@($files|Where-Object {$_.DirectoryName -ceq $planRoot -and $_.Name -ceq 'groups-planned.json'})}
