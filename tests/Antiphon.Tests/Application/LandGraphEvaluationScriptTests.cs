@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.RegularExpressions;
+using Antiphon.LandGraphAudit;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -338,6 +340,24 @@ public sealed partial class LandGraphEvaluationTests
         budgetSource.ShouldContain("public const int MeasuredLinuxCopyP95Milliseconds = 3751;", Case.Sensitive);
         budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 30;", Case.Sensitive);
         budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
+    }
+
+    // CARD-2000: R-1 pins the printed host copy and V-1 only admits an 8 s copy.
+    // A wider HostCopyP95Milliseconds still passed both until this equality, and
+    // the source pin refuses a second selector beside that property.
+    [Test]
+    [Timeout(60_000)]
+    public async Task HostCopyP95IsTheDefaultPrintAndProductionClock()
+    {
+        var host = await PrintBudgetAsync(null, null, null);
+        host.Copy.ShouldBe((int)EvaluationBudget.CopyTimeout.TotalSeconds,
+            "the production copy clock and the default --print-budget copy= must be the same seconds");
+        var program = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit", "Program.cs"));
+        Regex.IsMatch(
+            program,
+            @"var copyDefault = windows is null\s*\?\s*EvaluationBudget\.HostCopyP95Milliseconds\b",
+            RegexOptions.CultureInvariant).ShouldBeTrue(
+            "when --windows is omitted, --print-budget must take EvaluationBudget.HostCopyP95Milliseconds");
     }
 
     [Test]
