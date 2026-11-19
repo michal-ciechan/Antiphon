@@ -220,6 +220,17 @@ public class AgentTaskGetPollMetricsTests
         metrics.Record("client", null);
         metrics.Record(github, null);
 
+        AgentTaskGetPollMetrics.RegisteredLabels.OrderBy(label => label, StringComparer.Ordinal).ToArray().ShouldBe(
+            new[]
+            {
+                "board-watch",
+                "card.ps1",
+                "checkpoint-task.ps1",
+                "delegate.ps1",
+                "status-snapshot.ps1",
+                "useagenttask",
+            });
+
         var reading = metrics.Read();
         reading.Total.ShouldBe(8);
         reading.Unknown.ShouldBe(2);
