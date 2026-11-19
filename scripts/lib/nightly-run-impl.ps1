@@ -10,6 +10,7 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 . (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
+. (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside
 # Invoke-AntiphonNightlyRunCore kept the function only for that call and left
@@ -758,6 +759,9 @@ function Invoke-AntiphonNightlyRunCore {
             return [pscustomobject]$result
         }
 
+        # S6b shadow: snapshot the owned checkout before tests. A refusal does not change Full credit.
+        [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'admission' -CheckoutRoot $CheckoutRoot -LogRoot $LogRoot -Sha ([string]$sha))
+
         $phase = 'tests'
         $runName = New-NightlyRunDirectoryName -Utc (Get-NightlyUtcNow) -RunId $RunId
         $runDir = Join-Path $LogRoot $runName
@@ -902,6 +906,7 @@ function Invoke-AntiphonNightlyRunCore {
             # D-2: the state itself names the kind of credit it earns. Master green is the
             # only thing that ever reaches <StateRoot>\last-complete-green.json; RC green
             # lands in the candidate's own store and never touches master readiness.
+            [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'closure' -CheckoutRoot $CheckoutRoot -LogRoot $LogRoot -Sha ([string]$sha))
             $verdict = Get-ReleaseGateCreditVerdict -State $stateObj
             $creditKind = [string]$verdict.CreditKind
             $result.CreditKind = $creditKind
