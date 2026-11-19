@@ -19764,6 +19764,7 @@
     {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceSlotPool.cs",
       "classes": [
+        "C0824WindowsSlotHolderTests",
         "C0824WorkspaceSlotProcessScanTests",
         "C0824WorkspaceSlotRehomeTests",
         "C1817RunnerRepositoryMaintenanceTests"
