@@ -104,6 +104,8 @@ function Get-CheckpointSourceOnce {
 
 function Get-CheckpointSource {
     param([string]$Repository = (Get-Location).Path)
+    # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).
+    $drivers = [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsScope()
     try {
         $root = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel')))).Trim()
         $first = Get-CheckpointSourceOnce $root
@@ -118,7 +120,7 @@ function Get-CheckpointSource {
             observedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
             captureStatus = 'unknown'; errorCode = $code
         }
-    }
+    } finally { $drivers.Dispose() }
 }
 
 function Get-CheckpointSourceState {

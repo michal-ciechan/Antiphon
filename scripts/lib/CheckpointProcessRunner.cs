@@ -114,11 +114,38 @@ namespace Antiphon.Checkpoints
 
         private static readonly object DriverSettingsGate = new object();
         private static readonly Dictionary<string, KeyValuePair<long, string>> DriverSettingsCache = new Dictionary<string, KeyValuePair<long, string>>();
+        private static readonly AsyncLocal<Dictionary<string, string>> ScopedDriverSettings = new AsyncLocal<Dictionary<string, string>>();
+
+        // One driver-settings answer per scope for the same git, directory, environment and query:
+        // a source snapshot's back-to-back reads ask git once instead of before every read. Nothing the
+        // checkpoint starts runs inside a snapshot, and a process still alive then can already run code
+        // itself, so reusing the answer lets no build-written config run a driver. Each new scope (the
+        // next snapshot, after the build) asks again. Callers dispose the scope; it does not outlive them.
+        public static IDisposable DriverSettingsScope()
+        {
+            var previous = ScopedDriverSettings.Value;
+            ScopedDriverSettings.Value = new Dictionary<string, string>(StringComparer.Ordinal);
+            return new DriverSettingsScopeExit(previous);
+        }
+
+        private sealed class DriverSettingsScopeExit : IDisposable
+        {
+            private readonly Dictionary<string, string> _previous;
+            private bool _disposed;
+            public DriverSettingsScopeExit(Dictionary<string, string> previous) { _previous = previous; }
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                ScopedDriverSettings.Value = _previous;
+            }
+        }
 
         private static string DriverSettings(ProcessStartInfo config, int lifetime, CancellationToken cancellationToken, Action<ProcessStartInfo> beforeStart)
         {
             string key = null;
-            if (lifetime > 0)
+            var scoped = ScopedDriverSettings.Value;
+            if (lifetime > 0 || scoped != null)
             {
                 var parts = new List<string> { config.FileName, config.WorkingDirectory };
                 foreach (var pair in config.Environment) parts.Add(pair.Key + "=" + pair.Value);
@@ -127,7 +154,9 @@ namespace Antiphon.Checkpoints
                 key = string.Join("\0", parts);
                 lock (DriverSettingsGate)
                 {
-                    if (DriverSettingsCache.TryGetValue(key, out var cached) && Environment.TickCount64 - cached.Key < lifetime)
+                    if (scoped != null && scoped.TryGetValue(key, out var inScope))
+                        return inScope;
+                    if (lifetime > 0 && DriverSettingsCache.TryGetValue(key, out var cached) && Environment.TickCount64 - cached.Key < lifetime)
                         return cached.Value;
                 }
             }
@@ -135,7 +164,11 @@ namespace Antiphon.Checkpoints
             var stdout = settings.Stdout ?? "";
             // Exit 1 is "no driver configured"; anything else is not an answer worth keeping.
             if (key != null && !settings.TimedOut && (settings.Exit == 0 || settings.Exit == 1))
-                lock (DriverSettingsGate) DriverSettingsCache[key] = new KeyValuePair<long, string>(Environment.TickCount64, stdout);
+                lock (DriverSettingsGate)
+                {
+                    if (lifetime > 0) DriverSettingsCache[key] = new KeyValuePair<long, string>(Environment.TickCount64, stdout);
+                    if (scoped != null) scoped[key] = stdout;
+                }
             return stdout;
         }
 

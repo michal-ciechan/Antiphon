@@ -124,6 +124,41 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     }
 
     [Test]
+    [Timeout(60_000)]
+    public void Driver_settings_scope_asks_once_per_snapshot_and_again_in_the_next(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        CheckpointFixtureProcess.Git(root, "config", "filter.scope.clean", "scope-driver-must-not-run");
+        var starts = new List<string[]>();
+        void Status()
+        {
+            var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root };
+            foreach (var argument in new[] { "-C", root, "status", "--porcelain" }) start.ArgumentList.Add(argument);
+            CheckpointProcessRunner.RunObserved(start, 30_000, true,
+                child => starts.Add(child.ArgumentList.ToArray()), 0, cancellationToken).Exit.ShouldBe(0);
+        }
+        int Lookups() => starts.Count(args => args.Contains("--get-regexp"));
+
+        // One snapshot: the answer is reused, and the driver is still disabled on every read.
+        using (CheckpointProcessRunner.DriverSettingsScope()) { Status(); Status(); Status(); }
+        Lookups().ShouldBe(1);
+        starts.Count(args => args.Contains("status") && args.Contains("filter.scope.clean=")).ShouldBe(3);
+
+        // The next snapshot (after a build that may have changed config) asks again and sees the change.
+        starts.Clear();
+        CheckpointFixtureProcess.Git(root, "config", "diff.scope.textconv", "scope-textconv-must-not-run");
+        using (CheckpointProcessRunner.DriverSettingsScope()) { Status(); Status(); }
+        Lookups().ShouldBe(1);
+        starts.Count(args => args.Contains("status") && args.Contains("diff.scope.textconv=")).ShouldBe(2);
+
+        // Outside any scope every read asks again (the default).
+        starts.Clear();
+        Status(); Status();
+        Lookups().ShouldBe(2);
+    }
+
+    [Test]
     public async Task C1616_admitted_build_deadline_preserves_terminal_receipt()
     {
         await AssertAdmittedBuildTimeoutAsync(cancelBudget: false);

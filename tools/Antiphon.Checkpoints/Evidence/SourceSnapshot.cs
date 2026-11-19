@@ -57,6 +57,8 @@ public sealed class SourceSnapshot
 
     public SourceObservation Capture(string repository)
     {
+        // One filter/textconv driver lookup for this snapshot's reads (see DriverSettingsScope).
+        using var drivers = CheckpointProcessRunner.DriverSettingsScope();
         try
         {
             // Resolve a nested caller to the worktree root before hashing untracked paths.
