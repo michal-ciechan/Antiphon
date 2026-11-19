@@ -170,18 +170,20 @@ function ConvertFrom-NightlyDiscoveryDocument {
 function Read-NightlyDiscoveryDocument {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing discovery {0}' -f $Path) }
-    # The core parses the file's UTF-8 bytes into what ConvertFrom-Json gives (NightlyJson.ReadFile, nightly-core.ps1
-    # Read-NightlyJsonFile). Called directly: nightly-common.ps1 defines a different Read-NightlyJsonFile. It returns
-    # null for anything it cannot vouch for: empty or whitespace text (re-read only then, for its own message), or a
-    # document our writer does not produce.
+    # NightlyJson.ReadDiscovery reads the file's UTF-8 bytes. DiscoveryWriter.WriteFile is the producer:
+    # Invoke-NightlyProduceDiscovery parses the --list-tests diagnostic, then the writer emits UTF-8 with no
+    # BOM, commas only between values, and no comments. A UTF-8 BOM and a trailing comma are still accepted
+    # (the old ConvertFrom-Json reader accepted both, and both are cheap). UTF-16 and comments are refused:
+    # this writer never emits them, and there is no ConvertFrom-Json fallback. discovery-unreadable names
+    # the file and the reason (utf-16, comment, not-object, trailing-content, invalid-json, unreadable).
     Assert-NightlyCoreAvailable 'Read-NightlyDiscoveryDocument'
     $full = [IO.Path]::GetFullPath($Path)
-    $obj = [Antiphon.Nightly.NightlyJson]::ReadFile($full, $false)
-    if ($null -eq $obj) {
-        if ([string]::IsNullOrWhiteSpace([System.IO.File]::ReadAllText($full))) { throw ('empty discovery {0}' -f $Path) }
-        throw ('discovery-unreadable: {0}' -f $Path)
+    $read = [Antiphon.Nightly.NightlyJson]::ReadDiscovery($full)
+    if ($null -eq $read.Document) {
+        if ($read.Reason -ceq 'empty') { throw ('empty discovery {0}' -f $Path) }
+        throw ('discovery-unreadable: {0}: {1}' -f $Path, $read.Reason)
     }
-    return (ConvertFrom-NightlyDiscoveryDocument -Object $obj -ExpectedFormat $script:NightlyDiscoveryFormat)
+    return (ConvertFrom-NightlyDiscoveryDocument -Object $read.Document -ExpectedFormat $script:NightlyDiscoveryFormat)
 }
 
 function Read-NightlyExecutionDocument {
