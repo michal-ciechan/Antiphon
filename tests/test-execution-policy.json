@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "0396d6a543917cd112d2f28dd0adfe8bd80ae549f2803df2bb866a751b261542",
+  "policyHash": "8c376b03c4e012e3700de15e8b99bdbe851187bce4d3c5defe2b6b6df1f782e2",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1439,6 +1439,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: CARD-1884 reads /proc for the production factory and the live scan. The cases remain required on Linux.",
           "owner": "CARD-1884"
+        },
+        {
+          "suite": "session-runner",
+          "class": "C0824WindowsSlotHolderTests",
+          "methods": [
+            "Rm_lock_defers_release"
+          ],
+          "platform": "linux",
+          "reason": "Windows Restart Manager lock probe. The method remains required on Windows.",
+          "owner": "CARD-0824"
         },
         {
           "suite": "antiphon",
