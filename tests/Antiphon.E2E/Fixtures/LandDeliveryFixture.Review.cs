@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -104,13 +105,20 @@ public sealed partial class LandDeliveryFixture
     public async Task<ReviewReceipt> WaitForReviewReceiptAsync(string form = "raw", int seconds = 180)
     {
         AgentTaskLandNotification? note = null;
-        await UntilAsync(async () =>
+        try
         {
-            await using var db = CreateContext();
-            note = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n =>
-                n.TaskId == ReviewTaskId && n.Kind == LandNotificationKind.TaskCompletion && n.ConfirmedAt != null);
-            return note is not null;
-        }, "complete native Review receipt", seconds);
+            await UntilAsync(async () =>
+            {
+                await using var db = CreateContext();
+                note = await db.AgentTaskLandNotifications.AsNoTracking().FirstOrDefaultAsync(n =>
+                    n.TaskId == ReviewTaskId && n.Kind == LandNotificationKind.TaskCompletion && n.ConfirmedAt != null);
+                return note is not null;
+            }, "complete native Review receipt", seconds);
+        }
+        catch (TimeoutException ex)
+        {
+            throw await ReviewReceiptTimeoutAsync(ex);
+        }
 
         await using var observer = CreateContext();
         var stored = await observer.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note!.Id);
@@ -176,6 +184,44 @@ public sealed partial class LandDeliveryFixture
                 && line.Contains(evidenceId.ToString("N"), StringComparison.Ordinal));
         native.ShouldBe(1);
         return new ReviewReceipt(stored, wire, evidenceId, sha);
+    }
+
+    /// <summary>
+    /// C488: Review-task note, queue and outcome projection. Null when no Review task exists.
+    /// Metadata only: no body, wire text or error prose.
+    /// </summary>
+    internal async Task<JsonElement?> CaptureReviewDeliveryStateAsync(AppDbContext db)
+    {
+        if (ReviewTaskId == Guid.Empty) return null;
+        var notes = await db.AgentTaskLandNotifications.AsNoTracking()
+            .Where(n => n.TaskId == ReviewTaskId)
+            .Select(n => new { n.Id, n.Kind, n.State, n.QueueMessageId, n.LastErrorCode, n.EnqueueAttempts })
+            .ToListAsync();
+        var queue = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.SourceTaskId == ReviewTaskId)
+            .Select(m => new { m.Id, m.Status, m.DeliveryAttempts, m.LastDeliveryStartedAt, m.HoldUntil })
+            .ToListAsync();
+        var outcomes = await db.StageOutcomes.AsNoTracking()
+            .Where(o => o.StageTaskId == ReviewTaskId)
+            .Select(o => new { o.Id, o.Stage, o.Outcome, o.StageTaskId, o.SubjectTaskId, o.RecordedAt })
+            .ToListAsync();
+        return JsonSerializer.SerializeToElement(new { notes, queue, outcomes }, ApiJson);
+    }
+
+    private async Task<TimeoutException> ReviewReceiptTimeoutAsync(TimeoutException original)
+    {
+        string scans;
+        try { scans = Directory.GetFiles(Root, "completion-scan-*.observation.json").Length.ToString(); }
+        catch (Exception ex) { scans = "unavailable:" + ex.GetType().Name; }
+        string state;
+        try
+        {
+            await using var db = CreateContext();
+            var review = await CaptureReviewDeliveryStateAsync(db);
+            state = JsonSerializer.Serialize(new { completionScanCount = scans, review }, ApiJson);
+        }
+        catch (Exception ex) { state = "unavailable:" + ex.GetType().Name + " completionScanCount=" + scans; }
+        return new TimeoutException(original.Message + " | reviewState=" + state, original);
     }
 
     public async Task WaitForUnattemptedReviewQueueAsync()
