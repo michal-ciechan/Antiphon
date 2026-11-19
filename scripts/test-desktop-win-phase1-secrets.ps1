@@ -41,6 +41,9 @@ $saved = @{
     ANTIPHON_ORCHESTRATOR = $env:ANTIPHON_ORCHESTRATOR
     CLAUDECODE = $env:CLAUDECODE
     DW3_ARGV_LOG = $env:DW3_ARGV_LOG
+    DW3_CHMOD_FAIL = $env:DW3_CHMOD_FAIL
+    DW3_FAIL_STEP = $env:DW3_FAIL_STEP
+    DW3_MODE_AT_WRITE = $env:DW3_MODE_AT_WRITE
 }
 
 function Restore-SavedEnv {
@@ -87,6 +90,18 @@ function Get-JsonMap([string]$Path) {
     return $map
 }
 
+function Assert-NoStray([string]$Dir, [string]$Name) {
+    $hit = $false
+    if (Test-Path -LiteralPath $Dir) {
+        $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue)
+        foreach ($file in $files) {
+            $n = $file.Name.ToLowerInvariant()
+            if ($n.EndsWith('.dw3part') -or $n.EndsWith('.bak') -or $n.EndsWith('.tmp')) { $hit = $true }
+        }
+    }
+    Assert-True (-not $hit) $Name 'stray temp or backup remains'
+}
+
 function Test-BytesEqual([byte[]]$Left, [byte[]]$Right) {
     if ($null -eq $Left -or $null -eq $Right) { return $false }
     if ($Left.Length -ne $Right.Length) { return $false }
@@ -123,6 +138,9 @@ $chmodShim = Join-Shim @(
     '  done'
     '  printf ''\n'' >> "$log"'
     'fi'
+    'if [ -n "$DW3_CHMOD_FAIL" ]; then'
+    '  exit 1'
+    'fi'
     'exec /bin/chmod "$@"'
 )
 $dotnetShim = Join-Shim @(
@@ -154,10 +172,23 @@ $icaclsShim = Join-Shim @(
 [System.IO.File]::WriteAllText((Join-Path $shim 'icacls'), $icaclsShim.Replace("`r`n", "`n"))
 & /bin/chmod 755 (Join-Path $shim 'chmod') (Join-Path $shim 'dotnet') (Join-Path $shim 'icacls')
 
-function Invoke-Dw3([string[]]$ArgumentList, [string]$Username, [string]$Orchestrator, [string]$ClaudeCode, [string]$LogPath) {
+function Invoke-Dw3 {
+    param(
+        [string[]]$ArgumentList,
+        [string]$Username,
+        [string]$Orchestrator,
+        [string]$ClaudeCode,
+        [string]$LogPath,
+        [string]$ChmodFail,
+        [string]$FailStep,
+        [string]$ModeProbe
+    )
     Set-OrClearEnv 'ANTIPHON_ORCHESTRATOR' $Orchestrator
     Set-OrClearEnv 'CLAUDECODE' $ClaudeCode
     Set-OrClearEnv 'USERNAME' $Username
+    Set-OrClearEnv 'DW3_CHMOD_FAIL' $ChmodFail
+    Set-OrClearEnv 'DW3_FAIL_STEP' $FailStep
+    Set-OrClearEnv 'DW3_MODE_AT_WRITE' $ModeProbe
     $env:PATH = $shim + [System.IO.Path]::PathSeparator + $script:saved.PATH
     $env:DW3_ARGV_LOG = $LogPath
     if (Test-Path -LiteralPath $LogPath) { Remove-Item -LiteralPath $LogPath -Force }
@@ -359,6 +390,229 @@ try {
     Assert-True (Test-BytesEqual $secretBefore ([System.IO.File]::ReadAllBytes($run.SecretFile))) 'second-execute-secret-unchanged' 'secret file changed'
     Assert-True (Test-BytesEqual $jsonBefore ([System.IO.File]::ReadAllBytes($run.UserSecrets))) 'second-execute-user-secrets-unchanged' 'user-secrets changed'
     Assert-True (Test-BytesEqual $phaseBefore ([System.IO.File]::ReadAllBytes($run.Phase1))) 'second-execute-phase1-unchanged' 'phase1 changed'
+
+    $oldDesktop = 'sentinel-old-desktop-secret'
+    $oldFile = "sentinel-old-secret-file`n"
+    $date = '2020-01-02T03:04:05Z'
+
+    $lockedDir = $null
+    $rotateLocked = New-CaseRoot 'rotate-unwritable'
+    try {
+        $lockedJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$oldDesktop`"`n}`n"
+        Write-SeedJson $rotateLocked.UserSecrets $lockedJson
+        Write-SeedJson $rotateLocked.SecretFile $oldFile
+        $lockedJsonBefore = [System.IO.File]::ReadAllBytes($rotateLocked.UserSecrets)
+        $lockedFileBefore = [System.IO.File]::ReadAllBytes($rotateLocked.SecretFile)
+        $lockedDir = Split-Path -Parent $rotateLocked.UserSecrets
+        & /bin/chmod 444 $rotateLocked.UserSecrets
+        & /bin/chmod 555 $lockedDir
+        $lockedRun = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $rotateLocked.UserSecrets, '-SecretFile', $rotateLocked.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $rotateLocked.Log
+        Assert-True ($lockedRun.Exit -eq 2) 'rotate-unwritable-exit' ('exit=' + $lockedRun.Exit)
+        Assert-True ($lockedRun.Text.Contains('REFUSED: failed')) 'rotate-unwritable-refuses' 'missing refusal'
+        Assert-True ($lockedRun.Text.Contains('changed: none')) 'rotate-unwritable-changed-none' 'changed line missing'
+        Assert-True (-not $lockedRun.Text.Contains('changed: secret-file')) 'rotate-unwritable-secret-not-changed' 'secret half changed'
+        Assert-True (-not $lockedRun.Text.Contains('changed: user-secrets')) 'rotate-unwritable-json-not-changed' 'user-secrets half changed'
+        Assert-NoText 'rotate-unwritable-streams-have-no-sentinel' $lockedRun.Text $oldDesktop
+        Assert-NoText 'rotate-unwritable-streams-have-no-file-sentinel' $lockedRun.Text 'sentinel-old-secret-file'
+        Assert-True (Test-BytesEqual $lockedJsonBefore ([System.IO.File]::ReadAllBytes($rotateLocked.UserSecrets))) 'rotate-unwritable-json-unchanged' 'user-secrets bytes changed'
+        Assert-True (Test-BytesEqual $lockedFileBefore ([System.IO.File]::ReadAllBytes($rotateLocked.SecretFile))) 'rotate-unwritable-secret-unchanged' 'secret file bytes changed'
+        Assert-NoStray $rotateLocked.Runner 'rotate-unwritable-no-stray-runner'
+        Assert-NoStray $lockedDir 'rotate-unwritable-no-stray-store'
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($lockedDir) -and (Test-Path -LiteralPath $lockedDir)) {
+            & /bin/chmod 755 $lockedDir
+        }
+        if (Test-Path -LiteralPath $rotateLocked.UserSecrets) { & /bin/chmod 644 $rotateLocked.UserSecrets }
+    }
+
+    $rollback = New-CaseRoot 'rotate-rollback'
+    $rollbackJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$oldDesktop`"`n}`n"
+    Write-SeedJson $rollback.UserSecrets $rollbackJson
+    Write-SeedJson $rollback.SecretFile $oldFile
+    & /bin/chmod 640 $rollback.UserSecrets
+    $rollbackJsonBefore = [System.IO.File]::ReadAllBytes($rollback.UserSecrets)
+    $rollbackFileBefore = [System.IO.File]::ReadAllBytes($rollback.SecretFile)
+    $rollbackRun = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $rollback.UserSecrets, '-SecretFile', $rollback.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $rollback.Log -FailStep 'secret-file-commit'
+    Assert-True ($rollbackRun.Exit -eq 2) 'rotate-rollback-exit' ('exit=' + $rollbackRun.Exit)
+    Assert-True ($rollbackRun.Text.Contains('REFUSED: failed')) 'rotate-rollback-refuses' 'missing refusal'
+    Assert-True ($rollbackRun.Text.Contains('step=secret-file-commit')) 'rotate-rollback-step' 'step line missing'
+    Assert-True ($rollbackRun.Text.Contains('changed: none')) 'rotate-rollback-changed-none' 'changed line missing'
+    Assert-NoText 'rotate-rollback-streams-have-no-sentinel' $rollbackRun.Text $oldDesktop
+    Assert-True (Test-BytesEqual $rollbackJsonBefore ([System.IO.File]::ReadAllBytes($rollback.UserSecrets))) 'rotate-rollback-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (Test-BytesEqual $rollbackFileBefore ([System.IO.File]::ReadAllBytes($rollback.SecretFile))) 'rotate-rollback-secret-unchanged' 'secret file bytes changed'
+    $rollbackMode = (& /bin/stat -c '%a' -- $rollback.UserSecrets).Trim()
+    Assert-True ($rollbackMode -eq '640') 'rotate-rollback-json-mode' ('mode=' + $rollbackMode)
+    Assert-NoStray $rollback.Runner 'rotate-rollback-no-stray-runner'
+    Assert-NoStray (Split-Path -Parent $rollback.UserSecrets) 'rotate-rollback-no-stray-store'
+
+    $tempFail = New-CaseRoot 'temp-write-fail'
+    $tempJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:server2:SharedSecret`": `"$seedServer2`"`n}`n"
+    Write-SeedJson $tempFail.UserSecrets $tempJson
+    & /bin/chmod 640 $tempFail.UserSecrets
+    $tempBefore = [System.IO.File]::ReadAllBytes($tempFail.UserSecrets)
+    $tempRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $tempFail.UserSecrets, '-SecretFile', $tempFail.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $tempFail.Log -FailStep 'user-secrets-write'
+    Assert-True ($tempRun.Exit -eq 2) 'temp-write-fail-exit' ('exit=' + $tempRun.Exit)
+    Assert-True ($tempRun.Text.Contains('REFUSED: failed')) 'temp-write-fail-refuses' 'missing refusal'
+    Assert-True ($tempRun.Text.Contains('step=user-secrets-write')) 'temp-write-fail-step' 'step line missing'
+    Assert-True ($tempRun.Text.Contains('changed: none')) 'temp-write-fail-changed-none' 'changed line missing'
+    Assert-True (Test-BytesEqual $tempBefore ([System.IO.File]::ReadAllBytes($tempFail.UserSecrets))) 'temp-write-fail-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $tempFail.SecretFile)) 'temp-write-fail-no-secret-file' 'secret file remains'
+    Assert-NoStray $tempFail.Runner 'temp-write-fail-no-stray-runner'
+    Assert-NoStray (Split-Path -Parent $tempFail.UserSecrets) 'temp-write-fail-no-stray-store'
+
+    $chmodFail = New-CaseRoot 'chmod-fail'
+    $chmodJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $chmodFail.UserSecrets $chmodJson
+    $chmodBefore = [System.IO.File]::ReadAllBytes($chmodFail.UserSecrets)
+    $chmodRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $chmodFail.UserSecrets, '-SecretFile', $chmodFail.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $chmodFail.Log -ChmodFail '1'
+    Assert-True ($chmodRun.Exit -eq 2) 'chmod-fail-exit' ('exit=' + $chmodRun.Exit)
+    Assert-True ($chmodRun.Text.Contains('REFUSED: failed')) 'chmod-fail-refuses' 'missing refusal'
+    Assert-True ($chmodRun.Text.Contains('step=secret-acl')) 'chmod-fail-step' 'step line missing'
+    Assert-True ($chmodRun.Text.Contains('changed: none')) 'chmod-fail-changed-none' 'changed line missing'
+    Assert-True (-not (Test-Path -LiteralPath $chmodFail.SecretFile)) 'chmod-fail-no-secret-file' 'secret file remains'
+    Assert-True (Test-BytesEqual $chmodBefore ([System.IO.File]::ReadAllBytes($chmodFail.UserSecrets))) 'chmod-fail-json-unchanged' 'user-secrets bytes changed'
+    Assert-NoStray $chmodFail.Runner 'chmod-fail-no-stray-runner'
+    Assert-NoStray (Split-Path -Parent $chmodFail.UserSecrets) 'chmod-fail-no-stray-store'
+
+    $modeCase = New-CaseRoot 'mode-at-write'
+    $modeJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $modeCase.UserSecrets $modeJson
+    & /bin/chmod 640 $modeCase.UserSecrets
+    $modeProbe = Join-Path (Split-Path -Parent $modeCase.SecretFile) 'mode-at-write.txt'
+    $modeRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $modeCase.UserSecrets, '-SecretFile', $modeCase.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $modeCase.Log -ModeProbe $modeProbe
+    Assert-True ($modeRun.Exit -eq 0) 'mode-at-write-exit' ('exit=' + $modeRun.Exit)
+    $modeText = ''
+    if (Test-Path -LiteralPath $modeProbe) { $modeText = [System.IO.File]::ReadAllText($modeProbe) }
+    $modeLines = @($modeText.Split("`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $modeOk = ($modeLines.Count -ge 1)
+    foreach ($line in $modeLines) {
+        if ($line -ne 'mode=600') { $modeOk = $false }
+    }
+    Assert-True $modeOk 'mode-at-write-is-600' ('lines=' + $modeLines.Count)
+    Assert-True ($modeText.IndexOf('644') -lt 0) 'mode-at-write-not-644' '644 was recorded'
+    $modeSecret = ''
+    if (Test-Path -LiteralPath $modeCase.SecretFile) { $modeSecret = ([System.IO.File]::ReadAllText($modeCase.SecretFile)).Trim() }
+    Assert-NoText 'mode-at-write-probe-has-no-secret' $modeText $modeSecret
+    $modeNow = 'missing'
+    if (Test-Path -LiteralPath $modeCase.SecretFile) { $modeNow = (& /bin/stat -c '%a' -- $modeCase.SecretFile).Trim() }
+    Assert-True ($modeNow -eq '600') 'mode-at-write-final-600' ('mode=' + $modeNow)
+    Assert-NoStray $modeCase.Runner 'mode-at-write-no-stray'
+
+    $nested = New-CaseRoot 'nested-date'
+    $nestedJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"when`": `"$date`",`n  `"nested`": { `"k`": `"$date`", `"n`": 1 }`n}`n"
+    Write-SeedJson $nested.UserSecrets $nestedJson
+    & /bin/chmod 640 $nested.UserSecrets
+    $nestedRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $nested.UserSecrets, '-SecretFile', $nested.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $nested.Log
+    Assert-True ($nestedRun.Exit -eq 0) 'nested-date-exit' ('exit=' + $nestedRun.Exit)
+    $nestedRaw = ''
+    if (Test-Path -LiteralPath $nested.UserSecrets) { $nestedRaw = [System.IO.File]::ReadAllText($nested.UserSecrets) }
+    $dateCount = 0
+    $dateAt = 0
+    while ($dateAt -ge 0 -and $dateAt -lt $nestedRaw.Length) {
+        $foundAt = $nestedRaw.IndexOf($date, $dateAt)
+        if ($foundAt -lt 0) { break }
+        $dateCount++
+        $dateAt = $foundAt + $date.Length
+    }
+    Assert-True ($dateCount -ge 2) 'nested-date-string-kept' ('count=' + $dateCount)
+    Assert-True ($nestedRaw.Contains('"k": "' + $date + '"')) 'nested-date-object-kept' 'nested string missing'
+    Assert-True ($nestedRaw.Contains('"n": 1')) 'nested-date-number-kept' 'nested number missing'
+    Assert-True ($nestedRaw.Contains($seedKeep)) 'nested-date-preserves-connection-string' 'connection string missing'
+    Assert-True ($nestedRaw.IndexOf('/Date(') -lt 0) 'nested-date-not-coerced' 'coerced date token appeared'
+    $nestedSecret = ''
+    if (Test-Path -LiteralPath $nested.SecretFile) { $nestedSecret = ([System.IO.File]::ReadAllText($nested.SecretFile)).Trim() }
+    $nestedMap = $null
+    if (Test-Path -LiteralPath $nested.UserSecrets) { $nestedMap = Get-JsonMap $nested.UserSecrets }
+    $nestedStored = ''
+    if ($null -ne $nestedMap -and $nestedMap.ContainsKey('PhoneHomeRunner:Runners:desktop-win:SharedSecret')) {
+        $nestedStored = [string]$nestedMap['PhoneHomeRunner:Runners:desktop-win:SharedSecret']
+    }
+    Assert-True ($nestedSecret.Length -eq 64 -and $nestedStored -ceq $nestedSecret) 'nested-date-secret-matches' ('length=' + $nestedSecret.Length)
+    Assert-NoText 'nested-date-streams-have-no-secret' $nestedRun.Text $nestedSecret
+    Assert-NoText 'nested-date-streams-have-no-sentinel' $nestedRun.Text $seedKeep
+    $nestedMode = (& /bin/stat -c '%a' -- $nested.UserSecrets).Trim()
+    Assert-True ($nestedMode -eq '640') 'nested-date-json-mode' ('mode=' + $nestedMode)
+    Assert-NoStray $nested.Runner 'nested-date-no-stray'
+
+    $present = New-CaseRoot 'secret-file-present'
+    $presentJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $present.UserSecrets $presentJson
+    Write-SeedJson $present.SecretFile $oldFile
+    $presentJsonBefore = [System.IO.File]::ReadAllBytes($present.UserSecrets)
+    $presentFileBefore = [System.IO.File]::ReadAllBytes($present.SecretFile)
+    $presentRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $present.UserSecrets, '-SecretFile', $present.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $present.Log
+    Assert-True ($presentRun.Exit -eq 2) 'secret-file-present-exit' ('exit=' + $presentRun.Exit)
+    Assert-True ($presentRun.Text.Contains('REFUSED: secret-file-present')) 'secret-file-present-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $presentJsonBefore ([System.IO.File]::ReadAllBytes($present.UserSecrets))) 'secret-file-present-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (Test-BytesEqual $presentFileBefore ([System.IO.File]::ReadAllBytes($present.SecretFile))) 'secret-file-present-file-unchanged' 'secret file bytes changed'
+    Assert-NoText 'secret-file-present-streams-have-no-sentinel' $presentRun.Text 'sentinel-old-secret-file'
+    Assert-NoStray $present.Runner 'secret-file-present-no-stray'
+
+    $turned = New-CaseRoot 'rotate-success'
+    $turnedJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:server2:SharedSecret`": `"$seedServer2`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$oldDesktop`"`n}`n"
+    Write-SeedJson $turned.UserSecrets $turnedJson
+    Write-SeedJson $turned.SecretFile $oldFile
+    & /bin/chmod 640 $turned.UserSecrets
+    $turnedRun = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $turned.UserSecrets, '-SecretFile', $turned.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $turned.Log
+    Assert-True ($turnedRun.Exit -eq 0) 'rotate-success-exit' ('exit=' + $turnedRun.Exit)
+    $turnedSecret = ''
+    if (Test-Path -LiteralPath $turned.SecretFile) { $turnedSecret = ([System.IO.File]::ReadAllText($turned.SecretFile)).Trim() }
+    Assert-True ($turnedSecret.Length -eq 64 -and $turnedSecret -cmatch '^[0-9a-f]{64}$') 'rotate-success-shape' ('length=' + $turnedSecret.Length)
+    Assert-True ($turnedSecret -cne $oldDesktop -and $turnedSecret -cne 'sentinel-old-secret-file') 'rotate-success-replaces-old' 'old value kept'
+    $turnedMap = $null
+    if (Test-Path -LiteralPath $turned.UserSecrets) { $turnedMap = Get-JsonMap $turned.UserSecrets }
+    $turnedStored = ''
+    $turnedKept = $false
+    $turnedServer2 = $false
+    if ($null -ne $turnedMap) {
+        if ($turnedMap.ContainsKey('PhoneHomeRunner:Runners:desktop-win:SharedSecret')) {
+            $turnedStored = [string]$turnedMap['PhoneHomeRunner:Runners:desktop-win:SharedSecret']
+        }
+        $turnedKept = ([string]$turnedMap['ConnectionStrings:DefaultConnection']) -ceq $seedKeep
+        $turnedServer2 = ([string]$turnedMap['PhoneHomeRunner:Runners:server2:SharedSecret']) -ceq $seedServer2
+    }
+    Assert-True ($turnedStored -ceq $turnedSecret) 'rotate-success-halves-match' 'values differ'
+    Assert-True $turnedKept 'rotate-success-preserves-connection-string' 'pre-existing key changed'
+    Assert-True $turnedServer2 'rotate-success-preserves-server2' 'pre-existing key changed'
+    Assert-NoText 'rotate-success-streams-have-no-secret' $turnedRun.Text $turnedSecret
+    Assert-NoText 'rotate-success-streams-have-no-old' $turnedRun.Text $oldDesktop
+    Assert-NoText 'rotate-success-argv-has-no-secret' $turnedRun.Log $turnedSecret
+    $turnedMode = (& /bin/stat -c '%a' -- $turned.SecretFile).Trim()
+    $turnedJsonMode = (& /bin/stat -c '%a' -- $turned.UserSecrets).Trim()
+    Assert-True ($turnedMode -eq '600') 'rotate-success-secret-mode' ('mode=' + $turnedMode)
+    Assert-True ($turnedJsonMode -eq '640') 'rotate-success-json-mode' ('mode=' + $turnedJsonMode)
+    Assert-NoStray $turned.Runner 'rotate-success-no-stray'
+
+    $bad = New-CaseRoot 'malformed-json'
+    $badText = "{not-json`n"
+    Write-SeedJson $bad.UserSecrets $badText
+    $badBefore = [System.IO.File]::ReadAllBytes($bad.UserSecrets)
+    $badRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $bad.UserSecrets, '-SecretFile', $bad.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $bad.Log
+    Assert-True ($badRun.Exit -eq 2) 'malformed-json-exit' ('exit=' + $badRun.Exit)
+    Assert-True ($badRun.Text.Contains('REFUSED: user-secrets-malformed')) 'malformed-json-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $badBefore ([System.IO.File]::ReadAllBytes($bad.UserSecrets))) 'malformed-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $bad.SecretFile)) 'malformed-json-no-secret-file' 'secret file created'
+    Assert-NoStray $bad.Runner 'malformed-json-no-stray'
+
+    $arrayCase = New-CaseRoot 'non-object-array'
+    Write-SeedJson $arrayCase.UserSecrets "[1]`n"
+    $arrayBefore = [System.IO.File]::ReadAllBytes($arrayCase.UserSecrets)
+    $arrayRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $arrayCase.UserSecrets, '-SecretFile', $arrayCase.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $arrayCase.Log
+    Assert-True ($arrayRun.Exit -eq 2) 'non-object-array-exit' ('exit=' + $arrayRun.Exit)
+    Assert-True ($arrayRun.Text.Contains('REFUSED: user-secrets-malformed')) 'non-object-array-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $arrayBefore ([System.IO.File]::ReadAllBytes($arrayCase.UserSecrets))) 'non-object-array-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $arrayCase.SecretFile)) 'non-object-array-no-secret-file' 'secret file created'
+
+    $dateDoc = New-CaseRoot 'non-object-date'
+    Write-SeedJson $dateDoc.UserSecrets ('"' + $date + '"' + "`n")
+    $dateDocBefore = [System.IO.File]::ReadAllBytes($dateDoc.UserSecrets)
+    $dateDocRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $dateDoc.UserSecrets, '-SecretFile', $dateDoc.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $dateDoc.Log
+    Assert-True ($dateDocRun.Exit -eq 2) 'non-object-date-exit' ('exit=' + $dateDocRun.Exit)
+    Assert-True ($dateDocRun.Text.Contains('REFUSED: user-secrets-malformed')) 'non-object-date-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $dateDocBefore ([System.IO.File]::ReadAllBytes($dateDoc.UserSecrets))) 'non-object-date-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $dateDoc.SecretFile)) 'non-object-date-no-secret-file' 'secret file created'
+    Assert-NoStray $dateDoc.Runner 'non-object-date-no-stray'
 }
 finally {
     Restore-SavedEnv
