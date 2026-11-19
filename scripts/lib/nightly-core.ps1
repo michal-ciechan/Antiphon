@@ -181,8 +181,16 @@ function Read-NightlyJsonFile([string]$Path, [switch]$StripBom, [string[]]$Omit)
 # fully qualified is written by ConvertTo-Json.
 function Write-NightlyJsonFile([string]$Path, $Value, [int]$Depth = 8) {
     Assert-NightlyCoreAvailable 'Write-NightlyJsonFile'
-    if ([IO.Path]::IsPathFullyQualified($Path) -and [Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { return }
-    $Value | ConvertTo-Json -Depth $Depth | Set-Content -LiteralPath $Path -Encoding UTF8
+    # No ConvertTo-Json fallback (CARD-2005): it builds the whole document as one string and ran out of memory
+    # on a full run's summary. A value the core cannot write is an error, and no part-written file is left.
+    if (-not [IO.Path]::IsPathFullyQualified($Path)) { throw ('nightly-json-write-failed path-not-absolute ' + $Path) }
+    $reason = ''
+    try { if (-not [Antiphon.Nightly.NightlyJson]::WriteFile($Path, $Value, $Depth)) { $reason = 'unsupported-value-or-depth' } }
+    catch { $reason = $_.Exception.GetBaseException().GetType().Name }
+    if ($reason) {
+        try { [IO.File]::Delete($Path) } catch { }
+        throw ('nightly-json-write-failed ' + $reason + ' ' + $Path)
+    }
 }
 
 # Evidence file system (EvidenceFiles in Antiphon.Nightly/EvidenceFiles.cs). Off unless a nightly run turns it

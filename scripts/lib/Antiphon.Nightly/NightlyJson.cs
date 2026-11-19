@@ -15,8 +15,8 @@
 // numbers in their shortest round-trip form, line ends are the platform's. Dictionaries (string or stringified
 // keys), lists and PSCustomObjects (their properties, in order) are containers; strings, chars, booleans, numbers,
 // enums (as numbers, like ConvertTo-Json), DateTime, DateTimeOffset, Guid and Uri are values. It returns false (the
-// file possibly part-written, for the caller to write with ConvertTo-Json) for anything else or for containers
-// nested deeper than maxDepth, which ConvertTo-Json would truncate to strings.
+// file possibly part-written, which the caller deletes before failing) for anything else or for containers
+// nested deeper than maxDepth.
 using System;
 using System.Buffers;
 using System.Collections;
@@ -205,8 +205,8 @@ namespace Antiphon.Nightly
             MaxDepth = 1024,
         };
 
-        /// <summary>Writes the file and returns true, or returns false (the file possibly part-written) when the
-        /// caller must write it with ConvertTo-Json.</summary>
+        /// <summary>Writes the file and returns true, or returns false (the file possibly part-written) for a value
+        /// it cannot write. File errors are thrown. The caller fails either way: there is no other writer.</summary>
         public static bool WriteFile(string path, object value, int maxDepth)
         {
             try
@@ -224,8 +224,6 @@ namespace Antiphon.Nightly
                 return true;
             }
             catch (GiveUp) { return false; }
-            catch (IOException) { return false; }
-            catch (UnauthorizedAccessException) { return false; }
         }
 
         private static void WriteValue(Utf8JsonWriter writer, object value, int depth, int maxDepth)

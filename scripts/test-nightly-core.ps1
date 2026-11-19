@@ -850,18 +850,20 @@ function Test-NCJsonFilesMatchFallback {
         h = @{ a = 1 }; e = @(); one = @(1); nested = @(@(1, 2), @()); list = [Collections.Generic.List[object]]@(1, 'two')
         pso = [pscustomobject]@{ z = 1; y = [ordered]@{ x = @() } }; rows = @(foreach ($i in 1..3) { [ordered]@{ id = "r$i"; exclusions = @([ordered]@{ uid = "u$i" }) } })
     }
-    # The core writes the first; ConvertTo-Json writes the others (an arbitrary object, nesting past -Depth).
-    $cases = @(@{ Value = $value; Depth = 8 }, @{ Value = [ordered]@{ a = [IO.DirectoryInfo]::new($dir) }; Depth = 1 }, @{ Value = @{ deep = @{ a = @{ b = @{ c = 1 } } } }; Depth = 2 })
+    # The core writes the first. The others (an arbitrary object, nesting past -Depth) are refused: there is no
+    # ConvertTo-Json fallback, and a refused write leaves no file.
+    $refused = @(@{ Value = [ordered]@{ a = [IO.DirectoryInfo]::new($dir) }; Depth = 1 }, @{ Value = @{ deep = @{ a = @{ b = @{ c = 1 } } } }; Depth = 2 })
     $written = Join-Path $dir 'written.json'
-    # Each file against what ConvertTo-Json writes for the same value, read back.
-    $wrote = @(foreach ($case in $cases) {
-        Write-NightlyJsonFile -Path $written -Value $case.Value -Depth $case.Depth 3>$null
-        , ([IO.File]::ReadAllText($written) | ConvertFrom-Json)
-    }) | ConvertTo-Json -Depth 14 -Compress
-    $reference = @(foreach ($case in $cases) {
-        , ($case.Value | ConvertTo-Json -Depth $case.Depth 3>$null | ConvertFrom-Json)
-    }) | ConvertTo-Json -Depth 14 -Compress
-    Assert-NC ($wrote -ceq $reference -and $wrote.Contains('"id":"r3"')) 'jsonWrite' ('wrote ' + $wrote + ' reference ' + $reference)
+    Write-NightlyJsonFile -Path $written -Value $value -Depth 8
+    $wrote = [IO.File]::ReadAllText($written) | ConvertFrom-Json | ConvertTo-Json -Depth 14 -Compress
+    $reference = $value | ConvertTo-Json -Depth 8 3>$null | ConvertFrom-Json | ConvertTo-Json -Depth 14 -Compress
+    $refusals = 0
+    foreach ($case in $refused) {
+        $target = Join-Path $dir ('refused-' + $refusals + '.json')
+        try { Write-NightlyJsonFile -Path $target -Value $case.Value -Depth $case.Depth } catch { if ($_.Exception.Message.StartsWith('nightly-json-write-failed ') -and -not [IO.File]::Exists($target)) { $refusals++ } }
+    }
+    try { Write-NightlyJsonFile -Path 'relative.json' -Value $value -Depth 8 } catch { if ($_.Exception.Message.StartsWith('nightly-json-write-failed path-not-absolute')) { $refusals++ } }
+    Assert-NC ($wrote -ceq $reference -and $wrote.Contains('"id":"r3"') -and $refusals -eq 3) 'jsonWrite' ('refusals ' + $refusals + ' wrote ' + $wrote + ' reference ' + $reference)
 }
 
 function Test-NCPlannerPartsGolden {
