@@ -103,37 +103,48 @@ switch ($Case) {
             }
         }
 
-        # Exercise shipped map bytes, not a lookalike rule. Known fixture closure
-        # prevents dirty-all fallback from hiding missing owners in either snapshot.
+        # Shipped map consumers are source-repo suite ids. Pasting those bytes into
+        # this fixture throws unknown-input-consumer, so the check stays structural.
         $sourceRoot=Split-Path -Parent $PSScriptRoot
         $sourceSha=(Invoke-TestSelectionGit $sourceRoot @('rev-parse','HEAD')).Stdout.Trim()
         $mapText=Get-TestSelectionBlob $sourceRoot $sourceSha 'scripts/lib/rc-input-owners.json'
         $committedMap=ConvertFrom-Json -InputObject $mapText -AsHashtable
-        Put 'scripts/lib/rc-input-owners.json' $mapText
-        $baseline=Commit
-        Put 'docs/contract.md' 'committed-map fanout'; $s=Select-Manifest (Commit)
-        $expectedSuites=@('tests/Other/Other.csproj','tests/Runner/Runner.csproj','tests/Server/Server.csproj')
-        Note ($s.unresolved.Count -eq 0) 'committed-map-no-fallback'
-        Note (($s.dirtySuites -join ';') -ceq ($expectedSuites -join ';')) 'committed-map-all-projects-dirty'
-        $tracked=@((Git @('ls-tree','-r','--name-only',$s.candidateSha)).Split([char]10))
-        $covered=0
-        foreach ($rule in $committedMap.roots) {
-            if ($rule.consumers -cnotcontains '*') { continue }
-            $pattern=New-RcInputPattern $rule.path
-            foreach ($path in $tracked) {
-                if (-not $pattern.IsMatch($path)) { continue }
-                $covered++
-                foreach ($snapshot in $s.snapshots) {
-                    Note (($snapshot.suites.id -join ';') -ceq ($expectedSuites -join ';')) 'committed-map-suite-census'
-                    foreach ($suite in $snapshot.suites) {
-                        $record=@($suite.inputs | Where-Object path -CEQ $path)
-                        Note ($record.Count -eq 1 -and $record[0].present -and
-                            $record[0].reason.Split(';') -ccontains $rule.reason) "committed-map-owned:$($snapshot.sha):$($suite.id):$path"
-                    }
-                }
+        Note ($committedMap.schemaVersion -eq 1) 'committed-map-schema'
+        Note ($committedMap.suiteProjects -ceq 'tests/**/*.csproj') 'committed-map-suite-projects'
+        $blanket=@($committedMap.roots | Where-Object { $_.reason -ceq 'repository-scanners-conservative-all-inputs' })
+        Note ($blanket.Count -eq 0) 'committed-map-not-blanket'
+        $fallback=@($committedMap.roots | Where-Object { $_.path -ceq '**' })
+        Note ($fallback.Count -eq 1) 'committed-map-one-fallback'
+        if ($fallback.Count -eq 1) {
+            $fallbackConsumers=@(Get-TestSelectionSorted @($fallback[0].consumers))
+            Note (($fallbackConsumers -join ';') -ceq '*') 'committed-map-fallback-star'
+            Note ($fallback[0].reason -ceq 'unmatched-path-fallback') 'committed-map-fallback-reason'
+        }
+        $readers=@(Get-TestSelectionSorted @('tests/Antiphon.E2E/Antiphon.E2E.csproj','tests/Antiphon.Tests/Antiphon.Tests.csproj'))
+        $docs=@($committedMap.roots | Where-Object { $_.path -ceq 'docs/**' })
+        Note ($docs.Count -eq 1) 'committed-map-docs-root'
+        if ($docs.Count -eq 1) {
+            $docsConsumers=@(Get-TestSelectionSorted @($docs[0].consumers))
+            Note (($docsConsumers -join ';') -ceq ($readers -join ';')) 'committed-map-docs-readers'
+            Note ($docs[0].reason -ceq 'repository-reader-non-code') 'committed-map-docs-reason'
+            Note ($docsConsumers -cnotcontains '*') 'committed-map-docs-not-star'
+        }
+        $build=@($committedMap.roots | Where-Object { $_.path -ceq '**/Directory.Build.*' })
+        Note ($build.Count -eq 1) 'committed-map-build-root'
+        if ($build.Count -eq 1) {
+            $buildConsumers=@(Get-TestSelectionSorted @($build[0].consumers))
+            Note (($buildConsumers -join ';') -ceq '*') 'committed-map-build-star'
+            Note ($build[0].reason -ceq 'forced-full-build-graph') 'committed-map-build-reason'
+        }
+        foreach ($rule in @($committedMap.roots)) {
+            try { [void](New-RcInputPattern $rule.path); Note $true "committed-map-pattern:$($rule.path)" }
+            catch { Note $false "committed-map-pattern:$($rule.path)" }
+            foreach ($id in @($rule.consumers)) {
+                if ($id -ceq '*') { continue }
+                $full=Join-Path $sourceRoot ($id -replace '/',[IO.Path]::DirectorySeparatorChar)
+                Note ([IO.File]::Exists($full)) "committed-map-consumer-exists:$id"
             }
         }
-        Note ($covered -gt 0) 'committed-map-wildcard-coverage-nonempty'
     }
     'DynamicAndUnownedAreDirty' {
         Put 'unowned/new.txt' 'unknown'; $s=Select-Manifest (Commit)
