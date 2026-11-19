@@ -62,7 +62,61 @@ public sealed class C0824WindowsSlotAdmissionTests
         decision.ShouldBe(new WorkspaceSlotDecision(false, "windows_roles_none", Recorded: true, At: at));
     }
 
-    private sealed class WindowsRunnerDirectory(string runnerId) : ISessionRunnerDirectory
+    [Test]
+    public async Task Listed_investigate_runner_leases()
+    {
+        // The Windows role string admits Investigate. Global roles stay "*". The recorded reason is the
+        // Windows list's "listed", and catalogue id "desktop" stays legacy even when that id is listed.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var listedId = Guid.Parse("08240000-0000-4000-8000-000000000002");
+        var desktopId = Guid.Parse("08240000-0000-4000-8000-000000000003");
+        var at = new DateTime(2026, 11, 19, 12, 0, 0, DateTimeKind.Utc);
+        db.AgentTasks.Add(TaskRow(listedId, "desktop-win", at));
+        db.AgentTasks.Add(TaskRow(desktopId, RunnerPlatformWire.DesktopId, at));
+        await db.SaveChangesAsync();
+
+        var service = new RemoteWorkspaceService(
+            new WindowsRunnerDirectory("desktop-win", RunnerPlatformWire.DesktopId),
+            new UnusedGit(),
+            NullLogger<RemoteWorkspaceService>.Instance,
+            settings: Options.Create(new DelegationSettings
+            {
+                WorkspaceSlotsEnabled = true,
+                WorkspaceSlotRoles = "*",
+                WindowsSlotRoles = "Investigate",
+                WindowsSlotRunnerIds = ["desktop-win", RunnerPlatformWire.DesktopId],
+            }));
+        var listedExpectation = Expectation(listedId, "desktop-win");
+        var listed = await service.ResolveSlotDecisionAsync(db, db.AgentTasks.Single(t => t.Id == listedId), listedExpectation, at, CancellationToken.None);
+        listed.ShouldBe(new WorkspaceSlotDecision(true, WorkspaceSlotRoleVerdict.Listed, Recorded: true, At: at));
+        db.AgentTaskEvents.Local.Single(e => e.AgentTaskId == listedId).Detail.ShouldContain("reason=listed");
+
+        var desktop = await service.ResolveSlotDecisionAsync(
+            db, db.AgentTasks.Single(t => t.Id == desktopId), Expectation(desktopId, RunnerPlatformWire.DesktopId), at, CancellationToken.None);
+        desktop.Slot.ShouldBeFalse();
+        desktop.Reason.ShouldBe(WorkspaceSlotRoleVerdict.WindowsRunnerDesktop);
+    }
+
+    private static AgentTask TaskRow(Guid taskId, string runnerId, DateTime at) => new()
+    {
+        Id = taskId,
+        RootTaskId = taskId,
+        Title = "windows slot",
+        Goal = "windows slot",
+        Role = AgentTaskRole.Investigate,
+        RunnerId = runnerId,
+        Attempt = 1,
+        WorktreeBranch = "feat/card-task-" + taskId.ToString("N")[^8..],
+        CreatedAt = at,
+    };
+
+    private static MirrorBindingExpectation Expectation(Guid taskId, string runnerId) => new(
+        taskId, 1, Guid.Parse("08240000-0000-4000-8000-0000000000aa"), runnerId,
+        Guid.Parse("08240000-0000-4000-8000-0000000000bb").ToString("D"),
+        "/work/antiphon", "refs/heads/feat/card-task-08240000", new string('a', 40));
+
+    private sealed class WindowsRunnerDirectory(params string[] runnerIds) : ISessionRunnerDirectory
     {
         private readonly FakeSessionRunnerClient _local = new();
 
@@ -79,17 +133,17 @@ public sealed class C0824WindowsSlotAdmissionTests
         public Task<RunnerInventory> GetInventoryAsync(string? id, CancellationToken ct) =>
             Task.FromResult<RunnerInventory>(new RunnerInventory.Unavailable(RunnerInventoryReasons.PhoneHomeUnavailable));
 
-        public IReadOnlyList<string> KnownRunnerIds => [runnerId];
+        public IReadOnlyList<string> KnownRunnerIds => runnerIds;
 
         public Guid? GetLiveStoreId(string? id) =>
-            string.Equals(id, runnerId, StringComparison.Ordinal) ? Guid.Parse("08240000-0000-4000-8000-0000000000bb") : null;
+            runnerIds.Contains(id, StringComparer.Ordinal) ? Guid.Parse("08240000-0000-4000-8000-0000000000bb") : null;
 
         public Task<RunnerDescriptor?> DescribeAsync(string? id, CancellationToken ct)
         {
-            if (!string.Equals(id, runnerId, StringComparison.Ordinal))
+            if (id is null || !runnerIds.Contains(id, StringComparer.Ordinal))
                 return Task.FromResult<RunnerDescriptor?>(null);
             return Task.FromResult<RunnerDescriptor?>(new RunnerDescriptor(
-                runnerId, runnerId, RunnerPlatformWire.Windows, DateTimeOffset.UnixEpoch,
+                id, id, RunnerPlatformWire.Windows, DateTimeOffset.UnixEpoch,
                 true, true, false, 2,
                 new RunnerCapabilitiesDto("ModernConPty", "ModernConPty", "test", false,
                     Features: [RunnerCapabilityFeatures.WorkspaceSlotV1],
