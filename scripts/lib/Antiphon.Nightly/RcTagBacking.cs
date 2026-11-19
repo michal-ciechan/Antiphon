@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace Antiphon.Nightly
@@ -206,15 +207,36 @@ namespace Antiphon.Nightly
             return false;
         }
 
+        private static void RejectDuplicateProperties(string json)
+        {
+            var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), new JsonReaderOptions
+            {
+                CommentHandling = JsonCommentHandling.Disallow,
+                AllowTrailingCommas = false,
+                MaxDepth = 16
+            });
+            var names = new Stack<HashSet<string>>();
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.StartObject)
+                    names.Push(new HashSet<string>(StringComparer.Ordinal));
+                else if (reader.TokenType == JsonTokenType.EndObject)
+                    names.Pop();
+                else if (reader.TokenType == JsonTokenType.PropertyName && !names.Peek().Add(reader.GetString()))
+                    throw new ChainInvalid();
+            }
+        }
+
         private static Chain Parse(string chainJson)
         {
             if (string.IsNullOrEmpty(chainJson) || chainJson.Length > MaxJsonChars)
                 throw new ChainInvalid();
+            // net9 JsonDocumentOptions has no AllowDuplicateProperties; that member is net10.
+            RejectDuplicateProperties(chainJson);
             var options = new JsonDocumentOptions
             {
                 CommentHandling = JsonCommentHandling.Disallow,
                 AllowTrailingCommas = false,
-                AllowDuplicateProperties = false,
                 MaxDepth = 16
             };
             using var document = JsonDocument.Parse(chainJson, options);
