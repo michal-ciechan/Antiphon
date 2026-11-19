@@ -46,6 +46,9 @@ $saved = @{
     DW3_MODE_AT_WRITE = $env:DW3_MODE_AT_WRITE
     DW3_REPLACE_FAULT = $env:DW3_REPLACE_FAULT
     DW3_RESTORE_FAULT = $env:DW3_RESTORE_FAULT
+    DW3_OWNER_FAIL = $env:DW3_OWNER_FAIL
+    DW3_DELETE_FAULT = $env:DW3_DELETE_FAULT
+    DW3_CLEAR_PROBE = $env:DW3_CLEAR_PROBE
 }
 
 function Restore-SavedEnv {
@@ -185,7 +188,10 @@ function Invoke-Dw3 {
         [string]$FailStep,
         [string]$ModeProbe,
         [string]$ReplaceFault,
-        [string]$RestoreFault
+        [string]$RestoreFault,
+        [string]$OwnerFail,
+        [string]$DeleteFault,
+        [string]$ClearProbe
     )
     Set-OrClearEnv 'ANTIPHON_ORCHESTRATOR' $Orchestrator
     Set-OrClearEnv 'CLAUDECODE' $ClaudeCode
@@ -195,6 +201,9 @@ function Invoke-Dw3 {
     Set-OrClearEnv 'DW3_MODE_AT_WRITE' $ModeProbe
     Set-OrClearEnv 'DW3_REPLACE_FAULT' $ReplaceFault
     Set-OrClearEnv 'DW3_RESTORE_FAULT' $RestoreFault
+    Set-OrClearEnv 'DW3_OWNER_FAIL' $OwnerFail
+    Set-OrClearEnv 'DW3_DELETE_FAULT' $DeleteFault
+    Set-OrClearEnv 'DW3_CLEAR_PROBE' $ClearProbe
     $env:PATH = $shim + [System.IO.Path]::PathSeparator + $script:saved.PATH
     $env:DW3_ARGV_LOG = $LogPath
     if (Test-Path -LiteralPath $LogPath) { Remove-Item -LiteralPath $LogPath -Force }
@@ -762,6 +771,199 @@ try {
     Assert-True (Test-BytesEqual $dateDocBefore ([System.IO.File]::ReadAllBytes($dateDoc.UserSecrets))) 'non-object-date-unchanged' 'user-secrets bytes changed'
     Assert-True (-not (Test-Path -LiteralPath $dateDoc.SecretFile)) 'non-object-date-no-secret-file' 'secret file created'
     Assert-NoStray $dateDoc.Runner 'non-object-date-no-stray'
+
+    $strandedCanary = 'stranded-canary-9c2e'
+    $strandedPartName = 'aa11aa11aa11aa11aa11aa11aa11aa11.dw3part'
+    $strandedBakName = 'bb22bb22bb22bb22bb22bb22bb22bb22.dw3bak'
+    $stranded = New-CaseRoot 'stranded-list'
+    $strandedJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $stranded.UserSecrets $strandedJson
+    $strandedBefore = [System.IO.File]::ReadAllBytes($stranded.UserSecrets)
+    $strandedStore = Split-Path -Parent $stranded.UserSecrets
+    $strandedPart = Join-Path $strandedStore $strandedPartName
+    $strandedBak = Join-Path $stranded.Secrets $strandedBakName
+    Write-SeedJson $strandedPart $strandedCanary
+    Write-SeedJson $strandedBak $strandedCanary
+    $strandedRun = Invoke-Dw3 -ArgumentList @('-UserSecretsPath', $stranded.UserSecrets, '-SecretFile', $stranded.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $stranded.Log
+    Assert-True ($strandedRun.Exit -eq 0) 'stranded-list-exit' ('exit=' + $strandedRun.Exit)
+    Assert-True ($strandedRun.Text.Contains('stranded: ' + $strandedPart)) 'stranded-list-names-part' 'part name missing'
+    Assert-True ($strandedRun.Text.Contains('stranded: ' + $strandedBak)) 'stranded-list-names-backup' 'backup name missing'
+    Assert-True ($strandedRun.Text.Contains('recovery: rename the .dw3bak back over a missing target, or re-run -Execute -Rotate')) 'stranded-list-recovery' 'recovery text missing'
+    Assert-True ($strandedRun.Text.Contains('sweep: refused')) 'stranded-list-sweep-refused' 'sweep was not refused'
+    Assert-NoText 'stranded-list-no-contents' $strandedRun.Text $strandedCanary
+    Assert-True (Test-Path -LiteralPath $strandedPart) 'stranded-list-keeps-part' 'part was swept'
+    Assert-True (Test-Path -LiteralPath $strandedBak) 'stranded-list-keeps-backup' 'backup was swept'
+    Assert-True (Test-BytesEqual $strandedBefore ([System.IO.File]::ReadAllBytes($stranded.UserSecrets))) 'stranded-list-json-unchanged' 'user-secrets bytes changed'
+
+    $strandedExec = New-CaseRoot 'stranded-execute'
+    Write-SeedJson $strandedExec.UserSecrets $strandedJson
+    $strandedExecStore = Split-Path -Parent $strandedExec.UserSecrets
+    $strandedExecPart = Join-Path $strandedExecStore $strandedPartName
+    $strandedExecBak = Join-Path $strandedExec.Secrets $strandedBakName
+    Write-SeedJson $strandedExecPart $strandedCanary
+    Write-SeedJson $strandedExecBak $strandedCanary
+    $strandedExecRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $strandedExec.UserSecrets, '-SecretFile', $strandedExec.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $strandedExec.Log
+    Assert-True ($strandedExecRun.Exit -eq 0) 'stranded-execute-exit' ('exit=' + $strandedExecRun.Exit)
+    Assert-True ($strandedExecRun.Text.Contains('stranded: ' + $strandedExecPart)) 'stranded-execute-names-part' 'part name missing'
+    Assert-True ($strandedExecRun.Text.Contains('sweep: refused')) 'stranded-execute-sweep-refused' 'sweep was not refused'
+    Assert-NoText 'stranded-execute-no-contents' $strandedExecRun.Text $strandedCanary
+    Assert-True ((Test-Path -LiteralPath $strandedExecPart) -and (Test-Path -LiteralPath $strandedExecBak)) 'stranded-execute-keeps-files' 'stranded file was swept'
+
+    $strandedSweep = New-CaseRoot 'stranded-sweep'
+    Write-SeedJson $strandedSweep.UserSecrets $strandedJson
+    $strandedSweepStore = Split-Path -Parent $strandedSweep.UserSecrets
+    $strandedSweepPart = Join-Path $strandedSweepStore $strandedPartName
+    $strandedSweepBak = Join-Path $strandedSweep.Secrets $strandedBakName
+    $strandedKeep = Join-Path $strandedSweep.Secrets 'keep.txt'
+    Write-SeedJson $strandedSweepPart $strandedCanary
+    Write-SeedJson $strandedSweepBak $strandedCanary
+    Write-SeedJson $strandedKeep 'keep-me'
+    $strandedSweepRun = Invoke-Dw3 -ArgumentList @('-SweepStranded', '-UserSecretsPath', $strandedSweep.UserSecrets, '-SecretFile', $strandedSweep.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $strandedSweep.Log
+    Assert-True ($strandedSweepRun.Exit -eq 0) 'stranded-sweep-exit' ('exit=' + $strandedSweepRun.Exit)
+    Assert-True ($strandedSweepRun.Text.Contains('swept: ' + $strandedSweepPart)) 'stranded-sweep-names-part' 'swept part missing'
+    Assert-True ($strandedSweepRun.Text.Contains('swept: ' + $strandedSweepBak)) 'stranded-sweep-names-backup' 'swept backup missing'
+    Assert-True (-not $strandedSweepRun.Text.Contains('sweep: refused')) 'stranded-sweep-not-refused' 'sweep stayed refused'
+    Assert-NoText 'stranded-sweep-no-contents' $strandedSweepRun.Text $strandedCanary
+    Assert-True (-not (Test-Path -LiteralPath $strandedSweepPart)) 'stranded-sweep-removes-part' 'part remains'
+    Assert-True (-not (Test-Path -LiteralPath $strandedSweepBak)) 'stranded-sweep-removes-backup' 'backup remains'
+    Assert-True (Test-Path -LiteralPath $strandedKeep) 'stranded-sweep-keeps-other' 'unrelated file removed'
+    Assert-True (-not (Test-Path -LiteralPath $strandedSweep.SecretFile)) 'stranded-sweep-no-secret-file' 'secret file created'
+
+    $examplePath = Join-Path $PSScriptRoot 'phone-home.phase1.example.json'
+    $ownerFail = New-CaseRoot 'owner-fail-temp'
+    $ownerFailJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $ownerFail.UserSecrets $ownerFailJson
+    & /bin/chmod 640 $ownerFail.UserSecrets
+    if (Test-Path -LiteralPath $examplePath) { [System.IO.File]::Copy($examplePath, $ownerFail.Phase1, $false) }
+    $ownerFailBefore = [System.IO.File]::ReadAllBytes($ownerFail.UserSecrets)
+    $ownerFailRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $ownerFail.UserSecrets, '-SecretFile', $ownerFail.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $ownerFail.Log -OwnerFail 'temp'
+    Assert-True ($ownerFailRun.Exit -eq 2) 'owner-fail-temp-exit' ('exit=' + $ownerFailRun.Exit)
+    Assert-True ($ownerFailRun.Text.Contains('owner-only-failed: ')) 'owner-fail-temp-names-file' 'file was not named'
+    Assert-True ($ownerFailRun.Text.Contains('.dw3part')) 'owner-fail-temp-names-part' 'temp suffix missing'
+    Assert-True ($ownerFailRun.Text.Contains('REFUSED: failed')) 'owner-fail-temp-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $ownerFailBefore ([System.IO.File]::ReadAllBytes($ownerFail.UserSecrets))) 'owner-fail-temp-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $ownerFail.SecretFile)) 'owner-fail-temp-no-secret-file' 'secret file created'
+    Assert-NoText 'owner-fail-temp-no-sentinel' $ownerFailRun.Text $seedKeep
+
+    $ownerBak = New-CaseRoot 'owner-fail-backup'
+    $ownerBakJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $ownerBak.UserSecrets $ownerBakJson
+    & /bin/chmod 640 $ownerBak.UserSecrets
+    if (Test-Path -LiteralPath $examplePath) { [System.IO.File]::Copy($examplePath, $ownerBak.Phase1, $false) }
+    $ownerBakBefore = [System.IO.File]::ReadAllBytes($ownerBak.UserSecrets)
+    $ownerBakRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $ownerBak.UserSecrets, '-SecretFile', $ownerBak.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $ownerBak.Log -ReplaceFault 'user-secrets' -OwnerFail 'backup'
+    Assert-True ($ownerBakRun.Exit -eq 2) 'owner-fail-backup-exit' ('exit=' + $ownerBakRun.Exit)
+    Assert-True ($ownerBakRun.Text.Contains('owner-only-failed: ')) 'owner-fail-backup-names-file' 'file was not named'
+    Assert-True ($ownerBakRun.Text.Contains('.dw3bak')) 'owner-fail-backup-names-backup' 'backup suffix missing'
+    Assert-True (Test-BytesEqual $ownerBakBefore ([System.IO.File]::ReadAllBytes($ownerBak.UserSecrets))) 'owner-fail-backup-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $ownerBak.SecretFile)) 'owner-fail-backup-no-secret-file' 'secret file created'
+    Assert-NoText 'owner-fail-backup-no-sentinel' $ownerBakRun.Text $seedKeep
+
+    $deleteFault = New-CaseRoot 'delete-recheck'
+    $deleteJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $deleteFault.UserSecrets $deleteJson
+    & /bin/chmod 640 $deleteFault.UserSecrets
+    if (Test-Path -LiteralPath $examplePath) { [System.IO.File]::Copy($examplePath, $deleteFault.Phase1, $false) }
+    $deleteBefore = [System.IO.File]::ReadAllBytes($deleteFault.UserSecrets)
+    $deleteRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $deleteFault.UserSecrets, '-SecretFile', $deleteFault.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $deleteFault.Log -ReplaceFault 'user-secrets' -DeleteFault '1'
+    Assert-True ($deleteRun.Exit -ne 0) 'delete-recheck-exit' ('exit=' + $deleteRun.Exit)
+    Assert-True ($deleteRun.Text.Contains('kept: ')) 'delete-recheck-names-kept' 'kept line missing'
+    Assert-True ($deleteRun.Text.Contains('.dw3bak')) 'delete-recheck-names-backup' 'backup suffix missing'
+    $deleteStore = Split-Path -Parent $deleteFault.UserSecrets
+    $deleteLeft = $false
+    if (Test-Path -LiteralPath $deleteStore) {
+        $deleteFiles = @(Get-ChildItem -LiteralPath $deleteStore -Force -File -ErrorAction SilentlyContinue)
+        foreach ($deleteFile in $deleteFiles) {
+            if ($deleteFile.Name.ToLowerInvariant().EndsWith('.dw3bak')) { $deleteLeft = $true }
+        }
+    }
+    Assert-True $deleteLeft 'delete-recheck-backup-remains' 'backup was removed'
+    Assert-True (Test-BytesEqual $deleteBefore ([System.IO.File]::ReadAllBytes($deleteFault.UserSecrets))) 'delete-recheck-json-unchanged' 'user-secrets bytes changed'
+    Assert-NoText 'delete-recheck-no-sentinel' $deleteRun.Text $seedKeep
+
+    $clearCase = New-CaseRoot 'clear-bytes'
+    $clearJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $clearCase.UserSecrets $clearJson
+    & /bin/chmod 640 $clearCase.UserSecrets
+    $clearProbe = Join-Path (Split-Path -Parent $clearCase.UserSecrets) 'clear-probe.txt'
+    $clearRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $clearCase.UserSecrets, '-SecretFile', $clearCase.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $clearCase.Log -ClearProbe $clearProbe
+    Assert-True ($clearRun.Exit -eq 0) 'clear-bytes-exit' ('exit=' + $clearRun.Exit)
+    $clearText = ''
+    if (Test-Path -LiteralPath $clearProbe) { $clearText = [System.IO.File]::ReadAllText($clearProbe) }
+    Assert-True ($clearText.Contains('cleared=yes')) 'clear-bytes-cleared' 'probe missing or not cleared'
+    Assert-True ($clearText -match 'held=[1-9]') 'clear-bytes-held' ('probe=' + $clearText)
+    $clearSecret = ''
+    if (Test-Path -LiteralPath $clearCase.SecretFile) { $clearSecret = ([System.IO.File]::ReadAllText($clearCase.SecretFile)).Trim() }
+    Assert-NoText 'clear-bytes-probe-has-no-secret' $clearText $clearSecret
+    Assert-NoText 'clear-bytes-streams-have-no-secret' $clearRun.Text $clearSecret
+    Assert-NoText 'clear-bytes-probe-has-no-sentinel' $clearText $seedKeep
+
+    $phaseFail = New-CaseRoot 'phase1-failure'
+    $phaseFailJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $phaseFail.UserSecrets $phaseFailJson
+    & /bin/chmod 640 $phaseFail.UserSecrets
+    $phaseFailBefore = [System.IO.File]::ReadAllBytes($phaseFail.UserSecrets)
+    $phaseFailRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $phaseFail.UserSecrets, '-SecretFile', $phaseFail.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $phaseFail.Log -FailStep 'user-secrets-write'
+    Assert-True ($phaseFailRun.Exit -eq 2) 'phase1-failure-exit' ('exit=' + $phaseFailRun.Exit)
+    Assert-True ($phaseFailRun.Text.Contains('changed: phase1-config')) 'phase1-failure-names-change' 'phase1 change missing'
+    Assert-True (-not $phaseFailRun.Text.Contains('changed: none')) 'phase1-failure-not-none' 'changed: none while phase1 was created'
+    $phaseFailSame = $false
+    if ((Test-Path -LiteralPath $phaseFail.Phase1) -and (Test-Path -LiteralPath $examplePath)) {
+        $phaseFailSame = Test-BytesEqual ([System.IO.File]::ReadAllBytes($phaseFail.Phase1)) ([System.IO.File]::ReadAllBytes($examplePath))
+    }
+    Assert-True $phaseFailSame 'phase1-failure-copies-example' 'phase1 bytes differ'
+    Assert-True (Test-BytesEqual $phaseFailBefore ([System.IO.File]::ReadAllBytes($phaseFail.UserSecrets))) 'phase1-failure-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $phaseFail.SecretFile)) 'phase1-failure-no-secret-file' 'secret file created'
+    Assert-NoText 'phase1-failure-no-sentinel' $phaseFailRun.Text $seedKeep
+
+    $phaseKept = New-CaseRoot 'phase1-already'
+    Write-SeedJson $phaseKept.UserSecrets $phaseFailJson
+    & /bin/chmod 640 $phaseKept.UserSecrets
+    if (Test-Path -LiteralPath $examplePath) { [System.IO.File]::Copy($examplePath, $phaseKept.Phase1, $false) }
+    $phaseKeptRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $phaseKept.UserSecrets, '-SecretFile', $phaseKept.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $phaseKept.Log -FailStep 'user-secrets-write'
+    Assert-True ($phaseKeptRun.Exit -eq 2) 'phase1-already-exit' ('exit=' + $phaseKeptRun.Exit)
+    Assert-True ($phaseKeptRun.Text.Contains('changed: none')) 'phase1-already-changed-none' 'changed line missing'
+    Assert-True (-not $phaseKeptRun.Text.Contains('changed: phase1-config')) 'phase1-already-not-created' 'phase1 was reported as created'
+
+    $helperSrc = [System.IO.File]::ReadAllText($helper)
+    Assert-True ($helperSrc.IndexOf('$matches') -lt 0) 'repair-variable-does-not-shadow-matches' 'automatic matches variable is assigned'
+
+    $caseVariant = 'sentinel-case-secret'
+    $caseRoot = New-CaseRoot 'case-variant'
+    $caseJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"phonehomerunner:runners:desktop-win:sharedsecret`": `"$caseVariant`"`n}`n"
+    Write-SeedJson $caseRoot.UserSecrets $caseJson
+    & /bin/chmod 640 $caseRoot.UserSecrets
+    $caseBefore = [System.IO.File]::ReadAllBytes($caseRoot.UserSecrets)
+    $caseDry = Invoke-Dw3 -ArgumentList @('-UserSecretsPath', $caseRoot.UserSecrets, '-SecretFile', $caseRoot.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $caseRoot.Log
+    Assert-True ($caseDry.Exit -eq 0) 'case-variant-dry-exit' ('exit=' + $caseDry.Exit)
+    Assert-True ($caseDry.Text.Contains('shared-secret-key: ambiguous')) 'case-variant-dry-ambiguous' 'ambiguous line missing'
+    Assert-NoText 'case-variant-dry-no-value' $caseDry.Text $caseVariant
+    Assert-True (Test-BytesEqual $caseBefore ([System.IO.File]::ReadAllBytes($caseRoot.UserSecrets))) 'case-variant-dry-unchanged' 'user-secrets bytes changed'
+    $caseRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $caseRoot.UserSecrets, '-SecretFile', $caseRoot.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath (Join-Path $root 'case-variant-exec.log')
+    Assert-True ($caseRun.Exit -eq 2) 'case-variant-exit' ('exit=' + $caseRun.Exit)
+    Assert-True ($caseRun.Text.Contains('REFUSED: shared-secret-ambiguous')) 'case-variant-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $caseBefore ([System.IO.File]::ReadAllBytes($caseRoot.UserSecrets))) 'case-variant-unchanged' 'duplicate key was written'
+    Assert-True (-not (Test-Path -LiteralPath $caseRoot.SecretFile)) 'case-variant-no-secret-file' 'secret file created'
+    Assert-NoText 'case-variant-no-value' $caseRun.Text $caseVariant
+    $caseRotate = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $caseRoot.UserSecrets, '-SecretFile', $caseRoot.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath (Join-Path $root 'case-variant-rotate.log')
+    Assert-True ($caseRotate.Exit -eq 2) 'case-variant-rotate-exit' ('exit=' + $caseRotate.Exit)
+    Assert-True ($caseRotate.Text.Contains('REFUSED: shared-secret-ambiguous')) 'case-variant-rotate-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $caseBefore ([System.IO.File]::ReadAllBytes($caseRoot.UserSecrets))) 'case-variant-rotate-unchanged' 'duplicate key was written'
+    Assert-NoText 'case-variant-rotate-no-value' $caseRotate.Text $caseVariant
+
+    $nestedVariant = 'sentinel-nested-secret'
+    $nestedRoot = New-CaseRoot 'nested-phone-home'
+    $nestedPhone = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner`": { `"Runners`": { `"desktop-win`": { `"SharedSecret`": `"$nestedVariant`" } } }`n}`n"
+    Write-SeedJson $nestedRoot.UserSecrets $nestedPhone
+    & /bin/chmod 640 $nestedRoot.UserSecrets
+    $nestedBefore = [System.IO.File]::ReadAllBytes($nestedRoot.UserSecrets)
+    $nestedPhoneRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $nestedRoot.UserSecrets, '-SecretFile', $nestedRoot.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $nestedRoot.Log
+    Assert-True ($nestedPhoneRun.Exit -eq 2) 'nested-phone-home-exit' ('exit=' + $nestedPhoneRun.Exit)
+    Assert-True ($nestedPhoneRun.Text.Contains('REFUSED: shared-secret-ambiguous')) 'nested-phone-home-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $nestedBefore ([System.IO.File]::ReadAllBytes($nestedRoot.UserSecrets))) 'nested-phone-home-unchanged' 'duplicate key was written'
+    Assert-True (-not (Test-Path -LiteralPath $nestedRoot.SecretFile)) 'nested-phone-home-no-secret-file' 'secret file created'
+    Assert-NoText 'nested-phone-home-no-value' $nestedPhoneRun.Text $nestedVariant
+    Assert-NoText 'nested-phone-home-no-sentinel' $nestedPhoneRun.Text $seedKeep
 }
 finally {
     Restore-SavedEnv
