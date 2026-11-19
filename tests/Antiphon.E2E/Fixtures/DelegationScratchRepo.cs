@@ -23,9 +23,17 @@ public sealed class DelegationScratchRepo : IDisposable
 
         var scriptDir = System.IO.Path.Combine(Path, "scripts");
         Directory.CreateDirectory(scriptDir);
-        File.Copy(
-            System.IO.Path.Combine(root, "scripts", "delegate.ps1"),
-            System.IO.Path.Combine(scriptDir, "delegate.ps1"));
+        var delegateSource = System.IO.Path.Combine(root, "scripts", "delegate.ps1");
+        File.Copy(delegateSource, System.IO.Path.Combine(scriptDir, "delegate.ps1"));
+        // delegate.ps1 dot-sources each lib from its own directory. A lone copy exits
+        // before HTTP because scripts/lib/antiphon-caller.ps1 is not in the scratch repo.
+        foreach (var relative in DotSourcedLibraries(delegateSource))
+        {
+            var source = System.IO.Path.Combine(root, "scripts", ToPlatformRelative(relative));
+            var destination = System.IO.Path.Combine(scriptDir, ToPlatformRelative(relative));
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination);
+        }
 
         File.WriteAllText(
             System.IO.Path.Combine(Path, "README.md"),
@@ -76,6 +84,39 @@ public sealed class DelegationScratchRepo : IDisposable
         using var process = System.Diagnostics.Process.Start(psi);
         process?.WaitForExit(30_000);
     }
+
+    private static IEnumerable<string> DotSourcedLibraries(string scriptPath)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in File.ReadLines(scriptPath))
+        {
+            var relative = TryDotSourcedLibrary(line);
+            if (relative is not null && seen.Add(relative))
+                yield return relative;
+        }
+    }
+
+    private static string? TryDotSourcedLibrary(string line)
+    {
+        var trimmed = line.Trim();
+        const string marker = "(Join-Path $PSScriptRoot '";
+        var start = trimmed.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0 || !trimmed.StartsWith('.'))
+            return null;
+        start += marker.Length;
+        var end = trimmed.IndexOf('\'', start);
+        if (end <= start)
+            return null;
+        var relative = trimmed[start..end].Replace('\\', '/');
+        if (!relative.StartsWith("lib/", StringComparison.Ordinal)
+            || relative.Contains("..", StringComparison.Ordinal)
+            || relative.Contains(':', StringComparison.Ordinal))
+            return null;
+        return relative;
+    }
+
+    private static string ToPlatformRelative(string relative) =>
+        relative.Replace('/', System.IO.Path.DirectorySeparatorChar);
 
     private static string FindRepoRoot()
     {
