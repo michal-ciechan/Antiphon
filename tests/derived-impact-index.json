@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 334,
+      "classes": 335,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 9,
+      "classes": 10,
       "reason": "allowlist"
     },
     {
