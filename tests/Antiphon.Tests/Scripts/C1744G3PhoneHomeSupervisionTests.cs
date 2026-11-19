@@ -5,8 +5,8 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// CARD-1744 S4. Phone-home env, autostart config refusal, and the AppHost
-/// launch guard. The harness is pure functions and file parses, so the same
-/// cases run on Windows and Linux.
+/// launch guard. Fail-closed rows run the real autostart script against a
+/// stub run-daemon. The same cases run on Windows and Linux.
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -69,6 +69,39 @@ public sealed class C1744G3PhoneHomeSupervisionTests
             "C1744G3 autostart-refusals.malformed",
             "C1744G3 autostart-refusals.unc-root",
             "C1744G3 autostart-refusals.secret-missing");
+
+    [Test]
+    public Task Autostart_unreadable_config_exits_before_run_daemon() =>
+        ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1",
+            "C1744G3",
+            "autostart-unreadable",
+            3,
+            "C1744G3 autostart-unreadable.exit",
+            "C1744G3 autostart-unreadable.log",
+            "C1744G3 autostart-unreadable.stub");
+
+    [Test]
+    public Task Autostart_helper_load_failure_exits_before_run_daemon() =>
+        ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1",
+            "C1744G3",
+            "autostart-helper-load",
+            3,
+            "C1744G3 autostart-helper-load.exit",
+            "C1744G3 autostart-helper-load.log",
+            "C1744G3 autostart-helper-load.stub");
+
+    [Test]
+    public Task Autostart_refused_config_exits_before_run_daemon() =>
+        ScriptHarness.RunHarnessCaseAsync(
+            "test-windows-phone-home-runner.ps1",
+            "C1744G3",
+            "autostart-refused-script",
+            3,
+            "C1744G3 autostart-refused-script.exit",
+            "C1744G3 autostart-refused-script.log",
+            "C1744G3 autostart-refused-script.stub");
 
     [Test]
     public Task AppHost_launchers_refuse_while_phase2_config_exists() =>
