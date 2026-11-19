@@ -77,7 +77,7 @@ function Get-RcDirtyLaunchOrder {
         [void]$allowed.Add($name)
     }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $states = @{}
+    $states = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $omitted = New-Object System.Collections.Generic.List[string]
     foreach ($row in @($Obligations)) {
         $key = [string](Get-RcDirtyProp $row 'key')
@@ -85,8 +85,7 @@ function Get-RcDirtyLaunchOrder {
         $disposition = [string](Get-RcDirtyProp $row 'disposition')
         if (($disposition -cne 'Dirty') -and ($disposition -cne 'Sample') -and ($disposition -cne 'Carry')) { throw 'invalid-disposition' }
         if (-not $seen.Add($key)) { throw 'duplicate-obligation' }
-        if ($disposition -ceq 'Carry') { $omitted.Add($key); continue }
-        $states[$key] = @{
+        $states.Add($key, @{
             key = $key
             disposition = $disposition
             failed = $false
@@ -95,7 +94,7 @@ function Get-RcDirtyLaunchOrder {
             interruptSha = ''
             sawGreen = $false
             fixes = New-Object System.Collections.Generic.List[string]
-        }
+        })
     }
     foreach ($fix in @($Fixes)) {
         if ($null -eq $fix) { continue }
@@ -162,6 +161,11 @@ function Get-RcDirtyLaunchOrder {
     $ranked = New-Object System.Collections.Generic.List[object]
     foreach ($key in @($states.Keys)) {
         $state = $states[$key]
+        if ($state.disposition -ceq 'Carry') {
+            if ($state.failed -or $state.interrupted) { throw 'carry-with-open-failure' }
+            $omitted.Add([string]$state.key)
+            continue
+        }
         if ($state.failed) { $band = 'failed'; $rank = 0 }
         elseif ($state.interrupted) { $band = 'interrupted'; $rank = 1 }
         elseif (-not $state.sawGreen) { $band = 'not-run'; $rank = 2 }
