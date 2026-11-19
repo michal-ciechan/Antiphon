@@ -29,6 +29,13 @@ public sealed class PhoneHomeWorkspaceSlotSettings
     public DayOfWeek ColdResetDayOfWeek { get; set; } = DayOfWeek.Sunday;
     public int ColdResetHourUtc { get; set; } = 2;
 
+    /// <summary>
+    /// CARD-0824 S3 D-10. Empty means no fence. When set, cold and scheduled wipes wait while this
+    /// path exists or cannot be read. Warm lease and release continue. The desktop environment sets
+    /// the qualification lock in S4; the repository default stays empty.
+    /// </summary>
+    public string RcFencePath { get; set; } = "";
+
     /// <summary>H-5: evidence retained per task before the wipe, and for how long.</summary>
     public long EvidenceCapBytes { get; set; } = 256L * 1024 * 1024;
     public int EvidenceRetentionDays { get; set; } = 7;
