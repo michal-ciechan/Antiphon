@@ -487,7 +487,12 @@ POST   /api/agent-tasks/{id}/land/v2         same handler as `/land` (CARD-0495)
                                              advertises exact `land-v2`. An old process has
                                              no v2 route (404/405, never redirected to `/land`).
                                              Body `{ expectedSourceSha, reviewEvidenceId?,
-                                             adoptFromTaskId?, recoverReviewedSource?, verify? }`.
+                                             adoptFromTaskId?, recoverReviewedSource?, verify?,
+                                             ignoreKnownBrokenTarget? }`.
+                                             `ignoreKnownBrokenTarget: true` (CARD-1995,
+                                             `delegate.ps1 -IgnoreKnownBrokenTarget`) clears
+                                             the recorded broken targets so this land builds
+                                             instead of a `target_build_broken` refusal.
                                              `adoptFromTaskId` lands a reviewed source through
                                              the original owner; `recoverReviewedSource` uses
                                              the owner's own reviewed branch. Fresh work requires a full

@@ -320,7 +320,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 {
                     RecordBuildSlot(op, completedVerification, request?.Id);
                     if (completedVerification?.Passed != true)
-                        RememberFailure(op, completedVerification);
+                        await RememberFailureAsync(op, completedVerification, ct);
                     Require(completedVerification?.Passed == true, "verification_failed",
                         LandVerificationFailure.EventDetail(completedVerification?.FailureOutput));
                     op.VerificationPassed = true;
@@ -357,7 +357,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                         new(op.TaskId, op.Id, request?.Id, CommonDirectory: common, TargetRef: op.TargetFullRef), ct);
                     RecordBuildSlot(op, verification, request?.Id);
                     if (!verification.Passed)
-                        RememberFailure(op, verification);
+                        await RememberFailureAsync(op, verification, ct);
                     Require(verification.Passed, "verification_failed",
                         LandVerificationFailure.EventDetail(verification.FailureOutput));
                     op.VerificationPassed = true;
@@ -1168,31 +1168,66 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         if (!condition) throw new LandingRefusal(reason, detail);
     }
 
-    private static void RememberFailure(AgentTaskLanding op, LandingVerification? verification)
+    private async Task RememberFailureAsync(AgentTaskLanding op, LandingVerification? verification, CancellationToken ct)
     {
         if (verification is null) return;
         op.VerificationFailureStep = string.IsNullOrEmpty(verification.FailureStep) ? null
             : verification.FailureStep.Length <= 40 ? verification.FailureStep : verification.FailureStep[..40];
         op.VerificationFailureOutput = string.IsNullOrEmpty(verification.FailureOutput) ? null : verification.FailureOutput;
         op.VerificationFailingProjects = verification.FailureStep == "build"
-            ? LandVerificationFailure.ProjectList(verification.FailureOutput, op.LandWorktreePath)
+            ? await TargetBreakAsync(op, LandVerificationFailure.ProjectList(verification.FailureOutput, op.LandWorktreePath), ct)
             : null;
     }
 
     /// <summary>
-    /// CARD-1995: the latest build of this target SHA failed, and this diff does not change that
-    /// project. A later passing build, a test failure (the build itself passed), an unreadable
-    /// project, or a diff that touches the project all fall through to a real build.
+    /// CARD-1995 D-1: the land build compiled this candidate rebased onto the target, not the target
+    /// alone. Its failing projects describe the target only when this candidate's own diff left every
+    /// one of them, the projects they reference and the build inputs untouched. Otherwise, or when
+    /// that cannot be read, nothing is recorded and later lands build.
+    /// </summary>
+    private async Task<string?> TargetBreakAsync(AgentTaskLanding op, string? projects, CancellationToken ct)
+    {
+        if (projects is null || !GitObjectId.IsFull(op.TargetBeforeSha) || !GitObjectId.IsFull(op.RebasedSourceSha))
+            return null;
+        try
+        {
+            return await LandVerificationFailure.DiffTouchesClosureAsync(git, op.RepositoryPath, op.TargetBeforeSha,
+                op.RebasedSourceSha!, SplitProjects(projects), ct) == false ? projects : null;
+        }
+        catch (Exception)
+        {
+            // Any doubt records nothing; the verification failure itself is still reported.
+            return null;
+        }
+    }
+
+    private static string[] SplitProjects(string projects) =>
+        projects.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// CARD-1995: a build of this target SHA failed within <see cref="LandingSettings.KnownBrokenTargetMaxAgeMinutes"/>,
+    /// that failing land's own diff did not cause it (see <see cref="TargetBreakAsync"/>), no later build of the
+    /// target passed or reached tests, and this diff changes none of the failing projects, their references
+    /// or the build inputs. A refused land records nothing, so it never renews the record.
+    /// <c>Landing:RefuseKnownBrokenTarget=false</c>, <c>Landing:ForceVerificationBuild</c> and a request's
+    /// <c>ignoreKnownBrokenTarget</c> (which clears the records) all build instead.
     /// </summary>
     private async Task RefuseKnownBrokenTargetAsync(AgentTaskLanding op, CancellationToken ct)
     {
+        var settings = landingSettings?.Value ?? new LandingSettings();
+        if (!settings.RefuseKnownBrokenTarget || settings.ForceVerificationBuild || settings.KnownBrokenTargetMaxAgeMinutes <= 0)
+            return;
         if (!GitObjectId.IsFull(op.TargetBeforeSha) || !GitObjectId.IsFull(op.RebasedSourceSha)) return;
+        var cutoff = Now() - TimeSpan.FromMinutes(settings.KnownBrokenTargetMaxAgeMinutes);
         var latest = await db.AgentTaskLandings.AsNoTracking()
-            .Where(row => row.Id != op.Id && row.TargetBeforeSha == op.TargetBeforeSha
+            .Where(row => row.Id != op.Id && row.TargetBeforeSha == op.TargetBeforeSha && row.UpdatedAt >= cutoff
                 && (row.VerificationFailureStep == "build" || row.VerificationPassed || row.VerificationFailureStep == "tests"))
             .OrderByDescending(row => row.UpdatedAt).ThenByDescending(row => row.Id)
             .Select(row => new
             {
+                row.Id,
+                row.TaskId,
+                row.UpdatedAt,
                 row.VerificationFailureStep,
                 row.VerificationFailureOutput,
                 row.VerificationFailingProjects,
@@ -1200,24 +1235,33 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             .FirstOrDefaultAsync(ct);
         if (latest?.VerificationFailureStep != "build" || string.IsNullOrWhiteSpace(latest.VerificationFailingProjects))
             return;
-        var projects = latest.VerificationFailingProjects.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         bool? touches;
         try
         {
-            touches = await LandVerificationFailure.DiffTouchesProjectsAsync(
-                git, op.RepositoryPath, op.TargetBeforeSha, op.RebasedSourceSha!, projects, ct);
+            touches = await LandVerificationFailure.DiffTouchesClosureAsync(
+                git, op.RepositoryPath, op.TargetBeforeSha, op.RebasedSourceSha!, SplitProjects(latest.VerificationFailingProjects), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return;
         }
         if (touches != false) return;
-        op.VerificationFailureStep = "build";
-        op.VerificationFailureOutput = latest.VerificationFailureOutput;
-        op.VerificationFailingProjects = latest.VerificationFailingProjects;
+        var projects = latest.VerificationFailingProjects.Length <= 300
+            ? latest.VerificationFailingProjects : latest.VerificationFailingProjects[..300] + "...";
+        var header = $"Target {op.TargetBeforeSha} failed its land build in {projects} " +
+            $"(land operation {latest.Id:N}, task {latest.TaskId:N}, {latest.UpdatedAt:u}), and this diff changes none of " +
+            "those projects, their references or the build inputs, so no build ran. The record stops refusing " +
+            $"{settings.KnownBrokenTargetMaxAgeMinutes} minutes after it was written. To build anyway, land with " +
+            "-IgnoreKnownBrokenTarget (request body ignoreKnownBrokenTarget: true), or set Landing:RefuseKnownBrokenTarget=false. " +
+            "The saved build output follows.";
+        op.VerificationFailureStep = "target_build_broken";
+        op.VerificationFailureOutput = LandVerificationFailure.WithHeader(header, latest.VerificationFailureOutput,
+            LandVerificationFailure.StoredChars);
+        op.VerificationFailingProjects = null;
         op.VerificationCommand = "skipped; target_build_broken";
         op.VerificationPassed = false;
-        throw new LandingRefusal("target_build_broken", LandVerificationFailure.EventDetail(latest.VerificationFailureOutput));
+        throw new LandingRefusal("target_build_broken", LandVerificationFailure.WithHeader(header,
+            latest.VerificationFailureOutput, LandVerificationFailure.EventDetailChars));
     }
     private static string FullRef(string branch) => branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
     private static bool SamePath(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
