@@ -447,7 +447,7 @@ No product code. Operator steps, in order:
    windows, `dispatchEligible=true`. If it does not, stop. CARD-1744 S4 is
    the missing piece. Do not retarget the `desktop` row.
 2. Run S2's script for real: `powershell.exe -NoProfile -File
-   scripts\desktop-slot-provision.ps1 -Root C:\Antiphon\slots`.
+   scripts\desktop-slot-provision.ps1 -Root C:\Antiphon\slots -Execute`.
 3. Set the runner env `PhoneHome__AllowedCwd=C:/Antiphon/slots`,
    `PhoneHome__RunnerRepository=C:/Antiphon/slots/repos/antiphon`,
    `PhoneHome__WorkspaceSlots__Enabled=true`,

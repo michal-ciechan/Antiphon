@@ -14,9 +14,13 @@
 # local core.longpaths=true on that clone only and checks the value.
 # Otherwise prints the clone and config commands.
 #
-# Refuses a filesystem root, a root under C:\src\Antiphon, C:\Antiphon\releases,
+# Refuses a filesystem root, a bare drive root, UNC and \\?\ and \\.\ paths,
+# a segment ending in '.' or a space or containing '~', a reparse-point
+# ancestor, a root under or containing C:\src\Antiphon, C:\Antiphon\releases,
 # or C:\Antiphon\worktrees, a root with an ancestor named releases, and free
-# space below -DiskBudgetGiB (default 32). ASCII-only.
+# space below -DiskBudgetGiB (default 32). core.longpaths is written only
+# when git resolves that clone to exactly the clone and its .git.
+# 8.3 expansion and NTFS junctions are not resolved here. ASCII-only.
 [CmdletBinding()]
 param(
     [string]$Root = 'C:\Antiphon\slots',
@@ -84,6 +88,7 @@ function Test-ForbiddenSlotRoot([string]$Comparable) {
     )
     foreach ($prefix in $prefixes) {
         if (Test-UnderPrefix $Comparable $prefix) { return $true }
+        if (Test-UnderPrefix $prefix $Comparable) { return $true }
     }
     $segments = @(Get-SlotSegments $Comparable)
     $index = 0
@@ -98,19 +103,91 @@ function Test-ForbiddenSlotRoot([string]$Comparable) {
     return $false
 }
 
+function Test-SlotAliasSegment([string]$Segment) {
+    if ($Segment -eq '.' -or $Segment -eq '..') { return $false }
+    if ($Segment.EndsWith('.')) { return $true }
+    if ($Segment.EndsWith(' ')) { return $true }
+    if ($Segment.Contains('~')) { return $true }
+    return $false
+}
+
+function Test-SlotDriveAlias([string]$Path) {
+    $slash = $Path.Replace('/', '\')
+    $tail = ''
+    if ($slash.Length -gt 2) { $tail = $slash.Substring(2) }
+    foreach ($segment in ($tail -split '\\')) {
+        if ($segment.Length -eq 0) { continue }
+        if (Test-SlotAliasSegment $segment) { return $true }
+    }
+    return $false
+}
+
+function Test-SlotUnixAlias([string]$FullPath) {
+    $unix = $FullPath
+    if ($unix.Length -gt 1) { $unix = $unix.TrimEnd('/') }
+    if ($unix -eq '' -or $unix -eq '/') { return $false }
+    $body = $unix.TrimStart('/')
+    if ($body.Length -eq 0) { return $false }
+    foreach ($segment in ($body -split '/')) {
+        if ($segment.Length -eq 0) { continue }
+        if (Test-SlotAliasSegment $segment) { return $true }
+    }
+    return $false
+}
+
+function Test-ForbiddenSlotChild([string]$Comparable) {
+    foreach ($name in @('worktrees', 'workspace-slots', 'retained', 'repos')) {
+        $child = Join-SlotChild $Comparable $name
+        if (Test-ForbiddenSlotRoot $child) { return $true }
+    }
+    return $false
+}
+
 function Get-SlotTextRefusal([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) { return 'filesystem-root' }
     $text = $Path.Trim()
-    if ($text -match '^[A-Za-z]:$') { $text = $text + '\' }
+    $slash = $text.Replace('/', '\')
+    if ($slash.StartsWith('\\')) { return 'unsupported-root' }
     $comparable = ''
     if ($text -match '^[A-Za-z]:') {
+        if (Test-SlotDriveAlias $text) { return 'alias-segment' }
+        if ($text -match '^[A-Za-z]:$') { $text = $text + '\' }
         $comparable = ConvertTo-DriveSlotPath $text
     } else {
         $comparable = [System.IO.Path]::GetFullPath($text)
+        if (Test-SlotUnixAlias $comparable) { return 'alias-segment' }
     }
     if (Test-FilesystemRoot $comparable) { return 'filesystem-root' }
     if (Test-ForbiddenSlotRoot $comparable) { return 'forbidden-root' }
+    if (Test-ForbiddenSlotChild $comparable) { return 'forbidden-root' }
     return ''
+}
+
+function Test-SlotReparseAncestor([string]$Comparable) {
+    $current = $Comparable
+    $seen = 0
+    $reparse = [System.IO.FileAttributes]::ReparsePoint
+    while ($seen -lt 64) {
+        $seen++
+        if (Test-Path -LiteralPath $current) {
+            $item = $null
+            try {
+                $item = Get-Item -Force -LiteralPath $current -ErrorAction SilentlyContinue
+            } catch {
+                $item = $null
+            }
+            if ($null -ne $item) {
+                $attrs = $item.Attributes
+                if (($attrs -band $reparse) -eq $reparse) { return $true }
+            }
+        }
+        if ($current -match '^[A-Za-z]:[\\/]?$') { break }
+        if ($current -eq '/' -or $current -eq '\') { break }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $current) { break }
+        $current = $parent
+    }
+    return $false
 }
 
 function Test-FilesystemRoot([string]$Comparable) {
@@ -167,6 +244,52 @@ function New-SlotResult([int]$Code, $Lines) {
     return $row
 }
 
+function ConvertTo-SlotCompare([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $text = $Path.Trim().Replace('\', '/')
+    while ($text.Length -gt 1 -and $text.EndsWith('/')) {
+        $text = $text.Substring(0, $text.Length - 1)
+    }
+    return $text
+}
+
+function Test-SlotSamePath([string]$Left, [string]$Right) {
+    $a = ConvertTo-SlotCompare $Left
+    $b = ConvertTo-SlotCompare $Right
+    if ($a.Length -eq 0) { return $false }
+    return $a.Equals($b, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Invoke-SlotGit([string]$Ceiling, [string[]]$GitArgs) {
+    $defined = Test-Path Env:GIT_CEILING_DIRECTORIES
+    $previous = $env:GIT_CEILING_DIRECTORIES
+    $code = 1
+    $text = ''
+    try {
+        $env:GIT_CEILING_DIRECTORIES = $Ceiling
+        $output = $null
+        try {
+            $output = & git @GitArgs 2>&1
+            $code = $LASTEXITCODE
+        } catch {
+            $output = $_.Exception.Message
+            $code = 1
+        }
+        $text = ($output | Out-String).Trim()
+    } finally {
+        if ($defined) {
+            $env:GIT_CEILING_DIRECTORIES = $previous
+        } else {
+            Remove-Item Env:GIT_CEILING_DIRECTORIES -ErrorAction SilentlyContinue
+        }
+    }
+    $row = @{
+        Code = $code
+        Text = $text
+    }
+    return $row
+}
+
 function Add-SlotClonePlan([string]$RepoPath, $Lines, [bool]$Mutating) {
     $gitDir = Join-SlotChild $RepoPath '.git'
     $slash = ConvertTo-SlotSlash $RepoPath
@@ -178,19 +301,34 @@ function Add-SlotClonePlan([string]$RepoPath, $Lines, [bool]$Mutating) {
                 $Lines.Add('refused: git-missing')
                 return 2
             }
-            & git -C $RepoPath config --local core.longpaths true 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) {
+            $ceiling = Split-Path -Parent $RepoPath
+            if ([string]::IsNullOrEmpty($ceiling)) {
+                $Lines.Add('refused: clone-unresolved ' + $slash)
+                return 2
+            }
+            $top = Invoke-SlotGit $ceiling @('-C', $RepoPath, 'rev-parse', '--show-toplevel')
+            if ($top.Code -ne 0) {
+                $Lines.Add('refused: clone-unresolved ' + $slash)
+                return 2
+            }
+            $abs = Invoke-SlotGit $ceiling @('-C', $RepoPath, 'rev-parse', '--absolute-git-dir')
+            if ($abs.Code -ne 0) {
+                $Lines.Add('refused: clone-unresolved ' + $slash)
+                return 2
+            }
+            $topOk = Test-SlotSamePath $top.Text $RepoPath
+            $gitOk = Test-SlotSamePath $abs.Text $gitDir
+            if (-not $topOk -or -not $gitOk) {
+                $Lines.Add('refused: clone-mismatch ' + $slash)
+                return 2
+            }
+            $set = Invoke-SlotGit $ceiling @('-C', $RepoPath, '--git-dir', $gitDir, '--work-tree', $RepoPath, 'config', '--local', 'core.longpaths', 'true')
+            if ($set.Code -ne 0) {
                 $Lines.Add('refused: longpaths-not-true')
                 return 2
             }
-            $got = & git -C $RepoPath config --local --get core.longpaths 2>&1
-            $code = $LASTEXITCODE
-            $text = ($got | Out-String).Trim()
-            if ($code -ne 0) {
-                $Lines.Add('refused: longpaths-not-true')
-                return 2
-            }
-            if ($text -ne 'true') {
+            $got = Invoke-SlotGit $ceiling @('-C', $RepoPath, '--git-dir', $gitDir, '--work-tree', $RepoPath, 'config', '--local', '--get', 'core.longpaths')
+            if ($got.Code -ne 0 -or $got.Text -ne 'true') {
                 $Lines.Add('refused: longpaths-not-true')
                 return 2
             }
@@ -236,7 +374,12 @@ function Invoke-SlotRemoveEmpty([string]$Comparable, [bool]$Mutating, $Lines, [s
         if ($Mutating) {
             if ($null -ne $BeforeRemove) { & $BeforeRemove $path }
             if (Test-Path -LiteralPath $path) {
-                Remove-Item -LiteralPath $path -Force
+                try {
+                    [System.IO.Directory]::Delete($path, $false)
+                } catch {
+                    $Lines.Add('refused: remove-empty-blocked reason=not-empty')
+                    return (New-SlotResult 2 $Lines)
+                }
                 $Lines.Add('removed: ' + $path)
             }
         } else {
@@ -261,13 +404,18 @@ function Invoke-DesktopSlotProvision {
         $lines.Add('refused: filesystem-root')
         return (New-SlotResult 2 $lines)
     }
-    $comparable = ConvertTo-SlotPath $Root
-    if (Test-FilesystemRoot $comparable) {
-        $lines.Add('refused: filesystem-root ' + $comparable)
+    $textReason = Get-SlotTextRefusal $Root
+    if ($textReason -eq 'unsupported-root') {
+        $lines.Add('refused: unsupported-root ' + $Root.Trim())
         return (New-SlotResult 2 $lines)
     }
-    if (Test-ForbiddenSlotRoot $comparable) {
-        $lines.Add('refused: forbidden-root ' + $comparable)
+    $comparable = ConvertTo-SlotPath $Root
+    if ($textReason -ne '') {
+        $lines.Add('refused: ' + $textReason + ' ' + $comparable)
+        return (New-SlotResult 2 $lines)
+    }
+    if (Test-SlotReparseAncestor $comparable) {
+        $lines.Add('refused: reparse-ancestor ' + $comparable)
         return (New-SlotResult 2 $lines)
     }
     if (-not (Test-SlotRootCreatable $comparable)) {
