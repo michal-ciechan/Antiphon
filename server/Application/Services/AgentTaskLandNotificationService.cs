@@ -110,6 +110,9 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                 await db.SaveChangesAsync(ct);
                 return;
             }
+            // C488: the create and relink sites below wake once. A row already linked at the
+            // start of this pass is the lost-wakeup case and must not be counted twice.
+            var linkedBeforeThisPass = note.QueueMessageId is not null;
             // The producer can commit and deliver the keyed row before this outbox links it.
             // Recover that evidence even if the caller has since stopped; status gates new input only.
             if (note.QueueMessageId is null)
@@ -261,6 +264,15 @@ public sealed class AgentTaskLandNotificationService(AppDbContext db, SessionMes
                     db.ChangeTracker.Clear();
                 return;
             }
+            // C488: the 5s scan is the second recovery path after a wakeup lost once the row
+            // had committed. DeliveryAttempts == 0 is the CARD-1892 guard: a claimed attempt
+            // is Sent with a charge and is never retyped from this wake.
+            if (linkedBeforeThisPass
+                && row.Status == QueuedMessageStatus.Pending
+                && row.DeliveryAttempts == 0
+                && (row.HoldUntil is null || row.HoldUntil <= now)
+                && boundary?.DropWakeup("completion", note.Id) != true)
+                flushes.TryEnqueue(deliveredTo);
             if (row.DeliveryVerdict == DeliveryVerdict.Truncated)
                 note.LastErrorCode = "queue_truncated_unconfirmed";
             else if (row.Status == QueuedMessageStatus.Pending && row.DeliveryAttempts >= Math.Max(1,
