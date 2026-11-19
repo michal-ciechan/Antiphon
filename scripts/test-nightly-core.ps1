@@ -948,6 +948,57 @@ function Test-NCPlannerPartsGolden {
     } finally { [Globalization.CultureInfo]::CurrentCulture = $saved }
 }
 
+# LaunchPlanner.cs (ConvertTo-NightlyProfileLaunchGroups): ids, class order, filters, estimates and value types
+# against what the PowerShell body returned when it was ported. Culture ties, case-only and non-ASCII class and
+# method names, a case-only namespace, prefix-unsafe names, a class split by method, the E2E budget, a measured
+# class, duplicate leaves, exact leaves (Add-Member -Force moves seconds last) and the namespace error.
+function Get-NCLaunchGroupsGolden {
+    $sh = [string][char]0xAD; $ee = [string][char]0xE9; $acute = [string][char]0x301; $ss = [string][char]0xDF
+    $node = { param($class, $method, $uid, $slow) [pscustomobject]@{ ClassName = $class; Method = $method; Uid = $uid; Categories = $(if ($slow) { @('Slow') } else { @() }) } }
+    $many = { param($class, $methods, $count, $slow) foreach ($m in $methods) { for ($k = 0; $k -lt $count; $k++) { & $node $class $m ($class + '/' + $m + '/' + $k) $slow } } }
+    $leaf = { param($id, $class, $exact, $nodes) [pscustomobject]@{ id = $id; classes = @($class); exactFilter = $exact; nodes = @($nodes) } }
+    $leaves = { param($nodes, $prefix) $seen = [Collections.Generic.List[string]]::new(); foreach ($n in $nodes) { $b = Get-NightlyBareClassIdentity $n.ClassName; if (-not $seen.Contains($b)) { $seen.Add($b) } }
+        $i = 0; foreach ($b in $seen) { $i++; & $leaf ($prefix + '-profile-' + $i) $b '' @() } }
+    $project = { param($name, $plan) [ordered]@{ scenario = $name; groups = @(foreach ($g in $plan) {
+        $uids = @($g.nodes | ForEach-Object { [string]$_.Uid })
+        [ordered]@{ props = (@($g.PSObject.Properties.Name) -join ','); id = $g.id; classes = @($g.classes | ForEach-Object { [string]$_ }); exactFilter = $g.exactFilter
+            groupFilter = $g.groupFilter; methodFilter = $g.methodFilter; nodes = ('' + $uids.Count + ':' + (Get-NightlySha256Text -Text ($uids -join '|')))
+            nodeCount = $g.nodeCount; seconds = $g.seconds; types = (@($g.nodeCount, $g.seconds, $g.classes) | ForEach-Object { if ($null -eq $_) { 'null' } else { $_.GetType().Name } }) -join ',' } }) } }
+    $saved = @($script:NightlyLaunchTargetSeconds, $script:NightlyLaunchLoneClassBudgetSeconds, $script:NightlyLaunchMaxGroupOperands)
+    $table = Get-NightlyClassCostTable
+    $culture = [Globalization.CultureInfo]::CurrentCulture
+    try {
+        # Sort-Object and Group-Object order by the current culture. Namespaces that tie under it would follow the
+        # per-process hash order of the @{} keys, so none here do.
+        [Globalization.CultureInfo]::CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('en-US')
+        $names = @('Alpha', 'alpha', 'Beta', 'Gamma', 'Run', 'Runner', 'RunnerTests', ('Caf' + $ee), ('Cafe' + $acute), ('Stra' + $ss + 'e'), 'Strasse', ('A' + $sh + 'B'), 'AB', 'Zeta', 'Eta', 'Theta', 'Iota', 'Kappa', 'Lambda')
+        $nodes = @(foreach ($t in $names) { & $many ('N.S.' + $t) @('M') 2 $false }) + @(& $many 'n.s.Delta' @('M') 3 $false) + @(& $many 'M.S.Omega' @('M') 1 $true) + @(& $many 'N.S.Gamma(ctor)' @('M') 1 $false)
+        & $project 'ties' @(ConvertTo-NightlyProfileLaunchGroups -Leaves (@(& $leaves $nodes 'one') + @(& $leaves $nodes 'two')) -DiscoveryNodes $nodes)
+        $script:NightlyLaunchTargetSeconds = 4; $script:NightlyLaunchLoneClassBudgetSeconds = 8; $script:NightlyLaunchMaxGroupOperands = 3
+        $table['N.Big.Measured'] = 2.5
+        $nodes = @(& $many 'N.Big.LandHeavyTests' @('Run', 'run', 'RunAll', 'Ru', 'Go', 'Go2', ('A' + $sh + 'B'), 'AB', ('Caf' + $ee), ('Cafe' + $acute)) 3 $true) + @(& $many 'N.Big.LandHeavyTests' @('Zeta', 'Eta', 'Theta', 'Iota') 2 $false) + @(& $many 'N.Big.Measured' @('A', 'B') 2 $false) + @(& $many 'N.Big.Small' @('A') 2 $false)
+        & $project 'split' @(ConvertTo-NightlyProfileLaunchGroups -Leaves @(& $leaves $nodes 'big') -DiscoveryNodes $nodes)
+        $script:NightlyLaunchTargetSeconds = 900; $script:NightlyLaunchLoneClassBudgetSeconds = 1000000; $script:NightlyLaunchMaxGroupOperands = 30
+        $nodes = @(& $many 'Antiphon.E2E.Fixture.LandE2ETests' @('A', 'B', 'C', 'D') 50 $true) + @(& $many 'Antiphon.E2Ex.Fixture.LandE2ETests' @('A', 'B', 'C', 'D') 50 $true)
+        & $project 'e2e' @(ConvertTo-NightlyProfileLaunchGroups -Leaves @(& $leaves $nodes 'e2e') -DiscoveryNodes $nodes)
+        $script:NightlyLaunchLoneClassBudgetSeconds = 2400
+        $nodes = @(& $many 'N.X.Matrix' @('Run', 'Other') 2 $false) + @(& $many 'N.X.Plain' @('A') 2 $false)
+        $moved = [pscustomobject]@{ id = 'x-profile-2'; seconds = 'old'; classes = @('N.X.Matrix'); exactFilter = '/*/N.X/Matrix/Other'; nodes = @($nodes | Where-Object { $_.Method -ceq 'Other' }) }
+        $exactLeaves = @((& $leaf 'x-profile-1' 'N.X.Matrix' '/*/N.X/Matrix/Run' @($nodes | Where-Object { $_.Method -ceq 'Run' })), (& $leaf 'x-profile-3' 'N.X.Plain' '' @()), $moved, (& $leaf 'x-profile-4' 'NoNamespace' '/*/x' @()))
+        & $project 'exact' @(ConvertTo-NightlyProfileLaunchGroups -Leaves $exactLeaves -DiscoveryNodes $nodes)
+        try { [void]@(ConvertTo-NightlyProfileLaunchGroups -Leaves @((& $leaf 'y-profile-1' 'N.X.Plain' '' @()), (& $leaf 'y-profile-2' 'NoNamespace' '' @())) -DiscoveryNodes $nodes); [ordered]@{ scenario = 'error'; error = '' } }
+        catch { [ordered]@{ scenario = 'error'; error = $_.Exception.Message; id = [string]$_.FullyQualifiedErrorId } }
+    } finally {
+        $script:NightlyLaunchTargetSeconds, $script:NightlyLaunchLoneClassBudgetSeconds, $script:NightlyLaunchMaxGroupOperands = $saved
+        $table.Remove('N.Big.Measured')
+        [Globalization.CultureInfo]::CurrentCulture = $culture
+    }
+}
+
+function Test-NCProfileLaunchGroupsGolden {
+    Assert-NCGolden 'profile-launch-groups' { Get-NCLaunchGroupsGolden } @('"scenario":"split"', '"methodFilter":"/*/N.Big/LandHeavyTests/(', '-split-', '"error":"profile-discovery-namespace-required"', 'props":"id,classes,exactFilter,nodes,seconds"')
+}
+
 # PlannedManifestCheck.cs. The planned-manifest partition (duplicates differing only by case, missing in
 # RequiredUids order, one non-ASCII extra, an InvariantCultureIgnoreCase-only match) against the bytes the
 # PowerShell copy wrote; and the compiled census digest order (OrdinalIgnoreCase) over culture-equal and
@@ -1051,7 +1102,7 @@ function Test-NCDiscoveryViewKey {
 
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 35 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 36 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

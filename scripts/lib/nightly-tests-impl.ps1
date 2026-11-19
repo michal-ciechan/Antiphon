@@ -453,109 +453,20 @@ function ConvertTo-NightlyProfileLaunchGroups {
     if ($BoundaryAware) {
         return @(ConvertTo-NightlyBoundaryLaunchGroups -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
     }
-    $exact = New-Object System.Collections.ArrayList
-    $classItems = New-Object System.Collections.ArrayList
-    $oversized = New-Object System.Collections.ArrayList
     Assert-NightlyCoreAvailable 'ConvertTo-NightlyProfileLaunchGroups'
-    # Compiled passes over the discovery (NightlyCore.cs): nodes by bare class and types by namespace.
-    $indexed = $DiscoveryIndex
-    if ($null -eq $indexed) { $indexed = [Antiphon.Nightly.NightlyLaunchPlan]::IndexNodes($DiscoveryNodes) }
-    $nodesByBare = $indexed.NodesByBare
-    $sourceId = 'all'
-    foreach ($leaf in @($Leaves)) {
-        $id = [string]$leaf.id
-        $mark = $id.IndexOf('-profile-')
-        if ($mark -gt 0) { $sourceId = $id.Substring(0, $mark) }
-        if (-not [string]::IsNullOrWhiteSpace([string]$leaf.exactFilter)) {
-            $leafParts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
-            $leafCost = Get-NightlyLaunchClassCost -Nodes @($leaf.nodes) -TypeName $(if ($leafParts) { $leafParts.Type } else { '' }) -Bare $(if ($leafParts) { $leafParts.Bare } else { '' })
-            Add-Member -InputObject $leaf -NotePropertyName seconds -NotePropertyValue ([Math]::Round([double]$leafCost.Seconds, 1)) -Force
-            [void]$exact.Add($leaf)
-            continue
-        }
-        $parts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
-        if ($null -eq $parts) { throw 'profile-discovery-namespace-required' }
-        $known = @()
-        if ($nodesByBare.ContainsKey($parts.Bare)) { $known = @($nodesByBare[$parts.Bare].ToArray()) }
-        $cost = Get-NightlyLaunchClassCost -Nodes $known -TypeName $parts.Type -Bare $parts.Bare
-        # The type parts plus Key, NodeCount and Seconds, in that order (was three Add-Member calls).
-        $parts = [pscustomobject]@{
-            Bare = $parts.Bare
-            Namespace = $parts.Namespace
-            Type = $parts.Type
-            Key = [string]$parts.Bare
-            NodeCount = [int]$cost.NodeCount
-            Seconds = [double]$cost.Seconds
-        }
-        # CARD-1584: native E2E startup is priced per expanded case. Keep
-        # lone E2E classes below 25 minutes; large matrices expose small
-        # argument batches as methods so this splitter can honor the bound.
-        $classBudget = [double]$script:NightlyLaunchLoneClassBudgetSeconds
-        if ($parts.Namespace -ceq 'Antiphon.E2E' -or $parts.Namespace.StartsWith('Antiphon.E2E.', [StringComparison]::Ordinal)) { $classBudget = 1500 }
-        if ($known.Count -gt 0 -and [double]$cost.Seconds -gt $classBudget) {
-            [void]$oversized.Add([pscustomobject]@{ Parts = $parts; Nodes = $known })
-            continue
-        }
-        [void]$classItems.Add($parts)
-    }
-
-    $byNs = @{}
-    $universe = $indexed.Universe
-    foreach ($item in @($classItems)) {
-        if (-not $byNs.ContainsKey($item.Namespace)) {
-            $byNs[$item.Namespace] = New-Object System.Collections.ArrayList
-        }
-        [void]$byNs[$item.Namespace].Add($item)
-    }
-    foreach ($item in @($classItems)) {
-        if (-not $universe.ContainsKey($item.Namespace)) {
-            $universe[$item.Namespace] = New-Object System.Collections.Generic.List[string]
-        }
-        $universe[$item.Namespace].Add([string]$item.Type)
-    }
-
-    $groups = New-Object System.Collections.ArrayList
-    $index = 0
-    foreach ($ns in (@($byNs.Keys) | Sort-Object)) {
-        $unsafe = Get-NightlyPrefixUnsafeNames -Names @($universe[$ns].ToArray())
-        $pool = @($byNs[$ns] | Where-Object { -not $unsafe.Contains([string]$_.Type) })
-        $bins = @(Split-NightlyItemsBySeconds -Items $pool -TargetSeconds ([double]$script:NightlyLaunchTargetSeconds) -MaxOperands ([int]$script:NightlyLaunchMaxGroupOperands))
-        foreach ($item in @($byNs[$ns] | Where-Object { $unsafe.Contains([string]$_.Type) } | Sort-Object Bare)) {
-            $alone = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = [double]$item.Seconds; Closed = $true }
-            [void]$alone.Items.Add($item)
-            $bins += $alone
-        }
-        foreach ($bin in $bins) {
-            $items = @($bin.Items)
-            if ($items.Count -eq 0) { continue }
-            $index++
-            $types = @($items | ForEach-Object { [string]$_.Type })
-            $bares = @($items | ForEach-Object { [string]$_.Bare } | Sort-Object)
-            $sumNodes = 0
-            foreach ($item in $items) { $sumNodes += [int]$item.NodeCount }
-            $filter = ''
-            if ($types.Count -ge 2) { $filter = New-NightlyClassGroupFilter -Namespace $ns -TypeNames $types }
-            [void]$groups.Add([pscustomobject]@{
-                id = ('{0}-group-{1}' -f $sourceId, $index)
-                classes = $bares
-                exactFilter = ''
-                groupFilter = $filter
-                methodFilter = ''
-                nodes = @()
-                nodeCount = $sumNodes
-                seconds = [Math]::Round([double]$bin.Seconds, 1)
-            })
-        }
-    }
-    $splitIndex = 0
-    foreach ($big in @($oversized | Sort-Object { [string]$_.Parts.Bare })) {
-        $universeMethods = @($big.Nodes | ForEach-Object { [string]$_.Method })
-        foreach ($chunk in @(Split-NightlyOversizedClass -Parts $big.Parts -Nodes $big.Nodes -UniverseMethods $universeMethods -SourceId $sourceId -Index ([ref]$splitIndex))) {
-            [void]$groups.Add($chunk)
-        }
-    }
-    foreach ($leaf in @($exact)) { [void]$groups.Add($leaf) }
-    return @($groups.ToArray())
+    # Compiled (Antiphon.Nightly/LaunchPlanner.cs): the leaf loop (exact leaves get their seconds, a class over
+    # its lone budget - 1500 s for Antiphon.E2E, CARD-1584 - is split into exact-method chunks), the bin pack per
+    # namespace with the Split-NightlyItemsBySeconds order, the group and method filters, and the same Sort-Object
+    # and Group-Object orders. The class cost table is loaded where Get-NightlyLaunchClassCost first loaded it.
+    $costTable = $null
+    if ([Antiphon.Nightly.LaunchPlanner]::NeedsCostTable($Leaves)) { $costTable = Get-NightlyClassCostTable }
+    $plan = [Antiphon.Nightly.LaunchPlanner]::ProfileLaunchGroups($Leaves, $DiscoveryNodes, $DiscoveryIndex, $costTable,
+        [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
+        [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor,
+        [double]$script:NightlyLaunchTargetSeconds, [double]$script:NightlyLaunchLoneClassBudgetSeconds,
+        [int]$script:NightlyLaunchMaxGroupOperands)
+    if ($null -ne $plan.Error) { throw [string]$plan.Error }
+    return @($plan.Groups)
 }
 
 function Get-NightlyProfileLaunchPlan {
