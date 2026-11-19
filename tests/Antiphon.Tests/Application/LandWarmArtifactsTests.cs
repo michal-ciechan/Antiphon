@@ -280,6 +280,79 @@ public sealed class LandWarmArtifactsTests
         refused.Last().Detail.ShouldNotContain(early);
     }
 
+    /// <summary>CARD-1995: a diff that edits a linked Compile input still builds the known-broken target.</summary>
+    [Test]
+    public async Task C1995_LinkedCompileStillBuilds()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler
+        {
+            BuildOk = false,
+            BuildStdErr = "error CS0103: The name 'Missing' does not exist in the current context [tests/Failing/Failing.csproj]",
+        };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <Compile Include="Broken.cs" />
+                <Compile Include="../Shared/Broken.cs" />
+              </ItemGroup>
+            </Project>
+            """);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        var linked = Path.Combine(h.Fixture.Source, "tests", "Shared");
+        Directory.CreateDirectory(linked);
+        await File.WriteAllTextAsync(Path.Combine(linked, "Broken.cs"), "class Broken {}\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "fix the link");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(2, "editing the linked Compile input changes the failing project");
+        await using var db = h.CreateContext();
+        var second = await db.AgentTaskLandings.Where(o => o.TaskId == h.Fixture.TaskId)
+            .OrderBy(o => o.CreatedAt).LastAsync();
+        second.LastReason.ShouldBe("verification_failed");
+    }
+
+    /// <summary>CARD-1995: a moved target SHA is a different build, even when the diff still avoids the old project.</summary>
+    [Test]
+    public async Task C1995_MovedTargetStillBuilds()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler
+        {
+            BuildOk = false,
+            BuildStdErr = "error CS0103: The name 'Missing' does not exist in the current context [tests/Failing/Failing.csproj]",
+        };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        var first = await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <Compile Include="Broken.cs" />
+              </ItemGroup>
+            </Project>
+            """);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        var moved = await h.Fixture.PushIndependentAsync("target-moved");
+        moved.ShouldNotBe(first);
+        await File.WriteAllTextAsync(Path.Combine(h.Fixture.Source, "feature.txt"), "unrelated edit\n");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", "unrelated");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        compiler.BuildPaths.Count.ShouldBe(2, "a new target SHA is built even when the diff avoids the old project");
+    }
+
     [Test]
     public async Task C1380_CancellationQuarantinesCacheAndReleasesBothLocks()
     {

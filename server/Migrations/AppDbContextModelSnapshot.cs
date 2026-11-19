@@ -2569,6 +2569,17 @@ namespace Antiphon.Server.Migrations
                     b.Property<string>("VerificationCommand")
                         .HasColumnType("text");
 
+                    b.Property<string>("VerificationFailingProjects")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("VerificationFailureOutput")
+                        .HasColumnType("text");
+
+                    b.Property<string>("VerificationFailureStep")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<string>("VerificationFilter")
                         .HasMaxLength(400)
                         .HasColumnType("character varying(400)");
@@ -2597,6 +2608,10 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("TaskId")
                         .IsUnique()
                         .HasFilter("\"Active\" = TRUE");
+
+                    b.HasIndex("TargetBeforeSha", "UpdatedAt")
+                        .HasDatabaseName("IX_AgentTaskLandings_TargetBuildFailure")
+                        .HasFilter("\"VerificationFailureStep\" = 'build'");
 
                     b.ToTable("AgentTaskLandings", null, t =>
                         {

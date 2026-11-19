@@ -145,6 +145,21 @@ public sealed class LandFailureDiagnosticTests
         };
         var dto = LandRequestStatusDto.From(request, DateTime.UtcNow, []);
         dto.NoProgressSeconds.ShouldBe(0, "a Completed request is not still waiting");
+        var landing = new AgentTaskLanding
+        {
+            Phase = LandPhase.Refused,
+            CreatedAt = progressed,
+            UpdatedAt = progressed,
+            VerificationStartedAt = progressed,
+            VerificationFailureStep = "build",
+            VerificationFailureOutput = "error CS0103: The name 'C1995Marker' does not exist",
+        };
+        var refused = LandRequestStatusDto.From(request, DateTime.UtcNow, [], landing: landing);
+        refused.NoProgressSeconds.ShouldBe(0);
+        refused.StatusPhase.ShouldBe("build");
+        refused.StatusPhaseStartedAt.ShouldBe(progressed);
+        refused.VerificationFailureStep.ShouldBe("build");
+        refused.VerificationFailureOutput.ShouldContain("C1995Marker");
     }
 
     [Test]

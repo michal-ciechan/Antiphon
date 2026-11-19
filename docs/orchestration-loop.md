@@ -2460,6 +2460,21 @@ filter, or any target other than `refs/heads/master` requires a build. AlreadyPr
 still proves exact remote containment without a new publication or a promised build,
 even when force-build is set. Historical `base_unchanged` receipts remain readable.
 
+A plain `-Land` with no review evidence is a normal land. It is gated by the server build
+(`LandVerificationPolicy`): a documentation-only diff against master can skip, and every other
+diff runs `dotnet build`, plus selected tests only when `-Verify` supplies a filter. A Clean
+Review does not skip that build. `reviewedSourceClean` is required only when the request carries
+review evidence; a missing evidence id is the explicit-caller path, not a refusal. When the build
+fails, the land outcome keeps the failing step and the last 40 lines, and `-Status` prints them.
+`-Status` also names the current phase (`queue`, `admission`, `git`, `build`, `push`, `confirm`)
+and when that phase started, and a Completed request stops the no-progress counter. A later land
+of the same target commit that does not change the project which failed the build is refused
+immediately with `target_build_broken` and that saved output, without another build. Changing
+the failing project includes the csproj, files under its directory, and Compile, Content, None,
+and EmbeddedResource includes (including links). When the output names no project, or that
+project cannot be read, the land builds. On `verification_failed` or `target_build_broken`, read
+the refusal detail before commissioning a Review.
+
 On master, only regular mode-100644 changes to `docs/**/*.md` and root `README.md`
 can skip. The policy reads a NUL-delimited raw diff of the pinned `TargetBeforeSha`
 and actual `RebasedSourceSha`, including both names of renames and both file modes.
@@ -3091,6 +3106,8 @@ assertion on the Review outcome. Evidence-backed land admission and every unpubl
 require true; missing or false returns `review_evidence_source_not_clean`. Old outcomes remain
 null and need a fresh Review. An authorized explicit caller SHA without a Review evidence ID
 retains its separate approval path; a rejected evidence ID never falls back to that path.
+Supplying no review evidence is valid: a plain `-Land` is gated by the server build, and a review
+does not skip that build.
 
 ## Expectation watchdog (CARD-0650)
 

@@ -2992,7 +2992,7 @@ public sealed class AgentTaskService
             task.StandingAuthority, task.AutoContinueOnWait, task.NextStage, task.NextHandoff,
             task.DistilledResult, landingDto,
             landRequest is null ? null : LandRequestStatusDto.From(landRequest, _timeProvider.GetUtcNow().UtcDateTime,
-                landNotes.Select(LandNotificationStatusDto.From).ToList(), _landWaits?.Find(landRequest.Id)),
+                landNotes.Select(LandNotificationStatusDto.From).ToList(), _landWaits?.Find(landRequest.Id), landing),
             legacyLand is null ? null : new LegacyLandReceiptDto(legacyLand.Id, legacyLand.At,
                 legacyNote?.ConfirmedAt is not null ? "Confirmed" : task.ReplyTo == AgentTaskReplyTo.None ? "NotRequired" : "LegacyUnverified",
                 legacyNote?.QueueMessageId, legacyNote?.ConfirmedAt, legacyNote?.ConfirmingPromptSequence),

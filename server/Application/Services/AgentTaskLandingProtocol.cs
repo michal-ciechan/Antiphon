@@ -319,7 +319,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 if (ticket is not null)
                 {
                     RecordBuildSlot(op, completedVerification, request?.Id);
-                    Require(completedVerification?.Passed == true, "verification_failed");
+                    if (completedVerification?.Passed != true)
+                        RememberFailure(op, completedVerification);
+                    Require(completedVerification?.Passed == true, "verification_failed",
+                        LandVerificationFailure.EventDetail(completedVerification?.FailureOutput));
                     op.VerificationPassed = true;
                 }
                 else
@@ -345,6 +348,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 }
                 else
                 {
+                    await RefuseKnownBrokenTargetAsync(op, ct);
                     // Another repository land may have reset the shared land worktree since this op prepared.
                     var land = await VerifiedLandWorktreeAsync(op, op.RebasedSourceSha!, ct);
                     if (deferVerification && request is not null)
@@ -352,7 +356,10 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                     var verification = await verifier.VerifyAsync(land, op.VerificationFilter,
                         new(op.TaskId, op.Id, request?.Id, CommonDirectory: common, TargetRef: op.TargetFullRef), ct);
                     RecordBuildSlot(op, verification, request?.Id);
-                    Require(verification.Passed, "verification_failed");
+                    if (!verification.Passed)
+                        RememberFailure(op, verification);
+                    Require(verification.Passed, "verification_failed",
+                        LandVerificationFailure.EventDetail(verification.FailureOutput));
                     op.VerificationPassed = true;
                 }
                 }
@@ -1156,7 +1163,62 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
             clock.GetUtcNow().UtcDateTime);
     }
 
-    private static void Require(bool condition, string reason) { if (!condition) throw new LandingRefusal(reason); }
+    private static void Require(bool condition, string reason, string? detail = null)
+    {
+        if (!condition) throw new LandingRefusal(reason, detail);
+    }
+
+    private static void RememberFailure(AgentTaskLanding op, LandingVerification? verification)
+    {
+        if (verification is null) return;
+        op.VerificationFailureStep = string.IsNullOrEmpty(verification.FailureStep) ? null
+            : verification.FailureStep.Length <= 40 ? verification.FailureStep : verification.FailureStep[..40];
+        op.VerificationFailureOutput = string.IsNullOrEmpty(verification.FailureOutput) ? null : verification.FailureOutput;
+        op.VerificationFailingProjects = verification.FailureStep == "build"
+            ? LandVerificationFailure.ProjectList(verification.FailureOutput, op.LandWorktreePath)
+            : null;
+    }
+
+    /// <summary>
+    /// CARD-1995: the latest build of this target SHA failed, and this diff does not change that
+    /// project. A later passing build, a test failure (the build itself passed), an unreadable
+    /// project, or a diff that touches the project all fall through to a real build.
+    /// </summary>
+    private async Task RefuseKnownBrokenTargetAsync(AgentTaskLanding op, CancellationToken ct)
+    {
+        if (!GitObjectId.IsFull(op.TargetBeforeSha) || !GitObjectId.IsFull(op.RebasedSourceSha)) return;
+        var latest = await db.AgentTaskLandings.AsNoTracking()
+            .Where(row => row.Id != op.Id && row.TargetBeforeSha == op.TargetBeforeSha
+                && (row.VerificationFailureStep == "build" || row.VerificationPassed || row.VerificationFailureStep == "tests"))
+            .OrderByDescending(row => row.UpdatedAt).ThenByDescending(row => row.Id)
+            .Select(row => new
+            {
+                row.VerificationFailureStep,
+                row.VerificationFailureOutput,
+                row.VerificationFailingProjects,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (latest?.VerificationFailureStep != "build" || string.IsNullOrWhiteSpace(latest.VerificationFailingProjects))
+            return;
+        var projects = latest.VerificationFailingProjects.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        bool? touches;
+        try
+        {
+            touches = await LandVerificationFailure.DiffTouchesProjectsAsync(
+                git, op.RepositoryPath, op.TargetBeforeSha, op.RebasedSourceSha!, projects, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return;
+        }
+        if (touches != false) return;
+        op.VerificationFailureStep = "build";
+        op.VerificationFailureOutput = latest.VerificationFailureOutput;
+        op.VerificationFailingProjects = latest.VerificationFailingProjects;
+        op.VerificationCommand = "skipped; target_build_broken";
+        op.VerificationPassed = false;
+        throw new LandingRefusal("target_build_broken", LandVerificationFailure.EventDetail(latest.VerificationFailureOutput));
+    }
     private static string FullRef(string branch) => branch.StartsWith("refs/", StringComparison.Ordinal) ? branch : "refs/heads/" + branch;
     private static bool SamePath(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
