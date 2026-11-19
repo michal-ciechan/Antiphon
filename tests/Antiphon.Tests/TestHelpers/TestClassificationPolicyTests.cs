@@ -312,6 +312,57 @@ public sealed class TestClassificationPolicyTests
     }
 
     [Test]
+    public async Task C487_probe_stale_sibling_is_removed_at_start()
+    {
+        var owned = ProbeOwnedRoot();
+        var stale = Path.Combine(owned, "c487-probe-" + Guid.NewGuid().ToString("N"));
+        var fresh = Path.Combine(owned, "c487-probe-" + Guid.NewGuid().ToString("N"));
+        var nearMiss = Path.Combine(owned, "c487-probe-" + new string('G', 32));
+        Directory.CreateDirectory(stale);
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(nearMiss);
+        await File.WriteAllTextAsync(Path.Combine(stale, "marker.txt"), "stale\n");
+        await File.WriteAllTextAsync(Path.Combine(fresh, "marker.txt"), "fresh\n");
+        await File.WriteAllTextAsync(Path.Combine(nearMiss, "marker.txt"), "near\n");
+        var old = DateTime.UtcNow.AddHours(-25);
+        Directory.SetLastWriteTimeUtc(stale, old);
+        Directory.SetLastWriteTimeUtc(nearMiss, old);
+        Directory.SetLastWriteTimeUtc(fresh, DateTime.UtcNow);
+
+        var foreignParent = OwnedTempRoot.CreateOwned();
+        var foreign = Path.Combine(foreignParent, "c487-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(foreign);
+        await File.WriteAllTextAsync(Path.Combine(foreign, "marker.txt"), "foreign\n");
+        Directory.SetLastWriteTimeUtc(foreign, DateTime.UtcNow.AddHours(-48));
+        try
+        {
+            await WithTempDirectoryAsync("c487-probe-", dir =>
+            {
+                SameDirectory(Path.GetDirectoryName(dir)!, owned).ShouldBeTrue();
+                Path.GetFileName(dir).StartsWith("c487-probe-", StringComparison.Ordinal).ShouldBeTrue();
+                Directory.Exists(stale).ShouldBeFalse();
+                Directory.Exists(fresh).ShouldBeTrue();
+                Directory.Exists(nearMiss).ShouldBeTrue();
+                Directory.Exists(foreign).ShouldBeTrue();
+                File.ReadAllText(Path.Combine(fresh, "marker.txt")).Replace("\r\n", "\n").ShouldBe("fresh\n");
+                File.ReadAllText(Path.Combine(nearMiss, "marker.txt")).Replace("\r\n", "\n").ShouldBe("near\n");
+                File.ReadAllText(Path.Combine(foreign, "marker.txt")).Replace("\r\n", "\n").ShouldBe("foreign\n");
+                return Task.FromResult(0);
+            });
+        }
+        finally
+        {
+            if (Directory.Exists(stale))
+                StartRefGit.DeleteDirectory(stale);
+            if (Directory.Exists(fresh))
+                StartRefGit.DeleteDirectory(fresh);
+            if (Directory.Exists(nearMiss))
+                StartRefGit.DeleteDirectory(nearMiss);
+            OwnedTempRoot.Release(foreignParent);
+        }
+    }
+
+    [Test]
     [Arguments("inherits")]
     [Arguments("no-inherits")]
     public async Task C487_G067(string shape)
@@ -492,6 +543,24 @@ public sealed class TestClassificationPolicyTests
             var run = await InvokeTripwireAsyncPath(trxPath, allowPath);
             return (run.ExitCode, run.Output, root);
         });
+
+    // 32 hex digits so this directory matches the registered antiphon-owned family.
+    // The name is stable so a later process can see probe directories a killed run left.
+    internal const string ProbeOwnedLeaf = "c4870000000000000000000000000000";
+
+    internal static string ProbeOwnedRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), OwnedTempRoot.OwnedPrefix + ProbeOwnedLeaf);
+        Directory.CreateDirectory(root);
+        OwnedTempRoot.Track(root);
+        return NormalizeDirectory(root);
+    }
+
+    private static bool SameDirectory(string left, string right) =>
+        string.Equals(NormalizeDirectory(left), NormalizeDirectory(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeDirectory(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     // Every temp directory this class makes is its own; the body's result is all that survives it.
     private static async Task<T> WithTempDirectoryAsync<T>(string prefix, Func<string, Task<T>> body)
