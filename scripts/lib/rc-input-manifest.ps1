@@ -101,6 +101,10 @@ function Read-RcInputInventory {
     }
     if (-not $suites.Count) { throw 'input-suites-empty' }
     $paths=@(Get-TestSelectionSorted @($tree.Keys))
+    # ** is fallback only. Specific roots and the project walk claim their paths
+    # first; ** then covers paths still owned by nobody, before unknown-path
+    # broadens every suite.
+    $fallbackRoots=[Collections.Generic.List[object]]::new()
     foreach ($root in $map.roots) {
         Assert-TestSelectionKeys $root @('path','consumers','reason')
         if ($root.path -isnot [string] -or $root.reason -isnot [string] -or -not $root.reason -or
@@ -108,6 +112,9 @@ function Read-RcInputInventory {
         $pattern=New-RcInputPattern $root.path
         foreach ($id in $root.consumers) {
             if ($id -isnot [string] -or ($id -cne '*' -and -not $suites.ContainsKey($id))) { throw 'unknown-input-consumer' }
+        }
+        if ($root.path -ceq '**') { $fallbackRoots.Add(@{root=$root;pattern=$pattern}); continue }
+        foreach ($id in $root.consumers) {
             $consumers=if ($id -ceq '*') { @($suites.Values) } else { @($suites[$id]) }
             foreach ($path in $paths) {
                 if ($pattern.IsMatch($path)) { foreach ($suite in $consumers) { Add-RcInventoryInput $suite $tree $path $root.reason } }
@@ -180,6 +187,21 @@ function Read-RcInputInventory {
                         }
                     }
                 } catch { $unresolved.Add("project-parse:${input}:$($_.Exception.Message)") }
+            }
+        }
+    }
+    if ($fallbackRoots.Count) {
+        $claimed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($suite in $suites.Values) { foreach ($path in $suite.inputMap.Keys) { [void]$claimed.Add($path) } }
+        foreach ($fallback in $fallbackRoots) {
+            $root=$fallback.root
+            $pattern=$fallback.pattern
+            foreach ($id in $root.consumers) {
+                $consumers=if ($id -ceq '*') { @($suites.Values) } else { @($suites[$id]) }
+                foreach ($path in $paths) {
+                    if ($claimed.Contains($path) -or -not $pattern.IsMatch($path)) { continue }
+                    foreach ($suite in $consumers) { Add-RcInventoryInput $suite $tree $path $root.reason }
+                }
             }
         }
     }
