@@ -16,6 +16,19 @@ public sealed class LandingSettings
     public int BuildSlotWaitMinutes { get; set; } = 30;
 
     /// <summary>
+    /// CARD-1995. Refuse a land without building when a recent build of the same target commit failed
+    /// in a project this diff does not change (<c>target_build_broken</c>). False turns that refusal off,
+    /// so every land builds; a single request can pass <c>ignoreKnownBrokenTarget</c> instead.
+    /// </summary>
+    public bool RefuseKnownBrokenTarget { get; set; } = true;
+
+    /// <summary>
+    /// CARD-1995. How long a recorded broken target refuses later lands, measured from the failed
+    /// land's last write. An older record is ignored; zero or less turns the refusal off.
+    /// </summary>
+    public int KnownBrokenTargetMaxAgeMinutes { get; set; } = 30;
+
+    /// <summary>
     /// How long an unanswering runner (or one without <c>/build-slots</c>) is retried before the
     /// verifier builds unleased at <c>-maxcpucount:4</c>. Never a land failure.
     /// </summary>

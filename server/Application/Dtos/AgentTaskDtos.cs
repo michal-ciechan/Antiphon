@@ -702,7 +702,8 @@ public sealed record LandAgentTaskRequest(
     string? ExpectedSourceSha = null,
     Guid? ReviewEvidenceId = null,
     Guid? AdoptFromTaskId = null,
-    bool RecoverReviewedSource = false);
+    bool RecoverReviewedSource = false,
+    bool IgnoreKnownBrokenTarget = false);
 
 public sealed record ReviewEvidenceDto(
     Guid Id,

@@ -339,7 +339,8 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
     }
 
     public async Task<LandRequestResult> RequestAsync(string? filter = null, string? expectedSourceSha = null,
-        Guid? reviewEvidenceId = null, bool recoverReviewedSource = false, Guid? adoptFromTaskId = null)
+        Guid? reviewEvidenceId = null, bool recoverReviewedSource = false, Guid? adoptFromTaskId = null,
+        bool ignoreKnownBrokenTarget = false)
     {
         if (expectedSourceSha is null)
         {
@@ -359,7 +360,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         await using var scope = Services.CreateAsyncScope();
         return await CreateLand(scope.ServiceProvider.GetRequiredService<AppDbContext>(), scope.ServiceProvider)
             .RequestAsync(Fixture.TaskId, new LandAgentTaskRequest(filter, expectedSourceSha, reviewEvidenceId,
-                adoptFromTaskId, recoverReviewedSource),
+                adoptFromTaskId, recoverReviewedSource, ignoreKnownBrokenTarget),
                 CancellationToken.None);
     }
 
