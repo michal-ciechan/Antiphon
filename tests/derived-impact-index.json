@@ -2181,9 +2181,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "ContextCompactionSweepTests",
         "PhoneHomeRollingRunnerTests",
