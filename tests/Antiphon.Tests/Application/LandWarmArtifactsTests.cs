@@ -278,6 +278,8 @@ public sealed class LandWarmArtifactsTests
             .OrderBy(e => e.At).ToListAsync();
         refused.Last().Detail.ShouldContain(marker);
         refused.Last().Detail.ShouldNotContain(early);
+        refused.Last().Detail.ShouldContain("-IgnoreKnownBrokenTarget", Case.Sensitive, "the refusal names the request override");
+        refused.Last().Detail.ShouldContain("Landing:RefuseKnownBrokenTarget", Case.Sensitive, "the refusal names the setting");
     }
 
     /// <summary>CARD-1995: a diff that edits a linked Compile input still builds the known-broken target.</summary>
@@ -351,6 +353,205 @@ public sealed class LandWarmArtifactsTests
         await h.RequestAsync();
         (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
         compiler.BuildPaths.Count.ShouldBe(2, "a new target SHA is built even when the diff avoids the old project");
+    }
+
+    /// <summary>
+    /// CARD-1995 D-1: task A's own diff breaks the project on target X, so that failure is A's, not
+    /// X's. A later land onto X whose diff stays outside the project must build, not be refused.
+    /// </summary>
+    [Test]
+    public async Task C1995_CandidatesOwnBreakDoesNotRefuseAnUnrelatedLand()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler
+        {
+            FailWhen = worktree => File.Exists(Path.Combine(worktree, "tests", "Failing", "Broken.cs")),
+            BuildStdErr = FailingError,
+        };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        var target = await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj", FailingProject);
+        await CommitSourceAsync(h, "tests/Failing/Broken.cs", "class Broken { Missing value; }\n", "A breaks the project");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        await CommitSourceAsync(h, "tests/Failing/Broken.cs", null, "B drops the broken file");
+        await CommitSourceAsync(h, "feature.txt", "unrelated edit\n", "B edits outside the project");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(2, "a candidate's own break is not a broken target, so the unrelated land builds");
+        var operations = await OperationsAsync(h);
+        operations.Count.ShouldBe(2);
+        operations[0].LastReason.ShouldBe("verification_failed");
+        operations[0].VerificationFailingProjects.ShouldBeNull("the failing land changed the project it broke");
+        operations[1].TargetBeforeSha.ShouldBe(target);
+        operations[1].LastReason.ShouldNotBe("target_build_broken");
+        operations[1].Publication.ShouldBe(LandPublicationOutcome.Landed);
+    }
+
+    /// <summary>CARD-1995: the setting, the force-build setting and the request flag each build a known-broken target.</summary>
+    [Test]
+    [Arguments("setting")]
+    [Arguments("force-build")]
+    [Arguments("request")]
+    public async Task C1995_OverrideBuildsAKnownBrokenTarget(string via)
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = FailingError };
+        h.ConfigureServices = services =>
+        {
+            services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+            if (via != "request")
+                services.AddSingleton(Options.Create(new LandingSettings
+                {
+                    RefuseKnownBrokenTarget = via != "setting",
+                    ForceVerificationBuild = via == "force-build",
+                }));
+        };
+        await h.InitializeAsync();
+        await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj", FailingProject);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        await CommitSourceAsync(h, "unrelated.txt", "unrelated edit\n", "unrelated");
+        await h.RequestAsync(ignoreKnownBrokenTarget: via == "request");
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(2, $"the {via} override builds the known-broken target");
+        (await OperationsAsync(h))[1].LastReason.ShouldBe("verification_failed");
+    }
+
+    /// <summary>CARD-1995: a record older than Landing:KnownBrokenTargetMaxAgeMinutes (30) refuses nothing.</summary>
+    [Test]
+    public async Task C1995_AgedOutRecordDoesNotRefuse()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = FailingError };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj", FailingProject);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        var recorded = (await OperationsAsync(h)).Single();
+        recorded.VerificationFailingProjects.ShouldBe("tests/Failing/Failing.csproj");
+        await BackdateAsync(h, recorded.Id, TimeSpan.FromMinutes(31));
+
+        await CommitSourceAsync(h, "unrelated.txt", "unrelated edit\n", "unrelated");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(2, "a record older than the age bound does not refuse");
+        (await OperationsAsync(h))[1].LastReason.ShouldBe("verification_failed");
+    }
+
+    /// <summary>CARD-1995: a refused land is not a new record, so the original record still ages out.</summary>
+    [Test]
+    public async Task C1995_RefusedLandDoesNotRenewTheRecord()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = FailingError };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj", FailingProject);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        await CommitSourceAsync(h, "unrelated.txt", "unrelated edit\n", "unrelated");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        compiler.BuildPaths.Count.ShouldBe(1);
+        var operations = await OperationsAsync(h);
+        operations[1].LastReason.ShouldBe("target_build_broken");
+        operations[1].VerificationFailingProjects.ShouldBeNull("a refused land does not copy the record");
+        operations[1].VerificationFailureStep.ShouldNotBe("build");
+
+        await BackdateAsync(h, operations[0].Id, TimeSpan.FromMinutes(31));
+        await CommitSourceAsync(h, "unrelated.txt", "another unrelated edit\n", "unrelated again");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+
+        compiler.BuildPaths.Count.ShouldBe(2, "only the original record counts, and it has aged out");
+    }
+
+    /// <summary>CARD-1995: an MSBuild infrastructure error (a copy lock) is not recorded as a broken target.</summary>
+    [Test]
+    public async Task C1995_MsbOnlyFailureIsNotRecorded()
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler
+        {
+            BuildOk = false,
+            BuildStdErr = "error MSB3027: Could not copy \"obj/Failing.dll\" to \"bin/Failing.dll\". The file is locked. [tests/Failing/Failing.csproj]",
+        };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj", FailingProject);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        var operations = await OperationsAsync(h);
+        operations.Single().LastReason.ShouldBe("verification_failed");
+        operations.Single().VerificationFailingProjects.ShouldBeNull("only CS compiler errors name a broken project");
+
+        await CommitSourceAsync(h, "unrelated.txt", "unrelated edit\n", "unrelated");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        compiler.BuildPaths.Count.ShouldBe(2, "an MSB-only failure does not refuse the next land");
+    }
+
+    /// <summary>
+    /// CARD-1995: a failing land whose diff changed a referenced project or a root build input may
+    /// have caused the failure, so it is not recorded and the next unrelated land builds.
+    /// </summary>
+    [Test]
+    [Arguments("tests/Lib/Lib.cs")]
+    [Arguments("Directory.Build.props")]
+    public async Task C1995_ClosureChangeIsNotRecordedAsABrokenTarget(string changed)
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = FailingError };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await PushReferencingProjectAsync(h);
+        await CommitSourceAsync(h, changed, "<!-- A's change -->\n", "A changes the closure");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        (await OperationsAsync(h)).Single().VerificationFailingProjects.ShouldBeNull($"{changed} is in the failing project's closure");
+
+        await CommitSourceAsync(h, changed, null, "B drops A's change");
+        await CommitSourceAsync(h, "unrelated.txt", "unrelated edit\n", "B edits outside the closure");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        compiler.BuildPaths.Count.ShouldBe(2, "the unrelated land builds");
+    }
+
+    /// <summary>
+    /// CARD-1995: when the target really is broken, a fix in a referenced project or a root build
+    /// input changes the failing project's closure, so that land builds.
+    /// </summary>
+    [Test]
+    [Arguments("tests/Lib/Lib.cs")]
+    [Arguments("Directory.Packages.props")]
+    public async Task C1995_FixInTheClosureBuildsAKnownBrokenTarget(string changed)
+    {
+        await using var h = new LandingSafetyHarness();
+        var compiler = new Compiler { BuildOk = false, BuildStdErr = FailingError };
+        h.ConfigureServices = services => services.AddSingleton<ILandingVerifier>(Verifier(compiler));
+        await h.InitializeAsync();
+        await PushReferencingProjectAsync(h);
+        await h.AddSourceAsync();
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        (await OperationsAsync(h)).Single().VerificationFailingProjects.ShouldBe("tests/Failing/Failing.csproj");
+
+        await CommitSourceAsync(h, changed, "<!-- the fix -->\n", "fix in the closure");
+        await h.RequestAsync();
+        (await h.RunQueuedAsync()).ShouldBe(LandRunResult.Complete);
+        compiler.BuildPaths.Count.ShouldBe(2, $"{changed} is in the failing project's closure, so the fix builds");
+        (await OperationsAsync(h))[1].LastReason.ShouldBe("verification_failed");
     }
 
     [Test]
@@ -529,6 +730,62 @@ public sealed class LandWarmArtifactsTests
         compiler.BuildPaths[1].ShouldNotBe(compiler.BuildPaths[0], "the verifier keys its generation by the land target");
     }
 
+    private const string FailingError =
+        "error CS0103: The name 'Missing' does not exist in the current context [tests/Failing/Failing.csproj]";
+    private const string FailingProject = """
+        <Project Sdk="Microsoft.NET.Sdk">
+          <ItemGroup>
+            <Compile Include="Broken.cs" />
+          </ItemGroup>
+        </Project>
+        """;
+
+    /// <summary>Commits one write (or, with null content, one delete) on the task branch.</summary>
+    private static async Task CommitSourceAsync(LandingSafetyHarness h, string path, string? content, string message)
+    {
+        var full = Path.Combine(h.Fixture.Source, path.Replace('/', Path.DirectorySeparatorChar));
+        if (content is null) File.Delete(full);
+        else
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            await File.WriteAllTextAsync(full, content);
+        }
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "add", "-A", ".");
+        await h.Fixture.RequiredAsync(h.Fixture.Source, "commit", "-m", message);
+    }
+
+    private static async Task<List<Antiphon.Server.Domain.Entities.AgentTaskLanding>> OperationsAsync(LandingSafetyHarness h)
+    {
+        await using var db = h.CreateContext();
+        return await db.AgentTaskLandings.AsNoTracking().Where(o => o.TaskId == h.Fixture.TaskId)
+            .OrderBy(o => o.CreatedAt).ToListAsync();
+    }
+
+    /// <summary>Moves one land row's last write back, as if it had been written that long ago.</summary>
+    private static async Task BackdateAsync(LandingSafetyHarness h, Guid operationId, TimeSpan age)
+    {
+        await using var db = h.CreateContext();
+        var row = await db.AgentTaskLandings.SingleAsync(o => o.Id == operationId);
+        row.UpdatedAt = DateTime.UtcNow - age;
+        row.ConcurrencyToken = Guid.NewGuid();
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>A failing project that references tests/Lib/Lib.csproj, pushed to the target as two commits.</summary>
+    private static async Task<string> PushReferencingProjectAsync(LandingSafetyHarness h)
+    {
+        await h.Fixture.PushIndependentAsync("library-project", "tests/Lib/Lib.csproj", """<Project Sdk="Microsoft.NET.Sdk" />""");
+        return await h.Fixture.PushIndependentAsync("failing-project", "tests/Failing/Failing.csproj",
+            """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <ItemGroup>
+                <Compile Include="Broken.cs" />
+                <ProjectReference Include="..\Lib\Lib.csproj" />
+              </ItemGroup>
+            </Project>
+            """);
+    }
+
     private static LandingVerifier Verifier(Compiler compiler, bool reuse = true) => new(
         artifacts: new LandVerificationArtifacts { SdkIdentity = "fixture-sdk" },
         settings: Options.Create(new LandingSettings { ReuseVerificationArtifacts = reuse }))
@@ -541,6 +798,8 @@ public sealed class LandWarmArtifactsTests
         public List<string> TestArtifactPaths { get; } = [];
         public bool BuildOk { get; set; } = true;
         public string BuildStdErr { get; set; } = "compiler failed";
+        /// <summary>CARD-1995: when set, the build fails exactly when this returns true for the land worktree.</summary>
+        public Func<string, bool>? FailWhen { get; set; }
         public int? BuildExitCode { get; set; }
         public bool RecordExit { get; set; } = true;
         public bool WriteReport { get; set; } = true;
@@ -555,8 +814,9 @@ public sealed class LandWarmArtifactsTests
                 BuildPaths.Add(output);
                 OnBuild?.Invoke();
                 ct.ThrowIfCancellationRequested();
-                return Task.FromResult(new AgentTaskLandService.ProcessResult(BuildOk, "", BuildOk ? "" : BuildStdErr)
-                    { ExitCode = RecordExit ? BuildExitCode ?? (BuildOk ? 0 : 1) : null });
+                var ok = FailWhen is null ? BuildOk : !FailWhen(cwd);
+                return Task.FromResult(new AgentTaskLandService.ProcessResult(ok, "", ok ? "" : BuildStdErr)
+                    { ExitCode = RecordExit ? BuildExitCode ?? (ok ? 0 : 1) : null });
             }
             var resultsIndex = Array.IndexOf(args, "--results-directory");
             var results = resultsIndex < 0 ? output : args[resultsIndex + 1];

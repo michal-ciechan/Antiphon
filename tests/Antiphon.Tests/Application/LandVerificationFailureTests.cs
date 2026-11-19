@@ -30,7 +30,8 @@ public sealed class LandVerificationFailureTests
         await Task.CompletedTask;
         var output = "error CS0103: The name 'Missing' does not exist in the current context [tests/Failing/Failing.csproj]\n"
             + "error MSB3073: The command failed [tests/Other/Other.csproj]";
-        LandVerificationFailure.ProjectList(output, null).ShouldBe("tests/Failing/Failing.csproj;tests/Other/Other.csproj");
+        LandVerificationFailure.ProjectList(output, null).ShouldBe("tests/Failing/Failing.csproj",
+            "an MSB infrastructure error names no broken project; only CS compiler errors do");
         var includes = LandVerificationFailure.CompileIncludes(
             """
             <Project Sdk="Microsoft.NET.Sdk">
