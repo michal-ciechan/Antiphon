@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
-  "knownUnsound": [],
+  "knownUnsound": [
+    "f2de5b30-resilience-mirror"
+  ],
   "cases": [
     {
       "id": "d88de419-platform-taxonomy",
@@ -224,7 +226,7 @@
         "tests/Antiphon.Tests/TestHelpers/TestDbFixtureLifecycle.cs"
       ],
       "currentMap": "selected",
-      "m1": "selected",
+      "m1": "missed",
       "reason": "The rc failure was a Resilience.Tests compile break. Those two helpers are linked with Compile Include and are not under any project the suite ProjectReferences. The project closure misses them. The committed owner map still selects them. The failing subject is the project compile, not a test method."
     }
   ]
