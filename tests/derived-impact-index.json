@@ -26089,7 +26089,8 @@
         "C1677TempSweepTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "OwnedTempLeakTests",
-        "TaskWorktreeRetirementTests"
+        "TaskWorktreeRetirementTests",
+        "TestClassificationPolicyTests"
       ]
     },
     {
