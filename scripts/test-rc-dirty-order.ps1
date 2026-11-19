@@ -57,6 +57,34 @@ function BandOf($order,[string]$key) {
     foreach ($row in @($order.launch)) { if ([string]$row.key -ceq $key) { return [string]$row.band } }
     return ''
 }
+function LaunchText($order) {
+    $parts=New-Object System.Collections.Generic.List[string]
+    foreach ($item in @($order.launch)) { $parts.Add(([string]$item.key) + ':' + [string]$item.band + ':' + [string]$item.disposition) }
+    return ($parts -join ',')
+}
+function Omitted($order,[string]$key) {
+    foreach ($item in @($order.omitted)) { if ([string]$item -ceq $key) { return $true } }
+    return $false
+}
+function New-DoRepo([string]$root) {
+    [void][IO.Directory]::CreateDirectory($root)
+    function G([string[]]$arguments) { Invoke-C487FixtureGit $root $arguments }
+    [void](G @('init','-q','-b','main'))
+    [void](G @('config','user.name','Fixture'))
+    [void](G @('config','user.email','fixture@example.invalid'))
+    [IO.File]::WriteAllText((Join-Path $root 'note'), "base`n")
+    [void](G @('add','note')); [void](G @('commit','-qm','base'))
+    $base=G @('rev-parse','HEAD')
+    [void](G @('checkout','-q','-b','fixline'))
+    [IO.File]::WriteAllText((Join-Path $root 'note'), "fixed`n")
+    [void](G @('add','note')); [void](G @('commit','-qm','fix'))
+    $fix=G @('rev-parse','HEAD')
+    [void](G @('checkout','-q','-b','other',$base))
+    [IO.File]::WriteAllText((Join-Path $root 'note'), "other`n")
+    [void](G @('add','note')); [void](G @('commit','-qm','other'))
+    $other=G @('rev-parse','HEAD')
+    return @{ base=$base; fix=$fix; other=$other }
+}
 function Refuses([scriptblock]$body,[string]$reason) {
     try { & $body | Out-Null; Note $false ('accepted:'+ $reason) }
     catch { Note ($_.Exception.Message.Contains($reason)) ('wrong-refusal:'+ $reason + ':' + $_.Exception.Message) }
@@ -204,6 +232,91 @@ try {
             Note ((HasKey $order 'cherry') -and (BandOf $order 'cherry') -ceq 'changed') 'cherry-pick-fix-leaves-failed'
             Note ($order.gateCredit -eq $false -and $order.trustTransition -eq $false -and $order.effectiveMode -ceq 'Full') 'discharged-still-has-no-gate-credit'
             Assert-OffSwitch $order
+        }
+        'CaseDistinctKeysStaySeparate' {
+            $upper='Suite/FooTests'
+            $lower='Suite/fooTests'
+            $rows=@(
+                (Row $upper 'Dirty'),
+                (Row $lower 'Sample'))
+            $attempts=@(
+                (Attempt 1 'old-sha' $upper 'failed'),
+                (Attempt 2 'old-sha' $lower 'passed'))
+            $order=Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $attempts -Fixes @() -RepositoryRoot '' -CandidateSha 'candidate-not-in-history'
+            $text=LaunchText $order
+            Note ($text -ceq ($upper + ':failed:Dirty,' + $lower + ':sample:Sample')) ('case-distinct-launch:' + $text)
+            $repo=Join-Path $ResultsDirectory 'case-repo'
+            $built=New-DoRepo $repo
+            $fixRows=@(
+                (Row $upper 'Dirty'),
+                (Row $lower 'Dirty'))
+            $fixAttempts=@(
+                (Attempt 1 $built.base $upper 'failed'),
+                (Attempt 2 $built.base $lower 'failed'),
+                (Attempt 3 $built.other $upper 'passed'),
+                (Attempt 4 $built.fix $lower 'passed'))
+            $fixes=@(@{ key=$lower; fixSha=$built.fix })
+            $fixed=Get-RcDirtyLaunchOrder -Obligations $fixRows -Attempts $fixAttempts -Fixes $fixes -RepositoryRoot $repo -CandidateSha $built.base
+            $fixedText=LaunchText $fixed
+            Note ($fixedText -ceq ($upper + ':failed:Dirty,' + $lower + ':changed:Dirty')) ('case-distinct-fix:' + $fixedText)
+            Assert-OffSwitch $order
+        }
+        'CarryWithOpenFailureRefuses' {
+            $rows=@(
+                (Row 'k' 'Carry'),
+                (Row 'd' 'Dirty'))
+            $same=@(
+                (Attempt 1 'sha-a' 'k' 'failed'),
+                (Attempt 2 'sha-a' 'k' 'passed' $true))
+            Refuses { Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $same -Fixes @() -RepositoryRoot '' -CandidateSha 'candidate-not-in-history' } 'carry-with-open-failure'
+            $interrupted=@((Attempt 1 'sha-a' 'k' 'interrupted'))
+            Refuses { Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $interrupted -Fixes @() -RepositoryRoot '' -CandidateSha '' } 'carry-with-open-failure'
+            $later=@(
+                (Attempt 1 'sha-a' 'k' 'failed'),
+                (Attempt 2 'sha-b' 'k' 'passed' $true))
+            Refuses { Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $later -Fixes @() -RepositoryRoot '' -CandidateSha '' } 'carry-with-open-failure'
+            $cleanAttempts=@(
+                (Attempt 1 'old' 'k' 'passed'),
+                (Attempt 2 'old' 'd' 'passed'))
+            $clean=Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $cleanAttempts -Fixes @() -RepositoryRoot '' -CandidateSha 'candidate-not-in-history'
+            Note ((-not (HasKey $clean 'k')) -and (Omitted $clean 'k') -and (HasKey $clean 'd') -and ((BandOf $clean 'd') -ceq 'changed')) 'clean-carry-stays-omitted'
+            $repo=Join-Path $ResultsDirectory 'carry-repo'
+            $built=New-DoRepo $repo
+            $dischargedAttempts=@(
+                (Attempt 1 $built.base 'k' 'failed'),
+                (Attempt 2 $built.fix 'k' 'passed' $true),
+                (Attempt 3 $built.base 'd' 'passed'))
+            $dischargedFixes=@(@{ key='k'; fixSha=$built.fix })
+            $discharged=Get-RcDirtyLaunchOrder -Obligations $rows -Attempts $dischargedAttempts -Fixes $dischargedFixes -RepositoryRoot $repo -CandidateSha $built.base
+            $dischargedText=LaunchText $discharged
+            Note ((-not (HasKey $discharged 'k')) -and (Omitted $discharged 'k') -and ($dischargedText -ceq 'd:changed:Dirty')) ('discharged-carry-stays-omitted:' + $dischargedText)
+            Assert-OffSwitch $clean
+        }
+        'UnknownShaRefuses' {
+            $repo=Join-Path $ResultsDirectory 'unknown-repo'
+            $built=New-DoRepo $repo
+            $unknown='deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+            Note (($unknown -cne $built.base) -and ($unknown -cne $built.fix) -and ($unknown -cne $built.other)) 'unknown-sha-is-not-a-fixture-commit'
+            $fixRows=@((Row 'fix-unknown' 'Dirty'))
+            $fixAttempts=@(
+                (Attempt 1 $built.base 'fix-unknown' 'failed'),
+                (Attempt 2 $built.other 'fix-unknown' 'passed'))
+            $fixList=@(@{ key='fix-unknown'; fixSha=$unknown })
+            Refuses { Get-RcDirtyLaunchOrder -Obligations $fixRows -Attempts $fixAttempts -Fixes $fixList -RepositoryRoot $repo -CandidateSha $built.base } 'repo-sha-unresolved'
+            $greenRows=@((Row 'green-unknown' 'Dirty'))
+            $greenAttempts=@(
+                (Attempt 1 $built.base 'green-unknown' 'failed'),
+                (Attempt 2 $unknown 'green-unknown' 'passed'))
+            $greenFixes=@(@{ key='green-unknown'; fixSha=$built.fix })
+            Refuses { Get-RcDirtyLaunchOrder -Obligations $greenRows -Attempts $greenAttempts -Fixes $greenFixes -RepositoryRoot $repo -CandidateSha $built.base } 'repo-sha-unresolved'
+            $heldRows=@((Row 'held' 'Dirty'))
+            $heldAttempts=@(
+                (Attempt 1 $built.base 'held' 'failed'),
+                (Attempt 2 $built.other 'held' 'passed'))
+            $heldFixes=@(@{ key='held'; fixSha=$built.fix })
+            $held=Get-RcDirtyLaunchOrder -Obligations $heldRows -Attempts $heldAttempts -Fixes $heldFixes -RepositoryRoot $repo -CandidateSha $built.base
+            Note ((HasKey $held 'held') -and ((BandOf $held 'held') -ceq 'failed')) 'known-uncontained-fix-stays-failed'
+            Assert-OffSwitch $held
         }
         default { throw 'unknown-case' }
     }
