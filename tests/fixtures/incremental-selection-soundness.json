@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "knownUnsound": [],
+  "cases": [
+    {
+      "id": "d88de419-platform-taxonomy",
+      "run": "d88de419",
+      "failingClass": "PlatformTaxonomyFilterTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "387397c60c885a048cbf68e44d39ea40f4e44192",
+      "note": "docs/investigations/2026-11-10-why-missed-antiphon-g2-platformtaxonomy-filter-tests-red.md",
+      "changedPaths": [
+        "tests/Antiphon.Tests/PlatformTaxonomyClassFilterTests.cs",
+        "tests/Antiphon.Tests/PlatformTaxonomyFilterTests.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "Both changed paths are under tests/Antiphon.Tests, the suite directory. The committed owner map selects every path for every suite."
+    },
+    {
+      "id": "6591e378-composer-probe",
+      "run": "6591e378",
+      "failingClass": "ComposerInputProbeTests",
+      "suiteProject": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+      "introducingCommit": "754d02f72f91245c85427f1ed2db7aa7ea9be7f3",
+      "note": "docs/investigations/2026-11-10-why-missed-composer-input-probe-g1.md",
+      "changedPaths": [
+        "server/Application/Services/SessionMessageQueueService.cs",
+        "server/Application/Settings/AgentRegistrySettings.cs",
+        "server/Application/Settings/SupervisionSettings.cs",
+        "server/Infrastructure/Agents/Pty/ClaudeAdapter.cs",
+        "server/Infrastructure/Agents/SessionRunner/RunnerClaudeAdapter.cs",
+        "src/Antiphon.Agents.Pty/ComposerDeliveryEvidence.cs",
+        "src/Antiphon.Agents.Pty/ComposerInputProbe.cs",
+        "src/Antiphon.FakeClaude/Program.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeInputProbeCanaryTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/ComposerInputProbeTests.cs",
+        "tests/Antiphon.Agents.Pty.Tests/FakeClaudeContractTests.cs",
+        "tests/Antiphon.Tests/Agents/RunnerClaudeAdapterTrustPromptTests.cs",
+        "tests/Antiphon.Tests/Application/SessionMessageQueueDeliveryVerificationTests.cs",
+        "tests/Antiphon.Tests/TestHelpers/BridgeQueueHarness.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "src/Antiphon.Agents.Pty and the suite's own tests are inside the Pty test project's ProjectReference closure. Server paths in the same commit are outside that closure; the Pty paths still select the suite."
+    },
+    {
+      "id": "6591e378-e2e-land",
+      "run": "6591e378",
+      "failingClass": "AgentTaskLandDeliveryE2ETests",
+      "suiteProject": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+      "introducingCommit": "9792086f95db537da38285eb44bec3de4141211c",
+      "note": "docs/investigations/2026-11-10-why-missed-e2e-split-7-land-delivery.md",
+      "changedPaths": [
+        "server/Application/Services/AgentTaskLandNotificationService.cs",
+        "server/Application/Services/AgentTaskReplyService.cs",
+        "server/Application/Services/SessionMessageQueueService.cs",
+        "src/Antiphon.FakeGrok/Program.cs",
+        "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs",
+        "tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.Review.cs",
+        "tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs",
+        "tests/Antiphon.E2E/Fixtures/LandDeliveryOptions.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "tests/Antiphon.E2E references server/Antiphon.Server.csproj, and this commit changes server sources plus the suite's own tests."
+    },
+    {
+      "id": "97150a0b-checkpoint-source",
+      "run": "97150a0b",
+      "failingClass": "CheckpointSourceExecutionTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "0da4b71adc7c505e3abe1f38afcc200fa93c824b",
+      "note": "docs/investigations/2026-11-10-why-missed-g109 CheckpointSourceExecution xml timeout.md",
+      "changedPaths": [
+        "docs/superpowers/plans/2026-11-06-card-1217-s1-r3-checkpoints.md",
+        "tests/Antiphon.Tests/Checkpoints/C1217ConditionalSkipContractTests.cs",
+        "tests/Antiphon.Tests/Checkpoints/C1217ConditionalSkipFixture.cs",
+        "tests/Antiphon.Tests/Checkpoints/CheckpointSourceExecutionTests.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "The changed test files are under tests/Antiphon.Tests. The plan markdown is not a build-graph root."
+    },
+    {
+      "id": "34d41b7e-step-deadline",
+      "run": "34d41b7e",
+      "failingClass": "CheckpointStepDeadlineTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "477b7a501ef550fed48f7d14f265dbbe396c68b8",
+      "note": "docs/investigations/2026-11-10-why-missed-g111-checkpointstepdeadline.md",
+      "changedPaths": [
+        "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
+        "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcessTests.cs",
+        "tests/Antiphon.Tests/Checkpoints/CheckpointStepDeadline.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "Sibling files under tests/Antiphon.Tests/Checkpoints are in the suite tree. CheckpointStepDeadlineTests.cs itself is not in this commit."
+    },
+    {
+      "id": "34d41b7e-linux-compiler",
+      "run": "34d41b7e",
+      "failingClass": "LinuxSharedCompilerPolicyTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "ef43415b220607b844d4ed6726092fdfa61ff501",
+      "note": "docs/investigations/2026-11-10-why-missed-g121-linuxsharedcompilerpolicy.md",
+      "changedPaths": [
+        "scripts/lib/BuildDriverEnvironment.cs",
+        "tests/Antiphon.Tests/Infrastructure/LinuxSharedCompilerPolicyTests.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "The suite's own test file selects it. scripts/lib/BuildDriverEnvironment.cs is outside every ProjectReference directory and is not a build-graph root, so a commit that changed only that file would miss this suite."
+    },
+    {
+      "id": "0b292fa4-cardfile",
+      "run": "0b292fa4",
+      "failingClass": "CardFileGitFailureAcceptanceTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "c090828752dc2a0b8d82f0f8dcadff674781f2c4",
+      "note": "docs/investigations/2026-11-10-why-missed-g82 CardFileGit cancel hook.md",
+      "changedPaths": [
+        "docs/superpowers/plans/2026-09-06-card-0408-card-file-privacy-plan.md",
+        "docs/superpowers/plans/2026-09-06-card-0408-code-evidence.md",
+        "server/Application/Dtos/CardFileStatusDto.cs",
+        "server/Application/Dtos/CardFileSyncDtos.cs",
+        "server/Application/Interfaces/ICardFileRepository.cs",
+        "server/Application/Services/CardFilePolicyService.cs",
+        "server/Application/Services/CardFilePublicCard.cs",
+        "server/Application/Services/CardTaskFileRenderer.cs",
+        "server/Application/Services/CardTaskFileService.cs",
+        "server/Application/Services/CardTaskFileSyncGate.cs",
+        "server/Domain/Entities/Board.cs",
+        "server/Domain/Entities/Card.cs",
+        "server/Domain/Entities/CardRevision.cs",
+        "server/Domain/Entities/Project.cs",
+        "server/Domain/Enums/CardFileVisibility.cs",
+        "server/Domain/Enums/RepositoryVisibility.cs",
+        "server/Infrastructure/Data/AppDbContext.cs",
+        "server/Infrastructure/Git/CardFileRepository.cs",
+        "server/Migrations/20260906223252_CardFilePrivacy.Designer.cs",
+        "server/Migrations/20260906223252_CardFilePrivacy.cs",
+        "server/Migrations/AppDbContextModelSnapshot.cs",
+        "server/Program.cs",
+        "tests/Antiphon.Tests/Application/CardFilePolicyTests.cs",
+        "tests/Antiphon.Tests/Application/CardFilePrivacyGitTests.cs",
+        "tests/Antiphon.Tests/Application/CardRankingOrderTests.cs",
+        "tests/Antiphon.Tests/Application/CardTaskFileRendererTests.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "Server sources are in the Antiphon.Tests ProjectReference closure, and sibling tests under tests/Antiphon.Tests changed. CardFileGitFailureAcceptanceTests.cs is not in this commit. The plan markdown files are not build-graph roots."
+    },
+    {
+      "id": "d88de419-turn-end",
+      "run": "d88de419",
+      "failingClass": "TurnEndGapRestartDeliveryTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "7c6af459fd31e20ffd2529394b9c112f4caebc41",
+      "note": "docs/investigations/2026-11-10-why-missed-g60-TurnEndGapRestartDelivery-red.md",
+      "changedPaths": [
+        "docs/session-runtime-invariants.md",
+        "server/Application/Services/SessionMessageQueueService.Expectations.cs",
+        "server/Application/Services/SessionMessageQueueService.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "server/Antiphon.Server.csproj is in the Antiphon.Tests closure. The failing test file is not in this commit. docs/session-runtime-invariants.md is not a build-graph root. The note names this commit; it is not an ancestor of the current master tip."
+    },
+    {
+      "id": "f2de5b30-runner-budget",
+      "run": "f2de5b30",
+      "failingClass": "C1722GitTimeoutBudgetTests",
+      "suiteProject": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+      "introducingCommit": "8559efcaf8bd003c7a4b78bede96fb31565b3a57",
+      "note": "docs/investigations/2026-11-18-why-missed-session-runner-all-group-1.md",
+      "changedPaths": [
+        "docs/superpowers/plans/2026-11-17-card-1961-checkpoints.md",
+        "tests/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotResetTests.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "C0824WorkspaceSlotResetTests.cs is in the SessionRunner.Tests tree. C1722GitTimeoutBudgetTests.cs is not in this commit. The plan markdown is not a build-graph root."
+    },
+    {
+      "id": "97150a0b-c1514-sampler",
+      "run": "97150a0b",
+      "failingClass": "C1514HostLoadNativeOverheadTests",
+      "suiteProject": "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+      "introducingCommit": "1380bb4ada387a22e11361de13b57ecd06be3aae",
+      "note": "docs/investigations/2026-11-10-why-missed-sr profile16 C1514 sampler overhead.md",
+      "changedPaths": [
+        "src/Antiphon.SessionRunner/HostStatsSamplerService.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "The only changed path is HostStatsSamplerService.cs. SessionRunner.Tests references that project. The note names this introducing object and its master replay 4e2b755d6264384cce91452d8f204f75975ef196; the introducing object is not an ancestor of the current tip."
+    },
+    {
+      "id": "a6278259-spawn-lane",
+      "run": "a6278259",
+      "failingClass": "ScriptModelSpawnLaneTests",
+      "suiteProject": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "introducingCommit": "c9bf704375ccf02d46483d5c3fe9a05b3bbd36ad",
+      "note": "docs/investigations/2026-11-18-why-missed-spawn-lane-probes-windows.md",
+      "changedPaths": [
+        "tests/Antiphon.Tests/Scripts/ScriptModelSpawnLaneTests.cs",
+        "tests/Antiphon.Tests/TestHelpers/ScriptModelSpawnLimit.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "Both paths are under tests/Antiphon.Tests. The historical Windows failure is a platform skip, not a path-selection miss."
+    },
+    {
+      "id": "f2de5b30-resilience-mirror",
+      "run": "f2de5b30",
+      "failingClass": "Antiphon.Resilience.Tests",
+      "suiteProject": "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj",
+      "introducingCommit": "2c1b05349067731304b6a237e5f06511615675e5",
+      "note": "docs/investigations/2026-11-18-why-missed-resilience-tests-compile.md",
+      "changedPaths": [
+        "tests/Antiphon.Tests/TestHelpers/TestDbFailureEvidence.cs",
+        "tests/Antiphon.Tests/TestHelpers/TestDbFixtureLifecycle.cs"
+      ],
+      "currentMap": "selected",
+      "m1": "selected",
+      "reason": "The rc failure was a Resilience.Tests compile break. Those two helpers are linked with Compile Include and are not under any project the suite ProjectReferences. The project closure misses them. The committed owner map still selects them. The failing subject is the project compile, not a test method."
+    }
+  ]
+}
