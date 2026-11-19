@@ -1329,7 +1329,7 @@ function Test-FFPreviousRunChain {
         $fourth.Result.testsPassed -and $fourth.Result.coverageComplete -and $fourth.Result.ExitCode -eq 0) 'chainDigestMissing'
     $plain=New-NightlyDispatchSchedule -PreparedSuites $first.Prepared -RunId 'ingress' -Attempt '1'
     $wanted=@($plain.entries|ForEach-Object {$_.suite+'/'+$_.chunk})
-    $base=Copy-FFObject $first.Summary.dispatchProgress
+    $base=Copy-FFObject (Get-NightlySummaryDispatchProgress $first.Summary)
     if($base.PSObject.Properties.Name -cnotcontains 'liveness'){$base|Add-Member -NotePropertyName liveness -NotePropertyValue 'closed'}else{$base.liveness='closed'}
     if($base.PSObject.Properties.Name -cnotcontains 'schemaVersion'){$base|Add-Member -NotePropertyName schemaVersion -NotePropertyValue 1}else{$base.schemaVersion=1}
     $base.canonicalPlanDigest=$plain.canonicalPlanDigest

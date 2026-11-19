@@ -330,6 +330,22 @@ function Read-NightlyHistoryJson {
     return Read-NightlyJsonFile -Path $Path -StripBom -Omit $Omit
 }
 
+function Get-NightlySummaryDispatchProgress {
+    param($Summary)
+    # A summary's dispatchProgress snapshot, with its chunk rows. A summary marked suitesFromSummary does not
+    # carry them a second time: they are its suites rows that have a chunk. Older summaries carry their own.
+    if($null -eq $Summary -or $Summary.PSObject.Properties.Name -cnotcontains 'dispatchProgress'){return $null}
+    $progress=$Summary.dispatchProgress
+    if($null -eq $progress){return $null}
+    $names=@($progress.PSObject.Properties.Name)
+    if($names -ccontains 'suitesFromSummary' -and $progress.suitesFromSummary -eq $true -and $names -cnotcontains 'suites'){
+        $rows=[Collections.Generic.List[object]]::new()
+        foreach($row in @($Summary.suites)){ if($null -ne $row -and $row.chunk){ $rows.Add($row) } }
+        $progress|Add-Member -NotePropertyName suites -NotePropertyValue $rows.ToArray()
+    }
+    return $progress
+}
+
 function ConvertTo-NightlyHistoryTerminalInstant {
     param($Value)
     if ($null -eq $Value) { return $null }
@@ -749,7 +765,7 @@ function Initialize-NightlyDispatchHistory {
             $previous=$history
         }else{
         $history=Read-NightlyPriorFailures @read
-        $summary=Read-NightlyHistoryJson (Join-Path $history.sourceRoot 'summary.json') -Omit 'suites','dispatchProgress.suites[].exclusions','suiteExclusions'
+        $summary=Read-NightlyHistoryJson (Join-Path $history.sourceRoot 'summary.json') -Omit 'suites[].exclusions','dispatchProgress.suites[].exclusions','suiteExclusions'
         if($summary.outcome -cin @('Working','Running')){throw 'history-run-not-closed'}
         if($summary.dispatchProgress -and $summary.dispatchProgress.PSObject.Properties.Name -ccontains 'liveness' -and $summary.dispatchProgress.liveness -cne 'closed'){throw 'history-liveness-unknown'}
         if($CandidateSha -and $history.sourceSha -cne $CandidateSha){throw 'history-candidate-mismatch'}
@@ -757,8 +773,7 @@ function Initialize-NightlyDispatchHistory {
         if($null -eq $completed){throw 'history-terminal-time-invalid'}
         $now=Get-NightlyUtcNow
         if($completed.UtcDateTime -lt $now.AddDays(-7) -or $completed.UtcDateTime -gt $now.AddMinutes(5)){throw 'history-stale'}
-        $previous=$null
-        if($summary.PSObject.Properties.Name -contains 'dispatchProgress'){$previous=$summary.dispatchProgress}
+        $previous=Get-NightlySummaryDispatchProgress $summary
         }
         $digest=Get-NightlyHistoryDigest $Path
         $copy=$Path

@@ -2114,14 +2114,9 @@ function Invoke-AntiphonNightlyTests {
     # Bound by the exported summary digest. This diagnostic snapshot can order a
     # later complete attempt; it never supplies pass credit or skips a launch.
     if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
-        # The chunk rows without their D-5 exclusion lists: those stay once, in summary.suites (most of a full
-        # run's summary), and nothing orders by them.
-        $progressRows=@(foreach($resultRow in @($suiteResults|Where-Object {$_.chunk})){
-            $progressRow=[ordered]@{}
-            foreach($key in @($resultRow.Keys)){ if($key -cne 'exclusions'){ $progressRow[$key]=$resultRow[$key] } }
-            $progressRow
-        })
-        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=$progressRows}
+        # The snapshot's chunk rows are not written a second time (CARD-2005): they are summary.suites' rows that
+        # have a chunk, and the reader rebuilds them (Get-NightlySummaryDispatchProgress, nightly-failure-history.ps1).
+        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suitesFromSummary=$true}
     }
     try {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
