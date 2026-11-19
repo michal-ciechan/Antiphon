@@ -710,6 +710,22 @@ function Invoke-AntiphonNightlyRunCore {
                 }
             }
         } else {
+            # A -NoSync checkout was prepared elsewhere. Do not mutate it. Refuse
+            # unless this clone already opted Git into long paths.
+            $longpaths = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('config', '--local', '--get', 'core.longpaths')
+            $longpathsValue = ([string]$longpaths.Output).Trim()
+            if ([int]$longpaths.ExitCode -ne 0 -or $longpathsValue -cne 'true') {
+                Write-Host 'REFUSED: longpaths-not-enabled'
+                Write-Host ('git -C {0} config --local core.longpaths true' -f $CheckoutRoot)
+                $stateObj.phase = 'longpaths-not-enabled'
+                $stateObj.exitCode = 3
+                [void](Write-NightlyRunState -Path $paths.LastAttempt -State $stateObj -AllowFailure)
+                $exitCode = 3
+                $result.Refusal = 'longpaths-not-enabled'
+                $result.Phase = 'longpaths-not-enabled'
+                $result.ExitCode = $exitCode
+                return [pscustomobject]$result
+            }
             $rev = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'HEAD')
             $sha = ([string]$rev.Output).Trim()
             $stateObj.sha = $sha

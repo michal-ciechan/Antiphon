@@ -567,6 +567,14 @@ marked checkout at the pinned SHA; recheck the remote and candidate journal befo
 commissioning it. A durable bootstrap repair also needs to reach the rc line before
 ordinary syncing runs use that line's script.
 
+A `-NoSync` hop does not set `core.longpaths`. `launch-rc.ps1`, the `-NoSync` branch of
+`nightly-run.ps1`, and `scripts/qualification/preflight.ps1` refuse reason
+`longpaths-not-enabled` unless `git config --local --get core.longpaths` is `true`.
+The fix command is `git -C <checkout> config --local core.longpaths true`.
+`release-candidate.ps1` passes `-c core.longpaths=true` on `git clone`. The worktree
+guard passes the same override on `worktree add` and `worktree remove` and keeps
+git's own text in the failure.
+
 **Fix.** A bug or test fix for code already on the rc line lands on that line. A feature
 or refactor stays master-only. The failed run's evidence is kept. The line's new tip is
 tested from scratch under the rc profile. A partial run or a green under a different

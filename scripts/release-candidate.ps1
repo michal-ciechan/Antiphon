@@ -132,10 +132,10 @@ function Invoke-AntiphonReleaseCandidate {
     }
 
     if (-not (Test-Path -LiteralPath (Join-Path $CheckoutRoot '.git'))) {
-        if ($WhatIf) { Write-CandidateLine ('WhatIf: would clone {0} into {1}' -f $RemoteUrl, $CheckoutRoot) }
+        if ($WhatIf) { Write-CandidateLine ('WhatIf: would clone -c core.longpaths=true {0} into {1}' -f $RemoteUrl, $CheckoutRoot) }
         else {
             New-Item -ItemType Directory -Path (Split-Path -Parent $CheckoutRoot) -Force | Out-Null
-            $clone = Invoke-ReleaseGateGit -WorkingDirectory (Split-Path -Parent $CheckoutRoot) -Arguments @('clone', $RemoteUrl, $CheckoutRoot)
+            $clone = Invoke-ReleaseGateGit -WorkingDirectory (Split-Path -Parent $CheckoutRoot) -Arguments @('clone', '-c', 'core.longpaths=true', $RemoteUrl, $CheckoutRoot)
             if ([int]$clone.ExitCode -ne 0) {
                 Write-CandidateLine 'REFUSED: clone failed.'
                 $result.Refusal = 'clone-failed'; $result.ExitCode = 1; return [pscustomobject]$result

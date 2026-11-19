@@ -69,7 +69,7 @@ function New-C487OwnedClone {
     param([string]$Root, [string]$Origin = 'https://github.com/michal-ciechan/Antiphon')
     $clone = Join-Path $Root 'checkout'
     New-Item -ItemType Directory -Path (Join-Path $clone '.git') -Force | Out-Null
-    $cfg = "[remote `"origin`"]`n`turl = $Origin`n"
+    $cfg = "[core]`n`tlongpaths = true`n[remote `"origin`"]`n`turl = $Origin`n"
     Set-Content -LiteralPath (Join-Path $clone (Join-Path '.git' 'config')) -Value $cfg -Encoding ASCII
     Set-Content -LiteralPath (Join-Path $clone (Join-Path '.git' 'HEAD')) -Value 'ref: refs/heads/master' -Encoding ASCII
     Write-NightlyAtomicJson -Path (Join-Path $clone '.antiphon-nightly-owned') -Object ([ordered]@{ origin = $Origin; kind = 'nightly-clone' })
@@ -111,6 +111,9 @@ function Write-C487Seams {
         param(`$WorkingDirectory, `$Arguments)
         Add-Content -LiteralPath '$TracePath' -Value (('GIT {0}' -f (`$Arguments -join ' '))) -Encoding ASCII
         $wait
+        if (`$Arguments -contains '--get' -and `$Arguments -contains 'core.longpaths') {
+            return @{ ExitCode = 0; Output = 'true' }
+        }
         return @{ ExitCode = $GitExit; Output = '$GitOutput' }
     }
     StartProcess = {
