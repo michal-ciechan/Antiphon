@@ -15,4 +15,7 @@ public sealed class RcDirtyLaunchOrderTests
     [Test, Timeout(60_000)] public Task OnlyDirtyAndSampleLaunch(CancellationToken token) => Run(nameof(OnlyDirtyAndSampleLaunch), token);
     [Test, Timeout(60_000)] public Task OpenFailurePrecedesChanged(CancellationToken token) => Run(nameof(OpenFailurePrecedesChanged), token);
     [Test, Timeout(60_000)] public Task SameTipPassCannotClearFailure(CancellationToken token) => Run(nameof(SameTipPassCannotClearFailure), token);
+    [Test, Timeout(60_000)] public Task CaseDistinctKeysStaySeparate(CancellationToken token) => Run(nameof(CaseDistinctKeysStaySeparate), token);
+    [Test, Timeout(60_000)] public Task CarryWithOpenFailureRefuses(CancellationToken token) => Run(nameof(CarryWithOpenFailureRefuses), token);
+    [Test, Timeout(60_000)] public Task UnknownShaRefuses(CancellationToken token) => Run(nameof(UnknownShaRefuses), token);
 }
