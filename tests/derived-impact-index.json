@@ -1308,14 +1308,14 @@
       "reason": "cap",
       "owed": 333,
       "first": [
+        "UnixDeliveryCeilingTests",
         "DispatchHoldVisibilityTests",
         "InstructionBundleTests",
         "PostLandMutationWorktreeTests",
         "ProjectReadinessTests",
         "RoutingPinCandidateDispatchTests",
         "SpecialistExecutionIdentityTests",
-        "TaskProgressPolicyTests",
-        "TaskProgressStallSweepTests"
+        "TaskProgressPolicyTests"
       ]
     },
     {
@@ -10299,6 +10299,7 @@
     {
       "path": "server/Application/Services/RemoteWorkspaceReadiness.cs",
       "classes": [
+        "C0824WindowsSlotAdmissionTests",
         "RemoteWorkspaceReadinessTests"
       ]
     },
@@ -11767,6 +11768,7 @@
     {
       "path": "server/Application/Services/WindowsSlotCheckout.cs",
       "classes": [
+        "C0824WindowsSlotAdmissionTests",
         "C0824WindowsSlotCheckoutTests"
       ]
     },
@@ -12202,6 +12204,7 @@
         "AgentTaskReplyIntegrationTests",
         "AgentTaskServiceIntegrationTests",
         "AgentTaskStallEscalationTests",
+        "C0824WindowsSlotAdmissionTests",
         "C0824WorkspaceSlotRoleSettingsTests",
         "ChannelOutboundDeliveryTests",
         "ClaudeEffortByRoleSettingsTests",
@@ -12217,8 +12220,7 @@
         "SettlementSyncDebtPolicyTests",
         "SettlementSyncRecoveryTests",
         "StandingSpecialistSeatTests",
-        "TaskDeadlinePolicyTests",
-        "UnixDeliveryCeilingTests"
+        "TaskDeadlinePolicyTests"
       ]
     },
     {
