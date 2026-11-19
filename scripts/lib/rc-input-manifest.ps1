@@ -3,11 +3,14 @@
 . (Join-Path $PSScriptRoot 'test-selection.ps1')
 
 function New-RcInputPattern {
-    param([string]$Pattern)
+    param([string]$Pattern, [switch]$IgnoreCase)
     if (-not $Pattern -or $Pattern.Length -gt 2048 -or $Pattern -match '[\\\x00-\x1f:;\[\]]' -or
         $Pattern.StartsWith('/') -or $Pattern.Split('/') -contains '..') { throw 'invalid-input-pattern' }
     $expression='^'+[regex]::Escape($Pattern).Replace('\*\*/','(?:.*/)?').Replace('\*\*','.*').Replace('\*','[^/]*').Replace('\?','[^/]')+'$'
-    return [regex]::new($expression,[Text.RegularExpressions.RegexOptions]::CultureInvariant,[TimeSpan]::FromMilliseconds(100))
+    $options=[Text.RegularExpressions.RegexOptions]::CultureInvariant
+    # A-5: **/NuGet.config is forced full in every case. Other globs stay ordinal.
+    if ($IgnoreCase) { $options=$options -bor [Text.RegularExpressions.RegexOptions]::IgnoreCase }
+    return [regex]::new($expression,$options,[TimeSpan]::FromMilliseconds(100))
 }
 
 function Resolve-RcInventoryPath {
@@ -109,7 +112,7 @@ function Read-RcInputInventory {
         Assert-TestSelectionKeys $root @('path','consumers','reason')
         if ($root.path -isnot [string] -or $root.reason -isnot [string] -or -not $root.reason -or
             $root.consumers -isnot [array] -or -not $root.consumers.Count) { throw 'invalid-input-root' }
-        $pattern=New-RcInputPattern $root.path
+        $pattern=New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$')
         foreach ($id in $root.consumers) {
             if ($id -isnot [string] -or ($id -cne '*' -and -not $suites.ContainsKey($id))) { throw 'unknown-input-consumer' }
         }

@@ -103,12 +103,13 @@ switch ($Case) {
     }
     'DocsChangeDirtiesRepoReaders' {
         Put 'docs/contract.md' 'changed docs'; $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
         Note ($s.unresolved.Count -eq 0) "docs-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($antiphon,$e2e)) "docs-readers-only:$(& $shown $s)"
+        Note (SameSet $s $ids) "docs-every-suite:$(& $shown $s)"
         Note (Owns $s $antiphon 'docs/contract.md' 'repository-reader-non-code') 'docs-antiphon-reason'
         Note (Owns $s $e2e 'docs/contract.md' 'repository-reader-non-code') 'docs-e2e-reason'
-        Note (Lacks $s $messaging 'docs/contract.md') 'docs-misses-messaging'
-        Note (Lacks $s $resilience 'docs/contract.md') 'docs-misses-resilience'
+        Note (Owns $s $messaging 'docs/contract.md' 'repository-reader-non-code') 'docs-messaging-reason'
+        Note (Owns $s $resilience 'docs/contract.md' 'repository-reader-non-code') 'docs-resilience-reason'
     }
     'BuildGraphChangeForcesFull' {
         Put 'Directory.Build.props' '<Project><PropertyGroup><Fixture>changed</Fixture></PropertyGroup></Project>'
