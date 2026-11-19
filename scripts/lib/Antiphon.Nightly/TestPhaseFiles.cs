@@ -28,6 +28,27 @@ namespace Antiphon.Nightly
             if (string.IsNullOrWhiteSpace(path)) return Identity("missing", 0);
             long queued = EvidenceFiles.PendingLength(path);
             if (queued >= 0) return Identity("regular", queued);
+            // A file (the usual answer): existence, attributes and length from one look at it. Anything else
+            // (a directory, nothing there, a path File.Exists refuses such as one ending in a separator, an
+            // error) is answered by the calls below, as before.
+            try
+            {
+                var info = new FileInfo(path);
+                string full = info.FullName;
+                char last = full.Length > 0 ? full[full.Length - 1] : (char)0;
+                if (last != Path.DirectorySeparatorChar && last != Path.AltDirectorySeparatorChar && info.Exists)
+                {
+                    FileAttributes seen = info.Attributes;
+                    if ((seen & FileAttributes.Directory) == 0)
+                    {
+                        if ((seen & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) return Identity("unsupported", 0);
+                        long size = 0;
+                        if ((seen & (FileAttributes.Hidden | FileAttributes.System)) == 0) size = info.Length;
+                        return Identity("regular", size);
+                    }
+                }
+            }
+            catch { }
             if (!File.Exists(path) && !Directory.Exists(path)) return Identity("missing", 0);
             FileAttributes attrs;
             try { attrs = File.GetAttributes(path); }

@@ -161,6 +161,9 @@ function Read-QualificationActiveChunkIdentity {
 # The suite's planned-groups file is written once and re-validated on every active-chunk write (twice per
 # chunk). Its parse is reused while its bytes are unchanged: the key is the SHA-256 the record publishes as
 # planDigest, taken from the same bytes that are parsed. Validation still runs on every write.
+# -Index: the planned index beside it, read on the same writes, is kept the same way. Its parse is
+# Read-QualificationPlanJson's (the same text, the same parser), and the rows of a suite are filtered once per
+# snapshot. A changed file has another digest, so it is read and parsed again.
 function Get-QualificationBytesDigest {
     param([byte[]]$Bytes)
     $sha=[Security.Cryptography.SHA256]::Create()
@@ -170,29 +173,40 @@ function Get-QualificationBytesDigest {
 
 $script:QualificationPlanSnapshots = @{}
 function Read-QualificationPlanSnapshot {
-    param([string]$Path)
+    param([string]$Path, [switch]$Index)
     if((Get-TestPhasePathIdentity $Path).Kind -cne 'regular'){throw 'binding-file-unavailable'}
     # The file's digest without re-reading it while it is provably unchanged (EvidenceFiles.CachedSha256);
     # a snapshot is only ever built from bytes whose own digest is its key.
     Assert-NightlyCoreAvailable 'Read-QualificationPlanSnapshot'
     $bytes=$null
     $digest=[Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)
-    $key=$Path+'|'+$digest
+    $kind='plan|';if($Index){$kind='index|'}
+    $key=$kind+$Path+'|'+$digest
     if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
         if($null -eq $bytes){
             $bytes=Read-NightlyEvidenceBytes $Path
             $digest=Get-QualificationBytesDigest $bytes
-            $key=$Path+'|'+$digest
+            $key=$kind+$Path+'|'+$digest
         }
     }
     if(-not $script:QualificationPlanSnapshots.ContainsKey($key)){
         # As [IO.File]::ReadAllText decodes: UTF-8 unless a byte-order mark says otherwise.
         $reader=New-Object System.IO.StreamReader((New-Object System.IO.MemoryStream(,$bytes)), [Text.Encoding]::UTF8, $true)
-        try { $plan=$reader.ReadToEnd()|ConvertFrom-Json } finally { $reader.Dispose() }
-        $chunks=New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
-        foreach($group in @($plan.groups)){$chunk=[string]$group.chunk;$count=0;[void]$chunks.TryGetValue($chunk,[ref]$count);$chunks[$chunk]=$count+1}
+        try { $text=$reader.ReadToEnd() } finally { $reader.Dispose() }
+        $chunks=$null
+        $rows=$null
+        if($Index){
+            # As Read-QualificationPlanJson: strict JSON objects parse in the core, anything else is ConvertFrom-Json's.
+            $plan=[Antiphon.Nightly.NightlyJson]::ParseText($text,1024,$true)
+            if($null -eq $plan){$plan=$text|ConvertFrom-Json}
+            $rows=New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
+        } else {
+            $plan=$text|ConvertFrom-Json
+            $chunks=New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
+            foreach($group in @($plan.groups)){$chunk=[string]$group.chunk;$count=0;[void]$chunks.TryGetValue($chunk,[ref]$count);$chunks[$chunk]=$count+1}
+        }
         if($script:QualificationPlanSnapshots.Count -ge 16){$script:QualificationPlanSnapshots.Clear()}
-        $script:QualificationPlanSnapshots[$key]=[pscustomobject]@{Plan=$plan;Digest=$digest;Chunks=$chunks}
+        $script:QualificationPlanSnapshots[$key]=[pscustomobject]@{Plan=$plan;Digest=$digest;Chunks=$chunks;Rows=$rows}
     }
     return $script:QualificationPlanSnapshots[$key]
 }
@@ -205,8 +219,11 @@ function Write-QualificationActiveChunkIdentity {
         $path=Join-Path $Directory $file
         $snapshot=Read-QualificationPlanSnapshot $path
         $plan=$snapshot.Plan
-        $index=Read-QualificationPlanJson (Join-Path $Directory 'groups-planned-index.json')
-        $rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId})
+        $indexSnapshot=Read-QualificationPlanSnapshot (Join-Path $Directory 'groups-planned-index.json') -Index
+        $index=$indexSnapshot.Plan
+        $found=$null
+        if($indexSnapshot.Rows.TryGetValue([string]$SuiteId,[ref]$found)){$rows=[object[]]$found}
+        else{$rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId});$indexSnapshot.Rows[[string]$SuiteId]=$rows}
         $chunkCount=0;[void]$snapshot.Chunks.TryGetValue([string]$ChunkId,[ref]$chunkCount)
         if($rows.Count -ne 1 -or $rows[0].file -cne $file -or $index.runId -cne $RunId -or [string]$index.attempt -cne $Attempt -or $plan.runId -cne $RunId -or [string]$plan.attempt -cne $Attempt -or $plan.suite -cne $SuiteId -or $chunkCount -ne 1){throw 'active-plan-binding'}
         $old=Read-QualificationActiveChunkIdentity $Directory

@@ -920,9 +920,24 @@ function Test-TestPhaseRecordDigest {
     return ($actual -eq $hex)
 }
 
+# Test-Path -LiteralPath for the per-chunk directory checks: a drive-qualified path (X:\...) is answered by
+# .NET (the same answer for a file, a directory, a link and a missing path, without the cmdlet's per-call
+# cost); any other form (relative, provider-qualified, UNC, empty) is still the cmdlet's to resolve or refuse,
+# and so is a path .NET does not find that ends in a separator (the cmdlet finds a file named that way) or
+# holds a NUL (the cmdlet throws).
+function Test-TestPhasePathExists {
+    param([string]$Path)
+    if ($null -ne $Path -and $Path.Length -ge 3 -and [char]::IsLetter($Path[0]) -and $Path[1] -eq [char]58 -and ($Path[2] -eq [char]92 -or $Path[2] -eq [char]47)) {
+        if ([System.IO.Directory]::Exists($Path) -or [System.IO.File]::Exists($Path)) { return $true }
+        $last = $Path[$Path.Length - 1]
+        if ($last -ne [char]92 -and $last -ne [char]47 -and $Path.IndexOf([char]0) -lt 0) { return $false }
+    }
+    return (Test-Path -LiteralPath $Path)
+}
+
 function Write-TestPhaseDirectory {
     param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Test-TestPhasePathExists $Path)) {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
 }
@@ -2446,7 +2461,7 @@ function Test-QualificationTimingDirectory {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return 'missing' }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (-not (Test-Path -LiteralPath $Path)) { return 'missing' }
+        if (-not (Test-TestPhasePathExists $Path)) { return 'missing' }
         try { $attrs = [IO.File]::GetAttributes($Path) } catch { return 'unreadable' }
         $reparse = [IO.FileAttributes]::ReparsePoint
         $directory = [IO.FileAttributes]::Directory
