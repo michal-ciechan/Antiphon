@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 333,
+      "classes": 334,
       "reason": "allowlist"
     },
     {
@@ -2053,9 +2053,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 132,
+      "classes": 133,
       "reason": "cap",
-      "owed": 107,
+      "owed": 108,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
