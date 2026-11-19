@@ -24466,12 +24466,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Scripts/RcTagBackingTests.cs",
-      "classes": [
-        "ChannelPromptCorrelationTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
@@ -25158,7 +25152,9 @@
       "classes": [
         "ControlledLandingGitTests",
         "ControlledLandingRemovalReadTests",
-        "ExpectationObservationAdapterTests"
+        "ExpectationObservationAdapterTests",
+        "InterimVerificationReadinessTests",
+        "StaleWorkingTranscriptWatchdogTests"
       ]
     },
     {
