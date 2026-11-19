@@ -205,6 +205,7 @@ function Invoke-EnvTable {
         'SessionRunner__SessionLogPath',
         'SessionRunner__PtyHostDir',
         'SessionRunner__Herdr__Enabled',
+        'SessionRunner__HostStats__HistoryEnabled',
         'SessionRunner__HostStats__Volumes__0',
         'Serilog__LogPath',
         'PhoneHome__Executables__claude',
@@ -228,6 +229,7 @@ function Invoke-EnvTable {
         'SessionRunner__SessionLogPath' = 'C:/Antiphon/runner/state/session-runner'
         'SessionRunner__PtyHostDir' = 'C:/Antiphon/runner/state/pty-hosts'
         'SessionRunner__Herdr__Enabled' = 'false'
+        'SessionRunner__HostStats__HistoryEnabled' = 'false'
         'SessionRunner__HostStats__Volumes__0' = 'C:/Antiphon/runner/work'
         'Serilog__LogPath' = 'C:/Antiphon/runner/state/logs'
         'PhoneHome__Executables__claude' = 'C:\Tools\claude.exe'
@@ -256,6 +258,17 @@ function Invoke-EnvTable {
         if ($valuesOk) {
             foreach ($key in $expectedKeys) {
                 if ([string]$envs[$key] -cne [string]$expected[$key]) { $valuesOk = $false; $badKey = $key }
+            }
+        }
+        if ($valuesOk) {
+            $phase2 = Invoke-PhonePlan (New-PhoneJson) $false $true 'C:\Antiphon\repo'
+            $phase2Value = ''
+            if ($null -ne $phase2 -and $null -ne $phase2.env -and $phase2.mode -eq 'phone-home') {
+                $phase2Value = [string]$phase2.env['SessionRunner__HostStats__HistoryEnabled']
+            }
+            if ($phase2Value -cne 'false') {
+                $valuesOk = $false
+                $badKey = 'phase2-history'
             }
         }
         Assert-C1744 $valuesOk 'env-table.values' $badKey
