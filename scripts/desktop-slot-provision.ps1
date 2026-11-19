@@ -98,6 +98,21 @@ function Test-ForbiddenSlotRoot([string]$Comparable) {
     return $false
 }
 
+function Get-SlotTextRefusal([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return 'filesystem-root' }
+    $text = $Path.Trim()
+    if ($text -match '^[A-Za-z]:$') { $text = $text + '\' }
+    $comparable = ''
+    if ($text -match '^[A-Za-z]:') {
+        $comparable = ConvertTo-DriveSlotPath $text
+    } else {
+        $comparable = [System.IO.Path]::GetFullPath($text)
+    }
+    if (Test-FilesystemRoot $comparable) { return 'filesystem-root' }
+    if (Test-ForbiddenSlotRoot $comparable) { return 'forbidden-root' }
+    return ''
+}
+
 function Test-FilesystemRoot([string]$Comparable) {
     if ($Comparable -match '^[A-Za-z]:\\$') { return $true }
     if ($Comparable -eq '/') { return $true }
@@ -190,7 +205,7 @@ function Add-SlotClonePlan([string]$RepoPath, $Lines, [bool]$Mutating) {
     return 0
 }
 
-function Invoke-SlotRemoveEmpty([string]$Comparable, [bool]$Mutating, $Lines) {
+function Invoke-SlotRemoveEmpty([string]$Comparable, [bool]$Mutating, $Lines, [scriptblock]$BeforeRemove) {
     $names = @('worktrees', 'workspace-slots', 'retained', 'repos')
     $ledger = Join-SlotChild (Join-SlotChild $Comparable 'workspace-slots') 'ledger.json'
     $blocked = $false
@@ -219,6 +234,7 @@ function Invoke-SlotRemoveEmpty([string]$Comparable, [bool]$Mutating, $Lines) {
     foreach ($name in $names) {
         $path = Join-SlotChild $Comparable $name
         if ($Mutating) {
+            if ($null -ne $BeforeRemove) { & $BeforeRemove $path }
             if (Test-Path -LiteralPath $path) {
                 Remove-Item -LiteralPath $path -Force
                 $Lines.Add('removed: ' + $path)
@@ -237,7 +253,8 @@ function Invoke-DesktopSlotProvision {
         [switch]$WhatIf,
         [switch]$RemoveEmpty,
         [int]$DiskBudgetGiB = 32,
-        [scriptblock]$FreeSpaceProvider
+        [scriptblock]$FreeSpaceProvider,
+        [scriptblock]$BeforeRemove
     )
     $lines = New-Object System.Collections.Generic.List[string]
     if ([string]::IsNullOrWhiteSpace($Root)) {
@@ -267,7 +284,7 @@ function Invoke-DesktopSlotProvision {
     $lines.Add('root=' + $comparable)
 
     if ($RemoveEmpty) {
-        return (Invoke-SlotRemoveEmpty $comparable $mutating $lines)
+        return (Invoke-SlotRemoveEmpty $comparable $mutating $lines $BeforeRemove)
     }
 
     if ($DiskBudgetGiB -lt 1) {
