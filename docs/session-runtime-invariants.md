@@ -462,6 +462,7 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   it only in the server's reloadable JSON (`appsettings.Development.json` under the desktop AppHost), never
   through `Delegation__WorkspaceSlotRoles`: environment variables are not reloaded and shadow the file. The
   next task's `WorkspaceSlotDecision` event (`reason=roles_none`) confirms a rollback.
+- Windows slot allow-list (CARD-0824 S3). A Windows runner leases only when `Delegation:WindowsSlotRunnerIds` contains its id and `Delegation:WindowsSlotRoles` admits the role. The id list defaults to empty and the role string defaults to `none` (decision reason `windows_roles_none`). The catalogue id `desktop` never leases, even when it is listed. server2 ignores both keys and keeps `Delegation:WorkspaceSlotRoles`. Clearing `WindowsSlotRunnerIds` is the soft rollback: no new Windows leases, and releases continue. The Windows slot root is the short path `C:/Antiphon/slots` (`C:/Antiphon/slots/worktrees/ws-NN`). `PhoneHome:WorkspaceSlots:RcFencePath` defaults empty, so cold and scheduled wipes are not fenced; the desktop environment sets the qualification lock in S4.
 
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
