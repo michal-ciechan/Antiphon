@@ -23,16 +23,20 @@ function Get-NightlyStoppedSeedHash {
 function Assert-NightlyStoppedSeedContent {
     param($Seed)
     if($Seed.seedKind -cne 'operator-seed-from-stopped-run' -or $Seed.chunks -isnot [array] -or $Seed.failedTests -isnot [array] -or $Seed.chunks.Count -eq 0){throw 'seed-schema'}
-    $keys=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # suite/chunk -> row. Neither part can hold '/', so the key names exactly one row.
+    $keys=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach($row in $Seed.chunks){
-        if([string]$row.suite -cnotmatch '^[a-z][a-z0-9-]*$' -or [string]$row.chunk -cnotmatch '^[A-Za-z0-9_-]+$' -or $row.classes -isnot [array] -or $row.completed -isnot [bool] -or $row.started -isnot [bool] -or -not $keys.Add($row.suite+'/'+$row.chunk)){throw 'seed-schema: chunk'}
+        $rowKey=[string]($row.suite+'/'+$row.chunk)
+        if([string]$row.suite -cnotmatch '^[a-z][a-z0-9-]*$' -or [string]$row.chunk -cnotmatch '^[A-Za-z0-9_-]+$' -or $row.classes -isnot [array] -or $row.completed -isnot [bool] -or $row.started -isnot [bool] -or $keys.ContainsKey($rowKey)){throw 'seed-schema: chunk'}
+        $keys.Add($rowKey,$row)
         foreach($class in $row.classes){Assert-NightlyHistoryClass $class}
         [void](ConvertTo-NightlySeedUtc $row.lastRunAtUtc)
     }
     foreach($test in $Seed.failedTests){
         Assert-NightlyHistoryClass $test.className
-        if(-not $keys.Contains($test.suite+'/'+$test.chunk) -or [string]::IsNullOrWhiteSpace([string]$test.method) -or $test.outcome -cnotin @('Failed','Error','Timeout','Aborted')){throw 'seed-schema: failed test'}
-        $chunk=@($Seed.chunks|Where-Object {$_.suite -ceq $test.suite -and $_.chunk -ceq $test.chunk})[0]
+        $testKey=[string]($test.suite+'/'+$test.chunk)
+        if(-not $keys.ContainsKey($testKey) -or [string]::IsNullOrWhiteSpace([string]$test.method) -or $test.outcome -cnotin @('Failed','Error','Timeout','Aborted')){throw 'seed-schema: failed test'}
+        $chunk=$keys[$testKey]
         if(@($chunk.classes) -cnotcontains $test.className){throw 'seed-schema: failed membership'}
     }
     if($null -eq (ConvertTo-NightlySeedUtc $Seed.sourceObservedAtUtc)){throw 'seed-timestamp-missing'}
@@ -478,6 +482,7 @@ function Resolve-NightlyStoppedSeedOrder {
         $prepared=[Collections.Generic.List[object]]::new()
         $placedMethods=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $wholeClasses=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $historyFold=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         $mapped=0
         foreach($entry in $Entries){
             $classSource=@($entry.ChunkRef.classes)
@@ -516,11 +521,21 @@ function Resolve-NightlyStoppedSeedOrder {
                 $key=[string]$entry.suite+[char]0+[string]$class
                 if(-not $historyByClass.ContainsKey($key)){$seen=$false;continue}
                 $mapped++
-                foreach($old in @($historyByClass[$key])){
-                    if(-not $old.completed){$incomplete=$true;if($old.started -eq $true){$interrupted=$true}}
-                    $time=ConvertTo-NightlySeedUtc $old.lastRunAtUtc
-                    if($time -and ($null -eq $last -or $time -gt $last)){$last=$time}
+                # One class's history folds the same way for every chunk that holds it, so fold it once: a class
+                # split by method into N chunks otherwise reads its N rows N times.
+                if(-not $historyFold.ContainsKey($key)){
+                    $foldIncomplete=$false;$foldInterrupted=$false;$foldLast=$null
+                    foreach($old in @($historyByClass[$key])){
+                        if(-not $old.completed){$foldIncomplete=$true;if($old.started -eq $true){$foldInterrupted=$true}}
+                        $time=ConvertTo-NightlySeedUtc $old.lastRunAtUtc
+                        if($time -and ($null -eq $foldLast -or $time -gt $foldLast)){$foldLast=$time}
+                    }
+                    $historyFold[$key]=[pscustomobject]@{incomplete=$foldIncomplete;interrupted=$foldInterrupted;last=$foldLast}
                 }
+                $fold=$historyFold[$key]
+                if($fold.incomplete){$incomplete=$true}
+                if($fold.interrupted){$interrupted=$true}
+                if($fold.last -and ($null -eq $last -or $fold.last -gt $last)){$last=$fold.last}
             }
             $prepared.Add([pscustomobject]@{entry=$entry;classes=$classes;hasNodes=$hasNodes;methods=$methodKeys;seen=$seen;incomplete=$incomplete;interrupted=$interrupted;last=$last})
         }
@@ -564,10 +579,17 @@ function Resolve-NightlyStoppedSeedOrder {
         $resumed=[Collections.Generic.List[object]]::new();$untouched=[Collections.Generic.List[object]]::new()
         $lanes=[Collections.Generic.List[object]]::new()
         $laneSeen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        # A lane's rows in ranked order, grouped once. InvariantCulture is the comparison -ceq makes.
+        $laneRows=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::InvariantCulture)
+        foreach($item in @($ranked)){
+            $lane=[string]$item.entry.suite
+            if(-not $laneRows.ContainsKey($lane)){$laneRows[$lane]=[Collections.Generic.List[object]]::new()}
+            $laneRows[$lane].Add($item)
+        }
         foreach($item in @($ranked)){
             $lane=[string]$item.entry.suite
             if(-not $laneSeen.Add($lane)){continue}
-            $rows=@($ranked|Where-Object {[string]$_.entry.suite -ceq $lane})
+            $rows=$laneRows[$lane].ToArray()
             $start=-1;$lastPassed=-1
             for($i=0;$i -lt $rows.Count;$i++){
                 if($start -lt 0 -and $rows[$i].interrupted){$start=$i}

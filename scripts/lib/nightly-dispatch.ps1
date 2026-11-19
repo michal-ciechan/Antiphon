@@ -67,8 +67,15 @@ function Resolve-NightlyPreviousRunOrder {
         }
         $failed=[Collections.Generic.List[object]]::new();$unfinished=[Collections.Generic.List[object]]::new();$passed=[Collections.Generic.List[object]]::new()
         foreach($entry in $Entries){$key=$entry.suite+[char]0+$entry.chunk;if($entry.priorFailure -ne $true -and $states.ContainsKey($key) -and $states[$key] -ceq 'passed'){$passed.Add($entry)}}
+        # A lane's entries in order, grouped once. InvariantCulture is the comparison -ceq makes.
+        $laneRows=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::InvariantCulture)
+        foreach($entry in $Entries){
+            $laneKey=[string]$entry.suite
+            if(-not $laneRows.ContainsKey($laneKey)){$laneRows[$laneKey]=[Collections.Generic.List[object]]::new()}
+            $laneRows[$laneKey].Add($entry)
+        }
         foreach($lane in @($Entries.suite|Select-Object -Unique)){
-            $rows=@($Entries|Where-Object {$_.suite -ceq $lane});$last=-1
+            $rows=@();if($laneRows.ContainsKey([string]$lane)){$rows=$laneRows[[string]$lane].ToArray()};$last=-1
             if($lastPassed.ContainsKey($lane)){for($i=0;$i -lt $rows.Count;$i++){if($rows[$i].chunk -ceq $lastPassed[$lane]){$last=$i;break}}}
             $lanes.Add([pscustomobject]@{suite=$lane;lastPassedChunk=$(if($last -ge 0){$rows[$last].chunk}else{$null})})
             for($offset=1;$offset -le $rows.Count;$offset++){
