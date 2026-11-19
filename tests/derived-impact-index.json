@@ -2160,7 +2160,7 @@
         "ScriptHarnessWindowsOwnershipTests",
         "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
-        "ChangeAwareReleaseBudgetTests"
+        "AstraFixesBTests"
       ]
     },
     {
