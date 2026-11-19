@@ -44,6 +44,8 @@ $saved = @{
     DW3_CHMOD_FAIL = $env:DW3_CHMOD_FAIL
     DW3_FAIL_STEP = $env:DW3_FAIL_STEP
     DW3_MODE_AT_WRITE = $env:DW3_MODE_AT_WRITE
+    DW3_REPLACE_FAULT = $env:DW3_REPLACE_FAULT
+    DW3_RESTORE_FAULT = $env:DW3_RESTORE_FAULT
 }
 
 function Restore-SavedEnv {
@@ -96,7 +98,7 @@ function Assert-NoStray([string]$Dir, [string]$Name) {
         $files = @(Get-ChildItem -LiteralPath $Dir -Recurse -Force -File -ErrorAction SilentlyContinue)
         foreach ($file in $files) {
             $n = $file.Name.ToLowerInvariant()
-            if ($n.EndsWith('.dw3part') -or $n.EndsWith('.bak') -or $n.EndsWith('.tmp')) { $hit = $true }
+            if ($n.EndsWith('.dw3part') -or $n.EndsWith('.dw3bak') -or $n.EndsWith('.bak') -or $n.EndsWith('.tmp')) { $hit = $true }
         }
     }
     Assert-True (-not $hit) $Name 'stray temp or backup remains'
@@ -181,7 +183,9 @@ function Invoke-Dw3 {
         [string]$LogPath,
         [string]$ChmodFail,
         [string]$FailStep,
-        [string]$ModeProbe
+        [string]$ModeProbe,
+        [string]$ReplaceFault,
+        [string]$RestoreFault
     )
     Set-OrClearEnv 'ANTIPHON_ORCHESTRATOR' $Orchestrator
     Set-OrClearEnv 'CLAUDECODE' $ClaudeCode
@@ -189,6 +193,8 @@ function Invoke-Dw3 {
     Set-OrClearEnv 'DW3_CHMOD_FAIL' $ChmodFail
     Set-OrClearEnv 'DW3_FAIL_STEP' $FailStep
     Set-OrClearEnv 'DW3_MODE_AT_WRITE' $ModeProbe
+    Set-OrClearEnv 'DW3_REPLACE_FAULT' $ReplaceFault
+    Set-OrClearEnv 'DW3_RESTORE_FAULT' $RestoreFault
     $env:PATH = $shim + [System.IO.Path]::PathSeparator + $script:saved.PATH
     $env:DW3_ARGV_LOG = $LogPath
     if (Test-Path -LiteralPath $LogPath) { Remove-Item -LiteralPath $LogPath -Force }
@@ -284,11 +290,13 @@ try {
     }
     if ($dryRun.Text.Contains('C:\src\Antiphon')) { $valuesOk = $false }
     Assert-True $valuesOk 'dry-run-prints-no-value' 'a configured value appeared'
+    Assert-True ($dryRun.Text.Contains('secret-file-matches-map: no')) 'dry-run-match-absent-file' 'match line missing'
 
     $what = New-CaseRoot 'whatif'
     $whatIf = Invoke-Dw3 -ArgumentList @('-Execute', '-WhatIf', '-UserSecretsPath', $what.UserSecrets, '-SecretFile', $what.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $what.Log
     Assert-True ($whatIf.Exit -eq 0) 'whatif-exit' ('exit=' + $whatIf.Exit)
     Assert-True ($whatIf.Text.Contains('mode: dry-run')) 'whatif-stays-dry-run' 'mode line missing'
+    Assert-True ($whatIf.Text.Contains('secret-file-matches-map: yes')) 'whatif-match-both-absent' 'match line missing'
     Assert-True (-not (Test-Path -LiteralPath $what.SecretFile)) 'whatif-no-secret-file' 'file created'
 
     $run = New-CaseRoot 'execute'
@@ -583,6 +591,147 @@ try {
     Assert-True ($turnedMode -eq '600') 'rotate-success-secret-mode' ('mode=' + $turnedMode)
     Assert-True ($turnedJsonMode -eq '640') 'rotate-success-json-mode' ('mode=' + $turnedJsonMode)
     Assert-NoStray $turned.Runner 'rotate-success-no-stray'
+
+    $matchYes = New-CaseRoot 'dry-match-yes'
+    $matchYesJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$seedDesktop`"`n}`n"
+    Write-SeedJson $matchYes.UserSecrets $matchYesJson
+    Write-SeedJson $matchYes.SecretFile ($seedDesktop + "`n")
+    $matchYesBefore = [System.IO.File]::ReadAllBytes($matchYes.UserSecrets)
+    $matchYesFileBefore = [System.IO.File]::ReadAllBytes($matchYes.SecretFile)
+    $matchYesRun = Invoke-Dw3 -ArgumentList @('-UserSecretsPath', $matchYes.UserSecrets, '-SecretFile', $matchYes.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $matchYes.Log
+    Assert-True ($matchYesRun.Exit -eq 0) 'dry-match-yes-exit' ('exit=' + $matchYesRun.Exit)
+    Assert-True ($matchYesRun.Text.Contains('secret-file-matches-map: yes')) 'dry-match-yes-line' 'match line missing'
+    Assert-True (-not $matchYesRun.Text.Contains('secret-file-matches-map: no')) 'dry-match-yes-not-no' 'match line was no'
+    Assert-NoText 'dry-match-yes-no-value' $matchYesRun.Text $seedDesktop
+    Assert-True (Test-BytesEqual $matchYesBefore ([System.IO.File]::ReadAllBytes($matchYes.UserSecrets))) 'dry-match-yes-json-unchanged' 'user-secrets bytes changed'
+    Assert-True (Test-BytesEqual $matchYesFileBefore ([System.IO.File]::ReadAllBytes($matchYes.SecretFile))) 'dry-match-yes-file-unchanged' 'secret file bytes changed'
+
+    $matchNo = New-CaseRoot 'dry-match-no'
+    $matchNoJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$seedDesktop`"`n}`n"
+    Write-SeedJson $matchNo.UserSecrets $matchNoJson
+    Write-SeedJson $matchNo.SecretFile "different-sentinel-file`n"
+    $matchNoBefore = [System.IO.File]::ReadAllBytes($matchNo.UserSecrets)
+    $matchNoRun = Invoke-Dw3 -ArgumentList @('-UserSecretsPath', $matchNo.UserSecrets, '-SecretFile', $matchNo.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $matchNo.Log
+    Assert-True ($matchNoRun.Exit -eq 0) 'dry-match-no-exit' ('exit=' + $matchNoRun.Exit)
+    Assert-True ($matchNoRun.Text.Contains('secret-file-matches-map: no')) 'dry-match-no-line' 'match line missing'
+    Assert-NoText 'dry-match-no-no-map-value' $matchNoRun.Text $seedDesktop
+    Assert-NoText 'dry-match-no-no-file-value' $matchNoRun.Text 'different-sentinel-file'
+    Assert-True (Test-BytesEqual $matchNoBefore ([System.IO.File]::ReadAllBytes($matchNo.UserSecrets))) 'dry-match-no-json-unchanged' 'user-secrets bytes changed'
+
+    $jsonFault = New-CaseRoot 'replace-fault-json'
+    $jsonFaultText = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:server2:SharedSecret`": `"$seedServer2`"`n}`n"
+    Write-SeedJson $jsonFault.UserSecrets $jsonFaultText
+    & /bin/chmod 640 $jsonFault.UserSecrets
+    $jsonFaultBefore = [System.IO.File]::ReadAllBytes($jsonFault.UserSecrets)
+    $jsonFaultRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $jsonFault.UserSecrets, '-SecretFile', $jsonFault.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $jsonFault.Log -ReplaceFault 'user-secrets'
+    Assert-True ($jsonFaultRun.Exit -ne 0) 'replace-fault-json-exit' ('exit=' + $jsonFaultRun.Exit)
+    Assert-True ($jsonFaultRun.Text.Contains('REFUSED: failed')) 'replace-fault-json-refuses' 'missing refusal'
+    Assert-True ($jsonFaultRun.Text.Contains('step=user-secrets-commit')) 'replace-fault-json-step' 'step line missing'
+    $jsonFaultPresent = Test-Path -LiteralPath $jsonFault.UserSecrets
+    $jsonFaultSame = $false
+    if ($jsonFaultPresent) { $jsonFaultSame = Test-BytesEqual $jsonFaultBefore ([System.IO.File]::ReadAllBytes($jsonFault.UserSecrets)) }
+    Assert-True ($jsonFaultPresent -and $jsonFaultSame) 'replace-fault-json-restored' 'secrets.json missing or bytes differ'
+    $jsonFaultNone = $jsonFaultRun.Text.Contains('changed: none')
+    Assert-True ($jsonFaultNone -and $jsonFaultSame -and -not (Test-Path -LiteralPath $jsonFault.SecretFile)) 'replace-fault-json-truthful' 'changed: none while a target differs'
+    Assert-True (-not $jsonFaultRun.Text.Contains('differs:')) 'replace-fault-json-no-differs' 'differs line remains'
+    Assert-True (-not (Test-Path -LiteralPath $jsonFault.SecretFile)) 'replace-fault-json-no-secret-file' 'secret file remains'
+    Assert-NoText 'replace-fault-json-no-sentinel' $jsonFaultRun.Text $seedKeep
+    Assert-NoText 'replace-fault-json-no-server2' $jsonFaultRun.Text $seedServer2
+    Assert-NoStray $jsonFault.Runner 'replace-fault-json-no-stray-runner'
+    Assert-NoStray (Split-Path -Parent $jsonFault.UserSecrets) 'replace-fault-json-no-stray-store'
+
+    $secretFault = New-CaseRoot 'replace-fault-secret'
+    $secretFaultJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`",`n  `"PhoneHomeRunner:Runners:desktop-win:SharedSecret`": `"$oldDesktop`"`n}`n"
+    Write-SeedJson $secretFault.UserSecrets $secretFaultJson
+    Write-SeedJson $secretFault.SecretFile $oldFile
+    & /bin/chmod 640 $secretFault.UserSecrets
+    $secretFaultJsonBefore = [System.IO.File]::ReadAllBytes($secretFault.UserSecrets)
+    $secretFaultFileBefore = [System.IO.File]::ReadAllBytes($secretFault.SecretFile)
+    $secretFaultRun = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $secretFault.UserSecrets, '-SecretFile', $secretFault.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $secretFault.Log -ReplaceFault 'secret-file'
+    Assert-True ($secretFaultRun.Exit -ne 0) 'replace-fault-secret-exit' ('exit=' + $secretFaultRun.Exit)
+    Assert-True ($secretFaultRun.Text.Contains('REFUSED: failed')) 'replace-fault-secret-refuses' 'missing refusal'
+    Assert-True ($secretFaultRun.Text.Contains('step=secret-file-commit')) 'replace-fault-secret-step' 'step line missing'
+    $secretFaultJsonPresent = Test-Path -LiteralPath $secretFault.UserSecrets
+    $secretFaultFilePresent = Test-Path -LiteralPath $secretFault.SecretFile
+    $secretFaultJsonSame = $false
+    $secretFaultFileSame = $false
+    if ($secretFaultJsonPresent) { $secretFaultJsonSame = Test-BytesEqual $secretFaultJsonBefore ([System.IO.File]::ReadAllBytes($secretFault.UserSecrets)) }
+    if ($secretFaultFilePresent) { $secretFaultFileSame = Test-BytesEqual $secretFaultFileBefore ([System.IO.File]::ReadAllBytes($secretFault.SecretFile)) }
+    Assert-True ($secretFaultJsonPresent -and $secretFaultJsonSame) 'replace-fault-secret-json-restored' 'secrets.json missing or bytes differ'
+    Assert-True ($secretFaultFilePresent -and $secretFaultFileSame) 'replace-fault-secret-file-restored' 'secret file missing or bytes differ'
+    Assert-True ($secretFaultRun.Text.Contains('changed: none') -and $secretFaultJsonSame -and $secretFaultFileSame) 'replace-fault-secret-truthful' 'changed: none while a target differs'
+    Assert-True (-not $secretFaultRun.Text.Contains('differs:')) 'replace-fault-secret-no-differs' 'differs line remains'
+    Assert-NoText 'replace-fault-secret-no-sentinel' $secretFaultRun.Text $oldDesktop
+    Assert-NoText 'replace-fault-secret-no-file-sentinel' $secretFaultRun.Text 'sentinel-old-secret-file'
+    Assert-NoStray $secretFault.Runner 'replace-fault-secret-no-stray-runner'
+    Assert-NoStray (Split-Path -Parent $secretFault.UserSecrets) 'replace-fault-secret-no-stray-store'
+
+    $restoreFault = New-CaseRoot 'replace-restore-fault'
+    $restoreFaultJson = "{`n  `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"`n}`n"
+    Write-SeedJson $restoreFault.UserSecrets $restoreFaultJson
+    & /bin/chmod 640 $restoreFault.UserSecrets
+    $restoreFaultBefore = [System.IO.File]::ReadAllBytes($restoreFault.UserSecrets)
+    $restoreFaultRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $restoreFault.UserSecrets, '-SecretFile', $restoreFault.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $restoreFault.Log -ReplaceFault 'user-secrets' -RestoreFault 'user-secrets'
+    Assert-True ($restoreFaultRun.Exit -ne 0) 'replace-restore-fault-exit' ('exit=' + $restoreFaultRun.Exit)
+    Assert-True ($restoreFaultRun.Text.Contains('REFUSED: failed')) 'replace-restore-fault-refuses' 'missing refusal'
+    Assert-True ($restoreFaultRun.Text.Contains('differs: user-secrets')) 'replace-restore-fault-names-half' 'differs line missing'
+    Assert-True (-not $restoreFaultRun.Text.Contains('changed: none')) 'replace-restore-fault-not-none' 'changed: none while the half differs'
+    Assert-True (-not $restoreFaultRun.Text.Contains('differs: secret-file')) 'replace-restore-fault-secret-matches' 'secret half differs'
+    Assert-NoText 'replace-restore-fault-no-sentinel' $restoreFaultRun.Text $seedKeep
+    Assert-True (-not (Test-Path -LiteralPath $restoreFault.SecretFile)) 'replace-restore-fault-no-secret-file' 'secret file remains'
+    Assert-NoStray $restoreFault.Runner 'replace-restore-fault-no-stray-runner'
+    $restoreStore = Split-Path -Parent $restoreFault.UserSecrets
+    $restoreResidue = @()
+    if (Test-Path -LiteralPath $restoreStore) {
+        $restoreFiles = @(Get-ChildItem -LiteralPath $restoreStore -Force -File -ErrorAction SilentlyContinue)
+        foreach ($restoreFile in $restoreFiles) {
+            $restoreName = $restoreFile.Name.ToLowerInvariant()
+            if ($restoreName.EndsWith('.dw3part') -or $restoreName.EndsWith('.dw3bak')) { $restoreResidue += $restoreFile.FullName }
+        }
+    }
+    $restorePart = $false
+    $restoreBak = $false
+    $restoreNamed = $true
+    $restoreBakBytes = $false
+    $restoreBakMode = $false
+    foreach ($restorePath in $restoreResidue) {
+        if (-not $restoreFaultRun.Text.Contains('kept: ' + $restorePath)) { $restoreNamed = $false }
+        $restoreFileName = [System.IO.Path]::GetFileName($restorePath).ToLowerInvariant()
+        if ($restoreFileName.EndsWith('.dw3part')) { $restorePart = $true }
+        if ($restoreFileName.EndsWith('.dw3bak')) {
+            $restoreBak = $true
+            $restoreBakBytes = Test-BytesEqual $restoreFaultBefore ([System.IO.File]::ReadAllBytes($restorePath))
+            $restoreBakMode = ((& /bin/stat -c '%a' -- $restorePath).Trim() -eq '600')
+        }
+    }
+    Assert-True ($restorePart -and $restoreBak) 'replace-restore-fault-keeps-temp-and-backup' 'temp or backup was deleted'
+    Assert-True ($restoreNamed -and $restoreResidue.Count -ge 1) 'replace-restore-fault-names-kept' 'kept line missing'
+    Assert-True $restoreBakBytes 'replace-restore-fault-backup-bytes' 'backup bytes differ'
+    Assert-True $restoreBakMode 'replace-restore-fault-backup-mode' 'backup mode is not 600'
+    Assert-True (-not (Test-Path -LiteralPath $restoreFault.UserSecrets)) 'replace-restore-fault-target-absent' 'secrets.json was restored'
+
+    $badEscape = New-CaseRoot 'bad-escape'
+    $badEscapeText = "{`"note`": `"bad\Nescape`", `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"}`n"
+    Write-SeedJson $badEscape.UserSecrets $badEscapeText
+    $badEscapeBefore = [System.IO.File]::ReadAllBytes($badEscape.UserSecrets)
+    $badEscapeRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $badEscape.UserSecrets, '-SecretFile', $badEscape.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $badEscape.Log
+    Assert-True ($badEscapeRun.Exit -eq 2) 'bad-escape-exit' ('exit=' + $badEscapeRun.Exit)
+    Assert-True ($badEscapeRun.Text.Contains('REFUSED: user-secrets-malformed')) 'bad-escape-refuses' 'missing refusal'
+    Assert-True (Test-BytesEqual $badEscapeBefore ([System.IO.File]::ReadAllBytes($badEscape.UserSecrets))) 'bad-escape-unchanged' 'user-secrets bytes changed'
+    Assert-True (-not (Test-Path -LiteralPath $badEscape.SecretFile)) 'bad-escape-no-secret-file' 'secret file created'
+    Assert-NoText 'bad-escape-no-sentinel' $badEscapeRun.Text $seedKeep
+    Assert-NoStray $badEscape.Runner 'bad-escape-no-stray'
+
+    $goodEscape = New-CaseRoot 'good-escape'
+    $goodEscapeText = "{`"note`": `"a\nb`", `"ConnectionStrings:DefaultConnection`": `"$seedKeep`"}`n"
+    Write-SeedJson $goodEscape.UserSecrets $goodEscapeText
+    $goodEscapeRun = Invoke-Dw3 -ArgumentList @('-Execute', '-UserSecretsPath', $goodEscape.UserSecrets, '-SecretFile', $goodEscape.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $goodEscape.Log
+    Assert-True ($goodEscapeRun.Exit -eq 0) 'good-escape-exit' ('exit=' + $goodEscapeRun.Exit)
+    $goodEscapeRaw = ''
+    if (Test-Path -LiteralPath $goodEscape.UserSecrets) { $goodEscapeRaw = [System.IO.File]::ReadAllText($goodEscape.UserSecrets) }
+    Assert-True ($goodEscapeRaw.Contains('a\nb')) 'good-escape-keeps-newline' 'newline escape was lost'
+    Assert-NoText 'good-escape-no-sentinel' $goodEscapeRun.Text $seedKeep
+    Assert-NoStray $goodEscape.Runner 'good-escape-no-stray'
 
     $bad = New-CaseRoot 'malformed-json'
     $badText = "{not-json`n"
