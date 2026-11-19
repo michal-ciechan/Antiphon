@@ -2069,34 +2069,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 85,
+      "classes": 86,
       "reason": "cap",
-      "owed": 60,
+      "owed": 61,
       "first": [
+        "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
         "CheckpointRecoveryFixtureTests",
-        "CheckpointRecoveryLinuxTests",
-        "CheckpointRecoveryWindowsTests"
+        "CheckpointRecoveryLinuxTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 88,
+      "classes": 89,
       "reason": "cap",
-      "owed": 63,
+      "owed": 64,
       "first": [
+        "CheckpointLargeStampScriptTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
-        "CheckpointOwnedOutputTests",
-        "CheckpointProcessIdentityTests"
+        "CheckpointOwnedOutputTests"
       ]
     },
     {
@@ -2197,18 +2197,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
+        "CheckpointScriptReaderDeadlineTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
         "CheckpointShapeConflictTests",
         "CheckpointSlotExecutorTests",
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
-        "CheckpointStampSafetyTests",
-        "CheckpointStepDeadlineTests"
+        "CheckpointStampSafetyTests"
       ]
     },
     {
@@ -23910,6 +23910,7 @@
         "BaselineComparerTests",
         "C1217ConditionalSkipContractTests",
         "C1307CliCancellationTests",
+        "C1981LeaseTempDriverTests",
         "CheckpointAdmissionBudgetTests",
         "CheckpointAdmissionContractTests",
         "CheckpointAppTests",
@@ -23930,7 +23931,6 @@
         "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointNamespaceCensusUsageTests",
-        "CheckpointOrFilterTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -23940,6 +23940,7 @@
         "BaselineComparerTests",
         "C1217ConditionalSkipContractTests",
         "C1307CliCancellationTests",
+        "C1981LeaseTempDriverTests",
         "CheckpointAdmissionBudgetTests",
         "CheckpointAdmissionContractTests",
         "CheckpointAppTests",
@@ -23955,7 +23956,6 @@
         "CheckpointGitEncodingScriptTests",
         "CheckpointImportTests",
         "CheckpointInheritedFileTests",
-        "CheckpointLargeStampScriptTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -25024,6 +25024,7 @@
       "classes": [
         "AnchoredPathDeleteWitnessTests",
         "BuildSlotClientTests",
+        "C1981LeaseTempDriverTests",
         "CheckpointAdmissionContractTests",
         "CheckpointAppTests",
         "CheckpointBoundedReaderTests",
@@ -25045,8 +25046,7 @@
         "CheckpointReceiptStallBudgetTests",
         "CheckpointRecoveryFixtureTests",
         "CheckpointRecoveryLinuxTests",
-        "CheckpointRecoveryWindowsTests",
-        "CheckpointScriptReaderDeadlineTests"
+        "CheckpointRecoveryWindowsTests"
       ]
     },
     {
