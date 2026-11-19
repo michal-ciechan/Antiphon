@@ -326,7 +326,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             notifications = await db.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == TaskId).ToListAsync(),
             intents = await db.AgentTaskDispatchWarningIntents.AsNoTracking().Where(i => i.TaskId == TaskId).ToListAsync(),
             queue = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == TaskId).ToListAsync(),
-            prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync() }));
+            prompts = await db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == CallerId && p.Kind == TranscriptKinds.UserPrompt).ToListAsync(),
+            review = await CaptureReviewDeliveryStateAsync(db) }));
         File.Copy(Path.Combine(Root, "delivery-evidence.json"), Path.Combine(Root, $"delivery-evidence-{TaskId:N}-{Guid.NewGuid():N}.json"));
     }
     public async Task ArrangeOutcomeAsync(string outcome)
