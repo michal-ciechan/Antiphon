@@ -1,6 +1,7 @@
 #requires -Version 5.1
 # CARD-1744 S4. Offline witnesses for desktop-win phone-home supervision.
-# Pure function calls and file parses only. No runner, AppHost, or desktop process is started.
+# Function calls, file parses, and a copied autostart script against a stub run-daemon.
+# No runner, AppHost, or desktop process is started.
 # ASCII-only. Own C487 trailer; do not dot-source scripts/lib/c487-harness.ps1.
 [CmdletBinding()]
 param(
@@ -322,7 +323,7 @@ function Invoke-ApphostGuard {
         Assert-C1744 $false 'apphost-guard.absent' 'helper absent'
     } else {
         $present = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent $true -ConfigPath 'C:\Antiphon\runner\phone-home.json'
-        $presentOk = ($null -ne $present) -and $present.Contains('REFUSED: phone-home-config-present') -and $present.Contains('Delete ') -and $present.Contains('C:\Antiphon\runner\phone-home.json') -and $present.Contains('restart-session-runner.ps1 -Hard') -and $present.Contains('retry') -and (-not $present.Contains('restart-linux-server'))
+        $presentOk = ($null -ne $present) -and $present.Contains('REFUSED: phone-home-config-present') -and $present.Contains('If the Linux server is serving, this refusal is correct: do NOT delete the file.') -and $present.Contains('Only during ROLLBACK, after the Linux server is stopped and pg_stat_activity is clear:') -and $present.Contains('delete C:\Antiphon\runner\phone-home.json') -and $present.Contains('restart-session-runner.ps1 -Hard') -and $present.Contains('then retry.') -and (-not $present.Contains('restart-linux-server'))
         Assert-C1744 $presentOk 'apphost-guard.present' ([string]$present)
         $absent = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent $false -ConfigPath 'C:\Antiphon\runner\phone-home.json'
         Assert-C1744 ($null -eq $absent) 'apphost-guard.absent' ([string]$absent)
@@ -369,6 +370,110 @@ function Invoke-ApphostGuard {
     Assert-C1744 $linuxOk 'apphost-guard.no-linux-name' 'restart-linux-server'
 }
 
+function New-AutostartStage([bool]$CopyHelper) {
+    $root = Join-Path $script:c1744Scratch 'repo'
+    $scripts = Join-Path $root 'scripts'
+    [void][System.IO.Directory]::CreateDirectory($scripts)
+    if ($CopyHelper) {
+        $lib = Join-Path $scripts 'lib'
+        [void][System.IO.Directory]::CreateDirectory($lib)
+        [System.IO.File]::Copy($helperPath, (Join-Path $lib 'windows-phone-home-env.ps1'), $true)
+    }
+    [System.IO.File]::Copy($autostartPath, (Join-Path $scripts 'autostart-session-runner.ps1'), $true)
+    $stub = @'
+param(
+    [string]$Name,
+    [string]$WorkDir,
+    [string]$Exe,
+    [string]$ExeArgs,
+    [string]$LogFile,
+    [string]$ServicePidFile,
+    [string]$StateFile,
+    [string]$BuildProjectDir
+)
+$marker = Join-Path $PSScriptRoot 'stub-invoked.txt'
+('invoked exeArgs=[' + [string]$ExeArgs + ']') | Set-Content -LiteralPath $marker -Encoding ascii
+exit 0
+'@
+    [System.IO.File]::WriteAllText((Join-Path $scripts 'run-daemon.ps1'), $stub)
+    $row = @{
+        Scripts = $scripts
+        Stub = (Join-Path $scripts 'stub-invoked.txt')
+        Log = (Join-Path (Join-Path $root 'logs') 'session-runner.log')
+    }
+    return ,$row
+}
+
+function Invoke-StagedAutostart($Stage, [string]$ConfigPath) {
+    $scriptPath = Join-Path $Stage.Scripts 'autostart-session-runner.ps1'
+    $saved = $ErrorActionPreference
+    $ErrorActionPreference = 'Stop'
+    try {
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = 'pwsh'
+        $start.Arguments = '-NoProfile -File "' + $scriptPath + '" -PhoneHomeConfigPath "' + $ConfigPath + '"'
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.CreateNoWindow = $true
+        $proc = New-Object System.Diagnostics.Process
+        $proc.StartInfo = $start
+        [void]$proc.Start()
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $proc.WaitForExit()
+        $stdoutTask.Wait()
+        $stderrTask.Wait()
+        $code = [int]$proc.ExitCode
+    } finally {
+        $ErrorActionPreference = $saved
+    }
+    $logText = ''
+    if (Test-Path -LiteralPath $Stage.Log) { $logText = [System.IO.File]::ReadAllText($Stage.Log) }
+    $result = @{
+        Exit = [int]$code
+        Log = $logText
+        Stub = [bool](Test-Path -LiteralPath $Stage.Stub)
+    }
+    return ,$result
+}
+
+function Assert-AutostartClosed([string]$Prefix, $Result, [string]$Reason) {
+    Assert-C1744 ($Result.Exit -eq 2) ($Prefix + '.exit') ('exit=' + [string]$Result.Exit)
+    $needle = 'phone-home config refused: ' + $Reason
+    $logOk = $Result.Log.Contains($needle)
+    $logDetail = ''
+    if (-not $logOk) { $logDetail = 'missing ' + $needle }
+    Assert-C1744 $logOk ($Prefix + '.log') $logDetail
+    $stubDetail = ''
+    if ($Result.Stub) { $stubDetail = 'stub invoked' }
+    Assert-C1744 (-not $Result.Stub) ($Prefix + '.stub') $stubDetail
+}
+
+function Invoke-AutostartUnreadable {
+    $stage = New-AutostartStage $true
+    $config = Join-Path $script:c1744Scratch 'phone-home.json'
+    [void][System.IO.Directory]::CreateDirectory($config)
+    $result = Invoke-StagedAutostart $stage $config
+    Assert-AutostartClosed 'autostart-unreadable' $result 'config-unreadable'
+}
+
+function Invoke-AutostartHelperLoad {
+    $stage = New-AutostartStage $false
+    $config = Join-Path $script:c1744Scratch 'phone-home.json'
+    [System.IO.File]::WriteAllText($config, '{')
+    $result = Invoke-StagedAutostart $stage $config
+    Assert-AutostartClosed 'autostart-helper-load' $result 'helper-load-failed'
+}
+
+function Invoke-AutostartRefusedScript {
+    $stage = New-AutostartStage $true
+    $config = Join-Path $script:c1744Scratch 'phone-home.json'
+    [System.IO.File]::WriteAllText($config, '{')
+    $result = Invoke-StagedAutostart $stage $config
+    Assert-AutostartClosed 'autostart-refused-script' $result 'config-malformed'
+}
+
 function Invoke-Compat {
     $paths = @($helperPath, $autostartPath, $startPath, $restartPath, $aspirePath)
     $asciiOk = $true
@@ -401,6 +506,7 @@ function Invoke-Compat {
 }
 
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ('c1744g3-' + [guid]::NewGuid().ToString('N'))
+$script:c1744Scratch = $scratch
 [void][System.IO.Directory]::CreateDirectory($scratch)
 try {
     try {
@@ -409,6 +515,9 @@ try {
             'autostart-direct' { Invoke-AutostartDirect }
             'autostart-phone-home' { Invoke-AutostartPhoneHome }
             'autostart-refusals' { Invoke-AutostartRefusals }
+            'autostart-unreadable' { Invoke-AutostartUnreadable }
+            'autostart-helper-load' { Invoke-AutostartHelperLoad }
+            'autostart-refused-script' { Invoke-AutostartRefusedScript }
             'apphost-guard' { Invoke-ApphostGuard }
             'compat' { Invoke-Compat }
             default { Assert-C1744 $false 'unknown-case' $Case }
@@ -419,7 +528,7 @@ try {
     }
 } finally {
     if ([System.IO.Directory]::Exists($scratch)) {
-        [System.IO.Directory]::Delete($scratch)
+        try { [System.IO.Directory]::Delete($scratch, $true) } catch { }
     }
 }
 Write-Host ("C487: " + [string]$script:passed + " passed, " + [string]$script:failed + " failed, " + [string]($script:passed + $script:failed) + " rows")
