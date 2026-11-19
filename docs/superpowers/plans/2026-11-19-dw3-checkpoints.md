@@ -26,18 +26,24 @@ existing ancestor of the secrets directory. A directory created from an
 elevated shell can be owned by `BUILTIN\Administrators`; run the helper from
 a shell whose `USERNAME` owns that directory. An existing secret file with
 no map key refuses `secret-file-present` unless `-Rotate`. Failure output
-prints `step=` and `changed: secret-file`, `changed: user-secrets`, or
-`changed: none`, and never a value.
+prints `step=` and `changed: none` only when every target matches the bytes
+saved before the change. A failed restore prints `differs:` and `kept:` and
+never a value. A dry-run prints `secret-file-matches-map: yes` or `no` and
+never the value. `no` means re-run `-Execute -Rotate` before restarting AppHost.
 
 Linux owner-only mode is chmod 600 and is witnessed. The file is created
 empty at mode 600, or created empty and chmod 600, before any secret byte is
 written. The Windows owner-only ACL (`icacls /inheritance:r`, then a
 current-user `FileSystemAccessRule`, verified before the value is written) is
 UNOBSERVED on this Linux runner and is not a pass. `secrets.json` is written
-to an owner-only sibling and swapped with `File.Replace` on Windows (no
-backup) or `File.Move` overwrite on Linux, then the previous mode or ACL is
-put back. A failure deletes the sibling and restores the half that already
-moved, or leaves both old, and prints `secret-file` or `user-secrets` only.
+to an owner-only sibling and swapped with `File.Replace` on Windows or
+`File.Move` overwrite on Linux, then the previous mode or ACL is put back.
+On Windows the replace passes a same-directory owner-only `.dw3bak`. That
+backup exists only during the swap. It is deleted after the swap and the byte
+cross-check, and on a failure it is kept until the saved bytes are restored
+and checked, then deleted. A failed restore keeps the backup and the staged
+temp and prints their names. A failure compares each target with the bytes
+saved before any change and restores any target that differs.
 User-secrets JSON is parsed by the helper's own reader, not `ConvertFrom-Json`,
 so a nested object and a date-shaped string round-trip unchanged on pwsh 7 and
 on Windows PowerShell 5.1. No migration. No positive-control row. Mutation
@@ -49,7 +55,7 @@ inputs.
 
 ## Verification design
 
-- V-1. `scripts/test-desktop-win-phase1-secrets.ps1`: dry-run writes nothing and prints no value; `-Execute` creates the secret file and the map keys; the value is absent from all six streams and from every child argument; pre-existing user-secrets keys survive; a second `-Execute` without `-Rotate` refuses and changes nothing; agent env markers refuse; Linux mode is 600 at the first secret write and at the end; Windows ACL is labelled UNOBSERVED. Rotate with an unwritable `secrets.json` leaves both old values. A simulated user-secrets temp-write failure leaves that file byte-identical and leaves no `.dw3part`, `.tmp`, or `.bak`. A simulated failure after the user-secrets commit rolls that half back. Nested objects and date-shaped strings round-trip unchanged. A failing chmod leaves no secret file. Malformed JSON and a non-object document are refused without a write. An existing secret file without a map key refuses unless `-Rotate`. `-Rotate` success replaces both halves with the same new value. Failure output names the step and which half changed. Floor from this fix: passed=139 failed=0.
+- V-1. `scripts/test-desktop-win-phase1-secrets.ps1`: dry-run writes nothing and prints no value; `-Execute` creates the secret file and the map keys; the value is absent from all six streams and from every child argument; pre-existing user-secrets keys survive; a second `-Execute` without `-Rotate` refuses and changes nothing; agent env markers refuse; Linux mode is 600 at the first secret write and at the end; Windows ACL is labelled UNOBSERVED. Rotate with an unwritable `secrets.json` leaves both old values. A simulated user-secrets temp-write failure leaves that file byte-identical and leaves no `.dw3part`, `.tmp`, or `.bak`. A simulated failure after the user-secrets commit rolls that half back. Nested objects and date-shaped strings round-trip unchanged. A failing chmod leaves no secret file. Malformed JSON and a non-object document are refused without a write. An existing secret file without a map key refuses unless `-Rotate`. `-Rotate` success replaces both halves with the same new value. Failure output names the step. `changed: none` is printed only when both targets match the bytes saved before the change. A partial replace of `secrets.json`, and of the secret file under `-Rotate`, restores both saved byte strings, leaves no `.dw3part` or `.dw3bak`, and exits non-zero. When that restore fails, the output names the half that still differs and keeps the temp and backup by name. An invalid JSON escape is refused. A dry-run prints `secret-file-matches-map: yes` or `no` and never the value. Floor from this fix: passed=197 failed=0.
 - V-2. `TestClassificationPolicyTests` once. Floor 42.
 - V-3. The other eight classes of the nine-class guard union, without `WindowsUnitPlatformAdmissionTests` and without `DerivedImpactIndexTests`. Floor 39.
 - V-4. `DerivedImpactIndexTests` alone. Floor 27. Regenerate the index only if this row fails.
@@ -63,8 +69,12 @@ C1729 must stay VIOLATIONS 0 LISTED 162. The original red witness is commit
 The blocker witnesses are commit `af1a06d64c1b9cf0ec6515ade5f316fb14801a0e`
 (on `058dd52a`, passed=109 failed=30: unwritable rotate left a new secret
 file, chmod failure left the file, nested and date-shaped JSON did not match,
-and the temp-write and rollback seams were ignored). The closed list below is
-the official green run. The floor for CP-1 is passed=139 failed=0.
+and the temp-write and rollback seams were ignored). The round-3 partial-replace
+witnesses are commit `926caf363a87d9f8e943ec03db984508d6195f8c` (passed=179
+failed=18: `secrets.json` and the rotated secret file were absent while the
+output said `changed: none`, the restore fault deleted the temp and did not
+name the half, and an invalid escape was rewritten). The closed list below is
+the official green run. The floor for CP-1 is passed=197 failed=0.
 
 ## OS branch witnesses
 
@@ -86,7 +96,7 @@ closed list and is not a row, because a master conflict is not fixed by merging.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | dw3 | n/a | dw3-script | `pwsh -NoProfile -File scripts/test-desktop-win-phase1-secrets.ps1` | V-1 | RESULT passed=139 failed=0, exit 0 | n/a | 15 | true | n/a |
+| CP-1 | dw3 | n/a | dw3-script | `pwsh -NoProfile -File scripts/test-desktop-win-phase1-secrets.ps1` | V-1 | RESULT passed=197 failed=0, exit 0 | n/a | 15 | true | n/a |
 | CP-2 | dw3 | tests/Antiphon.Tests -> bin-dw3/ | dw3-policy | `/*/*/TestClassificationPolicyTests/*` | V-2 | 0 failed, executed at least 42 | 42 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | dw3 | CP-2 | dw3-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-3 | 0 failed, executed at least 39 | 39 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | dw3 | CP-2 | dw3-index | `/*/*/DerivedImpactIndexTests/*` | V-4 | 0 failed, executed at least 27 | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
