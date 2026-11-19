@@ -42,12 +42,19 @@ public sealed record LandRequestStatusDto(
     bool? RecoveryPatchesContained = null,
     string? RecoveryUncontainedPatches = null,
     Guid? SupersedesRequestId = null,
-    LandVerificationWaitDto? VerificationWait = null)
+    LandVerificationWaitDto? VerificationWait = null,
+    string? StatusPhase = null,
+    DateTime? StatusPhaseStartedAt = null,
+    string? VerificationFailureStep = null,
+    string? VerificationFailureOutput = null)
 {
     public static LandRequestStatusDto From(AgentTaskLandRequest r, DateTime now, IReadOnlyList<LandNotificationStatusDto> notifications,
-        LandVerificationWaitDto? verificationWait = null)
-        => new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
-            (now-r.RequestedAt).TotalSeconds, (now-r.LastProgressAt).TotalSeconds, r.Attempt,
+        LandVerificationWaitDto? verificationWait = null, AgentTaskLanding? landing = null)
+    {
+        var (phase, started) = CurrentPhase(r, landing);
+        return new(r.Id, r.State, r.RequestedAt, r.StartedAt, r.LastEvaluatedAt, r.LastProgressAt,
+            (now-r.RequestedAt).TotalSeconds,
+            r.State == LandRequestState.Completed ? 0 : (now-r.LastProgressAt).TotalSeconds, r.Attempt,
             r.HoldReasonCode, r.HoldDetail, r.HoldingTaskId, r.HoldingTaskStatus, r.HeldSince, r.HoldEpisode,
             r.LandingOperationId, r.TerminalEventId, r.ReconciliationError, notifications,
             r.SchemaVersion, r.ExpectedSourceSha, r.ReviewEvidenceId, r.ApprovalKind, r.SourceResolutionState,
@@ -58,7 +65,28 @@ public sealed record LandRequestStatusDto(
             r.SourceDiagnosticExceptionType, r.RecoveryMode, r.RecoveryOwnerStatus,
             r.RecoverySourceTaskId, r.RecoverySourceFullRef, r.RecoveryOwnerRemoteBeforeSha,
             r.RecoveryOwnerRemoteAfterSha, r.RecoveryRelationship,
-            r.RecoveryPatchesContained, r.RecoveryUncontainedPatches, r.SupersedesRequestId, verificationWait);
+            r.RecoveryPatchesContained, r.RecoveryUncontainedPatches, r.SupersedesRequestId, verificationWait,
+            phase, started, landing?.VerificationFailureStep, landing?.VerificationFailureOutput);
+    }
+
+    /// <summary>CARD-1995: the coarse phase a status line names. Derived; not a stored land phase.</summary>
+    internal static (string? Phase, DateTime? StartedAt) CurrentPhase(AgentTaskLandRequest r, AgentTaskLanding? landing)
+    {
+        if (landing is null)
+            return r.StartedAt is null ? ("queue", r.RequestedAt) : ("admission", r.StartedAt);
+        if (landing.RemoteConfirmedAt is not null
+            || landing.Phase is LandPhase.PublicationConfirmed or LandPhase.CleanupStarted or LandPhase.Complete)
+            return ("confirm", landing.RemoteConfirmedAt ?? landing.UpdatedAt);
+        if (landing.PushStartedAt is not null
+            || landing.Phase is LandPhase.PushStarted or LandPhase.TargetAdvanceStarted or LandPhase.LocalTargetAdvanced)
+            return ("push", landing.PushStartedAt ?? landing.UpdatedAt);
+        if (landing.VerificationStartedAt is not null || landing.VerificationFailureStep is not null)
+            return ("build", landing.VerificationStartedAt ?? landing.UpdatedAt);
+        if (landing.Phase is LandPhase.Inspected or LandPhase.RecoveryPinned or LandPhase.RebaseStarted
+            or LandPhase.Prepared or LandPhase.Refused)
+            return ("git", landing.CreatedAt == default ? r.StartedAt ?? r.RequestedAt : landing.CreatedAt);
+        return r.StartedAt is null ? ("queue", r.RequestedAt) : ("admission", r.StartedAt);
+    }
 }
 
 /// <summary>CARD-1470/1467: why a running land verification is not progressing.</summary>

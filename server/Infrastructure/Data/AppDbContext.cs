@@ -2345,6 +2345,12 @@ public partial class AppDbContext : DbContext
             entity.Property(l => l.CanonicalAdvanceReason).HasMaxLength(400);
             entity.Property(l => l.BranchDeletionReason).HasMaxLength(80);
             entity.Property(l => l.BranchDeletionDetail).HasMaxLength(400);
+            entity.Property(l => l.VerificationFailureStep).HasMaxLength(40);
+            entity.Property(l => l.VerificationFailureOutput).HasColumnType("text");
+            entity.Property(l => l.VerificationFailingProjects).HasMaxLength(2000);
+            entity.HasIndex(l => new { l.TargetBeforeSha, l.UpdatedAt })
+                .HasDatabaseName("IX_AgentTaskLandings_TargetBuildFailure")
+                .HasFilter("\"VerificationFailureStep\" = 'build'");
         });
 
         modelBuilder.Entity<VerificationExecution>(entity =>

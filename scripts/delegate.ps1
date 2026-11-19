@@ -843,7 +843,21 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($task.legacyLandReceipt) { Write-Output "Legacy receipt: $($task.legacyLandReceipt.state); event $($task.legacyLandReceipt.eventId)" }
         if ($task.landRequest) {
             $r = $task.landRequest
-            Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds)
+            $phase = ''
+            if ($r.statusPhase) { $phase = "; phase {0} since {1}" -f $r.statusPhase, (Format-AntiphonInstant $r.statusPhaseStartedAt) }
+            if ($r.state -eq 'Completed') {
+                $outcome = 'completed'
+                if ($r.terminalFailureCode) { $outcome = [string]$r.terminalFailureCode }
+                elseif ($task.landing -and $task.landing.reason) { $outcome = [string]$task.landing.reason }
+                $completedAt = if ($r.lastEvaluatedAt) { $r.lastEvaluatedAt } else { $r.lastProgressAt }
+                Write-Output ("Land: Completed; request {0}; requested {1}; attempt {2}; completed at {3}; outcome {4}{5}" -f $r.id, $r.requestedAt, $r.attempt, $completedAt, $outcome, $phase)
+            } else {
+                Write-Output ("Land: {0}; request {1}; requested {2}; attempt {3}; no progress for {4}s{5}" -f $r.state, $r.id, $r.requestedAt, $r.attempt, [int]$r.noProgressSeconds, $phase)
+            }
+            if ($r.verificationFailureStep) {
+                Write-Output ("Land verification: {0}" -f $r.verificationFailureStep)
+                if ($r.verificationFailureOutput) { Write-Output ([string]$r.verificationFailureOutput) }
+            }
             if ($r.expectedSourceSha) { Write-Output "Approved original: $($r.expectedSourceSha)" } else { Write-Output 'Approved original: (legacy; not bound)' }
             if ($r.recoveryMode -and $r.recoveryMode -ne 'None') {
                 Write-Output "Recovery: $($r.recoveryMode); source task $($r.recoverySourceTaskId); ref $($r.recoverySourceFullRef); reviewed $($r.expectedSourceSha); owner status $($r.recoveryOwnerStatus)"

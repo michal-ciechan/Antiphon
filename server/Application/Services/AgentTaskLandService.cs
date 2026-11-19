@@ -792,8 +792,13 @@ public sealed class AgentTaskLandService
         {
             if (op?.RebasedSourceSha is not null && op.Mode != LandOperationMode.CleanupRetry)
                 Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Clean, DurationSeconds(op, OrchestrationStage.Rebase));
-            if (result.Reason == "verification_failed")
-                Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, DurationSeconds(op, OrchestrationStage.Verify), "build failed or selected tests failed", task.WorktreePath);
+            if (result.Reason is "verification_failed" or "target_build_broken")
+            {
+                var verifyDetail = op?.VerificationFailureStep is { Length: > 0 } step
+                    ? step + " failed\n" + (op.VerificationFailureOutput ?? "")
+                    : "build failed or selected tests failed";
+                Record(task, OrchestrationStage.Verify, StageOutcomeKind.Found, DurationSeconds(op, OrchestrationStage.Verify), verifyDetail, task.WorktreePath);
+            }
             if (op?.VerifiedAt is not null)
                 Record(task, OrchestrationStage.Verify, op.VerificationPassed ? StageOutcomeKind.Clean : StageOutcomeKind.Skipped,
                     DurationSeconds(op, OrchestrationStage.Verify), VerifyDetail(op, "verification passed"));
@@ -1998,14 +2003,14 @@ public sealed class AgentTaskLandService
         var build = await runProcess(worktree, observer, ct, "dotnet", buildArgs);
         // CARD-1994: the build child returned an exit status (it was not cancelled or killed by this verifier).
         buildExited?.Invoke(build);
-        if (!build.Ok) return LandVerification.Failure("build", Tail(build));
+        if (!build.Ok) return LandVerification.Failure("build", Output(build));
         if (string.IsNullOrWhiteSpace(filter)) return LandVerification.Success("build OK");
         var results = Infrastructure.Git.LandVerificationArtifacts.CreateResultsDirectory(output);
         // Reuse the capped build's artifacts; dotnet run's implicit build would run uncapped.
         var tests = await runProcess(worktree, observer, ct, "dotnet", ["run", "--project", "tests/Antiphon.Tests",
             "--no-build", "--artifacts-path", output, "--configuration", "Debug", "--", "--treenode-filter", filter, "--report-trx",
             "--results-directory", results, "--report-trx-filename", "landing-verification.trx"]);
-        if (!tests.Ok) return LandVerification.Failure("tests", Tail(tests));
+        if (!tests.Ok) return LandVerification.Failure("tests", Output(tests));
         var reportPath = Path.Combine(results, "landing-verification.trx");
         if (!File.Exists(reportPath)) return LandVerification.Failure("tests", "fresh_test_report_missing_or_ambiguous");
         Infrastructure.Git.LandVerificationArtifacts.RequireNoLinks(reportPath);
@@ -2060,11 +2065,7 @@ public sealed class AgentTaskLandService
         return new ProcessResult(process.ExitCode == 0, await stdout, await stderr) { ExitCode = process.ExitCode };
     }
 
-    private static string Tail(ProcessResult result)
-    {
-        var text = (result.StdOut + "\n" + result.StdErr).Trim();
-        return text.Length <= 1800 ? text : text[^1800..];
-    }
+    private static string Output(ProcessResult result) => (result.StdOut + "\n" + result.StdErr).Trim();
 
     private void Record(
         AgentTask task,
@@ -2118,8 +2119,16 @@ internal sealed record LandVerification(bool Ok, string Step, string Tail, strin
     /// <summary>CARD-1470: the build-slot memory-floor wait or fallback, recorded on the land operation.</summary>
     public BuildSlotMemoryWait? MemoryWait { get; init; }
 
+    /// <summary>CARD-1995: the last 40 lines of the failing step, kept in full up to <see cref="LandVerificationFailure.StoredChars"/>.</summary>
+    public string KeptOutput { get; init; } = "";
+
     public static LandVerification Success(string description) => new(true, string.Empty, string.Empty, description);
-    public static LandVerification Failure(string step, string tail) => new(false, step, tail, string.Empty);
+    public static LandVerification Failure(string step, string full)
+    {
+        var text = full ?? "";
+        var tail = text.Length <= 1800 ? text : text[^1800..];
+        return new(false, step, tail, string.Empty) { KeptOutput = LandVerificationFailure.LastLines(text) };
+    }
 }
 
 public sealed record LandRequestResult(Guid TaskId, string Status, Guid RequestId = default, string Notification = "tracked");

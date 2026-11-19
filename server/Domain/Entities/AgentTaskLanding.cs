@@ -108,4 +108,13 @@ public sealed class AgentTaskLanding
     public string? BranchDeletionDetail { get; set; }
     /// <summary>When every runner that held the branch confirmed its local refs absent (before the origin delete).</summary>
     public DateTime? RunnerRefsDeletedAt { get; set; }
+
+    /// <summary>CARD-1995: <c>build</c> or <c>tests</c> when this attempt's verification did not pass.</summary>
+    public string? VerificationFailureStep { get; set; }
+
+    /// <summary>CARD-1995: the last 40 lines of that step's output.</summary>
+    public string? VerificationFailureOutput { get; set; }
+
+    /// <summary>CARD-1995: repo-relative csproj paths a failed build named, separated by semicolons.</summary>
+    public string? VerificationFailingProjects { get; set; }
 }

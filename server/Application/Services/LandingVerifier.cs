@@ -18,7 +18,7 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter, CancellationToken ct)
     {
         var result = await AgentTaskLandService.VerifyWithObserverAsync(worktree, filter, new Observer(worktree, logger, null, null), ct, buildSlots, RunProcess);
-        return new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait);
+        return Reported(result);
     }
 
     public async Task<LandingVerification> VerifyAsync(string worktree, string? filter,
@@ -45,7 +45,7 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
                 });
             // No build child ran (a build-slot timeout): the generation is as Prepare found it.
             if (!built) generation?.Complete();
-            return new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait);
+            return Reported(result);
         }
         finally
         {
@@ -53,6 +53,10 @@ public sealed class LandingVerifier(ILogger<LandingVerifier>? logger = null, IBu
             observer.MemoryWait(null);
         }
     }
+
+    private static LandingVerification Reported(LandVerification result) =>
+        new(result.Ok, result.Ok ? result.Description : result.Step + " failed", result.MemoryWait,
+            result.Ok ? null : result.Step, result.Ok ? null : result.KeptOutput);
 
     private sealed class Observer(string repository, ILogger<LandingVerifier>? logger, LandingVerificationCorrelation? correlation,
         LandVerificationWaits? waits) : ILandingChildObserver
