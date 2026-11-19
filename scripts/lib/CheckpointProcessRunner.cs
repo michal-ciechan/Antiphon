@@ -124,20 +124,26 @@ namespace Antiphon.Checkpoints
         public static IDisposable DriverSettingsScope()
         {
             var previous = ScopedDriverSettings.Value;
-            ScopedDriverSettings.Value = new Dictionary<string, string>(StringComparer.Ordinal);
-            return new DriverSettingsScopeExit(previous);
+            var own = new Dictionary<string, string>(StringComparer.Ordinal);
+            ScopedDriverSettings.Value = own;
+            return new DriverSettingsScopeExit(own, previous);
         }
 
         private sealed class DriverSettingsScopeExit : IDisposable
         {
+            private readonly Dictionary<string, string> _own;
             private readonly Dictionary<string, string> _previous;
             private bool _disposed;
-            public DriverSettingsScopeExit(Dictionary<string, string> previous) { _previous = previous; }
+            public DriverSettingsScopeExit(Dictionary<string, string> own, Dictionary<string, string> previous)
+            { _own = own; _previous = previous; }
             public void Dispose()
             {
                 if (_disposed) return;
                 _disposed = true;
-                ScopedDriverSettings.Value = _previous;
+                // Out of order (an outer scope first) or from another flow: never revive a closed scope.
+                // A scope is always closed, though: its answers are not reused once it is disposed.
+                if (ReferenceEquals(ScopedDriverSettings.Value, _own)) ScopedDriverSettings.Value = _previous;
+                lock (DriverSettingsGate) _own.Clear();
             }
         }
 

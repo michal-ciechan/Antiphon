@@ -40,3 +40,12 @@ if (-not ('Antiphon.Checkpoints.CheckpointProcessRunner' -as [type])) {
     if (-not $checkpointRunnerLoaded) { Add-Type -TypeDefinition $checkpointRunnerSource }
     Remove-Variable -Name checkpointRunner* -ErrorAction SilentlyContinue
 }
+
+# One filter/textconv driver lookup for a run of git reads (CheckpointProcessRunner.DriverSettingsScope), or
+# $null when the loaded runner predates it (a long-lived session that loaded an older build): the reads then
+# ask before each one, as before. Dispose the result in a finally: if ($scope) { $scope.Dispose() }.
+function New-CheckpointDriverScope {
+    $runner = [Antiphon.Checkpoints.CheckpointProcessRunner]
+    if ($null -eq $runner.GetMethod('DriverSettingsScope', [Type]::EmptyTypes)) { return $null }
+    return $runner::DriverSettingsScope()
+}

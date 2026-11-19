@@ -159,6 +159,52 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     }
 
     [Test]
+    [Timeout(120_000)]
+    public async Task Script_source_snapshot_asks_for_drivers_once_and_closes_its_scope(CancellationToken cancellationToken)
+    {
+        var root = TempDir();
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        CheckpointFixtureProcess.Git(root, "config", "filter.scope.clean", "scope-driver-must-not-run");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "one\n");
+        CheckpointFixtureProcess.Git(root, "add", "tracked.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "two\n");
+        File.WriteAllText(Path.Combine(root, "untracked.txt"), "new\n");
+        var trace = Directory.CreateDirectory(Path.Combine(TempDir(), "trace2")).FullName;
+        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+        var source = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-source.ps1");
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root, UseShellExecute = false,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", $$"""
+            $ErrorActionPreference = 'Stop'
+            . {{Quote(source)}}
+            $observation = Get-CheckpointSource {{Quote(root)}}
+            $field = [Antiphon.Checkpoints.CheckpointProcessRunner].GetField('ScopedDriverSettings', [Reflection.BindingFlags]'NonPublic,Static')
+            'SCOPE_CLOSED=' + ($null -eq $field.GetValue($null).Value)
+            'CAPTURE=' + $observation.captureStatus + ':' + $observation.dirtyFiles
+            """ })
+            start.ArgumentList.Add(argument);
+        start.Environment["GIT_TRACE2_EVENT"] = trace;
+        var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
+        run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+        run.Stdout.ShouldContain("SCOPE_CLOSED=True");
+        run.Stdout.ShouldContain("CAPTURE=known:2");
+
+        // One trace file per git process; its start event carries the argv.
+        var argvs = Directory.GetFiles(trace).Select(File.ReadAllText).ToList();
+        argvs.Count(text => text.Contains("\"--get-regexp\"", StringComparison.Ordinal)).ShouldBe(1,
+            "one driver lookup for the whole snapshot, not one before every read");
+        argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)).ShouldBe(2,
+            "both capture passes ran");
+        argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)
+            && text.Contains("\"filter.scope.clean=\"", StringComparison.Ordinal)).ShouldBe(2,
+            "the reused answer still disables the driver on every read");
+    }
+
+    [Test]
     public async Task C1616_admitted_build_deadline_preserves_terminal_receipt()
     {
         await AssertAdmittedBuildTimeoutAsync(cancelBudget: false);

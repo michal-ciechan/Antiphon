@@ -95,6 +95,8 @@ public static class BuildConfinement
         stamp ??= Stamp;
         if (!TryFindOutput(arguments, out var outputValue) || !TryFindProject(arguments, out var project))
             return LedgerCapture.None;
+        // Only git reads and file stamps run here: one driver lookup for all of them (DriverSettingsScope).
+        using var drivers = CheckpointProcessRunner.DriverSettingsScope();
         var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
         if (repo.Error is not null || repo.Exit != 0 || string.IsNullOrWhiteSpace(repo.Stdout))
             return RefuseLedger(repo.Error ?? "git-toplevel");
@@ -248,17 +250,24 @@ public static class BuildConfinement
         if (string.IsNullOrEmpty(projectDir))
             return Refuse("graph-unevaluated", "project directory missing");
 
-        var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
-        if (repo.Error is not null || repo.Exit != 0 || string.IsNullOrWhiteSpace(repo.Stdout))
-            return Refuse("tracked-snapshot", repo.Error ?? "git-toplevel");
-        var repository = repo.Stdout.Trim();
-        var status = ReadStatus(repository);
-        if (status.Error is not null)
-            return Refuse("tracked-snapshot", status.Error);
-        if (status.Paths.Count > 0)
-            return new Prepared("dirty-tracked", DirtyText(status.Paths), [], null);
+        string repository;
+        CaptureResult captured;
+        // One driver lookup for the git reads below. The scope closes before Walk, whose MSBuild evaluations of
+        // the project under test are not git reads (DriverSettingsScope).
+        using (CheckpointProcessRunner.DriverSettingsScope())
+        {
+            var repo = Git(workingDirectory, ["rev-parse", "--show-toplevel"]);
+            if (repo.Error is not null || repo.Exit != 0 || string.IsNullOrWhiteSpace(repo.Stdout))
+                return Refuse("tracked-snapshot", repo.Error ?? "git-toplevel");
+            repository = repo.Stdout.Trim();
+            var status = ReadStatus(repository);
+            if (status.Error is not null)
+                return Refuse("tracked-snapshot", status.Error);
+            if (status.Paths.Count > 0)
+                return new Prepared("dirty-tracked", DirtyText(status.Paths), [], null);
 
-        var captured = Capture(repository, ledger);
+            captured = Capture(repository, ledger);
+        }
         if (captured.Error is not null || captured.Value is null)
             return Refuse("tracked-snapshot", captured.Error ?? "git-ls-files");
         var baseline = captured.Value;
@@ -294,6 +303,8 @@ public static class BuildConfinement
     public static Settlement Settle(Baseline baseline, Func<string, string>? stamp = null)
     {
         stamp ??= Stamp;
+        // Only git reads and file stamps run here: one driver lookup for all of them (DriverSettingsScope).
+        using var drivers = CheckpointProcessRunner.DriverSettingsScope();
         var status = ReadStatus(baseline.Repository);
         if (status.Error is not null)
             return new Settlement("tracked-snapshot", "refused: tracked-snapshot\n" + status.Error + "\nBuild-result bytes and index entries were left in place; no source recovery was attempted.\n", []);

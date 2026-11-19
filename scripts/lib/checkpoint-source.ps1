@@ -104,10 +104,11 @@ function Get-CheckpointSourceOnce {
 
 function Get-CheckpointSource {
     param([string]$Repository = (Get-Location).Path)
-    # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).
-    $drivers = [Antiphon.Checkpoints.CheckpointProcessRunner]::DriverSettingsScope()
+    $drivers = $null
     try {
-        $root = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel')))).Trim()
+        # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).
+        $drivers = New-CheckpointDriverScope
+        $root =([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel')))).Trim()
         $first = Get-CheckpointSourceOnce $root
         $second = Get-CheckpointSourceOnce $root
         if ($first.commit -cne $second.commit -or $first.dirtyFiles -ne $second.dirtyFiles -or $first.fingerprint -cne $second.fingerprint) { throw 'capture_changed' }
@@ -120,7 +121,7 @@ function Get-CheckpointSource {
             observedAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
             captureStatus = 'unknown'; errorCode = $code
         }
-    } finally { $drivers.Dispose() }
+    } finally { if ($null -ne $drivers) { $drivers.Dispose() } }
 }
 
 function Get-CheckpointSourceState {

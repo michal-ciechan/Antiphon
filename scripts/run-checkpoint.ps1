@@ -917,31 +917,37 @@ function Get-CheckpointTrackedSnapshot {
     param([string[]]$Projects, [switch]$IndexOnly)
     # Retained for the membership probe. The baseline is the whole tracked set.
     $null = $Projects
-    $top = Invoke-CheckpointGit $root @('rev-parse', '--show-toplevel')
-    if ($top.Reason -or [int]$top.Exit -ne 0) { return @{ Error = 'git-toplevel'; Index = ''; Hashes = $null; Head = $null; Repository = $null; Untracked = $null } }
-    $repo = ([string]$top.Stdout).Trim()
-    $headCall = Invoke-CheckpointGit $repo @('rev-parse', 'HEAD')
-    if ($headCall.Reason -or [int]$headCall.Exit -ne 0) { return @{ Error = 'git-head'; Index = ''; Hashes = $null; Head = $null; Repository = $repo; Untracked = $null } }
-    $head = ([string]$headCall.Stdout).Trim()
-    $listed = Invoke-CheckpointGit $repo @('ls-files', '-z', '-s')
-    if ($listed.Reason -or [int]$listed.Exit -ne 0) {
-        $listingError = 'git-ls-files'
-        if ([string]$listed.Reason -ceq 'git-encoding') { $listingError = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
-        return @{ Error = $listingError; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null }
-    }
-    $raw = [string]$listed.Stdout
-    $hashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    foreach ($record in $raw.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
-        $tab = $record.IndexOf("`t")
-        if ($tab -lt 1 -or $tab -ge ($record.Length - 1)) { return @{ Error = 'index-record'; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
-        $hashes[$record.Substring($tab + 1)] = $record.Substring(0, $tab)
-    }
-    if ($IndexOnly) { return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $null } }
-    $manifest = Get-CheckpointUntrackedManifest $repo
-    if ($null -ne $manifest.Error) { return @{ Error = [string]$manifest.Error; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
-    $content = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    foreach ($key in $hashes.Keys) { $content[$key] = Get-CheckpointContentStamp (Join-CheckpointRepoPath $repo $key) }
-    return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $manifest.Files; Content = $content }
+    # Only git reads and in-process content stamps run here: one driver lookup for all of them
+    # (CheckpointProcessRunner.DriverSettingsScope).
+    $drivers = $null
+    try {
+        $drivers = New-CheckpointDriverScope
+        $top = Invoke-CheckpointGit $root @('rev-parse', '--show-toplevel')
+        if ($top.Reason -or [int]$top.Exit -ne 0) { return @{ Error = 'git-toplevel'; Index = ''; Hashes = $null; Head = $null; Repository = $null; Untracked = $null } }
+        $repo = ([string]$top.Stdout).Trim()
+        $headCall = Invoke-CheckpointGit $repo @('rev-parse', 'HEAD')
+        if ($headCall.Reason -or [int]$headCall.Exit -ne 0) { return @{ Error = 'git-head'; Index = ''; Hashes = $null; Head = $null; Repository = $repo; Untracked = $null } }
+        $head = ([string]$headCall.Stdout).Trim()
+        $listed = Invoke-CheckpointGit $repo @('ls-files', '-z', '-s')
+        if ($listed.Reason -or [int]$listed.Exit -ne 0) {
+            $listingError = 'git-ls-files'
+            if ([string]$listed.Reason -ceq 'git-encoding') { $listingError = 'git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+            return @{ Error = $listingError; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null }
+        }
+        $raw = [string]$listed.Stdout
+        $hashes = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($record in $raw.Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
+            $tab = $record.IndexOf("`t")
+            if ($tab -lt 1 -or $tab -ge ($record.Length - 1)) { return @{ Error = 'index-record'; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
+            $hashes[$record.Substring($tab + 1)] = $record.Substring(0, $tab)
+        }
+        if ($IndexOnly) { return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $null } }
+        $manifest = Get-CheckpointUntrackedManifest $repo
+        if ($null -ne $manifest.Error) { return @{ Error = [string]$manifest.Error; Index = ''; Hashes = $null; Head = $head; Repository = $repo; Untracked = $null } }
+        $content = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($key in $hashes.Keys) { $content[$key] = Get-CheckpointContentStamp (Join-CheckpointRepoPath $repo $key) }
+        return @{ Error = $null; Index = $raw; Hashes = $hashes; Head = $head; Repository = $repo; Untracked = $manifest.Files; Content = $content }
+    } finally { if ($null -ne $drivers) { $drivers.Dispose() } }
 }
 
 function Get-CheckpointTrackedStatus {
@@ -1063,35 +1069,41 @@ function Format-CheckpointDirty {
 
 function Complete-CheckpointBaseline {
     param($Baseline)
-    $status = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
-    if ($null -ne $status.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $status.Error } }
-    $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($path in @($status.Paths)) { [void]$paths.Add([string]$path) }
-    # CARD-1363 (the CARD-1358 D-3 design): an entry whose recorded or current stamp the reader refused is
-    # unprovable, not a change; a readable stamp that differs is a change.
-    $unreadable = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-    foreach ($key in @($Baseline.Content.Keys) + @($Baseline.Untracked.Keys)) {
-        $expected = if ($Baseline.Content.ContainsKey($key)) { $Baseline.Content[$key] } else { $Baseline.Untracked[$key] }
-        if (Test-CheckpointUnreadableStamp $expected) { $unreadable[$key] = Get-CheckpointUnreadableReason $expected; continue }
-        $current = Get-CheckpointContentStamp (Join-CheckpointRepoPath $Baseline.Repository $key)
-        if (Test-CheckpointUnreadableStamp $current) { $unreadable[$key] = Get-CheckpointUnreadableReason $current }
-        elseif ($current -cne $expected) { [void]$paths.Add([string]$key) }
-    }
-    $again = Get-CheckpointTrackedSnapshot -Projects @() -IndexOnly
-    if ($null -ne $again.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $again.Error } }
-    foreach ($key in @($Baseline.Hashes.Keys) + @($again.Hashes.Keys)) {
-        if (-not $Baseline.Hashes.ContainsKey($key) -or -not $again.Hashes.ContainsKey($key) -or $Baseline.Hashes[$key] -cne $again.Hashes[$key]) { [void]$paths.Add([string]$key) }
-    }
-    $ordinary = Invoke-CheckpointGit $Baseline.Repository @('ls-files', '-z', '--others', '--exclude-standard')
-    if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) {
-        $listingDetail = 'refused: git-ls-files'
-        if ([string]$ordinary.Reason -ceq 'git-encoding') { $listingDetail = 'refused: git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
-        return @{ Kind = 'tracked-snapshot'; Detail = $listingDetail }
-    }
-    foreach ($path in ([string]$ordinary.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
-        if (-not $path.StartsWith('.antiphon/', [StringComparison]::Ordinal) -and -not $Baseline.Untracked.ContainsKey($path)) { [void]$paths.Add($path) }
-    }
-    return Format-CheckpointSettlement $Baseline $again $paths $unreadable
+    # Only git reads and in-process content stamps run here: one driver lookup for all of them
+    # (CheckpointProcessRunner.DriverSettingsScope).
+    $drivers = $null
+    try {
+        $drivers = New-CheckpointDriverScope
+        $status = Get-CheckpointTrackedStatus ([string]$Baseline.Repository)
+        if ($null -ne $status.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $status.Error } }
+        $paths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @($status.Paths)) { [void]$paths.Add([string]$path) }
+        # CARD-1363 (the CARD-1358 D-3 design): an entry whose recorded or current stamp the reader refused is
+        # unprovable, not a change; a readable stamp that differs is a change.
+        $unreadable = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($key in @($Baseline.Content.Keys) + @($Baseline.Untracked.Keys)) {
+            $expected = if ($Baseline.Content.ContainsKey($key)) { $Baseline.Content[$key] } else { $Baseline.Untracked[$key] }
+            if (Test-CheckpointUnreadableStamp $expected) { $unreadable[$key] = Get-CheckpointUnreadableReason $expected; continue }
+            $current = Get-CheckpointContentStamp (Join-CheckpointRepoPath $Baseline.Repository $key)
+            if (Test-CheckpointUnreadableStamp $current) { $unreadable[$key] = Get-CheckpointUnreadableReason $current }
+            elseif ($current -cne $expected) { [void]$paths.Add([string]$key) }
+        }
+        $again = Get-CheckpointTrackedSnapshot -Projects @() -IndexOnly
+        if ($null -ne $again.Error) { return @{ Kind = 'tracked-snapshot'; Detail = 'refused: tracked-snapshot ' + $again.Error } }
+        foreach ($key in @($Baseline.Hashes.Keys) + @($again.Hashes.Keys)) {
+            if (-not $Baseline.Hashes.ContainsKey($key) -or -not $again.Hashes.ContainsKey($key) -or $Baseline.Hashes[$key] -cne $again.Hashes[$key]) { [void]$paths.Add([string]$key) }
+        }
+        $ordinary = Invoke-CheckpointGit $Baseline.Repository @('ls-files', '-z', '--others', '--exclude-standard')
+        if ($ordinary.Reason -or [int]$ordinary.Exit -ne 0) {
+            $listingDetail = 'refused: git-ls-files'
+            if ([string]$ordinary.Reason -ceq 'git-encoding') { $listingDetail = 'refused: git-ls-files git output is not valid UTF-8 (a non-UTF-8 file name?)' }
+            return @{ Kind = 'tracked-snapshot'; Detail = $listingDetail }
+        }
+        foreach ($path in ([string]$ordinary.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)) {
+            if (-not $path.StartsWith('.antiphon/', [StringComparison]::Ordinal) -and -not $Baseline.Untracked.ContainsKey($path)) { [void]$paths.Add($path) }
+        }
+        return Format-CheckpointSettlement $Baseline $again $paths $unreadable
+    } finally { if ($null -ne $drivers) { $drivers.Dispose() } }
 }
 
 # CARD-1363 (the CARD-1358 D-3 design): any changed path makes the kind tampered, with the unprovable entries listed
