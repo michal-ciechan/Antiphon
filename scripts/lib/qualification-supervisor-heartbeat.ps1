@@ -219,11 +219,20 @@ function Write-QualificationActiveChunkIdentity {
         $path=Join-Path $Directory $file
         $snapshot=Read-QualificationPlanSnapshot $path
         $plan=$snapshot.Plan
-        $indexSnapshot=Read-QualificationPlanSnapshot (Join-Path $Directory 'groups-planned-index.json') -Index
-        $index=$indexSnapshot.Plan
+        # The index through its snapshot; whatever the snapshot cannot give (an unreadable or unparsable file)
+        # is read as before, for the same refusal.
+        $indexPath=Join-Path $Directory 'groups-planned-index.json'
+        $indexSnapshot=$null
+        try {$indexSnapshot=Read-QualificationPlanSnapshot $indexPath -Index} catch {$indexSnapshot=$null}
         $found=$null
-        if($indexSnapshot.Rows.TryGetValue([string]$SuiteId,[ref]$found)){$rows=[object[]]$found}
-        else{$rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId});$indexSnapshot.Rows[[string]$SuiteId]=$rows}
+        if($null -eq $indexSnapshot){
+            $index=Read-QualificationPlanJson $indexPath
+            $rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId})
+        } else {
+            $index=$indexSnapshot.Plan
+            if($indexSnapshot.Rows.TryGetValue([string]$SuiteId,[ref]$found)){$rows=[object[]]$found}
+            else{$rows=@($index.suites|Where-Object {$_.suite -ceq $SuiteId});$indexSnapshot.Rows[[string]$SuiteId]=$rows}
+        }
         $chunkCount=0;[void]$snapshot.Chunks.TryGetValue([string]$ChunkId,[ref]$chunkCount)
         if($rows.Count -ne 1 -or $rows[0].file -cne $file -or $index.runId -cne $RunId -or [string]$index.attempt -cne $Attempt -or $plan.runId -cne $RunId -or [string]$plan.attempt -cne $Attempt -or $plan.suite -cne $SuiteId -or $chunkCount -ne 1){throw 'active-plan-binding'}
         $old=Read-QualificationActiveChunkIdentity $Directory
