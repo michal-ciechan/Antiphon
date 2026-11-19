@@ -81,6 +81,92 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
+        /// Read-NightlyDiscoveryDocument. One JSON object from the file's UTF-8 bytes, with one UTF-8 BOM
+        /// dropped and trailing commas accepted. UTF-16 and comments are refused: DiscoveryWriter.WriteFile
+        /// writes UTF-8 with no BOM, commas only between values, and no comments (Invoke-NightlyProduceDiscovery
+        /// parses the --list-tests diagnostic, then that writer emits the discovery document). There is no
+        /// ConvertFrom-Json fallback. Document is null and Reason is empty, utf-16, comment, not-object,
+        /// trailing-content, invalid-json or unreadable.
+        /// </summary>
+        public static DiscoveryRead ReadDiscovery(string path)
+        {
+            byte[] buffer = null;
+            try
+            {
+                int length;
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan))
+                {
+                    if (stream.Length > int.MaxValue / 2) return DiscoveryRead.Fail("unreadable");
+                    buffer = ArrayPool<byte>.Shared.Rent((int)stream.Length);
+                    length = 0;
+                    int read;
+                    while (length < buffer.Length && (read = stream.Read(buffer, length, buffer.Length - length)) > 0) length += read;
+                    if (stream.ReadByte() >= 0) return DiscoveryRead.Fail("unreadable");
+                }
+                if (length >= 2 && ((buffer[0] == 0xFF && buffer[1] == 0xFE) || (buffer[0] == 0xFE && buffer[1] == 0xFF)))
+                    return DiscoveryRead.Fail("utf-16");
+                var start = 0;
+                if (StartsWithBom(buffer, start, length)) start += 3;
+                if (IsDiscoveryWhitespace(buffer, start, length)) return DiscoveryRead.Fail("empty");
+                if (length - start >= 2 && (buffer[start] == 0 || buffer[start + 1] == 0))
+                    return DiscoveryRead.Fail("utf-16");
+                var parsed = TryParseDiscoveryObject(buffer, start, length - start, false, out var reason);
+                if (parsed != null) return DiscoveryRead.Ok(parsed);
+                if (reason != "comment")
+                {
+                    var skipped = TryParseDiscoveryObject(buffer, start, length - start, true, out _);
+                    if (skipped != null) reason = "comment";
+                }
+                return DiscoveryRead.Fail(reason);
+            }
+            catch (IOException) { return DiscoveryRead.Fail("unreadable"); }
+            catch (UnauthorizedAccessException) { return DiscoveryRead.Fail("unreadable"); }
+            finally { if (buffer != null) ArrayPool<byte>.Shared.Return(buffer); }
+        }
+
+        private static bool IsDiscoveryWhitespace(byte[] buffer, int start, int length)
+        {
+            for (var i = start; i < length; i++)
+            {
+                var c = buffer[i];
+                if (c != (byte)' ' && c != (byte)'\t' && c != (byte)'\r' && c != (byte)'\n') return false;
+            }
+            return true;
+        }
+
+        // allowComments is only the probe that decides a comment refusal. Callers discard that object.
+        private static PSObject TryParseDiscoveryObject(byte[] buffer, int start, int count, bool allowComments, out string reason)
+        {
+            reason = "invalid-json";
+            try
+            {
+                var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(buffer, start, count),
+                    new JsonReaderOptions
+                    {
+                        CommentHandling = allowComments ? JsonCommentHandling.Skip : JsonCommentHandling.Disallow,
+                        AllowTrailingCommas = true,
+                        MaxDepth = 1024
+                    });
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+                {
+                    reason = "not-object";
+                    return null;
+                }
+                var root = (PSObject)ReadValue(ref reader, "", new HashSet<string>(StringComparer.Ordinal), true);
+                if (reader.Read())
+                {
+                    reason = "trailing-content";
+                    return null;
+                }
+                reason = "";
+                return root;
+            }
+            catch (GiveUp) { reason = "invalid-json"; return null; }
+            catch (JsonException) { reason = "invalid-json"; return null; }
+            catch (InvalidOperationException) { reason = "invalid-json"; return null; }
+        }
+
+        /// <summary>
         /// Read-QualificationSidecar's Newtonsoft read (DateParseHandling.None, through ConvertFrom-QualificationJToken)
         /// for text that is one strict JSON object: note-property objects, object[] arrays, Int64 (BigInteger past
         /// Int64) or Double numbers, strings kept as strings. Null whenever Newtonsoft could read the text
@@ -300,5 +386,15 @@ namespace Antiphon.Nightly
             if (text.IndexOfAny(new[] { '.', 'E', 'e' }) < 0) text += ".0";
             writer.WriteRawValue(text, true);
         }
+    }
+
+    /// <summary>ReadDiscovery's document, or a refusal Reason when Document is null.</summary>
+    public sealed class DiscoveryRead
+    {
+        public PSObject Document { get; private set; }
+        public string Reason { get; private set; }
+
+        internal static DiscoveryRead Ok(PSObject document) => new DiscoveryRead { Document = document, Reason = "" };
+        internal static DiscoveryRead Fail(string reason) => new DiscoveryRead { Reason = string.IsNullOrEmpty(reason) ? "invalid-json" : reason };
     }
 }
