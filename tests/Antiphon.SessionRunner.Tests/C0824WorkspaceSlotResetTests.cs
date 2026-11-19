@@ -48,7 +48,7 @@ public sealed class C0824WorkspaceSlotResetTests
         var pool = scratch.Pool();
         var a = await pool.LeaseAsync(scratch.RequestA(), ct);
         await Release(pool, a, TaskA);
-        scratch.Faults.Add(new GitFault((dir, args) => dir == a.Path && args is ["checkout", "--force", "-B", ..], "", 1, 0));
+        scratch.Faults.Add(new GitFault((dir, args) => dir == a.Path && args is ["-c", "core.longpaths=true", "checkout", "--force", "-B", ..], "", 1, 0));
 
         var b = await pool.LeaseAsync(scratch.RequestB(), ct);
         b.Path.ShouldNotBe(a.Path, "returned directory != quarantined one");
@@ -284,7 +284,7 @@ public sealed class C0824WorkspaceSlotResetTests
         lock (scratch.Argv)
         {
             scratch.Argv.ShouldContain(argv => argv.Skip(1).SequenceEqual(
-                new[] { "--literal-pathspecs", "clean", "-ffdx", "--", "tests/X/bin-row/" }));
+                new[] { "-c", "core.longpaths=true", "--literal-pathspecs", "clean", "-ffdx", "--", "tests/X/bin-row/" }));
         }
 
         WorkspaceSlotResetPolicy.KeepList.ShouldBe(new[] { "**/obj/", "**/bin/", "**/node_modules/", "/client/dist/" });
