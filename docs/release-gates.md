@@ -649,6 +649,16 @@ Release notes name the commits since the prior published tag, card references wh
 test counts, profile and exclusions, evidence identities and the previous release. The first
 release says there is no earlier release.
 
+## Tag and promotion backing (CARD-1820 S5, decision D-5)
+
+A human tag or promotion is backed only by an answer from `Antiphon.Nightly.RcTagBacking.Test` over an admission envelope chain (`antiphon-rc-tag-chain-v1`):
+
+- `full`: the tagged SHA itself has an admitted all-executed Windows Full. Carried count is zero, there is no open failure and no shadow discrepancy, and the run is not a seed. The exact Full has no seven-day age limit.
+- `chain-to-full(anchor, age)`: a chain of carried or shadow runs bottoms out in an admitted all-executed Windows Full, every link is admitted, none has a shadow discrepancy or an open failure, the anchor SHA is an ancestor of the tagged SHA, and the anchor's age is strictly under 7 days. Age greater than or equal to 7 days is `chain-older-than-seven-days`, the same bound as the coded `full-anchor-expired` predicate. This form is allowed only after two trusted Windows Shadow cuts (CARD-1836 D-8). Fewer than two answers `not-backed(shadow-trust-absent)`.
+- `not-backed(reason)`: every other chain. A missing origin is `missing-link`. A carry that never reaches a Full is `carry-without-anchor`. A seed used as the anchor is `seed-is-not-credit`; seeds never give credit. An anchor SHA that is not on the tagged SHA's parent path is `anchor-not-ancestor`.
+
+The result's `gateCredit` is always false. An envelope that claims `gateCredit=true` is `not-backed(gate-credit-claimed)`. Ledger-basis success stays publication-ineligible (CARD-1836 D-6). No tag, publish, or promote entrypoint calls this rule. There is no PowerShell launcher: nothing calls it yet. The chain is the already-admitted envelope record; this rule does not re-open evidence bundles or grant gate credit.
+
 ## Release identity is not local activation
 
 `/api/version.version` remains the built SHA and `capabilities` remain feature probes; no new
