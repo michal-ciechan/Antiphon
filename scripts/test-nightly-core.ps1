@@ -1294,8 +1294,18 @@ function Test-NCDiscoveryCacheAgrees {
 # F5. The discovery writer (DiscoveryWriter.WriteFile) emits UTF-8 without a BOM,
 # with commas only between values and with no comments. The reader accepts a UTF-8
 # BOM, a trailing comma, and a UTF-16 document that starts with a BOM (FF FE or
-# FE FF). A UTF-16 document without a BOM is discovery-unreadable with reason
+# FE FF). UnicodeEncoding.GetBytes does not write that BOM; the witness prepends
+# GetPreamble. A UTF-16 document without a BOM is discovery-unreadable with reason
 # utf-16, and a comment names this file and the reason. No ConvertFrom-Json fallback.
+function Write-NCWideFile([string]$Path, [string]$Text, [bool]$BigEndian, [bool]$Bom) {
+    $enc = New-Object System.Text.UnicodeEncoding $BigEndian, $Bom
+    $payload = $enc.GetBytes($Text)
+    $preamble = $(if ($Bom) { $enc.GetPreamble() } else { New-Object byte[] 0 })
+    $bytes = New-Object byte[] ($preamble.Length + $payload.Length)
+    if ($preamble.Length -gt 0) { [Buffer]::BlockCopy($preamble, 0, $bytes, 0, $preamble.Length) }
+    [Buffer]::BlockCopy($payload, 0, $bytes, $preamble.Length, $payload.Length)
+    [IO.File]::WriteAllBytes($Path, $bytes)
+}
 function Test-NCDiscoveryParserTolerance {
     $dir = Join-Path $root 'discovery-parser'
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -1327,21 +1337,24 @@ function Test-NCDiscoveryParserTolerance {
     $trailRead = Read-NCDiscoveryOutcome $trailPath
     Assert-NC ($trailRead.Ok -and $trailRead.Count -eq 1 -and $trailRead.Uid -ceq 'u1') 'trailing-comma' $trailRead.Error
     $utf16Path = Join-Path $dir 'utf16.discovery.json'
-    $utf16 = New-Object System.Text.UnicodeEncoding $false, $true
-    [IO.File]::WriteAllBytes($utf16Path, $utf16.GetBytes($text))
+    Write-NCWideFile $utf16Path $text $false $true
+    $utf16Wrote = [IO.File]::ReadAllBytes($utf16Path)
     $utf16Read = Read-NCDiscoveryOutcome $utf16Path
-    Assert-NC ($utf16Read.Ok -and $utf16Read.Count -eq 1 -and $utf16Read.Uid -ceq 'u1') 'utf16-le' ('actual=' + $utf16Read.Error + ' uid=' + $utf16Read.Uid)
+    $leBom = ($utf16Wrote.Length -ge 4 -and $utf16Wrote[0] -eq 0xFF -and $utf16Wrote[1] -eq 0xFE)
+    Assert-NC ($leBom -and $utf16Read.Ok -and $utf16Read.Count -eq 1 -and $utf16Read.Uid -ceq 'u1') 'utf16-le' ('bom=' + $leBom + ' actual=' + $utf16Read.Error + ' uid=' + $utf16Read.Uid)
     $utf16BePath = Join-Path $dir 'utf16-be.discovery.json'
-    $utf16Be = New-Object System.Text.UnicodeEncoding $true, $true
-    [IO.File]::WriteAllBytes($utf16BePath, $utf16Be.GetBytes($text))
+    Write-NCWideFile $utf16BePath $text $true $true
+    $utf16BeWrote = [IO.File]::ReadAllBytes($utf16BePath)
     $utf16BeRead = Read-NCDiscoveryOutcome $utf16BePath
-    Assert-NC ($utf16BeRead.Ok -and $utf16BeRead.Count -eq 1 -and $utf16BeRead.Uid -ceq 'u1') 'utf16-be' ('actual=' + $utf16BeRead.Error + ' uid=' + $utf16BeRead.Uid)
+    $beBom = ($utf16BeWrote.Length -ge 4 -and $utf16BeWrote[0] -eq 0xFE -and $utf16BeWrote[1] -eq 0xFF)
+    Assert-NC ($beBom -and $utf16BeRead.Ok -and $utf16BeRead.Count -eq 1 -and $utf16BeRead.Uid -ceq 'u1') 'utf16-be' ('bom=' + $beBom + ' actual=' + $utf16BeRead.Error + ' uid=' + $utf16BeRead.Uid)
     $utf16BarePath = Join-Path $dir 'utf16-bare.discovery.json'
-    $utf16Bare = New-Object System.Text.UnicodeEncoding $false, $false
-    [IO.File]::WriteAllBytes($utf16BarePath, $utf16Bare.GetBytes($text))
+    Write-NCWideFile $utf16BarePath $text $false $false
+    $utf16BareWrote = [IO.File]::ReadAllBytes($utf16BarePath)
     $utf16BareRead = Read-NCDiscoveryOutcome $utf16BarePath
     $utf16BareExpect = 'discovery-unreadable: ' + $utf16BarePath + ': utf-16'
-    Assert-NC ((-not $utf16BareRead.Ok) -and ($utf16BareRead.Error -ceq $utf16BareExpect)) 'utf16-nobom' ('actual=' + $utf16BareRead.Error)
+    $bareNoBom = -not ($utf16BareWrote.Length -ge 2 -and (($utf16BareWrote[0] -eq 0xFF -and $utf16BareWrote[1] -eq 0xFE) -or ($utf16BareWrote[0] -eq 0xFE -and $utf16BareWrote[1] -eq 0xFF)))
+    Assert-NC ($bareNoBom -and (-not $utf16BareRead.Ok) -and ($utf16BareRead.Error -ceq $utf16BareExpect)) 'utf16-nobom' ('actual=' + $utf16BareRead.Error)
     $utf16EmptyPath = Join-Path $dir 'utf16-empty.discovery.json'
     [IO.File]::WriteAllBytes($utf16EmptyPath, [byte[]](0xFF, 0xFE))
     $utf16EmptyRead = Read-NCDiscoveryOutcome $utf16EmptyPath
@@ -1349,7 +1362,7 @@ function Test-NCDiscoveryParserTolerance {
     Assert-NC ((-not $utf16EmptyRead.Ok) -and ($utf16EmptyRead.Error -ceq $utf16EmptyExpect)) 'utf16-empty' ('actual=' + $utf16EmptyRead.Error)
     $utf16CommentPath = Join-Path $dir 'utf16-comment.discovery.json'
     $utf16CommentText = $text.Insert(1, '/* retained inventory */')
-    [IO.File]::WriteAllBytes($utf16CommentPath, $utf16.GetBytes($utf16CommentText))
+    Write-NCWideFile $utf16CommentPath $utf16CommentText $false $true
     $utf16CommentRead = Read-NCDiscoveryOutcome $utf16CommentPath
     $utf16CommentExpect = 'discovery-unreadable: ' + $utf16CommentPath + ': comment'
     Assert-NC ((-not $utf16CommentRead.Ok) -and ($utf16CommentRead.Error -ceq $utf16CommentExpect)) 'utf16-comment' ('actual=' + $utf16CommentRead.Error)
