@@ -77,14 +77,52 @@ internal sealed class WriteBehindQueue
         }
     }
 
-    /// <summary>Waits until the path's queued content is on disk.</summary>
+    /// <summary>Waits until the path's queued content is on disk. Does not raise or clear failures.</summary>
+    public void Wait(string path)
+    {
+        string key = Key(path);
+        lock (gate)
+        {
+            while (pending.ContainsKey(key) || (writingPath is not null && options.PathComparer.Equals(writingPath, key))) Monitor.Wait(gate);
+        }
+    }
+
+    /// <summary>True when this path has a failed write that a later flush can still report.</summary>
+    public bool HasFailure(string path)
+    {
+        string key = Key(path);
+        lock (gate)
+        {
+            foreach (WriteBehindException failure in failures)
+                if (options.PathComparer.Equals(failure.Path, key)) return true;
+            return false;
+        }
+    }
+
+    /// <summary>Copies failed-write descriptions without clearing them. Same text as EvidenceFiles.Describe.</summary>
+    public string[] CopyFailureDescriptions()
+    {
+        lock (gate)
+        {
+            var copy = new string[failures.Count];
+            for (int i = 0; i < failures.Count; i++)
+            {
+                WriteBehindException failure = failures[i];
+                string message = failure.InnerException is null ? failure.Message : failure.InnerException.Message;
+                copy[i] = failure.Path + ": " + message;
+            }
+            return copy;
+        }
+    }
+
+    /// <summary>Waits until the path's queued content is on disk, then raises only that path's failures.</summary>
     public void Flush(string path)
     {
         string key = Key(path);
         lock (gate)
         {
             while (pending.ContainsKey(key) || (writingPath is not null && options.PathComparer.Equals(writingPath, key))) Monitor.Wait(gate);
-            ThrowFailures();
+            ThrowFailures(key);
         }
     }
 
@@ -94,7 +132,7 @@ internal sealed class WriteBehindQueue
         lock (gate)
         {
             while (order.Count > 0 || writingPath is not null) Monitor.Wait(gate);
-            ThrowFailures();
+            ThrowFailures(null);
         }
     }
 
@@ -109,12 +147,23 @@ internal sealed class WriteBehindQueue
         finally { lock (gate) disposed = true; }
     }
 
-    private void ThrowFailures()
+    private void ThrowFailures(string? onlyPath)
     {
-        if (failures.Count == 0) return;
-        var failed = failures.ToArray();
-        failures.Clear();
-        throw new AggregateException("Write-behind writes failed: " + string.Join(", ", failed.Select(f => f.Path)), failed);
+        var matched = new List<WriteBehindException>();
+        if (onlyPath is null)
+        {
+            if (failures.Count == 0) return;
+            matched.AddRange(failures);
+            failures.Clear();
+        }
+        else
+        {
+            foreach (WriteBehindException failure in failures)
+                if (options.PathComparer.Equals(failure.Path, onlyPath)) matched.Add(failure);
+            if (matched.Count == 0) return;
+            failures.RemoveAll(failure => options.PathComparer.Equals(failure.Path, onlyPath));
+        }
+        throw new AggregateException("Write-behind writes failed: " + string.Join(", ", matched.Select(f => f.Path)), matched);
     }
 
     private void Run()

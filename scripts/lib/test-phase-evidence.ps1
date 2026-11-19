@@ -329,6 +329,13 @@ function Read-TestPhaseBoundedBytes {
     if ($MaxBytes -lt 1) { $MaxBytes = 1 }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
+    # A failed deferred write is a refusal on every host. The failure stays stored for the run summary.
+    if ($script:NightlyDeferEvidenceWrites) {
+        [Antiphon.Nightly.EvidenceFiles]::Wait($Path)
+        if ([Antiphon.Nightly.EvidenceFiles]::PathFailed($Path)) {
+            return [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'deferred-write-failed' }
+        }
+    }
     # Compiled for a real stopwatch; a scripted one (tests drive the budget through it) stays here.
     if ($Watch -is [Diagnostics.Stopwatch] -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Read-TestPhaseBoundedBytes' }
@@ -1386,6 +1393,17 @@ function Open-TestPhaseExecutedContext {
 function Close-TestPhaseExecutedContext {
     param($Context)
     if ($null -eq $Context) { return }
+    if ($script:NightlyDeferEvidenceWrites -and $null -ne $Context.Lock) {
+        $failed = @([Antiphon.Nightly.EvidenceFiles]::Flush())
+        if ($failed.Count -gt 0) {
+            $Context.Reason = 'commit-unpublished'
+            $Context.Unresolved = $true
+            if (-not $Context.Gaps.Contains('deferred-evidence-write-failed')) {
+                [void]$Context.Gaps.Add('deferred-evidence-write-failed')
+            }
+            return
+        }
+    }
     if ($null -ne $Context.Lock) {
         try { $Context.Lock.Dispose() } catch { }
         $Context.Lock = $null
@@ -1430,7 +1448,10 @@ function Write-TestPhaseCommitFile {
     if ($script:NightlyDeferEvidenceWrites -and $null -eq $script:TestPhaseCommitBarrier -and $null -eq $script:TestPhaseCommitFault) {
         if (Test-NightlyEvidencePath $FinalPath 'Leaf') { throw 'commit-exists' }
         Write-NightlyEvidenceText $FinalPath $Text
-        if ((Read-NightlyEvidenceText $FinalPath) -ne $Text) { throw 'commit-unreadable' }
+        $unpublished = @([Antiphon.Nightly.EvidenceFiles]::Flush($FinalPath))
+        if ($unpublished.Count -gt 0) { throw ('commit-unpublished ' + ($unpublished -join '; ')) }
+        $onDisk = [System.IO.File]::ReadAllText($FinalPath)
+        if ($onDisk -ne $Text) { throw 'commit-unreadable' }
         return
     }
     Wait-TestPhaseCommitBarrier -Stage 'BeforeTempComplete'
@@ -1803,6 +1824,22 @@ function Invoke-TestPhaseExecutedRecovery {
     }
 }
 
+function Add-TestPhaseDeferredEvidenceToken {
+    param($Tokens)
+    if ($null -eq $Tokens) { return }
+    try {
+        if (-not ('Antiphon.Nightly.EvidenceFiles' -as [type])) { return }
+        $pending = @([Antiphon.Nightly.EvidenceFiles]::PeekFailures())
+        $any = $false
+        foreach ($item in $pending) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$item)) { $any = $true; break }
+        }
+        if ($any -and -not $Tokens.Contains('deferred-evidence-write-failed')) {
+            [void]$Tokens.Add('deferred-evidence-write-failed')
+        }
+    } catch { }
+}
+
 function Get-TestPhasePublicationQuality {
     param([string]$RunDirectory, $KnownPrefix)
     $tokens = New-Object System.Collections.Generic.List[string]
@@ -1812,15 +1849,20 @@ function Get-TestPhasePublicationQuality {
         $currentPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $timing) 'current.json'
         $hasFlat = (Get-TestPhasePathIdentity -Path $flat).Kind -eq 'regular'
         $hasJournal = (Get-TestPhasePathIdentity -Path $currentPath).Kind -eq 'regular'
-        if (-not $hasFlat -and -not $hasJournal) { return @() }
+        if (-not $hasFlat -and -not $hasJournal) {
+            Add-TestPhaseDeferredEvidenceToken $tokens
+            return @($tokens.ToArray())
+        }
         $statePath = Join-Path $timing 'groups-executed.state.json'
         if ((Get-TestPhasePathIdentity -Path $statePath).Kind -ne 'regular') {
             $tokens.Add('publication-state-missing')
+            Add-TestPhaseDeferredEvidenceToken $tokens
             return @($tokens.ToArray())
         }
         $state = Read-TestPhaseJsonFile -Path $statePath
         if ($null -eq $state) {
             $tokens.Add('publication-state-mismatch')
+            Add-TestPhaseDeferredEvidenceToken $tokens
             return @($tokens.ToArray())
         }
         $mismatch = $false
@@ -1854,6 +1896,7 @@ function Get-TestPhasePublicationQuality {
     } catch {
         if (-not $tokens.Contains('publication-state-mismatch')) { $tokens.Add('publication-state-mismatch') }
     }
+    Add-TestPhaseDeferredEvidenceToken $tokens
     return @($tokens.ToArray())
 }
 

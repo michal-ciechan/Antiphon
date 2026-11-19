@@ -138,26 +138,65 @@ function Get-AntiphonScriptsCli {
 }
 
 function Test-NightlyCoreAvailable {
-    if ($null -ne $script:NightlyCoreAvailable) { return $script:NightlyCoreAvailable }
-    $script:NightlyCoreAvailable = $false
-    if ([string]$env:ANTIPHON_NIGHTLY_CORE -ieq 'off') { return $false }
-    if ($PSVersionTable.PSVersion.Major -lt 7) { return $false }
-    if ('Antiphon.Nightly.TestPhaseJson' -as [type]) { $script:NightlyCoreAvailable = $true; return $true }
+    if ($script:NightlyCoreAvailable -eq $false) { return $false }
+    if ($script:NightlyCoreAvailable -eq $true) { return $true }
+    if ([string]$env:ANTIPHON_NIGHTLY_CORE -ieq 'off') { $script:NightlyCoreAvailable = $false; return $false }
+    if ($PSVersionTable.PSVersion.Major -lt 7) { $script:NightlyCoreAvailable = $false; return $false }
+    $loaded = 'Antiphon.Nightly.TestPhaseJson' -as [type]
+    if ($loaded) {
+        Assert-NightlyLoadedCoreIdentity $loaded
+        $script:NightlyCoreAvailable = $true
+        return $true
+    }
     $identity = Get-NightlyCoreBuildIdentity
-    if ($null -eq $identity) { return $false }
+    if ($null -eq $identity) { $script:NightlyCoreAvailable = $false; return $false }
     try { $dir = Install-NightlyCoreBuild -Identity $identity }
     catch {
         Write-Warning -WarningAction Continue ('nightly-core-unavailable: ' + $_.Exception.Message)
+        $script:NightlyCoreAvailable = $false
         return $false
     }
-    if ($null -eq $dir) { return $false }
+    if ($null -eq $dir) { $script:NightlyCoreAvailable = $false; return $false }
     # Dependencies first (the write-behind library and System.IO.Abstractions), then the core.
     foreach ($dll in @([IO.Directory]::GetFiles($dir, '*.dll') | Sort-Object)) {
         if ([IO.Path]::GetFileName($dll) -ne 'Antiphon.Nightly.dll') { Add-Type -Path $dll }
     }
     Add-Type -Path (Join-Path $dir 'Antiphon.Nightly.dll')
+    Assert-NightlyLoadedCoreIdentity ('Antiphon.Nightly.TestPhaseJson' -as [type])
     $script:NightlyCoreAvailable = $true
     return $true
+}
+
+# A core already in this process must be the build identity that keys the shared cache, and it must
+# contain the types a chunk calls. A miss throws before any chunk runs. The flag is not cached on a throw.
+function Assert-NightlyLoadedCoreIdentity {
+    param($Loaded)
+    $required = @(
+        'Antiphon.Nightly.TestPhaseJson',
+        'Antiphon.Nightly.NightlyCoverageParts',
+        'Antiphon.Nightly.EvidenceFiles',
+        'Antiphon.Nightly.TestPhaseFiles'
+    )
+    $missing = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $required) {
+        if (-not ($name -as [type])) { [void]$missing.Add($name.Substring('Antiphon.Nightly.'.Length)) }
+    }
+    $identity = Get-NightlyCoreBuildIdentity
+    if ($null -eq $identity) { throw 'nightly-core-identity-mismatch: required-identity-unavailable' }
+    $cache = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-nightly-core'
+    $expectedDll = Join-Path (Join-Path $cache ('Antiphon.Nightly-' + $identity.Hash)) 'Antiphon.Nightly.dll'
+    $location = ''
+    if ($null -ne $Loaded) {
+        try { $location = [IO.Path]::GetFullPath($Loaded.Assembly.Location) } catch { $location = [string]$Loaded.Assembly.Location }
+    }
+    $expectedFull = $expectedDll
+    try { $expectedFull = [IO.Path]::GetFullPath($expectedDll) } catch { }
+    $pathOk = [string]::Equals($location, $expectedFull, [StringComparison]::OrdinalIgnoreCase)
+    if ($pathOk -and $missing.Count -eq 0) { return }
+    $detail = 'nightly-core-identity-mismatch: required=' + $identity.Hash
+    if (-not $pathOk) { $detail = $detail + ' loaded=' + $location }
+    if ($missing.Count -gt 0) { $detail = $detail + ' missing=' + ($missing -join ',') }
+    throw $detail
 }
 
 # ConvertFrom-Json of a file's text ([IO.File]::ReadAllText decoding; -StripBom also drops one leading U+FEFF left
@@ -220,6 +259,24 @@ function Disable-NightlyDeferredEvidenceWrites {
 function Write-NightlyEvidenceFailures([string[]]$Failures) {
     foreach ($failure in @($Failures)) {
         Write-Warning -WarningAction Continue ('deferred-evidence-write-failed: ' + $failure)
+    }
+}
+
+# Failures a deferred write already recorded. coverageComplete and testsPassed are false when any remain,
+# so the run summary and the returned verdict name them. An empty list leaves both true.
+function Get-NightlyDeferredEvidenceWriteVerdict {
+    $reasons = @()
+    if ('Antiphon.Nightly.EvidenceFiles' -as [type]) {
+        foreach ($text in @([Antiphon.Nightly.EvidenceFiles]::PeekFailures())) {
+            if ([string]::IsNullOrWhiteSpace([string]$text)) { continue }
+            $reasons += ('deferred-evidence-write-failed: ' + [string]$text)
+        }
+    }
+    $complete = ($reasons.Count -eq 0)
+    return [pscustomobject]@{
+        coverageComplete = $complete
+        testsPassed = $complete
+        reasons = $reasons
     }
 }
 
