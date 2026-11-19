@@ -288,5 +288,5 @@ function Get-WindowsPhoneHomeLaunchRefusal {
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
         $ConfigPath = 'C:\Antiphon\runner\phone-home.json'
     }
-    return ('REFUSED: phone-home-config-present' + [Environment]::NewLine + 'Delete ' + $ConfigPath + ', run restart-session-runner.ps1 -Hard, then retry.')
+    return ('REFUSED: phone-home-config-present' + [Environment]::NewLine + 'If the Linux server is serving, this refusal is correct: do NOT delete the file. Only during ROLLBACK, after the Linux server is stopped and pg_stat_activity is clear: delete ' + $ConfigPath + ', run restart-session-runner.ps1 -Hard, then retry.')
 }
