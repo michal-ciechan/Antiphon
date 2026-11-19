@@ -16,7 +16,7 @@ PC-V12-join, PC-V12-inputs, PC-V12-interrupt and PC-V12-once remain pending for 
 
 ## Performance budget
 
-Provisional method 60s, child 45s plus 10s joined cleanup. The nightly core cache is warmed by the witness harness before CP-12, because the first load builds scripts/lib/Antiphon.Nightly. Serial rows, one build at a time. CP-12 EstimatedMinutes is 15. CP-90 keeps its own isolated output because After=all cannot reuse the S6b build. Min is the TUnit executed-test floor.
+Provisional method 60s, child 45s plus 10s joined cleanup. The nightly core cache is warmed by the witness harness before CP-12, because the first load builds scripts/lib/Antiphon.Nightly. Serial rows, one build at a time. CP-12 EstimatedMinutes is 15. CP-90 keeps its own isolated output because After=all cannot reuse the S6b build. CP-91 and CP-92 are the impacted spawn-limit rosters in the other two test projects; they run serially and never overlap Antiphon.Tests. Min is the TUnit executed-test floor.
 
 ### Checkpoints
 
@@ -24,6 +24,8 @@ Provisional method 60s, child 45s plus 10s joined cleanup. The nightly core cach
 |---|---|---|---|---|---|---|---:|---:|
 | CP-12 | S6b | `tests/Antiphon.Tests -> bin-c1836-s6b/` | linux-run-evidence | `/*/*/(RcRunEvidenceTests*)\|(RcFullTimingContractTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-12 R-4 | all listed, 0 failed/skipped | 4 | 15 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s6b-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, layering, spawn census | all listed, 0 failed/skipped | 79 | 15 |
+| CP-91 | S6b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s6b-pty/` | linux-pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 4 |
+| CP-92 | S6b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s6b-runner/` | linux-runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 4 |
 
 ### S6b command contract and remaining native work
 
