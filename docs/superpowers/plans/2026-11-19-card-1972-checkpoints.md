@@ -28,6 +28,7 @@ and is not discharged. Short tests only (operator 2026-11-18).
 `[Timeout(600_000)]`, and `C1210_Windows_linux_only_outcomes_are_exact` skips on Linux
 before it launches a child host. A skipped result is not a clean checkpoint certificate.
 The other guard classes in the standing union are CP-3, CP-5, and CP-6.
+`TaskPlatformGuidanceTests` is five methods. `RunnerDefaultGuidanceTests` is four more methods in the same file and is not this filter. CP-5's floor is the 34 results those seven classes execute (mechanical arguments included).
 
 The red witnesses ran once, unlisted, at `446db1876829992c721ac3dfda3faadfc6fd7e7f`
 (filter `/*/*/AgentTaskGetPollMetricsTests/*`, 7 failed, 0 passed) while the counter stub
@@ -51,7 +52,7 @@ recorded nothing. This table is the green closed list. It has no expected-red ro
 | CP-2 | S1 | CP-1 | c1972-dbrate | `/*/*/(DbRateSamplerTests*)\|(DbCallSiteMetricsTests*)/*` | db-rate and call-site counters | 0 failed, executed 11 | 11 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | S1 | CP-1 | c1972-policy | `/*/*/TestClassificationPolicyTests/*` | policy sweep | 0 failed, executed 42 | 42 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | S1 | CP-1 | c1972-index | `/*/*/DerivedImpactIndexTests/*` | derived-impact index | 0 failed, executed 27 | 27 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-5 | S1 | CP-1 | c1972-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | guard, tripwire, native Linux, mechanical contract, platform guidance, layering, lane | 0 failed, executed 38 | 38 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-5 | S1 | CP-1 | c1972-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | guard, tripwire, native Linux, mechanical contract, platform guidance, layering, lane | 0 failed, executed 34 | 34 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | S1 | CP-1 | c1972-slowmerge | `/*/*/SlowTestRegistryMergeTests/*` | slow-registry merge | 0 failed, executed 5 | 5 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | S1 | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | land graph | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | S1 | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 81add8595d60295b4bf1d3bb76af2e927842421f -HeadRef HEAD` | evidence diff over the task base | exit 0 | n/a | 3 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
