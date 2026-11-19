@@ -14,7 +14,13 @@
     Runs under the interactive user account so spawned agents inherit your PATH/profile
     (dotnet, npm, cl.bat, etc.). This process IS the supervisor: it blocks in
     run-daemon.ps1's restart loop and only exits when the desired state becomes 'stopped'.
+    When C:\Antiphon\runner\phone-home.json exists, the same task runs the phone-home
+    runner. A bad config is refused and nothing is started. Pass -PhoneHomeConfigPath
+    for the phase 1 file (phone-home.phase1.json); that path may use port 17214.
 #>
+param(
+    [string]$PhoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'
+)
 $ErrorActionPreference = 'Continue'
 
 $root   = Split-Path $PSScriptRoot -Parent          # scripts/ -> repo root
@@ -26,6 +32,43 @@ $supervisorPid  = Join-Path $logDir 'session-runner.supervisor.pid'
 $servicePidFile = Join-Path $logDir 'session-runner.service.pid'
 $logFile        = Join-Path $logDir 'session-runner.log'
 $runnerDir      = Join-Path $root 'src\Antiphon.SessionRunner'
+
+. (Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1')
+
+$configText = $null
+if (Test-Path -LiteralPath $PhoneHomeConfigPath) {
+    $configText = [System.IO.File]::ReadAllText($PhoneHomeConfigPath)
+}
+$explicitConfigPath = $PSBoundParameters.ContainsKey('PhoneHomeConfigPath')
+$secretPresent = $true
+if ($null -ne $configText) {
+    $requirePort = 0
+    if (-not $explicitConfigPath) { $requirePort = 17204 }
+    $parsedConfig = ConvertFrom-WindowsPhoneHomeConfig -Text $configText -RequirePort $requirePort
+    if ($parsedConfig.ok) {
+        $secretFile = Join-Path ([string]$parsedConfig.root) 'secrets\phone-home'
+        $secretPresent = Test-Path -LiteralPath $secretFile
+    }
+}
+$pwshCommand = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+$pwshPath = ''
+if ($null -ne $pwshCommand) { $pwshPath = [string]$pwshCommand.Source }
+$executables = [ordered]@{}
+foreach ($name in @('claude', 'codex', 'grok')) {
+    $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $command) { $executables[$name] = [string]$command.Source }
+}
+$plan = Resolve-SessionRunnerAutostartPlan -ConfigText $configText -ExplicitConfigPath $explicitConfigPath -SecretPresent $secretPresent -HomeDir $HOME -PwshPath $pwshPath -Executables $executables -RepoRoot $root
+if ($plan.mode -eq 'refused') {
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    Add-Content -LiteralPath $logFile -Value ($stamp + ' [autostart] phone-home config refused: ' + [string]$plan.reason) -Encoding UTF8 -ErrorAction SilentlyContinue
+    exit 2
+}
+if ($plan.mode -eq 'phone-home') {
+    foreach ($key in @($plan.env.Keys)) {
+        [Environment]::SetEnvironmentVariable([string]$key, [string]$plan.env[$key], 'Process')
+    }
+}
 
 # Force desired-state 'running' on every logon: a prior dashboard "Stop" wrote
 # 'stopped' to this file, which would otherwise make run-daemon.ps1 exit immediately.
@@ -48,7 +91,7 @@ $runnerExe = Join-Path $runnerDir 'bin\Debug\net9.0\Antiphon.SessionRunner.exe'
     -Name            'session-runner' `
     -WorkDir         $runnerDir `
     -Exe             $runnerExe `
-    -ExeArgs         '--urls http://localhost:17204' `
+    -ExeArgs         $plan.exeArgs `
     -LogFile         $logFile `
     -ServicePidFile  $servicePidFile `
     -StateFile       $stateFile `

@@ -100,6 +100,16 @@ if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
     Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
 }
 
+if (-not $StopOnly) {
+    . (Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1')
+    $phoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'
+    $phoneHomeRefusal = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent (Test-Path -LiteralPath $phoneHomeConfigPath) -ConfigPath $phoneHomeConfigPath
+    if ($null -ne $phoneHomeRefusal) {
+        Write-Host $phoneHomeRefusal
+        exit 3
+    }
+}
+
 $logDir  = Join-Path $root 'logs'
 $pidFile = Join-Path $logDir 'apphost.pid'
 $urlFile = Join-Path $logDir 'apphost-dashboard-url.txt'

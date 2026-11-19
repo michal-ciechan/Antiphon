@@ -72,28 +72,8 @@ if (-not $NoBuild) {
 }
 if (-not (Test-Path -LiteralPath $exe)) { throw "Runner not built: $exe" }
 
-$envs = [ordered]@{
-    'ASPNETCORE_URLS'                       = "http://localhost:$Port"
-    'PhoneHome__Enabled'                    = 'true'
-    'PhoneHome__RunnerId'                   = $RunnerId
-    'PhoneHome__ServerOrigin'               = $ServerOrigin
-    'PhoneHome__SecretPath'                 = $secret
-    'PhoneHome__StoreIdPath'                = "$state/runner-store-id"
-    'PhoneHome__CapacityStatePath'          = "$state/runner-capacity"
-    'PhoneHome__AllowedCwd'                 = $work
-    'PhoneHome__RunnerRepository'           = "$work/repos/antiphon"
-    'PhoneHome__Capacity'                   = "$Capacity"
-    'PhoneHome__ClaudeHome'                 = $claudeHome
-    'PhoneHome__CodexHome'                  = $codexHome
-    'PhoneHome__GrokHome'                   = $grokHome
-    'PhoneHome__RawExeAllowList__0'         = (Get-Command pwsh).Source
-    'SessionRunner__SessionLogPath'         = "$state/session-runner"
-    'SessionRunner__PtyHostDir'             = "$state/pty-hosts"
-    'SessionRunner__Herdr__Enabled'         = 'false'
-    'SessionRunner__HostStats__Volumes__0'  = $work
-    'Serilog__LogPath'                      = "$state/logs"
-}
-foreach ($name in $executables.Keys) { $envs["PhoneHome__Executables__$name"] = $executables[$name] }
+. (Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1')
+$envs = New-WindowsPhoneHomeRunnerEnv -RunnerId $RunnerId -Root $Root -Port $Port -Capacity $Capacity -ServerOrigin $ServerOrigin -ClaudeHome $claudeHome -CodexHome $codexHome -GrokHome $grokHome -PwshPath (Get-Command pwsh).Source -Executables $executables
 foreach ($key in $envs.Keys) { [Environment]::SetEnvironmentVariable($key, $envs[$key], 'Process') }
 
 Write-Host "Phone-home runner '$RunnerId' -> $ServerOrigin (local http://localhost:$Port)"
