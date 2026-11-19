@@ -55,7 +55,7 @@ function Get-AstraDiskRecords {
 
 function Enable-AstraBeforeWriteType {
     if ('AstraBeforeWrite' -as [type]) { return }
-    $definition = @'
+    $definition = '
 public static class AstraBeforeWrite {
     public static string Mode;
     public static string SignalPath;
@@ -82,7 +82,7 @@ public static class AstraBeforeWrite {
         }
     }
 }
-'@
+'
     $pwshHome = Split-Path ([psobject].Assembly.Location)
     $threadRef = Join-Path $pwshHome 'ref/System.Threading.Thread.dll'
     if (-not [IO.File]::Exists($threadRef)) { $threadRef = Join-Path $pwshHome 'System.Threading.Thread.dll' }
@@ -347,13 +347,13 @@ function Invoke-AstraJournalKillChild {
 function Test-AstraStaleCore {
     $root = New-AstraResultsRoot
     $dll = Join-Path $root 'stale-core.dll'
-    $source = @"
+    $source = '
 namespace Antiphon.Nightly {
     public static class TestPhaseJson {
         public static int Marker() { return 1; }
     }
 }
-"@
+'
     Add-Type -TypeDefinition $source -OutputAssembly $dll -OutputType Library
     try { Add-Type -Path $dll } catch {
         if (-not ('Antiphon.Nightly.TestPhaseJson' -as [type])) { throw }
