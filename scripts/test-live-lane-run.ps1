@@ -244,12 +244,20 @@ function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Age
 function Read-Census($root) {
     # A fresh runspace prevents script-level import guards from making a pinned
     # reader silently resolve functions from the candidate (or the reverse).
+    # The pinned root has NightlyCore.cs and not src/Antiphon.IO.WriteBehind, so
+    # its loader's build identity is null. A core already loaded from this checkout
+    # then fails Assert-NightlyLoadedCoreIdentity with required-identity-unavailable.
+    # Re-bind the loader to the checkout after the pinned scripts are dotted; the
+    # pinned census functions stay the ones from $root.
     $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
     $reader = {
-        param($root, $discovery)
+        param($root, $discovery, $checkout)
         . "$root/scripts/lib/nightly-common.ps1"
         . "$root/scripts/lib/nightly-policy.ps1"
         . "$root/scripts/lib/nightly-coverage.ps1"
+        if (-not [string]::IsNullOrWhiteSpace($checkout) -and $checkout -ne $root) {
+            . "$checkout/scripts/lib/nightly-core.ps1"
+        }
         $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
         $policy = $policyRead.Object
         $nodes = @($discovery.Nodes)
@@ -264,7 +272,7 @@ function Read-Census($root) {
     }
     $ps = [PowerShell]::Create()
     try {
-        [void]$ps.AddScript($reader.ToString()).AddArgument($root).AddArgument($discovery)
+        [void]$ps.AddScript($reader.ToString()).AddArgument($root).AddArgument($discovery).AddArgument($repo)
         $output = $ps.Invoke()
         if ($ps.HadErrors) { throw 'isolated census reader failed' }
         return [string]$output[0]
