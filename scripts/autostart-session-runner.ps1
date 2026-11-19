@@ -93,21 +93,21 @@ try {
     $plan = Resolve-SessionRunnerAutostartPlan -ConfigText $configText -ExplicitConfigPath $explicitConfigPath -SecretPresent $secretPresent -HomeDir $HOME -PwshPath $pwshPath -Executables $executables -RepoRoot $root
 } catch {
     $ErrorActionPreference = $savedPreference
-    Write-AutostartRefusal 'config-unreadable'
+    Write-AutostartRefusal 'plan-resolve-failed'
     exit 2
 }
 $ErrorActionPreference = $savedPreference
 $mode = ''
 if ($null -ne $plan) { $mode = [string]$plan.mode }
-if ($mode -eq 'refused') {
+if ($mode -ceq 'refused') {
     Write-AutostartRefusal ([string]$plan.reason)
     exit 2
 }
-if ($mode -ne 'direct' -and $mode -ne 'phone-home') {
+if ($mode -cne 'direct' -and $mode -cne 'phone-home') {
     Write-AutostartRefusal 'plan-mode-invalid'
     exit 2
 }
-if ($plan.mode -eq 'phone-home') {
+if ($mode -ceq 'phone-home') {
     foreach ($key in @($plan.env.Keys)) {
         [Environment]::SetEnvironmentVariable([string]$key, [string]$plan.env[$key], 'Process')
     }
