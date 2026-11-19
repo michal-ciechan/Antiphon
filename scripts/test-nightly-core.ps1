@@ -1227,9 +1227,123 @@ function Test-NCDiscoveryViewKey {
     Assert-NC ($bad.Count -eq 0 -and $sets.mixed.Count -eq 10) 'viewKey' ($bad -join '; ')
 }
 
+# The audit inventory: one discovered node. u1 and u2 are the same length, so a
+# replacement can keep the file length.
+function Get-NCDiscoveryInventoryText([string]$Uid) {
+    return '{"format":"antiphon-tunit-discovery-v1","tunitVersion":"1.44.0","mtpVersion":"2.2.2","assemblyHash":"hash","nodes":[{"uid":"' + $Uid + '","type":"C","namespace":"N","method":"M","categories":[],"state":"Discovered"}]}'
+}
+
+function Read-NCDiscoveryOutcome([string]$Path) {
+    try {
+        $doc = Read-NightlyDiscoveryDocument -Path $Path
+        $nodes = @($doc.Nodes)
+        $uid = ''
+        if ($nodes.Count -gt 0) { $uid = [string]$nodes[0].Uid }
+        return [pscustomobject]@{ Ok = $true; Count = $nodes.Count; Uid = $uid; Error = '' }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Count = 0; Uid = ''; Error = [string]$_.Exception.Message }
+    }
+}
+
+# F3 / F-1. Read a settled discovery whose required UID is u1, then atomically
+# replace it with an equal-length document whose required UID is u2 and put the
+# old timestamp back. The same discovery index and a fresh Read-NightlyDiscoveryDocument
+# must require u2, and Test-NightlyExpandedRowsPresent must agree for a terminal
+# Passed row of u1 (the audit: cachedOk=True diskOk=False, missing=u2).
+function Test-NCDiscoveryCacheAgrees {
+    $dir = Join-Path $root 'discovery-cache'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $path = Join-Path $dir 'suite.discovery.json'
+    $u1 = Get-NCDiscoveryInventoryText 'u1'
+    $u2 = Get-NCDiscoveryInventoryText 'u2'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [IO.File]::WriteAllBytes($path, $utf8.GetBytes($u1))
+    [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddMinutes(-1))
+    $kept = [IO.File]::GetLastWriteTimeUtc($path)
+    Assert-NightlyCoreAvailable 'Test-NCDiscoveryCacheAgrees'
+    [Antiphon.Nightly.NightlyClassNames]::ClearHashes()
+    $index = New-NightlyDiscoveryIndex
+    $first = Get-NightlyDiscoveryIndexEntry -Index $index -Path $path
+    $firstUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($first.Document.Nodes))
+    $before = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
+    $len1 = (Get-Item -LiteralPath $path).Length
+    Assert-NC (($firstUids -join ',') -ceq 'u1' -and $u1.Length -eq $u2.Length -and $len1 -eq $utf8.GetBytes($u1).Length) 'primed' ('uids=' + ($firstUids -join ',') + ' chars=' + $u1.Length + '/' + $u2.Length)
+    $tmp = $path + '.tmp'
+    $bak = $path + '.bak'
+    [IO.File]::WriteAllBytes($tmp, $utf8.GetBytes($u2))
+    [IO.File]::Replace($tmp, $path, $bak)
+    if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
+    [IO.File]::SetLastWriteTimeUtc($path, $kept)
+    $len2 = (Get-Item -LiteralPath $path).Length
+    $after = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
+    $again = Get-NightlyDiscoveryIndexEntry -Index $index -Path $path
+    $againUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($again.Document.Nodes))
+    $disk = Read-NightlyDiscoveryDocument -Path $path
+    $diskUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($disk.Nodes))
+    $row = [pscustomobject]@{ Uid = 'u1'; Outcome = 'Passed'; ClassName = 'N.C'; Type = 'C'; Method = 'M' }
+    $cachedCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($again.Document.Nodes) -TerminalRows @($row) -RequiredUids $againUids
+    $diskCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($disk.Nodes) -TerminalRows @($row) -RequiredUids $diskUids
+    $cachedUid = [string]($againUids | Select-Object -First 1)
+    $diskUid = [string]($diskUids | Select-Object -First 1)
+    $missing = @($diskCover.Missing) -join ','
+    $detail = 'cachedUid=' + $cachedUid + ' diskUid=' + $diskUid + ' cachedOk=' + [bool]$cachedCover.Ok + ' diskOk=' + [bool]$diskCover.Ok + ' missing=' + $missing + ' len=' + $len1 + '/' + $len2 + ' ino=' + $before.Ino + '->' + $after.Ino + ' mtime=' + $kept.Ticks
+    $agree = ($cachedUid -ceq $diskUid) -and ([bool]$cachedCover.Ok -eq [bool]$diskCover.Ok) -and ($diskUid -ceq 'u2') -and (-not [bool]$diskCover.Ok) -and ($len1 -eq $len2)
+    Assert-NC $agree 'cacheAgrees' $detail
+}
+
+# F5. The discovery writer (DiscoveryWriter.WriteFile) emits UTF-8 without a BOM,
+# with commas only between values and with no comments. The reader still has to
+# accept a UTF-8 BOM and a trailing comma, and a discovery-unreadable for UTF-16
+# or a comment has to name this file and the reason. No ConvertFrom-Json fallback.
+function Test-NCDiscoveryParserTolerance {
+    $dir = Join-Path $root 'discovery-parser'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $text = Get-NCDiscoveryInventoryText 'u1'
+    $produced = Join-Path $dir 'produced.discovery.json'
+    $node = [pscustomobject]@{ uid = 'u1'; type = 'C'; namespace = 'N'; method = 'M'; categories = @(); state = 'Discovered' }
+    Write-NightlyDiscoveryDocument -Path $produced -Document (ConvertTo-NightlyDiscoveryDocument -Nodes @($node) -AssemblyHash 'hash')
+    $bytes = [IO.File]::ReadAllBytes($produced)
+    $producedText = [Text.Encoding]::UTF8.GetString($bytes)
+    $noBom = -not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+    $noComment = ($producedText.IndexOf('/*') -lt 0) -and ($producedText.IndexOf('//') -lt 0)
+    $noTrail = -not [regex]::IsMatch($producedText, ',\s*[}\]]')
+    $round = Read-NCDiscoveryOutcome $produced
+    Assert-NC ($noBom -and $noComment -and $noTrail -and $round.Ok -and $round.Uid -ceq 'u1') 'producer' ('bom=' + (-not $noBom) + ' comment=' + (-not $noComment) + ' trail=' + (-not $noTrail) + ' uid=' + $round.Uid + ' err=' + $round.Error)
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $plain = Join-Path $dir 'plain.discovery.json'
+    [IO.File]::WriteAllBytes($plain, $utf8.GetBytes($text))
+    $plainRead = Read-NCDiscoveryOutcome $plain
+    Assert-NC ($plainRead.Ok -and $plainRead.Count -eq 1 -and $plainRead.Uid -ceq 'u1') 'utf8' $plainRead.Error
+    $bomPath = Join-Path $dir 'bom.discovery.json'
+    $bom = New-Object System.Text.UTF8Encoding $true
+    [IO.File]::WriteAllBytes($bomPath, $bom.GetBytes($text))
+    $bomRead = Read-NCDiscoveryOutcome $bomPath
+    Assert-NC ($bomRead.Ok -and $bomRead.Count -eq 1 -and $bomRead.Uid -ceq 'u1') 'utf8-bom' $bomRead.Error
+    $trailPath = Join-Path $dir 'trail.discovery.json'
+    $trailAt = $text.LastIndexOf('}')
+    $trailText = $text.Insert($trailAt, ',')
+    [IO.File]::WriteAllBytes($trailPath, $utf8.GetBytes($trailText))
+    $trailRead = Read-NCDiscoveryOutcome $trailPath
+    Assert-NC ($trailRead.Ok -and $trailRead.Count -eq 1 -and $trailRead.Uid -ceq 'u1') 'trailing-comma' $trailRead.Error
+    $utf16Path = Join-Path $dir 'utf16.discovery.json'
+    $utf16 = New-Object System.Text.UnicodeEncoding $false, $true
+    [IO.File]::WriteAllBytes($utf16Path, $utf16.GetBytes($text))
+    $utf16Read = Read-NCDiscoveryOutcome $utf16Path
+    $utf16Expect = 'discovery-unreadable: ' + $utf16Path + ': utf-16'
+    Assert-NC ((-not $utf16Read.Ok) -and ($utf16Read.Error -ceq $utf16Expect)) 'utf16' ('actual=' + $utf16Read.Error)
+    $commentPath = Join-Path $dir 'comment.discovery.json'
+    $commentText = $text.Insert(1, '/* retained inventory */')
+    [IO.File]::WriteAllBytes($commentPath, $utf8.GetBytes($commentText))
+    $commentRead = Read-NCDiscoveryOutcome $commentPath
+    $commentExpect = 'discovery-unreadable: ' + $commentPath + ': comment'
+    Assert-NC ((-not $commentRead.Ok) -and ($commentRead.Error -ceq $commentExpect)) 'comment' ('actual=' + $commentRead.Error)
+}
+
 $expected = 0
 switch -Exact ($Case) {
     'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCDiscoveryWriterMatchesConvertToJson; Test-NCHistoryLinks; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 38 }
+    'DiscoveryCacheAgrees' { Test-NCDiscoveryCacheAgrees; $expected = 2 }
+    'DiscoveryParserTolerance' { Test-NCDiscoveryParserTolerance; $expected = 6 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
