@@ -2133,18 +2133,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 68,
+      "classes": 69,
       "reason": "cap",
-      "owed": 43,
+      "owed": 44,
       "first": [
+        "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
-        "LiveLaneOutcomeTests",
-        "LiveLaneReceiptTests"
+        "LiveLaneOutcomeTests"
       ]
     },
     {
@@ -24524,6 +24524,7 @@
         "BuildSlotScriptTests",
         "C1514LandingSplitBudgetTests",
         "C1733AllocatorFixtureTests",
+        "C1744G3PhoneHomeSupervisionTests",
         "C599SnapshotTests",
         "CheckpointOwnedOutputScriptTests",
         "NightlyDeadOwnerLockTests",
@@ -24543,7 +24544,6 @@
         "ReleaseSelectionCliTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
-        "ScriptHarnessProcessContractTests",
         "TestSelectionCatalogTests",
         "ToolchainFloorWarningTests"
       ]
