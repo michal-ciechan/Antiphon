@@ -53,7 +53,7 @@ process once a minute and served at `GET /api/diagnostics/db-rate`.
 
 ## Agent-task detail pollers (CARD-1972)
 
-`GET /api/diagnostics/agent-task-polls` counts `GET /api/agent-tasks/{id}` in the current process, by caller label. The counter is memory only: it does not query Postgres and it does not keep tokens, task ids, or SQL. Read it twice to see which label is polling. The label rules and the 64-label cap are in [ops-http.md](ops-http.md).
+`GET /api/diagnostics/agent-task-polls` counts `GET /api/agent-tasks/{id}` in the current process, by caller label. The counter is memory only: it does not query Postgres, and it does not keep the raw `X-Antiphon-Caller` header, tokens, task ids, or SQL. A header is kept only when it is one of the registered labels. `kind:*`, `session`, and bare `capability` have their own slots, so other labels cannot push them out. Read it twice to see which label is polling. The registered labels and the caps are in [ops-http.md](ops-http.md).
 
 Code that already calls that route, and the interval written next to it:
 
@@ -61,7 +61,7 @@ Code that already calls that route, and the interval written next to it:
 - `scripts/status-snapshot.ps1` and `scripts/checkpoint-task.ps1` also GET one task.
 - The client drawer (`useAgentTask`) fetches the detail when it opens and when a mutation invalidates it. It has no `refetchInterval`. The board list, summary, and pipeline refetch every 15 seconds. Those are other routes, and this counter does not include them.
 
-A caller that wants its own label sends `X-Antiphon-Caller`. This slice does not change those intervals. A later change waits on a read of this endpoint that shows which label dominates.
+A caller that wants its own label sends `X-Antiphon-Caller` with one of the registered names. This slice does not change those scripts or the client, and it does not change their intervals. A later change waits on a read of this endpoint that shows which label dominates.
 
 The Compose `antiphon` role is the database superuser and can reset the
 statistics. The extension can exist in databases without the library
