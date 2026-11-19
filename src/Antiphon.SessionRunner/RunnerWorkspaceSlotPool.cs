@@ -260,10 +260,10 @@ public sealed class RunnerWorkspaceSlotPool
             return "identity: " + broken!.Detail;
         var path = owned.Path;
         await AbortSequencersAsync(path, ct);
-        var checkout = await _service.GitAsync(path, ct, "checkout", "--force", "-B", request.Branch, request.Sha);
+        var checkout = await SlotGitAsync(path, ct, "checkout", "--force", "-B", request.Branch, request.Sha);
         if (checkout.ExitCode != 0)
             return "checkout: " + Bound(checkout.Stderr);
-        var clean = await _service.GitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
+        var clean = await SlotGitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
         if (clean.ExitCode != 0)
             return "clean: " + Bound(clean.Stderr);
         await ClearWorktreeStateAsync(owned, ct);
@@ -272,13 +272,13 @@ public sealed class RunnerWorkspaceSlotPool
 
     private async Task<string?> VerifyLeaseAsync(string path, WorkspaceSlotLeaseRequest request, CancellationToken ct)
     {
-        var head = await _service.GitAsync(path, ct, "rev-parse", "HEAD");
+        var head = await SlotGitAsync(path, ct, "rev-parse", "HEAD");
         if (head.ExitCode != 0 || head.Stdout.Trim() != request.Sha)
             return "HEAD is " + head.Stdout.Trim() + ", not " + request.Sha;
-        var symbolic = await _service.GitAsync(path, ct, "symbolic-ref", "-q", "HEAD");
+        var symbolic = await SlotGitAsync(path, ct, "symbolic-ref", "-q", "HEAD");
         if (symbolic.ExitCode != 0 || symbolic.Stdout.Trim() != "refs/heads/" + request.Branch)
             return "HEAD is not on refs/heads/" + request.Branch;
-        var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+        var status = await SlotGitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
         if (status.ExitCode != 0 || status.Stdout.Length > 0)
             return "tree is not clean: " + Bound(status.Stdout.Replace('\0', ' '));
         if (await GitDirectoryAsync(path, ct) is not { } gitDir)
@@ -501,10 +501,10 @@ public sealed class RunnerWorkspaceSlotPool
         var path = owned.Path;
         var branch = slot.Branch;
         await AbortSequencersAsync(path, ct);
-        var checkout = await _service.GitAsync(path, ct, "checkout", "--force", "--detach", published);
+        var checkout = await SlotGitAsync(path, ct, "checkout", "--force", "--detach", published);
         if (checkout.ExitCode != 0)
             return "checkout: " + Bound(checkout.Stderr);
-        var clean = await _service.GitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
+        var clean = await SlotGitAsync(path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold)]);
         if (clean.ExitCode != 0)
             return "clean: " + Bound(clean.Stderr);
         // Warm only. A nested obj/, bin/ or node_modules/ makes git clean -e keep the ignored parent.
@@ -514,8 +514,8 @@ public sealed class RunnerWorkspaceSlotPool
         if (branch is not null && branch != _service.PublishedBranch)
         {
             // Runner-local task refs go with the release; the unpushed check already ran.
-            await _service.GitAsync(path, ct, "update-ref", "-d", "refs/heads/" + branch);
-            await _service.GitAsync(path, ct, "update-ref", "-d", "refs/remotes/origin/" + branch);
+            await SlotGitAsync(path, ct, "update-ref", "-d", "refs/heads/" + branch);
+            await SlotGitAsync(path, ct, "update-ref", "-d", "refs/remotes/origin/" + branch);
         }
 
         DeleteFile(owned.AdminDir + "/logs/HEAD");
@@ -525,18 +525,18 @@ public sealed class RunnerWorkspaceSlotPool
     private async Task AbortSequencersAsync(string path, CancellationToken ct)
     {
         foreach (var verb in new[] { "rebase", "cherry-pick", "revert", "merge" })
-            await _service.GitAsync(path, ct, verb, "--abort");
+            await SlotGitAsync(path, ct, verb, "--abort");
         foreach (var verb in new[] { "rebase", "cherry-pick", "revert", "merge" })
-            await _service.GitAsync(path, ct, verb, "--quit");
+            await SlotGitAsync(path, ct, verb, "--quit");
     }
 
     private async Task ClearWorktreeStateAsync(Owned owned, CancellationToken ct)
     {
-        var refs = await _service.GitAsync(owned.Path, ct, "for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/");
+        var refs = await SlotGitAsync(owned.Path, ct, "for-each-ref", "--format=%(refname)", "refs/worktree/", "refs/bisect/");
         if (refs.ExitCode == 0)
         {
             foreach (var name in refs.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                await _service.GitAsync(owned.Path, ct, "update-ref", "-d", name);
+                await SlotGitAsync(owned.Path, ct, "update-ref", "-d", name);
         }
 
         foreach (var name in new[] { "config.worktree", "ORIG_HEAD", "AUTO_MERGE", "FETCH_HEAD", "BISECT_LOG", "BISECT_START", "BISECT_NAMES", "BISECT_EXPECTED_REV", "BISECT_TERMS", "BISECT_ANCESTORS_OK" })
@@ -659,12 +659,12 @@ public sealed class RunnerWorkspaceSlotPool
         if (owned is null)
             return broken;
         var gitDir = owned.AdminDir;
-        if ((await _service.GitAsync(path, ct, "symbolic-ref", "-q", "HEAD")).ExitCode == 0)
+        if ((await SlotGitAsync(path, ct, "symbolic-ref", "-q", "HEAD")).ExitCode == 0)
             return new Failure("custody", "attached", "HEAD is on a branch");
-        var contained = await _service.GitAsync(path, ct, "for-each-ref", "--count=1", "--contains", "HEAD", "--format=%(refname)", "refs/remotes/origin/");
+        var contained = await SlotGitAsync(path, ct, "for-each-ref", "--count=1", "--contains", "HEAD", "--format=%(refname)", "refs/remotes/origin/");
         if (contained.ExitCode != 0 || contained.Stdout.Trim().Length == 0)
             return new Failure("custody", "unpublished_head", "HEAD is not contained in an origin head");
-        var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
+        var status = await SlotGitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
         if (status.ExitCode != 0)
             return new Failure("filesystem", "status", Bound(status.Stderr));
         var foreign = ForeignEntries(status.Stdout);
@@ -692,14 +692,14 @@ public sealed class RunnerWorkspaceSlotPool
     /// </summary>
     private async Task<string?> ClearRejectedIgnoredAsync(string path, CancellationToken ct)
     {
-        var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
+        var status = await SlotGitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching");
         if (status.ExitCode != 0)
             return "scoped clean: " + Bound(status.Stderr);
         foreach (var entry in ForeignEntries(status.Stdout))
         {
             if (entry.Code != "!!")
                 continue;
-            var clean = await _service.GitAsync(path, ct, "--literal-pathspecs", "clean", "-ffdx", "--", entry.Path);
+            var clean = await SlotGitAsync(path, ct, "--literal-pathspecs", "clean", "-ffdx", "--", entry.Path);
             if (clean.ExitCode != 0)
                 return "scoped clean: " + Bound(clean.Stderr);
         }
@@ -746,15 +746,15 @@ public sealed class RunnerWorkspaceSlotPool
         if (fetch)
             await PublishedShaAsync(ct);
         var shas = new HashSet<string>(StringComparer.Ordinal);
-        var reflog = await _service.GitAsync(path, ct, "reflog", "show", "--format=%H", "HEAD");
+        var reflog = await SlotGitAsync(path, ct, "reflog", "show", "--format=%H", "HEAD");
         if (reflog.ExitCode == 0)
             shas.UnionWith(reflog.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        var head = await _service.GitAsync(path, ct, "rev-parse", "HEAD");
+        var head = await SlotGitAsync(path, ct, "rev-parse", "HEAD");
         if (head.ExitCode == 0)
             shas.Add(head.Stdout.Trim());
         if (branch is not null)
         {
-            var tip = await _service.GitAsync(path, ct, "rev-parse", "-q", "--verify", "refs/heads/" + branch);
+            var tip = await SlotGitAsync(path, ct, "rev-parse", "-q", "--verify", "refs/heads/" + branch);
             if (tip.ExitCode == 0)
                 shas.Add(tip.Stdout.Trim());
         }
@@ -762,7 +762,7 @@ public sealed class RunnerWorkspaceSlotPool
         shas.RemoveWhere(sha => sha.Length == 0);
         if (shas.Count == 0)
             return null;
-        var missing = await _service.GitAsync(path, ct, ["rev-list", "--max-count=1", .. shas.Order(StringComparer.Ordinal), "--not", "--remotes=origin"]);
+        var missing = await SlotGitAsync(path, ct, ["rev-list", "--max-count=1", .. shas.Order(StringComparer.Ordinal), "--not", "--remotes=origin"]);
         if (missing.ExitCode != 0)
             return "unpushed check failed: " + Bound(missing.Stderr);
         var commit = missing.Stdout.Trim();
@@ -771,7 +771,7 @@ public sealed class RunnerWorkspaceSlotPool
 
     private async Task<string?> DirtAsync(string path, CancellationToken ct)
     {
-        var status = await _service.GitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
+        var status = await SlotGitAsync(path, ct, "status", "--porcelain=v1", "-z", "--untracked-files=all");
         if (status.ExitCode != 0)
             return "status failed: " + Bound(status.Stderr);
         return status.Stdout.Length == 0 ? null : Bound(status.Stdout.Replace('\0', ' ').Trim());
@@ -892,9 +892,9 @@ public sealed class RunnerWorkspaceSlotPool
         string? head = null, branch = null;
         if (Directory.Exists(slot.Path) && File.Exists(slot.Path + "/.git"))
         {
-            var rev = await _service.GitAsync(slot.Path, ct, "rev-parse", "HEAD");
+            var rev = await SlotGitAsync(slot.Path, ct, "rev-parse", "HEAD");
             head = rev.ExitCode == 0 ? rev.Stdout.Trim() : null;
-            var symbolic = await _service.GitAsync(slot.Path, ct, "symbolic-ref", "-q", "--short", "HEAD");
+            var symbolic = await SlotGitAsync(slot.Path, ct, "symbolic-ref", "-q", "--short", "HEAD");
             branch = symbolic.ExitCode == 0 ? symbolic.Stdout.Trim() : null;
         }
 
@@ -1034,9 +1034,9 @@ public sealed class RunnerWorkspaceSlotPool
 
     private async Task<(string Diff, string Untracked, string Commits)> LossAsync(QuarantinedDirectoryRecord entry, CancellationToken ct)
     {
-        var diff = await _service.GitAsync(entry.Path, ct, "diff", "HEAD", "--binary");
-        var untracked = await _service.GitAsync(entry.Path, ct, "ls-files", "--others", "--exclude-standard");
-        var commits = await _service.GitAsync(entry.Path, ct, "log", "-p", "--binary", "HEAD", "--not", "--remotes=origin");
+        var diff = await SlotGitAsync(entry.Path, ct, "diff", "HEAD", "--binary");
+        var untracked = await SlotGitAsync(entry.Path, ct, "ls-files", "--others", "--exclude-standard");
+        var commits = await SlotGitAsync(entry.Path, ct, "log", "-p", "--binary", "HEAD", "--not", "--remotes=origin");
         if (diff.ExitCode != 0 || untracked.ExitCode != 0)
             throw Refuse("The quarantined directory's diff could not be read; nothing was removed.");
         return (diff.Stdout, untracked.Stdout, commits.ExitCode == 0 ? commits.Stdout : "");
@@ -1118,7 +1118,7 @@ public sealed class RunnerWorkspaceSlotPool
             {
                 var owned = ProveOwnership(slot);
                 var clean = owned.Owned is { } proven
-                    ? await _service.GitAsync(proven.Path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold: true)])
+                    ? await SlotGitAsync(proven.Path, ct, [.. WorkspaceSlotResetPolicy.CleanArguments(cold: true)])
                     : (ExitCode: 1, Stdout: "", Stderr: owned.Failure!.Detail);
                 failure = clean.ExitCode != 0
                     ? new Failure("filesystem", "cold-reset", "clean: " + Bound(clean.Stderr))
@@ -1294,12 +1294,12 @@ public sealed class RunnerWorkspaceSlotPool
         using var lease = _activity?.EnterLease();
         try
         {
-            var fetch = await _service.GitAsync(_service.PrimaryRepository, ct, "fetch", "origin",
+            var fetch = await SlotGitAsync(_service.PrimaryRepository, ct, "fetch", "origin",
                 "+refs/heads/" + branch + ":refs/remotes/origin/" + branch);
             if (fetch.ExitCode != 0)
                 throw Refuse("Mirror fetch failed: " + Bound(fetch.Stderr));
             // G-27: the fetched tip must be exactly the sha the desktop pushed.
-            var tip = await _service.GitAsync(_service.PrimaryRepository, ct, "rev-parse", "refs/remotes/origin/" + branch);
+            var tip = await SlotGitAsync(_service.PrimaryRepository, ct, "rev-parse", "refs/remotes/origin/" + branch);
             if (tip.ExitCode != 0 || tip.Stdout.Trim() != sha)
                 throw Refuse($"Fetched tip of {branch} is not {sha}.");
         }
@@ -1314,11 +1314,19 @@ public sealed class RunnerWorkspaceSlotPool
     {
         var branch = _service.PublishedBranch;
         await RepositoryGitAsync(ct, "fetch", "origin", "+refs/heads/" + branch + ":refs/remotes/origin/" + branch);
-        var tip = await _service.GitAsync(_service.PrimaryRepository, ct, "rev-parse", "refs/remotes/origin/" + branch);
+        var tip = await SlotGitAsync(_service.PrimaryRepository, ct, "rev-parse", "refs/remotes/origin/" + branch);
         if (tip.ExitCode != 0 || tip.Stdout.Trim().Length != 40)
             throw Refuse("The published branch " + branch + " has no fetched tip.");
         return tip.Stdout.Trim();
     }
+
+    /// <summary>
+    /// CARD-0824 S3. Every slot git call opts into long paths. Legacy <c>task-&lt;id&gt;</c> mirrors call
+    /// <see cref="RunnerWorkspaceService.GitAsync"/> directly and stay byte-identical.
+    /// </summary>
+    private Task<(int ExitCode, string Stdout, string Stderr)> SlotGitAsync(
+        string workingDirectory, CancellationToken ct, params string[] args) =>
+        _service.GitAsync(workingDirectory, ct, ["-c", "core.longpaths=true", ..args]);
 
     private async Task<(int ExitCode, string Stdout, string Stderr)> RepositoryGitAsync(CancellationToken ct, params string[] args)
     {
@@ -1326,7 +1334,7 @@ public sealed class RunnerWorkspaceSlotPool
         using var lease = _activity?.EnterLease();
         try
         {
-            return await _service.GitAsync(_service.PrimaryRepository, ct, args);
+            return await SlotGitAsync(_service.PrimaryRepository, ct, args);
         }
         finally
         {
@@ -1338,7 +1346,7 @@ public sealed class RunnerWorkspaceSlotPool
     {
         if (!Directory.Exists(path))
             return null;
-        var gitDir = await _service.GitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
+        var gitDir = await SlotGitAsync(path, ct, "rev-parse", "--path-format=absolute", "--git-dir");
         return gitDir.ExitCode == 0 && gitDir.Stdout.Trim().Length > 0 ? Normalize(gitDir.Stdout.Trim()) : null;
     }
 

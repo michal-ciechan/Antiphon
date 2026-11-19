@@ -103,7 +103,7 @@ public sealed class C0824WorkspaceSlotRehomeTests
         foreach (var leaf in new[] { "ws-01-d2", "ws-01-d3" })
         {
             var target = scratch.Slot(leaf);
-            scratch.Faults.Add(new GitFault((_, args) => args is ["worktree", "add", ..] && args.Contains(target),
+            scratch.Faults.Add(new GitFault((_, args) => args is ["-c", "core.longpaths=true", "worktree", "add", ..] && args.Contains(target),
                 "fatal: could not create directory of '" + target + "': Permission denied"));
         }
 
@@ -203,7 +203,7 @@ public sealed class C0824WorkspaceSlotRehomeTests
         };
         if (disposition == "Removed")
         {
-            scratch.Faults.Add(new GitFault((_, args) => args is ["worktree", "remove", ..], "error: failed to delete: Permission denied"));
+            scratch.Faults.Add(new GitFault((_, args) => args is ["-c", "core.longpaths=true", "worktree", "remove", ..], "error: failed to delete: Permission denied"));
             (await pool.ReleaseQuarantineAsync(Ask(), ct)).Outcome.ShouldBe("removal_failed");
             pool.Ledger().QuarantinedDirectories.Single().IsOpen.ShouldBeTrue();
         }

@@ -308,7 +308,7 @@ public sealed class C0824WorkspaceSlotCustodyTests
         (await Release(pool, b, TaskB)).Outcome.ShouldBe("already_free");
         Tree(b.Path).ShouldBe(tree);
         lock (scratch.Argv)
-            scratch.Argv.Skip(calls).ShouldNotContain(argv => argv.Length > 1 && (argv[1] == "clean" || argv[1] == "checkout"));
+            scratch.Argv.Skip(calls).ShouldNotContain(argv => argv.Length > 3 && argv[1] == "-c" && (argv[3] == "clean" || argv[3] == "checkout"));
     }
 
     [Test]
