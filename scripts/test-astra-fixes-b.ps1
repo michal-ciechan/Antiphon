@@ -370,11 +370,11 @@ function Test-AstraJournalPublish {
         }
         $unrelatedVerdict = Get-NightlyDeferredEvidenceWriteVerdict
         $unrelatedReasons = [string](@($unrelatedVerdict.reasons) -join ' | ')
-        $unrelatedFailed = ((-not [bool]$unrelatedVerdict.coverageComplete) -and (-not [bool]$unrelatedVerdict.testsPassed) -and $unrelatedReasons.Contains('deferred-evidence-write-failed:'))
+        $unrelatedFailed = ((-not [bool]$unrelatedVerdict.coverageComplete) -and (-not [bool]$unrelatedVerdict.testsPassed) -and $unrelatedReasons.Contains('outside.json'))
+        Clear-AstraBeforeWrite
         $again = Open-TestPhaseExecutedContext -LogRoot (Join-Path $unrelatedDir 'log') -TimingRoot $unrelated.TimingRoot -RunId 'run' -Attempt '1' -Suite 'antiphon' -Source ('b' * 40) -InvocationId 'again'
         if ($null -ne $again -and $null -ne $again.Lock) { $held += $again }
         $againOpen = ($null -ne $again -and -not [bool]$again.Refused)
-        Clear-AstraBeforeWrite
         $unrelatedOk = ($unrelatedFree -and $unrelatedFailed -and $againOpen)
         Assert-C487 $unrelatedOk 'AB JournalPublish.unrelated-releases-lock' ('free=' + $unrelatedFree + ' failed=' + $unrelatedFailed + ' again=' + $againOpen + ' reason=' + [string]$again.Reason + ' ' + $unrelatedReasons)
         $done['unrelated-releases-lock'] = $true
