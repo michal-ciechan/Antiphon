@@ -81,13 +81,32 @@ function Get-FirstCommand($Ast, [string]$Name) {
     return ,$row
 }
 
+function Test-PureNotStopOnly($Condition) {
+    $node = $Condition
+    if ($node -is [System.Management.Automation.Language.PipelineAst]) {
+        $elements = @($node.PipelineElements)
+        if ($elements.Count -ne 1) { return $false }
+        $node = $elements[0]
+    }
+    if ($node -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $node = $node.Expression
+    }
+    if ($node -isnot [System.Management.Automation.Language.UnaryExpressionAst]) { return $false }
+    if ([string]$node.TokenKind -ne 'Not') { return $false }
+    $child = $node.Child
+    if ($child -isnot [System.Management.Automation.Language.VariableExpressionAst]) { return $false }
+    return ([string]$child.VariablePath.UserPath -eq 'StopOnly')
+}
+
 function Test-StopOnlyExempt($Command) {
     $node = $Command.Parent
     while ($null -ne $node) {
         if ($node -is [System.Management.Automation.Language.IfStatementAst]) {
             foreach ($clause in @($node.Clauses)) {
-                $text = [string]$clause.Item1.Extent.Text
-                if ($text.Contains('-not') -and $text.Contains('StopOnly')) { return $true }
+                $body = $clause.Item2
+                if ($null -eq $body) { continue }
+                $inside = ($Command.Extent.StartOffset -ge $body.Extent.StartOffset) -and ($Command.Extent.EndOffset -le $body.Extent.EndOffset)
+                if ($inside -and (Test-PureNotStopOnly $clause.Item1)) { return $true }
             }
         }
         $node = $node.Parent

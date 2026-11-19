@@ -15,8 +15,9 @@
     (dotnet, npm, cl.bat, etc.). This process IS the supervisor: it blocks in
     run-daemon.ps1's restart loop and only exits when the desired state becomes 'stopped'.
     When C:\Antiphon\runner\phone-home.json exists, the same task runs the phone-home
-    runner. A bad config is refused and nothing is started. Pass -PhoneHomeConfigPath
-    for the phase 1 file (phone-home.phase1.json); that path may use port 17214.
+    runner. A bad, unreadable, or unloadable config is refused and nothing is started.
+    Pass -PhoneHomeConfigPath for the phase 1 file (phone-home.phase1.json); that path
+    may use port 17214.
 #>
 param(
     [string]$PhoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'
@@ -33,22 +34,49 @@ $servicePidFile = Join-Path $logDir 'session-runner.service.pid'
 $logFile        = Join-Path $logDir 'session-runner.log'
 $runnerDir      = Join-Path $root 'src\Antiphon.SessionRunner'
 
-. (Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1')
+function Write-AutostartRefusal([string]$Reason) {
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    Add-Content -LiteralPath $logFile -Value ($stamp + ' [autostart] phone-home config refused: ' + $Reason) -Encoding UTF8 -ErrorAction SilentlyContinue
+}
+
+$configPresent = Test-Path -LiteralPath $PhoneHomeConfigPath
+$helperPath = Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1'
+$helperLoaded = $false
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Stop'
+try {
+    . $helperPath
+    $helperLoaded = $true
+} catch {
+    $helperLoaded = $false
+}
+$ErrorActionPreference = $savedPreference
+if (-not $helperLoaded) {
+    Write-AutostartRefusal 'helper-load-failed'
+    exit 2
+}
 
 $configText = $null
-if (Test-Path -LiteralPath $PhoneHomeConfigPath) {
-    $configText = [System.IO.File]::ReadAllText($PhoneHomeConfigPath)
-}
 $explicitConfigPath = $PSBoundParameters.ContainsKey('PhoneHomeConfigPath')
 $secretPresent = $true
-if ($null -ne $configText) {
-    $requirePort = 0
-    if (-not $explicitConfigPath) { $requirePort = 17204 }
-    $parsedConfig = ConvertFrom-WindowsPhoneHomeConfig -Text $configText -RequirePort $requirePort
-    if ($parsedConfig.ok) {
-        $secretFile = Join-Path ([string]$parsedConfig.root) 'secrets\phone-home'
-        $secretPresent = Test-Path -LiteralPath $secretFile
+if ($configPresent) {
+    $savedPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Stop'
+    try {
+        $configText = [System.IO.File]::ReadAllText($PhoneHomeConfigPath)
+        $requirePort = 0
+        if (-not $explicitConfigPath) { $requirePort = 17204 }
+        $parsedConfig = ConvertFrom-WindowsPhoneHomeConfig -Text $configText -RequirePort $requirePort
+        if ($parsedConfig.ok) {
+            $secretFile = Join-Path ([string]$parsedConfig.root) 'secrets\phone-home'
+            $secretPresent = Test-Path -LiteralPath $secretFile
+        }
+    } catch {
+        $ErrorActionPreference = $savedPreference
+        Write-AutostartRefusal 'config-unreadable'
+        exit 2
     }
+    $ErrorActionPreference = $savedPreference
 }
 $pwshCommand = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $pwshPath = ''
@@ -58,10 +86,25 @@ foreach ($name in @('claude', 'codex', 'grok')) {
     $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) { $executables[$name] = [string]$command.Source }
 }
-$plan = Resolve-SessionRunnerAutostartPlan -ConfigText $configText -ExplicitConfigPath $explicitConfigPath -SecretPresent $secretPresent -HomeDir $HOME -PwshPath $pwshPath -Executables $executables -RepoRoot $root
-if ($plan.mode -eq 'refused') {
-    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $logFile -Value ($stamp + ' [autostart] phone-home config refused: ' + [string]$plan.reason) -Encoding UTF8 -ErrorAction SilentlyContinue
+$plan = $null
+$savedPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Stop'
+try {
+    $plan = Resolve-SessionRunnerAutostartPlan -ConfigText $configText -ExplicitConfigPath $explicitConfigPath -SecretPresent $secretPresent -HomeDir $HOME -PwshPath $pwshPath -Executables $executables -RepoRoot $root
+} catch {
+    $ErrorActionPreference = $savedPreference
+    Write-AutostartRefusal 'config-unreadable'
+    exit 2
+}
+$ErrorActionPreference = $savedPreference
+$mode = ''
+if ($null -ne $plan) { $mode = [string]$plan.mode }
+if ($mode -eq 'refused') {
+    Write-AutostartRefusal ([string]$plan.reason)
+    exit 2
+}
+if ($mode -ne 'direct' -and $mode -ne 'phone-home') {
+    Write-AutostartRefusal 'plan-mode-invalid'
     exit 2
 }
 if ($plan.mode -eq 'phone-home') {
