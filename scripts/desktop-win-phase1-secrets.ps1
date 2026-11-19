@@ -23,10 +23,14 @@
 # byte cross-check. On a failure it is kept until the saved bytes are
 # restored and checked, then deleted. A delete that leaves a file prints
 # kept: and the path. A failed restore keeps the backup and the staged temp
-# and prints their names. A hard kill can leave a .dw3part or .dw3bak. The
-# next run lists those names and does not read them. It does not delete
-# them unless -SweepStranded is set. Recovery is to rename a .dw3bak back
-# over a missing target, or re-run -Execute -Rotate. A failure compares
+# and prints their names. A hard kill can leave a <32 lowercase hex>.dw3part
+# or .dw3bak. The next run lists those exact names and does not read them.
+# It does not delete them unless -Execute -SweepStranded is set and -WhatIf
+# is absent. A file newer than Dw3StrandedMaxAgeMinutes (15) is kept and
+# reported fresh. There is no run lock; the age guard is the live-temp
+# protection. A .dw3bak is kept unless -SweepBackups is also set. -WhatIf
+# and a dry run print would-sweep and do not delete. Recovery is to rename
+# a .dw3bak back over a missing target, or re-run -Execute -Rotate. A failure compares
 # each target with the bytes saved before any change and restores any
 # target that differs. It prints changed: none only when every target
 # matches that saved state and this run did not create the phase1 example.
@@ -44,7 +48,9 @@
 # Run it from a shell whose USERNAME owns that directory.
 #
 # DW3_FAIL_STEP, DW3_REPLACE_FAULT, DW3_RESTORE_FAULT, DW3_MODE_AT_WRITE,
-# DW3_OWNER_FAIL, DW3_DELETE_FAULT and DW3_CLEAR_PROBE are test seams.
+# DW3_OWNER_FAIL, DW3_DELETE_FAULT, DW3_CLEAR_PROBE and
+# DW3_STRANDED_MAX_AGE_MINUTES are test seams.
+# DW3_STRANDED_MAX_AGE_MINUTES overrides Dw3StrandedMaxAgeMinutes.
 # DW3_REPLACE_FAULT names user-secrets or secret-file, deletes that target,
 # leaves the old bytes in an owner-only .dw3bak, and throws.
 # DW3_RESTORE_FAULT names a half whose restore throws and then keeps the temp
@@ -55,18 +61,21 @@
 #
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
-#   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -SweepStranded
+#   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute -SweepStranded
+#   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute -SweepStranded -SweepBackups
 param(
     [switch]$Execute,
     [switch]$Rotate,
     [switch]$WhatIf,
     [switch]$SweepStranded,
+    [switch]$SweepBackups,
     [string]$UserSecretsPath,
     [string]$SecretFile,
     [string]$ProfileHome,
     [string]$Phase1ConfigPath
 )
 $ErrorActionPreference = 'Stop'
+$script:Dw3StrandedMaxAgeMinutes = 15
 
 function Refuse([string]$Code, [string]$Message) {
     Write-Host ('REFUSED: ' + $Code)
@@ -606,11 +615,31 @@ function Finish-Dw3Bytes {
     [System.IO.File]::WriteAllText($path, $text, $utf8)
 }
 
+function Get-Dw3StrandedMaxAgeMinutes {
+    $minutes = $script:Dw3StrandedMaxAgeMinutes
+    $override = $env:DW3_STRANDED_MAX_AGE_MINUTES
+    if ([string]::IsNullOrWhiteSpace($override)) { return $minutes }
+    $parsed = 0
+    $ok = [int]::TryParse($override, [ref]$parsed)
+    if (-not $ok) { return $minutes }
+    if ($parsed -lt 0) { return $minutes }
+    return $parsed
+}
+
+function Test-Dw3StrandedFresh([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return $false }
+    $minutes = Get-Dw3StrandedMaxAgeMinutes
+    $age = [datetime]::UtcNow.Subtract($item.LastWriteTimeUtc)
+    if ($age.TotalMinutes -lt $minutes) { return $true }
+    return $false
+}
+
 function Test-Dw3StrandedName([string]$Name) {
     if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    if ($Name.EndsWith('.dw3part', [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    if ($Name.EndsWith('.dw3bak', [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    return $false
+    return $Name -cmatch '^[0-9a-f]{32}\.(dw3part|dw3bak)$'
 }
 
 function Get-Dw3StrandedPaths([string]$Directory) {
@@ -625,7 +654,7 @@ function Get-Dw3StrandedPaths([string]$Directory) {
     return $found
 }
 
-function Write-Dw3StrandedReport([string]$UserDir, [string]$SecretDir, [bool]$Sweep) {
+function Write-Dw3StrandedReport([string]$UserDir, [string]$SecretDir, [bool]$SweepRequested, [bool]$ApplySweep, [bool]$SweepBackups) {
     $seen = @{}
     $paths = New-Object System.Collections.Generic.List[string]
     foreach ($dir in @($UserDir, $SecretDir)) {
@@ -641,11 +670,27 @@ function Write-Dw3StrandedReport([string]$UserDir, [string]$SecretDir, [bool]$Sw
     if ($paths.Count -lt 1) { return }
     foreach ($path in @($paths)) { Write-Host ('stranded: ' + $path) }
     Write-Host 'recovery: rename the .dw3bak back over a missing target, or re-run -Execute -Rotate'
-    if (-not $Sweep) {
+    if (-not $SweepRequested) {
         Write-Host 'sweep: refused'
         return
     }
     foreach ($path in @($paths)) {
+        $name = [System.IO.Path]::GetFileName($path)
+        if (-not (Test-Dw3StrandedName $name)) { continue }
+        if (Test-Dw3StrandedFresh $path) {
+            Write-Host ('kept: ' + $path + ' fresh')
+            continue
+        }
+        $backup = $false
+        if ($name.EndsWith('.dw3bak')) { $backup = $true }
+        if ($backup -and -not $SweepBackups) {
+            Write-Host ('kept: ' + $path + ' backup-of-secrets-keep-until-confirmed')
+            continue
+        }
+        if (-not $ApplySweep) {
+            Write-Host ('would-sweep: ' + $path)
+            continue
+        }
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
         }
@@ -1057,9 +1102,13 @@ $apply = $false
 if ($Execute -and -not $WhatIf) { $apply = $true }
 if ($apply -and [string]::IsNullOrWhiteSpace($ProfileHome)) { Refuse 'profile-home-missing' 'Profile home is empty.' }
 $userSecretsDir = Split-Path -Parent $UserSecretsPath
-$doSweep = $false
-if ($SweepStranded) { $doSweep = $true }
-Write-Dw3StrandedReport $userSecretsDir $secretsDir $doSweep
+$sweepRequested = $false
+if ($SweepStranded) { $sweepRequested = $true }
+$applySweep = $false
+if ($sweepRequested -and $apply) { $applySweep = $true }
+$sweepBackups = $false
+if ($SweepBackups) { $sweepBackups = $true }
+Write-Dw3StrandedReport $userSecretsDir $secretsDir $sweepRequested $applySweep $sweepBackups
 
 $lib = Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1'
 if (-not (Test-Path -LiteralPath $lib)) { Refuse 'phone-home-lib-missing' 'scripts/lib/windows-phone-home-env.ps1 is not beside this script.' }
@@ -1085,7 +1134,7 @@ if ($apply -and (Test-Path -LiteralPath $SecretFile) -and -not $Rotate) {
 $entries = Get-DesktopWinEntries -HomeDir $ProfileHome -Secret ''
 $ambiguity = Get-Dw3SecretAmbiguity $map $entries
 if ($apply -and -not [string]::IsNullOrWhiteSpace($ambiguity)) {
-    Refuse 'shared-secret-ambiguous' 'A case-variant key or a nested PhoneHomeRunner object is already present. Nothing was changed.'
+    Refuse 'shared-secret-ambiguous' 'A case-variant key or a nested PhoneHomeRunner object is already present. Merge or remove the case-variant or nested PhoneHomeRunner entry, then re-run. Nothing was changed.'
 }
 if (-not $apply) {
     Write-Host 'mode: dry-run'
