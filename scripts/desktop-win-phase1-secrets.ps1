@@ -1106,9 +1106,9 @@ $sweepRequested = $false
 if ($SweepStranded) { $sweepRequested = $true }
 $applySweep = $false
 if ($sweepRequested -and $apply) { $applySweep = $true }
-$sweepBackups = $false
-if ($SweepBackups) { $sweepBackups = $true }
-Write-Dw3StrandedReport $userSecretsDir $secretsDir $sweepRequested $applySweep $sweepBackups
+$doSweepBackups = $false
+if ($SweepBackups) { $doSweepBackups = $true }
+Write-Dw3StrandedReport $userSecretsDir $secretsDir $sweepRequested $applySweep $doSweepBackups
 
 $lib = Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1'
 if (-not (Test-Path -LiteralPath $lib)) { Refuse 'phone-home-lib-missing' 'scripts/lib/windows-phone-home-env.ps1 is not beside this script.' }
