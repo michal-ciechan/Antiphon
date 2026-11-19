@@ -1461,18 +1461,18 @@
     },
     {
       "path": "server/Domain/Entities/AgentTaskLanding.cs",
-      "classes": 55,
+      "classes": 56,
       "reason": "cap",
-      "owed": 30,
+      "owed": 31,
       "first": [
         "DefaultRunnerPinTests",
+        "LandFailureDiagnosticTests",
         "LandingProtocolGuardTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "ProjectCascadeForeignKeyTests",
         "RemoteWorkspacePreparerTests",
-        "RepositoryMutationLeaseTests",
-        "TaskSupervisionVisibilityTests"
+        "RepositoryMutationLeaseTests"
       ]
     },
     {
@@ -1643,9 +1643,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 607,
+      "classes": 608,
       "reason": "cap",
-      "owed": 582,
+      "owed": 583,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1659,9 +1659,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 607,
+      "classes": 608,
       "reason": "cap",
-      "owed": 582,
+      "owed": 583,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2281,8 +2281,8 @@
       "reason": "cap",
       "owed": 35,
       "first": [
+        "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandConcurrencyTests",
-        "LandWarmArtifactsTests",
         "AgentTaskLandDispatchYieldTests",
         "AgentTaskLandHoldVisibilityTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -9572,6 +9572,12 @@
         "LandGraphLandRefreshTests",
         "LandNonCodeSkipTests",
         "ReleaseImpactEvaluationTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/LandVerificationFailure.cs",
+      "classes": [
+        "LandVerificationFailureTests"
       ]
     },
     {
@@ -25744,7 +25750,6 @@
         "AgentTaskLandActiveSourceClaimTests",
         "AgentTaskLandAdoptionTests",
         "AgentTaskLandBoundaryTests",
-        "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandCleanupSafetyTests",
         "AgentTaskLandHeldNotificationTests",
         "AgentTaskLandIdentityMatrixTests",
@@ -25764,6 +25769,7 @@
         "LandNonCodeSkipTests",
         "LandReplacementApprovalTests",
         "LandRequestWriteDiagnosticTests",
+        "LandWarmArtifactsTests",
         "PostLandMutationDeliveryTests",
         "WorktreeLandingCleanupRetryTests"
       ]
