@@ -44,6 +44,10 @@ public static class DiagnosticsEndpoints
 
         diagnostics.MapGet("/db-rate", DbRate);
 
+        // CARD-1972. Process-lifetime counts. No database read.
+        diagnostics.MapGet(AgentTaskGetPollMetrics.DiagnosticsPath, (AgentTaskGetPollMetrics polls) =>
+            Results.Ok(polls.Read()));
+
         diagnostics.MapPost("/bundle", async (
             BugReportRequest request,
             DiagnosticsBundleService service,
