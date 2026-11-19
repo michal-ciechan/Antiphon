@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 336,
+      "classes": 337,
       "reason": "allowlist"
     },
     {
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 126,
+      "classes": 127,
       "reason": "cap",
-      "owed": 101,
+      "owed": 102,
       "first": [
         "AgentTaskStandingAgentDispatchTests",
         "ChannelE2ETests",
@@ -20611,6 +20611,7 @@
       "path": "tests/Antiphon.E2E/Fixtures/DelegationScratchRepo.cs",
       "classes": [
         "DelegationPipelineE2ETests",
+        "DelegationScratchCallerTests",
         "DelegationSequencingE2ETests"
       ]
     },
