@@ -17,13 +17,21 @@
 # Nothing that can fail is done after a secret byte is on disk. The helper
 # validates and serialises the new JSON in memory, writes each half to an
 # owner-only sibling in the same directory, then swaps them. On Windows the
-# swap passes a same-directory owner-only .dw3bak. That backup exists only
-# during the swap. It is deleted after the swap and the byte cross-check,
-# and on a failure it is kept until the saved bytes are restored and checked,
-# then deleted. A failed restore keeps the backup and the staged temp and
-# prints their names. A failure compares each target with the bytes saved
-# before any change and restores any target that differs. It prints
-# changed: none only when every target matches that saved state.
+# swap passes a same-directory owner-only .dw3bak. After the swap the helper
+# checks that the backup and the staged temp are owner-only and names the
+# file if that check fails. The backup is deleted after the swap and the
+# byte cross-check. On a failure it is kept until the saved bytes are
+# restored and checked, then deleted. A delete that leaves a file prints
+# kept: and the path. A failed restore keeps the backup and the staged temp
+# and prints their names. A hard kill can leave a .dw3part or .dw3bak. The
+# next run lists those names and does not read them. It does not delete
+# them unless -SweepStranded is set. Recovery is to rename a .dw3bak back
+# over a missing target, or re-run -Execute -Rotate. A failure compares
+# each target with the bytes saved before any change and restores any
+# target that differs. It prints changed: none only when every target
+# matches that saved state and this run did not create the phase1 example.
+# Saved byte arrays are cleared after use. A case-variant key or a nested
+# PhoneHomeRunner object is refused instead of written beside the flat key.
 #
 # scripts/lib/windows-phone-home-env.ps1 does not generate
 # C:\Antiphon\runner\phone-home.phase1.json. -Execute copies
@@ -35,19 +43,24 @@
 # BUILTIN\Administrators, and the helper then refuses secrets-dir-owner.
 # Run it from a shell whose USERNAME owns that directory.
 #
-# DW3_FAIL_STEP, DW3_REPLACE_FAULT, DW3_RESTORE_FAULT and DW3_MODE_AT_WRITE
-# are test seams. DW3_REPLACE_FAULT names user-secrets or secret-file, deletes
-# that target, leaves the old bytes in an owner-only .dw3bak, and throws.
+# DW3_FAIL_STEP, DW3_REPLACE_FAULT, DW3_RESTORE_FAULT, DW3_MODE_AT_WRITE,
+# DW3_OWNER_FAIL, DW3_DELETE_FAULT and DW3_CLEAR_PROBE are test seams.
+# DW3_REPLACE_FAULT names user-secrets or secret-file, deletes that target,
+# leaves the old bytes in an owner-only .dw3bak, and throws.
 # DW3_RESTORE_FAULT names a half whose restore throws and then keeps the temp
-# and backup. None of them prints a value. The mode probe records only a
-# mode line.
+# and backup. DW3_OWNER_FAIL names backup or temp and fails that owner-only
+# check. DW3_DELETE_FAULT=1 leaves a tracked file in place. DW3_CLEAR_PROBE
+# receives only held= and cleared=, never a byte value. None of them prints
+# a secret. The mode probe records only a mode line.
 #
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
+#   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -SweepStranded
 param(
     [switch]$Execute,
     [switch]$Rotate,
     [switch]$WhatIf,
+    [switch]$SweepStranded,
     [string]$UserSecretsPath,
     [string]$SecretFile,
     [string]$ProfileHome,
@@ -461,6 +474,25 @@ function Set-OwnerOnlyFile([string]$Path, [string]$Secret) {
     Invoke-Dw3Native -File 'chmod' -ArgumentList @('600', $Path) -Secret $Secret
 }
 
+function Confirm-Dw3OwnerOnly([string]$Path) {
+    $forced = $false
+    $fail = $env:DW3_OWNER_FAIL
+    if (-not [string]::IsNullOrWhiteSpace($fail)) {
+        $name = [System.IO.Path]::GetFileName($Path)
+        if ($fail -ceq 'backup') {
+            if ($name.EndsWith('.dw3bak')) { $forced = $true }
+        }
+        if ($fail -ceq 'temp') {
+            if ($name.EndsWith('.dw3part')) { $forced = $true }
+        }
+    }
+    $ok = $false
+    if (-not $forced) { $ok = Test-Dw3OwnerOnly $Path }
+    if ($ok) { return }
+    Write-Host ('owner-only-failed: ' + $Path)
+    throw 'owner-only permission was not applied'
+}
+
 function Test-Dw3OwnerOnly([string]$Path) {
     if ($env:OS -eq 'Windows_NT') {
         $acl = Get-Acl -LiteralPath $Path
@@ -516,8 +548,139 @@ function Remove-Dw3Tracked([string]$Path) {
     if ($name.EndsWith('.dw3bak')) { $allowed = $true }
     if (-not $allowed) { return }
     if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        $skip = $false
+        if ($env:DW3_DELETE_FAULT -eq '1') { $skip = $true }
+        if (-not $skip) {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        }
     }
+    if (Test-Path -LiteralPath $Path) { Write-Host ('kept: ' + $Path) }
+}
+
+function Hold-Dw3Bytes([byte[]]$Bytes) {
+    if ($null -eq $Bytes) { return }
+    if ($null -eq $script:dw3Held) {
+        $script:dw3Held = New-Object System.Collections.Generic.List[object]
+    }
+    [void]$script:dw3Held.Add($Bytes)
+}
+
+function Clear-Dw3Held {
+    if ($null -eq $script:dw3Held) { return }
+    $index = 0
+    while ($index -lt $script:dw3Held.Count) {
+        $item = $script:dw3Held[$index]
+        $index++
+        if ($null -eq $item) { continue }
+        if ($item -isnot [byte[]]) { continue }
+        if ($item.Length -le 0) { continue }
+        [Array]::Clear($item, 0, $item.Length)
+    }
+}
+
+function Finish-Dw3Bytes {
+    $count = 0
+    if ($null -ne $script:dw3Held) { $count = $script:dw3Held.Count }
+    Clear-Dw3Held
+    $path = $env:DW3_CLEAR_PROBE
+    if ([string]::IsNullOrWhiteSpace($path)) { return }
+    $ok = $true
+    if ($null -ne $script:dw3Held) {
+        $index = 0
+        while ($index -lt $script:dw3Held.Count) {
+            $item = $script:dw3Held[$index]
+            $index++
+            if ($null -eq $item) { continue }
+            if ($item -isnot [byte[]]) { $ok = $false; continue }
+            $byteIndex = 0
+            while ($byteIndex -lt $item.Length) {
+                if ($item[$byteIndex] -ne 0) { $ok = $false }
+                $byteIndex++
+            }
+        }
+    }
+    $state = 'no'
+    if ($ok) { $state = 'yes' }
+    $text = 'held=' + $count + ' cleared=' + $state
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($path, $text, $utf8)
+}
+
+function Test-Dw3StrandedName([string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name.EndsWith('.dw3part', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($Name.EndsWith('.dw3bak', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    return $false
+}
+
+function Get-Dw3StrandedPaths([string]$Directory) {
+    $found = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrWhiteSpace($Directory)) { return $found }
+    if (-not (Test-Path -LiteralPath $Directory)) { return $found }
+    $files = @(Get-ChildItem -LiteralPath $Directory -Force -File -ErrorAction SilentlyContinue)
+    foreach ($file in $files) {
+        $name = [string]$file.Name
+        if (Test-Dw3StrandedName $name) { [void]$found.Add([string]$file.FullName) }
+    }
+    return $found
+}
+
+function Write-Dw3StrandedReport([string]$UserDir, [string]$SecretDir, [bool]$Sweep) {
+    $seen = @{}
+    $paths = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in @($UserDir, $SecretDir)) {
+        $list = @(Get-Dw3StrandedPaths $dir)
+        foreach ($path in $list) {
+            $text = [string]$path
+            if ([string]::IsNullOrWhiteSpace($text)) { continue }
+            if ($seen.ContainsKey($text)) { continue }
+            $seen[$text] = $true
+            [void]$paths.Add($text)
+        }
+    }
+    if ($paths.Count -lt 1) { return }
+    foreach ($path in @($paths)) { Write-Host ('stranded: ' + $path) }
+    Write-Host 'recovery: rename the .dw3bak back over a missing target, or re-run -Execute -Rotate'
+    if (-not $Sweep) {
+        Write-Host 'sweep: refused'
+        return
+    }
+    foreach ($path in @($paths)) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $path) { Write-Host ('kept: ' + $path) }
+        else { Write-Host ('swept: ' + $path) }
+    }
+}
+
+function Get-Dw3SecretAmbiguity($Node, $Planned) {
+    if ($null -eq $Node) { return '' }
+    if ([string]$Node.T -ne 'object') { return '' }
+    $map = $Node.V
+    foreach ($key in @($map.Keys)) {
+        $text = [string]$key
+        $isRunner = $text.Equals('PhoneHomeRunner', [StringComparison]::OrdinalIgnoreCase)
+        if ($isRunner) {
+            $child = $map[$key]
+            if ($null -ne $child) {
+                if ([string]$child.T -eq 'object') { return 'nested' }
+            }
+        }
+    }
+    if ($null -eq $Planned) { return '' }
+    foreach ($key in @($map.Keys)) {
+        $text = [string]$key
+        foreach ($plannedKey in @($Planned.Keys)) {
+            $plannedText = [string]$plannedKey
+            $sameIgnore = $text.Equals($plannedText, [StringComparison]::OrdinalIgnoreCase)
+            $sameOrdinal = $text.Equals($plannedText, [StringComparison]::Ordinal)
+            if ($sameIgnore) {
+                if (-not $sameOrdinal) { return 'case-variant' }
+            }
+        }
+    }
+    return ''
 }
 
 function Get-Dw3HalfDir([string]$Half) {
@@ -596,6 +759,7 @@ function Test-Dw3SavedTarget([string]$Path, [bool]$Existed, [byte[]]$OldBytes) {
     }
     if (-not $present) { return $false }
     $now = [System.IO.File]::ReadAllBytes($Path)
+    Hold-Dw3Bytes $now
     if ($null -eq $OldBytes) { $OldBytes = New-Object byte[] 0 }
     return (Test-Dw3BytesEqual $now $OldBytes)
 }
@@ -642,7 +806,7 @@ function New-Dw3OwnerOnlyEmpty([string]$Path, [string]$Secret, [string]$Step) {
         }
         $created = $true
         Set-OwnerOnlyFile -Path $Path -Secret $Secret
-        if (-not (Test-Dw3OwnerOnly $Path)) { throw 'owner-only permission was not applied' }
+        Confirm-Dw3OwnerOnly $Path
     }
     catch {
         if ($created -or (Test-Path -LiteralPath $Path)) { Remove-Dw3Temp $Path }
@@ -716,6 +880,7 @@ function Move-Dw3TempOnto([string]$Temp, [string]$Target, [string]$Half) {
         $backup = Join-Path $dir ([guid]::NewGuid().ToString('n') + '.dw3bak')
         Add-Dw3Backup -Half $Half -Path $backup
         $old = [System.IO.File]::ReadAllBytes($Target)
+        Hold-Dw3Bytes $old
         New-Dw3OwnerOnlyEmpty -Path $backup -Secret '' -Step ''
         Write-Dw3BytesFlush -Path $backup -Bytes $old
         Remove-Item -LiteralPath $Target -Force
@@ -737,7 +902,10 @@ function Move-Dw3TempOnto([string]$Temp, [string]$Target, [string]$Half) {
             $replaceError = $null
             try { [void]$method.Invoke($null, $replaceArgs) }
             catch { $replaceError = $_ }
-            if (Test-Path -LiteralPath $backup) { Set-OwnerOnlyFile -Path $backup -Secret '' }
+            if (Test-Path -LiteralPath $backup) {
+                Set-OwnerOnlyFile -Path $backup -Secret ''
+                Confirm-Dw3OwnerOnly $backup
+            }
             if ($null -ne $replaceError) { throw $replaceError }
         }
         else { [System.IO.File]::Move($Temp, $Target) }
@@ -750,29 +918,31 @@ function Move-Dw3TempOnto([string]$Temp, [string]$Target, [string]$Half) {
 function Publish-Dw3Staged([string]$Temp, [string]$Target, [string]$Secret, [string]$Half, [bool]$OwnerOnly, $SavedAcl) {
     if (-not (Test-Path -LiteralPath $Temp)) { throw 'staged temp is missing' }
     $expected = [System.IO.File]::ReadAllBytes($Temp)
+    Hold-Dw3Bytes $expected
     if ($OwnerOnly -and ($env:OS -eq 'Windows_NT') -and (Test-Path -LiteralPath $Target)) {
         Set-OwnerOnlyFile -Path $Target -Secret $Secret
-        if (-not (Test-Dw3OwnerOnly $Target)) { throw 'owner-only permission was not applied' }
+        Confirm-Dw3OwnerOnly $Target
     }
     $script:dw3Staged[$Half] = $Temp
     Move-Dw3TempOnto -Temp $Temp -Target $Target -Half $Half
     $swapped = $false
     if (Test-Path -LiteralPath $Target) {
         $now = [System.IO.File]::ReadAllBytes($Target)
+        Hold-Dw3Bytes $now
         $swapped = Test-Dw3BytesEqual $now $expected
     }
     if (-not $swapped) { throw 'replace cross-check failed' }
     $script:dw3Changed[$Half] = $true
     if ($OwnerOnly) {
         Set-OwnerOnlyFile -Path $Target -Secret $Secret
-        if (-not (Test-Dw3OwnerOnly $Target)) { throw 'owner-only permission was not applied' }
+        Confirm-Dw3OwnerOnly $Target
     }
     elseif ($null -ne $SavedAcl) {
         Restore-SavedAcl -Path $Target -Saved $SavedAcl -Secret $Secret
     }
     else {
         Set-OwnerOnlyFile -Path $Target -Secret $Secret
-        if (-not (Test-Dw3OwnerOnly $Target)) { throw 'owner-only permission was not applied' }
+        Confirm-Dw3OwnerOnly $Target
     }
     Remove-Dw3HalfBackups $Half
 }
@@ -791,7 +961,10 @@ function Restore-Dw3Target([string]$Target, [byte[]]$OldBytes, [bool]$Existed, [
         if ($null -eq $OldBytes) { $OldBytes = New-Object byte[] 0 }
         Write-Dw3BytesFlush -Path $temp -Bytes $OldBytes
         Move-Dw3TempOnto -Temp $temp -Target $Target -Half $Half
-        if ($OwnerOnly) { Set-OwnerOnlyFile -Path $Target -Secret $Secret }
+        if ($OwnerOnly) {
+            Set-OwnerOnlyFile -Path $Target -Secret $Secret
+            Confirm-Dw3OwnerOnly $Target
+        }
         elseif ($null -ne $SavedAcl) { Restore-SavedAcl -Path $Target -Saved $SavedAcl -Secret $Secret }
         $script:dw3Step = $kept
     }
@@ -802,16 +975,16 @@ function Restore-Dw3Target([string]$Target, [byte[]]$OldBytes, [bool]$Existed, [
 }
 
 function Repair-Dw3Half([string]$Half, [string]$Target, [byte[]]$OldBytes, [bool]$Existed, [string]$Secret, $SavedAcl, [bool]$OwnerOnly) {
-    $matches = Test-Dw3SavedTarget -Path $Target -Existed $Existed -OldBytes $OldBytes
-    if (-not $matches) {
+    $halfMatches = Test-Dw3SavedTarget -Path $Target -Existed $Existed -OldBytes $OldBytes
+    if (-not $halfMatches) {
         $restoreFault = $env:DW3_RESTORE_FAULT
         if (-not [string]::IsNullOrWhiteSpace($restoreFault) -and $restoreFault -ceq $Half) {
             throw (New-Object System.IO.IOException 'simulated restore failure')
         }
         Restore-Dw3Target -Target $Target -OldBytes $OldBytes -Existed $Existed -Secret $Secret -SavedAcl $SavedAcl -OwnerOnly $OwnerOnly -Half $Half
-        $matches = Test-Dw3SavedTarget -Path $Target -Existed $Existed -OldBytes $OldBytes
+        $halfMatches = Test-Dw3SavedTarget -Path $Target -Existed $Existed -OldBytes $OldBytes
     }
-    if ($matches) {
+    if ($halfMatches) {
         Remove-Dw3HalfResidue $Half
         return $true
     }
@@ -883,6 +1056,10 @@ if ([string]::IsNullOrWhiteSpace($ownerName) -or -not $ownerName.Equals($env:USE
 $apply = $false
 if ($Execute -and -not $WhatIf) { $apply = $true }
 if ($apply -and [string]::IsNullOrWhiteSpace($ProfileHome)) { Refuse 'profile-home-missing' 'Profile home is empty.' }
+$userSecretsDir = Split-Path -Parent $UserSecretsPath
+$doSweep = $false
+if ($SweepStranded) { $doSweep = $true }
+Write-Dw3StrandedReport $userSecretsDir $secretsDir $doSweep
 
 $lib = Join-Path $PSScriptRoot 'lib/windows-phone-home-env.ps1'
 if (-not (Test-Path -LiteralPath $lib)) { Refuse 'phone-home-lib-missing' 'scripts/lib/windows-phone-home-env.ps1 is not beside this script.' }
@@ -906,6 +1083,10 @@ if ($apply -and (Test-Path -LiteralPath $SecretFile) -and -not $Rotate) {
 }
 
 $entries = Get-DesktopWinEntries -HomeDir $ProfileHome -Secret ''
+$ambiguity = Get-Dw3SecretAmbiguity $map $entries
+if ($apply -and -not [string]::IsNullOrWhiteSpace($ambiguity)) {
+    Refuse 'shared-secret-ambiguous' 'A case-variant key or a nested PhoneHomeRunner object is already present. Nothing was changed.'
+}
 if (-not $apply) {
     Write-Host 'mode: dry-run'
     Write-Host ('secret-file: ' + $SecretFile + ' ' + (Format-Exists $SecretFile))
@@ -913,7 +1094,9 @@ if (-not $apply) {
     Write-Host ('secrets-dir: ' + $secretsDir + ' ' + (Format-Exists $secretsDir))
     Write-Host ('phase1-config: ' + $Phase1ConfigPath + ' ' + (Format-Exists $Phase1ConfigPath))
     Write-Host ('phase1-example: ' + $example + ' ' + (Format-Exists $example))
-    if ($hasSecret) { Write-Host 'shared-secret-key: present' } else { Write-Host 'shared-secret-key: absent' }
+    if (-not [string]::IsNullOrWhiteSpace($ambiguity)) { Write-Host 'shared-secret-key: ambiguous' }
+    elseif ($hasSecret) { Write-Host 'shared-secret-key: present' }
+    else { Write-Host 'shared-secret-key: absent' }
     $secretMatches = Test-Dw3SecretMatchesMap -Path $SecretFile -MapValue $existingSecret -HasMap $hasSecret
     if ($secretMatches) { Write-Host 'secret-file-matches-map: yes' }
     else { Write-Host 'secret-file-matches-map: no' }
@@ -928,6 +1111,7 @@ if (-not $apply) {
 if (-not (Test-Path -LiteralPath $example)) { Refuse 'phase1-example-missing' 'scripts/phone-home.phase1.example.json is not beside this script.' }
 
 $secret = $null
+$script:dw3Held = New-Object System.Collections.Generic.List[object]
 $oldJsonBytes = $null
 $oldJsonExists = $false
 $oldJsonSaved = $null
@@ -936,12 +1120,14 @@ $oldSecretExists = $false
 if (Test-Path -LiteralPath $UserSecretsPath) {
     $oldJsonExists = $true
     $oldJsonBytes = [System.IO.File]::ReadAllBytes($UserSecretsPath)
+    Hold-Dw3Bytes $oldJsonBytes
     if ($windows) { $oldJsonSaved = Get-Acl -LiteralPath $UserSecretsPath }
     else { $oldJsonSaved = Get-UnixMode $UserSecretsPath }
 }
 if (Test-Path -LiteralPath $SecretFile) {
     $oldSecretExists = $true
     $oldSecretBytes = [System.IO.File]::ReadAllBytes($SecretFile)
+    Hold-Dw3Bytes $oldSecretBytes
 }
 $script:dw3Step = 'prepare'
 $script:dw3Changed = @{ 'secret-file' = $false; 'user-secrets' = $false }
@@ -1029,7 +1215,14 @@ catch {
         Write-Host 'differs: secret-file'
         Write-Dw3Kept 'secret-file'
     }
-    if ($jsonOk -and $secretOk) { Write-Host 'changed: none' }
+    if ($jsonOk -and $secretOk) {
+        if ($phaseWrote) { Write-Host 'changed: phase1-config' }
+        else { Write-Host 'changed: none' }
+    }
+    elseif ($phaseWrote) { Write-Host 'changed: phase1-config' }
     Refuse 'failed' 'The helper stopped before finishing. No secret was written to the console.'
+}
+finally {
+    Finish-Dw3Bytes
 }
 exit 0
