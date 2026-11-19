@@ -68,6 +68,9 @@ public sealed class RunnerWorkspaceSlotPool
     public string LedgerRoot => _ledger.StateRoot;
     public string RetainedRoot => _service.AllowedRoot + "/retained";
 
+    /// <summary>Test seam: the probe chosen when the caller does not inject one.</summary>
+    internal IWorkspaceSlotProcessProbe SelectedProcesses => _processes;
+
     /// <summary>Test seam: named phase cuts (enter, picked, leasing, leased, releasing, before-clean, free, ...).</summary>
     internal Action<string>? PhaseCut { get; set; }
 
