@@ -31,7 +31,7 @@ if (-not (Test-Path -LiteralPath $helper)) {
     exit 1
 }
 
-$root = Join-Path ([System.IO.Path]::GetTempPath()) 'dw3-phase1-secrets-test'
+$root = Join-Path ([System.IO.Path]::GetTempPath()) ('dw3-phase1-secrets-test-' + [guid]::NewGuid().ToString('n'))
 if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
 New-Item -ItemType Directory -Path $root | Out-Null
 $rootLeaf = [System.IO.Path]::GetFileName($root.TrimEnd('\', '/'))
@@ -229,6 +229,15 @@ function Invoke-Dw3 {
 function Assert-NoText([string]$Name, [string]$Haystack, [string]$Needle) {
     if ([string]::IsNullOrEmpty($Needle)) { Fail $Name 'needle empty'; return }
     if ($Haystack.Contains($Needle)) { Fail $Name 'forbidden text appeared' } else { Pass $Name }
+}
+
+function Assert-Dw3SecretQuiet([string]$Name, $Run, [string]$SecretFile, [string]$Sentinel) {
+    $secret = ''
+    if (Test-Path -LiteralPath $SecretFile) { $secret = ([System.IO.File]::ReadAllText($SecretFile)).Trim() }
+    if ([string]::IsNullOrEmpty($secret)) { Fail ($Name + '-no-secret') 'needle empty'; return }
+    Assert-NoText ($Name + '-no-secret') $Run.Text $secret
+    Assert-NoText ($Name + '-argv-no-secret') $Run.Log $secret
+    Assert-NoText ($Name + '-no-sentinel') $Run.Text $Sentinel
 }
 
 $keyNames = @(
@@ -836,7 +845,9 @@ try {
     Write-SeedJson $strandedSweepPart $strandedCanary
     Write-SeedJson $strandedSweepBak $strandedCanary
     Write-SeedJson $strandedKeep 'keep-me'
-    $strandedSweepRun = Invoke-Dw3 -ArgumentList @('-SweepStranded', '-UserSecretsPath', $strandedSweep.UserSecrets, '-SecretFile', $strandedSweep.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $strandedSweep.Log
+    Set-Dw3AgeMinutes $strandedSweepPart 30
+    Set-Dw3AgeMinutes $strandedSweepBak 30
+    $strandedSweepRun = Invoke-Dw3 -ArgumentList @('-Execute', '-SweepStranded', '-SweepBackups', '-UserSecretsPath', $strandedSweep.UserSecrets, '-SecretFile', $strandedSweep.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $strandedSweep.Log
     Assert-True ($strandedSweepRun.Exit -eq 0) 'stranded-sweep-exit' ('exit=' + $strandedSweepRun.Exit)
     Assert-True ($strandedSweepRun.Text.Contains('swept: ' + $strandedSweepPart)) 'stranded-sweep-names-part' 'swept part missing'
     Assert-True ($strandedSweepRun.Text.Contains('swept: ' + $strandedSweepBak)) 'stranded-sweep-names-backup' 'swept backup missing'
@@ -845,7 +856,8 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $strandedSweepPart)) 'stranded-sweep-removes-part' 'part remains'
     Assert-True (-not (Test-Path -LiteralPath $strandedSweepBak)) 'stranded-sweep-removes-backup' 'backup remains'
     Assert-True (Test-Path -LiteralPath $strandedKeep) 'stranded-sweep-keeps-other' 'unrelated file removed'
-    Assert-True (-not (Test-Path -LiteralPath $strandedSweep.SecretFile)) 'stranded-sweep-no-secret-file' 'secret file created'
+    Assert-True (Test-Path -LiteralPath $strandedSweep.SecretFile) 'stranded-sweep-execute-writes-secret' 'secret file missing'
+    Assert-Dw3SecretQuiet 'stranded-sweep' $strandedSweepRun $strandedSweep.SecretFile $seedKeep
 
     $examplePath = Join-Path $PSScriptRoot 'phone-home.phase1.example.json'
     $ownerFail = New-CaseRoot 'owner-fail-temp'
@@ -998,6 +1010,7 @@ try {
     Assert-True (Test-Path -LiteralPath $freshPart) 'stranded-fresh-keeps-file' 'fresh file was swept'
     Assert-True (-not $freshRun.Text.Contains('swept: ' + $freshPart)) 'stranded-fresh-not-swept' 'fresh file was reported swept'
     Assert-NoText 'stranded-fresh-no-contents' $freshRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-fresh' $freshRun $freshCase.SecretFile $seedKeep
 
     $staleName = '22222222222222222222222222222222.dw3part'
     $staleCase = New-CaseRoot 'stranded-stale'
@@ -1012,6 +1025,7 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $stalePart)) 'stranded-stale-removed' 'stale file remains'
     Assert-True (-not $staleRun.Text.Contains('kept: ' + $stalePart + ' fresh')) 'stranded-stale-not-fresh' 'stale file was kept as fresh'
     Assert-NoText 'stranded-stale-no-contents' $staleRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-stale' $staleRun $staleCase.SecretFile $seedKeep
 
     $seamName = '33333333333333333333333333333333.dw3part'
     $seamCase = New-CaseRoot 'stranded-seam'
@@ -1025,6 +1039,7 @@ try {
     Assert-True ($seamRun.Text.Contains('kept: ' + $seamPart + ' fresh')) 'stranded-seam-reports-fresh' 'seam keep line missing'
     Assert-True (Test-Path -LiteralPath $seamPart) 'stranded-seam-keeps-file' 'seam file was swept'
     Assert-NoText 'stranded-seam-no-contents' $seamRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-seam' $seamRun $seamCase.SecretFile $seedKeep
 
     $mixedFreshName = '44444444444444444444444444444444.dw3part'
     $mixedStaleName = '55555555555555555555555555555555.dw3part'
@@ -1044,6 +1059,7 @@ try {
     Assert-True ($mixedRun.Text.Contains('swept: ' + $mixedStale)) 'stranded-mixed-stale-swept' 'stale sweep line missing'
     Assert-True (-not (Test-Path -LiteralPath $mixedStale)) 'stranded-mixed-stale-removed' 'stale file remains'
     Assert-NoText 'stranded-mixed-no-contents' $mixedRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-mixed' $mixedRun $mixedCase.SecretFile $seedKeep
 
     $decoyNotes = 'Notes.DW3BAK'
     $decoyShort = 'abc.dw3bak'
@@ -1086,6 +1102,7 @@ try {
     Assert-True ($decoyRun.Text.Contains('swept: ' + $decoyRealPath)) 'stranded-exact-real-swept' 'exact name was not swept'
     Assert-True (-not (Test-Path -LiteralPath $decoyRealPath)) 'stranded-exact-real-removed' 'exact name remains'
     Assert-NoText 'stranded-exact-no-contents' $decoyRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-exact' $decoyRun $decoyCase.SecretFile $seedKeep
 
     $drySweepName = '77777777777777777777777777777777.dw3part'
     $drySweep = New-CaseRoot 'stranded-dry-sweep'
@@ -1129,6 +1146,7 @@ try {
     Assert-True ($bakKeepRun.Text.Contains('kept: ' + $bakKeepPath + ' backup-of-secrets-keep-until-confirmed')) 'stranded-backup-keep-line' 'backup keep line missing'
     Assert-True (-not $bakKeepRun.Text.Contains('swept: ' + $bakKeepPath)) 'stranded-backup-keep-not-swept' 'backup was reported swept'
     Assert-NoText 'stranded-backup-keep-no-contents' $bakKeepRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-backup-keep' $bakKeepRun $bakKeep.SecretFile $seedKeep
 
     $bakSweepName = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.dw3bak'
     $bakSweep = New-CaseRoot 'stranded-backup-sweep'
@@ -1136,11 +1154,12 @@ try {
     $bakSweepPath = Join-Path $bakSweep.Secrets $bakSweepName
     Write-SeedJson $bakSweepPath $ageCanary
     Set-Dw3AgeMinutes $bakSweepPath 30
-    $bakSweepRun = Invoke-Dw3 -ArgumentList @('-Execute', '-SweepStranded', '-UserSecretsPath', $bakSweep.UserSecrets, '-SecretFile', $bakSweep.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $bakSweep.Log
+    $bakSweepRun = Invoke-Dw3 -ArgumentList @('-Execute', '-SweepStranded', '-SweepBackups', '-UserSecretsPath', $bakSweep.UserSecrets, '-SecretFile', $bakSweep.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $bakSweep.Log
     Assert-True ($bakSweepRun.Exit -eq 0) 'stranded-backup-sweep-exit' ('exit=' + $bakSweepRun.Exit)
     Assert-True ($bakSweepRun.Text.Contains('swept: ' + $bakSweepPath)) 'stranded-backup-sweep-swept' 'backup sweep line missing'
     Assert-True (-not (Test-Path -LiteralPath $bakSweepPath)) 'stranded-backup-sweep-removed' 'backup remains'
     Assert-NoText 'stranded-backup-sweep-no-contents' $bakSweepRun.Text $ageCanary
+    Assert-Dw3SecretQuiet 'stranded-backup-sweep' $bakSweepRun $bakSweep.SecretFile $seedKeep
 }
 finally {
     Restore-SavedEnv
