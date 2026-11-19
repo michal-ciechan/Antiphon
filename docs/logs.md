@@ -57,11 +57,11 @@ process once a minute and served at `GET /api/diagnostics/db-rate`.
 
 Code that already calls that route, and the interval written next to it:
 
-- `scripts/delegate.ps1 -Status` reads one task when asked. It sends `X-Antiphon-Task-Token` when the environment has one, and it does not send `X-Antiphon-Caller`.
-- `scripts/status-snapshot.ps1` and `scripts/checkpoint-task.ps1` also GET one task.
-- The client drawer (`useAgentTask`) fetches the detail when it opens and when a mutation invalidates it. It has no `refetchInterval`. The board list, summary, and pipeline refetch every 15 seconds. Those are other routes, and this counter does not include them.
+- `scripts/delegate.ps1` sends `X-Antiphon-Caller: delegate.ps1` on its server calls. `-Status` reads one task. It also sends `X-Antiphon-Task-Token` when the environment has one.
+- `scripts/status-snapshot.ps1` sends `status-snapshot.ps1` and GETs one task per in-flight, queued, or blocked id. `scripts/checkpoint-task.ps1` sends `checkpoint-task.ps1` and GETs the named task. `scripts/card.ps1` sends `card.ps1`.
+- The client drawer (`useAgentTask`) fetches the detail when it opens and when a mutation invalidates it. It has no `refetchInterval` and does not send `X-Antiphon-Caller`. The board list, summary, and pipeline refetch every 15 seconds. Those are other routes, and this counter does not include them.
 
-A caller that wants its own label sends `X-Antiphon-Caller` with one of the registered names. This slice does not change those scripts or the client, and it does not change their intervals. A later change waits on a read of this endpoint that shows which label dominates.
+`scripts/lib/antiphon-caller.ps1` attaches a label only when the trimmed, lowercased value is registered. Any other value is refused and is not copied into the header or the error. Intervals are unchanged. `board-watch` is registered and has no script.
 
 The Compose `antiphon` role is the database superuser and can reset the
 statistics. The extension can exist in databases without the library

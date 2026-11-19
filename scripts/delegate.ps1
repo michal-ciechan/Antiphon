@@ -462,6 +462,8 @@ if ($hasCapability) {
 elseif ($hasTaskToken) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
+. (Join-Path $PSScriptRoot 'lib/antiphon-caller.ps1')
+Add-AntiphonCallerHeader -Headers $headers -Label 'delegate.ps1'
 
 function Get-AntiphonSafeApiBase {
     param([string]$Api)

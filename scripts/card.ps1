@@ -240,6 +240,8 @@ $headers = @{}
 if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
+. (Join-Path $PSScriptRoot 'lib/antiphon-caller.ps1')
+Add-AntiphonCallerHeader -Headers $headers -Label 'card.ps1'
 
 function Invoke-Antiphon {
     param([string]$Method, [string]$Path, $Body)

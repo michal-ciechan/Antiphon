@@ -27,6 +27,8 @@ $headers = @{}
 if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
+. (Join-Path $PSScriptRoot 'lib/antiphon-caller.ps1')
+Add-AntiphonCallerHeader -Headers $headers -Label 'status-snapshot.ps1'
 $problems = New-Object 'System.Collections.Generic.List[string]'
 . (Join-Path $PSScriptRoot 'lib/rc-qualification-status.ps1')
 

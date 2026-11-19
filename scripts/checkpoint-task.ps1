@@ -32,6 +32,8 @@ $headers = @{}
 if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_TASK_TOKEN)) {
     $headers['X-Antiphon-Task-Token'] = $env:ANTIPHON_TASK_TOKEN
 }
+. (Join-Path $PSScriptRoot 'lib/antiphon-caller.ps1')
+Add-AntiphonCallerHeader -Headers $headers -Label 'checkpoint-task.ps1'
 
 function Invoke-AntiphonGet([string]$Path) {
     return Invoke-RestMethod -Method GET -Uri "$api$Path" -Headers $headers
