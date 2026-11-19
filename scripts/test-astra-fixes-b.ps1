@@ -507,6 +507,7 @@ namespace Antiphon.Nightly {
 }
 
 function Test-AstraCompleteCorePath {
+    . (Join-Path $PSScriptRoot 'lib/nightly-core.ps1')
     $core = New-AstraCompleteCore
     $script:NightlyCoreAvailable = $null
     $accepted = $false
@@ -522,6 +523,7 @@ function Test-AstraCompleteCorePath {
 }
 
 function Test-AstraCheckoutIdentity {
+    . (Join-Path $PSScriptRoot 'lib/nightly-core.ps1')
     $core = New-AstraCompleteCore
     $script:NightlyCoreAvailable = $true
     $script:NightlyCoreVerifiedHash = 'stale-checkout-hash'
