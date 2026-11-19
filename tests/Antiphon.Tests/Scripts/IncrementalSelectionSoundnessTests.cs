@@ -1,0 +1,499 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using System.Xml.Linq;
+using Shouldly;
+using TUnit.Core;
+
+namespace Antiphon.Tests.Scripts;
+
+/// <summary>
+/// Replays twelve historical rc failures through two pure selections over the
+/// stored path lists. The current owner map is read from scripts/lib/rc-input-owners.json.
+/// The proposed project closure selects a suite only when a changed path sits under
+/// the suite csproj or a project it reaches by ProjectReference (reflexive, transitive,
+/// every Include, conditions included, no Directory.Build import walk) or the path
+/// is a build-graph root. Linked Compile items are not edges. Statuses are computed
+/// and compared with the fixture, so a map or graph change that moves a case fails
+/// until the recorded known-unsound set is updated.
+/// </summary>
+[Category("Unit")]
+[Timeout(60_000)]
+public sealed class IncrementalSelectionSoundnessTests
+{
+    private static readonly string[] RequiredRuns =
+    [
+        "6591e378", "d88de419", "0b292fa4", "97150a0b", "34d41b7e", "f2de5b30", "a6278259",
+    ];
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = false,
+        ReadCommentHandling = JsonCommentHandling.Disallow,
+        AllowTrailingCommas = false,
+    };
+
+    [Test]
+    public void Recorded_owner_map_status_matches_the_committed_map()
+    {
+        var root = RepoRoot();
+        var corpus = LoadCorpus(root);
+        var map = LoadOwnerMap(root);
+        foreach (var item in corpus.Cases!)
+        {
+            var status = OwnerSelects(map, item.SuiteProject, item.ChangedPaths!) ? "selected" : "missed";
+            status.ShouldBe(item.CurrentMap, item.Id);
+        }
+    }
+
+    [Test]
+    public void Project_closure_misses_match_the_recorded_known_unsound_set()
+    {
+        var root = RepoRoot();
+        var corpus = LoadCorpus(root);
+        var graph = ProjectGraph.Load(root);
+        var missed = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var item in corpus.Cases!)
+        {
+            var status = graph.Selects(item.SuiteProject, item.ChangedPaths!) ? "selected" : "missed";
+            status.ShouldBe(item.M1, item.Id);
+            if (status == "missed")
+                missed.Add(item.Id);
+        }
+
+        var recorded = new SortedSet<string>(corpus.KnownUnsound!, StringComparer.Ordinal);
+        string.Join(",", missed).ShouldBe(string.Join(",", recorded));
+    }
+
+    private static Corpus LoadCorpus(string root)
+    {
+        var path = Path.Combine(root, "tests", "fixtures", "incremental-selection-soundness.json");
+        var corpus = JsonSerializer.Deserialize<Corpus>(File.ReadAllText(path), JsonOptions)
+            ?? throw new InvalidOperationException("soundness fixture did not parse.");
+        if (corpus.SchemaVersion != 1)
+            throw new InvalidOperationException("soundness fixture schemaVersion must be 1.");
+        if (corpus.KnownUnsound is null || corpus.Cases is null)
+            throw new InvalidOperationException("soundness fixture is missing knownUnsound or cases.");
+        if (corpus.Cases.Length is < 1 or > 12)
+            throw new InvalidOperationException("soundness fixture must hold 1 to 12 cases.");
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var runs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in corpus.Cases)
+        {
+            if (string.IsNullOrWhiteSpace(item.Id) || !ids.Add(item.Id))
+                throw new InvalidOperationException("soundness case id is missing or duplicated: " + item.Id);
+            if (item.Run is null || !Regex.IsMatch(item.Run, "^[0-9a-f]{8}$", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException(item.Id + " run is not an 8-hex qualification id.");
+            runs.Add(item.Run);
+            if (item.IntroducingCommit is null || !Regex.IsMatch(item.IntroducingCommit, "^[0-9a-f]{40}$", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException(item.Id + " introducing commit is not 40 hex.");
+            if (string.IsNullOrWhiteSpace(item.FailingClass) || string.IsNullOrWhiteSpace(item.Reason))
+                throw new InvalidOperationException(item.Id + " needs a failing class and a reason.");
+            if (item.Note is null || !item.Note.StartsWith("docs/", StringComparison.Ordinal)
+                || !File.Exists(Path.Combine(root, item.Note.Replace('/', Path.DirectorySeparatorChar))))
+                throw new InvalidOperationException(item.Id + " note is missing: " + item.Note);
+            if (item.CurrentMap is not ("selected" or "missed") || item.M1 is not ("selected" or "missed"))
+                throw new InvalidOperationException(item.Id + " status must be selected or missed.");
+            if (item.SuiteProject is null || !item.SuiteProject.EndsWith(".csproj", StringComparison.Ordinal)
+                || item.SuiteProject.Contains('\\') || !File.Exists(Path.Combine(root, item.SuiteProject.Replace('/', Path.DirectorySeparatorChar))))
+                throw new InvalidOperationException(item.Id + " suite project is missing: " + item.SuiteProject);
+            if (item.ChangedPaths is null || item.ChangedPaths.Length == 0)
+                throw new InvalidOperationException(item.Id + " has no changed paths.");
+
+            var paths = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var changed in item.ChangedPaths)
+            {
+                if (string.IsNullOrWhiteSpace(changed) || changed.Contains('\\') || changed.StartsWith('/')
+                    || changed.Split('/').Contains("..") || !paths.Add(changed))
+                    throw new InvalidOperationException(item.Id + " has an invalid changed path: " + changed);
+            }
+
+            var projectName = item.SuiteProject[(item.SuiteProject.LastIndexOf('/') + 1)..^".csproj".Length];
+            if (!string.Equals(item.FailingClass, projectName, StringComparison.Ordinal))
+            {
+                var suiteDirectory = Path.Combine(root, Path.GetDirectoryName(item.SuiteProject.Replace('/', Path.DirectorySeparatorChar))!);
+                if (!ClassFileExists(suiteDirectory, item.FailingClass))
+                    throw new InvalidOperationException(item.Id + " failing class is not in " + item.SuiteProject);
+            }
+        }
+
+        foreach (var recorded in corpus.KnownUnsound)
+        {
+            if (!ids.Contains(recorded))
+                throw new InvalidOperationException("knownUnsound id is not a case: " + recorded);
+        }
+
+        if (corpus.KnownUnsound.Distinct(StringComparer.Ordinal).Count() != corpus.KnownUnsound.Length)
+            throw new InvalidOperationException("knownUnsound contains a duplicate.");
+        foreach (var required in RequiredRuns)
+        {
+            if (!runs.Contains(required))
+                throw new InvalidOperationException("corpus is missing qualification run " + required);
+        }
+
+        foreach (var run in runs)
+        {
+            if (!RequiredRuns.Contains(run, StringComparer.Ordinal))
+                throw new InvalidOperationException("corpus run is outside the seven qualification runs: " + run);
+        }
+
+        return corpus;
+    }
+
+    private static OwnerMap LoadOwnerMap(string root)
+    {
+        var path = Path.Combine(root, "scripts", "lib", "rc-input-owners.json");
+        var map = JsonSerializer.Deserialize<OwnerMap>(File.ReadAllText(path), JsonOptions)
+            ?? throw new InvalidOperationException("owner map did not parse.");
+        if (map.SchemaVersion != 1 || map.Roots is null || map.Roots.Length == 0)
+            throw new InvalidOperationException("owner map schema is not a version-1 root list.");
+        if (string.IsNullOrWhiteSpace(map.SuiteProjects) && (map.Suites is null || map.Suites.Length == 0))
+            throw new InvalidOperationException("owner map names neither suiteProjects nor suites.");
+        if (map.Suites is not null)
+        {
+            foreach (var suite in map.Suites)
+            {
+                if (string.IsNullOrWhiteSpace(suite.Id) || string.IsNullOrWhiteSpace(suite.Project))
+                    throw new InvalidOperationException("owner suite is missing an id or a project.");
+            }
+        }
+
+        foreach (var ownerRoot in map.Roots)
+        {
+            if (string.IsNullOrWhiteSpace(ownerRoot.Path) || string.IsNullOrWhiteSpace(ownerRoot.Reason)
+                || ownerRoot.Consumers is null || ownerRoot.Consumers.Length == 0)
+                throw new InvalidOperationException("owner root is missing a path, a reason, or a consumer.");
+            _ = CompileOwnerPattern(ownerRoot.Path);
+        }
+
+        return map;
+    }
+
+    private static bool OwnerSelects(OwnerMap map, string suiteProject, string[] changedPaths)
+    {
+        foreach (var ownerRoot in map.Roots!)
+        {
+            var consumes = false;
+            foreach (var consumer in ownerRoot.Consumers!)
+            {
+                if (consumer == "*" || string.Equals(consumer, suiteProject, StringComparison.Ordinal))
+                {
+                    consumes = true;
+                    break;
+                }
+            }
+
+            if (!consumes)
+                continue;
+            var pattern = CompileOwnerPattern(ownerRoot.Path);
+            foreach (var changed in changedPaths)
+            {
+                if (pattern.IsMatch(changed))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Same translation as scripts/lib/rc-input-manifest.ps1 New-RcInputPattern.
+    private static Regex CompileOwnerPattern(string pattern)
+    {
+        if (string.IsNullOrEmpty(pattern) || pattern.Length > 2048 || pattern.StartsWith('/')
+            || pattern.Split('/').Contains(".."))
+            throw new InvalidOperationException("invalid-input-pattern: " + pattern);
+        foreach (var character in pattern)
+        {
+            if (character < ' ' || character is '\\' or ':' or ';' or '[' or ']')
+                throw new InvalidOperationException("invalid-input-pattern: " + pattern);
+        }
+
+        var expression = "^" + Regex.Escape(pattern)
+            .Replace(@"\*\*/", "(?:.*/)?", StringComparison.Ordinal)
+            .Replace(@"\*\*", ".*", StringComparison.Ordinal)
+            .Replace(@"\*", "[^/]*", StringComparison.Ordinal)
+            .Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$";
+        return new Regex(expression, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    }
+
+    private static bool ClassFileExists(string suiteDirectory, string className)
+    {
+        var stack = new Stack<string>();
+        stack.Push(suiteDirectory);
+        var fileName = className + ".cs";
+        while (stack.Count > 0)
+        {
+            var dir = stack.Pop();
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                var name = Path.GetFileName(sub);
+                if (name is "bin" or "obj" or "node_modules")
+                    continue;
+                stack.Push(sub);
+            }
+
+            if (Directory.EnumerateFiles(dir, fileName).Any())
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
+            dir = dir.Parent;
+        return dir?.FullName ?? throw new DirectoryNotFoundException("Antiphon.sln was not found.");
+    }
+
+    private static bool IsBuildInput(string path)
+    {
+        var slash = path.LastIndexOf('/');
+        var name = slash < 0 ? path : path[(slash + 1)..];
+        if (name.Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("global.json", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("NuGet.Config", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("packages.lock.json", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.StartsWith("Directory.Build.", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return name.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsUnderProject(string path, string csproj)
+    {
+        var slash = csproj.LastIndexOf('/');
+        if (slash < 0)
+            return string.Equals(path, csproj, StringComparison.Ordinal);
+        return path.StartsWith(csproj[..(slash + 1)], StringComparison.Ordinal);
+    }
+
+    private sealed class ProjectGraph
+    {
+        private readonly Dictionary<string, string[]> _references;
+        private readonly Dictionary<string, HashSet<string>> _closures = new(StringComparer.Ordinal);
+
+        private ProjectGraph(Dictionary<string, string[]> references) => _references = references;
+
+        public static ProjectGraph Load(string root)
+        {
+            var projects = new Dictionary<string, string[]>(StringComparer.Ordinal);
+            foreach (var full in EnumerateProjects(root))
+            {
+                var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
+                projects.Add(relative, ReadReferences(relative, full));
+            }
+
+            if (projects.Count < 10)
+                throw new InvalidOperationException("project graph found too few csproj files.");
+            foreach (var pair in projects)
+            {
+                foreach (var reference in pair.Value)
+                {
+                    if (!projects.ContainsKey(reference))
+                        throw new InvalidOperationException("missing ProjectReference target: " + pair.Key + " -> " + reference);
+                }
+            }
+
+            return new ProjectGraph(projects);
+        }
+
+        public bool Selects(string suiteProject, string[] changedPaths)
+        {
+            if (changedPaths.Length == 0)
+                throw new InvalidOperationException("empty changed path list.");
+            if (!_closures.TryGetValue(suiteProject, out var closure))
+            {
+                closure = Closure(suiteProject);
+                _closures.Add(suiteProject, closure);
+            }
+
+            foreach (var changed in changedPaths)
+            {
+                if (IsBuildInput(changed))
+                    return true;
+                foreach (var project in closure)
+                {
+                    if (IsUnderProject(changed, project))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private HashSet<string> Closure(string suiteProject)
+        {
+            if (!_references.ContainsKey(suiteProject))
+                throw new InvalidOperationException("suite project is not in the graph: " + suiteProject);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var queue = new Queue<string>();
+            seen.Add(suiteProject);
+            queue.Enqueue(suiteProject);
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                foreach (var reference in _references[current])
+                {
+                    if (seen.Add(reference))
+                        queue.Enqueue(reference);
+                }
+            }
+
+            return seen;
+        }
+
+        private static IEnumerable<string> EnumerateProjects(string root)
+        {
+            var stack = new Stack<string>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var dir = stack.Pop();
+                foreach (var sub in Directory.EnumerateDirectories(dir))
+                {
+                    var name = Path.GetFileName(sub);
+                    if (name is ".git" or "bin" or "obj" or "node_modules" or ".antiphon")
+                        continue;
+                    stack.Push(sub);
+                }
+
+                foreach (var file in Directory.EnumerateFiles(dir, "*.csproj"))
+                    yield return file;
+            }
+        }
+
+        private static string[] ReadReferences(string csproj, string fullPath)
+        {
+            var slash = csproj.LastIndexOf('/');
+            if (slash < 0)
+                throw new InvalidOperationException("csproj is not in a directory: " + csproj);
+            var directory = csproj[..(slash + 1)];
+            var document = XDocument.Load(fullPath);
+            var references = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var element in document.Descendants().Where(item => item.Name.LocalName == "ProjectReference"))
+            {
+                var include = element.Attribute("Include")?.Value;
+                if (string.IsNullOrWhiteSpace(include))
+                    throw new InvalidOperationException("ProjectReference without Include in " + csproj);
+                var resolved = Resolve(directory, csproj, include);
+                if (seen.Add(resolved))
+                    references.Add(resolved);
+            }
+
+            return references.ToArray();
+        }
+
+        private static string Resolve(string directory, string csproj, string include)
+        {
+            var value = include.Replace('\\', '/').Trim();
+            if (value.Length == 0 || value.StartsWith('/') || value.Contains('$') || value.Contains('@')
+                || value.Contains('%') || value.Contains(':'))
+                throw new InvalidOperationException("unresolved ProjectReference in " + csproj + ": " + include);
+            var parts = new List<string>();
+            foreach (var part in (directory + value).Split('/'))
+            {
+                if (part == "..")
+                {
+                    if (parts.Count == 0)
+                        throw new InvalidOperationException("outside-repository: " + csproj + " -> " + include);
+                    parts.RemoveAt(parts.Count - 1);
+                }
+                else if (part.Length > 0 && part != ".")
+                {
+                    parts.Add(part);
+                }
+            }
+
+            var resolved = string.Join('/', parts);
+            if (!resolved.EndsWith(".csproj", StringComparison.Ordinal))
+                throw new InvalidOperationException("project reference is not a csproj: " + csproj + " -> " + resolved);
+            return resolved;
+        }
+    }
+
+    private sealed class Corpus
+    {
+        [JsonPropertyName("schemaVersion")]
+        public int SchemaVersion { get; set; }
+
+        [JsonPropertyName("knownUnsound")]
+        public string[]? KnownUnsound { get; set; }
+
+        [JsonPropertyName("cases")]
+        public Case[]? Cases { get; set; }
+    }
+
+    private sealed class Case
+    {
+        [JsonPropertyName("id")]
+        public string Id { get; set; } = "";
+
+        [JsonPropertyName("run")]
+        public string? Run { get; set; }
+
+        [JsonPropertyName("failingClass")]
+        public string? FailingClass { get; set; }
+
+        [JsonPropertyName("suiteProject")]
+        public string? SuiteProject { get; set; }
+
+        [JsonPropertyName("introducingCommit")]
+        public string? IntroducingCommit { get; set; }
+
+        [JsonPropertyName("note")]
+        public string? Note { get; set; }
+
+        [JsonPropertyName("changedPaths")]
+        public string[]? ChangedPaths { get; set; }
+
+        [JsonPropertyName("currentMap")]
+        public string? CurrentMap { get; set; }
+
+        [JsonPropertyName("m1")]
+        public string? M1 { get; set; }
+
+        [JsonPropertyName("reason")]
+        public string? Reason { get; set; }
+    }
+
+    private sealed class OwnerMap
+    {
+        [JsonPropertyName("schemaVersion")]
+        public int SchemaVersion { get; set; }
+
+        [JsonPropertyName("suiteProjects")]
+        public string? SuiteProjects { get; set; }
+
+        [JsonPropertyName("suites")]
+        public OwnerSuite[]? Suites { get; set; }
+
+        [JsonPropertyName("roots")]
+        public OwnerRoot[]? Roots { get; set; }
+    }
+
+    private sealed class OwnerSuite
+    {
+        [JsonPropertyName("id")]
+        public string? Id { get; set; }
+
+        [JsonPropertyName("project")]
+        public string? Project { get; set; }
+    }
+
+    private sealed class OwnerRoot
+    {
+        [JsonPropertyName("path")]
+        public string Path { get; set; } = "";
+
+        [JsonPropertyName("consumers")]
+        public string[]? Consumers { get; set; }
+
+        [JsonPropertyName("reason")]
+        public string? Reason { get; set; }
+    }
+}
