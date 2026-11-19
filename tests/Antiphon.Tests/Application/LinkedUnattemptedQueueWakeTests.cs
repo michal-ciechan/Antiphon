@@ -73,7 +73,7 @@ public sealed class LinkedUnattemptedQueueWakeTests
         saved.DeliveryAttempts.ShouldBe(attempts, shape + " must not retype a claimed or unattempted row");
         saved.Status.ShouldBe(status);
         if (shape == "linked-pending")
-            flushes.Sessions.ShouldBe(new[] { harness.SessionId },
+            flushes.Sessions.ShouldHaveSingleItem(shape + ": the flush is not woken").ShouldBe(harness.SessionId,
                 "linked, Pending, zero attempts: the flush is not woken");
         else
             flushes.Sessions.ShouldBeEmpty(shape + ": the flush is not woken");
