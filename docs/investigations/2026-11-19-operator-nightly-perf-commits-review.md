@@ -206,6 +206,16 @@ $still = @($back.suites | Where-Object { $_.PSObject.Properties.Name -contains "
 
 Replace `<candidate-checkout>` with the checkout path. Expect `rowExclusions=0` and a file on the order of a few megabytes, not hundreds. If `SameElementReferences` throws `dedupe refused`, the real census lists are not one shared reference and the production writer would keep per-row lists; stop and do not start the 16-hour run.
 
+## Master moved after this measurement
+
+`git fetch origin master` during publication found `origin/master` at `0822e8bbc60f2c8f333504d60cf3484cc7b6f2b8`, four commits ahead of `fb6dc4e5a36b4ecbc827afb29ed7039a2d74fdc2`. Those commits were not built or tested here. `git merge-tree --write-tree origin/master HEAD` for this document's commit exits 0.
+
+- `9abb57129` and `8cca875d8` are docs for run `a6278259`.
+- `57575f8dc` removes the `ConvertTo-Json` fallback from `Write-NightlyJsonFile`. A path that is not absolute, or a value `WriteFile` will not write, throws `nightly-json-write-failed` and deletes a part-written file. That commit also edits `scripts/test-live-lane-run.ps1`, so the `PinnedInputDigest` measured above is the `fb6dc4e5` pin only.
+- `0822e8bbc` stops copying chunk rows into `dispatchProgress.suites`. The field becomes `suitesFromSummary=$true`, and `nightly-failure-history.ps1` rebuilds the rows from `summary.suites`.
+
+The Linux reds and the synthetic RSS numbers in this document are for `fb6dc4e5` plus this investigation commit. They are not a result for `0822e8bbc`.
+
 ## Not done, noted
 
 One line: teach `LatestDiagnosticLog` an ordinal name tie-break and stop treating the Windows hidden bit as the Linux witness, and regenerate `tests/derived-impact-index.json` with `scripts/regenerate-derived-impact-index.ps1` so `committed_index_matches_the_builder` matches the builder.
