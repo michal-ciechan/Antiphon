@@ -372,6 +372,7 @@ try {
         Write-Host 'OBSERVED windows-acl'
     } else {
         Test-Case 'execute-linux-mode-600'
+        $null = { Set-OwnerOnlyFile }
         $null = Get-Command -Name Set-OwnerOnlyFile -ErrorAction SilentlyContinue
         $null = [System.Security.AccessControl.FileSystemAccessRule]
         $mode = 'missing'
@@ -426,7 +427,8 @@ try {
         $lockedRun = Invoke-Dw3 -ArgumentList @('-Execute', '-Rotate', '-UserSecretsPath', $rotateLocked.UserSecrets, '-SecretFile', $rotateLocked.SecretFile, '-ProfileHome', $profileHome) -Username $owner -Orchestrator '' -ClaudeCode '' -LogPath $rotateLocked.Log
         Assert-True ($lockedRun.Exit -eq 2) 'rotate-unwritable-exit' ('exit=' + $lockedRun.Exit)
         Assert-True ($lockedRun.Text.Contains('REFUSED: failed')) 'rotate-unwritable-refuses' 'missing refusal'
-        Assert-True ($lockedRun.Text.Contains('changed: none')) 'rotate-unwritable-changed-none' 'changed line missing'
+        Assert-True ($lockedRun.Text.Contains('changed: phase1-config')) 'rotate-unwritable-names-phase1' 'phase1 change missing'
+        Assert-True (-not $lockedRun.Text.Contains('changed: none')) 'rotate-unwritable-not-none' 'changed: none while phase1 was created'
         Assert-True (-not $lockedRun.Text.Contains('changed: secret-file')) 'rotate-unwritable-secret-not-changed' 'secret half changed'
         Assert-True (-not $lockedRun.Text.Contains('changed: user-secrets')) 'rotate-unwritable-json-not-changed' 'user-secrets half changed'
         Assert-NoText 'rotate-unwritable-streams-have-no-sentinel' $lockedRun.Text $oldDesktop
@@ -454,7 +456,8 @@ try {
     Assert-True ($rollbackRun.Exit -eq 2) 'rotate-rollback-exit' ('exit=' + $rollbackRun.Exit)
     Assert-True ($rollbackRun.Text.Contains('REFUSED: failed')) 'rotate-rollback-refuses' 'missing refusal'
     Assert-True ($rollbackRun.Text.Contains('step=secret-file-commit')) 'rotate-rollback-step' 'step line missing'
-    Assert-True ($rollbackRun.Text.Contains('changed: none')) 'rotate-rollback-changed-none' 'changed line missing'
+    Assert-True ($rollbackRun.Text.Contains('changed: phase1-config')) 'rotate-rollback-names-phase1' 'phase1 change missing'
+    Assert-True (-not $rollbackRun.Text.Contains('changed: none')) 'rotate-rollback-not-none' 'changed: none while phase1 was created'
     Assert-NoText 'rotate-rollback-streams-have-no-sentinel' $rollbackRun.Text $oldDesktop
     Assert-True (Test-BytesEqual $rollbackJsonBefore ([System.IO.File]::ReadAllBytes($rollback.UserSecrets))) 'rotate-rollback-json-unchanged' 'user-secrets bytes changed'
     Assert-True (Test-BytesEqual $rollbackFileBefore ([System.IO.File]::ReadAllBytes($rollback.SecretFile))) 'rotate-rollback-secret-unchanged' 'secret file bytes changed'
@@ -472,7 +475,8 @@ try {
     Assert-True ($tempRun.Exit -eq 2) 'temp-write-fail-exit' ('exit=' + $tempRun.Exit)
     Assert-True ($tempRun.Text.Contains('REFUSED: failed')) 'temp-write-fail-refuses' 'missing refusal'
     Assert-True ($tempRun.Text.Contains('step=user-secrets-write')) 'temp-write-fail-step' 'step line missing'
-    Assert-True ($tempRun.Text.Contains('changed: none')) 'temp-write-fail-changed-none' 'changed line missing'
+    Assert-True ($tempRun.Text.Contains('changed: phase1-config')) 'temp-write-fail-names-phase1' 'phase1 change missing'
+    Assert-True (-not $tempRun.Text.Contains('changed: none')) 'temp-write-fail-not-none' 'changed: none while phase1 was created'
     Assert-True (Test-BytesEqual $tempBefore ([System.IO.File]::ReadAllBytes($tempFail.UserSecrets))) 'temp-write-fail-json-unchanged' 'user-secrets bytes changed'
     Assert-True (-not (Test-Path -LiteralPath $tempFail.SecretFile)) 'temp-write-fail-no-secret-file' 'secret file remains'
     Assert-NoStray $tempFail.Runner 'temp-write-fail-no-stray-runner'
@@ -486,7 +490,8 @@ try {
     Assert-True ($chmodRun.Exit -eq 2) 'chmod-fail-exit' ('exit=' + $chmodRun.Exit)
     Assert-True ($chmodRun.Text.Contains('REFUSED: failed')) 'chmod-fail-refuses' 'missing refusal'
     Assert-True ($chmodRun.Text.Contains('step=secret-acl')) 'chmod-fail-step' 'step line missing'
-    Assert-True ($chmodRun.Text.Contains('changed: none')) 'chmod-fail-changed-none' 'changed line missing'
+    Assert-True ($chmodRun.Text.Contains('changed: phase1-config')) 'chmod-fail-names-phase1' 'phase1 change missing'
+    Assert-True (-not $chmodRun.Text.Contains('changed: none')) 'chmod-fail-not-none' 'changed: none while phase1 was created'
     Assert-True (-not (Test-Path -LiteralPath $chmodFail.SecretFile)) 'chmod-fail-no-secret-file' 'secret file remains'
     Assert-True (Test-BytesEqual $chmodBefore ([System.IO.File]::ReadAllBytes($chmodFail.UserSecrets))) 'chmod-fail-json-unchanged' 'user-secrets bytes changed'
     Assert-NoStray $chmodFail.Runner 'chmod-fail-no-stray-runner'
@@ -640,8 +645,9 @@ try {
     $jsonFaultSame = $false
     if ($jsonFaultPresent) { $jsonFaultSame = Test-BytesEqual $jsonFaultBefore ([System.IO.File]::ReadAllBytes($jsonFault.UserSecrets)) }
     Assert-True ($jsonFaultPresent -and $jsonFaultSame) 'replace-fault-json-restored' 'secrets.json missing or bytes differ'
+    $jsonFaultNoted = $jsonFaultRun.Text.Contains('changed: phase1-config')
     $jsonFaultNone = $jsonFaultRun.Text.Contains('changed: none')
-    Assert-True ($jsonFaultNone -and $jsonFaultSame -and -not (Test-Path -LiteralPath $jsonFault.SecretFile)) 'replace-fault-json-truthful' 'changed: none while a target differs'
+    Assert-True ((-not $jsonFaultNone) -and $jsonFaultNoted -and $jsonFaultSame -and -not (Test-Path -LiteralPath $jsonFault.SecretFile)) 'replace-fault-json-truthful' 'changed line does not match the phase1 copy'
     Assert-True (-not $jsonFaultRun.Text.Contains('differs:')) 'replace-fault-json-no-differs' 'differs line remains'
     Assert-True (-not (Test-Path -LiteralPath $jsonFault.SecretFile)) 'replace-fault-json-no-secret-file' 'secret file remains'
     Assert-NoText 'replace-fault-json-no-sentinel' $jsonFaultRun.Text $seedKeep
@@ -668,7 +674,9 @@ try {
     if ($secretFaultFilePresent) { $secretFaultFileSame = Test-BytesEqual $secretFaultFileBefore ([System.IO.File]::ReadAllBytes($secretFault.SecretFile)) }
     Assert-True ($secretFaultJsonPresent -and $secretFaultJsonSame) 'replace-fault-secret-json-restored' 'secrets.json missing or bytes differ'
     Assert-True ($secretFaultFilePresent -and $secretFaultFileSame) 'replace-fault-secret-file-restored' 'secret file missing or bytes differ'
-    Assert-True ($secretFaultRun.Text.Contains('changed: none') -and $secretFaultJsonSame -and $secretFaultFileSame) 'replace-fault-secret-truthful' 'changed: none while a target differs'
+    $secretFaultNoted = $secretFaultRun.Text.Contains('changed: phase1-config')
+    $secretFaultNone = $secretFaultRun.Text.Contains('changed: none')
+    Assert-True ((-not $secretFaultNone) -and $secretFaultNoted -and $secretFaultJsonSame -and $secretFaultFileSame) 'replace-fault-secret-truthful' 'changed line does not match the phase1 copy'
     Assert-True (-not $secretFaultRun.Text.Contains('differs:')) 'replace-fault-secret-no-differs' 'differs line remains'
     Assert-NoText 'replace-fault-secret-no-sentinel' $secretFaultRun.Text $oldDesktop
     Assert-NoText 'replace-fault-secret-no-file-sentinel' $secretFaultRun.Text 'sentinel-old-secret-file'
