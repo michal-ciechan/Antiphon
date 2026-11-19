@@ -1292,9 +1292,10 @@ function Test-NCDiscoveryCacheAgrees {
 }
 
 # F5. The discovery writer (DiscoveryWriter.WriteFile) emits UTF-8 without a BOM,
-# with commas only between values and with no comments. The reader still has to
-# accept a UTF-8 BOM and a trailing comma, and a discovery-unreadable for UTF-16
-# or a comment has to name this file and the reason. No ConvertFrom-Json fallback.
+# with commas only between values and with no comments. The reader accepts a UTF-8
+# BOM, a trailing comma, and a UTF-16 document that starts with a BOM (FF FE or
+# FE FF). A UTF-16 document without a BOM is discovery-unreadable with reason
+# utf-16, and a comment names this file and the reason. No ConvertFrom-Json fallback.
 function Test-NCDiscoveryParserTolerance {
     $dir = Join-Path $root 'discovery-parser'
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
@@ -1329,8 +1330,29 @@ function Test-NCDiscoveryParserTolerance {
     $utf16 = New-Object System.Text.UnicodeEncoding $false, $true
     [IO.File]::WriteAllBytes($utf16Path, $utf16.GetBytes($text))
     $utf16Read = Read-NCDiscoveryOutcome $utf16Path
-    $utf16Expect = 'discovery-unreadable: ' + $utf16Path + ': utf-16'
-    Assert-NC ((-not $utf16Read.Ok) -and ($utf16Read.Error -ceq $utf16Expect)) 'utf16' ('actual=' + $utf16Read.Error)
+    Assert-NC ($utf16Read.Ok -and $utf16Read.Count -eq 1 -and $utf16Read.Uid -ceq 'u1') 'utf16-le' ('actual=' + $utf16Read.Error + ' uid=' + $utf16Read.Uid)
+    $utf16BePath = Join-Path $dir 'utf16-be.discovery.json'
+    $utf16Be = New-Object System.Text.UnicodeEncoding $true, $true
+    [IO.File]::WriteAllBytes($utf16BePath, $utf16Be.GetBytes($text))
+    $utf16BeRead = Read-NCDiscoveryOutcome $utf16BePath
+    Assert-NC ($utf16BeRead.Ok -and $utf16BeRead.Count -eq 1 -and $utf16BeRead.Uid -ceq 'u1') 'utf16-be' ('actual=' + $utf16BeRead.Error + ' uid=' + $utf16BeRead.Uid)
+    $utf16BarePath = Join-Path $dir 'utf16-bare.discovery.json'
+    $utf16Bare = New-Object System.Text.UnicodeEncoding $false, $false
+    [IO.File]::WriteAllBytes($utf16BarePath, $utf16Bare.GetBytes($text))
+    $utf16BareRead = Read-NCDiscoveryOutcome $utf16BarePath
+    $utf16BareExpect = 'discovery-unreadable: ' + $utf16BarePath + ': utf-16'
+    Assert-NC ((-not $utf16BareRead.Ok) -and ($utf16BareRead.Error -ceq $utf16BareExpect)) 'utf16-nobom' ('actual=' + $utf16BareRead.Error)
+    $utf16EmptyPath = Join-Path $dir 'utf16-empty.discovery.json'
+    [IO.File]::WriteAllBytes($utf16EmptyPath, [byte[]](0xFF, 0xFE))
+    $utf16EmptyRead = Read-NCDiscoveryOutcome $utf16EmptyPath
+    $utf16EmptyExpect = 'empty discovery ' + $utf16EmptyPath
+    Assert-NC ((-not $utf16EmptyRead.Ok) -and ($utf16EmptyRead.Error -ceq $utf16EmptyExpect)) 'utf16-empty' ('actual=' + $utf16EmptyRead.Error)
+    $utf16CommentPath = Join-Path $dir 'utf16-comment.discovery.json'
+    $utf16CommentText = $text.Insert(1, '/* retained inventory */')
+    [IO.File]::WriteAllBytes($utf16CommentPath, $utf16.GetBytes($utf16CommentText))
+    $utf16CommentRead = Read-NCDiscoveryOutcome $utf16CommentPath
+    $utf16CommentExpect = 'discovery-unreadable: ' + $utf16CommentPath + ': comment'
+    Assert-NC ((-not $utf16CommentRead.Ok) -and ($utf16CommentRead.Error -ceq $utf16CommentExpect)) 'utf16-comment' ('actual=' + $utf16CommentRead.Error)
     $commentPath = Join-Path $dir 'comment.discovery.json'
     $commentText = $text.Insert(1, '/* retained inventory */')
     [IO.File]::WriteAllBytes($commentPath, $utf8.GetBytes($commentText))
@@ -1339,11 +1361,75 @@ function Test-NCDiscoveryParserTolerance {
     Assert-NC ((-not $commentRead.Ok) -and ($commentRead.Error -ceq $commentExpect)) 'comment' ('actual=' + $commentRead.Error)
 }
 
+# A-2 / A-3. The cache identity on Windows prefers the 128-bit FileIdInfo id and
+# falls back to the 64-bit file index. Unknown is never equal, including to
+# itself. A different id does not hit the hash cache. HistoryNodeIdentity.Read
+# is the production factory. The real FileIdInfo query is Windows-only; the
+# desktop observation is scripts/test-nightly-core.ps1 -Case DiscoveryCacheAgrees.
+function Test-NCDiscoveryCacheFileId {
+    $dir = Join-Path $root 'discovery-file-id'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $path = Join-Path $dir 'suite.bin'
+    $a = [Text.Encoding]::UTF8.GetBytes('alpha-content-one')
+    $b = [Text.Encoding]::UTF8.GetBytes('bravo-content-two')
+    $c = [Text.Encoding]::UTF8.GetBytes('charlie-content-x')
+    [IO.File]::WriteAllBytes($path, $a)
+    [IO.File]::SetLastWriteTimeUtc($path, [DateTime]::UtcNow.AddMinutes(-1))
+    $kept = [IO.File]::GetLastWriteTimeUtc($path)
+    $id128 = New-Object byte[] 16
+    $other = New-Object byte[] 16
+    for ($i = 0; $i -lt 16; $i++) { $id128[$i] = [byte]($i + 1); $other[$i] = [byte]($i + 1) }
+    $other[15] = 99
+    $short = New-Object byte[] 15
+    $full = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]9, $id128, $true, [uint32]9, [uint64]100)
+    $fullOtherIndex = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]9, $id128, $true, [uint32]9, [uint64]999)
+    $different = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]9, $other, $true, [uint32]9, [uint64]100)
+    $otherVolume = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]8, $id128, $true, [uint32]9, [uint64]100)
+    $fallback = [Antiphon.Nightly.CacheFileIdentity]::Decide($false, [uint64]0, $null, $true, [uint32]9, [uint64]100)
+    $fallbackOther = [Antiphon.Nightly.CacheFileIdentity]::Decide($false, [uint64]0, $null, $true, [uint32]9, [uint64]101)
+    $unknown = [Antiphon.Nightly.CacheFileIdentity]::Decide($false, [uint64]0, $null, $false, [uint32]0, [uint64]0)
+    $malformed = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]9, $short, $true, [uint32]9, [uint64]100)
+    $malformedUnknown = [Antiphon.Nightly.CacheFileIdentity]::Decide($true, [uint64]9, $short, $false, [uint32]9, [uint64]100)
+    Assert-NC ($full.Known -and ($full.Kind.ToString() -ceq 'FileId128') -and [Antiphon.Nightly.CacheIdentity]::Same($full, $fullOtherIndex)) 'fileId128' ('kind=' + $full.Kind)
+    Assert-NC (-not [Antiphon.Nightly.CacheIdentity]::Same($full, $different)) 'fileId-differs' 'different 128-bit id compared equal'
+    Assert-NC (-not [Antiphon.Nightly.CacheIdentity]::Same($full, $otherVolume)) 'volume-differs' 'different volume compared equal'
+    Assert-NC ($fallback.Known -and ($fallback.Kind.ToString() -ceq 'FileIndex64') -and [Antiphon.Nightly.CacheIdentity]::Same($fallback, $fallback) -and -not [Antiphon.Nightly.CacheIdentity]::Same($fallback, $fallbackOther)) 'fallback' ('kind=' + $fallback.Kind)
+    Assert-NC (-not [Antiphon.Nightly.CacheIdentity]::Same($full, $fallback)) 'kind-differs' '128-bit id compared equal to the 64-bit fallback'
+    Assert-NC ((-not $unknown.Known) -and -not [Antiphon.Nightly.CacheIdentity]::Same($unknown, $unknown) -and -not [Antiphon.Nightly.CacheIdentity]::Same($unknown, $fallback) -and -not [Antiphon.Nightly.CacheIdentity]::Same($unknown, $full)) 'unknown' 'unknown identity compared equal'
+    Assert-NC ($malformed.Known -and ($malformed.Kind.ToString() -ceq 'FileIndex64') -and [Antiphon.Nightly.CacheIdentity]::Same($malformed, $fallback) -and -not $malformedUnknown.Known) 'malformed' ('kind=' + $malformed.Kind)
+    $node = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
+    Assert-NC ($null -ne $node.CacheId -and $node.CacheId.Known -and -not $node.Missing -and -not $node.Linked) 'read-cache-id' ('kind=' + $(if ($null -eq $node.CacheId) { 'null' } else { $node.CacheId.Kind }))
+    [Antiphon.Nightly.NightlyClassNames]::ClearHashes()
+    [Antiphon.Nightly.CacheFileIdentity]::TestOverride = $null
+    try {
+        [Antiphon.Nightly.CacheFileIdentity]::TestOverride = $full
+        $hash1 = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($path)
+        [IO.File]::WriteAllBytes($path, $b)
+        [IO.File]::SetLastWriteTimeUtc($path, $kept)
+        [Antiphon.Nightly.CacheFileIdentity]::TestOverride = $different
+        $hash2 = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($path)
+        $diskB = [Antiphon.Nightly.NightlyClassNames]::FileSha256($path)
+        Assert-NC (($a.Length -eq $b.Length) -and ($hash2 -ceq $diskB) -and ($hash2 -cne $hash1)) 'different-id-miss' ('hash1=' + $hash1 + ' hash2=' + $hash2 + ' disk=' + $diskB)
+        $hash3 = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($path)
+        Assert-NC ($hash3 -ceq $hash2) 'same-id-hit' ('hash3=' + $hash3 + ' hash2=' + $hash2)
+        [IO.File]::WriteAllBytes($path, $c)
+        [IO.File]::SetLastWriteTimeUtc($path, $kept)
+        [Antiphon.Nightly.CacheFileIdentity]::TestOverride = $unknown
+        $hash4 = [Antiphon.Nightly.NightlyClassNames]::CachedFileSha256($path)
+        $diskC = [Antiphon.Nightly.NightlyClassNames]::FileSha256($path)
+        Assert-NC (($c.Length -eq $b.Length) -and ($hash4 -ceq $diskC) -and ($hash4 -cne $hash2)) 'unknown-miss' ('hash4=' + $hash4 + ' disk=' + $diskC + ' stale=' + $hash2)
+    } finally {
+        [Antiphon.Nightly.CacheFileIdentity]::TestOverride = $null
+        [Antiphon.Nightly.NightlyClassNames]::ClearHashes()
+    }
+}
+
 $expected = 0
 switch -Exact ($Case) {
     'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCProfileLaunchGroupsGolden; Test-NCDiscoveryWriterMatchesConvertToJson; Test-NCHistoryLinks; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 38 }
     'DiscoveryCacheAgrees' { Test-NCDiscoveryCacheAgrees; $expected = 2 }
-    'DiscoveryParserTolerance' { Test-NCDiscoveryParserTolerance; $expected = 6 }
+    'DiscoveryParserTolerance' { Test-NCDiscoveryParserTolerance; $expected = 10 }
+    'DiscoveryCacheFileId' { Test-NCDiscoveryCacheFileId; $expected = 11 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected
