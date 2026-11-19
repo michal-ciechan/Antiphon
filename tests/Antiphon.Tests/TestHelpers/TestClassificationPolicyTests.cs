@@ -556,20 +556,166 @@ public sealed class TestClassificationPolicyTests
         return NormalizeDirectory(root);
     }
 
+    private static readonly TimeSpan StaleProbeAge = TimeSpan.FromHours(24);
+
     private static bool SameDirectory(string left, string right) =>
         string.Equals(NormalizeDirectory(left), NormalizeDirectory(right), StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeDirectory(string path) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
+    private static bool IsExactProbeDirectoryName(string name)
+    {
+        const string prefix = "c487-probe-";
+        if (name.Length != prefix.Length + 32 || !name.StartsWith(prefix, StringComparison.Ordinal))
+            return false;
+        for (var i = prefix.Length; i < name.Length; i++)
+        {
+            if (name[i] is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Deletes direct children of <paramref name="ownedRoot"/> named <c>c487-probe-</c> plus 32
+    /// lowercase hex digits whose last write is older than 24 hours. The parent must be the
+    /// temp directory. Nothing outside that parent is enumerated.
+    /// </summary>
+    internal static int SweepStaleProbeDirectories(string ownedRoot, DateTimeOffset utcNow)
+    {
+        var root = NormalizeDirectory(ownedRoot);
+        var temp = NormalizeDirectory(Path.GetTempPath());
+        var parent = Path.GetDirectoryName(root);
+        if (parent is null || !SameDirectory(parent, temp) || SameDirectory(root, temp) || !Directory.Exists(root))
+        {
+            Console.WriteLine("c487-probe stale sweep removed=0");
+            return 0;
+        }
+
+        var removed = 0;
+        foreach (var entry in Directory.EnumerateDirectories(root))
+        {
+            var full = NormalizeDirectory(entry);
+            var entryParent = Path.GetDirectoryName(full);
+            if (entryParent is null || !SameDirectory(entryParent, root))
+                continue;
+            if (!IsExactProbeDirectoryName(Path.GetFileName(full)))
+                continue;
+            var written = new DateTimeOffset(Directory.GetLastWriteTimeUtc(full), TimeSpan.Zero);
+            if (utcNow - written <= StaleProbeAge)
+                continue;
+            ReleaseTempDirectory(full);
+            if (!Directory.Exists(full))
+                removed++;
+        }
+
+        Console.WriteLine($"c487-probe stale sweep removed={removed}");
+        return removed;
+    }
+
     // Every temp directory this class makes is its own; the body's result is all that survives it.
     private static async Task<T> WithTempDirectoryAsync<T>(string prefix, Func<string, Task<T>> body)
     {
-        var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        string dir;
+        if (string.Equals(prefix, "c487-probe-", StringComparison.Ordinal))
+        {
+            var owned = ProbeOwnedRoot();
+            SweepStaleProbeDirectories(owned, DateTimeOffset.UtcNow);
+            dir = Path.Combine(owned, prefix + Guid.NewGuid().ToString("N"));
+        }
+        else
+        {
+            dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
+        }
+
         Directory.CreateDirectory(dir);
+        dir = NormalizeDirectory(dir);
+        OwnedTempRoot.Track(dir);
         try { return await body(dir); }
         // Best-effort: a failed delete (a Probe.dll still loaded on Windows) never fails the test.
-        finally { StartRefGit.DeleteDirectory(dir); }
+        finally { ReleaseTempDirectory(dir); }
+    }
+
+    private static void ReleaseTempDirectory(string path)
+    {
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            if (!Directory.Exists(path))
+            {
+                OwnedTempRoot.Release(path);
+                return;
+            }
+
+            ClearReadOnlyAttributes(path);
+            StartRefGit.DeleteDirectory(path);
+            if (!Directory.Exists(path))
+            {
+                OwnedTempRoot.Release(path);
+                return;
+            }
+
+            if (attempt < 3)
+                Thread.Sleep(TimeSpan.FromMilliseconds(50 * attempt));
+        }
+    }
+
+    private static void ClearReadOnlyAttributes(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+            return;
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        if (attributes.HasFlag(FileAttributes.ReparsePoint))
+            return;
+        if (attributes.HasFlag(FileAttributes.ReadOnly))
+        {
+            try { File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+
+        IEnumerable<string> entries;
+        try
+        {
+            entries = Directory.EnumerateFileSystemEntries(path).ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            FileAttributes entryAttributes;
+            try
+            {
+                entryAttributes = File.GetAttributes(entry);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            if (entryAttributes.HasFlag(FileAttributes.ReparsePoint))
+                continue;
+            if (entryAttributes.HasFlag(FileAttributes.ReadOnly))
+            {
+                try { File.SetAttributes(entry, entryAttributes & ~FileAttributes.ReadOnly); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+
+            if (entryAttributes.HasFlag(FileAttributes.Directory))
+                ClearReadOnlyAttributes(entry);
+        }
     }
 
     private static async Task<(int ExitCode, string Output)> InvokeTripwireAsyncPath(string trxPath, string allowPath)
