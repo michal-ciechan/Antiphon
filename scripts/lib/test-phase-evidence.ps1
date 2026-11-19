@@ -209,6 +209,7 @@ function Read-TestPhaseTrxRows {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $none = [pscustomobject]@{ Rows = @(); Complete = $false; Refused = $true }
     if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Read-TestPhaseTrxRows' }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
@@ -325,6 +326,7 @@ function Read-TestPhaseBoundedBytes {
         [int]$DeadlineMilliseconds = 200,
         $Watch = $null
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $refused = [pscustomobject]@{ Bytes = $null; Complete = $false; Refused = $true; Kind = 'unreadable' }
     if ($MaxBytes -lt 1) { $MaxBytes = 1 }
     if ($DeadlineMilliseconds -lt 1) { $DeadlineMilliseconds = 1 }
@@ -365,6 +367,7 @@ function Read-TestPhaseBoundedBytes {
 
 function ConvertTo-TestPhaseJsonlRecords {
     param($Read, [int]$MaxLines = 4000, [int]$DeadlineMilliseconds = 200, $Watch = $null)
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $records = New-Object System.Collections.Generic.List[object]
     $torn = 0
     $malformed = 0
@@ -411,6 +414,7 @@ function ConvertTo-TestPhaseJsonlRecords {
 
 function Read-TestPhaseJsonlFile {
     param([string]$Path)
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $watch
     $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $watch
@@ -424,6 +428,7 @@ function Get-TestPhaseSummaryBudgetMilliseconds { return 5000 }
 
 function Read-TestPhaseJsonlForSummary {
     param([string]$Path, $BudgetState = $null)
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $inline = [Diagnostics.Stopwatch]::StartNew()
     $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes 262144 -DeadlineMilliseconds 200 -Watch $inline
     $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines 4000 -DeadlineMilliseconds 200 -Watch $inline
@@ -466,6 +471,7 @@ function Read-TestPhaseJsonlBounded {
         [int]$DeadlineMilliseconds = 200,
         $Watch = $null
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
     $read = Read-TestPhaseBoundedBytes -Path $Path -MaxBytes $MaxBytes -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
     $parsed = ConvertTo-TestPhaseJsonlRecords -Read $read -MaxLines $MaxLines -DeadlineMilliseconds $DeadlineMilliseconds -Watch $Watch
@@ -2425,6 +2431,7 @@ function Get-QualificationTrxStats {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $incomplete = [pscustomobject]@{ P50 = $null; P95 = $null; Max = $null; Slowest = @(); Count = 0; Complete = $false }
     if ([string]::IsNullOrWhiteSpace($TrxPath)) { return $null }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
@@ -2572,6 +2579,7 @@ function Read-QualificationTimingJsonl {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $none = [pscustomobject]@{ Records = @(); Complete = $false }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $none }
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
@@ -2711,6 +2719,7 @@ function Read-QualificationShardHeader {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $refused = [pscustomobject]@{ Header = $null; Refused = $true }
     $absent = [pscustomobject]@{ Header = $null; Refused = $false }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $refused }
@@ -2746,6 +2755,7 @@ function Get-QualificationPhaseSums {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 500
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     $empty = [pscustomobject]@{
         fixtureSetupSeconds = $null
         fixtureTeardownSeconds = $null
@@ -2946,6 +2956,7 @@ function Read-QualificationSidecar {
         $Watch = $null,
         [int]$DeadlineMilliseconds = 200
     )
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
     Sync-NightlyDeferredEvidenceWrites $Path
     if ($null -eq $Watch) { $Watch = [Diagnostics.Stopwatch]::StartNew() }
@@ -3239,6 +3250,7 @@ function Initialize-TestPhaseReadWarmup {
 # One shared reader budget per terminal publication. Tests can supply a stopped
 # Stopwatch and an exhausted/unexhausted budget without replacing the readers.
 function New-QualificationReadBudget {
+    if (-not $script:TestPhaseReadWarmed) { Initialize-TestPhaseReadWarmup }
     return @{ Watch = [Diagnostics.Stopwatch]::StartNew(); DeadlineMilliseconds = 200 }
 }
 
@@ -3445,7 +3457,10 @@ function Update-QualificationChunkTiming {
     }
 }
 
-Initialize-TestPhaseReadWarmup
+# The warm-up runs on first use, not at load: each reader that starts a read deadline, and New-QualificationReadBudget,
+# calls Initialize-TestPhaseReadWarmup before its clock starts. A process that loads this file and never reads evidence
+# (the heartbeat, most nightly helpers) no longer spends about 0.3 s on it.
+if (-not (Get-Variable -Name TestPhaseReadWarmed -Scope Script -ErrorAction SilentlyContinue)) { $script:TestPhaseReadWarmed = $false }
 
 function Invoke-QualificationPostRunAggregation {
     param(
