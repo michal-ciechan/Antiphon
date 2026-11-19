@@ -493,6 +493,17 @@ function Invoke-AutostartRefusedScript {
     Assert-AutostartClosed 'autostart-refused-script' $result 'config-malformed'
 }
 
+function Invoke-AutostartScriptDirect {
+    $stage = New-AutostartStage $true
+    $config = Join-Path $script:c1744Scratch 'phone-home.json'
+    $result = Invoke-StagedAutostart $stage $config
+    Assert-C1744 ($result.Exit -eq 0) 'autostart-script-direct.exit' ('exit=' + [string]$result.Exit)
+    $stubText = ''
+    if ($result.Stub) { $stubText = [System.IO.File]::ReadAllText($stage.Stub).Trim() }
+    Assert-C1744 ($stubText -ceq 'invoked exeArgs=[--urls http://localhost:17204]') 'autostart-script-direct.stub' $stubText
+    Assert-C1744 (-not $result.Log.Contains('phone-home config refused')) 'autostart-script-direct.log' $result.Log
+}
+
 function Invoke-Compat {
     $paths = @($helperPath, $autostartPath, $startPath, $restartPath, $aspirePath)
     $asciiOk = $true
@@ -537,6 +548,7 @@ try {
             'autostart-unreadable' { Invoke-AutostartUnreadable }
             'autostart-helper-load' { Invoke-AutostartHelperLoad }
             'autostart-refused-script' { Invoke-AutostartRefusedScript }
+            'autostart-script-direct' { Invoke-AutostartScriptDirect }
             'apphost-guard' { Invoke-ApphostGuard }
             'compat' { Invoke-Compat }
             default { Assert-C1744 $false 'unknown-case' $Case }
