@@ -62,7 +62,8 @@ public static class WorkspaceSlotRoles
 }
 
 /// <summary>The lease verdict for one role: <see cref="Reason"/> is <c>all</c>, <c>listed</c>, <c>role_not_listed</c>,
-/// <c>roles_none</c>, <c>roles_invalid</c>, <c>mutation</c> or <c>source_landing</c>.</summary>
+/// <c>roles_none</c>, <c>roles_invalid</c>, <c>mutation</c>, <c>source_landing</c>, or a Windows-list token
+/// (<c>windows_roles_none</c>, <c>windows_roles_invalid</c>, <c>windows_runner_not_listed</c>, <c>windows_runner_desktop</c>).</summary>
 public readonly record struct WorkspaceSlotRoleVerdict(bool Lease, string Reason)
 {
     public const string AllReason = "all";
@@ -72,6 +73,12 @@ public readonly record struct WorkspaceSlotRoleVerdict(bool Lease, string Reason
     public const string RolesInvalid = "roles_invalid";
     public const string Mutation = "mutation";
     public const string SourceLanding = "source_landing";
+
+    /// <summary>CARD-0824 S3. The Windows role string is <c>none</c>. Distinct from <see cref="RolesNone"/>.</summary>
+    public const string WindowsRolesNone = "windows_roles_none";
+    public const string WindowsRolesInvalid = "windows_roles_invalid";
+    public const string WindowsRunnerNotListed = "windows_runner_not_listed";
+    public const string WindowsRunnerDesktop = "windows_runner_desktop";
 }
 
 /// <summary>A parsed <c>Delegation:WorkspaceSlotRoles</c> value.</summary>
