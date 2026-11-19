@@ -170,12 +170,13 @@ function ConvertFrom-NightlyDiscoveryDocument {
 function Read-NightlyDiscoveryDocument {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw ('missing discovery {0}' -f $Path) }
-    # NightlyJson.ReadDiscovery reads the file's UTF-8 bytes. DiscoveryWriter.WriteFile is the producer:
+    # NightlyJson.ReadDiscovery reads the file. DiscoveryWriter.WriteFile is the producer:
     # Invoke-NightlyProduceDiscovery parses the --list-tests diagnostic, then the writer emits UTF-8 with no
-    # BOM, commas only between values, and no comments. A UTF-8 BOM and a trailing comma are still accepted
-    # (the old ConvertFrom-Json reader accepted both, and both are cheap). UTF-16 and comments are refused:
-    # this writer never emits them, and there is no ConvertFrom-Json fallback. discovery-unreadable names
-    # the file and the reason (utf-16, comment, not-object, trailing-content, invalid-json, unreadable).
+    # BOM, commas only between values, and no comments. A UTF-8 BOM, a trailing comma, and a UTF-16 document
+    # that starts with a BOM are accepted (the old ConvertFrom-Json reader accepted them). UTF-16 without a
+    # BOM is refused with reason utf-16. Comments are refused. There is no ConvertFrom-Json fallback.
+    # discovery-unreadable names the file and the reason (utf-16, comment, not-object, trailing-content,
+    # invalid-json, unreadable).
     Assert-NightlyCoreAvailable 'Read-NightlyDiscoveryDocument'
     $full = [IO.Path]::GetFullPath($Path)
     $read = [Antiphon.Nightly.NightlyJson]::ReadDiscovery($full)
