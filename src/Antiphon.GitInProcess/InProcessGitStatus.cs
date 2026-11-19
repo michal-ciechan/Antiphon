@@ -24,7 +24,9 @@ namespace Antiphon.GitInProcess;
 /// (skip-worktree, intent-to-add), and LibGit2Sharp cannot see those flags; version 4 and split
 /// indexes are git's too.</item>
 /// <item>Gitlinks (submodules) and sparse checkouts are git's.</item>
-/// <item>Any libgit2 error (an unreadable directory, a path it cannot open) is git's.</item>
+/// <item>Any libgit2 error (a path it cannot open) is git's.</item>
+/// <item>A work-tree directory that cannot be listed is skipped, as git skips it (git only warns "could not
+/// open directory"): nothing under it is listed, and the question is not asked of git.</item>
 /// <item>Racy entries: libgit2 re-reads an entry whose mtime is not before the index write at
 /// nanosecond precision, git at second precision. They differ only for a same-size edit whose mtime is
 /// put back inside the index's own second; git is blind to the same edit a second later. Accepted.</item>
@@ -140,7 +142,6 @@ internal static class InProcessGitStatus
                 ExcludeSubmodules = false,
                 IncludeUnaltered = false,
             };
-            if ((untracked || ignored) && !WalkReadable(repo, ignored)) return null;
             var entries = new SortedDictionary<string, FileStatus>(StringComparer.Ordinal);
             foreach (var entry in repo.RetrieveStatus(options))
             {
@@ -199,7 +200,6 @@ internal static class InProcessGitStatus
                 DetectRenamesInIndex = false,
                 DetectRenamesInWorkDir = false,
             };
-            if (!WalkReadable(repo, ignored)) return null;
             var want = ignored ? FileStatus.Ignored : FileStatus.NewInWorkdir;
             var paths = new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in repo.RetrieveStatus(options))
@@ -372,42 +372,6 @@ internal static class InProcessGitStatus
         return header[..4].SequenceEqual("DIRC"u8)
             && BinaryPrimitives.ReadUInt32BigEndian(header[4..]) == 2
             && !Directory.EnumerateFiles(gitDir, "sharedindex.*").Any();
-    }
-
-    /// <summary>
-    /// Whether every directory git's untracked walk enters can be listed. git warns "could not open
-    /// directory" and lists nothing beneath it (CARD-1714); libgit2 skips it silently and calls the tree
-    /// clean, so any directory that cannot be listed sends the question to git. The walk mirrors git's:
-    /// it skips .git, nested repositories (listed as "dir/", never entered) and reparse points, and it
-    /// prunes ignored directories unless ignored files are listed too. Directories only, no file reads.
-    /// </summary>
-    private static bool WalkReadable(Repository repo, bool intoIgnored)
-    {
-        var root = repo.Info.WorkingDirectory;
-        var options = new EnumerationOptions
-        {
-            IgnoreInaccessible = false, RecurseSubdirectories = false, ReturnSpecialDirectories = false,
-            AttributesToSkip = FileAttributes.ReparsePoint,
-        };
-        var pending = new Stack<(string Full, string Relative)>();
-        pending.Push((root, ""));
-        while (pending.Count != 0)
-        {
-            var (full, relative) = pending.Pop();
-            IEnumerable<string> children;
-            try { children = Directory.EnumerateDirectories(full, "*", options).ToList(); }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException) { return false; }
-            foreach (var child in children)
-            {
-                var name = Path.GetFileName(child);
-                if (relative.Length == 0 && string.Equals(name, ".git", StringComparison.OrdinalIgnoreCase)) continue;
-                var childRelative = relative + name + "/";
-                if (Directory.Exists(Path.Combine(child, ".git")) || File.Exists(Path.Combine(child, ".git"))) continue;
-                if (!intoIgnored && repo.Ignore.IsPathIgnored(childRelative)) continue;
-                pending.Push((child, childRelative));
-            }
-        }
-        return true;
     }
 
     private static string Slashes(string path) => path.Replace('\\', '/');
