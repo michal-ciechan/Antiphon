@@ -14,7 +14,8 @@ namespace Antiphon.IO.WriteBehind;
 /// </para>
 /// <para>
 /// A failed background write is raised by the next <see cref="Flush()"/> (or <see cref="Dispose"/>) as an
-/// <see cref="AggregateException"/> of <see cref="WriteBehindException"/>; its content is dropped.
+/// <see cref="AggregateException"/> of <see cref="WriteBehindException"/>. <see cref="Flush(string)"/> raises only
+/// that path's failures and leaves the others stored. The failed content is dropped.
 /// </para>
 /// </summary>
 public sealed class WriteBehindFileSystem : IFileSystem, IDisposable
@@ -72,8 +73,17 @@ public sealed class WriteBehindFileSystem : IFileSystem, IDisposable
     /// <summary>Waits until every queued write is on disk; throws the writes that failed since the last flush.</summary>
     public void Flush() => Queue.Flush();
 
-    /// <summary>Waits until the path's queued write is on disk.</summary>
+    /// <summary>Waits until the path's queued write is on disk, then throws only that path's failures.</summary>
     public void Flush(string path) => Queue.Flush(path);
+
+    /// <summary>Waits until the path's queued write has finished. Does not raise or clear a failure.</summary>
+    public void Wait(string path) => Queue.Wait(path);
+
+    /// <summary>True when this path has a failed write that a later flush can still report.</summary>
+    public bool HasFailure(string path) => Queue.HasFailure(path);
+
+    /// <summary>Failed writes still stored on the queue, without clearing them.</summary>
+    public string[] FailureDescriptions() => Queue.CopyFailureDescriptions();
 
     /// <summary>
     /// The length in bytes of the path's queued write that has not landed yet, or null when none is queued

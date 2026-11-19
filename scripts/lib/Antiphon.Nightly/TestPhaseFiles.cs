@@ -75,8 +75,9 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Read-TestPhaseBoundedBytes on Windows: at most maxBytes, stopping at the deadline on watch; Complete
-        /// is false when bytes were left or the deadline passed. Refusals carry the identity kind, 'budget' or
-        /// 'unreadable'. A queued evidence write lands first, so the read is of the disk.
+        /// is false when bytes were left or the deadline passed. Refusals carry the identity kind, 'budget',
+        /// 'unreadable', or 'deferred-write-failed'. A queued evidence write is waited on first. A failed write
+        /// refuses and leaves the failure stored, so the read is not the previous bytes reported as complete.
         /// </summary>
         public static PSObject BoundedRead(string path, int maxBytes, int deadlineMilliseconds, Stopwatch watch)
         {
@@ -87,7 +88,8 @@ namespace Antiphon.Nightly
             string kind = (string)identity.Properties["Kind"].Value;
             if (kind != "regular") return Read(null, false, true, kind);
             if (watch.ElapsedMilliseconds >= deadlineMilliseconds) return Read(null, false, true, "budget");
-            EvidenceFiles.Flush(path);
+            EvidenceFiles.Wait(path);
+            if (EvidenceFiles.PathFailed(path)) return Read(null, false, true, "deferred-write-failed");
             FileStream stream;
             try { stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); }
             catch { return Read(null, false, true, "unreadable"); }

@@ -2020,6 +2020,16 @@ function Invoke-AntiphonNightlyTests {
     if (@($expectedSkipRoster).Count -gt 0) {
         $expectedSkipRosterDigest = [string](Get-NightlyExpectedSkipRosterDigest -Entries $expectedSkipRoster)
     }
+    $evidenceWriteVerdict = Get-NightlyDeferredEvidenceWriteVerdict
+    foreach ($evidenceWriteReason in @($evidenceWriteVerdict.reasons)) {
+        if ($reasons -notcontains $evidenceWriteReason) { $reasons += $evidenceWriteReason }
+    }
+    if (-not $evidenceWriteVerdict.coverageComplete) {
+        $coverageComplete = $false
+        $testsPassed = $false
+        $overallFailed = $true
+        Set-NightlyOutcome TESTS
+    }
     $summary = [ordered]@{
         startedAt = $startedAt.ToString('o')
         completedAt = $completedAt.ToString('o')
