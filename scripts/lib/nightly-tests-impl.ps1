@@ -710,7 +710,7 @@ function Write-NightlyMeasuredPhase {
     try {
         $started = [datetime]$StartedAt
         $ended = $started.AddSeconds([double]$Seconds)
-        Write-QualificationRunPhase -LogRoot $LogRoot -Name $Name -StartedAt $started.ToString('o') -EndedAt $ended.ToString('o') -Seconds ([double]$Seconds)
+        [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $LogRoot), $Name, $started.ToString('o'), $ended.ToString('o'), ([double]$Seconds))
     } catch { }
 }
 
@@ -1012,7 +1012,7 @@ function Prepare-NightlySuiteExecution {
                 id = $suiteId; name = $label; skipped = $false; result = 'FAIL'; exitCode = 1
                 coverageComplete = $false; detail = 'e2e-prerequisite-failed'
             }
-            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk 'prereq' -LastPhase 'preflight' -Why 'e2e-prerequisite-failed' -BuildSeconds $qualificationBuildSeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = 'prereq'; LastPhase = 'preflight'; Why = 'e2e-prerequisite-failed'; BuildSeconds = $qualificationBuildSeconds; StartedAt = (Get-NightlyUtcNow).ToString('o'); RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
             return $null
         }
     }
@@ -1060,7 +1060,7 @@ function Prepare-NightlySuiteExecution {
                 $discTargets = @([pscustomobject]@{ id = 'discovery' })
             }
             foreach ($discChunk in $discTargets) {
-                Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$discChunk.id) -LastPhase 'discovery' -Why $discWhy -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $suiteDiscoverySeconds -StartedAt (Get-NightlyUtcNow).ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
+                [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$discChunk.id); LastPhase = 'discovery'; Why = $discWhy; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $suiteDiscoverySeconds; StartedAt = (Get-NightlyUtcNow).ToString('o'); RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
             }
             throw
         }
@@ -1140,7 +1140,7 @@ function Invoke-NightlyScheduledChunk {
     $chunkDiscoverySeconds = $resolvedDiscovery.chunkDiscoverySeconds
     $heartbeatTrx = ''
     if ($isNative) { $heartbeatTrx = $trxPath }
-    Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'run' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+    [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'run'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
     $runWatch = [Diagnostics.Stopwatch]::StartNew()
     if ($suiteId -eq 'client') {
         $wrapper = Join-Path $RepoRoot (Join-Path 'scripts' 'test-client.ps1')
@@ -1149,7 +1149,7 @@ function Invoke-NightlyScheduledChunk {
             $run = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $args -WorkingDirectory $RepoRoot `
                 -TimeoutMilliseconds 1200000 -Environment $envMap -LogPath $logPath
         } catch {
-            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
             throw
         }
     } elseif ($suiteId -eq 'scripts') {
@@ -1166,7 +1166,7 @@ function Invoke-NightlyScheduledChunk {
                 $sr = Invoke-NightlyOwnedProcess -FilePath 'pwsh' -ArgumentList $sargs -WorkingDirectory $RepoRoot `
                     -TimeoutMilliseconds 600000 -Environment $envMap -LogPath (Join-Path $LogRoot ('script-{0}.log' -f $row.id))
             } catch {
-                Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+                [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
                 throw
             }
             if ($sr.ExitCode -ne 0) { $scriptFail = $true }
@@ -1220,7 +1220,7 @@ function Invoke-NightlyScheduledChunk {
                 -HangCapturePath ($logPath + '.hang.txt') `
                 -ExecutionGraceMilliseconds ([int]$script:NightlyCompletionGraceMilliseconds)
         } catch {
-            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite $suiteId -Chunk ([string]$chunk.id) -LastPhase 'launch' -Why 'launch-failed' -StartedAt $chunkStartedAt -QueueWaitSeconds $queueWaitSeconds -BuildSeconds $qualificationBuildSeconds -DiscoverySeconds $chunkDiscoverySeconds -TrxPath $heartbeatTrx -RunId $invocationId -Attempt ([string]$Attempt)
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $suiteId; Chunk = ([string]$chunk.id); LastPhase = 'launch'; Why = 'launch-failed'; StartedAt = $chunkStartedAt; QueueWaitSeconds = $queueWaitSeconds; BuildSeconds = $qualificationBuildSeconds; DiscoverySeconds = $chunkDiscoverySeconds; TrxPath = $heartbeatTrx; RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
             throw
         }
         $phaseWatch.Stop()
@@ -1476,7 +1476,7 @@ function Invoke-NightlyScheduledChunk {
         Terminal = $true
     }
     if (-not $run.TimedOut) { $timingUpdate.CompletedAt = (Get-NightlyUtcNow).ToString('o') }
-    Update-QualificationChunkTiming @timingUpdate
+    [Antiphon.Nightly.QualificationTiming]::Update($timingUpdate, (Get-NightlyUtcNow))
     $suiteResults += $row
     } finally {
         if($isNative){[void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -State Idle)}
@@ -1983,7 +1983,7 @@ function Invoke-AntiphonNightlyTests {
                 $unstartedWhy = 'build-failed'
                 $unstartedPhase = 'build'
             }
-            Update-QualificationChunkTiming -LogRoot $LogRoot -TimingRoot $TimingRoot -Suite ([string]$unstartedSuite) -Chunk 'unstarted' -LastPhase $unstartedPhase -Why $unstartedWhy -BuildSeconds $qualificationBuildSeconds -StartedAt $startedAt.ToString('o') -RunId $invocationId -Attempt ([string]$Attempt)
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = ([string]$unstartedSuite); Chunk = 'unstarted'; LastPhase = $unstartedPhase; Why = $unstartedWhy; BuildSeconds = $qualificationBuildSeconds; StartedAt = $startedAt.ToString('o'); RunId = $invocationId; Attempt = ([string]$Attempt) }, (Get-NightlyUtcNow))
         }
     }
 
@@ -2049,7 +2049,7 @@ function Invoke-AntiphonNightlyTests {
     $timingChunks = @()
     $suiteTimeline = @()
     try {
-        $timingReport = Get-QualificationTimingReport -LogRoot $LogRoot -TimingRoot $TimingRoot
+        $timingReport = [Antiphon.Nightly.QualificationTiming]::Report($LogRoot, $TimingRoot)
         if ($null -ne $timingReport) {
             $timingChunks = @($timingReport.Chunks)
             $suiteTimeline = @($timingReport.Timeline)

@@ -708,9 +708,9 @@ public sealed class RcFullTimingContractTests
             } else {
                 Write-NightlyPrerequisitePhases -LogRoot $work -NpmCiStarted '2026-10-29T00:00:00.0000000Z' -NpmCiSeconds 1 -NpmBuildStarted '2026-10-29T00:00:01.0000000Z' -NpmBuildSeconds 6 -LintStarted '2026-10-29T00:00:07.0000000Z' -LintSeconds 2 -DotnetStarted '2026-10-29T00:00:09.0000000Z' -DotnetSeconds 0
             }
-            Update-QualificationChunkTiming -LogRoot $work -TimingRoot (Join-Path $work 'timing') -Suite 'antiphon' -Chunk 'a' -LastPhase 'run' -BuildSeconds 6 -RunId 'run-1' -Attempt '1'
-            Update-QualificationChunkTiming -LogRoot $work -TimingRoot (Join-Path $work 'timing') -Suite 'antiphon' -Chunk 'b' -LastPhase 'run' -BuildSeconds 6 -RunId 'run-1' -Attempt '1'
-            $acct = Get-QualificationSetupAccounting -LogRoot $work
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $work; TimingRoot = (Join-Path $work 'timing'); Suite = 'antiphon'; Chunk = 'a'; LastPhase = 'run'; BuildSeconds = 6; RunId = 'run-1'; Attempt = '1' }, (Get-NightlyUtcNow))
+            [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $work; TimingRoot = (Join-Path $work 'timing'); Suite = 'antiphon'; Chunk = 'b'; LastPhase = 'run'; BuildSeconds = 6; RunId = 'run-1'; Attempt = '1' }, (Get-NightlyUtcNow))
+            $acct = [Antiphon.Nightly.QualificationTiming]::SetupAccounting((Get-TestPhaseTimingDirectory -RunDirectory $work))
             $countedOnce = [bool]$acct.countedOnce
             $setup = [double]$acct.setupSeconds
             $sum = [double]$acct.perChunkBuildSum
@@ -721,14 +721,14 @@ public sealed class RcFullTimingContractTests
             if ($overlapped) { $problems.Add('phases-overlapped') }
             $stampRoot = Join-Path $work 'stamp-root'
             New-Item -ItemType Directory -Path $stampRoot -Force | Out-Null
-            Write-QualificationRunPhase -LogRoot $stampRoot -Name 'npm-ci' -StartedAt '2026-10-30T10:00:00.5698141Z' -EndedAt '2026-10-30T12:00:00.5698141Z' -Seconds 7200
-            Write-QualificationRunPhase -LogRoot $stampRoot -Name 'npm-build' -StartedAt '2026-10-30T06:00:00.5698141Z' -EndedAt '2026-10-30T07:00:00.5698141Z' -Seconds 3600
+            [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot), 'npm-ci', '2026-10-30T10:00:00.5698141Z', '2026-10-30T12:00:00.5698141Z', 7200)
+            [Antiphon.Nightly.QualificationTiming]::WriteRunPhase((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot), 'npm-build', '2026-10-30T06:00:00.5698141Z', '2026-10-30T07:00:00.5698141Z', 3600)
             $stampPath = Join-Path (Join-Path $stampRoot 'timing') 'setup-phases.json'
             $rawStamp = ''
             if (Test-Path -LiteralPath $stampPath) { $rawStamp = [IO.File]::ReadAllText($stampPath) }
             $stampUtc = $rawStamp.Contains('"startedAt":"2026-10-30T10:00:00.5698141Z"') -and $rawStamp.Contains('"endedAt":"2026-10-30T12:00:00.5698141Z"')
             if (-not $stampUtc) { $problems.Add('stamp-not-iso') }
-            $stampAcct = Get-QualificationSetupAccounting -LogRoot $stampRoot
+            $stampAcct = [Antiphon.Nightly.QualificationTiming]::SetupAccounting((Get-TestPhaseTimingDirectory -RunDirectory $stampRoot))
             $stampOverlapped = [bool]$stampAcct.overlapped
             if ($stampOverlapped) { $problems.Add('stamp-phases-overlapped') }
             if ($stampUtc) {

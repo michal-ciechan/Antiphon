@@ -216,12 +216,11 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Read-QualificationSidecar's Newtonsoft read (DateParseHandling.None, through ConvertFrom-QualificationJToken)
-        /// for text that is one strict JSON object: note-property objects, object[] arrays, Int64 (BigInteger past
-        /// Int64) or Double numbers, strings kept as strings. Null whenever Newtonsoft could read the text
-        /// differently (comments, trailing commas or content, a leading U+FEFF, an empty or case-insensitively
-        /// repeated property name, a non-finite number, nesting deeper than maxDepth): the caller then runs its own
-        /// Newtonsoft read.
+        /// The timing sidecar read (QualificationTiming.ReadSidecar): text that is one strict JSON object as
+        /// note-property objects, object[] arrays, Int64 (BigInteger past Int64) or Double numbers, strings kept as
+        /// strings. Null for anything else (comments, trailing commas or content, a leading U+FEFF, an empty or
+        /// case-insensitively repeated property name, a non-finite number, nesting deeper than maxDepth): the
+        /// sidecar is then unreadable.
         /// </summary>
         public static PSObject ParseText(string text, int maxDepth) => ParseText(text, maxDepth, false);
 

@@ -65,6 +65,7 @@ namespace Antiphon.Nightly
             return TakeFailures();
         }
 
+
         /// <summary>Waits until every queued write is on disk; returns the writes that failed since the last flush.</summary>
         public static string[] Flush()
         {
@@ -83,6 +84,23 @@ namespace Antiphon.Nightly
             if (fs == null || string.IsNullOrEmpty(path)) return new string[0];
             try { fs.Flush(System.IO.Path.GetFullPath(path)); return new string[0]; }
             catch (AggregateException ex) { return Retain(ex); }
+        }
+
+        /// <summary>
+        /// A compiled reader's barrier (null path: every write): the same wait as Flush. A failure is retained
+        /// (PathFailed, PeekFailures) and DisableWriteBehind or TakeFailures reports it, so none is lost.
+        /// </summary>
+        internal static void FlushKeeping(string path)
+        {
+            WriteBehindFileSystem fs;
+            lock (Gate) fs = buffered;
+            if (fs == null) return;
+            try
+            {
+                if (path == null) fs.Flush();
+                else if (path.Length > 0) fs.Flush(System.IO.Path.GetFullPath(path));
+            }
+            catch (AggregateException ex) { Retain(ex); }
         }
 
         /// <summary>Waits until one path's queued write has finished. A failure stays stored.</summary>

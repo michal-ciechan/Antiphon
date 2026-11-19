@@ -484,8 +484,34 @@ $lib = Join-Path $repo 'scripts/lib'
 . (Join-Path $lib 'nightly-tests-impl.ps1')
 
 Assert-Check ([bool](Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) 'resolver-exists'
-Assert-Check ([bool](Get-Command Update-QualificationChunkTiming -ErrorAction SilentlyContinue)) 'chunk-writer-exists'
-Assert-Check ([bool](Get-Command Get-QualificationTimingReport -ErrorAction SilentlyContinue)) 'report-exists'
+Assert-Check ([bool]('Antiphon.Nightly.QualificationTiming' -as [type])) 'chunk-timing-core-exists'
+
+# The terminal budget and read log of the compiled timing readers (QualificationTiming's test seams). A stopped
+# Stopwatch holds the clock still, so a deadline tests the readers' bounds rather than host scheduling.
+function Set-TimingBudget([int]$Deadline) {
+    [Antiphon.Nightly.QualificationTiming]::BudgetWatch = [Diagnostics.Stopwatch]::new()
+    [Antiphon.Nightly.QualificationTiming]::BudgetDeadlineMilliseconds = $Deadline
+}
+function Reset-TimingSeams {
+    [Antiphon.Nightly.QualificationTiming]::BudgetWatch = $null
+    [Antiphon.Nightly.QualificationTiming]::BudgetDeadlineMilliseconds = 200
+    [Antiphon.Nightly.QualificationTiming]::ReadLog = $null
+}
+
+# The post-run publication as the runner makes it: one terminal update; the chunk verdict passes through untouched.
+function Invoke-QualificationPostRunAggregation {
+    param(
+        [int]$ChunkExitCode, [string]$ChunkResult, [string]$LogRoot, [string]$TimingRoot, [string]$Suite, [string]$Chunk,
+        [string]$TrxPath, [string]$LastPhase, [string]$Why, $QueueWaitSeconds, $BuildSeconds, $DiscoverySeconds, $RunWallSeconds,
+        [string]$StartedAt, [string]$CompletedAt, [string]$RunId = '', [string]$Attempt = ''
+    )
+    $values = @{ LogRoot = $LogRoot; TimingRoot = $TimingRoot; Suite = $Suite; Chunk = $Chunk; TrxPath = $TrxPath; LastPhase = $LastPhase; RunId = $RunId; Attempt = $Attempt; Terminal = $true }
+    foreach ($name in @('Why', 'QueueWaitSeconds', 'BuildSeconds', 'DiscoverySeconds', 'RunWallSeconds', 'StartedAt', 'CompletedAt')) {
+        if ($PSBoundParameters.ContainsKey($name)) { $values[$name] = $PSBoundParameters[$name] }
+    }
+    [Antiphon.Nightly.QualificationTiming]::Update($values, (Get-NightlyUtcNow))
+    return [pscustomobject]@{ ChunkExitCode = $ChunkExitCode; ChunkResult = $ChunkResult }
+}
 
 # Windows PowerShell 5.1 compiles every Add-Type here-string with the legacy
 # csc (.NET Framework, C# 5). This host has no powershell.exe, so the Linux
@@ -525,8 +551,7 @@ exit 0
 }
 
 if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) -and
-    (Get-Command Update-QualificationChunkTiming -ErrorAction SilentlyContinue) -and
-    (Get-Command Get-QualificationTimingReport -ErrorAction SilentlyContinue)) {
+    ('Antiphon.Nightly.QualificationTiming' -as [type])) {
     $root = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     try {
@@ -546,13 +571,13 @@ if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) 
         $log = Join-Path $root 'logs'
         New-Item -ItemType Directory -Path $log -Force | Out-Null
         $timing = Join-Path $log 'timing'
-        Update-QualificationChunkTiming -LogRoot $log -TimingRoot $timing -Suite 'antiphon' -Chunk 'g1' -LastPhase 'run' -StartedAt '2026-10-27T00:00:00.0000000Z' -QueueWaitSeconds 1.5 -BuildSeconds 2 -DiscoverySeconds 0.25
+        [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $log; TimingRoot = $timing; Suite = 'antiphon'; Chunk = 'g1'; LastPhase = 'run'; StartedAt = '2026-10-27T00:00:00.0000000Z'; QueueWaitSeconds = 1.5; BuildSeconds = 2; DiscoverySeconds = 0.25 }, (Get-NightlyUtcNow))
         $side = Join-Path $log 'antiphon-g1.timing.json'
         Assert-Check (Test-Path -LiteralPath $side) 'sidecar-beside-trx-slot'
         $heart = Get-Content -LiteralPath $side -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-Check ([string]$heart.lastPhase -eq 'run') 'heartbeat-last-phase'
         Assert-Check (-not [string]::IsNullOrWhiteSpace([string]$heart.lastPhaseUtc)) 'heartbeat-utc'
-        Update-QualificationChunkTiming -LogRoot $log -TimingRoot $timing -Suite 'antiphon' -Chunk 'g1' -LastPhase 'timeout' -Why 'timeout' -RunWallSeconds 30 -Terminal
+        [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $log; TimingRoot = $timing; Suite = 'antiphon'; Chunk = 'g1'; LastPhase = 'timeout'; Why = 'timeout'; RunWallSeconds = 30; Terminal = $true }, (Get-NightlyUtcNow))
         $dead = Get-Content -LiteralPath $side -Raw -Encoding UTF8 | ConvertFrom-Json
         Assert-Check ([string]$dead.lastPhase -eq 'timeout') 'timeout-keeps-last-phase'
         Assert-Check ([string]$dead.why -eq 'timeout') 'timeout-why'
@@ -572,8 +597,8 @@ if ((Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue) 
 </Results></TestRun>
 '@
         [IO.File]::WriteAllText($trx, $trxXml)
-        Update-QualificationChunkTiming -LogRoot $log -TimingRoot $timing -Suite 'antiphon' -Chunk 'g2' -TrxPath $trx -LastPhase 'complete' -StartedAt '2026-10-27T00:01:00.0000000Z' -CompletedAt '2026-10-27T00:02:00.0000000Z' -QueueWaitSeconds 0.1 -BuildSeconds 4 -DiscoverySeconds 0.2 -RunWallSeconds 9 -Terminal
-        $report = Get-QualificationTimingReport -LogRoot $log -TimingRoot $timing
+        [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $log; TimingRoot = $timing; Suite = 'antiphon'; Chunk = 'g2'; TrxPath = $trx; LastPhase = 'complete'; StartedAt = '2026-10-27T00:01:00.0000000Z'; CompletedAt = '2026-10-27T00:02:00.0000000Z'; QueueWaitSeconds = 0.1; BuildSeconds = 4; DiscoverySeconds = 0.2; RunWallSeconds = 9; Terminal = $true }, (Get-NightlyUtcNow))
+        $report = [Antiphon.Nightly.QualificationTiming]::Report($log, $timing)
         Assert-Check ([string]$report.TimingRoot -eq $timing) 'report-timing-root'
         $g2 = @($report.Chunks | Where-Object { [string]$_.chunk -eq 'g2' })
         Assert-Check ($g2.Count -eq 1) 'report-has-trx-chunk'
@@ -733,7 +758,7 @@ try {
 $phaseDir = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-phase-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $phaseDir -Force | Out-Null
 try {
-    $phaseChunk = Join-Path $phaseDir (Get-QualificationChunkDirectoryName -Chunk 'group-1' -RunId 'new-run' -Attempt '1' -Suite 'antiphon')
+    $phaseChunk = Join-Path $phaseDir ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('group-1', 'new-run', '1', 'antiphon'))
     New-Item -ItemType Directory -Path $phaseChunk -Force | Out-Null
     $currentLines = @(
         '{"recordKind":"header","version":1,"pid":11,"nonce":"abc","runId":"new-run","groupId":"group-1","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
@@ -752,7 +777,7 @@ try {
     $sums = $null
     $sumError = ''
     try {
-        $sums = Get-QualificationPhaseSums -TimingRoot $phaseDir -Chunk 'group-1' -RunId 'new-run' -Suite 'antiphon' -Attempt '1'
+        $sums = [Antiphon.Nightly.QualificationTiming]::PhaseSums($phaseDir, 'group-1', 'new-run', 'antiphon', '1')
     } catch {
         $sumError = $_.Exception.Message
     }
@@ -780,18 +805,18 @@ $boundTiming = Join-Path $boundLog 'timing'
 New-Item -ItemType Directory -Path $boundTiming -Force | Out-Null
 try {
     $malformed = ('{invalid' + "`n") * 4000
-    $boundChunk = Join-Path $boundTiming (Get-QualificationChunkDirectoryName -Chunk 'g1' -RunId 'run-bound' -Attempt '1' -Suite 'antiphon')
+    $boundChunk = Join-Path $boundTiming ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g1', 'run-bound', '1', 'antiphon'))
     New-Item -ItemType Directory -Path $boundChunk -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $boundChunk 'cases-99-zzzz.jsonl'), $malformed)
     $heartWatch = [Diagnostics.Stopwatch]::StartNew()
-    Update-QualificationChunkTiming -LogRoot $boundLog -TimingRoot $boundTiming -Suite 'antiphon' -Chunk 'g1' -LastPhase 'run' -StartedAt '2026-10-27T00:00:00.0000000Z'
+    [Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $boundLog; TimingRoot = $boundTiming; Suite = 'antiphon'; Chunk = 'g1'; LastPhase = 'run'; StartedAt = '2026-10-27T00:00:00.0000000Z' }, (Get-NightlyUtcNow))
     $heartWatch.Stop()
     Assert-Check ($heartWatch.Elapsed.TotalSeconds -lt 0.75 -and (Test-Path -LiteralPath (Join-Path $boundLog 'antiphon-g1.timing.json'))) 'heartbeat-parse-is-bounded'
     $readWatch = [Diagnostics.Stopwatch]::StartNew()
     $boundedSums = $null
     $boundedError = ''
     try {
-        $boundedSums = Get-QualificationPhaseSums -TimingRoot $boundTiming -Chunk 'g1' -RunId 'run-bound' -Suite 'antiphon' -Attempt '1'
+        $boundedSums = [Antiphon.Nightly.QualificationTiming]::PhaseSums($boundTiming, 'g1', 'run-bound', 'antiphon', '1')
     } catch {
         $boundedError = $_.Exception.Message
     }
@@ -844,7 +869,7 @@ $payload = [ordered]@{
 
         $fifoDir = Join-Path $boundTiming 'fifo-dir'
         New-Item -ItemType Directory -Path $fifoDir -Force | Out-Null
-        $fifoChunk = Join-Path $fifoDir (Get-QualificationChunkDirectoryName -Chunk 'g1' -RunId 'run-fifo' -Attempt '1' -Suite 'antiphon')
+        $fifoChunk = Join-Path $fifoDir ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g1', 'run-fifo', '1', 'antiphon'))
         New-Item -ItemType Directory -Path $fifoChunk -Force | Out-Null
         $fifo = Join-Path $fifoChunk 'cases-81-fifo.jsonl'
         $fifoOkCreated = New-HarnessFifo $fifo
@@ -856,24 +881,20 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'nightly-common.ps1')
 . (Join-Path $Lib 'test-phase-evidence.ps1')
 $script:fifoOpenCalls = 0
-$script:fifoListCalls = 0
-$script:fifoListedEntries = 0
-$script:fifoListedFolder = ''
 $fifoOpen = ${function:Open-TestPhaseReadStream}
 function Open-TestPhaseReadStream {
     param([string]$Path)
     $script:fifoOpenCalls++
     & $fifoOpen @PSBoundParameters
 }
-$fifoSums = ${function:Get-QualificationPhaseSums}.ToString()
-$list = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
-$countedList = $list + '; $script:fifoListCalls++; $script:fifoListedEntries += $entries.Count; $script:fifoListedFolder = $folder'
-Set-Item -LiteralPath Function:Get-QualificationPhaseSums -Value ([scriptblock]::Create($fifoSums.Replace($list, $countedList)))
+$timingReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
 $readSeconds = $sw.Elapsed.TotalSeconds
-$sums = Get-QualificationPhaseSums -TimingRoot $Timing -Chunk 'g1' -RunId 'run-fifo' -Suite 'antiphon' -Attempt '1'
+$sums = [Antiphon.Nightly.QualificationTiming]::PhaseSums($Timing, 'g1', 'run-fifo', 'antiphon', '1')
 $sw.Stop()
+$listedFolder = ''
+if ($timingReads.Listings.Count -gt 0) { $listedFolder = $timingReads.Listings[$timingReads.Listings.Count - 1] }
 $waitNull = ($null -ne $sums -and $null -eq $sums.processWaitSeconds)
 $payload = [ordered]@{
     seconds = $sw.Elapsed.TotalSeconds
@@ -881,10 +902,10 @@ $payload = [ordered]@{
     count = @($read.Records).Count
     waitNull = [bool]$waitNull
     readSeconds = $readSeconds
-    openCalls = $script:fifoOpenCalls
-    listCalls = $script:fifoListCalls
-    listedEntries = $script:fifoListedEntries
-    listedFolder = $script:fifoListedFolder
+    openCalls = $script:fifoOpenCalls + $timingReads.Opens.Count
+    listCalls = $timingReads.Listings.Count
+    listedEntries = [int]($timingReads.ListedEntries | Measure-Object -Sum).Sum
+    listedFolder = $listedFolder
 }
 [IO.File]::WriteAllText($Result, ($payload | ConvertTo-Json -Compress))
 '@
@@ -918,7 +939,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $Lib 'test-phase-evidence.ps1')
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $read = Read-TestPhaseJsonlBounded -Path $Path -MaxBytes 262144 -MaxLines 4000 -DeadlineMilliseconds 200
-$side = Read-QualificationSidecar -Path $Path
+$side = [Antiphon.Nightly.QualificationTiming]::ReadSidecar($Path)
 $sw.Stop()
 $payload = [ordered]@{
     seconds = $sw.Elapsed.TotalSeconds
@@ -959,10 +980,11 @@ $NightlySeams = @{
         if ($argsText -match '--report-trx' -and $argsText -notmatch '--list-tests') {
             $script:launchWitnessCount++
             $script:launchWitnessReached = $true
+            $timingReads = [Antiphon.Nightly.QualificationTiming]::ReadLog
             $marker = [ordered]@{
                 seconds = $script:launchWitnessWatch.Elapsed.TotalSeconds
-                sidecarReads = $script:launchWitnessSidecarReads
-                fifoOpens = $script:launchWitnessFifoOpens
+                sidecarReads = $timingReads.SidecarReads
+                fifoOpens = $script:launchWitnessFifoOpens + @($timingReads.Opens | Where-Object { $_ -eq $script:launchWitnessSidecar }).Count
             }
             [IO.File]::WriteAllText($env:QTIMING_LAUNCH_MARKER, ($marker | ConvertTo-Json -Compress))
         }
@@ -984,14 +1006,9 @@ $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/nightly-tests-impl.ps1')
 $script:launchWitnessCount = 0
 $script:launchWitnessReached = $false
-$script:launchWitnessSidecarReads = 0
 $script:launchWitnessFifoOpens = 0
-$launchSidecar = ${function:Read-QualificationSidecar}
-function Read-QualificationSidecar {
-    param([string]$Path, $Watch = $null, [int]$DeadlineMilliseconds = 200)
-    if (-not $script:launchWitnessReached) { $script:launchWitnessSidecarReads++ }
-    & $launchSidecar @PSBoundParameters
-}
+$script:launchWitnessSidecar = Join-Path $LogRoot 'antiphon-all.timing.json'
+$null = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
 $launchOpen = ${function:Open-TestPhaseReadStream}
 function Open-TestPhaseReadStream {
     param([string]$Path)
@@ -1206,7 +1223,7 @@ New-Item -ItemType Directory -Path $aggTiming -Force | Out-Null
 try {
     $aggFifo = Join-Path $aggLog 'antiphon-g9.trx'
     $aggFifoOk = New-HarnessFifo $aggFifo
-    $aggFolder = Join-Path $aggTiming (Get-QualificationChunkDirectoryName -Chunk 'g9' -RunId 'agg' -Attempt '1' -Suite 'antiphon')
+    $aggFolder = Join-Path $aggTiming ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g9', 'agg', '1', 'antiphon'))
     New-Item -ItemType Directory -Path $aggFolder -Force | Out-Null
     $aggHuge = Join-Path $aggFolder 'cases-80-huge.jsonl'
     $aggStream = [IO.File]::Create($aggHuge)
@@ -1224,30 +1241,15 @@ try {
     for ($n = 0; $n -lt 100000; $n++) { [void]$aggDense.Append('0,') }
     [void]$aggDense.Append('0]}')
     [IO.File]::WriteAllText((Join-Path $aggLog 'antiphon-g9.timing.json'), $aggDense.ToString())
-    $aggSavedReaders = @{}
-    $script:aggReadBytes = 0L
-    $script:aggOpenPaths = New-Object System.Collections.Generic.List[string]
-    $script:aggSuccessfulPaths = New-Object System.Collections.Generic.List[string]
-    $aggSavedOpen = ${function:Open-TestPhaseReadStream}
-    function Open-TestPhaseReadStream {
-        param([string]$Path)
-        $script:aggOpenPaths.Add($Path)
-        $opened = & $aggSavedOpen @PSBoundParameters
-        if (-not $opened.Refused -and $null -ne $opened.Stream) { $script:aggSuccessfulPaths.Add($Path) }
-        return $opened
-    }
-    foreach ($readerName in @('Read-TestPhaseBoundedBytes', 'Read-QualificationShardHeader', 'Read-QualificationTimingJsonl', 'Get-QualificationTrxStats')) {
-        $reader = Get-Item -LiteralPath ('Function:' + $readerName)
-        $aggSavedReaders[$readerName] = $reader.ScriptBlock
-        $dispose = 'try { $opened.Stream.Dispose() } catch { }'
-        $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:aggReadBytes += $opened.Stream.Position; ' + $dispose))
-        Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
-    }
+    # Count actual opens, streams and bytes through the compiled readers.
+    $aggReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
     $aggWatch = [Diagnostics.Stopwatch]::StartNew()
     $agg = Invoke-QualificationPostRunAggregation -ChunkExitCode 7 -ChunkResult 'KEEP-7' -LogRoot $aggLog -TimingRoot $aggTiming -Suite 'antiphon' -Chunk 'g9' -TrxPath $aggFifo -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'agg' -Attempt '1'
     $aggWatch.Stop()
-    foreach ($readerName in $aggSavedReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $aggSavedReaders[$readerName] }
-    Set-Item -LiteralPath Function:Open-TestPhaseReadStream -Value $aggSavedOpen
+    Reset-TimingSeams
+    $script:aggReadBytes = $aggReads.ReadBytes
+    $script:aggOpenPaths = $aggReads.Opens
+    $script:aggSuccessfulPaths = $aggReads.Streams
     $aggDoc = Get-Content -LiteralPath (Join-Path $aggLog 'antiphon-g9.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED hostile-aggregation=' + $aggWatch.Elapsed.TotalSeconds + ' exit=' + $agg.ChunkExitCode + ' result=' + $agg.ChunkResult + ' why=' + $aggDoc.why)
     $aggPhases = ($null -eq $aggDoc.p50Seconds -and $null -eq $aggDoc.p95Seconds -and $null -eq $aggDoc.maxSeconds -and $null -eq $aggDoc.fixtureSetupSeconds -and $null -eq $aggDoc.fixtureTeardownSeconds -and $null -eq $aggDoc.processSpawnSeconds -and $null -eq $aggDoc.processWaitSeconds)
@@ -1268,10 +1270,7 @@ try {
     Write-Host ('FAIL post-run-hostile-files-keep-exit-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if ($null -ne $aggSavedReaders) {
-        foreach ($readerName in $aggSavedReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $aggSavedReaders[$readerName] }
-    }
-    if ($null -ne $aggSavedOpen) { Set-Item -LiteralPath Function:Open-TestPhaseReadStream -Value $aggSavedOpen }
+    Reset-TimingSeams
     if (Test-Path -LiteralPath $aggDenied) { Set-HarnessUnixMode $aggDenied '644' }
     Remove-Item -LiteralPath $aggRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -1324,7 +1323,7 @@ $ErrorActionPreference = "Stop"
 . (Join-Path $Lib "release-gate.ps1")
 . (Join-Path $Lib "release-selection.ps1")
 . (Join-Path $Lib "nightly-tests-impl.ps1")
-Update-QualificationChunkTiming -LogRoot $Log -TimingRoot $Timing -Suite "antiphon" -Chunk "g1" -LastPhase "run" -StartedAt "2026-10-27T00:00:00.0000000Z" -QueueWaitSeconds 1 -BuildSeconds 2 -DiscoverySeconds 0 -TrxPath $Trx -RunId "open" -Attempt "1"
+[Antiphon.Nightly.QualificationTiming]::Update(@{ LogRoot = $Log; TimingRoot = $Timing; Suite = "antiphon"; Chunk = "g1"; LastPhase = "run"; StartedAt = "2026-10-27T00:00:00.0000000Z"; QueueWaitSeconds = 1; BuildSeconds = 2; DiscoverySeconds = 0; TrxPath = $Trx; RunId = "open"; Attempt = "1" }, [datetime]::UtcNow)
 [IO.File]::WriteAllText($Marker, "LAUNCHED")
 '@ | Set-Content -LiteralPath $openChild -Encoding ascii
     $openDriver = Join-Path $openRoot 'drive.ps1'
@@ -1474,7 +1473,7 @@ try {
         $wideWriter.Dispose()
     }
     $wideBytes = [int64](Get-Item -LiteralPath $wideTrx).Length
-    $wideChunk = Join-Path $wideTiming (Get-QualificationChunkDirectoryName -Chunk 'g5' -RunId 'run-5k' -Attempt '1' -Suite 'antiphon')
+    $wideChunk = Join-Path $wideTiming ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g5', 'run-5k', '1', 'antiphon'))
     New-Item -ItemType Directory -Path $wideChunk -Force | Out-Null
     $wideShard = Join-Path $wideChunk 'cases-11-abc.jsonl'
     $shardWriter = New-Object System.IO.StreamWriter($wideShard, $false, (New-Object System.Text.UTF8Encoding $false))
@@ -1500,11 +1499,11 @@ try {
     # read budget, so load cannot refuse a finished 5000-result file.
     $wideInjected = 10000
     $readSw = [Diagnostics.Stopwatch]::StartNew()
-    $wideStats = Get-QualificationTrxStats -TrxPath $wideTrx -DeadlineMilliseconds $wideInjected
+    $wideStats = [Antiphon.Nightly.QualificationTiming]::TrxStats($wideTrx, $null, $wideInjected)
     $readSw.Stop()
     Write-Host ('MEASURED trx-5000-read-ms=' + [math]::Round($readSw.Elapsed.TotalMilliseconds, 1) + ' bytes=' + $wideBytes + ' deadline=' + $wideInjected)
     $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
-    $widePhases = Get-QualificationPhaseSums -TimingRoot $wideTiming -Chunk 'g5' -RunId 'run-5k' -Suite 'antiphon' -Attempt '1' -Watch $phaseWatch -DeadlineMilliseconds $wideInjected
+    $widePhases = [Antiphon.Nightly.QualificationTiming]::PhaseSums($wideTiming, 'g5', 'run-5k', 'antiphon', '1', $phaseWatch, $wideInjected)
     $phaseWatch.Stop()
     Write-Host ('MEASURED trx-5000-phase-ms=' + [math]::Round($phaseWatch.Elapsed.TotalMilliseconds, 1))
     # Boundedness stays on the production 200 ms budget. R5 provisional, n=4,
@@ -1512,7 +1511,7 @@ try {
     # terminals 73.6, 90.7, 112.8, 313.4 ms. The ceiling is 2x the largest
     # sample (read 408 ms, terminal 628 ms), not the production budget.
     $boundReadSw = [Diagnostics.Stopwatch]::StartNew()
-    $null = Get-QualificationTrxStats -TrxPath $wideTrx
+    $null = [Antiphon.Nightly.QualificationTiming]::TrxStats($wideTrx)
     $boundReadSw.Stop()
     $aggSw = [Diagnostics.Stopwatch]::StartNew()
     $wideAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 3 -ChunkResult 'KEEP-3' -LogRoot $wideLog -TimingRoot $wideTiming -Suite 'antiphon' -Chunk 'g5' -TrxPath $wideTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:05:00.0000000Z' -RunId 'run-5k' -Attempt '1'
@@ -1550,18 +1549,13 @@ try {
     } finally {
         $hugeTagWriter.Dispose()
     }
-    $savedHugeBudget = ${function:New-QualificationReadBudget}
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
-    $savedHugeStats = (Get-Item -LiteralPath 'Function:Get-QualificationTrxStats').ScriptBlock
-    $script:hugeTagReadBytes = 0L
-    $hugeDispose = 'try { $opened.Stream.Dispose() } catch { }'
-    $hugeInstrumented = $savedHugeStats.ToString().Replace($hugeDispose, ('$script:hugeTagReadBytes += $opened.Stream.Position; ' + $hugeDispose))
-    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value ([scriptblock]::Create($hugeInstrumented))
+    Set-TimingBudget 200
+    $hugeReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
     $hugeSw = [Diagnostics.Stopwatch]::StartNew()
     $hugeAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 4 -ChunkResult 'KEEP-4' -LogRoot $hugeLog -TimingRoot $hugeTiming -Suite 'antiphon' -Chunk 'g6' -TrxPath $hugeTag -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -RunId 'run-huge' -Attempt '1'
     $hugeSw.Stop()
-    Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats
-    ${function:New-QualificationReadBudget} = $savedHugeBudget
+    Reset-TimingSeams
+    $script:hugeTagReadBytes = $hugeReads.TrxBytes
     $hugeDoc = Get-Content -LiteralPath (Join-Path $hugeLog 'antiphon-g6.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $hugePhases = ($null -eq $hugeDoc.p50Seconds -and $null -eq $hugeDoc.fixtureSetupSeconds -and @($hugeDoc.slowest).Count -eq 0)
     Write-Host ('MEASURED unterminated-trx-tag ' + (@{ seconds = $hugeSw.Elapsed.TotalSeconds; bytes = $script:hugeTagReadBytes; verdict = $hugeAgg; document = $hugeDoc } | ConvertTo-Json -Depth 5 -Compress))
@@ -1575,8 +1569,7 @@ try {
     Write-Host ('FAIL five-thousand-result-trx ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if ($null -ne $savedHugeStats) { Set-Item -LiteralPath 'Function:Get-QualificationTrxStats' -Value $savedHugeStats }
-    if ($null -ne $savedHugeBudget) { ${function:New-QualificationReadBudget} = $savedHugeBudget }
+    Reset-TimingSeams
     Remove-Item -LiteralPath $wideRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -1662,7 +1655,7 @@ try {
     $script:failed++
 }
 
-# The real nightly heartbeat (the pre-launch Update-QualificationChunkTiming) must stay
+# The real nightly heartbeat (the pre-launch QualificationTiming.Update) must stay
 # non-terminal: a readable TRX already at the chunk path must not be parsed into the
 # sidecar before the owned process starts.
 $heartRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-heart-' + [guid]::NewGuid().ToString('N'))
@@ -1736,7 +1729,7 @@ $NightlySeams = @{
 # read lists only that directory. The owner file is
 # own-<prefix of that sha256>-<pid>-<nonce>.txt. A full own-<sha256>- name
 # still matches.
-Assert-Check ((ConvertTo-QualificationGroupToken -Chunk 'g-own') -eq '672d6f776e') 'group-token-vector'
+Assert-Check (([Antiphon.Nightly.QualificationTiming]::GroupToken('g-own')) -eq '672d6f776e') 'group-token-vector'
 
 $foreignRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-foreign-' + [guid]::NewGuid().ToString('N'))
 $foreignLog = Join-Path $foreignRoot 'logs'
@@ -1764,11 +1757,11 @@ try {
             $foreignStream.Write($foreignHeaderBytes, 0, $foreignHeaderBytes.Length)
             $foreignStream.Write($foreignChunk, 0, $foreignChunk.Length)
         } finally { $foreignStream.Dispose() }
-        $foreignOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk $foreignGroup) + '-' + $foreignPid + '-' + $foreignNonce + '.txt'
+        $foreignOwner = 'own-' + ([Antiphon.Nightly.QualificationTiming]::GroupToken($foreignGroup)) + '-' + $foreignPid + '-' + $foreignNonce + '.txt'
         [IO.File]::WriteAllText((Join-Path $foreignTiming $foreignOwner), ($foreignName + "`n"))
         $foreignBytes += [int64](Get-Item -LiteralPath $foreignPath).Length
     }
-    $ownChunk = Join-Path $foreignTiming (Get-QualificationChunkDirectoryName -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon')
+    $ownChunk = Join-Path $foreignTiming ([Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g-own', 'run-own', '1', 'antiphon'))
     New-Item -ItemType Directory -Path $ownChunk -Force | Out-Null
     $ownName = 'cases-42-own1.jsonl'
     $ownText = @(
@@ -1777,7 +1770,7 @@ try {
         '{"recordKind":"complete","testId":"own-a","phases":[{"phase":"process-spawn","startOffsetMs":0,"endOffsetMs":400}]}'
     ) -join "`n"
     [IO.File]::WriteAllText((Join-Path $ownChunk $ownName), $ownText + "`n")
-    $ownIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon'
+    $ownIdentity = [Antiphon.Nightly.QualificationTiming]::ChunkIdentity('g-own', 'run-own', '1', 'antiphon')
     [IO.File]::WriteAllText((Join-Path $ownChunk ('own-' + $ownIdentity + '-42-own1.txt')), ($ownName + "`n"))
     $foreignBytes += [int64](Get-Item -LiteralPath (Join-Path $ownChunk $ownName)).Length
     $ownTrx = Join-Path $foreignLog 'antiphon-g-own.trx'
@@ -1788,29 +1781,16 @@ try {
     $listSw = [Diagnostics.Stopwatch]::StartNew()
     $listedForeign = @(Get-ChildItem -LiteralPath $foreignTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $listSw.Stop()
-    # Count actual bytes through the real reader, including accidental foreign reads.
-    $savedForeignReaders = @{}
-    $script:foreignReadBytes = 0L
-    foreach ($readerName in @('Read-QualificationTimingJsonl', 'Read-QualificationShardHeader')) {
-        $reader = Get-Item -LiteralPath ('Function:' + $readerName)
-        $savedForeignReaders[$readerName] = $reader.ScriptBlock
-        $dispose = 'try { $opened.Stream.Dispose() } catch { }'
-        $instrumented = $reader.ScriptBlock.ToString().Replace($dispose, ('$script:foreignReadBytes += $opened.Stream.Position; ' + $dispose))
-        Set-Item -LiteralPath ('Function:' + $readerName) -Value ([scriptblock]::Create($instrumented))
-    }
-    $savedForeignBudget = ${function:New-QualificationReadBudget}
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
-    $phaseReader = Get-Item -LiteralPath 'Function:Get-QualificationPhaseSums'
-    $savedForeignReaders['Get-QualificationPhaseSums'] = $phaseReader.ScriptBlock
-    $script:foreignListedPaths = [Collections.Generic.List[string]]::new()
-    $script:foreignListedCounts = [Collections.Generic.List[int]]::new()
-    $listStatement = '$entries = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction SilentlyContinue)'
-    $phaseInstrumented = $phaseReader.ScriptBlock.ToString().Replace($listStatement, ($listStatement + '; $script:foreignListedPaths.Add($folder); $script:foreignListedCounts.Add($entries.Count)'))
-    Set-Item -LiteralPath 'Function:Get-QualificationPhaseSums' -Value ([scriptblock]::Create($phaseInstrumented))
+    # Count actual bytes through the real readers, including accidental foreign reads.
+    Set-TimingBudget 200
+    $foreignReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
     $foreignSw = [Diagnostics.Stopwatch]::StartNew()
     $foreignAgg = Invoke-QualificationPostRunAggregation -ChunkExitCode 5 -ChunkResult 'KEEP-5' -LogRoot $foreignLog -TimingRoot $foreignTiming -Suite 'antiphon' -Chunk 'g-own' -TrxPath $ownTrx -LastPhase 'complete' -StartedAt '2026-10-27T00:00:00.0000000Z' -CompletedAt '2026-10-27T00:01:00.0000000Z' -RunId 'run-own' -Attempt '1'
     $foreignSw.Stop()
-    foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
+    Reset-TimingSeams
+    $script:foreignReadBytes = $foreignReads.JournalBytes
+    $script:foreignListedPaths = $foreignReads.Listings
+    $script:foreignListedCounts = $foreignReads.ListedEntries
     $foreignDoc = Get-Content -LiteralPath (Join-Path $foreignLog 'antiphon-g-own.timing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED foreign-journal-files=' + $listedForeign.Count + ' bytes=' + $foreignBytes + ' list-ms=' + [math]::Round($listSw.Elapsed.TotalMilliseconds, 1) + ' terminal-ms=' + [math]::Round($foreignSw.Elapsed.TotalMilliseconds, 1) + ' why=' + [string]$foreignDoc.why + ' trx-bytes=' + $ownTrxBytes)
     $foreignOwn = ([string]$foreignDoc.why -eq '' -and [int]$foreignDoc.testCount -eq 2 -and [math]::Abs([double]$foreignDoc.p50Seconds - 1) -lt 0.001 -and [math]::Abs([double]$foreignDoc.p95Seconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.maxSeconds - 3) -lt 0.001 -and [math]::Abs([double]$foreignDoc.fixtureSetupSeconds - 1.25) -lt 0.001 -and [math]::Abs([double]$foreignDoc.processSpawnSeconds - 0.4) -lt 0.001 -and $null -eq $foreignDoc.processWaitSeconds -and $null -eq $foreignDoc.fixtureTeardownSeconds)
@@ -1825,10 +1805,7 @@ try {
     Write-Host ('FAIL own-chunk-ignores-foreign-journals ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if ($null -ne $savedForeignReaders) {
-        foreach ($readerName in $savedForeignReaders.Keys) { Set-Item -LiteralPath ('Function:' + $readerName) -Value $savedForeignReaders[$readerName] }
-    }
-    if ($null -ne $savedForeignBudget) { ${function:New-QualificationReadBudget} = $savedForeignBudget }
+    Reset-TimingSeams
     Remove-Item -LiteralPath $foreignRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -1838,11 +1815,11 @@ try {
 $crowdRoot = Join-Path ([IO.Path]::GetTempPath()) ('qtiming-crowd-' + [guid]::NewGuid().ToString('N'))
 $crowdLog = Join-Path $crowdRoot 'logs'
 $crowdTiming = Join-Path $crowdLog 'timing'
-$crowdChunkName = Get-QualificationChunkDirectoryName -Chunk 'g-600' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+$crowdChunkName = [Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g-600', 'run-600', '2', 'antiphon')
 $crowdDir = Join-Path $crowdTiming $crowdChunkName
 New-Item -ItemType Directory -Path $crowdDir -Force | Out-Null
 try {
-    $crowdIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'g-600' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+    $crowdIdentity = [Antiphon.Nightly.QualificationTiming]::ChunkIdentity('g-600', 'run-600', '2', 'antiphon')
     Assert-Check ($crowdIdentity -eq '8d1c1172c1260d2d5c0925f638af059f3a8483e982fa7d086f3a20e44d17838f') 'chunk-identity-vector'
     $crowdLine = '{"recordKind":"complete","testId":"old","phases":[{"phase":"process-wait","startOffsetMs":0,"endOffsetMs":5000}]}' + "`n"
     $crowdLineBytes = [Text.Encoding]::UTF8.GetBytes($crowdLine)
@@ -1860,7 +1837,7 @@ try {
         $priorStream.Write($priorHeaderBytes, 0, $priorHeaderBytes.Length)
         $priorStream.Write($crowdChunk, 0, $crowdChunk.Length)
     } finally { $priorStream.Dispose() }
-    $priorOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk 'g-600') + '-9-prior.txt'
+    $priorOwner = 'own-' + ([Antiphon.Nightly.QualificationTiming]::GroupToken('g-600')) + '-9-prior.txt'
     [IO.File]::WriteAllText((Join-Path $crowdTiming $priorOwner), ($priorName + "`n"))
     for ($n = 0; $n -lt 600; $n++) {
         $crowdPid = [string](2000 + $n)
@@ -1868,7 +1845,7 @@ try {
         $crowdName = 'cases-' + $crowdPid + '-' + $crowdNonce + '.jsonl'
         $crowdHeader = '{"recordKind":"header","version":1,"pid":' + $crowdPid + ',"nonce":"' + $crowdNonce + '","runId":"other","groupId":"other-' + $n + '","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}' + "`n"
         [IO.File]::WriteAllText((Join-Path $crowdTiming $crowdName), $crowdHeader)
-        $crowdOwner = 'own-' + (ConvertTo-QualificationGroupToken -Chunk ('other-' + $n)) + '-' + $crowdPid + '-' + $crowdNonce + '.txt'
+        $crowdOwner = 'own-' + ([Antiphon.Nightly.QualificationTiming]::GroupToken(('other-' + $n))) + '-' + $crowdPid + '-' + $crowdNonce + '.txt'
         [IO.File]::WriteAllText((Join-Path $crowdTiming $crowdOwner), ($crowdName + "`n"))
     }
     $ownText = @(
@@ -1883,28 +1860,23 @@ try {
         '{"recordKind":"fixture","fixtureId":"fix-bare","phases":[{"phase":"fixture-teardown","startOffsetMs":0,"endOffsetMs":500}]}'
     ) -join "`n"
     [IO.File]::WriteAllText((Join-Path $crowdDir 'cases-7-bare.jsonl'), $bareText + "`n")
-    $foreignIdentity = ConvertTo-QualificationChunkIdentity -Chunk 'other' -RunId 'run-600' -Attempt '2' -Suite 'antiphon'
+    $foreignIdentity = [Antiphon.Nightly.QualificationTiming]::ChunkIdentity('other', 'run-600', '2', 'antiphon')
     [IO.File]::WriteAllText((Join-Path $crowdDir ('own-' + $foreignIdentity + '-7-bare.txt')), "cases-7-bare.jsonl`n")
     $crowdTrx = Join-Path $crowdLog 'antiphon-g-600.trx'
     [IO.File]::WriteAllText($crowdTrx, "<?xml version=`"1.0`" encoding=`"utf-8`"?>`n<TestRun><Results>`n<UnitTestResult testId=`"a`" testName=`"OwnA`" duration=`"00:00:01`" outcome=`"Passed`" />`n</Results></TestRun>`n")
     $crowdList = [Diagnostics.Stopwatch]::StartNew()
     $crowdListed = @(Get-ChildItem -LiteralPath $crowdTiming -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'cases-*.jsonl' })
     $crowdList.Stop()
-    $defaultCrowdBudget = New-QualificationReadBudget
-    Assert-Check ($defaultCrowdBudget.DeadlineMilliseconds -eq 200 -and $defaultCrowdBudget.Watch.IsRunning) 'terminal-reader-default-budget-unchanged'
-    $savedCrowdBudget = ${function:New-QualificationReadBudget}
-    $savedCrowdOpen = ${function:Open-TestPhaseReadStream}
-    $script:crowdOpens = [Collections.Generic.List[string]]::new()
-    function Open-TestPhaseReadStream {
-        param([string]$Path)
-        $script:crowdOpens.Add($Path)
-        & $savedCrowdOpen -Path $Path
-    }
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    # The production budget: a fresh running clock per publication (no injected watch) and 200 ms.
+    Assert-Check ([Antiphon.Nightly.QualificationTiming]::BudgetDeadlineMilliseconds -eq 200 -and $null -eq [Antiphon.Nightly.QualificationTiming]::BudgetWatch) 'terminal-reader-default-budget-unchanged'
+    $crowdReads = [Antiphon.Nightly.QualificationTiming]::StartReadLog()
+    Set-TimingBudget 200
     $crowdArgs = @{ ChunkExitCode = 0; ChunkResult = 'KEEP-0'; LogRoot = $crowdLog; TimingRoot = $crowdTiming; Suite = 'antiphon'; Chunk = 'g-600'; TrxPath = $crowdTrx; LastPhase = 'complete'; StartedAt = '2026-10-28T00:00:00.0000000Z'; CompletedAt = '2026-10-28T00:01:00.0000000Z'; RunId = 'run-600'; Attempt = '2' }
     $crowdSw = [Diagnostics.Stopwatch]::StartNew()
     $crowdAgg = Invoke-QualificationPostRunAggregation @crowdArgs
     $crowdSw.Stop()
+    $script:crowdOpens = @($crowdReads.Opens)
+    [Antiphon.Nightly.QualificationTiming]::ReadLog = $null
     $crowdPath = Join-Path $crowdLog 'antiphon-g-600.timing.json'
     $crowdDoc = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED six-hundred-journals terminal-ms=' + $crowdSw.Elapsed.TotalMilliseconds + ' opens=' + $script:crowdOpens.Count + ' document=' + ($crowdDoc | ConvertTo-Json -Compress -Depth 5))
@@ -1914,7 +1886,7 @@ try {
     Assert-Check ([string]$crowdDoc.why -eq '' -and $crowdDoc.fixtureSetupSeconds -eq 1.25 -and $crowdDoc.fixtureTeardownSeconds -eq 0.5 -and $crowdDoc.processSpawnSeconds -eq 0.4 -and $null -eq $crowdDoc.processWaitSeconds -and $crowdDoc.testCount -eq 1) 'six-hundred-journals-unexhausted-complete'
     Assert-Check ($crowdAgg.ChunkExitCode -eq 0 -and $crowdAgg.ChunkResult -eq 'KEEP-0') 'six-hundred-journals-unexhausted-verdict'
 
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    Set-TimingBudget 0
     $crowdArgs.ChunkExitCode = 7
     $crowdArgs.ChunkResult = 'KEEP-7'
     $crowdExhausted = Invoke-QualificationPostRunAggregation @crowdArgs
@@ -1925,17 +1897,17 @@ try {
     Assert-Check (@($crowdMetrics | Where-Object { $null -ne $crowdGap.$_ }).Count -eq 0 -and $crowdGap.testCount -eq 0 -and @($crowdGap.slowest).Count -eq 0) 'six-hundred-journals-exhausted-null-metrics'
     Assert-Check ($crowdExhausted.ChunkExitCode -eq 7 -and $crowdExhausted.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-exhausted-verdict'
 
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    Set-TimingBudget 200
     $crowdRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
     $crowdRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host ('MEASURED recovered-publication ' + ($crowdRecovery | ConvertTo-Json -Compress -Depth 5))
     Assert-Check ($crowdRecovery.why -eq '' -and $crowdRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdRecovery.fixtureTeardownSeconds -eq 0.5 -and $crowdRecovery.processSpawnSeconds -eq 0.4 -and $crowdRecovery.testCount -eq 1) 'six-hundred-journals-next-publication-recovers'
     Assert-Check ($crowdRecovered.ChunkExitCode -eq 7 -and $crowdRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-recovery-verdict'
     # Repeat without process memory to exercise recovery from the persisted sidecar.
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 0 } }
+    Set-TimingBudget 0
     $null = Invoke-QualificationPostRunAggregation @crowdArgs
-    $script:QualificationChunkMemory.Remove($crowdLog + '|antiphon|g-600')
-    function New-QualificationReadBudget { return @{ Watch = [Diagnostics.Stopwatch]::new(); DeadlineMilliseconds = 200 } }
+    $null = [Antiphon.Nightly.QualificationTiming]::Forget($crowdLog, 'antiphon', 'g-600')
+    Set-TimingBudget 200
     $crowdDiskRecovered = Invoke-QualificationPostRunAggregation @crowdArgs
     $crowdDiskRecovery = Get-Content -LiteralPath $crowdPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-Check ($crowdDiskRecovery.why -eq '' -and $crowdDiskRecovery.testCount -eq 1 -and $crowdDiskRecovery.fixtureSetupSeconds -eq 1.25 -and $crowdDiskRecovered.ChunkExitCode -eq 7 -and $crowdDiskRecovered.ChunkResult -eq 'KEEP-7') 'six-hundred-journals-persisted-gap-recovers'
@@ -1947,8 +1919,7 @@ try {
     Write-Host ('FAIL six-hundred-journals-stay-inside-budget ' + $_.Exception.Message)
     $script:failed++
 } finally {
-    if ($null -ne $savedCrowdBudget) { ${function:New-QualificationReadBudget} = $savedCrowdBudget }
-    if ($null -ne $savedCrowdOpen) { ${function:Open-TestPhaseReadStream} = $savedCrowdOpen }
+    Reset-TimingSeams
     Remove-Item -LiteralPath $crowdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -1967,7 +1938,7 @@ try {
     $linkRun = 'run-link'
     $linkAttempt = '1'
     $linkSuite = 'antiphon'
-    $linkName = Get-QualificationChunkDirectoryName -Chunk $linkChunk -RunId $linkRun -Attempt $linkAttempt -Suite $linkSuite
+    $linkName = [Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName($linkChunk, $linkRun, $linkAttempt, $linkSuite)
     $linkJournal = @(
         '{"recordKind":"header","version":1,"pid":42,"nonce":"link1","runId":"run-link","groupId":"g-link","attempt":"1","suite":"antiphon","assembly":"Antiphon.Tests"}',
         '{"recordKind":"fixture","fixtureId":"fix-link","phases":[{"phase":"fixture-setup","startOffsetMs":0,"endOffsetMs":1500}]}',
@@ -1976,9 +1947,9 @@ try {
     [IO.File]::WriteAllText((Join-Path $linkOutside 'cases-42-link1.jsonl'), $linkJournal + "`n")
     $linkPath = Join-Path $linkTiming $linkName
     $linkMade = New-HarnessSymlink $linkPath $linkOutside
-    $linkSums = Get-QualificationPhaseSums -TimingRoot $linkTiming -Chunk $linkChunk -RunId $linkRun -Suite $linkSuite -Attempt $linkAttempt
+    $linkSums = [Antiphon.Nightly.QualificationTiming]::PhaseSums($linkTiming, $linkChunk, $linkRun, $linkSuite, $linkAttempt)
     $linkRefused = ($linkMade -and [bool]$linkSums.refused -and $null -eq $linkSums.fixtureSetupSeconds)
-    $realName = Get-QualificationChunkDirectoryName -Chunk 'g-real' -RunId $linkRun -Attempt $linkAttempt -Suite $linkSuite
+    $realName = [Antiphon.Nightly.QualificationTiming]::ChunkDirectoryName('g-real', $linkRun, $linkAttempt, $linkSuite)
     $realDir = Join-Path $linkTiming $realName
     New-Item -ItemType Directory -Path $realDir -Force | Out-Null
     $realJournal = $linkJournal.Replace('g-link', 'g-real').Replace('link-case', 'real-case').Replace('fix-link', 'fix-real')

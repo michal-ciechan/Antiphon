@@ -781,7 +781,7 @@ function Invoke-FFPreparedArm {
     }
     $armExecuteSeconds=$armExecuteWatch.Elapsed.TotalSeconds
     if ($Fixture.PSObject.Properties.Name -notcontains 'replay') { Invoke-TestPhaseRunSummary -RunDirectory $LogRoot }
-    $timing = Get-QualificationTimingReport -LogRoot $LogRoot -TimingRoot $TimingRoot
+    $timing = [Antiphon.Nightly.QualificationTiming]::Report($LogRoot, $TimingRoot)
     $projection = [IO.File]::ReadAllText((Join-Path $TimingRoot 'groups-executed.json')) | ConvertFrom-Json
     $plansStable = $true
     foreach ($s in $Fixture.suites) { if ([IO.File]::ReadAllText((Join-Path $TimingRoot ('groups-planned-'+$s.id+'.json'))) -cne $plannedBytes[$s.id]) { $plansStable=$false } }

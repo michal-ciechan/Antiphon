@@ -1,10 +1,13 @@
-// Compiled Windows file checks of test-phase-evidence.ps1: the path identity taken before every evidence
-// read and write, and the bounded, deadline-limited read used for sidecars, TRX and JSONL files. Each returns
-// what its PowerShell function returned (the PowerShell stays the Linux implementation and the fallback).
+// Compiled file checks of test-phase-evidence.ps1: the path identity taken before every evidence read and
+// write, and the bounded, deadline-limited read used for sidecars, TRX and JSONL files. PathIdentity and
+// BoundedRead return what their PowerShell functions returned on Windows; Kind is the same identity on both
+// platforms (lstat on Linux) for the compiled readers (QualificationTiming).
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Management.Automation;
+using System.Runtime.InteropServices;
+using Antiphon.TestPhase;
 
 namespace Antiphon.Nightly
 {
@@ -25,9 +28,35 @@ namespace Antiphon.Nightly
         /// </summary>
         public static PSObject PathIdentity(string path)
         {
-            if (string.IsNullOrWhiteSpace(path)) return Identity("missing", 0);
+            string kind = Kind(path, out long size);
+            return Identity(kind, size);
+        }
+
+        /// <summary>
+        /// PathIdentity's kind and size without the wrapper object. On Linux: lstat, 'regular' for a regular
+        /// file, 'unsupported' for anything else (a link, FIFO, directory), 'missing' for ENOENT.
+        /// </summary>
+        internal static string Kind(string path, out long size)
+        {
+            size = 0;
+            if (string.IsNullOrWhiteSpace(path)) return "missing";
             long queued = EvidenceFiles.PendingLength(path);
-            if (queued >= 0) return Identity("regular", queued);
+            if (queued >= 0) { size = queued; return "regular"; }
+            if (!OperatingSystem.IsWindows()) return LinuxKind(path, out size);
+            return WindowsKind(path, out size);
+        }
+
+        private static string LinuxKind(string path, out long size)
+        {
+            size = 0;
+            if (FileIdentity.LStat(path, out LinuxStat stat) != 0) return Marshal.GetLastWin32Error() == 2 ? "missing" : "unreadable";
+            size = stat.Size;
+            return (stat.Mode & 0xF000) == 0x8000 ? "regular" : "unsupported";
+        }
+
+        private static string WindowsKind(string path, out long size)
+        {
+            size = 0;
             // A file (the usual answer): existence, attributes and length from one look at it. Anything else
             // (a directory, nothing there, a path File.Exists refuses such as one ending in a separator, an
             // error) is answered by the calls below, as before.
@@ -41,26 +70,24 @@ namespace Antiphon.Nightly
                     FileAttributes seen = info.Attributes;
                     if ((seen & FileAttributes.Directory) == 0)
                     {
-                        if ((seen & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) return Identity("unsupported", 0);
-                        long size = 0;
+                        if ((seen & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) return "unsupported";
                         if ((seen & (FileAttributes.Hidden | FileAttributes.System)) == 0) size = info.Length;
-                        return Identity("regular", size);
+                        return "regular";
                     }
                 }
             }
             catch { }
-            if (!File.Exists(path) && !Directory.Exists(path)) return Identity("missing", 0);
+            if (!File.Exists(path) && !Directory.Exists(path)) return "missing";
             FileAttributes attrs;
             try { attrs = File.GetAttributes(path); }
-            catch { return Identity("unreadable", 0); }
-            if ((attrs & FileAttributes.Directory) == FileAttributes.Directory) return Identity("unsupported", 0);
-            if ((attrs & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) return Identity("unsupported", 0);
-            long length = 0;
+            catch { return "unreadable"; }
+            if ((attrs & FileAttributes.Directory) == FileAttributes.Directory) return "unsupported";
+            if ((attrs & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint) return "unsupported";
             if ((attrs & (FileAttributes.Hidden | FileAttributes.System)) == 0)
             {
-                try { length = new FileInfo(path).Length; } catch { length = 0; }
+                try { size = new FileInfo(path).Length; } catch { size = 0; }
             }
-            return Identity("regular", length);
+            return "regular";
         }
 
         private static PSObject Read(byte[] bytes, bool complete, bool refused, string kind)
@@ -84,8 +111,7 @@ namespace Antiphon.Nightly
             if (maxBytes < 1) maxBytes = 1;
             if (deadlineMilliseconds < 1) deadlineMilliseconds = 1;
             if (watch == null) watch = Stopwatch.StartNew();
-            PSObject identity = PathIdentity(path);
-            string kind = (string)identity.Properties["Kind"].Value;
+            string kind = Kind(path, out _);
             if (kind != "regular") return Read(null, false, true, kind);
             if (watch.ElapsedMilliseconds >= deadlineMilliseconds) return Read(null, false, true, "budget");
             EvidenceFiles.Wait(path);

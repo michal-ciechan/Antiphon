@@ -158,15 +158,16 @@ public sealed class TestTimingRecorderTests
             $ErrorActionPreference = 'Stop'
             . $args[0]
             $root = $args[1]
-            $id = ConvertTo-QualificationChunkIdentity -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon'
-            $prefix = Get-QualificationOwnerPrefixLength
-            $sums = Get-QualificationPhaseSums -TimingRoot $root -Chunk 'g-own' -RunId 'run-own' -Suite 'antiphon' -Attempt '1'
-            $folder = Join-Path $root (Get-QualificationChunkDirectoryName -Chunk 'g-own' -RunId 'run-own' -Attempt '1' -Suite 'antiphon')
+            $timing = [Antiphon.Nightly.QualificationTiming]
+            $id = $timing::ChunkIdentity('g-own', 'run-own', '1', 'antiphon')
+            $prefix = $timing::OwnerPrefixLength
+            $sums = $timing::PhaseSums($root, 'g-own', 'run-own', 'antiphon', '1')
+            $folder = Join-Path $root ($timing::ChunkDirectoryName('g-own', 'run-own', '1', 'antiphon'))
             $own = @(Get-ChildItem -LiteralPath $folder -Filter 'own-*.txt' -File)
             if ($own.Count -ne 1) { throw ('owner-count=' + $own.Count) }
-            $parsed = ConvertFrom-QualificationOwnerName -Name $own[0].Name
+            $parsed = $timing::OwnerName($own[0].Name)
             if ($null -eq $parsed) { throw 'owner-name-unparsed' }
-            $match = Test-QualificationOwnerToken -Token $parsed.Token -Identity $id
+            $match = $timing::OwnerToken($parsed.Token, $id)
             $setup = 'null'
             if ($null -ne $sums.fixtureSetupSeconds) {
                 $setup = ([double]$sums.fixtureSetupSeconds).ToString('0.000', [Globalization.CultureInfo]::InvariantCulture)

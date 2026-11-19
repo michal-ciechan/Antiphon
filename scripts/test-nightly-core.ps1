@@ -332,8 +332,9 @@ function Test-NCDiagnosticsMatchFallback {
     Test-NCEvidenceRecordsMatchFallback
 }
 
-# TestPhaseRecords.cs and NightlyJson.ParseText: the timing sidecar read (density guard and the Newtonsoft
-# read), the journal envelope and the owner observation, each against its PowerShell body.
+# TestPhaseRecords.cs and NightlyJson.ParseText: the timing sidecar read (QualificationTiming.ReadSidecar: the
+# density guard and the strict JSON read; anything not one strict JSON object is unreadable), the journal envelope
+# and the owner observation, each against its golden.
 function Test-NCEvidenceRecordsMatchFallback {
     $dir = Join-Path $root 'nc-records'
     [void][IO.Directory]::CreateDirectory($dir)
@@ -363,7 +364,7 @@ function Test-NCEvidenceRecordsMatchFallback {
         $script:NCRecordArm++
         $sidecarRows = foreach ($name in $sidecars.Keys) {
             $value = $null; $err = ''
-            try { $value = Read-QualificationSidecar -Path (Join-Path $dir ($name + '.json')) -DeadlineMilliseconds 60000 } catch { $err = $_.Exception.GetType().Name }
+            try { $value = [Antiphon.Nightly.QualificationTiming]::ReadSidecar((Join-Path $dir ($name + '.json')), $null, 60000) } catch { $err = $_.Exception.GetType().Name }
             [ordered]@{ name = $name; err = $err; json = ($value | ConvertTo-Json -Depth 20 -Compress); types = (@(Get-NCValueTypes $value) -join ',') }
         }
         $densities = foreach ($text in @('', 'a,b:c', ((1..10) -join ','), ('{' + ((1..6) -join ':') + '}'))) {
@@ -384,7 +385,7 @@ function Test-NCEvidenceRecordsMatchFallback {
             }
         }
         [ordered]@{ sidecars = @($sidecarRows); densities = @($densities); envelopes = $envelopes; owners = @($owners) }
-    } @('System.Numerics.BigInteger', 'missedDescendantPids', 'owner-Session-Runner-Chunk.A-run-0.json', 'object,a:,System.Int64')
+    } @('System.Numerics.BigInteger', 'missedDescendantPids', 'owner-Session-Runner-Chunk.A-run-0.json', '{"name":"comment","err":"","json":"null"')
     Test-NCCoveragePartsMatchFallback
 }
 
