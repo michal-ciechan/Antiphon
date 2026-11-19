@@ -777,6 +777,7 @@ function Get-NightlyDiscoveryIndexView {
         ByClass = $pass.ByClass
         RequiredUids = $pass.RequiredUids
         Classes = $pass.Classes
+        UidIndex = $pass.UidIndex
         Census = (Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $ProfileExclusions -ProfileAware:$ProfileAware)
     }
     $Entry.Views[$policyKey] = $view
@@ -789,6 +790,8 @@ function Get-NightlyDiscoveryIndexRequiredUids {
     param($View, [string[]]$RequiredClasses = @())
     if ($null -eq $RequiredClasses -or @($RequiredClasses).Count -eq 0) { return $View.RequiredUids }
     Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexRequiredUids'
+    # UidIndex was filled from the same nodes. Views built before it existed still walk the nodes.
+    if ($null -ne $View.UidIndex) { return $View.UidIndex.RequiredUidsFor($RequiredClasses) }
     return [Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($View.ByClass, $View.Excluded, $View.Nodes, $RequiredClasses)
 }
 
@@ -1377,8 +1380,13 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         try {
             if ($null -eq $DiscoveryIndex) { $DiscoveryIndex = New-NightlyDiscoveryIndex }
             $discoveryEntry = Get-NightlyDiscoveryIndexEntry -Index $DiscoveryIndex -Path $DiscoveryPath
-            $discoveryNodes = @($discoveryEntry.Document.Nodes)
-            if ($discoveryNodes.Count -eq 0) {
+            $discoveryNodes = $discoveryEntry.Document.Nodes
+            if ($null -eq $discoveryNodes) { $discoveryNodes = @() }
+            $discoveryCount = 0
+            if ($discoveryNodes -is [System.Array]) { $discoveryCount = $discoveryNodes.Length }
+            elseif ($discoveryNodes -is [System.Collections.ICollection]) { $discoveryCount = $discoveryNodes.Count }
+            else { $discoveryNodes = @($discoveryNodes); $discoveryCount = $discoveryNodes.Count }
+            if ($discoveryCount -eq 0) {
                 $reasons += 'empty-discovery'
             } else {
                 $discoveryPresent = $true

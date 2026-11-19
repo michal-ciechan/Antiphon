@@ -1396,8 +1396,9 @@ function Invoke-NightlyScheduledChunk {
                 if ($expectedSkipWarnings -notcontains $skipWarningText) { $expectedSkipWarnings += $skipWarningText }
             }
         }
-        if ($nativeVerdict.discoveryNodes -and @($nativeVerdict.discoveryNodes).Count -gt 0 -and $suiteDiscoveryNodes.Count -eq 0) {
-            $suiteDiscoveryNodes = @($nativeVerdict.discoveryNodes)
+        if ($suiteDiscoveryNodes.Count -eq 0 -and $nativeVerdict.discoveryNodes) {
+            $copied = @($nativeVerdict.discoveryNodes)
+            if ($copied.Count -gt 0) { $suiteDiscoveryNodes = $copied }
         }
         if ($nativeVerdict.terminalNodes) {
             # One concatenation per chunk, not one array copy per terminal node (19,000 in the main suite).

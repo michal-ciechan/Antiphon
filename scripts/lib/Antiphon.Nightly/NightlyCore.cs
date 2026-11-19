@@ -421,11 +421,13 @@ namespace Antiphon.Nightly
         /// <summary>
         /// Get-NightlyDiscoveryIndexView's per-node pass: excluded flags, the class lookup (name or bare name of
         /// ClassName or Type, case-insensitive), required UIDs and required bare classes, in discovery order.
+        /// UidIndex keeps each node's UID so a later chunk does not walk the node list again.
         /// </summary>
         public static PSObject IndexView(object[] nodes, ProfileExclusionIndex index)
         {
             nodes = nodes ?? Array.Empty<object>();
             var excluded = new bool[nodes.Length];
+            var uidAt = new string[nodes.Length];
             var byClass = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             var allRequired = new List<object>();
             var seenUid = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -445,8 +447,9 @@ namespace Antiphon.Nightly
                     var hits = (List<int>)hitsObject;
                     if (hits.Count == 0 || hits[hits.Count - 1] != i) hits.Add(i);
                 }
+                uidAt[i] = PsValue.Str(PsValue.Prop(n, "Uid"));
                 if (index != null ? index.Excluded(n) : DefaultExcluded(n)) { excluded[i] = true; continue; }
-                var uid = PsValue.Str(PsValue.Prop(n, "Uid"));
+                var uid = uidAt[i];
                 if (!string.IsNullOrWhiteSpace(uid) && seenUid.Add(uid)) allRequired.Add(uid);
                 var t = NightlyClassNames.Bare(className);
                 if (string.IsNullOrWhiteSpace(t)) t = NightlyClassNames.Bare(typeName);
@@ -457,6 +460,7 @@ namespace Antiphon.Nightly
             o.Properties.Add(new PSNoteProperty("ByClass", byClass));
             o.Properties.Add(new PSNoteProperty("RequiredUids", allRequired.ToArray()));
             o.Properties.Add(new PSNoteProperty("Classes", classes.ToArray()));
+            o.Properties.Add(new PSNoteProperty("UidIndex", new DiscoveryUidIndex(byClass, excluded, uidAt)));
             return o;
         }
     }
@@ -704,6 +708,46 @@ namespace Antiphon.Nightly
             result.Properties.Add(new PSNoteProperty("Node", null));
             result.Properties.Add(new PSNoteProperty("Error", error));
             return result;
+        }
+    }
+
+    /// <summary>
+    /// UIDs captured by IndexView. A chunk asks this for its classes instead of handing the node list back
+    /// across the engine. RequiredUidsFor matches NightlyVerdicts.IndexRequiredUids.
+    /// </summary>
+    public sealed class DiscoveryUidIndex
+    {
+        private readonly IDictionary byClass;
+        private readonly bool[] excluded;
+        private readonly string[] uidAt;
+
+        public DiscoveryUidIndex(IDictionary byClass, bool[] excluded, string[] uidAt)
+        {
+            this.byClass = byClass;
+            this.excluded = excluded;
+            this.uidAt = uidAt;
+        }
+
+        public object[] RequiredUidsFor(string[] requiredClasses)
+        {
+            var selected = new SortedSet<int>();
+            foreach (var want in requiredClasses)
+            {
+                if (string.IsNullOrWhiteSpace(want)) continue;
+                foreach (var name in new[] { want, NightlyClassNames.Bare(want) })
+                    if (byClass.Contains(name) && byClass[name] is IEnumerable hits)
+                        foreach (var i in hits) selected.Add((int)i);
+            }
+            var uids = new List<object>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var i in selected)
+            {
+                if (excluded[i]) continue;
+                var uid = uidAt[i] ?? "";
+                if (string.IsNullOrWhiteSpace(uid) || !seen.Add(uid)) continue;
+                uids.Add(uid);
+            }
+            return uids.ToArray();
         }
     }
 
