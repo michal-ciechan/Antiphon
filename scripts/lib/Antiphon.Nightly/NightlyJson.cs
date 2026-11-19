@@ -25,6 +25,7 @@ using System.Globalization;
 using System.IO;
 using System.Management.Automation;
 using System.Numerics;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 
@@ -81,12 +82,13 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// Read-NightlyDiscoveryDocument. One JSON object from the file's UTF-8 bytes, with one UTF-8 BOM
-        /// dropped and trailing commas accepted. UTF-16 and comments are refused: DiscoveryWriter.WriteFile
-        /// writes UTF-8 with no BOM, commas only between values, and no comments (Invoke-NightlyProduceDiscovery
-        /// parses the --list-tests diagnostic, then that writer emits the discovery document). There is no
-        /// ConvertFrom-Json fallback. Document is null and Reason is empty, utf-16, comment, not-object,
-        /// trailing-content, invalid-json or unreadable.
+        /// Read-NightlyDiscoveryDocument. One JSON object. A UTF-8 BOM is dropped. A UTF-16 document with a
+        /// BOM (FF FE or FE FF) is decoded and parsed the same way; FF FE 00 00 is UTF-32 and stays refused.
+        /// UTF-16 without a BOM is refused with reason utf-16. Trailing commas are accepted. Comments are
+        /// refused. DiscoveryWriter.WriteFile writes UTF-8 with no BOM, commas only between values, and no
+        /// comments (Invoke-NightlyProduceDiscovery parses the --list-tests diagnostic, then that writer emits
+        /// the discovery document). There is no ConvertFrom-Json fallback. Document is null and Reason is
+        /// empty, utf-16, comment, not-object, trailing-content, invalid-json or unreadable.
         /// </summary>
         public static DiscoveryRead ReadDiscovery(string path)
         {
@@ -103,25 +105,72 @@ namespace Antiphon.Nightly
                     while (length < buffer.Length && (read = stream.Read(buffer, length, buffer.Length - length)) > 0) length += read;
                     if (stream.ReadByte() >= 0) return DiscoveryRead.Fail("unreadable");
                 }
-                if (length >= 2 && ((buffer[0] == 0xFF && buffer[1] == 0xFE) || (buffer[0] == 0xFE && buffer[1] == 0xFF)))
-                    return DiscoveryRead.Fail("utf-16");
+                if (TryUtf16Bom(buffer, length, out var utf8, out var utf16Reason))
+                {
+                    if (utf8 == null) return DiscoveryRead.Fail(utf16Reason);
+                    return ParseDiscoveryUtf8(utf8, 0, utf8.Length);
+                }
                 var start = 0;
                 if (StartsWithBom(buffer, start, length)) start += 3;
-                if (IsDiscoveryWhitespace(buffer, start, length)) return DiscoveryRead.Fail("empty");
                 if (length - start >= 2 && (buffer[start] == 0 || buffer[start + 1] == 0))
                     return DiscoveryRead.Fail("utf-16");
-                var parsed = TryParseDiscoveryObject(buffer, start, length - start, false, out var reason);
-                if (parsed != null) return DiscoveryRead.Ok(parsed);
-                if (reason != "comment")
-                {
-                    var skipped = TryParseDiscoveryObject(buffer, start, length - start, true, out _);
-                    if (skipped != null) reason = "comment";
-                }
-                return DiscoveryRead.Fail(reason);
+                return ParseDiscoveryUtf8(buffer, start, length);
             }
             catch (IOException) { return DiscoveryRead.Fail("unreadable"); }
             catch (UnauthorizedAccessException) { return DiscoveryRead.Fail("unreadable"); }
             finally { if (buffer != null) ArrayPool<byte>.Shared.Return(buffer); }
+        }
+
+        // True when the buffer starts with a UTF-16 BOM. utf8 is the decoded document, or null when reason is set.
+        private static bool TryUtf16Bom(byte[] buffer, int length, out byte[] utf8, out string reason)
+        {
+            utf8 = null;
+            reason = null;
+            if (length < 2) return false;
+            bool le = buffer[0] == 0xFF && buffer[1] == 0xFE;
+            bool be = buffer[0] == 0xFE && buffer[1] == 0xFF;
+            if (!le && !be) return false;
+            // FF FE 00 00 is a UTF-32 LE BOM, not a UTF-16 document.
+            if (le && length >= 4 && buffer[2] == 0x00 && buffer[3] == 0x00)
+            {
+                reason = "utf-16";
+                return true;
+            }
+            int payload = length - 2;
+            if ((payload & 1) != 0)
+            {
+                reason = "invalid-json";
+                return true;
+            }
+            if (payload == 0)
+            {
+                utf8 = Array.Empty<byte>();
+                return true;
+            }
+            try
+            {
+                var text = new UnicodeEncoding(!le, false, true).GetString(buffer, 2, payload);
+                utf8 = Encoding.UTF8.GetBytes(text);
+                return true;
+            }
+            catch (DecoderFallbackException)
+            {
+                reason = "invalid-json";
+                return true;
+            }
+        }
+
+        private static DiscoveryRead ParseDiscoveryUtf8(byte[] buffer, int start, int end)
+        {
+            if (IsDiscoveryWhitespace(buffer, start, end)) return DiscoveryRead.Fail("empty");
+            var parsed = TryParseDiscoveryObject(buffer, start, end - start, false, out var reason);
+            if (parsed != null) return DiscoveryRead.Ok(parsed);
+            if (reason != "comment")
+            {
+                var skipped = TryParseDiscoveryObject(buffer, start, end - start, true, out _);
+                if (skipped != null) reason = "comment";
+            }
+            return DiscoveryRead.Fail(reason);
         }
 
         private static bool IsDiscoveryWhitespace(byte[] buffer, int start, int length)
