@@ -1300,7 +1300,7 @@ function Test-NCDiscoveryCacheAgrees {
 function Write-NCWideFile([string]$Path, [string]$Text, [bool]$BigEndian, [bool]$Bom) {
     $enc = New-Object System.Text.UnicodeEncoding $BigEndian, $Bom
     $payload = $enc.GetBytes($Text)
-    $preamble = $(if ($Bom) { $enc.GetPreamble() } else { New-Object byte[] 0 })
+    if ($Bom) { $preamble = $enc.GetPreamble() } else { $preamble = New-Object byte[] 0 }
     $bytes = New-Object byte[] ($preamble.Length + $payload.Length)
     if ($preamble.Length -gt 0) { [Buffer]::BlockCopy($preamble, 0, $bytes, 0, $preamble.Length) }
     [Buffer]::BlockCopy($payload, 0, $bytes, $preamble.Length, $payload.Length)
