@@ -1390,18 +1390,39 @@ function Open-TestPhaseExecutedContext {
     return $ctx
 }
 
+function Test-TestPhaseJournalWriteFailure {
+    param($Context, [string[]]$Failures)
+    $journal = ''
+    try { $journal = [IO.Path]::GetFullPath((Get-TestPhaseJournalRoot -TimingRoot ([string]$Context.TimingRoot))) } catch { return $true }
+    if ([string]::IsNullOrWhiteSpace($journal)) { return $true }
+    $prefix = $journal.TrimEnd([char]92, [char]47) + [IO.Path]::DirectorySeparatorChar
+    foreach ($item in @($Failures)) {
+        $text = [string]$item
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        $path = $text
+        $split = $text.IndexOf(': ')
+        if ($split -gt 0) { $path = $text.Substring(0, $split) }
+        try { $path = [IO.Path]::GetFullPath($path) } catch { }
+        if ($path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Close-TestPhaseExecutedContext {
     param($Context)
     if ($null -eq $Context) { return }
     if ($script:NightlyDeferEvidenceWrites -and $null -ne $Context.Lock) {
         $failed = @([Antiphon.Nightly.EvidenceFiles]::Flush())
-        if ($failed.Count -gt 0) {
+        $named = @($failed | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        if ($named.Count -gt 0) {
             $Context.Reason = 'commit-unpublished'
             $Context.Unresolved = $true
             if (-not $Context.Gaps.Contains('deferred-evidence-write-failed')) {
                 [void]$Context.Gaps.Add('deferred-evidence-write-failed')
             }
-            return
+            # A failed journal write keeps writer.lock. Any other path is already retained for the
+            # verdict, so release the lock and let a later chunk in this process open.
+            if (Test-TestPhaseJournalWriteFailure -Context $Context -Failures $named) { return }
         }
     }
     if ($null -ne $Context.Lock) {

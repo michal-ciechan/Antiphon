@@ -137,15 +137,66 @@ function Get-AntiphonScriptsCli {
     return $exe
 }
 
+# Cheap fingerprint of the source files the build hash covers: names, lengths and write times.
+# A long-lived session compares this before it trusts a core it already loaded.
+function Get-NightlyCoreSourceStamp {
+    $projects = @(
+        (Join-Path $PSScriptRoot 'Antiphon.Nightly'),
+        [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../src/Antiphon.IO.WriteBehind'))
+    )
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($project in $projects) {
+        if (-not [IO.Directory]::Exists($project)) { return '' }
+        foreach ($file in [IO.Directory]::EnumerateFiles($project, '*', [IO.SearchOption]::AllDirectories)) {
+            $rel = $file.Substring($project.Length).Replace([char]92, '/').TrimStart('/')
+            if ($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$') { continue }
+            $info = [IO.FileInfo]::new($file)
+            [void]$parts.Add([IO.Path]::GetFileName($project) + '/' + $rel + ':' + $info.Length.ToString() + ':' + $info.LastWriteTimeUtc.Ticks.ToString())
+        }
+    }
+    $parts.Sort([StringComparer]::Ordinal)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $text = [string]::Join("`n", $parts.ToArray())
+        return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '')
+    } finally { $sha.Dispose() }
+}
+
+function Set-NightlyCoreVerified {
+    param($Identity)
+    $script:NightlyCoreAvailable = $true
+    $script:NightlyCoreVerifiedHash = ''
+    if ($null -ne $Identity) { $script:NightlyCoreVerifiedHash = [string]$Identity.Hash }
+    $script:NightlyCoreVerifiedStamp = Get-NightlyCoreSourceStamp
+}
+
 function Test-NightlyCoreAvailable {
     if ($script:NightlyCoreAvailable -eq $false) { return $false }
-    if ($script:NightlyCoreAvailable -eq $true) { return $true }
+    if ($script:NightlyCoreAvailable -eq $true) {
+        # Dot-sourcing a newer checkout leaves this flag true. Re-check when the source stamp
+        # changes and the build hash no longer matches the core this process accepted.
+        $stamp = Get-NightlyCoreSourceStamp
+        if (-not [string]::IsNullOrWhiteSpace($stamp) -and $stamp -eq [string]$script:NightlyCoreVerifiedStamp -and -not [string]::IsNullOrWhiteSpace([string]$script:NightlyCoreVerifiedHash)) {
+            return $true
+        }
+        $identity = Get-NightlyCoreBuildIdentity
+        $hash = ''
+        if ($null -ne $identity) { $hash = [string]$identity.Hash }
+        if (-not [string]::IsNullOrWhiteSpace($hash) -and $hash -eq [string]$script:NightlyCoreVerifiedHash) {
+            $script:NightlyCoreVerifiedStamp = $stamp
+            return $true
+        }
+        Assert-NightlyLoadedCoreIdentity ('Antiphon.Nightly.TestPhaseJson' -as [type])
+        $script:NightlyCoreVerifiedHash = $hash
+        $script:NightlyCoreVerifiedStamp = $stamp
+        return $true
+    }
     if ([string]$env:ANTIPHON_NIGHTLY_CORE -ieq 'off') { $script:NightlyCoreAvailable = $false; return $false }
     if ($PSVersionTable.PSVersion.Major -lt 7) { $script:NightlyCoreAvailable = $false; return $false }
     $loaded = 'Antiphon.Nightly.TestPhaseJson' -as [type]
     if ($loaded) {
         Assert-NightlyLoadedCoreIdentity $loaded
-        $script:NightlyCoreAvailable = $true
+        Set-NightlyCoreVerified (Get-NightlyCoreBuildIdentity)
         return $true
     }
     $identity = Get-NightlyCoreBuildIdentity
@@ -163,7 +214,7 @@ function Test-NightlyCoreAvailable {
     }
     Add-Type -Path (Join-Path $dir 'Antiphon.Nightly.dll')
     Assert-NightlyLoadedCoreIdentity ('Antiphon.Nightly.TestPhaseJson' -as [type])
-    $script:NightlyCoreAvailable = $true
+    Set-NightlyCoreVerified $identity
     return $true
 }
 
@@ -182,7 +233,7 @@ function Assert-NightlyLoadedCoreIdentity {
         if (-not ($name -as [type])) { [void]$missing.Add($name.Substring('Antiphon.Nightly.'.Length)) }
     }
     $identity = Get-NightlyCoreBuildIdentity
-    if ($null -eq $identity) { throw 'nightly-core-identity-mismatch: required-identity-unavailable' }
+    if ($null -eq $identity) { throw 'nightly-core-identity-mismatch: required-identity-unavailable; start a fresh pwsh' }
     $cache = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-nightly-core'
     $expectedDll = Join-Path (Join-Path $cache ('Antiphon.Nightly-' + $identity.Hash)) 'Antiphon.Nightly.dll'
     $location = ''
@@ -196,6 +247,7 @@ function Assert-NightlyLoadedCoreIdentity {
     $detail = 'nightly-core-identity-mismatch: required=' + $identity.Hash
     if (-not $pathOk) { $detail = $detail + ' loaded=' + $location }
     if ($missing.Count -gt 0) { $detail = $detail + ' missing=' + ($missing -join ',') }
+    $detail = $detail + '; start a fresh pwsh'
     throw $detail
 }
 
@@ -264,7 +316,11 @@ function Write-NightlyEvidenceFailures([string[]]$Failures) {
 
 # Failures a deferred write already recorded. coverageComplete and testsPassed are false when any remain,
 # so the run summary and the returned verdict name them. An empty list leaves both true.
+# Flush before the peek: a peek alone can report complete while a failing write is still queued.
 function Get-NightlyDeferredEvidenceWriteVerdict {
+    if ('Antiphon.Nightly.EvidenceFiles' -as [type]) {
+        try { [void][Antiphon.Nightly.EvidenceFiles]::Flush() } catch { }
+    }
     $reasons = @()
     if ('Antiphon.Nightly.EvidenceFiles' -as [type]) {
         foreach ($text in @([Antiphon.Nightly.EvidenceFiles]::PeekFailures())) {
@@ -277,6 +333,29 @@ function Get-NightlyDeferredEvidenceWriteVerdict {
         coverageComplete = $complete
         testsPassed = $complete
         reasons = $reasons
+    }
+}
+
+# Invoke-AntiphonNightlyTests merges this into the summary before summary.json is written.
+# A failed verdict forces coverageComplete and testsPassed false and keeps every earlier reason.
+function Merge-NightlyDeferredEvidenceVerdict {
+    param($Reasons)
+    $verdict = Get-NightlyDeferredEvidenceWriteVerdict
+    $merged = New-Object System.Collections.Generic.List[string]
+    foreach ($reason in @($Reasons)) {
+        $text = [string]$reason
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if (-not $merged.Contains($text)) { [void]$merged.Add($text) }
+    }
+    foreach ($evidenceWriteReason in @($verdict.reasons)) {
+        $text = [string]$evidenceWriteReason
+        if ([string]::IsNullOrWhiteSpace($text)) { continue }
+        if (-not $merged.Contains($text)) { [void]$merged.Add($text) }
+    }
+    return [pscustomobject]@{
+        reasons = @($merged.ToArray())
+        coverageComplete = [bool]$verdict.coverageComplete
+        testsPassed = [bool]$verdict.testsPassed
     }
 }
 
