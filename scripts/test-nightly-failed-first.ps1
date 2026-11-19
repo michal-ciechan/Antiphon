@@ -524,9 +524,58 @@ public static class FFText {
     public static string Sha256(string path) {
         byte[] hash;
         using (FileStream stream = File.OpenRead(path)) { hash = Sha.ComputeHash(stream); }
+        return Hex(hash);
+    }
+    static string Hex(byte[] hash) {
         StringBuilder sb = new StringBuilder(64);
         foreach (byte b in hash) { sb.Append(b.ToString("x2", CultureInfo.InvariantCulture)); }
         return sb.ToString();
+    }
+    // The archive epilogue: for each i, create destination[i]'s directory (each distinct directory once),
+    // File.Copy(source[i], destination[i], false) and hash source[i] as Sha256 does. Four worker threads;
+    // the hashes come back in input order. A failure stops the remaining work and the failure of the
+    // lowest index is rethrown.
+    public static string[] CopyAndHash(string[] source, string[] destination) {
+        int count = source == null ? 0 : source.Length;
+        if ((destination == null ? 0 : destination.Length) != count) { throw new System.ArgumentException("source and destination differ in length"); }
+        string[] hashes = new string[count];
+        if (count == 0) { return hashes; }
+        HashSet<string> made = new HashSet<string>(System.StringComparer.Ordinal);
+        for (int i = 0; i < count; i++) {
+            string dir = Path.GetDirectoryName(destination[i]);
+            if (made.Add(dir)) { Directory.CreateDirectory(dir); }
+        }
+        int next = -1; int failedAt = int.MaxValue; System.Exception failure = null; object gate = new object();
+        System.Threading.ThreadStart work = delegate {
+            using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create()) {
+                while (true) {
+                    int i = System.Threading.Interlocked.Increment(ref next);
+                    if (i >= count || System.Threading.Volatile.Read(ref failedAt) < i) { return; }
+                    try {
+                        File.Copy(source[i], destination[i], false);
+                        using (FileStream stream = File.OpenRead(source[i])) { hashes[i] = Hex(sha.ComputeHash(stream)); }
+                    } catch (System.Exception e) {
+                        lock (gate) { if (i < failedAt) { failure = e; System.Threading.Volatile.Write(ref failedAt, i); } }
+                        return;
+                    }
+                }
+            }
+        };
+        int workers = System.Math.Min(4, count);
+        System.Threading.Thread[] threads = new System.Threading.Thread[workers];
+        for (int t = 0; t < workers; t++) { threads[t] = new System.Threading.Thread(work); threads[t].IsBackground = true; threads[t].Start(); }
+        foreach (System.Threading.Thread thread in threads) { thread.Join(); }
+        if (failure != null) { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw(); }
+        return hashes;
+    }
+    // foreach($n in $nodes){$index.Add([string]$n.Uid,$n)} on an ordinal dictionary: a duplicate Uid throws.
+    public static Dictionary<string, object> IndexByUid(object nodes) {
+        Dictionary<string, object> index = new Dictionary<string, object>(System.StringComparer.Ordinal);
+        if (nodes == null) { return index; }
+        IEnumerable items = LanguagePrimitives.GetEnumerable(nodes);
+        if (items == null) { index.Add(Str(nodes, "Uid"), nodes); return index; }
+        foreach (object n in items) { index.Add(Str(n, "Uid"), n); }
+        return index;
     }
     // Get-NightlyBareClassIdentity (nightly-coverage.ps1).
     static string Bare(string name) {
@@ -1106,8 +1155,8 @@ function Invoke-FFActualLoop {
     $p.Object.policyHash=Get-NightlyPolicyHash $p.Object
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
     $bySuite=@{}
-    foreach($s in $Fixture.suites){$index=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal);foreach($n in $s.nodes){$index.Add([string]$n.Uid,$n)};$bySuite[$s.id]=$index}
-    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Identities=[Collections.Generic.List[object]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false;Plans=@{}}
+    foreach($s in $Fixture.suites){$bySuite[$s.id]=[AntiphonFixture.FFText]::IndexByUid($s.nodes)}
+    $global:FFLoopBoundaryState=[pscustomobject]@{Fixture=$Fixture;BySuite=$bySuite;Variant=$Variant;Launches=[Collections.Generic.List[object]]::new();Discovery=[Collections.Generic.List[string]]::new();Identities=[Collections.Generic.List[object]]::new();Builds=0;Active=0;Max=0;SettledBeforeReturn=$false;Plans=@{};PlanGroups=@{}}
     $seams=Join-Path $dir 'seams.ps1'
     [IO.File]::WriteAllText($seams, @'
 $NightlySeams=@{
@@ -1143,11 +1192,18 @@ $NightlySeams=@{
             $global:FFLoopBoundaryState.Active++;$global:FFLoopBoundaryState.Max=[math]::Max($global:FFLoopBoundaryState.Max,$global:FFLoopBoundaryState.Active)
             $s=@($global:FFLoopBoundaryState.Fixture.suites|Where-Object {$_.id -ceq $sid})[0]
             $planPath=Join-Path $script:QualificationTimingRoot ('groups-planned-'+$sid+'.json')
-            # One parse per written plan (it is rewritten once per suite, read by every launch).
-            $planInfo=[IO.FileInfo]::new($planPath);$planKey=$planPath+'|'+$planInfo.Length+'|'+$planInfo.LastWriteTimeUtc.Ticks
-            if(-not $global:FFLoopBoundaryState.Plans.ContainsKey($planKey)){$global:FFLoopBoundaryState.Plans[$planKey]=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json}
+            # One parse per written plan (it is rewritten once per suite, read by every launch), and one
+            # chunk index per parse: the first group of each chunk id, $null for a chunk the plan lacks.
+            $planInfo=[IO.FileInfo]::new($planPath);$planKey=$planInfo.FullName+'|'+$planInfo.Length+'|'+$planInfo.LastWriteTimeUtc.Ticks
+            if(-not $global:FFLoopBoundaryState.Plans.ContainsKey($planKey)){
+                $global:FFLoopBoundaryState.Plans[$planKey]=[IO.File]::ReadAllText($planPath)|ConvertFrom-Json
+                $byChunk=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+                foreach($g in $global:FFLoopBoundaryState.Plans[$planKey].groups){if($g.chunk -is [string] -and -not $byChunk.ContainsKey($g.chunk)){$byChunk.Add($g.chunk,$g)}}
+                $global:FFLoopBoundaryState.PlanGroups[$planKey]=$byChunk
+            }
             $plan=$global:FFLoopBoundaryState.Plans[$planKey]
-            $group=@($plan.groups|Where-Object {$_.chunk -ceq $cid})[0]
+            $group=$null
+            if(-not $global:FFLoopBoundaryState.PlanGroups[$planKey].TryGetValue($cid,[ref]$group)){$group=$null}
             $nodes=@(foreach($uid in $group.plannedTestIds){$global:FFLoopBoundaryState.BySuite[$sid][[string]$uid]})
             if($nodes.Count -eq 0){$nodes=@($s.nodes|Where-Object {@($group.classes) -ccontains $_.ClassName})}
             $legacyCost=$null;$qualifiedCost=$null
@@ -1182,9 +1238,14 @@ $NightlySeams=@{
     $result=& (Join-Path $PSScriptRoot 'nightly-tests.ps1') @args -PassThru
     $summary=Read-NightlyJsonFile (Join-Path $dir 'summary.json')
     $schedule=[IO.File]::ReadAllText((Join-Path $dir 'dispatch-schedule.json'))|ConvertFrom-Json
-    $projection=[IO.File]::ReadAllText((Join-Path $dir 'timing/groups-executed.json'))|ConvertFrom-Json
+    $projection=Read-NightlyJsonFile (Join-Path $dir 'timing/groups-executed.json')
     Write-FFJson (Join-Path $dir 'actual-loop-observer.json') ([ordered]@{launches=$global:FFLoopBoundaryState.Launches.ToArray();discovery=$global:FFLoopBoundaryState.Discovery.ToArray();builds=$global:FFLoopBoundaryState.Builds})
-    $prepared=@(foreach($s in $Fixture.suites){$plan=[IO.File]::ReadAllText((Join-Path $dir ('timing/groups-planned-'+$s.id+'.json')))|ConvertFrom-Json;[pscustomobject]@{id=$s.id;nodes=$s.nodes;exclusions=@();chunks=@(foreach($g in $plan.groups){[pscustomobject]@{id=$g.chunk;classes=$g.classes}})}})
+    $prepared=@(foreach($s in $Fixture.suites){
+        # The seam's parse of this plan when the file is still the one it read (same key as the seam).
+        $planInfo=[IO.FileInfo]::new((Join-Path $dir ('timing/groups-planned-'+$s.id+'.json')));$planKey=$planInfo.FullName+'|'+$planInfo.Length+'|'+$planInfo.LastWriteTimeUtc.Ticks
+        $plan=$global:FFLoopBoundaryState.Plans[$planKey]
+        if($null -eq $plan){$plan=[IO.File]::ReadAllText($planInfo.FullName)|ConvertFrom-Json}
+        [pscustomobject]@{id=$s.id;nodes=$s.nodes;exclusions=@();chunks=@(foreach($g in $plan.groups){[pscustomobject]@{id=$g.chunk;classes=$g.classes}})}})
     return [pscustomobject]@{Result=$result;Summary=$summary;Schedule=$schedule;Projection=$projection;Trace=$global:FFLoopBoundaryState;Prepared=$prepared;Root=$dir}
 }
 
@@ -1556,6 +1617,7 @@ $archiveWatch=[Diagnostics.Stopwatch]::StartNew()
 $archive=Join-Path $repo ('.antiphon/failfirst/'+$sourceSha+'/portable/'+$Case+'-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($archive)
 $inventory=[Collections.Generic.List[object]]::new()
+$archiveSources=[Collections.Generic.List[string]]::new();$archiveDestinations=[Collections.Generic.List[string]]::new();$archiveRows=[Collections.Generic.List[object]]::new()
 foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
     $relative=$file.FullName.Substring($root.Length).TrimStart('\','/')
     if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $file.LinkType) {
@@ -1569,11 +1631,13 @@ foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
         $inventory.Add([ordered]@{path=$relative;kind='git-dir';copied=$false})
         continue
     }
-    $destination=Join-Path $archive $relative
-    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destination))
-    [IO.File]::Copy($file.FullName,$destination,$false)
-    $inventory.Add([ordered]@{path=$relative;kind='regular';copied=$true;sha256=[AntiphonFixture.FFText]::Sha256($file.FullName)})
+    # Copied and hashed after the walk, on four threads (FFText.CopyAndHash); the row keeps its place.
+    $row=[ordered]@{path=$relative;kind='regular';copied=$true;sha256=$null}
+    $archiveSources.Add($file.FullName);$archiveDestinations.Add((Join-Path $archive $relative));$archiveRows.Add($row)
+    $inventory.Add($row)
 }
+$archiveHashes=[AntiphonFixture.FFText]::CopyAndHash($archiveSources.ToArray(),$archiveDestinations.ToArray())
+for ($i=0; $i -lt $archiveRows.Count; $i++) { $archiveRows[$i].sha256=$archiveHashes[$i] }
 Write-FFJson (Join-Path $archive 'inventory.json') ([ordered]@{source=$sourceSha;case=$Case;testClass=$(if($Case -cin @('EvidenceUnion','RefusesIncompleteEvidence','OrdinaryFailedChunk')){'Antiphon.Tests.Scripts.RcFailureHistoryTests'}else{'Antiphon.Tests.Scripts.RcFailedFirstPlannerTests'});files=$inventory.ToArray()})
 $performancePath=Join-Path $root 'performance.json'
 $performance=[IO.File]::ReadAllText($performancePath) | ConvertFrom-Json
