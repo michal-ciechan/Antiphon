@@ -30,8 +30,10 @@
 # BUILTIN\Administrators, and the helper then refuses secrets-dir-owner.
 # Run it from a shell whose USERNAME owns that directory.
 #
-# DW3_FAIL_STEP and DW3_MODE_AT_WRITE are test seams. The fail step aborts
-# and never prints a value. The mode probe records only a mode line.
+# DW3_FAIL_STEP, DW3_REPLACE_FAULT and DW3_MODE_AT_WRITE are test seams.
+# DW3_REPLACE_FAULT names user-secrets or secret-file, deletes that target,
+# leaves the old bytes in an owner-only .dw3bak, and throws. It never prints
+# a value. The mode probe records only a mode line.
 #
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
 #   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
@@ -477,6 +479,14 @@ function Remove-Dw3Temp([string]$Path) {
     }
 }
 
+function Add-Dw3Backup([string]$Half, [string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return }
+    if ($null -eq $script:dw3Backup) { return }
+    $list = $script:dw3Backup[$Half]
+    if ($null -eq $list) { return }
+    [void]$list.Add($Path)
+}
+
 function Try-New-Dw3UnixModeEmpty([string]$Path) {
     $modeType = [Type]::GetType('System.IO.UnixFileMode, System.Private.CoreLib')
     $optionsType = [Type]::GetType('System.IO.FileStreamOptions, System.Private.CoreLib')
@@ -582,7 +592,23 @@ function New-Dw3StagedText([string]$Directory, [string]$Text, [string]$Secret, [
     }
 }
 
-function Move-Dw3TempOnto([string]$Temp, [string]$Target) {
+function Move-Dw3TempOnto([string]$Temp, [string]$Target, [string]$Half) {
+    $fault = $env:DW3_REPLACE_FAULT
+    $fireFault = $false
+    if ($script:dw3Step -cne 'restore' -and -not [string]::IsNullOrWhiteSpace($fault) -and $fault -ceq $Half) {
+        $fireFault = $true
+    }
+    if ($fireFault -and (Test-Path -LiteralPath $Target)) {
+        $dir = Split-Path -Parent $Target
+        $backup = Join-Path $dir ([guid]::NewGuid().ToString('n') + '.dw3bak')
+        $old = [System.IO.File]::ReadAllBytes($Target)
+        New-Dw3OwnerOnlyEmpty -Path $backup -Secret '' -Step ''
+        Write-Dw3BytesFlush -Path $backup -Bytes $old
+        Add-Dw3Backup -Half $Half -Path $backup
+        Remove-Item -LiteralPath $Target -Force
+        throw (New-Object System.IO.IOException 'simulated partial replace')
+    }
+    if ($fireFault) { throw (New-Object System.IO.IOException 'simulated partial replace') }
     $existed = Test-Path -LiteralPath $Target
     if ($env:OS -eq 'Windows_NT') {
         if ($existed) {
@@ -606,7 +632,8 @@ function Publish-Dw3Staged([string]$Temp, [string]$Target, [string]$Secret, [str
         Set-OwnerOnlyFile -Path $Target -Secret $Secret
         if (-not (Test-Dw3OwnerOnly $Target)) { throw 'owner-only permission was not applied' }
     }
-    Move-Dw3TempOnto -Temp $Temp -Target $Target
+    $script:dw3Staged[$Half] = $Temp
+    Move-Dw3TempOnto -Temp $Temp -Target $Target -Half $Half
     $script:dw3Changed[$Half] = $true
     if ($OwnerOnly) {
         Set-OwnerOnlyFile -Path $Target -Secret $Secret
@@ -621,7 +648,7 @@ function Publish-Dw3Staged([string]$Temp, [string]$Target, [string]$Secret, [str
     }
 }
 
-function Restore-Dw3Target([string]$Target, [byte[]]$OldBytes, [bool]$Existed, [string]$Secret, $SavedAcl, [bool]$OwnerOnly) {
+function Restore-Dw3Target([string]$Target, [byte[]]$OldBytes, [bool]$Existed, [string]$Secret, $SavedAcl, [bool]$OwnerOnly, [string]$Half) {
     $kept = $script:dw3Step
     if (-not $Existed) {
         if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue }
@@ -634,7 +661,7 @@ function Restore-Dw3Target([string]$Target, [byte[]]$OldBytes, [bool]$Existed, [
         New-Dw3OwnerOnlyEmpty -Path $temp -Secret $Secret -Step 'restore'
         if ($null -eq $OldBytes) { $OldBytes = New-Object byte[] 0 }
         Write-Dw3BytesFlush -Path $temp -Bytes $OldBytes
-        Move-Dw3TempOnto -Temp $temp -Target $Target
+        Move-Dw3TempOnto -Temp $temp -Target $Target -Half $Half
         if ($OwnerOnly) { Set-OwnerOnlyFile -Path $Target -Secret $Secret }
         elseif ($null -ne $SavedAcl) { Restore-SavedAcl -Path $Target -Saved $SavedAcl -Secret $Secret }
         $script:dw3Step = $kept
@@ -784,6 +811,12 @@ if (Test-Path -LiteralPath $SecretFile) {
 $script:dw3Step = 'prepare'
 $script:dw3Changed = @{ 'secret-file' = $false; 'user-secrets' = $false }
 $script:dw3Temps = New-Object System.Collections.Generic.List[string]
+$script:dw3Backup = @{}
+$script:dw3Backup['secret-file'] = New-Object System.Collections.Generic.List[string]
+$script:dw3Backup['user-secrets'] = New-Object System.Collections.Generic.List[string]
+$script:dw3Staged = @{ 'secret-file' = ''; 'user-secrets' = '' }
+$script:dw3SecretTarget = $SecretFile
+$script:dw3UserSecretsTarget = $UserSecretsPath
 $phaseWrote = $false
 
 try {
@@ -809,8 +842,10 @@ try {
     if ([string]::IsNullOrWhiteSpace($storeDir)) { throw 'user-secrets directory is missing' }
     $script:dw3Step = 'secret-acl'
     $secretTemp = New-Dw3StagedText -Directory $secretsDir -Text $secretText -Secret $secret -AclStep 'secret-acl' -WriteStep 'secret-write' -FailStep ''
+    $script:dw3Staged['secret-file'] = $secretTemp
     $script:dw3Step = 'user-secrets-acl'
     $jsonTemp = New-Dw3StagedText -Directory $storeDir -Text $jsonText -Secret $secret -AclStep 'user-secrets-acl' -WriteStep 'user-secrets-write' -FailStep 'user-secrets-write'
+    $script:dw3Staged['user-secrets'] = $jsonTemp
 
     $script:dw3Step = 'user-secrets-commit'
     Publish-Dw3Staged -Temp $jsonTemp -Target $UserSecretsPath -Secret $secret -Half 'user-secrets' -OwnerOnly $false -SavedAcl $oldJsonSaved
