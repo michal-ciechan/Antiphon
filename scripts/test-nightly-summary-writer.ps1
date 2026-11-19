@@ -54,7 +54,7 @@ function New-C2005Rows {
 }
 
 function New-C2005Summary {
-    param($Rows, $ProgressSuites)
+    param($Rows, $ProgressSuites, [string]$LogDir = 'C:\Antiphon\nightly\logs\run-c2005')
     $sha = 'a' * 40
     $summary = [ordered]@{
         startedAt = '2026-11-19T01:02:03.0040000Z'
@@ -68,7 +68,7 @@ function New-C2005Summary {
         requiredSuites = @('antiphon')
         runId = 'run-c2005'
         clone = 'C:\Antiphon\nightly\checkout'
-        logDir = 'C:\Antiphon\nightly\logs\run-c2005'
+        logDir = $LogDir
         selectedSuites = @('antiphon')
         selection = [ordered]@{ attempt = '1' }
         timingRoot = 'C:\timing'
@@ -118,8 +118,8 @@ function Write-C2005New {
     }
     . $WriterPath
     $rows = New-C2005Rows
-    $progress = @(Get-NightlyDispatchProgressSuites $rows)
-    $summary = New-C2005Summary $rows $progress
+    $progress = Get-NightlyDispatchProgressSuites $rows
+    $summary = New-C2005Summary $rows $progress (Split-Path -Parent $OutputPath)
     Write-NightlyStreamingJson -Path $OutputPath -Object $summary -Depth 8
     $length = (Get-Item -LiteralPath $OutputPath).Length
     Write-Output ('NEW-BOUNDED {0}' -f $length)
@@ -176,6 +176,11 @@ function Test-C2005Format {
     $none = Get-NightlyDispatchProgressSuites @([ordered]@{ id = 'manual'; result = 'skipped' })
     if ($one -isnot [System.Array] -or $one.Count -ne 1) { return 'ONE-ARRAY' }
     if ($one[0].Contains('exclusions')) { return 'ONE-EXCLUSIONS' }
+    $miniPath = $Path + '.one.json'
+    Write-NightlyStreamingJson -Path $miniPath -Object ([ordered]@{ suites = $one }) -Depth 4
+    $miniRaw = [IO.File]::ReadAllText($miniPath)
+    [IO.File]::Delete($miniPath)
+    if (-not $miniRaw.StartsWith('{"suites":[{')) { return 'ONE-JSON' }
     if ($none -isnot [System.Array] -or $none.Count -ne 0) { return 'NONE-ARRAY' }
     $sample = [ordered]@{
         startedAt = '2026-11-19T01:02:03.0040000Z'
@@ -198,6 +203,11 @@ function Test-C2005Format {
     return ''
 }
 
+function Write-C2005Line {
+    param([string]$Message)
+    [Console]::Out.WriteLine($Message)
+}
+
 function Test-C2005ReadBack {
     param([string]$Path)
     $text = [IO.File]::ReadAllText($Path)
@@ -205,44 +215,44 @@ function Test-C2005ReadBack {
     $uids = ([regex]::Matches($text, '"uid":')).Count
     $evidence = ([regex]::Matches($text, [regex]::Escape('"evidenceReasons"'))).Count
     if ($uid -ne 1 -or $uids -ne 80 -or $evidence -ne 40) {
-        Write-Output ('UID-COUNT uid0={0} uids={1} evidence={2}' -f $uid, $uids, $evidence)
+        Write-C2005Line ('UID-COUNT uid0={0} uids={1} evidence={2}' -f $uid, $uids, $evidence)
         return $false
     }
-    Write-Output 'UID-ONCE'
+    Write-C2005Line 'UID-ONCE'
     $parsed = $text | ConvertFrom-Json
     $suites = @($parsed.suites)
     $progress = @($parsed.dispatchProgress.suites)
     if ($suites.Count -ne 41 -or $progress.Count -ne 40) {
-        Write-Output ('ROW-COUNT suites={0} progress={1}' -f $suites.Count, $progress.Count)
+        Write-C2005Line ('ROW-COUNT suites={0} progress={1}' -f $suites.Count, $progress.Count)
         return $false
     }
-    if ([string]$suites[0].exclusions[0].uid -ne 'u0-0') { Write-Output 'SUITE-UID'; return $false }
-    if ([string]$suites[0].exclusions[0].categories[1] -ne 'Integration') { Write-Output 'SUITE-CATEGORY'; return $false }
-    if ([string]$suites[40].id -ne 'manual') { Write-Output 'MANUAL-ROW'; return $false }
+    if ([string]$suites[0].exclusions[0].uid -ne 'u0-0') { Write-C2005Line 'SUITE-UID'; return $false }
+    if ([string]$suites[0].exclusions[0].categories[1] -ne 'Integration') { Write-C2005Line 'SUITE-CATEGORY'; return $false }
+    if ([string]$suites[40].id -ne 'manual') { Write-C2005Line 'MANUAL-ROW'; return $false }
     foreach ($row in $progress) {
         $present = @($row.PSObject.Properties.Name)
         foreach ($forbidden in @('exclusions', 'evidenceReasons', 'trx', 'detail')) {
-            if ($present -contains $forbidden) { Write-Output ('PROGRESS-LEAK ' + $forbidden); return $false }
+            if ($present -contains $forbidden) { Write-C2005Line ('PROGRESS-LEAK ' + $forbidden); return $false }
         }
         foreach ($required in @('id', 'chunk', 'timedOut', 'result', 'exitCode', 'skipped', 'coverageComplete')) {
-            if ($present -notcontains $required) { Write-Output ('PROGRESS-MISSING ' + $required); return $false }
+            if ($present -notcontains $required) { Write-C2005Line ('PROGRESS-MISSING ' + $required); return $false }
         }
     }
     . (Join-Path $Root (Join-Path 'scripts' (Join-Path 'lib' 'nightly-failure-history.ps1')))
     Initialize-NightlyHistoryIdentity
     $bytes = [Text.Encoding]::UTF8.GetBytes($text)
     $cut = [Antiphon.NightlyHistory.SummaryPrefix]::CutBeforeBulk($bytes)
-    if ($cut -lt 1) { Write-Output 'PREFIX-CUT'; return $false }
+    if ($cut -lt 1) { Write-C2005Line 'PREFIX-CUT'; return $false }
     $prefix = [Text.Encoding]::UTF8.GetString($bytes, 0, $cut)
     $key = [Text.Encoding]::UTF8.GetString($bytes, $cut, 15)
     foreach ($field in @('runId', 'sha', 'timingRoot', 'startedAt', 'completedAt')) {
-        if (-not $prefix.Contains('"' + $field + '"')) { Write-Output ('PREFIX-MISSING ' + $field); return $false }
+        if (-not $prefix.Contains('"' + $field + '"')) { Write-C2005Line ('PREFIX-MISSING ' + $field); return $false }
     }
     if ($prefix.Contains('"suites"') -or $key -ne '"timingChunks":') {
-        Write-Output ('PREFIX-ORDER key={0}' -f $key)
+        Write-C2005Line ('PREFIX-ORDER key={0}' -f $key)
         return $false
     }
-    Write-Output 'PREFIX-OK'
+    Write-C2005Line 'PREFIX-OK'
     $shim = {
         param($Method, $Uri, $Headers, $Body)
         if ($Uri -like '*/api/boards/*/columns') {
@@ -259,12 +269,12 @@ function Test-C2005ReadBack {
     $report = Join-Path $Root (Join-Path 'scripts' 'nightly-report.ps1')
     $result = & $report -Summary $Path -PassThru -DryRun -HttpShim $shim -Board Antiphon
     if ($result.ExitCode -ne 0 -or $result.Action -ne 'none') {
-        Write-Output ('REPORT-REJECT exit={0} action={1}' -f $result.ExitCode, $result.Action)
+        Write-C2005Line ('REPORT-REJECT exit={0} action={1}' -f $result.ExitCode, $result.Action)
         return $false
     }
     $card = Join-Path (Split-Path -Parent $Path) 'card.md'
-    if (Test-Path -LiteralPath $card) { Write-Output 'REPORT-WROTE-CARD'; return $false }
-    Write-Output 'REPORT-ACCEPTED'
+    if (Test-Path -LiteralPath $card) { Write-C2005Line 'REPORT-WROTE-CARD'; return $false }
+    Write-C2005Line 'REPORT-ACCEPTED'
     return $true
 }
 

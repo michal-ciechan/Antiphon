@@ -804,7 +804,10 @@ function Invoke-AntiphonNightlyRunCore {
             if ($null -ne $summary.PSObject.Properties['succeeded']) {
                 $summary.succeeded = $false
             }
-            Write-NightlyAtomicJson -Path $summaryPath -Object $summary
+            if (-not (Get-Command Write-NightlyStreamingJson -ErrorAction SilentlyContinue)) {
+                . (Join-Path $PSScriptRoot 'nightly-summary-json.ps1')
+            }
+            Write-NightlyStreamingJson -Path $summaryPath -Object $summary -Depth 8
         }
         if ($testExit -ne 0) { $testsPassed = $false }
 

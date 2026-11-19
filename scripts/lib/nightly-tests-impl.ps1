@@ -8,6 +8,7 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 . (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
 . (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
+. (Join-Path $PSScriptRoot 'nightly-summary-json.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -2267,7 +2268,8 @@ function Invoke-AntiphonNightlyTests {
     # Bound by the exported summary digest. This diagnostic snapshot can order a
     # later complete attempt; it never supplies pass credit or skips a launch.
     if($null -ne $dispatchSchedule -and $dispatchSchedule.preparationComplete){
-        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=@($suiteResults|Where-Object {$_.chunk})}
+        # Scheduling fields only. The census rows, including exclusions, stay on suites.
+        $summary.dispatchProgress=[ordered]@{schemaVersion=1;liveness='closed';sha=$Sha;completedAt=$completedAt.ToString('o');canonicalPlanDigest=$dispatchSchedule.canonicalPlanDigest;suites=(Get-NightlyDispatchProgressSuites $suiteResults)}
     }
     try {
         $phaseDir = Get-TestPhaseTimingDirectory -RunDirectory $LogRoot
@@ -2279,7 +2281,7 @@ function Invoke-AntiphonNightlyTests {
     } catch {
         Write-TestPhaseFailureMarker -RunDirectory $LogRoot -Code 'phase-summary-failed'
     }
-    $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding UTF8
+    Write-NightlyStreamingJson -Path $summaryPath -Object $summary -Depth 8
     Write-NightlyRunLine ('wrote {0}' -f $summaryPath)
 
     $exit = 0

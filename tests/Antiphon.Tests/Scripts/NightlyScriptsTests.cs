@@ -62,6 +62,8 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "nightly-coverage.ps1"),
                      Path.Combine("lib", "nightly-run-impl.ps1"),
                      Path.Combine("lib", "nightly-tests-impl.ps1"),
+                     Path.Combine("lib", "nightly-summary-json.ps1"),
+                     "test-nightly-summary-writer.ps1",
                      Path.Combine("lib", "nightly-health.ps1"),
                      Path.Combine("lib", "c487-harness.ps1"),
                      // CARD-1698: the toolchain floor library and the restart entry points that load it.
