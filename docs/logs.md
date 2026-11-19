@@ -99,6 +99,18 @@ At the 2026-09-24 host check there was **no retrievable durable server2 deployme
 
 After the control plane is the Linux server, the server container is `antiphon-server2-server-server-1`. Its stdout and stderr are `docker logs antiphon-server2-server-server-1`. Its Serilog files are under `/state/logs` in that container (`Serilog__LogPath`), on the volume `antiphon-server2-server_server-state`. The sidecar container `antiphon-server2-server-server-session-runner-1` has its own `/state/logs` on `antiphon-server2-server_runner-state`. Do not read one volume as the other's. Neither path is a desktop file, and `scripts/logs.ps1 -Source desktop-server` does not read them. Do not inspect `/state/keyring`, `/state/keyring-cert`, or `/state/operator-token`.
 
+## desktop-win runner (CARD-1744)
+
+`desktop-win` is the Windows phone-home runner on the desktop. The switch and rollback are the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md). `scripts/logs.ps1 -Source session-runner` reads `C:\src\Antiphon\logs\session-runner.log` and `%TEMP%\antiphon-logs\session-runner-*.log`. It does not read `C:\Antiphon\runner\state\logs`. Live tails below are UNOBSERVED. Do not open `C:\Antiphon\runner\secrets\phone-home`.
+
+| Phase | Supervisor stdout | Serilog file |
+|---|---|---|
+| Phase 1, autostart from `C:\Antiphon\runner\app` | `C:\Antiphon\runner\app\logs\session-runner.log`. `autostart-session-runner.ps1` puts `session-runner.log` under its own repo root, and `run-daemon.ps1` appends the service stdout there. | `C:\Antiphon\runner\state\logs\session-runner-.log` once the phone-home environment sets `Serilog__LogPath` to `C:/Antiphon/runner/state/logs` (`start-windows-phone-home-runner.ps1`, `Program.cs`). |
+| Phase 1, fallback starter | The terminal that launched `start-windows-phone-home-runner.ps1`. That script runs the executable in the foreground and writes no supervisor log. | Same `C:\Antiphon\runner\state\logs\session-runner-.log`. |
+| Phase 2, logon task on 17204 | `C:\src\Antiphon\logs\session-runner.log` when the task was registered from that checkout. | `C:\Antiphon\runner\state\logs\session-runner-.log` after the phase 2 environment is set. Until then the supervised direct runner stays on the `%TEMP%\antiphon-logs` row above. |
+
+On master `a789c87770d31a77687f75a619c5af646d1ce91f`, `autostart-session-runner.ps1` does not set `Serilog__LogPath`. The phase 1 autostart row and the phase 2 Serilog row apply once S4 is on the tip the task launches.
+
 ## Windmill runs
 
 Windmill is the evidence source for scheduled nightly and tracker jobs, not a desktop log file. Open the job in Windmill and use its run-log view; the configured nightly script is `u/lndcobra/antiphon_nightly_tests` and writes durable local run evidence below `C:\Antiphon\nightly\logs\<yyyy-MM-dd-HHmm>-<runId>\` (`build.log`, suite logs and `summary.json`). `scripts/nightly-run.ps1` owns the layout and no local Scheduled Task is supported. This task did not use a Windmill credential or query an unauthenticated endpoint, so live Windmill retrieval remains an access-dependent gap rather than a claimed check.
