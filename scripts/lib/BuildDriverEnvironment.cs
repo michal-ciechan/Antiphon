@@ -48,14 +48,33 @@ namespace Antiphon.Build
                     throw new ArgumentException("invalid CPU affinity range");
                 for (int cpu = first; cpu <= last; cpu++) cpus.Add(cpu);
             }
+            var ordered = new List<int>(cpus);
+            int count = ordered.Count;
+            if (count == 0) throw new ArgumentException("invalid CPU affinity");
+            // A one-CPU grant stacks on the lowest CPU. Use two when the allowed set has room.
+            int width = grant;
+            if (count > 1 && width < 2) width = 2;
+            if (width > count) width = count;
+            // Rotate the window so different grants do not all start at the lowest CPU.
+            int origin = 0;
+            if (width < count)
+            {
+                origin = (grant * width) % count;
+                if (origin + width > count) origin = count - width;
+            }
             var chosen = new List<string>();
-            foreach (int cpu in cpus) { if (chosen.Count == grant) break; chosen.Add(cpu.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+            for (int i = origin; i < origin + width; i++)
+                chosen.Add(ordered[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
             return string.Join(",", chosen.ToArray());
         }
 
+        // The runtime reads DOTNET_GCHeapHardLimit as hexadecimal. 0x200000000 is 8 GiB.
+        // The stock Antiphon.Tests compiler peaked at 5.8 GB RSS; the old literal was 4 GiB.
+        public const string HeapHardLimitHex = "0x200000000";
+
         public static string Identity(string sdk, string scope, string cpus)
         {
-            return Hash("c1885-v1\n" + sdk + "\n" + scope + "\n" + cpus + "\nheap=100000000;idle=120");
+            return Hash("c1885-v1\n" + sdk + "\n" + scope + "\n" + cpus + "\nheap=" + HeapHardLimitHex + ";idle=120");
         }
 
         public static string[] Arguments(string[] args, string toolset, string pipe)
@@ -89,7 +108,7 @@ namespace Antiphon.Build
         {
             if (count <= 0) throw new ArgumentException("invalid compiler processor count");
             return new Dictionary<string, string> { { "DOTNET_PROCESSOR_COUNT", count.ToString(System.Globalization.CultureInfo.InvariantCulture) },
-                { "DOTNET_GCHeapHardLimit", "100000000" } };
+                { "DOTNET_GCHeapHardLimit", HeapHardLimitHex } };
         }
 
         public static string Hash(string value)
@@ -304,7 +323,7 @@ namespace Antiphon.Build
             string[] prepared = LinuxSharedCompilerPolicy.Arguments(args, entry, pipe);
             var argv = Argv(start); argv.Clear(); foreach (string token in prepared) argv.Add(token);
             return "LINUX COMPILER policy=c1885-v1 sdk=" + sdk + " sdkContent=" + content + " identity=" + key + " pipe=" + pipe + " cpus=" + cpus
-                + " heap=" + (capped ? "100000000" : "stock") + " idle=" + idleSeconds + " cache=" + (hit ? "hit" : "copy")
+                + " heap=" + (capped ? LinuxSharedCompilerPolicy.HeapHardLimitHex : "stock") + " idle=" + idleSeconds + " cache=" + (hit ? "hit" : "copy")
                 + " resolutionMs=" + resolution.ElapsedMilliseconds + " prepareMs=" + budget.ElapsedMilliseconds + " lockMs=" + lockWait.ElapsedMilliseconds
                 + " argvSha256=" + LinuxSharedCompilerPolicy.Hash(string.Join("\n", prepared));
         }

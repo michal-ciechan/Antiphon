@@ -46,7 +46,7 @@ public sealed class LinuxSharedCompilerPolicyTests
     [Test]
     public void Sparse_affinity_is_intersected_with_grant()
     {
-        LinuxSharedCompilerPolicy.SelectCpus("2,4-5,9,12-13", 3).ShouldBe("2,4,5");
+        LinuxSharedCompilerPolicy.SelectCpus("2,4-5,9,12-13", 3).ShouldBe("9,12,13");
         LinuxSharedCompilerPolicy.SelectCpus("4,9", 6).ShouldBe("4,9");
         Should.Throw<ArgumentException>(() => LinuxSharedCompilerPolicy.SelectCpus("0-1000000", 6));
         Should.Throw<ArgumentException>(() => LinuxSharedCompilerPolicy.SelectCpus("0-3", 0));
@@ -62,8 +62,8 @@ public sealed class LinuxSharedCompilerPolicyTests
         int start1 = int.Parse(grant1.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture);
         int start6 = int.Parse(grant6.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture);
         (start1 == 0 && start6 == 0).ShouldBeFalse("grant 1 and grant 6 must not both start at CPU 0");
-        grant1.Split(',').Length.ShouldBeGreaterThan(1);
-        grant6.Split(',').Length.ShouldBeGreaterThan(1);
+        grant1.ShouldBe("2,3");
+        grant6.ShouldBe("12,13,14,15,16,17");
     }
 
     [Test]
@@ -115,7 +115,7 @@ public sealed class LinuxSharedCompilerPolicyTests
         env.Count.ShouldBe(1);
         var child = LinuxSharedCompilerPolicy.CompilerEnvironment(3);
         child["DOTNET_PROCESSOR_COUNT"].ShouldBe("3");
-        child["DOTNET_GCHeapHardLimit"].ShouldBe("100000000");
+        child["DOTNET_GCHeapHardLimit"].ShouldBe("0x200000000");
         child.Count.ShouldBe(2);
     }
 
