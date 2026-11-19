@@ -246,4 +246,71 @@ public sealed class C0824WorkspaceSlotColdResetTests
         entry.Reason.ShouldBe(lost is null ? "dirty" : "unpushed");
         pool.Ledger().Slot("ws-01")!.Path.ShouldBe(scratch.Slot("ws-01-d2"));
     }
+
+    [Test]
+    public async Task C0824_QualificationFenceDefersColdAndKeepsWarm(CancellationToken ct)
+    {
+        // D-10. Not a closed checkpoint row. Warm lease and release continue while the lock exists.
+        // Cold and the weekly mark record pending; the wipe runs only after the lock is gone.
+        new WorkspaceSlotFenceFile("").Held().ShouldBeFalse();
+        new WorkspaceSlotFenceFile(Path.Combine(Path.GetTempPath(), "card-0824-no-such-fence-" + Guid.NewGuid().ToString("N"))).Held().ShouldBeFalse();
+        new WorkspaceSlotFenceFile("unreadable", _ => throw new UnauthorizedAccessException("unreadable")).Held().ShouldBeTrue();
+
+        var fenceDirectory = Path.Combine(Path.GetTempPath(), "card-0824-fence-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fenceDirectory);
+        var lockPath = Path.Combine(fenceDirectory, "native-run.lock");
+        File.WriteAllText(lockPath, "held");
+        try
+        {
+            new WorkspaceSlotFenceFile(lockPath).Held().ShouldBeTrue();
+
+            using var scratch = Create();
+            var pool = scratch.Pool(Settings(settings => settings.RcFencePath = lockPath));
+            var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+            PlantNative(a.Path);
+            await Release(pool, a, TaskA);
+            NativePresent(a.Path);
+            pool.Ledger().Slot("ws-01")!.LastResetKind.ShouldBe("warm");
+
+            var response = await pool.ColdResetAsync(
+                new PhoneHomeWorkspaceSlotColdResetRequest(Guid.NewGuid(), ["ws-01"], false, "rc", "qualification"), ct);
+            response.Slots.ShouldHaveSingleItem().Outcome.ShouldBe("pending");
+            NativePresent(a.Path);
+            var pending = pool.Ledger().Slot("ws-01")!;
+            pending.State.ShouldBe(WorkspaceSlotStates.Free);
+            pending.ColdResetPending.ShouldNotBeNull();
+
+            await pool.MaintainAsync(ct);
+            pool.Ledger().ScheduledMarks.ShouldBe(0);
+            scratch.Clock.SetUtcNow(new DateTimeOffset(2026, 11, 8, 2, 0, 1, TimeSpan.Zero));
+            await pool.MaintainAsync(ct);
+            NativePresent(a.Path);
+            pool.Ledger().ScheduledMarks.ShouldBe(1);
+            pool.Ledger().Slot("ws-01")!.ColdResetPending.ShouldNotBeNull();
+
+            var b = await pool.LeaseAsync(scratch.RequestB(cold: true), ct);
+            b.Path.ShouldBe(a.Path);
+            NativePresent(b.Path);
+            pool.Ledger().Slot("ws-01")!.LastResetKind.ShouldBe("warm");
+            pool.Ledger().Slot("ws-01")!.ColdResetPending.ShouldNotBeNull();
+            await Release(pool, b, TaskB);
+            NativePresent(a.Path);
+            pool.Ledger().Slot("ws-01")!.LastResetKind.ShouldBe("warm");
+            pool.Ledger().Slot("ws-01")!.ColdResetPending.ShouldNotBeNull();
+
+            File.Delete(lockPath);
+            var c = await pool.LeaseAsync(scratch.RequestC(), ct);
+            NativeAbsent(c.Path);
+            var finished = pool.Ledger().Slot("ws-01")!;
+            finished.LastResetKind.ShouldBe("cold");
+            finished.ColdResetPending.ShouldBeNull();
+        }
+        finally
+        {
+            if (File.Exists(lockPath))
+                File.Delete(lockPath);
+            if (Directory.Exists(fenceDirectory))
+                Directory.Delete(fenceDirectory);
+        }
+    }
 }
