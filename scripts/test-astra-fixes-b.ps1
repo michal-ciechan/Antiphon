@@ -67,6 +67,10 @@ public static class AstraBeforeWrite {
     public static bool SnapshotSeen;
     public static void Invoke(string path) {
         if (Mode == "throw") throw new System.IO.IOException("astra-before-write");
+        if (Mode == "delay-throw") {
+            System.Threading.Thread.Sleep(SleepMs);
+            throw new System.IO.IOException("astra-delay-throw");
+        }
         if (Mode == "kill") {
             System.IO.File.WriteAllText(SignalPath, "entered");
             System.Threading.Thread.Sleep(SleepMs);
@@ -189,6 +193,11 @@ function Test-AstraFlushFailure {
         $pathKeeps = ($oneText.Contains('one.json') -and -not $oneText.Contains('two.json'))
         Assert-C487 $pathKeeps 'AB FlushFailure.path-keeps-other' $oneText
         $done['path-keeps-other'] = $true
+        $afterFlush = [Antiphon.Nightly.TestPhaseFiles]::BoundedRead($file1, 4096, 5000, [Diagnostics.Stopwatch]::StartNew())
+        $pathStillFailed = [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1)
+        $stillRefused = ($pathStillFailed -and [bool]$afterFlush.Refused -and -not [bool]$afterFlush.Complete -and [string]$afterFlush.Kind -eq 'deferred-write-failed')
+        Assert-C487 $stillRefused 'AB FlushFailure.path-still-failed' ('PathFailed=' + $pathStillFailed + ' Complete=' + $afterFlush.Complete + ' Refused=' + $afterFlush.Refused + ' Kind=' + $afterFlush.Kind)
+        $done['path-still-failed'] = $true
         $rest = @([Antiphon.Nightly.EvidenceFiles]::Flush())
         $restText = [string]($rest -join ' | ')
         Assert-C487 $restText.Contains('two.json') 'AB FlushFailure.later-flush-keeps-other' $restText
@@ -205,9 +214,42 @@ function Test-AstraFlushFailure {
         }
         Assert-C487 $verdictOk 'AB FlushFailure.verdict' $verdictDetail
         $done['verdict'] = $true
+        & chmod 700 $blocked
+        if ($LASTEXITCODE -ne 0) { throw 'chmod 700 failed' }
+        $retryText = '{"sequence":3,"publicationComplete":true}'
+        [Antiphon.Nightly.EvidenceFiles]::WriteAtomic($file1, $retryText, $false)
+        $retryWatch = [Diagnostics.Stopwatch]::StartNew()
+        $retryReady = $false
+        while ($retryWatch.ElapsedMilliseconds -lt 8000) {
+            if ([Antiphon.Nightly.EvidenceFiles]::PendingLength($file1) -lt 0) { $retryReady = $true; break }
+            Start-Sleep -Milliseconds 50
+        }
+        if (-not $retryReady) { throw 'setup: retry stayed queued' }
+        $retryReported = @([Antiphon.Nightly.EvidenceFiles]::Flush($file1) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $retryVerdict = Get-NightlyDeferredEvidenceWriteVerdict
+        $retryReasons = [string](@($retryVerdict.reasons) -join ' | ')
+        $retryKept = ($retryReported.Count -eq 0 -and [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1) -and -not [bool]$retryVerdict.coverageComplete -and -not [bool]$retryVerdict.testsPassed -and $retryReasons.Contains('one.json'))
+        Assert-C487 $retryKept 'AB FlushFailure.retry-keeps-failed' ('reported=' + $retryReported.Count + ' pathFailed=' + [Antiphon.Nightly.EvidenceFiles]::PathFailed($file1) + ' coverage=' + $retryVerdict.coverageComplete + ' reasons=' + $retryReasons)
+        $done['retry-keeps-failed'] = $true
+        $quality = @(Get-TestPhasePublicationQuality -RunDirectory $root)
+        $qualityOk = @($quality | Where-Object { [string]$_ -eq 'deferred-evidence-write-failed' }).Count -gt 0
+        Assert-C487 $qualityOk 'AB FlushFailure.phase-quality-token' ('tokens=' + ($quality -join ','))
+        $done['phase-quality-token'] = $true
+        $summaryOk = $false
+        $summaryDetail = ''
+        try {
+            $merged = Merge-NightlyDeferredEvidenceVerdict -Reasons @('kept-reason')
+            $mergedReasons = [string](@($merged.reasons) -join ' | ')
+            $summaryOk = ($mergedReasons.Contains('kept-reason') -and $mergedReasons.Contains('deferred-evidence-write-failed:') -and -not [bool]$merged.coverageComplete -and -not [bool]$merged.testsPassed)
+            $summaryDetail = ('coverage=' + $merged.coverageComplete + ' tests=' + $merged.testsPassed + ' reasons=' + $mergedReasons)
+        } catch {
+            $summaryDetail = $_.Exception.Message
+        }
+        Assert-C487 $summaryOk 'AB FlushFailure.summary-calls-verdict' $summaryDetail
+        $done['summary-calls-verdict'] = $true
     } catch {
         $detail = $_.Exception.Message
-        foreach ($name in @('not-complete-stale','refused','path-keeps-other','later-flush-keeps-other','verdict')) {
+        foreach ($name in @('not-complete-stale','refused','path-keeps-other','path-still-failed','later-flush-keeps-other','verdict','retry-keeps-failed','phase-quality-token','summary-calls-verdict')) {
             if (-not $done[$name]) { Assert-C487 $false ('AB FlushFailure.' + $name) $detail }
         }
     } finally {
@@ -217,12 +259,37 @@ function Test-AstraFlushFailure {
             try { Disable-NightlyDeferredEvidenceWrites } catch { }
         }
     }
-    $implPath = Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'
-    $impl = [IO.File]::ReadAllText($implPath)
-    Assert-C487 $impl.Contains('Get-NightlyDeferredEvidenceWriteVerdict') 'AB FlushFailure.summary-calls-verdict' 'summary hook absent'
-    $phasePath = Join-Path $PSScriptRoot 'lib/test-phase-evidence.ps1'
-    $phase = [IO.File]::ReadAllText($phasePath)
-    Assert-C487 $phase.Contains('deferred-evidence-write-failed') 'AB FlushFailure.phase-quality-token' 'publication token absent'
+    Test-AstraVerdictFlushes
+}
+
+function Test-AstraVerdictFlushes {
+    $root = New-AstraResultsRoot
+    $dir = Join-Path $root 'inflight'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $target = Join-Path $dir 'late.json'
+    $ok = $false
+    $detail = ''
+    try {
+        Enable-NightlyDeferredEvidenceWrites
+        Set-AstraBeforeWrite -Mode 'delay-throw' -SleepMs 2000
+        [Antiphon.Nightly.EvidenceFiles]::WriteAllText($target, 'late')
+        $verdict = Get-NightlyDeferredEvidenceWriteVerdict
+        $reasons = [string](@($verdict.reasons) -join ' | ')
+        $ok = ((-not [bool]$verdict.coverageComplete) -and (-not [bool]$verdict.testsPassed) -and $reasons.Contains('deferred-evidence-write-failed:'))
+        $detail = ('coverage=' + $verdict.coverageComplete + ' tests=' + $verdict.testsPassed + ' reasons=' + $reasons)
+        $wait = [Diagnostics.Stopwatch]::StartNew()
+        while ($wait.ElapsedMilliseconds -lt 8000 -and [Antiphon.Nightly.EvidenceFiles]::PendingLength($target) -ge 0) {
+            Start-Sleep -Milliseconds 50
+        }
+    } catch {
+        $detail = $_.Exception.Message
+    } finally {
+        Clear-AstraBeforeWrite
+        if ($script:NightlyDeferEvidenceWrites) {
+            try { Disable-NightlyDeferredEvidenceWrites } catch { }
+        }
+    }
+    Assert-C487 $ok 'AB FlushFailure.verdict-flushes' $detail
 }
 
 function Test-AstraJournalPublish {
@@ -263,8 +330,9 @@ function Test-AstraJournalPublish {
         $lockDir = Join-Path $root 'lock'
         $locked = Open-AstraContext $lockDir
         $held += $locked
+        $lockedJournal = Get-TestPhaseJournalRoot -TimingRoot $locked.TimingRoot
         Set-AstraBeforeWrite -Mode 'throw'
-        [Antiphon.Nightly.EvidenceFiles]::WriteAllText((Join-Path $lockDir 'queued.json'), 'queued')
+        [Antiphon.Nightly.EvidenceFiles]::WriteAllText((Join-Path $lockedJournal 'held-failure.json'), 'held')
         Close-TestPhaseExecutedContext -Context $locked
         $lockPath = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $locked.TimingRoot) 'writer.lock'
         $reacquired = $false
@@ -282,6 +350,34 @@ function Test-AstraJournalPublish {
         $lockOk = ((-not $reacquired) -and $lockVisible.Visible)
         Assert-C487 $lockOk 'AB JournalPublish.close-holds-lock' ('reacquired=' + $reacquired + ' ' + $lockVisible.Detail)
         $done['close-holds-lock'] = $true
+
+        $unrelatedDir = Join-Path $root 'unrelated'
+        $unrelated = Open-AstraContext $unrelatedDir
+        $held += $unrelated
+        Set-AstraBeforeWrite -Mode 'throw'
+        [Antiphon.Nightly.EvidenceFiles]::WriteAllText((Join-Path $unrelatedDir 'outside.json'), 'outside')
+        Close-TestPhaseExecutedContext -Context $unrelated
+        $unrelatedLock = Join-Path (Get-TestPhaseJournalRoot -TimingRoot $unrelated.TimingRoot) 'writer.lock'
+        $unrelatedProbe = $null
+        $unrelatedFree = $false
+        try {
+            $unrelatedProbe = [IO.File]::Open($unrelatedLock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            $unrelatedFree = $true
+        } catch {
+            $unrelatedFree = $false
+        } finally {
+            if ($null -ne $unrelatedProbe) { try { $unrelatedProbe.Dispose() } catch { } }
+        }
+        $unrelatedVerdict = Get-NightlyDeferredEvidenceWriteVerdict
+        $unrelatedReasons = [string](@($unrelatedVerdict.reasons) -join ' | ')
+        $unrelatedFailed = ((-not [bool]$unrelatedVerdict.coverageComplete) -and (-not [bool]$unrelatedVerdict.testsPassed) -and $unrelatedReasons.Contains('deferred-evidence-write-failed:'))
+        $again = Open-TestPhaseExecutedContext -LogRoot (Join-Path $unrelatedDir 'log') -TimingRoot $unrelated.TimingRoot -RunId 'run' -Attempt '1' -Suite 'antiphon' -Source ('b' * 40) -InvocationId 'again'
+        if ($null -ne $again -and $null -ne $again.Lock) { $held += $again }
+        $againOpen = ($null -ne $again -and -not [bool]$again.Refused)
+        Clear-AstraBeforeWrite
+        $unrelatedOk = ($unrelatedFree -and $unrelatedFailed -and $againOpen)
+        Assert-C487 $unrelatedOk 'AB JournalPublish.unrelated-releases-lock' ('free=' + $unrelatedFree + ' failed=' + $unrelatedFailed + ' again=' + $againOpen + ' reason=' + [string]$again.Reason + ' ' + $unrelatedReasons)
+        $done['unrelated-releases-lock'] = $true
 
         $killRoot = Join-Path $root 'kill'
         New-Item -ItemType Directory -Path $killRoot -Force | Out-Null
@@ -313,7 +409,7 @@ function Test-AstraJournalPublish {
         $done['kill-keeps-acked-record'] = $true
     } catch {
         $detail = $_.Exception.Message
-        foreach ($name in @('ack-waits-for-disk','held-write-not-acked','throw-does-not-ack','close-holds-lock','kill-keeps-acked-record')) {
+        foreach ($name in @('ack-waits-for-disk','held-write-not-acked','throw-does-not-ack','close-holds-lock','unrelated-releases-lock','kill-keeps-acked-record')) {
             if (-not $done[$name]) { Assert-C487 $false ('AB JournalPublish.' + $name) $detail }
         }
     } finally {
@@ -379,7 +475,72 @@ namespace Antiphon.Nightly {
     Assert-C487 (-not $accepted) 'AB StaleCore.refused' ('accepted=' + $accepted + ' reason=' + $reason)
     Assert-C487 ($reason.StartsWith('nightly-core-identity-mismatch')) 'AB StaleCore.named-reason' $reason
     Assert-C487 ($reason.Contains('NightlyCoverageParts')) 'AB StaleCore.missing-type-at-load' $reason
+    Assert-C487 ($reason.Contains('start a fresh pwsh')) 'AB StaleCore.fresh-pwsh' $reason
     Assert-C487 (-not $late) 'AB StaleCore.no-late-call' $lateError
+}
+
+function New-AstraCompleteCore {
+    . (Join-Path $PSScriptRoot 'lib/nightly-core.ps1')
+    $identity = Get-NightlyCoreBuildIdentity
+    if ($null -eq $identity) { throw 'identity-unavailable' }
+    $other = [guid]::NewGuid().ToString('N').Substring(0, 24)
+    if ([string]$identity.Hash -eq $other) { $other = ('0' * 24) }
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ('antiphon-nightly-core/Antiphon.Nightly-' + $other)
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $dll = Join-Path $dir 'Antiphon.Nightly.dll'
+    $source = @'
+namespace Antiphon.Nightly {
+    public static class TestPhaseJson { public static int Marker() { return 1; } }
+    public static class NightlyCoverageParts { public static int Marker() { return 1; } }
+    public static class EvidenceFiles { public static int Marker() { return 1; } }
+    public static class TestPhaseFiles { public static int Marker() { return 1; } }
+}
+'@
+    Add-Type -TypeDefinition $source -OutputAssembly $dll -OutputType Library
+    try { Add-Type -Path $dll } catch {
+        if (-not ('Antiphon.Nightly.TestPhaseJson' -as [type])) { throw }
+        if (-not ('Antiphon.Nightly.NightlyCoverageParts' -as [type])) { throw }
+        if (-not ('Antiphon.Nightly.EvidenceFiles' -as [type])) { throw }
+        if (-not ('Antiphon.Nightly.TestPhaseFiles' -as [type])) { throw }
+    }
+    return [pscustomobject]@{ Dll = [IO.Path]::GetFullPath($dll); Hash = [string]$identity.Hash }
+}
+
+function Test-AstraCompleteCorePath {
+    $core = New-AstraCompleteCore
+    $script:NightlyCoreAvailable = $null
+    $accepted = $false
+    $reason = ''
+    try { $accepted = [bool](Test-NightlyCoreAvailable) }
+    catch { $reason = [string]$_.Exception.Message; $accepted = $false }
+    $loaded = ''
+    if ($reason -match 'loaded=([^\s;]+)') { $loaded = $Matches[1] }
+    Assert-C487 (-not $accepted) 'AB CompleteCorePath.refused' ('accepted=' + $accepted + ' reason=' + $reason)
+    Assert-C487 ($reason.StartsWith('nightly-core-identity-mismatch') -and $loaded -eq $core.Dll) 'AB CompleteCorePath.loaded-path' ('loaded=' + $loaded + ' dll=' + $core.Dll + ' reason=' + $reason)
+    Assert-C487 (-not $reason.Contains('missing=')) 'AB CompleteCorePath.types-present' $reason
+    Assert-C487 ($reason.Contains('start a fresh pwsh')) 'AB CompleteCorePath.fresh-pwsh' $reason
+}
+
+function Test-AstraCheckoutIdentity {
+    $core = New-AstraCompleteCore
+    $script:NightlyCoreAvailable = $true
+    $script:NightlyCoreVerifiedHash = 'stale-checkout-hash'
+    $script:NightlyCoreVerifiedStamp = ''
+    $rechecked = $false
+    $reason = ''
+    try { $null = Test-NightlyCoreAvailable }
+    catch { $rechecked = $true; $reason = [string]$_.Exception.Message }
+    $loaded = ''
+    if ($reason -match 'loaded=([^\s;]+)') { $loaded = $Matches[1] }
+    $recheckOk = ($rechecked -and $reason.StartsWith('nightly-core-identity-mismatch') -and $loaded -eq $core.Dll -and $reason.Contains('start a fresh pwsh'))
+    Assert-C487 $recheckOk 'AB CheckoutIdentity.rechecked' ('rechecked=' + $rechecked + ' loaded=' + $loaded + ' dll=' + $core.Dll + ' reason=' + $reason)
+    $script:NightlyCoreAvailable = $true
+    $script:NightlyCoreVerifiedHash = $core.Hash
+    $stable = $false
+    $stableError = ''
+    try { $stable = [bool](Test-NightlyCoreAvailable) }
+    catch { $stable = $false; $stableError = [string]$_.Exception.Message }
+    Assert-C487 $stable 'AB CheckoutIdentity.stable-hash' $stableError
 }
 
 switch ($Case) {
@@ -402,10 +563,20 @@ switch ($Case) {
         . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
         Test-AstraStaleCore
     }
+    'CompleteCorePath' {
+        . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
+        Test-AstraCompleteCorePath
+    }
+    'CheckoutIdentity' {
+        . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
+        Test-AstraCheckoutIdentity
+    }
     default { throw ('unknown case ' + $Case) }
 }
 $expected = 0
-if ($Case -eq 'FlushFailure') { $expected = 7 }
-elseif ($Case -eq 'JournalPublish') { $expected = 5 }
-elseif ($Case -eq 'StaleCore') { $expected = 4 }
+if ($Case -eq 'FlushFailure') { $expected = 10 }
+elseif ($Case -eq 'JournalPublish') { $expected = 6 }
+elseif ($Case -eq 'StaleCore') { $expected = 5 }
+elseif ($Case -eq 'CompleteCorePath') { $expected = 4 }
+elseif ($Case -eq 'CheckoutIdentity') { $expected = 2 }
 Complete-C487Harness -ResultsDirectory (New-AstraResultsRoot) -ExpectedRows $expected
