@@ -72,7 +72,7 @@ public sealed class C0824WindowsSlotHolderTests
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add($"$f = [IO.File]::Open('{held}', 'Open', 'Read', 'None'); Start-Sleep -Seconds 120");
+        start.ArgumentList.Add("$f = [IO.File]::Open('" + held + "', 'Open', 'Read', 'None'); Start-Sleep -Seconds 120");
         using var child = Process.Start(start)!;
         try
         {
