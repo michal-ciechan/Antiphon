@@ -18,7 +18,8 @@ internal static class EvaluationBudget
     // Plain byte copy of this tree on server2, 2026-10-29. Three samples of the
     // tracked set (9138 paths, 182462478 bytes): 1957, 2253, 2249 ms. Userspace
     // read/write, so this is slower than File.Copy. Nearest-rank p95 for n=3 is
-    // rank 3, so 2253. Twice that, rounded up, is 5 s on Linux.
+    // rank 3, so 2253. This sample stays the Windows multiplier base.
+    // Linux uses MeasuredLinuxCopyP95Milliseconds (2026-11-19, n=20, p95 3751, 8 s).
     // PROVISIONAL calibration from three native Windows CanaryRepository.Create runs,
     // DESKTOP-KTLKPIF, 2026-10-29, task 0a72f317, tool SHA-256
     // 5EBF83ADDF00F41391AC6AD5C19EF19FA754BE215F70A06560E3922817C853BB:
@@ -27,6 +28,13 @@ internal static class EvaluationBudget
     // the measured native copy. The old multiplier 5 (12s) timed out on this tree.
     // Re-measure on the next native qualification; see docs/orchestration-loop.md.
     public const int MeasuredCopyP95Milliseconds = 2253;
+
+    // server2 Linux, 24 CPUs, HEAD 42d7af1f, Antiphon.sln, 2026-11-19.
+    // Twenty -Check runs. Each waited until the 1-minute load was below 16;
+    // the end load reached 31.31. Copy phase ms, nearest-rank for n=20:
+    // p50 rank ceil(0.50*20)=10 is 2315; p95 rank ceil(0.95*20)=19 is 3751.
+    // TwiceSeconds(3751) is 8. Pass 1 (max 23044 ms) dominated the wall time.
+    public const int MeasuredLinuxCopyP95Milliseconds = 3751;
 
     public const int WindowsCopyMeasurementMultiplier = 30;
 
@@ -61,17 +69,20 @@ internal static class EvaluationBudget
         return passSeconds * passes + copySeconds;
     }
 
+    public static int HostCopyP95Milliseconds =>
+        OperatingSystem.IsWindows() ? MeasuredCopyP95Milliseconds : MeasuredLinuxCopyP95Milliseconds;
+
     public static int ToolCeilingSeconds =>
         TotalSeconds(
             PassSeconds(MeasuredLoadedPassP95Milliseconds, OperatingSystem.IsWindows()),
             Passes,
-            CopySeconds(MeasuredCopyP95Milliseconds, OperatingSystem.IsWindows())) + StartupGraceSeconds;
+            CopySeconds(HostCopyP95Milliseconds, OperatingSystem.IsWindows())) + StartupGraceSeconds;
 
     public static TimeSpan PassTimeout => TimeSpan.FromSeconds(
         PassSeconds(MeasuredLoadedPassP95Milliseconds, OperatingSystem.IsWindows()));
 
     public static TimeSpan CopyTimeout => TimeSpan.FromSeconds(
-        CopySeconds(MeasuredCopyP95Milliseconds, OperatingSystem.IsWindows()));
+        CopySeconds(HostCopyP95Milliseconds, OperatingSystem.IsWindows()));
 
     private static int TwiceSeconds(int measuredP95Milliseconds)
     {

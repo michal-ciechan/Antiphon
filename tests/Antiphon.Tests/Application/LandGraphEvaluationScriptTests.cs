@@ -321,7 +321,7 @@ public sealed partial class LandGraphEvaluationTests
 
         var host = await PrintBudgetAsync(null, null, null);
         host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
-        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 68 : 5);
+        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 68 : 8);
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
         host.Grace.ShouldBe(60);
         host.Ceiling.ShouldBe(host.Total + host.Grace);
@@ -335,6 +335,7 @@ public sealed partial class LandGraphEvaluationTests
         script.ShouldNotContain("WitnessClock", Case.Sensitive);
         var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit.Core", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
+        budgetSource.ShouldContain("public const int MeasuredLinuxCopyP95Milliseconds = 3751;", Case.Sensitive);
         budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 30;", Case.Sensitive);
         budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
     }
