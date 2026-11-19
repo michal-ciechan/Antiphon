@@ -142,11 +142,28 @@ function Get-TestPhaseClassBasisMap {
         $path = Join-Path $PSScriptRoot 'nightly-class-costs.json'
     }
     if (-not (Test-Path -LiteralPath $path)) { return $map }
-    $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
-    if ($null -eq $doc.classes) { return $map }
-    foreach ($row in @($doc.classes.PSObject.Properties)) {
-        $map[[string]$row.Name] = [string]$row.Value.basis
+    # Parsed once per process and file content (Antiphon.Nightly/ClassCostCache.cs, shared with
+    # Get-NightlyClassCostTable); every call returns its own copy.
+    $entry = $null
+    $full = ''
+    if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) {
+        $full = [System.IO.Path]::GetFullPath($path)
+        $entry = [Antiphon.Nightly.ClassCostCache]::Find($full)
     }
+    if ($null -ne $entry -and $null -ne $entry.Basis) { return $entry.Basis.Clone() }
+    if ($null -ne $entry) { $doc = $entry.Document }
+    elseif ($full) {
+        $before = [Antiphon.Nightly.ClassCostCache]::Digest($full)
+        $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json
+        $entry = [Antiphon.Nightly.ClassCostCache]::Store($full, $before, $doc)
+    }
+    else { $doc = [System.IO.File]::ReadAllText($path) | ConvertFrom-Json }
+    if ($null -ne $doc.classes) {
+        foreach ($row in @($doc.classes.PSObject.Properties)) {
+            $map[[string]$row.Name] = [string]$row.Value.basis
+        }
+    }
+    if ($null -ne $entry) { $entry.Basis = $map.Clone() }
     return $map
 }
 

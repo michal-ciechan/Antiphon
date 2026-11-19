@@ -137,15 +137,34 @@ $script:NightlyClassCostTable = $null
 function Get-NightlyClassCostTable {
     # Bare class identity -> measured seconds per node.
     if ($null -ne $script:NightlyClassCostTable) { return $script:NightlyClassCostTable }
+    # The file is parsed once per process and file content (Antiphon.Nightly/ClassCostCache.cs, shared with
+    # Get-TestPhaseClassBasisMap); callers add rows to the table, so each load gets its own copy.
     $table = @{}
     if (Test-Path -LiteralPath $script:NightlyClassCostPath) {
-        $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json
-        if ([string]$doc.format -cne 'antiphon-nightly-class-costs-v1') { throw 'class-cost-format' }
-        foreach ($row in @($doc.classes.PSObject.Properties)) {
-            $nodes = [int]$row.Value.nodes
-            $seconds = [double]$row.Value.seconds
-            if ($nodes -lt 1 -or $seconds -le 0) { throw ('class-cost-row ' + [string]$row.Name) }
-            $table[[string]$row.Name] = $seconds / $nodes
+        $entry = $null
+        $full = ''
+        if ($script:NightlyCoreAvailable -or (Test-NightlyCoreAvailable)) {
+            $full = [System.IO.Path]::GetFullPath($script:NightlyClassCostPath)
+            $entry = [Antiphon.Nightly.ClassCostCache]::Find($full)
+        }
+        if ($null -ne $entry -and $null -ne $entry.Costs) {
+            $table = $entry.Costs.Clone()
+        } else {
+            if ($null -ne $entry) { $doc = $entry.Document }
+            elseif ($full) {
+                $before = [Antiphon.Nightly.ClassCostCache]::Digest($full)
+                $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json
+                $entry = [Antiphon.Nightly.ClassCostCache]::Store($full, $before, $doc)
+            }
+            else { $doc = [System.IO.File]::ReadAllText($script:NightlyClassCostPath) | ConvertFrom-Json }
+            if ([string]$doc.format -cne 'antiphon-nightly-class-costs-v1') { throw 'class-cost-format' }
+            foreach ($row in @($doc.classes.PSObject.Properties)) {
+                $nodes = [int]$row.Value.nodes
+                $seconds = [double]$row.Value.seconds
+                if ($nodes -lt 1 -or $seconds -le 0) { throw ('class-cost-row ' + [string]$row.Name) }
+                $table[[string]$row.Name] = $seconds / $nodes
+            }
+            if ($null -ne $entry) { $entry.Costs = $table.Clone() }
         }
     }
     $script:NightlyClassCostTable = $table
@@ -950,6 +969,12 @@ function Get-NightlyNativeExecutionArguments {
 function Resolve-NightlyNpmLauncher {
     param([string]$PathValue = $env:PATH)
     if ([string]::IsNullOrWhiteSpace($PathValue)) { throw 'npm launcher not found' }
+    # One resolution per PATH value and process (a run asks three times); only a found launcher is kept.
+    if ($null -eq $script:NightlyNpmLauncherByPath) {
+        $script:NightlyNpmLauncherByPath = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+    }
+    $known = $null
+    if ($script:NightlyNpmLauncherByPath.TryGetValue($PathValue, [ref]$known) -and [System.IO.File]::Exists($known)) { return $known }
     $names = @('npm.cmd', 'npm.exe', 'npm')
     $separator = [string][System.IO.Path]::PathSeparator
     foreach ($dir in ($PathValue -split [regex]::Escape($separator))) {
@@ -959,6 +984,7 @@ function Resolve-NightlyNpmLauncher {
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
                 $full = [System.IO.Path]::GetFullPath($candidate)
                 if (-not [System.IO.Path]::IsPathRooted($full)) { throw 'npm launcher is not absolute' }
+                $script:NightlyNpmLauncherByPath[$PathValue] = $full
                 return $full
             }
         }
