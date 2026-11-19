@@ -2133,25 +2133,25 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 70,
+      "classes": 71,
       "reason": "cap",
-      "owed": 45,
+      "owed": 46,
       "first": [
+        "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
         "ClassCostMeasurementTests",
         "ClaudeEffortFixtureTraceTests",
         "ExpectedPlatformSkipRosterTests",
         "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests",
-        "LiveLaneOutcomeTests"
+        "LiveLaneFingerprintTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 47,
+      "classes": 48,
       "reason": "cap",
-      "owed": 22,
+      "owed": 23,
       "first": [
         "RcLedgerDurationTests",
         "RcLedgerStatusTests",
@@ -24533,6 +24533,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
       "classes": [
+        "AstraFixesBTests",
         "BuildSlotScriptTests",
         "C1514LandingSplitBudgetTests",
         "C1733AllocatorFixtureTests",
@@ -24553,7 +24554,6 @@
         "ReleaseBranchModelGateTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
-        "ReleaseSelectionCliTests",
         "ReleaseTagAllocatorTests",
         "RunCheckpointScriptTests",
         "TestSelectionCatalogTests",
