@@ -77,6 +77,7 @@ function New-WindowsPhoneHomeRunnerEnv {
         'SessionRunner__SessionLogPath'        = $state + '/session-runner'
         'SessionRunner__PtyHostDir'            = $state + '/pty-hosts'
         'SessionRunner__Herdr__Enabled'        = 'false'
+        'SessionRunner__HostStats__HistoryEnabled' = 'false'
         'SessionRunner__HostStats__Volumes__0' = $work
         'Serilog__LogPath'                     = $state + '/logs'
     }
