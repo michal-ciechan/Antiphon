@@ -40,6 +40,13 @@ public sealed class C0824WindowsSlotHolderTests
 
         if (!OperatingSystem.IsWindows())
             new WindowsWorkspaceSlotProcessProbe().Scan(second.Path).Complete.ShouldBeFalse();
+
+        using var factoryScratch = Create();
+        var factoryPool = new RunnerWorkspaceSlotPool(factoryScratch.Service(), Settings(), 1);
+        if (OperatingSystem.IsWindows())
+            factoryPool.SelectedProcesses.ShouldBeOfType<WindowsWorkspaceSlotProcessProbe>();
+        else
+            factoryPool.SelectedProcesses.ShouldBeOfType<ProcWorkspaceSlotProcessProbe>();
         var source = ProbeSource();
         source.Contains("RmShutdown", StringComparison.Ordinal).ShouldBeFalse();
         source.Contains("RmGetList", StringComparison.Ordinal).ShouldBeTrue();
