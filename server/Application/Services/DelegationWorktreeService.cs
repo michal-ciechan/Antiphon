@@ -37,6 +37,7 @@ public sealed class DelegationWorktreeService
     private readonly IVerificationWorkspaceDirectory? _verificationWorkspaces;
     private readonly ISessionRunnerDirectory? _runners;
     private readonly DelegationSettings? _delegation;
+    private readonly IOptionsMonitor<DelegationSettings>? _delegationMonitor;
 
     public DelegationWorktreeService(
         IWorktreeManager worktrees,
@@ -49,11 +50,13 @@ public sealed class DelegationWorktreeService
         AppDbContext? db = null,
         GatedCommitService? gatedCommit = null,
         IVerificationWorkspaceDirectory? verificationWorkspaces = null,
-        ISessionRunnerDirectory? runners = null, IOptions<DelegationSettings>? delegationSettings = null)
+        ISessionRunnerDirectory? runners = null, IOptions<DelegationSettings>? delegationSettings = null,
+        IOptionsMonitor<DelegationSettings>? delegationMonitor = null)
     {
         _verificationWorkspaces = verificationWorkspaces;
         _runners = runners;
         _delegation = delegationSettings?.Value;
+        _delegationMonitor = delegationMonitor;
         _leases = leases;
         _sourceLanding = sourceLanding;
         _landingGit = landingGit;
@@ -417,6 +420,11 @@ public sealed class DelegationWorktreeService
             return null;
         }
 
+        // CARD-0824 S3 D-4. A Windows slot is the checkout: mint the branch in the repository and
+        // leave a sentinel until the runner reports the slot path. No card-task directory.
+        if (await WindowsSlotCheckoutAdmittedAsync(task, ct))
+            return await RecordWindowsSlotPendingAsync(task, ct, startAtSha, cardBase, cardBaseTaskId, cardBaseBranch);
+
         var alreadyRecorded = !string.IsNullOrWhiteSpace(task.WorktreeBaseRef);
         // A retry owns its earlier checkout. Its recorded base is historical evidence and
         // must not be replaced by a newer same-card selection or an expired source ref.
@@ -496,6 +504,83 @@ public sealed class DelegationWorktreeService
             DelegationReportFormatter.Short(task.Id), info.Path, info.Branch, baseRef,
             (alreadyRecorded ? task.WorktreeBaseSha : head) ?? "(unknown)", resolved.Source);
         return decision;
+    }
+
+    private async Task<bool> WindowsSlotCheckoutAdmittedAsync(AgentTask task, CancellationToken ct)
+    {
+        // The slot flag is restart-only. The allow-list is live, so clearing it stops new sentinels.
+        if (_delegation?.WorkspaceSlotsEnabled != true || _runners is null || string.IsNullOrEmpty(task.RunnerId))
+            return false;
+        DelegationSettings settings;
+        try
+        {
+            settings = _delegationMonitor?.CurrentValue ?? _delegation;
+        }
+        catch (OptionsValidationException)
+        {
+            return false;
+        }
+
+        RunnerDescriptor? runner;
+        try
+        {
+            runner = await _runners.DescribeAsync(task.RunnerId, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested && ex is not OutOfMemoryException)
+        {
+            _logger.LogWarning(ex, "Runner description unavailable for task {TaskId}; keeping the desktop checkout", task.Id);
+            return false;
+        }
+
+        if (!WindowsSlotCheckout.IsWindows(runner)
+            || runner?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) != true)
+            return false;
+        return WindowsSlotCheckout.DecideListed(settings, task).Slot;
+    }
+
+    private async Task<WorktreeBaseDecision> RecordWindowsSlotPendingAsync(
+        AgentTask task, CancellationToken ct, string? startAtSha, ResolvedBase? cardBase,
+        Guid? cardBaseTaskId, string? cardBaseBranch)
+    {
+        var alreadyRecorded = !string.IsNullOrWhiteSpace(task.WorktreeBaseRef);
+        var resolved = await SelectBaseAsync(task, startAtSha, cardBase, ct);
+        var branch = await MintBranchAsync(task, ct);
+        var repo = task.RepoPath!;
+        var full = "refs/heads/" + branch;
+        var tip = await _landingGit!.RunAsync(repo, ["rev-parse", "--verify", "--quiet", full], ct);
+        if (tip.ExitCode != 0)
+        {
+            var created = await _landingGit.RunAsync(repo, ["branch", "--", branch, resolved.Ref], ct);
+            if (created.ExitCode != 0)
+                throw new ConflictException("windows_slot_branch: " + created.Diagnostic);
+            tip = await _landingGit.RunAsync(repo, ["rev-parse", full], ct);
+        }
+
+        var sha = tip.Output.Trim();
+        if (!tip.Succeeded || sha.Length != 40)
+            throw new ConflictException("windows_slot_branch");
+
+        task.WorktreePath = WindowsSlotCheckout.Pending(task.Id);
+        task.WorktreeBranch = branch;
+        if (!alreadyRecorded)
+        {
+            task.WorktreeBaseRef = resolved.Ref;
+            task.WorktreeBaseSource = resolved.Source;
+            task.WorktreeBaseSha = sha;
+            task.WorktreeBaseTaskId = resolved.Source switch
+            {
+                WorktreeBaseSource.Repair => task.RepairSourceTaskId,
+                WorktreeBaseSource.CardCurrent => cardBaseTaskId,
+                _ => null,
+            };
+            task.WorktreeBaseBranch = resolved.Source == WorktreeBaseSource.CardCurrent
+                ? cardBaseBranch : null;
+        }
+
+        _logger.LogInformation(
+            "Task {ShortId}: windows slot pending on {Branch} (base {BaseRef}, sha {Sha}); no card-task directory",
+            DelegationReportFormatter.Short(task.Id), branch, resolved.Ref, sha);
+        return new WorktreeBaseDecision(resolved, NewlyRecorded: !alreadyRecorded);
     }
 
     // Shared selection only: the legacy caller retains its checkout adoption and HEAD capture.
