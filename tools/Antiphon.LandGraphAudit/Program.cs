@@ -288,10 +288,14 @@ public static class Program
             }
         }
 
+        var windowsHost = windows ?? OperatingSystem.IsWindows();
         var passMs = measuredPass ?? EvaluationBudget.MeasuredLoadedPassP95Milliseconds;
-        var copyMs = measuredCopy ?? EvaluationBudget.MeasuredCopyP95Milliseconds;
-        var passSeconds = EvaluationBudget.PassSeconds(passMs, windows ?? OperatingSystem.IsWindows());
-        var copySeconds = EvaluationBudget.CopySeconds(copyMs, windows ?? OperatingSystem.IsWindows());
+        var copyDefault = windowsHost
+            ? EvaluationBudget.MeasuredCopyP95Milliseconds
+            : EvaluationBudget.MeasuredLinuxCopyP95Milliseconds;
+        var copyMs = measuredCopy ?? copyDefault;
+        var passSeconds = EvaluationBudget.PassSeconds(passMs, windowsHost);
+        var copySeconds = EvaluationBudget.CopySeconds(copyMs, windowsHost);
         var total = EvaluationBudget.TotalSeconds(passSeconds, EvaluationBudget.Passes, copySeconds);
         var grace = EvaluationBudget.StartupGraceSeconds;
         Console.Out.WriteLine($"pass={passSeconds.ToString(CultureInfo.InvariantCulture)}");

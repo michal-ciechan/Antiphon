@@ -2633,18 +2633,22 @@ burners, so 45 s), and on Windows at least the 120 s one-pass floor from qualifi
 `28bbb58e`, which finished a pass and then refused because both passes and the canary copy
 shared one 120 s wait. That Windows 120 s floor is provisional until a Windows pass
 duration is recorded. The canary is a plain byte copy, not a hard link. Its Linux budget is
-twice the plain-copy p95 measured on server2 on 2026-10-29 (samples 1957 ms, 2253 ms and 2249 ms;
-nearest-rank p95 2253 ms, so 5 s; see `EvaluationBudget.MeasuredCopyP95Milliseconds`).
-The Windows copy budget is PROVISIONAL with three native samples: task `0a72f317` on
-DESKTOP-KTLKPIF measured the existing `CanaryRepository.Create` at 33515.1436, 25745.3282
-and 25641.6397 ms on 2026-10-29. The prior 12 s budget failed on the combined tree.
-Nearest-rank p95 is 33515.1436 ms; `EvaluationBudget.WindowsCopyMeasurementMultiplier`
-is `ceil(2 * 33515.1436 / 2253) = 30`, giving 68 s after rounding. Evidence is retained at
+twice the plain-copy p95 measured on server2 on 2026-11-19 at base `42d7af1f`
+(20 `-Check` runs; nearest-rank p50 2315 ms, p95 3751 ms, so 8 s; see
+`EvaluationBudget.MeasuredLinuxCopyP95Milliseconds`). Solution evaluation dominated
+those runs (pass 1 about 10-23 s). The 2026-10-29 samples 1957 ms, 2253 ms and 2249 ms
+remain the Windows multiplier base in `EvaluationBudget.MeasuredCopyP95Milliseconds`.
+The Linux clock is the 2026-11-19 sample. The Windows copy budget is PROVISIONAL with three native
+samples: task `0a72f317` on DESKTOP-KTLKPIF measured the existing `CanaryRepository.Create`
+at 33515.1436, 25745.3282 and 25641.6397 ms on 2026-10-29. The prior 12 s budget failed
+on the combined tree. Nearest-rank p95 is 33515.1436 ms;
+`EvaluationBudget.WindowsCopyMeasurementMultiplier` is `ceil(2 * 33515.1436 / 2253) = 30`,
+giving 68 s after rounding. Evidence is retained at
 `C:\Antiphon\releases\task-0a72f317\copy-samples.json`; remeasure on the next native
 qualification. A canary directory left when the audit script process itself dies
 is not swept on the next run. Raise the Windows pass floor by editing
 `EvaluationBudget.WindowsPassFloorSeconds`, the Linux copy measurement by editing
-`EvaluationBudget.MeasuredCopyP95Milliseconds`, and the provisional Windows multiplier by
+`EvaluationBudget.MeasuredLinuxCopyP95Milliseconds`, and the provisional Windows multiplier by
 editing `EvaluationBudget.WindowsCopyMeasurementMultiplier`, all in
 `tools/Antiphon.LandGraphAudit.Core/EvaluationBudget.cs`, from a fresh measurement. The audit
 (`LandGraphAuditGate`) waits for the evaluator's `ceiling`, which adds only `EvaluationBudget.StartupGraceSeconds`
