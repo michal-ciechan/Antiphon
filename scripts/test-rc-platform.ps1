@@ -262,6 +262,7 @@ function New-C1323ExecutionFixture {
     [void](Invoke-C1323Git $clone @('config', 'core.autocrlf', 'false'))
     [void](Invoke-C1323Git $clone @('add', '--all'))
     [void](Invoke-C1323Git $clone @('commit', '--quiet', '-m', 'offline execution fixture'))
+    [void](Invoke-C1323Git $clone @('config', '--local', 'core.longpaths', 'true'))
     $sha = Invoke-C1323Git $clone @('rev-parse', 'HEAD')
     $nodes = @(New-C1323Nodes | ForEach-Object {
         @{ uid = $_.uid; type = ($_.class -replace '^Antiphon.E2E.', ''); className = $_.class; namespace = 'Antiphon.E2E'; method = $_.method; categories = $_.categories; state = 'Discovered' }

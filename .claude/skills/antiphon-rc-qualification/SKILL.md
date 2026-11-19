@@ -251,9 +251,14 @@ through a `1>` wrapper buffer; the run itself survived.
   `nightlyArguments`), refuses (exit 2) a record without `-RunId` or with a run id other than the
   supervisor's (`ANTIPHON_QUALIFICATION_RUN_ID`), refuses (exit 3) while `run.lock` names a live
   owner or cannot be read or parsed (a dead owner is left to nightly-run), refuses a HEAD
-  mismatch, and runs `build-slot.ps1 -- nightly-run.ps1`. The `run.lock` check is point-in-time:
+  mismatch, refuses (exit 2) `longpaths-not-enabled` unless `git config --local --get core.longpaths`
+  is `true` (fix: `git -C <checkout> config --local core.longpaths true`), and runs
+  `build-slot.ps1 -- nightly-run.ps1`. The `run.lock` check is point-in-time:
   a run that starts while the launch waits for a build slot (up to 45 min) makes nightly-run
   refuse it (exit 3), and one that ends in that wait lets it start after.
+- `preflight.ps1` is copied with this set and run on the checkout before `start-supervisor.ps1`.
+  It refuses (exit 2) `longpaths-not-enabled` with the same fix command when local
+  `core.longpaths` is not `true`. It does not change the checkout.
 - `start-supervisor.ps1 -TaskRoot <task-dir> -LaunchScript <task-dir>\launch-rc.ps1 -LogRoot
   <candidate>\logs -StateRoot <state-dir> -RunId <id>` starts `supervise-rc.ps1` with its **own
   hidden console** (setsid on Unix) and output in its own files, waits for

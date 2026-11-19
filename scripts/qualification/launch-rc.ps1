@@ -10,7 +10,8 @@ equal the supervisor's ANTIPHON_QUALIFICATION_RUN_ID, the run id observe.ps1 cre
 (exit 3) while the state root's run.lock (-StateRoot, default C:\Antiphon\nightly) names a live
 owner, rather than queueing behind that run; a dead owner is left to nightly-run's stale-lock
 rule. This is a point-in-time check: a run that starts while this launch waits for a build slot
-still makes nightly-run refuse it (exit 3). Refuses unless the checkout HEAD equals expectedSha, then runs
+still makes nightly-run refuse it (exit 3). Refuses unless the checkout HEAD equals expectedSha and local core.longpaths is true
+(reason longpaths-not-enabled; fix: git -C <checkout> config --local core.longpaths true), then runs
   pwsh -NoProfile -File <checkout>\scripts\build-slot.ps1 -Label <label> -- pwsh -NoProfile -File <checkout>\scripts\nightly-run.ps1 <nightlyArguments>
 and exits with its exit code. Copy it into the task directory with its record, or pass -Config.
 Ownership-marker, memory and leftover-testhost prechecks stay with the commissioning task.
@@ -57,6 +58,14 @@ if (Test-Path -LiteralPath $lockPath) {
 }
 $head = ('' + (& git -C $checkout rev-parse HEAD)).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $expected) { Write-Output "launch-rc: refused, checkout HEAD $head is not $expected"; exit 2 }
+$longpathsRaw = & git -C $checkout config --local --get core.longpaths 2>&1
+$longpathsCode = $LASTEXITCODE
+$longpathsText = ((@($longpathsRaw) | ForEach-Object { $_.ToString() }) -join '').Trim()
+if ($longpathsCode -ne 0 -or $longpathsText -cne 'true') {
+    Write-Output 'launch-rc: refused, longpaths-not-enabled'
+    Write-Output ('git -C {0} config --local core.longpaths true' -f $checkout)
+    exit 2
+}
 $label = [string]$record.buildSlotLabel
 if ([string]::IsNullOrWhiteSpace($label)) { $label = 'rc-qualification' }
 $pwsh = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName

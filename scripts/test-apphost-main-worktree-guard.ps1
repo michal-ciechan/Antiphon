@@ -36,6 +36,24 @@ function Assert-True {
     else { Write-Fail $Name $Detail }
 }
 
+function Invoke-GuardWorktreeGit {
+    param([string[]]$Arguments)
+    # Windows qualification temp prefix is 105 characters:
+    # C:\Users\lndco\AppData\Local\Temp\antiphon-apphost-worktree-guard-<32 hex>\linked
+    # plus one separator plus the longest tracked path at the 2026-11-19 cut (163)
+    # is 269, over MAX_PATH 260. The next longest path (151) is 257. Exactly one
+    # tracked file needs core.longpaths. git worktree add reads the source repo
+    # config, so the override is passed on the command. Git's own text is kept
+    # when add or remove fails.
+    $raw = & git -c core.longpaths=true -C $sourceRoot @Arguments 2>&1
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        $text = ((@($raw) | ForEach-Object { $_.ToString() }) -join "`n")
+        if ($text.Length -gt 4000) { $text = $text.Substring($text.Length - 4000, 4000) }
+        throw ("git -c core.longpaths=true -C source worktree failed with exit {0}: {1}" -f $code, $text)
+    }
+}
+
 function Invoke-RefusalEntry {
     param([string]$ScriptPath, [string[]]$Arguments)
     $output = @(& pwsh -NoProfile -File $ScriptPath @Arguments 2>&1 | ForEach-Object { $_.ToString() })
@@ -60,8 +78,7 @@ try {
     New-Item -ItemType Directory -Force $temporaryRoot | Out-Null
     $head = (& git -C $sourceRoot rev-parse HEAD 2>&1 | Select-Object -First 1).ToString().Trim()
     if (-not $head) { throw 'Could not resolve source checkout HEAD.' }
-    & git -C $sourceRoot worktree add --detach $linkedRoot $head 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "git worktree add failed with exit $LASTEXITCODE" }
+    Invoke-GuardWorktreeGit -Arguments @('worktree', 'add', '--detach', $linkedRoot, $head)
     $worktreeAdded = $true
 
     $linkedClassification = Get-AppHostWorktreeClassification -SourceRoot $linkedRoot
@@ -103,8 +120,8 @@ catch {
 }
 finally {
     if ($worktreeAdded) {
-        & git -C $sourceRoot worktree remove --force $linkedRoot 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Fail 'disposable worktree cleanup' "git worktree remove failed with exit $LASTEXITCODE" }
+        try { Invoke-GuardWorktreeGit -Arguments @('worktree', 'remove', '--force', $linkedRoot) }
+        catch { Write-Fail 'disposable worktree cleanup' $_.Exception.Message }
     }
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
