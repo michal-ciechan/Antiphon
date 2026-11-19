@@ -44,8 +44,7 @@ public sealed class CheckpointRecoveryLinuxTests : CheckpointTestBase
     {
         if (!Linux()) return;
         var sandbox = TempDir();
-        var source = Path.Combine(CheckpointFixtures.RepoRoot, "tools", "Antiphon.Checkpoints", "bin-c804-final");
-        if (!Directory.Exists(source)) source = Path.GetDirectoryName(typeof(DetachedLauncher).Assembly.Location)!;
+        var source = CheckpointFixtures.ToolOutputForStaging("bin-c804-final");
         var staged = Path.Combine(sandbox, "staged");
         ShadowCopy.CopyToolOutput(source, staged);
         var marker = Path.Combine(sandbox, "done");

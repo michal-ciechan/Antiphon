@@ -181,6 +181,44 @@ internal static class CheckpointFixtures
 
     public static string RepoRoot => DockerStackDocuments.RepoRoot;
 
+    /// <summary>
+    /// A folder holding a runnable build of the checkpoint tool, for a test that stages a copy of it. The first
+    /// <paramref name="preferred"/> folder under tools/Antiphon.Checkpoints that exists wins (a checkpoint row's
+    /// own output). Otherwise the tool's own bin folder for the test's configuration and framework, but only when
+    /// its Antiphon.Checkpoints.dll is this build (same module version id as the one loaded here): about 20 MB and
+    /// 40 files. Otherwise the test assembly's folder, which also holds the tool (a project reference) but is
+    /// about 900 MB and 2,000 files, every one hashed by the staged copy.
+    /// </summary>
+    public static string ToolOutputForStaging(params string[] preferred)
+    {
+        var tool = Path.Combine(RepoRoot, "tools", "Antiphon.Checkpoints");
+        foreach (var name in preferred)
+            if (Directory.Exists(Path.Combine(tool, name)))
+                return Path.Combine(tool, name);
+        var loaded = typeof(DetachedLauncher).Assembly;
+        var testFolder = Path.GetDirectoryName(loaded.Location)!;
+        var framework = Path.GetFileName(testFolder);
+        var configuration = Path.GetFileName(Path.GetDirectoryName(testFolder));
+        if (string.IsNullOrEmpty(framework) || string.IsNullOrEmpty(configuration))
+            return testFolder;
+        var own = Path.Combine(tool, "bin", configuration, framework);
+        var dll = Path.Combine(own, "Antiphon.Checkpoints.dll");
+        if (!File.Exists(dll) || !File.Exists(Path.Combine(own, "Antiphon.Checkpoints.runtimeconfig.json")))
+            return testFolder;
+        try
+        {
+            using var stream = File.OpenRead(dll);
+            using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+            var metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+            return metadata.GetGuid(metadata.GetModuleDefinition().Mvid) == loaded.ManifestModule.ModuleVersionId
+                ? own : testFolder;
+        }
+        catch (Exception ex) when (ex is IOException or BadImageFormatException or UnauthorizedAccessException)
+        {
+            return testFolder;
+        }
+    }
+
     public static SourceObservation CleanSource() => new(new string('a', 40), 0, new string('1', 64),
         DateTimeOffset.UtcNow, "known");
 

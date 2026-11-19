@@ -40,8 +40,7 @@ public sealed class CheckpointRecoveryWindowsTests : CheckpointTestBase
     {
         if (!Windows()) return;
         var sandbox = TempDir();
-        var source = Path.Combine(CheckpointFixtures.RepoRoot, "tools", "Antiphon.Checkpoints", "bin-c804-windows");
-        if (!Directory.Exists(source)) source = Path.GetDirectoryName(typeof(DetachedLauncher).Assembly.Location)!;
+        var source = CheckpointFixtures.ToolOutputForStaging("bin-c804-windows");
         var staged = Path.Combine(sandbox, "staged");
         try { ShadowCopy.CopyToolOutput(source, staged); }
         catch (Exception ex)
