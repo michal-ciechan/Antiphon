@@ -93,6 +93,161 @@
       "group": "apphost-program",
       "paths": ["Antiphon.AppHost/Program.cs"],
       "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-01",
+      "paths": ["Antiphon.AppHost/appsettings.json"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-02",
+      "paths": ["Antiphon.AppHost/Program.cs"],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
+      "group": "scan-03",
+      "paths": ["server/appsettings.json"],
+      "suites": ["tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj"]
+    },
+    {
+      "group": "scan-04",
+      "paths": ["src/Antiphon.Messaging.FakeGateway/appsettings.json"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-05",
+      "paths": ["src/Antiphon.Messaging.FakeGateway/Program.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-06",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-07",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-08",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-09",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-10",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-11",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-12",
+      "paths": ["tests/Antiphon.Agents.Pty.Tests/UnixPtyDeliveryEnvelopeTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-13",
+      "paths": ["tests/Antiphon.E2E/Antiphon.E2E.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-14",
+      "paths": ["tests/Antiphon.E2E/Fixtures/PipelineContractScenario.cs"],
+      "suites": ["tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj"]
+    },
+    {
+      "group": "scan-15",
+      "paths": ["tests/Antiphon.Messaging.Tests/Conformance/TelegramLiveChatConformanceTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-16",
+      "paths": ["tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-17",
+      "paths": ["tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-18",
+      "paths": ["tests/Antiphon.Resilience.Tests/ResilienceCircuitTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-19",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/AgentPinWorkspaceStoreTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-20",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-21",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/C1677TempFamilyRegistryTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-22",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/C1793SessionPwshCacheTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-23",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/Fixtures/CodexVersionChild.ps1"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-24",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-25",
+      "paths": ["tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs"],
+      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
+    },
+    {
+      "group": "scan-26",
+      "paths": ["tests/Antiphon.Tests/Agents/Fixtures/compact-full-manual.jsonl"],
+      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
+    },
+    {
+      "group": "scan-27",
+      "paths": ["tests/Antiphon.Tests/Fixtures/Card0418/combined.pdf"],
+      "suites": ["tests/Antiphon.E2E/Antiphon.E2E.csproj"]
+    },
+    {
+      "group": "scan-28",
+      "paths": ["tests/Antiphon.Tests/Infrastructure/LandingGitBatchingTests.cs"],
+      "suites": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj"]
+    },
+    {
+      "group": "scan-29",
+      "paths": ["tests/Antiphon.Tests/Infrastructure/ServerGitProcessTests.cs"],
+      "suites": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj"]
+    },
+    {
+      "group": "scan-30",
+      "paths": ["tests/Antiphon.Tests/TestHelpers/LibGit2ConfigIsolationAssemblyHook.cs"],
+      "suites": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj"]
+    },
+    {
+      "group": "scan-31",
+      "paths": ["tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
     }
   ]
 }

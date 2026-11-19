@@ -155,9 +155,13 @@ switch ($Case) {
             foreach ($id in @($row.suites)) {
                 Ensure-RioProject $id '<Project Sdk="Microsoft.NET.Sdk" />'
             }
-            foreach ($path in @($row.paths)) { Put $path 'seed' }
+            foreach ($path in @($row.paths)) {
+                # A csproj seed must stay well-formed or the project walk marks the whole census unresolved.
+                if ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) { Ensure-RioProject $path '<Project Sdk="Microsoft.NET.Sdk" />' }
+                else { Put $path 'seed' }
+            }
         }
-        $inv=Read-RcInputInventory $root (Commit) $null
+        $inv=Read-RcInputInventory $root (Commit) $null -SkipUnresolvedBroadening
         Note (@($inv.unresolved).Count -eq 0) "census-unresolved:$(@($inv.unresolved) -join ',')"
         foreach ($row in $rows) {
             foreach ($path in @($row.paths)) {
