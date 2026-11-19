@@ -1084,6 +1084,8 @@ A hot reload works only for the desktop AppHost's `appsettings.Development.json`
 `Delegation__WorkspaceSlotRoles` environment variable shadows it. Confirm a rollback from the next task's
 `WorkspaceSlotDecision` event (`reason=roles_none`).
 
+A Windows runner does not use that global string. `Delegation:WindowsSlotRunnerIds` (default empty) and `Delegation:WindowsSlotRoles` (default `none`) are its allow-list: only a listed id other than the catalogue id `desktop`, with an admitted role, leases. Clearing the id list stops new Windows leases and leaves releases running. The Windows slot root is the short path `C:/Antiphon/slots`.
+
 #### Workspace-slot activation and retained directories (2026-11-16)
 
 The desktop AppHost's local `server/appsettings.Development.json` now has
