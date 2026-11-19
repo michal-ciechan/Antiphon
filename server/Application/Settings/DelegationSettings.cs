@@ -748,6 +748,20 @@ public sealed class DelegationSettings
     /// </summary>
     public string WorkspaceSlotRoles { get; set; } = Settings.WorkspaceSlotRoles.All;
 
+    /// <summary>
+    /// CARD-0824 S3. Runner ids that may lease a slot on Windows. Empty (the default) leases none.
+    /// Catalogue id <c>desktop</c> never leases even when it is listed. Hot-reloadable. Clearing the
+    /// list is the soft rollback: no new Windows leases, releases continue.
+    /// </summary>
+    public string[] WindowsSlotRunnerIds { get; set; } = [];
+
+    /// <summary>
+    /// CARD-0824 S3. Which roles may lease on a runner in <see cref="WindowsSlotRunnerIds"/>. The same
+    /// grammar as <see cref="WorkspaceSlotRoles"/>, default <c>none</c>. The server2 global role string
+    /// does not apply to a Windows runner. A single string, never an array.
+    /// </summary>
+    public string WindowsSlotRoles { get; set; } = Settings.WorkspaceSlotRoles.None;
+
     /// <summary>CARD-0633 D-6: the remote-preparation backoff cap. Default 900; at least the base.</summary>
     public int RemotePrepBackoffMaxSeconds { get; set; } = 900;
 
@@ -1505,6 +1519,17 @@ public sealed class DelegationSettingsValidator : IValidateOptions<DelegationSet
         // makes the role gate lease nothing until the file is fixed.
         if (!Settings.WorkspaceSlotRoles.TryParse(options.WorkspaceSlotRoles, out _, out var slotRolesError))
             failures.Add(slotRolesError);
+
+        // CARD-0824 S3. The Windows list has the same grammar and fails the host when it cannot be read.
+        // Listing catalogue id "desktop" is not a startup failure; the decision refuses that id.
+        if (!Settings.WorkspaceSlotRoles.TryParse(options.WindowsSlotRoles, out _, out var windowsRolesError))
+            failures.Add(windowsRolesError.Replace(
+                Settings.WorkspaceSlotRoles.SettingName, "Delegation:WindowsSlotRoles", StringComparison.Ordinal));
+        var windowsIds = options.WindowsSlotRunnerIds;
+        if (windowsIds is null || windowsIds.Any(id => string.IsNullOrWhiteSpace(id)
+                || id.Length > 64 || id != id.Trim() || id.Any(char.IsControl))
+            || windowsIds.Distinct(StringComparer.Ordinal).Count() != windowsIds.Length)
+            failures.Add("Delegation:WindowsSlotRunnerIds must contain distinct, exact runner ids of at most 64 characters.");
 
         var instructions = options.OrchestratorInstructions ?? new OrchestratorInstructionsSettings();
         if (instructions.MaxBytes is < OrchestratorInstructionsSettings.MinMaxBytes

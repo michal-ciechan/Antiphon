@@ -36,6 +36,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     private readonly RepositoryLeaseWaiters? _leaseWaiters;
     private readonly int _remotePrepPushBudgetMinutes;
     private readonly bool _workspaceSlots;
+    private readonly DelegationSettings _delegationSnapshot;
+    private readonly IOptionsMonitor<DelegationSettings>? _delegationMonitor;
     private readonly WorkspaceSlotRoleGate _roleGate;
     private readonly RefOnlyDesktopWorkspaceService? _refWorkspaces;
     internal Action? BeforeRemoveMirrorCommand { get; set; }
@@ -67,7 +69,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         SyncBudget = TimeSpan.FromSeconds(configured.RunnerSyncBudgetSeconds);
         _remotePrepPushBudgetMinutes = configured.RemotePrepPushBudgetMinutes;
         _workspaceSlots = configured.WorkspaceSlotsEnabled;
-        // CARD-0824 S1c S-3: the flag stays restart-only (IOptions); only the role list is read live, from the monitor.
+        _delegationSnapshot = configured;
+        _delegationMonitor = monitor;
+        // CARD-0824 S1c S-3: the flag stays restart-only (IOptions). The role lists are read live, from the monitor.
         _roleGate = roleGate ?? new WorkspaceSlotRoleGate(monitor, NullLogger<WorkspaceSlotRoleGate>.Instance);
         if (workspaceContexts is not null && progressGit is not null && leases is not null)
             _refWorkspaces = new(workspaceContexts, git, progressGit, leases);
@@ -224,12 +228,68 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// CARD-0824 S1c S-3. The lease decision for a task now: the server flag, the role allow-list and SourceLanding. The
     /// runner's <c>workspaceSlotV1</c> and the committed preparation are checked by <see cref="ResolveSlotDecisionAsync"/>.
     /// </summary>
-    public WorkspaceSlotDecision DecideSlot(AgentTask task)
+    public WorkspaceSlotDecision DecideSlot(AgentTask task, RunnerDescriptor? runner = null)
     {
         if (!_workspaceSlots)
             return new WorkspaceSlotDecision(false, "flag_off");
-        var verdict = _roleGate.Evaluate(task.Role, task.SourceLandingOperationId);
-        return new WorkspaceSlotDecision(verdict.Lease, verdict.Reason);
+        // A Windows runner never inherits the server2 global role string. Other platforms ignore the Windows keys.
+        if (!IsWindowsRunner(runner))
+        {
+            var verdict = _roleGate.Evaluate(task.Role, task.SourceLandingOperationId);
+            return new WorkspaceSlotDecision(verdict.Lease, verdict.Reason);
+        }
+
+        return DecideWindowsSlot(task);
+    }
+
+    private WorkspaceSlotDecision DecideWindowsSlot(AgentTask task)
+    {
+        if (!TryReadDelegation(out var settings)
+            || !WorkspaceSlotRoles.TryParse(settings.WindowsSlotRoles, out var set, out _))
+            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRolesInvalid);
+
+        var verdict = set.Admits(task.Role, task.SourceLandingOperationId);
+        if (verdict.Reason == WorkspaceSlotRoleVerdict.RolesNone)
+            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRolesNone);
+        if (!verdict.Lease)
+            return new WorkspaceSlotDecision(false, verdict.Reason);
+
+        var id = task.RunnerId ?? "";
+        if (string.Equals(id, RunnerPlatformWire.DesktopId, StringComparison.Ordinal))
+            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRunnerDesktop);
+        var ids = settings.WindowsSlotRunnerIds ?? [];
+        if (!ids.Contains(id, StringComparer.Ordinal))
+            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRunnerNotListed);
+        return new WorkspaceSlotDecision(true, verdict.Reason);
+    }
+
+    private bool TryReadDelegation(out DelegationSettings settings)
+    {
+        if (_delegationMonitor is null)
+        {
+            settings = _delegationSnapshot;
+            return true;
+        }
+
+        try
+        {
+            settings = _delegationMonitor.CurrentValue;
+            return true;
+        }
+        catch (OptionsValidationException)
+        {
+            settings = _delegationSnapshot;
+            return false;
+        }
+    }
+
+    private static bool IsWindowsRunner(RunnerDescriptor? runner)
+    {
+        if (runner is null)
+            return false;
+        var platform = RunnerPlatformWire.Normalize(runner.Platform)
+            ?? RunnerPlatformWire.Normalize(runner.Capabilities?.Platform);
+        return platform == RunnerPlatformWire.Windows;
     }
 
     /// <summary>The detail prefix of every <see cref="AgentTaskEventType.WorkspaceSlotDecision"/> event.</summary>
@@ -247,7 +307,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     public async Task<WorkspaceSlotDecision> ResolveSlotDecisionAsync(
         AppDbContext db, AgentTask task, MirrorBindingExpectation? expectation, DateTime at, CancellationToken ct)
     {
-        if (!_workspaceSlots || expectation is null || !await AdvertisesSlotsAsync(task.RunnerId, ct))
+        var runner = await _runners.DescribeAsync(task.RunnerId, ct);
+        if (!_workspaceSlots || expectation is null || !AdvertisesSlots(runner))
             return new WorkspaceSlotDecision(false, "ineligible");
 
         var preparation = "preparation=" + expectation.PreparationId.ToString("D");
@@ -268,7 +329,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return new WorkspaceSlotDecision(slot, reason, true, last.At);
         }
 
-        var decision = DecideSlot(task) with { Recorded = true, At = at };
+        var decision = DecideSlot(task, runner) with { Recorded = true, At = at };
         db.AgentTaskEvents.Add(new AgentTaskEvent
         {
             Id = Guid.NewGuid(),
@@ -301,9 +362,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         });
     }
 
-    private async Task<bool> AdvertisesSlotsAsync(string? runnerId, CancellationToken ct) =>
-        (await _runners.DescribeAsync(runnerId, ct))?.Capabilities?.Features
-            ?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) == true;
+    private static bool AdvertisesSlots(RunnerDescriptor? runner) =>
+        runner?.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.WorkspaceSlotV1, StringComparer.Ordinal) == true;
 
     /// <summary>
     /// Asks the runner for a mirror of the pushed branch. When <paramref name="expectation"/> is
