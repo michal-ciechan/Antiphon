@@ -21,6 +21,7 @@ namespace Antiphon.Nightly
         private static readonly IFileSystem Disk = new FileSystem();
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
         private static WriteBehindFileSystem buffered;
+        private static readonly List<string> retainedFailures = new List<string>();
         private static bool exitHooked;
 
         /// <summary>True between EnableWriteBehind and DisableWriteBehind.</summary>
@@ -39,6 +40,7 @@ namespace Antiphon.Nightly
             lock (Gate)
             {
                 if (buffered != null) return;
+                retainedFailures.Clear();
                 buffered = new WriteBehindFileSystem(new FileSystem());
                 if (!exitHooked)
                 {
@@ -53,11 +55,12 @@ namespace Antiphon.Nightly
         {
             WriteBehindFileSystem fs;
             lock (Gate) fs = buffered;
-            if (fs == null) return new string[0];
-            string[] failed = Flush();
+            if (fs == null) return TakeFailures();
+            Flush();
             lock (Gate) buffered = null;
-            try { fs.Dispose(); } catch (AggregateException) { }
-            return failed;
+            try { fs.Dispose(); }
+            catch (AggregateException ex) { Retain(Describe(ex)); }
+            return TakeFailures();
         }
 
         /// <summary>Waits until every queued write is on disk; returns the writes that failed since the last flush.</summary>
@@ -67,17 +70,76 @@ namespace Antiphon.Nightly
             lock (Gate) fs = buffered;
             if (fs == null) return new string[0];
             try { fs.Flush(); return new string[0]; }
-            catch (AggregateException ex) { return Describe(ex); }
+            catch (AggregateException ex) { return Retain(Describe(ex)); }
         }
 
-        /// <summary>Waits until one path's queued write is on disk; returns the writes that failed.</summary>
+        /// <summary>Waits until one path's queued write is on disk; returns that path's failures and keeps them.</summary>
         public static string[] Flush(string path)
         {
             WriteBehindFileSystem fs;
             lock (Gate) fs = buffered;
             if (fs == null || string.IsNullOrEmpty(path)) return new string[0];
             try { fs.Flush(System.IO.Path.GetFullPath(path)); return new string[0]; }
-            catch (AggregateException ex) { return Describe(ex); }
+            catch (AggregateException ex) { return Retain(Describe(ex)); }
+        }
+
+        /// <summary>Waits until one path's queued write has finished. A failure stays stored.</summary>
+        public static void Wait(string path)
+        {
+            WriteBehindFileSystem fs;
+            lock (Gate) fs = buffered;
+            if (fs == null || string.IsNullOrEmpty(path)) return;
+            fs.Wait(System.IO.Path.GetFullPath(path));
+        }
+
+        /// <summary>True when this path has a failed deferred write that has not been cleared.</summary>
+        public static bool PathFailed(string path)
+        {
+            WriteBehindFileSystem fs;
+            lock (Gate) fs = buffered;
+            if (fs == null || string.IsNullOrEmpty(path)) return false;
+            return fs.HasFailure(System.IO.Path.GetFullPath(path));
+        }
+
+        /// <summary>Retained failures plus failures still stored on the queue. Does not clear either.</summary>
+        public static string[] PeekFailures()
+        {
+            string[] retained;
+            WriteBehindFileSystem fs;
+            lock (Gate)
+            {
+                retained = retainedFailures.ToArray();
+                fs = buffered;
+            }
+            string[] queued = fs == null ? new string[0] : fs.FailureDescriptions();
+            var all = new List<string>(retained);
+            foreach (string item in queued)
+            {
+                if (!string.IsNullOrEmpty(item) && !all.Contains(item)) all.Add(item);
+            }
+            return all.ToArray();
+        }
+
+        /// <summary>Returns the retained failures and clears that list. Queued failures stay stored.</summary>
+        public static string[] TakeFailures()
+        {
+            lock (Gate)
+            {
+                string[] copy = retainedFailures.ToArray();
+                retainedFailures.Clear();
+                return copy;
+            }
+        }
+
+        private static string[] Retain(string[] described)
+        {
+            if (described == null || described.Length == 0) return new string[0];
+            lock (Gate)
+            {
+                foreach (string item in described)
+                    if (!string.IsNullOrEmpty(item)) retainedFailures.Add(item);
+            }
+            return described;
         }
 
         private static string[] Describe(AggregateException ex)
