@@ -132,7 +132,7 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 14,
+      "classes": 15,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 8,
+      "classes": 9,
       "reason": "allowlist"
     },
     {
@@ -1461,9 +1461,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTaskLanding.cs",
-      "classes": 56,
+      "classes": 57,
       "reason": "cap",
-      "owed": 31,
+      "owed": 32,
       "first": [
         "DefaultRunnerPinTests",
         "LandFailureDiagnosticTests",
@@ -2477,6 +2477,12 @@
       "path": ".dockerignore",
       "classes": [
         "DockerStackContractTests"
+      ]
+    },
+    {
+      "path": ".editorconfig",
+      "classes": [
+        "LandVerificationFailureTests"
       ]
     },
     {
