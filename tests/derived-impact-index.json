@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 333,
+      "classes": 334,
       "reason": "allowlist"
     },
     {
@@ -1643,9 +1643,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 608,
+      "classes": 609,
       "reason": "cap",
-      "owed": 583,
+      "owed": 584,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1659,9 +1659,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 608,
+      "classes": 609,
       "reason": "cap",
-      "owed": 583,
+      "owed": 584,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2053,9 +2053,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 132,
+      "classes": 133,
       "reason": "cap",
-      "owed": 107,
+      "owed": 108,
       "first": [
         "DelegateScriptLandApprovalTests",
         "LinuxServerRestartGateTests",
