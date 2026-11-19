@@ -5,10 +5,16 @@ Base master `5be178005f06aa868bbb038e561c2ef22a654cb5`. Branch
 `docs/superpowers/plans/2026-11-19-dw3-checkpoints.md` stays as the record of
 task 066a9073. This plan is the closed list for the advisory repair.
 
-The helper lists leftover `.dw3part` and `.dw3bak` files by path and prints
-one recovery line. It does not read or print their contents. Sweeping them
-requires `-SweepStranded`. Without that switch the run prints `sweep: refused`
-and continues. After a temp or a backup is created, `Confirm-Dw3OwnerOnly`
+The helper lists leftover `<32 lowercase hex>.dw3part` and `.dw3bak` files
+by path and prints one recovery line. It does not read or print their
+contents. Names that are not that exact pattern are not listed and are not
+deleted. Sweeping a stale part requires `-Execute -SweepStranded` with
+`-WhatIf` absent. A file newer than `Dw3StrandedMaxAgeMinutes` (15) is kept
+and reported `fresh`. There is no run lock; the age guard is the live-temp
+protection. A `.dw3bak` is kept unless `-SweepBackups` is also set, so the
+recovery line is not contradicted. `-WhatIf` and a dry run print
+`would-sweep` and do not delete. Without `-SweepStranded` the run prints
+`sweep: refused` and continues. After a temp or a backup is created, `Confirm-Dw3OwnerOnly`
 checks the mode or ACL and, on failure, prints `owner-only-failed:` plus the
 path and stops. A residue delete that leaves the file prints `kept:` and the
 path. Saved byte arrays are held on a list and cleared with `[Array]::Clear`
@@ -38,12 +44,23 @@ failed=38). The 197 witnesses already on the base stayed green. The 38
 failures were the missing advisory lines, the missing sweep, the missing
 owner-only name, the uncleared probe, `changed: none` after a phase 1 copy,
 the `$matches` assignment, and the ambiguous-key refusal. The short green
-witness before this plan was passed=279 failed=0. CP-1 is that script again,
-at the committed tip.
+witness before the blocker fix was passed=279 failed=0.
+
+Fix round 1 (task 1b3802c5) starts at `b5d5cb87f487158116cd1d8f697d3bc0d5b66c37`.
+The red witness is `11b374565be5ec6ea5cf1b739f6cfbaf050e7ca4` (passed=313
+failed=25). Those 25 failures were a fresh file being swept, the age seam
+being ignored, a fresh file beside a stale one being swept, `Notes.DW3BAK`,
+`abc.dw3bak`, an uppercase-hex name, a dry run deleting, `-WhatIf` deleting,
+a stale `.dw3bak` being deleted without `-SweepBackups`, the missing
+ambiguity action, and the fixed temp root. A backdated exact `.dw3part` was
+already swept. A 32-hex name with another extension and a directory named
+like a stranded file were already left in place. The four exit codes were
+already 2. The green witness is passed=362 failed=0. CP-1 is that script
+again, at the committed tip. Windows ACL and `File.Replace` stay UNOBSERVED.
 
 ## Verification design
 
-- V-1. `scripts/test-desktop-win-phase1-secrets.ps1`. Floor from the green witness: passed=279 failed=0. Includes the stranded list, the refused sweep, `-SweepStranded`, owner-only failure names, `kept:`, the clear probe, `changed: phase1-config`, the renamed repair variable, and the ambiguous-key refusals. Existing leak checks stay in the same script.
+- V-1. `scripts/test-desktop-win-phase1-secrets.ps1`. Floor from the green witness: passed=362 failed=0. Includes the stranded list, the refused sweep, the age keep, the exact-name keep, the dry-run and `-WhatIf` would-sweep lines, `-SweepBackups`, owner-only failure names, `kept:`, the clear probe, `changed: phase1-config`, the renamed repair variable, and the ambiguous-key refusals. Existing leak checks stay in the same script.
 - V-2. `TestClassificationPolicyTests` once. Floor 42.
 - V-3. Eight guard classes, without `WindowsUnitPlatformAdmissionTests` and without `DerivedImpactIndexTests`. Floor 39, 0 skipped.
 - V-4. `DerivedImpactIndexTests` alone. Floor 27. Regenerate the index only if this row fails, as its own last commit, driver built first, twice (changed, then unchanged).
@@ -71,7 +88,7 @@ Startup impact is not required: this helper is not on the AppHost or restart pat
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | dw3 | n/a | dw3-script | `pwsh -NoProfile -File scripts/test-desktop-win-phase1-secrets.ps1` | V-1 | RESULT passed=279 failed=0, exit 0 | n/a | 15 | true | n/a |
+| CP-1 | dw3 | n/a | dw3-script | `pwsh -NoProfile -File scripts/test-desktop-win-phase1-secrets.ps1` | V-1 | RESULT passed=362 failed=0, exit 0 | n/a | 15 | true | n/a |
 | CP-2 | dw3 | tests/Antiphon.Tests -> bin-dw3adv/ | dw3-policy | `/*/*/TestClassificationPolicyTests/*` | V-2 | 0 failed, executed at least 42 | 42 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | dw3 | CP-2 | dw3-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-3 | 0 failed, executed at least 39 | 39 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | dw3 | CP-2 | dw3-index | `/*/*/DerivedImpactIndexTests/*` | V-4 | 0 failed, executed at least 27 | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
