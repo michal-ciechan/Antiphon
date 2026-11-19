@@ -675,7 +675,8 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
         using (var json = JsonDocument.Parse(service.Stdout))
         {
             Strings(json.RootElement, "classes").ShouldContain("PreDispatchFailureDeliveryTests");
-            OwedCount(json.RootElement, NotificationServicePath).ShouldBe(16);
+            // The wake test joined the kept window, so this path's owed remainder is 17.
+            OwedCount(json.RootElement, NotificationServicePath).ShouldBe(17);
         }
 
         var sweep = await SelectAsync(root, "-Path", LeakSweepPath, "-Json");
