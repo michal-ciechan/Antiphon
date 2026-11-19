@@ -44,7 +44,7 @@ It is not a checkpoint row. This table runs on the fix, where that witness passe
 |---|---|---|---|---|---|---|---|---|---:|---|---|
 | CP-1 | green | tests/Antiphon.Tests -> bin-c2005-summary/ | c2005-witness | `/*/*/NightlySummaryWriterTests/*` | V-1, V-2, V-3 | 1 case, 0 failed | 1 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | green | CP-1 (-NoBuild) | nightly-fast | `/*/*/(NightlyDiscoveryParserTests*)\|(NightlyReclaimRaceTests*)\|(NightlyProbeSupervisorTests*)\|(NightlyCoreTests*)\|(NightlyPrerequisiteTests*)\|(NightlyDeadOwnerLockTests*)/*` | R-1 | 16 cases, 0 failed | 16 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-3 | green | CP-1 (-NoBuild) | nightly-native | `/*/*/(NightlyExecutionDiagnosticTests*)\|(NightlyNativeOwnershipTests*)/*` | R-1 | 16 cases, 0 failed | 16 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-3 | green | CP-1 (-NoBuild) | nightly-native | `/*/*/(NightlyExecutionDiagnosticTests*)\|(NightlyNativeOwnershipTests*)/*` | R-1 | 7 linux / 16 windows, 0 failed | 7 linux / 16 windows | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | green | CP-1 (-NoBuild) | nightly-watchdog | `/*/*/NightlyWatchdogCoreTests/*` | R-1 | 14 cases, 0 failed | 14 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | green | CP-1 (-NoBuild) | nightly-c544 | `/*/*/NightlyVerificationContractTests/(C544_*)` | R-1 | 23 cases, 0 failed | 23 | 9 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | green | CP-1 (-NoBuild) | nightly-c545 | `/*/*/NightlyVerificationContractTests/(C545_*)` | R-1 | 15 cases, 0 failed | 15 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
@@ -58,4 +58,4 @@ It is not a checkpoint row. This table runs on the fix, where that witness passe
 
 ### Cost
 
-Ordinary floor is 15 + 8 + 8 + 8 + 9 + 8 + 8 + 8 + 8 + 8 + 3 + 3 + 3 = 97 minutes of budget. CP-1 is the cold `Antiphon.Tests` build plus the witness. Later test rows reuse it. No repeat proof after green.
+Ordinary floor is 15 + 8 + 8 + 8 + 9 + 8 + 8 + 8 + 8 + 8 + 3 + 3 + 3 = 97 minutes of budget. CP-1 is the cold `Antiphon.Tests` build plus the witness. Later test rows reuse it. No repeat proof after green. CP-3 counts 16 methods. All nine NightlyNativeOwnershipTests methods skip on Linux (Windows job and OwnedChild.exe), so the executed floor is 7 on Linux and 16 on Windows.
