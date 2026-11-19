@@ -264,10 +264,13 @@ public static class AgentTaskEndpoints
             string id,
             HttpContext http,
             AgentTaskService service,
+            AgentTaskGetPollMetrics polls,
             CancellationToken ct) =>
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             var caller = await ResolvePollingCallerAsync(http, service, ct);
+            // CARD-1972. The caller was already resolved; Record does not query.
+            polls.Record(http.Request.Headers[AgentTaskGetPollMetrics.CallerHeader].FirstOrDefault(), caller);
             return Results.Ok(await service.GetAsync(taskId, ct, caller?.SessionId));
         });
 

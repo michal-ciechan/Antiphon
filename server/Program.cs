@@ -131,6 +131,7 @@ try
     builder.Services.AddSingleton<SessionStateCommandMetrics>();
     builder.Services.AddSingleton<DbCommandMetrics>();
     builder.Services.AddSingleton<DbCallSiteMetrics>();
+    builder.Services.AddSingleton<AgentTaskGetPollMetrics>();
     builder.Services.AddDbContext<AppDbContext>((services, options) =>
         options.AddInterceptors(services.GetRequiredService<SessionStateCommandMetrics>(),
             services.GetRequiredService<DbCommandMetrics>(),
