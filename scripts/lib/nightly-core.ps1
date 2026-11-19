@@ -4,7 +4,8 @@
 # The project is built once per source version into a cache under the user's temp directory, keyed by the
 # SHA-256 of every source and project file of both projects plus the PowerShell/.NET versions, so each later
 # process only loads it (the script tests start many PowerShell processes). Concurrent first runs take turns
-# on a lock file; the build uses its own artifacts directory, never the projects' obj folders. Windows
+# on a lock file; the build uses its own artifacts directory, never the projects' obj folders, and keeps it
+# between source versions, so a changed source rebuilds warm (no restore, only the changed project). Windows
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
 # SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
 # (Assert-NightlyCoreAvailable: nightly-core-required). Only what such a process still runs keeps a PowerShell
@@ -53,7 +54,8 @@ function Install-NightlyCoreBuild {
     if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
     if ($null -eq (Get-Command dotnet -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
     [void][IO.Directory]::CreateDirectory($cacheDir)
-    $lockPath = Join-Path $cacheDir ($Identity.Name + '-' + $Identity.Hash + '.lock')
+    # One lock per project: every source version builds in the same work directory.
+    $lockPath = Join-Path $cacheDir ($Identity.Name + '.build.lock')
     $lock = $null
     $deadline = [DateTime]::UtcNow.AddMinutes(10)
     while ($null -eq $lock) {
@@ -66,18 +68,17 @@ function Install-NightlyCoreBuild {
     try {
         # Another process may have built it while this one waited.
         if ([IO.File]::Exists((Join-Path $target $Identity.Output))) { return $target }
-        $work = Join-Path $cacheDir ('build-' + [guid]::NewGuid().ToString('N'))
-        try {
-            $out = Join-Path $work 'out'
-            $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
-            if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out $Identity.Output))) {
-                $tail = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'error' } | Select-Object -First 5) -join ' | '
-                throw ($Identity.Name + ' build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
-            }
-            [IO.Directory]::Move($out, $target)
-        } finally {
-            if ([IO.Directory]::Exists($work)) { try { [IO.Directory]::Delete($work, $true) } catch { } }
+        # A warm build: the work directory (restore, obj and the referenced projects' outputs) stays between source
+        # versions, so a changed source restores nothing and recompiles only its own project.
+        $work = Join-Path $cacheDir ('work-' + $Identity.Name)
+        $out = Join-Path $work ('out-' + $Identity.Hash)
+        if ([IO.Directory]::Exists($out)) { [IO.Directory]::Delete($out, $true) }
+        $output = & dotnet build $Identity.Project -c Release -o $out --artifacts-path (Join-Path $work 'artifacts') '-p:CopyLocalLockFileAssemblies=true' -nologo -v q '-nodeReuse:false' 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not [IO.File]::Exists((Join-Path $out $Identity.Output))) {
+            $tail = @($output | ForEach-Object { [string]$_ } | Where-Object { $_ -match 'error' } | Select-Object -First 5) -join ' | '
+            throw ($Identity.Name + ' build failed (exit ' + $LASTEXITCODE + '): ' + $tail)
         }
+        [IO.Directory]::Move($out, $target)
         # Builds of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
         foreach ($old in @([IO.Directory]::GetDirectories($cacheDir, $Identity.Name + '-*'))) {
             if ($old -eq $target -or [IO.Directory]::GetLastWriteTimeUtc($old) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
@@ -215,6 +216,8 @@ function Test-NightlyCoreAvailable {
     Add-Type -Path (Join-Path $dir 'Antiphon.Nightly.dll')
     Assert-NightlyLoadedCoreIdentity ('Antiphon.Nightly.TestPhaseJson' -as [type])
     Set-NightlyCoreVerified $identity
+    # Windows would otherwise move this busy background process to efficiency cores within seconds (NightlyProcesses).
+    [void][Antiphon.Nightly.NightlyProcesses]::RunAtFullSpeed()
     return $true
 }
 

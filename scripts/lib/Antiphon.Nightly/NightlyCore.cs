@@ -903,6 +903,32 @@ namespace Antiphon.Nightly
         [System.Runtime.InteropServices.DllImport("kernel32.dll")]
         private static extern bool CloseHandle(IntPtr handle);
 
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct PowerThrottlingState
+        {
+            public uint Version, ControlMask, StateMask;
+        }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetProcessInformation(IntPtr process, int informationClass, ref PowerThrottlingState information, int length);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcess();
+
+        /// <summary>
+        /// Opts this process out of Windows power throttling (EcoQoS). On a hybrid CPU Windows otherwise moves a busy
+        /// process that has no foreground window to the efficiency cores within seconds: on an i9-13900H a SHA-256
+        /// loop went from 16 ms to 40 ms an iteration after about two seconds, and a run of the stopped-seed cases in
+        /// one process ran up to five times slower. False off Windows or when Windows refuses.
+        /// </summary>
+        public static bool RunAtFullSpeed()
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            // PROCESS_POWER_THROTTLING_CURRENT_VERSION, control EXECUTION_SPEED, state off; class ProcessPowerThrottling.
+            var state = new PowerThrottlingState { Version = 1, ControlMask = 1, StateMask = 0 };
+            return SetProcessInformation(GetCurrentProcess(), 4, ref state, System.Runtime.InteropServices.Marshal.SizeOf(typeof(PowerThrottlingState)));
+        }
+
         /// <summary>The parent process id, or -1 when it cannot be read (the caller falls back to CIM).</summary>
         public static int ParentProcessId(int processId)
         {
