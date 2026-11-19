@@ -59,7 +59,10 @@ Unit lane. No positive controls. Cost floor is the sum of `EstimatedMinutes`
   `policyHash`, `PinnedInputDigest`, and `LegacyExclusionDigest` recomputed
   and left unchanged unless a guard fails.
 - R-4: the guard classes in CP-4 pass. `WindowsUnitPlatformAdmissionTests` is
-  not in this Linux selection: a Windows skip is not a pass.
+  not in this Linux selection: a Windows skip is not a pass. The closed union
+  executes 39 cases. `RunnerDefaultGuidanceTests` shares the guidance file and
+  is outside this union. The first CP-4 receipt executed 39, passed 39, failed
+  0, and exited 3 on a floor of 43.
 
 No PC variants. Mutation is waived for this Code task (operator 2026-11-12).
 Every PC stays pending for method-scoped SourceLanding Mutation. Restart: none.
@@ -71,5 +74,5 @@ Every PC stays pending for method-scoped SourceLanding Mutation. Restart: none.
 | CP-1 | fix | tests/Antiphon.Tests -> bin-c487-probe/ | probe-class | `/*/*/TestClassificationPolicyTests/*` | V-1, V-2, V-3 | 43 results, 0 failed/skipped, includes C487_probe_stale_sibling_is_removed_at_start | 43 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | fix | CP-1 | owned-temp | `/*/*/OwnedTempLeakTests/*` | V-4 | 10 methods, 0 failed/skipped | 10 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | fix | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-1 | 27 methods, 0 failed/skipped | 27 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-4 | fix | CP-1 | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-4 | 43 results, 0 failed/skipped | 43 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-4 | fix | CP-1 | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-4 | 39 results, 0 failed/skipped | 39 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | fix | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-2 | exit 0 | n/a | 5 | true | n/a |
