@@ -8,6 +8,7 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 . (Join-Path $PSScriptRoot 'nightly-failure-history.ps1')
 . (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
+. (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
 if (-not (Get-Command Remove-TestPhaseVariables -ErrorAction SilentlyContinue)) {
     . (Join-Path $PSScriptRoot 'test-phase-evidence.ps1')
@@ -1033,6 +1034,8 @@ function Prepare-NightlySuiteExecution {
             $suiteCensus = (Get-NightlyDiscoveryIndexView -Entry $suiteDiscoveryEntry -ProfileExclusions $profileExclusions -ProfileAware).Census
             if (-not $suiteCensus.Ok) { throw 'profile-discovery-census-incomplete' }
             $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $suiteDiscoveryNodes -Chunks $chunks -Exclusions $profileExclusions -ProfileAware:$profileAware -Native:$isNative -SuiteId $suiteId -PolicyObject $policy.Object)
+            # S6b shadow: one discovery per suite. Carry cannot skip it. Recording grants no gate credit.
+            [void](Register-NightlyRcDiscoveryEvidence -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$suiteId) -DiscoveryPath $profileDiscoveryPath)
             if ($chunks.Count -eq 0) { throw 'zero-required-uid' }
         } catch {
             if ($profileDiscWatch.IsRunning) { $profileDiscWatch.Stop() }
@@ -1197,6 +1200,8 @@ function Invoke-NightlyScheduledChunk {
         $phaseWatch = [Diagnostics.Stopwatch]::StartNew()
         [void](Write-QualificationActiveChunkIdentity -Directory $TimingRoot -SuiteId $suiteId -ChunkId ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt))
         try {
+            # S6b shadow: launch output must join the suite build seal. A refusal stays unproven unless the caller is strict.
+            [void](Register-NightlyRcLaunchEvidence -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Arguments @($nativeArgs) -OutputDirectory ([IO.Path]::GetDirectoryName([string]$suiteHost.AssemblyPath)) -Sha ([string]$Sha))
             $run = Invoke-NightlyOwnedProcess -FilePath $suiteHost.FilePath -ArgumentList $nativeArgs -WorkingDirectory $RepoRoot `
                 -TimeoutMilliseconds ([int]$admission.WatchdogMilliseconds) `
                 -Environment $phaseEnv -LogPath $logPath `
@@ -1208,6 +1213,7 @@ function Invoke-NightlyScheduledChunk {
             throw
         }
         $phaseWatch.Stop()
+        [void](Register-NightlyRcChunkRevision -LogRoot $LogRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Outcome $(if ([int]$run.ExitCode -eq 0) { 'Passed' } else { 'Failed' }))
         try {
             [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
         } catch {
@@ -1913,6 +1919,17 @@ function Invoke-AntiphonNightlyTests {
             Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
             $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
+    if ($dotnetOk) {
+        foreach ($evidenceSuiteId in @($selectedSuites)) {
+            $evidenceSuite = $null
+            if ($suiteMap.ContainsKey($evidenceSuiteId)) { $evidenceSuite = $suiteMap[$evidenceSuiteId] }
+            $evidenceAssembly = ''
+            if ($evidenceSuite) { $evidenceAssembly = [string]$evidenceSuite.assembly }
+            if ([string]::IsNullOrWhiteSpace($evidenceAssembly)) { continue }
+            $evidenceOut = [IO.Path]::Combine($RepoRoot, 'tests', $evidenceAssembly, 'bin', 'Debug', 'net9.0')
+            [void](Register-NightlyRcBuildEvidence -LogRoot $LogRoot -RepoRoot $RepoRoot -Suite ([string]$evidenceSuiteId) -Command 'dotnet build Antiphon.sln -c Debug --nologo' -OutputDirectory $evidenceOut -Entry ($evidenceAssembly + '.dll') -Sha ([string]$Sha))
+        }
+    }
             $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
             if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
                 $expectedSkipRoster = @(Get-NightlyExpectedSkipRoster -Path $rosterFile)
