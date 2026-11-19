@@ -45,7 +45,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     /// with untracked or ignored files, ls-files --others); WorkTree, every status form and ls-files --others;
     /// or every command.
     /// </summary>
-    private enum Falls { None, Walk, WorkTree, All, KnownRacyDivergence }
+    private enum Falls { None, WorkTree, All, KnownRacyDivergence }
 
     private sealed record Scenario(string Name, Func<Repo, Task> Arrange, Falls Fallback = Falls.None, bool Linked = false);
 
@@ -204,10 +204,10 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             await File.WriteAllTextAsync(full, "deep\n");
         }, Fallback: Falls.WorkTree),
-        // Shapes LibGit2Sharp cannot read the way git does: these must fall back.
         new("unreadable-directory", async r =>
         {
-            // git warns "could not open directory" and lists nothing under it (CARD-1714): libgit2 must not call it clean.
+            // git warns "could not open directory" and lists nothing under it; libgit2 skips it the same way, so
+            // the answer is libgit2's and git is not asked (a warning, not a failure).
             await r.WriteAsync("locked/inside.txt", "x\n");
             if (OperatingSystem.IsWindows())
             {
@@ -216,7 +216,13 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 r.OnDispose(() => Repo.RunToolAsync("icacls", r.Full("locked"), "/remove:d", user));
             }
             else File.SetUnixFileMode(r.Full("locked"), UnixFileMode.None);
-        }, Fallback: Falls.Walk),
+            // An elevated Windows administrator lists the directory through the deny entry from .NET and libgit2
+            // while git is refused (measured 2026-11-19: elevated pwsh 7 lists it, the same pwsh with the
+            // Administrators group filtered out is refused), so the two listings legitimately differ there.
+            if (DirectoryListable(r.Full("locked")))
+                Skip.Test("the locked directory is still listable by this process (an elevated administrator on Windows), so the scenario cannot arise");
+        }),
+        // Shapes LibGit2Sharp cannot read the way git does: these must fall back.
         new("skip-worktree", async r => { await r.GitAsync("update-index", "--skip-worktree", "a.txt"); File.Delete(r.Full("a.txt")); }, Fallback: Falls.All),
         new("intent-to-add", async r => { await r.WriteAsync("ita.txt", "i\n"); await r.GitAsync("add", "-N", "ita.txt"); }, Fallback: Falls.All),
         new("index-version-4", r => r.GitAsync("update-index", "--index-version", "4"), Fallback: Falls.All),
@@ -255,7 +261,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 break;
             }
             var git = await Repo.RunGitAsync(checkout, args);
-            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree || scenario.Fallback == Falls.Walk && (untracked || ignored), "status " + form, mine, git, StatusPaths);
+            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree, "status " + form, mine, git, StatusPaths);
             // A verdict caller's dirty answer (GitTreeVerdict): porcelain-shaped rows over the same paths, so
             // emptiness is git's wherever the path set is.
             // The verdict's in-process dirty answer must never call a git-clean tree dirty.
@@ -275,7 +281,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             var mine = InProcessGitStatus.OtherPaths(checkout, ignored);
             string[] args = ignored ? ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] : ["ls-files", "--others", "--exclude-standard", "-z"];
             var git = await Repo.RunGitAsync(checkout, args);
-            Check(mismatches, scenario.Fallback is Falls.All or Falls.Walk or Falls.WorkTree, string.Join(' ', args), mine, git, Records);
+            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree, string.Join(' ', args), mine, git, Records);
         }
         {
             var mine = InProcessGitStatus.IndexTags(checkout);
@@ -573,6 +579,12 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         return committed.Output.Trim();
     }
 
+    private static bool DirectoryListable(string path)
+    {
+        try { _ = Directory.EnumerateFileSystemEntries(path).Count(); return true; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     private static void Check(List<string> mismatches, bool fallback, string what, IReadOnlySet<string>? mine,
         (int ExitCode, string Output, string Error) git, Func<string, IEnumerable<string>> parse)
     {
@@ -588,7 +600,12 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             mismatches.Add($"{what}: VERDICT git {(expected.Count == 0 ? "clean" : "dirty")} libgit2 {(mine.Count == 0 ? "clean" : "dirty")}");
         if (!expected.SetEquals(mine))
             mismatches.Add($"{what}: paths git [{string.Join(", ", expected.Order())}] libgit2 [{string.Join(", ", mine.Order())}]");
-        if (git.Error.Length != 0) mismatches.Add($"{what}: git warned: {git.Error.Trim()}");
+        // A directory git cannot open is only a warning: both skip it, and the in-process answer stands.
+        var warnings = git.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !(line.StartsWith("warning: could not open directory '", StringComparison.Ordinal)
+                && line.EndsWith("': Permission denied", StringComparison.Ordinal)))
+            .ToList();
+        if (warnings.Count != 0) mismatches.Add($"{what}: git warned: {string.Join(" | ", warnings)}");
     }
 
     private static IEnumerable<string> Records(string output) => output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
