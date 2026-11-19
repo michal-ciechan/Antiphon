@@ -52,7 +52,9 @@ public sealed class RunnerWorkspaceSlotPool
         Capacity = Math.Max(1, capacity);
         _clock = clock ?? TimeProvider.System;
         _fileSystem = fileSystem ?? new PhysicalWorkspaceSlotFileSystem();
-        _processes = processes ?? new ProcWorkspaceSlotProcessProbe();
+        _processes = processes ?? (OperatingSystem.IsWindows()
+            ? new WindowsWorkspaceSlotProcessProbe()
+            : new ProcWorkspaceSlotProcessProbe());
         _disk = disk ?? new PhysicalWorkspaceSlotDiskProbe();
         _activity = activity;
         _ledger = new RunnerWorkspaceSlotLedger(service.AllowedRoot + "/workspace-slots");
@@ -385,11 +387,11 @@ public sealed class RunnerWorkspaceSlotPool
             return quarantined;
         }
 
-        var holders = _processes.Holders(slot.Path);
-        if (holders.Count > 0)
+        var scan = ScanHolders(slot.Path);
+        if (!scan.Complete || scan.Holders.Count > 0)
         {
             var attempts = slot.LingerAttempts + 1;
-            var detail = string.Join("; ", holders.Select(holder => $"pid={holder.Pid} argv0={holder.Argv0} kind={holder.Kind}"));
+            var detail = HolderDetail(scan);
             if (!allowDefer || attempts > Settings.LingerRetries)
             {
                 await QuarantineAndRehomeAsync(slot, "custody", "lingering", detail, ct);
@@ -631,6 +633,24 @@ public sealed class RunnerWorkspaceSlotPool
             : null;
     }
 
+    /// <summary>
+    /// CARD-0824 S3. A probe that can say its scan finished is lingering when it did not. A holders-only
+    /// probe (the slot tests' fake) stays fail-open: an empty list is still "no holder".
+    /// </summary>
+    private HolderScan ScanHolders(string path) =>
+        _processes is IWorkspaceHolderScan scan
+            ? scan.Scan(path)
+            : new HolderScan(true, _processes.Holders(path));
+
+    private static string HolderDetail(HolderScan scan)
+    {
+        var parts = new List<string>();
+        if (!scan.Complete)
+            parts.Add("scan incomplete");
+        parts.AddRange(scan.Holders.Select(holder => $"pid={holder.Pid} argv0={holder.Argv0} kind={holder.Kind}"));
+        return string.Join("; ", parts);
+    }
+
     /// <summary>The free invariant (§3.4): ownership, detached at a published sha, only keep-list residue, no markers, no holder.</summary>
     private async Task<Failure?> CheckFreeAsync(WorkspaceSlotRecord slot, CancellationToken ct)
     {
@@ -654,9 +674,9 @@ public sealed class RunnerWorkspaceSlotPool
             return new Failure("filesystem", "marker", marker);
         if (File.Exists(gitDir + "/config.worktree"))
             return new Failure("filesystem", "marker", "config.worktree");
-        var holders = _processes.Holders(path);
-        if (holders.Count > 0)
-            return new Failure("custody", "lingering", string.Join("; ", holders.Select(holder => $"pid={holder.Pid} argv0={holder.Argv0} kind={holder.Kind}")));
+        var scan = ScanHolders(path);
+        if (!scan.Complete || scan.Holders.Count > 0)
+            return new Failure("custody", "lingering", HolderDetail(scan));
         return null;
     }
 

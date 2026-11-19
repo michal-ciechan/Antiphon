@@ -24,7 +24,11 @@ public interface IWorkspaceSlotProcessProbe
 /// </summary>
 public sealed record HolderScan(bool Complete, IReadOnlyList<WorkspaceSlotHolder> Holders);
 
-/// <summary>CARD-1677 S1. The fail-closed holder scan retention uses; the slot pool keeps its fail-open probe.</summary>
+/// <summary>
+/// CARD-1677 S1. The fail-closed holder scan. Retention uses it, and the slot pool uses it when the
+/// probe implements it (CARD-0824 S3): an incomplete scan is lingering. A probe that only implements
+/// <see cref="IWorkspaceSlotProcessProbe"/> stays holders-only.
+/// </summary>
 public interface IWorkspaceHolderScan
 {
     HolderScan Scan(string path);
