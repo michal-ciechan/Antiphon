@@ -82,9 +82,9 @@ public sealed class RcTagBackingTests
             allExecuted: true);
         var commits = new[]
         {
-            new Commit(Tagged, new[] { Mid }),
-            new Commit(Mid, new[] { OffPath }),
-            new Commit(Stranger, Array.Empty<string>())
+            new TagChainCommit(Tagged, new[] { Mid }),
+            new TagChainCommit(Mid, new[] { OffPath }),
+            new TagChainCommit(Stranger, Array.Empty<string>())
         };
         var answer = RcTagBacking.Test(Document(2, new[] { head, anchor }, commits));
         answer.Answer.ShouldBe("not-backed(anchor-not-ancestor)");
@@ -96,7 +96,7 @@ public sealed class RcTagBackingTests
     {
         var full = Link("full-run", Tagged, "executed-full", origin: null, At(TimeSpan.FromDays(30)),
             allExecuted: true);
-        var answer = RcTagBacking.Test(Document(0, new[] { full }, new[] { new Commit(Tagged, Array.Empty<string>()) }));
+        var answer = RcTagBacking.Test(Document(0, new[] { full }, new[] { new TagChainCommit(Tagged, Array.Empty<string>()) }));
         answer.Answer.ShouldBe("full");
         answer.Kind.ShouldBe("full");
         answer.GateCredit.ShouldBeFalse();
@@ -140,7 +140,7 @@ public sealed class RcTagBackingTests
     {
         var full = Link("full-run", Tagged, "executed-full", origin: null, At(TimeSpan.FromDays(1)),
             allExecuted: true, gateCredit: true);
-        var answer = RcTagBacking.Test(Document(2, new[] { full }, new[] { new Commit(Tagged, Array.Empty<string>()) }));
+        var answer = RcTagBacking.Test(Document(2, new[] { full }, new[] { new TagChainCommit(Tagged, Array.Empty<string>()) }));
         answer.Answer.ShouldBe("not-backed(gate-credit-claimed)");
         answer.GateCredit.ShouldBeFalse();
     }
@@ -154,7 +154,7 @@ public sealed class RcTagBackingTests
         return Document(trusted, new[] { head, anchor }, Lineage(Anchor));
     }
 
-    private static string Document(int trusted, Envelope[] envelopes, Commit[] commits) =>
+    private static string Document(int trusted, TagChainEnvelope[] envelopes, TagChainCommit[] commits) =>
         JsonSerializer.Serialize(new
         {
             format = "antiphon-rc-tag-chain-v1",
@@ -165,22 +165,22 @@ public sealed class RcTagBackingTests
             commits
         });
 
-    private static Commit[] Lineage(string anchorSha) => new[]
+    private static TagChainCommit[] Lineage(string anchorSha) => new[]
     {
-        new Commit(Tagged, new[] { anchorSha }),
-        new Commit(anchorSha, Array.Empty<string>())
+        new TagChainCommit(Tagged, new[] { anchorSha }),
+        new TagChainCommit(anchorSha, Array.Empty<string>())
     };
 
     private static string At(TimeSpan age) =>
         Now.Subtract(age).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'");
 
-    private static Envelope Link(string runId, string source, string disposition, string? origin, string? completed,
+    private static TagChainEnvelope Link(string runId, string source, string disposition, string? origin, string? completed,
         bool seed = false, bool admitted = true, bool openFailure = false, bool shadowDiscrepancy = false,
         bool gateCredit = false, bool allExecuted = false, int carriedCount = 0) =>
         new(runId, source, disposition, origin, completed, seed, admitted, openFailure, shadowDiscrepancy,
             gateCredit, allExecuted, carriedCount);
 
-    private sealed record Envelope(
+    private sealed record TagChainEnvelope(
         string runId,
         string sourceSha,
         string disposition,
@@ -198,5 +198,5 @@ public sealed class RcTagBackingTests
         public string platform { get; } = "windows";
     }
 
-    private sealed record Commit(string sha, string[] parents);
+    private sealed record TagChainCommit(string sha, string[] parents);
 }
