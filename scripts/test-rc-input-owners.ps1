@@ -61,6 +61,7 @@ $antiphon='tests/Antiphon.Tests/Antiphon.Tests.csproj'
 $e2e='tests/Antiphon.E2E/Antiphon.E2E.csproj'
 $resilience='tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj'
 $messaging='tests/Antiphon.Messaging.Tests/Antiphon.Messaging.Tests.csproj'
+$gitinprocess='tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj'
 $created=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 foreach ($rule in @($map.roots)) {
     foreach ($id in @($rule.consumers)) {
@@ -122,21 +123,21 @@ switch ($Case) {
     'LinkedSourceSelectsIncludingProject' {
         Put 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'changed linked helper'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "link-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($antiphon,$resilience)) "link-selects-including:$(& $shown $s)"
+        Note (SameSet $s @($antiphon,$resilience,$gitinprocess)) "link-selects-including:$(& $shown $s)"
         Note (Owns $s $resilience 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'Compile') 'link-compile-edge'
         Note (Lacks $s $messaging 'tests/Antiphon.Tests/TestHelpers/Linked.cs') 'link-misses-messaging'
     }
     'UnrelatedFileSelectsNothing' {
         Put 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' 'changed unlinked sibling'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "sibling-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($antiphon)) "sibling-selects-owner-only:$(& $shown $s)"
+        Note (SameSet $s @($antiphon,$gitinprocess)) "sibling-selects-owner-only:$(& $shown $s)"
         Note (Lacks $s $resilience 'tests/Antiphon.Tests/TestHelpers/Sibling.cs') 'sibling-not-a-compile-link'
         $baseline=Git @('rev-parse','HEAD')
         Put 'tests/Antiphon.Messaging.Tests/Own.cs' 'changed unrelated'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "unrelated-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($messaging)) "unrelated-selects-nothing-else:$(& $shown $s)"
+        Note (SameSet $s @($messaging,$antiphon)) "unrelated-selects-nothing-else:$(& $shown $s)"
         Note (Lacks $s $resilience 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-including-project'
-        Note (Lacks $s $antiphon 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-antiphon'
+        Note (Owns $s $antiphon 'tests/Antiphon.Messaging.Tests/Own.cs' 'derived-impact-scan') 'unrelated-derived-impact-scan'
         Note (Lacks $s $e2e 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-e2e'
     }
     'RuntimeReaderCensus' {
