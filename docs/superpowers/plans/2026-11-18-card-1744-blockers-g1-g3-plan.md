@@ -260,7 +260,7 @@ operator forbids desktop load during the live Full run, and nothing here needs W
 | CP-6 | S3 | tests/Antiphon.Tests -> bin-c1744g2l/ | g2l-green | `/*/*/(C1744G2HostLoadKeyTests*)\|(C1514HostLoad*)\|(AgentTaskPipelineStatusTests*)/*` | W-6..W-8, existing host-load + pipeline (including the `HostBudgetPipelineTests.cs` partial) | 0 failed | 121 | 14 |
 | CP-7 | S4-red | n/a | g3-red | `pwsh -NoProfile -File scripts/test-windows-phone-home-runner.ps1` | W-9..W-11 | exit 1, output contains `FAIL` | n/a | 2 |
 | CP-8 | S4 | n/a | g3-green | `pwsh -NoProfile -File scripts/test-windows-phone-home-runner.ps1` | W-9..W-11 | exit 0, `failed=0` | n/a | 2 |
-| CP-9 | S5 | tests/Antiphon.Tests -> bin-c1744doc/ | docs | `/*/*/(DockerStackDocumentationTests*)/*` | S5 | 0 failed | 19 | 12 |
+| CP-9 | S5 | tests/Antiphon.Tests -> bin-c1744doc/ | docs | `/*/*/(DockerStackDocumentationTests*)/*` | S5 | 0 failed | 20 | 12 |
 
 Filter roster check (amendment 1, counted at `997f9b8d9` from `[Test]` and `[Arguments(` attributes;
 a `[Test]` with k `Arguments` runs k cases):
@@ -309,7 +309,7 @@ a `[Test]` with k `Arguments` runs k cases):
 
   The other `C1514HostLoad*` types (`Fixture`, `World`, `CrashCases`, `SqlProbe`, `Scenario`,
   `ProgressExecutor`) hold no tests. No class in CP-4 or CP-6 has a skip or platform attribute.
-- CP-9: `DockerStackDocumentationTests` has 19 `[Test]`, no `Arguments`. S5 adds no test: **19**.
+- CP-9: `DockerStackDocumentationTests` had 19 `[Test]` and no `Arguments` at `997f9b8d9`. Rechecked for S5a on master `a789c87770d31a77687f75a619c5af646d1ce91f`: 20 `[Test]` methods, no `[Arguments]`. S5a adds no test. Min is **20**. The S5a checkpoint row is CP-14 in `2026-11-19-card-1744-s5a-checkpoints.md`.
 - If Code adds a test to a named class, it raises that row's Min by the added cases. It never
   lowers one. A run that executes fewer than Min is red, even with 0 failed.
 

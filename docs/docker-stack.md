@@ -2238,6 +2238,8 @@ Do not run `scripts/restart-apphost.ps1` while the Linux server is a writer. Do 
 | R-2 | The Linux server has started and the public origin has not switched | On the host, `docker compose -p antiphon-server2-server stop`, then R-1. Restore `Project.LocalRepositoryPath` from the window's before column. |
 | R-3 | The public origin points at server2 | Switch the vhost back to the desktop first, stop the Linux project, then R-1. Sessions launched on Linux are orphaned seats. |
 
+Phase 2 `desktop-win` rollback runs before R-2 and before R-3 when that mode was started. Delete `C:\Antiphon\runner\phone-home.json`, then run `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`, and only then restart the AppHost. `scripts/run-daemon.ps1` launches the service with `UseShellExecute` false, so a soft runner restart keeps the supervisor's environment. The adopted AppHost refusal while that file exists is exit 3 `REFUSED: phone-home-config-present`. On master `a789c87770d31a77687f75a619c5af646d1ce91f` neither `scripts/restart-apphost.ps1` nor `dev-aspire.ps1` reads the file. The steps are the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
+
 Maintenance on the desktop is the end state after a completed window: marker present (`logs/apphost.down-on-purpose`), the AppHost logon task `Antiphon AppHost` stays disabled, and the `Antiphon AppHost Watchdog` stays disabled by design. The state observer reports `maintenance=true` on purpose. Clearing the marker is rollback, not the steady state.
 
 ### Recorded numbers
@@ -2274,6 +2276,18 @@ unconfigured name keeps the Linux behaviour (Codex pinned to `/usr/local/bin/cod
    terminal (an agent shell's Job Object would kill the detached pty hosts). The runner clones its
    own checkout into `RunnerRepository` on the first workspace mirror. `GET
    /api/session-runners/laptop/status` reports `available` and `dispatchEligible` once connected.
+
+### desktop-win on the desktop (CARD-1744)
+
+`desktop-win` is the Windows phone-home id for this desktop after the control plane moves. The production compose already requires its secret and home (`PHONE_HOME_DESKTOP_WIN_SHARED_SECRET`, `PHONE_HOME_DESKTOP_WIN_HOME`) and caps it at `MaxCapacity` 2. The build-slot default on Windows stays `http://localhost:17204/build-slots` (`scripts/lib/build-slot.ps1`). Phase 1 children and the phase 2 runner share that address. The procedure is the [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md). O-12, the production rehearsal, is operator-only.
+
+Phase 1 runs from a separate clone, `C:\Antiphon\runner\app`, on port 17214, with `C:\Antiphon\runner\phone-home.phase1.json` and capacity 1. The AppHost keeps serving. Adopted start, once S4 is on the activated tip: `autostart-session-runner.ps1 -PhoneHomeConfigPath` of that file, from a normal terminal. On master `a789c87770d31a77687f75a619c5af646d1ce91f` that script has no parameters and always passes `--urls http://localhost:17204`. Until S4 is on the tip, the fallback is `start-windows-phone-home-runner.ps1 -RunnerId desktop-win -Port 17214 -Capacity 1` from the clone. That fallback has no crash relaunch.
+
+Phase 2 is the existing logon task `Antiphon Session Runner` on 17204. The operator writes `C:\Antiphon\runner\phone-home.json` (`runnerId` `desktop-win`, public `serverOrigin`, capacity 1, no secret) and an orchestrator runs `scripts/restart-session-runner.ps1 -Hard` from `C:\src\Antiphon`, only inside an operator-run rehearsal or window. A plain restart is the wrong switch: the service inherits the supervisor environment (`run-daemon.ps1` sets `UseShellExecute` false), and `-Hard` is what stops the supervisor and starts the task again (`session-runner-restart-health.ps1`). Capacity rises from 1 to 2 only after one Full run beside phase 2. The secret stays in `C:\Antiphon\runner\secrets\phone-home`.
+
+While `phone-home.json` exists, the adopted S4 guard makes `scripts/restart-apphost.ps1` and `dev-aspire.ps1` exit 3 with `REFUSED: phone-home-config-present` before any stop or launch. `-StopOnly` stays allowed. Those two scripts do not implement that guard on this master. AppHost already adopts any listener on 17204 as the direct runner (`Antiphon.AppHost/Program.cs`, `DaemonProcessService`), so the file and a desktop AppHost launch must not overlap.
+
+A Windows phone-home runner does not run worktree retention. `RunnerWorkspaceRetention` is constructed only when phone-home is enabled and the process is Linux (`src/Antiphon.SessionRunner/Program.cs`). `C:\Antiphon\runner\work\worktrees` grows until someone clears it. The rate is UNOBSERVED.
 
 Like the desktop runner, a Windows phone-home runner advertises the `windows-job-v1` custody
 backend, and the server accepts its slash-normalized drive-rooted verification coordinates under
