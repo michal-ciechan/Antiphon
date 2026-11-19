@@ -16,6 +16,11 @@
 # A queued population, canOverride false, or a same-stage collision never justifies the flag.
 # Read the scoped pipeline or scripts/dispatch-concurrency.ps1 before raising a durable limit.
 #
+# CARD-1995: a -Land refused with target_build_broken (a recent land build of the same target
+# failed in a project this diff does not change, and that failure was not the failing land's own)
+# names its overrides. Re-send with -IgnoreKnownBrokenTarget (body ignoreKnownBrokenTarget: true)
+# to clear the recorded broken targets and build, or set Landing:RefuseKnownBrokenTarget=false.
+#
 # CARD-0527: settlement commits a Shared task's own footprint unless you pass -NoCommit.
 # That is the only opt-out an instruction can carry; prose in -Goal is an advisory, not a
 # behaviour change. Always/Agent are API-only.
@@ -350,6 +355,10 @@ param(
 
     [Parameter(ParameterSetName = 'Land')]
     [switch]$RecoverReviewedSource,
+
+    # CARD-1995: build even when a recent land build of the same target is recorded as broken.
+    [Parameter(ParameterSetName = 'Land')]
+    [switch]$IgnoreKnownBrokenTarget,
 
     [Parameter(ParameterSetName = 'Finding')]
     [string]$ReviewedSourceSha,
@@ -991,6 +1000,7 @@ switch ($PSCmdlet.ParameterSetName) {
         if ($ReviewEvidenceId) { $body['reviewEvidenceId'] = $ReviewEvidenceId }
         if ($resolvedFromTaskId) { $body['adoptFromTaskId'] = $resolvedFromTaskId }
         if ($RecoverReviewedSource) { $body['recoverReviewedSource'] = $true }
+        if ($IgnoreKnownBrokenTarget) { $body['ignoreKnownBrokenTarget'] = $true }
         $landPath = "/api/agent-tasks/$Land/land/v2"
         $uri = "$api$landPath"
         $json = $body | ConvertTo-Json -Depth 6 -Compress

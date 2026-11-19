@@ -2467,13 +2467,29 @@ Review does not skip that build. `reviewedSourceClean` is required only when the
 review evidence; a missing evidence id is the explicit-caller path, not a refusal. When the build
 fails, the land outcome keeps the failing step and the last 40 lines, and `-Status` prints them.
 `-Status` also names the current phase (`queue`, `admission`, `git`, `build`, `push`, `confirm`)
-and when that phase started, and a Completed request stops the no-progress counter. A later land
-of the same target commit that does not change the project which failed the build is refused
-immediately with `target_build_broken` and that saved output, without another build. Changing
-the failing project includes the csproj, files under its directory, and Compile, Content, None,
-and EmbeddedResource includes (including links). When the output names no project, or that
-project cannot be read, the land builds. On `verification_failed` or `target_build_broken`, read
-the refusal detail before commissioning a Review.
+and when that phase started, and a Completed request stops the no-progress counter.
+
+The land build compiles the candidate rebased onto the target, not the target alone, so a failure
+is recorded as a broken target only when the failing land's own diff could not have caused it:
+the build output names projects with `CS` compiler errors (`MSB` errors such as copy locks never
+count), and that land's diff against the target changes none of those projects, the projects they
+reference (transitively, read from the target), or a build input (`*.props`, `*.targets`,
+`*.rsp`, `*.sln*`, `global.json`, `nuget.config`, `.editorconfig`, `*.globalconfig`). Changing a
+project includes its csproj, files under its directory, and every item include and import it
+names (including links). A glob, an MSBuild expression, an unreadable project or an unreadable
+diff records nothing. The record is keyed by `TargetBeforeSha` (the target tip before the land)
+and refuses for `Landing:KnownBrokenTargetMaxAgeMinutes` (default 30) after the failed land's last
+write. Within that window, a later land of the same target commit whose diff changes none of
+that closure is refused immediately with `target_build_broken`, without another build, unless a
+later build of that commit passed or reached tests. The refusal detail names the failing
+operation, task, projects and age, then the overrides, then the saved output. A refused land
+records nothing, so it never renews the record. Overrides that need no code change:
+`delegate.ps1 -Land <task> -IgnoreKnownBrokenTarget` (land body `ignoreKnownBrokenTarget: true`)
+clears every recorded broken target when the request is accepted, so the land builds;
+`Landing:RefuseKnownBrokenTarget=false` (default true) or `Landing:ForceVerificationBuild` turns
+the refusal off. A fix that lies in a referenced project or a build input changes the closure,
+so it builds. On `verification_failed` or `target_build_broken`, read the refusal detail before
+commissioning a Review.
 
 On master, only regular mode-100644 changes to `docs/**/*.md` and root `README.md`
 can skip. The policy reads a NUL-delimited raw diff of the pinned `TargetBeforeSha`

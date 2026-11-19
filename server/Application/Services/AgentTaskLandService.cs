@@ -142,6 +142,16 @@ public sealed class AgentTaskLandService
 
             var now = _clock.GetUtcNow().UtcDateTime;
             var filter = ClipFilter(body.Verify);
+            // CARD-1995: the override clears every recorded broken target in this transaction, so this
+            // land (and any other until a new failure is recorded) builds instead of target_build_broken.
+            int? clearedBrokenTargets = body.IgnoreKnownBrokenTarget
+                ? await _db.AgentTaskLandings
+                    .Where(o => o.VerificationFailureStep == "build" && o.VerificationFailingProjects != null)
+                    .ExecuteUpdateAsync(set => set.SetProperty(o => o.VerificationFailingProjects, (string?)null), ct)
+                : null;
+            if (clearedBrokenTargets is { } cleared)
+                _logger.LogInformation("Land request for task {TaskId} ignores known-broken targets; cleared {Count} record(s)",
+                    task.Id, cleared);
             await _db.Entry(task).ReloadAsync(ct);
             var request = task.LandRequestedAt is not null ? await EnsureRequestAsync(task, ct) : await GetRequestAsync(task, ct);
             var pending = request is { IsPending: true } && task.LandRequestedAt is not null;
@@ -308,7 +318,7 @@ public sealed class AgentTaskLandService
                 task.LandStartedAt = null;
                 task.LandAttempt = 0;
                 var requestedEvent = Event(task.Id, AgentTaskEventType.LandRequested,
-                    ApprovalRequestedDetail(filter, expected, evidenceId), now);
+                    ApprovalRequestedDetail(filter, expected, evidenceId, clearedBrokenTargets), now);
                 requestedEvent.LandRequestId = request.Id;
                 _db.AgentTaskEvents.Add(requestedEvent);
             }
@@ -1657,12 +1667,14 @@ public sealed class AgentTaskLandService
         return request;
     }
 
-    private static string ApprovalRequestedDetail(string? filter, string? expected, Guid? evidence)
+    private static string ApprovalRequestedDetail(string? filter, string? expected, Guid? evidence,
+        int? clearedBrokenTargets = null)
     {
         var bits = new List<string>();
         if (expected is not null) bits.Add($"expected={expected}");
         if (evidence is { } id) bits.Add($"evidence={id:N}");
         if (filter is not null) bits.Add($"filter={filter}");
+        if (clearedBrokenTargets is { } cleared) bits.Add($"ignoreKnownBrokenTarget (cleared {cleared})");
         return bits.Count == 0 ? "Land requested." : "Land requested: " + string.Join("; ", bits);
     }
 
