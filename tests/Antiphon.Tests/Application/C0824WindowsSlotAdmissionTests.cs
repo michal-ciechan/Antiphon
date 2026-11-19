@@ -7,6 +7,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -98,6 +99,57 @@ public sealed class C0824WindowsSlotAdmissionTests
         desktop.Reason.ShouldBe(WorkspaceSlotRoleVerdict.WindowsRunnerDesktop);
     }
 
+    [Test]
+    public async Task Cleared_list_after_checkout_replaces_the_pending_sentinel()
+    {
+        // S3 review A-1. The checkout admitted the slot and recorded the sentinel. The allow-list is then
+        // cleared (the D-12 rollback) before preparation, so preparation decides legacy and the runner
+        // returns a task-<id8> mirror with no slot. The sentinel must not outlive that mirror.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var taskId = Guid.Parse("08240000-0000-4000-8000-000000000004");
+        var at = new DateTime(2026, 11, 19, 12, 0, 0, DateTimeKind.Utc);
+        var listed = new DelegationSettings
+        {
+            WorkspaceSlotsEnabled = true,
+            WindowsSlotRoles = "Investigate",
+            WindowsSlotRunnerIds = ["desktop-win"],
+        };
+        var task = TaskRow(taskId, "desktop-win", at);
+        WindowsSlotCheckout.DecideListed(listed, task).Slot.ShouldBeTrue();
+        task.WorktreePath = WindowsSlotCheckout.Pending(taskId);
+        db.AgentTasks.Add(task);
+        await db.SaveChangesAsync();
+
+        var monitor = new MutableMonitor(listed);
+        var service = new RemoteWorkspaceService(
+            new WindowsRunnerDirectory("desktop-win"),
+            new UnusedGit(),
+            NullLogger<RemoteWorkspaceService>.Instance,
+            settings: Options.Create(listed),
+            monitor: monitor);
+        monitor.Value = new DelegationSettings
+        {
+            WorkspaceSlotsEnabled = true,
+            WindowsSlotRoles = "Investigate",
+            WindowsSlotRunnerIds = [],
+        };
+
+        var decision = await service.ResolveSlotDecisionAsync(db, task, Expectation(taskId, "desktop-win"), at, CancellationToken.None);
+        decision.Slot.ShouldBeFalse();
+        decision.Reason.ShouldBe(WorkspaceSlotRoleVerdict.WindowsRunnerNotListed);
+
+        const string mirror = @"C:\Antiphon\runner\workspaces\task-00000004";
+        (await RemoteWorkspaceReadiness.RecordPathAsync(db, taskId, 1, "desktop-win", mirror, CancellationToken.None))
+            .ShouldBeTrue();
+
+        db.ChangeTracker.Clear();
+        var row = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        row.RemoteWorktreePath.ShouldBe(mirror);
+        row.RemoteWorkspaceSlotId.ShouldBeNull();
+        row.WorktreePath.ShouldBe(mirror, "the pending sentinel must not survive a legacy mirror");
+    }
+
     private static AgentTask TaskRow(Guid taskId, string runnerId, DateTime at) => new()
     {
         Id = taskId,
@@ -115,6 +167,14 @@ public sealed class C0824WindowsSlotAdmissionTests
         taskId, 1, Guid.Parse("08240000-0000-4000-8000-0000000000aa"), runnerId,
         Guid.Parse("08240000-0000-4000-8000-0000000000bb").ToString("D"),
         "/work/antiphon", "refs/heads/feat/card-task-08240000", new string('a', 40));
+
+    private sealed class MutableMonitor(DelegationSettings value) : IOptionsMonitor<DelegationSettings>
+    {
+        public DelegationSettings Value { get; set; } = value;
+        public DelegationSettings CurrentValue => Value;
+        public DelegationSettings Get(string? name) => Value;
+        public IDisposable? OnChange(Action<DelegationSettings, string?> listener) => null;
+    }
 
     private sealed class WindowsRunnerDirectory(params string[] runnerIds) : ISessionRunnerDirectory
     {
