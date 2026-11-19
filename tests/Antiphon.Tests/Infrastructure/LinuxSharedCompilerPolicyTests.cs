@@ -53,6 +53,20 @@ public sealed class LinuxSharedCompilerPolicyTests
     }
 
     [Test]
+    public void Grants_do_not_both_start_on_cpu_zero()
+    {
+        // Matched A/B: grants 1, 4 and 6 all took the lowest CPUs, so one grant-1
+        // server held 50 runnable threads on CPU 0 while CPUs 6-23 sat idle.
+        string grant1 = LinuxSharedCompilerPolicy.SelectCpus("0-23", 1);
+        string grant6 = LinuxSharedCompilerPolicy.SelectCpus("0-23", 6);
+        int start1 = int.Parse(grant1.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture);
+        int start6 = int.Parse(grant6.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture);
+        (start1 == 0 && start6 == 0).ShouldBeFalse("grant 1 and grant 6 must not both start at CPU 0");
+        grant1.Split(',').Length.ShouldBeGreaterThan(1);
+        grant6.Split(',').Length.ShouldBeGreaterThan(1);
+    }
+
+    [Test]
     [NotInParallel]
     public void Cache_and_pipe_identity_are_stable_across_worktrees()
     {
@@ -103,6 +117,18 @@ public sealed class LinuxSharedCompilerPolicyTests
         child["DOTNET_PROCESSOR_COUNT"].ShouldBe("3");
         child["DOTNET_GCHeapHardLimit"].ShouldBe("100000000");
         child.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public void Heap_limit_parses_as_hex_to_at_least_six_gibibytes()
+    {
+        // The runtime reads DOTNET_GCHeapHardLimit as hexadecimal. The stock
+        // Antiphon.Tests compiler peaked at 5.8 GB RSS, so a 4 GiB cap is too small.
+        string emitted = LinuxSharedCompilerPolicy.CompilerEnvironment(6)["DOTNET_GCHeapHardLimit"];
+        string hex = emitted.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? emitted.Substring(2) : emitted;
+        ulong bytes = Convert.ToUInt64(hex, 16);
+        const ulong sixGiB = 6UL * 1024UL * 1024UL * 1024UL;
+        bytes.ShouldBeGreaterThanOrEqualTo(sixGiB);
     }
 
     [Test]
