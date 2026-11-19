@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "baseSha": "ef331572957c36548dffed10a6f68a026268193f",
+  "headSha": "c53765d4ac2d6e498f7987c2a1f253ee1d1149f5",
+  "inspectedPaths": [
+    {
+      "path": "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
+      "disposition": "portable",
+      "reason": "S6b shadow recording is portable C#. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/lib/nightly-run-impl.ps1",
+      "disposition": "portable",
+      "reason": "S6b checkout hooks are portable. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/lib/nightly-tests-impl.ps1",
+      "disposition": "portable",
+      "reason": "S6b discovery and launch hooks are portable. The only OS token is a pre-existing host label.",
+      "helpers": [],
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 43,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing $IsLinux host label. S6b does not change this line."
+        },
+        {
+          "revision": "head",
+          "line": 44,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing $IsLinux host label. S6b inserted a dot-source above it and did not change this line."
+        }
+      ]
+    },
+    {
+      "path": "scripts/lib/rc-run-evidence.ps1",
+      "disposition": "portable",
+      "reason": "S6b PowerShell wrapper is portable. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/test-rc-run-evidence.ps1",
+      "disposition": "test-only",
+      "reason": "S6b witness script. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RcRunEvidenceTests.cs",
+      "disposition": "test-only",
+      "reason": "S6b witness class. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "tests/derived-impact-index.json",
+      "disposition": "test-only",
+      "reason": "Generated impact index. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    }
+  ],
+  "witnesses": [],
+  "restartImpact": {
+    "required": true,
+    "paths": [
+      "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
+      "scripts/lib/nightly-run-impl.ps1",
+      "scripts/lib/nightly-tests-impl.ps1",
+      "scripts/lib/rc-run-evidence.ps1"
+    ],
+    "additionalPaths": [],
+    "reason": "S6b edits scripts/lib. A later rc pick owes the Windows startup probe. This task does not run it.",
+    "nativeObligation": {
+      "status": "pending",
+      "targetOS": "Windows",
+      "sourceSha": "c53765d4ac2d6e498f7987c2a1f253ee1d1149f5",
+      "command": "Windows startup probe for scripts/lib rc-run-evidence before an rc pick. Not run on this Linux task.",
+      "reason": "S6b is shadow recording on Linux. The startup census path is unobserved on Windows."
+    }
+  }
+}
