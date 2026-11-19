@@ -129,6 +129,24 @@ public sealed class LandFailureDiagnosticTests
         absent.RootElement.GetProperty("terminalFailureCode").ValueKind.ShouldBe(JsonValueKind.Null);
     }
 
+    /// <summary>CARD-1995: a Completed land has finished; the no-progress clock stops.</summary>
+    [Test]
+    public async Task C1995_CompletedStatusStopsNoProgress()
+    {
+        await Task.CompletedTask;
+        var progressed = DateTime.UtcNow.AddMinutes(-30);
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(),
+            State = LandRequestState.Completed,
+            RequestedAt = progressed,
+            LastEvaluatedAt = progressed,
+            LastProgressAt = progressed,
+        };
+        var dto = LandRequestStatusDto.From(request, DateTime.UtcNow, []);
+        dto.NoProgressSeconds.ShouldBe(0, "a Completed request is not still waiting");
+    }
+
     [Test]
     public async Task C498_PayloadSnapshotsDiagnosticFromEvent()
     {

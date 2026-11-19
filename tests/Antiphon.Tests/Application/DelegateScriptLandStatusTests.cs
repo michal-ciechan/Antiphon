@@ -238,4 +238,49 @@ public sealed class DelegateScriptLandStatusTests
         status.Output.IndexOf("Progress:", StringComparison.Ordinal)
             .ShouldBeLessThan(status.Output.IndexOf("EXACT REPORT AFTER FACTS", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// CARD-1995: -Status names the land phase and keeps the build error, and a Completed
+    /// request does not keep counting no-progress time.
+    /// </summary>
+    [Test]
+    public async Task C1995_StatusPrintsPhaseAndKeepsTheBuildError()
+    {
+        var id = Guid.NewGuid();
+        const string error = "error CS0103: The name 'C1995Marker' does not exist in the current context [tests/Failing/Failing.csproj]";
+        const string started = "2026-11-19T03:15:00Z";
+        var body = JsonSerializer.Serialize(new
+        {
+            summary = new { status = "Succeeded", title = "land status", kind = "Worker", role = "Code", modelLevel = "High" },
+            result = "EXACT REPORT AFTER FACTS",
+            landRequest = new
+            {
+                id,
+                state = "Completed",
+                requestedAt = "2026-11-19T03:00:00Z",
+                attempt = 0,
+                noProgressSeconds = 2072,
+                statusPhase = "build",
+                statusPhaseStartedAt = started,
+                verificationFailureStep = "build",
+                verificationFailureOutput = "early noise\n" + error,
+                notifications = Array.Empty<object>(),
+            },
+            landing = new
+            {
+                publication = "Refused",
+                operationId = id,
+                cleanup = "NotStarted",
+                reason = "verification_failed",
+            },
+        });
+        await using var server = LandApiStub.Compatible(new string('e', 40), taskStatusBody: body);
+        var status = await DelegateScriptRunner.RunAsync(server.Url, "-Status", id.ToString());
+        status.ExitCode.ShouldBe(0, status.Output);
+        status.Output.ShouldContain("Land: Completed");
+        status.Output.ShouldContain("attempt 0");
+        status.Output.ShouldContain("phase build since " + started);
+        status.Output.ShouldContain(error);
+        status.Output.ShouldNotContain("no progress");
+    }
 }
