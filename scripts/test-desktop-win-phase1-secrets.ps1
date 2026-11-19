@@ -110,42 +110,45 @@ function Get-CaseOwner([string]$Dir) {
 
 $shim = Join-Path $root 'shim'
 New-Item -ItemType Directory -Path $shim | Out-Null
-$chmodShim = @'
-#!/bin/sh
-log="$DW3_ARGV_LOG"
-if [ -n "$log" ]; then
-  printf '%s' chmod >> "$log"
-  for a in "$@"; do
-    printf '\t%s' "$a" >> "$log"
-  done
-  printf '\n' >> "$log"
-fi
-exec /bin/chmod "$@"
-'@
-$dotnetShim = @'
-#!/bin/sh
-log="$DW3_ARGV_LOG"
-if [ -n "$log" ]; then
-  printf '%s' dotnet >> "$log"
-  for a in "$@"; do
-    printf '\t%s' "$a" >> "$log"
-  done
-  printf '\n' >> "$log"
-fi
-exit 9
-'@
-$icaclsShim = @'
-#!/bin/sh
-log="$DW3_ARGV_LOG"
-if [ -n "$log" ]; then
-  printf '%s' icacls >> "$log"
-  for a in "$@"; do
-    printf '\t%s' "$a" >> "$log"
-  done
-  printf '\n' >> "$log"
-fi
-exit 0
-'@
+function Join-Shim([string[]]$Lines) {
+    return (($Lines -join "`n") + "`n")
+}
+$chmodShim = Join-Shim @(
+    '#!/bin/sh'
+    'log="$DW3_ARGV_LOG"'
+    'if [ -n "$log" ]; then'
+    '  printf ''%s'' chmod >> "$log"'
+    '  for a in "$@"; do'
+    '    printf ''\t%s'' "$a" >> "$log"'
+    '  done'
+    '  printf ''\n'' >> "$log"'
+    'fi'
+    'exec /bin/chmod "$@"'
+)
+$dotnetShim = Join-Shim @(
+    '#!/bin/sh'
+    'log="$DW3_ARGV_LOG"'
+    'if [ -n "$log" ]; then'
+    '  printf ''%s'' dotnet >> "$log"'
+    '  for a in "$@"; do'
+    '    printf ''\t%s'' "$a" >> "$log"'
+    '  done'
+    '  printf ''\n'' >> "$log"'
+    'fi'
+    'exit 9'
+)
+$icaclsShim = Join-Shim @(
+    '#!/bin/sh'
+    'log="$DW3_ARGV_LOG"'
+    'if [ -n "$log" ]; then'
+    '  printf ''%s'' icacls >> "$log"'
+    '  for a in "$@"; do'
+    '    printf ''\t%s'' "$a" >> "$log"'
+    '  done'
+    '  printf ''\n'' >> "$log"'
+    'fi'
+    'exit 0'
+)
 [System.IO.File]::WriteAllText((Join-Path $shim 'chmod'), $chmodShim.Replace("`r`n", "`n"))
 [System.IO.File]::WriteAllText((Join-Path $shim 'dotnet'), $dotnetShim.Replace("`r`n", "`n"))
 [System.IO.File]::WriteAllText((Join-Path $shim 'icacls'), $icaclsShim.Replace("`r`n", "`n"))
