@@ -22,6 +22,19 @@ checked-in census `scripts/lib/rc-input-reader-census.json` select at least
 the listed suites. Compile, ProjectReference, and link selectivity for source
 files stays. Windows is unobserved.
 
+Round 2 (Code task 1e0a0939): the literal scan is a lower bound. A path class
+whose reader set that scan does not prove closed selects every suite. A
+narrower extra consumer is allowed only for a scan class the census proves:
+every `tests/**/*.cs` selects Antiphon.Tests, and every
+`tests/Antiphon.Tests/**/*.cs` selects GitInProcess.Tests. Narrow rows the
+scan contradicts are removed (`Antiphon.AppHost/Program.cs` only for
+Antiphon.Tests, and `tests/Antiphon.E2E/**/*.cs` only for Antiphon.Tests).
+`scripts/rc-input-reader-census.ps1` runs that scan with unresolved broadening
+disabled and exits 1 when any pair is under-selected. A measured run took 153
+seconds and reported paths-checked=11132, suites-checked=27, pairs-checked=787,
+under-selected=0. The 26-method owner floor is unchanged: the census is a
+command row and no new `[Test]` method was added. CP-2 stays 81 and CP-3 stays 27.
+
 `WindowsUnitPlatformAdmissionTests` stays off this Linux selection.
 `C1210_Windows_linux_only_outcomes_are_exact` skips on Linux, and a skip is
 not a pass. CP-2 is the nine-class guard union, floor 81, and the single
@@ -44,6 +57,7 @@ first row. `bin-s3-owners/` contains no `ref` substring.
 - V-3. `DerivedImpactIndexTests` alone, floor 27.
 - V-4. `scripts/audit-land-verification-graph.ps1 -Check`.
 - V-5. Nightly policy hash and pinned input digest recomputed against the committed pins. No re-pin unless a guard fails.
+- V-6. `scripts/rc-input-reader-census.ps1` with broadening disabled. Exit 0 and `under-selected=0`.
 
 ### Checkpoints
 
@@ -54,3 +68,4 @@ first row. `bin-s3-owners/` contains no `ref` substring.
 | CP-3 | s3 | CP-1 | s3-index | `/*/*/DerivedImpactIndexTests/*` | V-3 | 0 failed, executed at least 27 | 27 | 9 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | s3 | n/a | s3-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | V-4 | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | s3 | n/a | s3-pins | `pwsh -NoProfile -Command '. ./scripts/lib/nightly-common.ps1; . ./scripts/lib/nightly-policy.ps1; $p = Read-NightlyExecutionPolicy -RepoRoot (Get-Location).Path; $d = @(& pwsh -NoProfile -File ./scripts/test-live-lane-run.ps1 -PrintInputDigest)[-1].Trim(); $q = [char]39; $m = [regex]::Match((Get-Content -Raw ./scripts/test-live-lane-run.ps1), ("PinnedInputDigest = " + $q + "([0-9a-f]{64})" + $q)); if (-not $m.Success) { throw "pin line missing" }; $pin = $m.Groups[1].Value; $quote = [char]34; $legacyPattern = "LegacyExclusionDigest = ${quote}([0-9a-f]{64})${quote}"; $legacy = [regex]::Match((Get-Content -Raw ./tests/Shared/NativeLinuxPolicyWitness.cs), $legacyPattern).Groups[1].Value; Write-Output ("policyHash=" + $p.Hash); Write-Output ("inputDigest=" + $d); Write-Output ("pinnedInputDigest=" + $pin); Write-Output ("legacyExclusionDigest=" + $legacy); if (-not $legacy) { throw "legacy pin line missing" }; if ($d -cne $pin) { throw ("input digest drift computed=" + $d) }'` | V-5 | exit 0, printed digest equals the script pin | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-6 | s3 | n/a | s3-census | `pwsh -NoProfile -File scripts/rc-input-reader-census.ps1` | V-6 | exit 0 and under-selected=0 | n/a | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
