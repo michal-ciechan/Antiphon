@@ -33,9 +33,10 @@ public static class RemoteWorkspaceReadiness
             return false;
         if (task.Status is not (AgentTaskStatus.Queued or AgentTaskStatus.Canceled)) return false;
         // A late canceled attempt may still own the path; it gains no ready transition.
-        // D-4: a Windows slot replaces the pending sentinel with the slot path in this same update.
-        // A real card-task checkout (server2) is left as it is.
-        var replaceCheckout = slotId != null && WindowsSlotCheckout.IsPending(task.WorktreePath);
+        // D-4: the reported path replaces the pending sentinel in this same update. That is the slot
+        // path, or the legacy mirror when the preparation decided legacy after the checkout decided
+        // slot (A-1: the allow-list changed in between). A real card-task checkout (server2) is left as it is.
+        var replaceCheckout = WindowsSlotCheckout.IsPending(task.WorktreePath);
         await db.AgentTasks.Where(t => t.Id == taskId && t.Attempt == attempt && t.RunnerId == runnerId)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(t => t.WorktreePath, t => replaceCheckout ? path : t.WorktreePath)
