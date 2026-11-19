@@ -287,7 +287,11 @@ internal sealed class GitFault(Func<string, string[], bool> match, string stderr
     public int Hits { get; set; }
 
     public static GitFault In(string cwd, string verb, string stderr, int remaining = 1, int exitCode = 1) =>
-        new((dir, args) => dir == cwd && args.Length > 0 && args[0] == verb, stderr, remaining, exitCode);
+        new((dir, args) => dir == cwd && Verb(args) == verb, stderr, remaining, exitCode);
+
+    /// <summary>The git subcommand, after the slot <c>-c core.longpaths=true</c> prefix when present.</summary>
+    private static string? Verb(string[] args) =>
+        args.Length >= 3 && args[0] == "-c" && args[1] == "core.longpaths=true" ? args[2] : args.Length > 0 ? args[0] : null;
 }
 
 internal sealed class FakeDisk : IWorkspaceSlotDiskProbe
