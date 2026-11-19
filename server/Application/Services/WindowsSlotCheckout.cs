@@ -8,7 +8,8 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>
 /// CARD-0824 S3 D-4. A Windows slot is the registered checkout. Until the runner reports the slot
 /// path, <see cref="AgentTask.WorktreePath"/> holds <see cref="PendingPrefix"/> and no
-/// <c>card-task-*</c> directory is created. server2 never uses the sentinel.
+/// <c>card-task-*</c> directory is created. If the preparation decides legacy instead, the legacy
+/// mirror path replaces the sentinel. server2 never uses the sentinel.
 /// </summary>
 public static class WindowsSlotCheckout
 {
