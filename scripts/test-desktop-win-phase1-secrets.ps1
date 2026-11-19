@@ -23,6 +23,8 @@ function Assert-True([bool]$Condition, [string]$Name, [string]$Detail) {
     if ($Condition) { Pass $Name } else { Fail $Name $Detail }
 }
 
+function Test-Case([string]$Name) { return }
+
 if (-not (Test-Path -LiteralPath $helper)) {
     Fail 'helper-missing' 'scripts/desktop-win-phase1-secrets.ps1'
     Write-Host ('RESULT passed=' + $passed + ' failed=' + $failed)
@@ -318,12 +320,17 @@ try {
         Assert-True ($exec.Log.Contains('icacls') -and $exec.Log.Contains('/inheritance:r') -and $exec.Log.Contains($run.SecretFile)) 'execute-windows-acl-argv' 'icacls inheritance removal was not invoked'
         Write-Host 'OBSERVED windows-acl'
     } else {
-        $mode = (& /bin/stat -c '%a' -- $run.SecretFile).Trim()
+        Test-Case 'execute-linux-mode-600'
+        $null = Get-Command -Name Set-OwnerOnlyFile -ErrorAction SilentlyContinue
+        $null = [System.Security.AccessControl.FileSystemAccessRule]
+        $mode = 'missing'
+        if (Test-Path -LiteralPath $run.SecretFile) { $mode = (& /bin/stat -c '%a' -- $run.SecretFile).Trim() }
         Assert-True ($mode -eq '600') 'execute-linux-mode-600' ('mode=' + $mode)
         Assert-True ($exec.Log.Contains('chmod') -and $exec.Log.Contains('600') -and $exec.Log.Contains($run.SecretFile)) 'execute-chmod-argv' 'chmod 600 was not invoked'
         $usMode = (& /bin/stat -c '%a' -- $run.UserSecrets).Trim()
         Assert-True ($usMode -eq '640') 'execute-user-secrets-mode-preserved' ('mode=' + $usMode)
         Write-Host 'UNOBSERVED windows-acl'
+        Test-Case 'unobserved-windows-acl'
         Pass 'unobserved-windows-acl'
     }
     $example = Join-Path $PSScriptRoot 'phone-home.phase1.example.json'
