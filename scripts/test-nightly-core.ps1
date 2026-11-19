@@ -558,6 +558,30 @@ function Test-NCVerdictsMatchFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains(' trx=')) 'verdicts' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
+function Test-NCUidIndex {
+    # Required UIDs come from the array captured when the view was built. A decoy node list must not be walked.
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $nodes = @(Get-NCFixtureNodes 400)
+    $classes = @($nodes | ForEach-Object { $_.ClassName } | Select-Object -Unique)
+    $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
+    $uidView = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
+    $one = @($classes | Select-Object -First 1)
+    $decoy = [pscustomobject]@{
+        ByClass = $uidView.ByClass
+        Excluded = $uidView.Excluded
+        Nodes = @([pscustomobject]@{ Uid = 'decoy-should-not-be-read' })
+        RequiredUids = $uidView.RequiredUids
+        UidIndex = $uidView.UidIndex
+    }
+    $fromNodes = @((Get-NightlyDiscoveryIndexRequiredUids -View $uidView -RequiredClasses $one) | ForEach-Object { [string]$_ })
+    $legacy = @([Antiphon.Nightly.NightlyVerdicts]::IndexRequiredUids($uidView.ByClass, $uidView.Excluded, $uidView.Nodes, $one) | ForEach-Object { [string]$_ })
+    $fromIndex = @()
+    if ($null -ne $uidView.UidIndex) {
+        $fromIndex = @((Get-NightlyDiscoveryIndexRequiredUids -View $decoy -RequiredClasses $one) | ForEach-Object { [string]$_ })
+    }
+    Assert-NC ($null -ne $uidView.UidIndex -and $fromIndex.Count -gt 0 -and (($fromIndex -join '|') -ceq ($fromNodes -join '|')) -and (($fromIndex -join '|') -ceq ($legacy -join '|')) -and ($fromIndex -notcontains 'decoy-should-not-be-read')) 'matchesLegacy' ('index [' + ($fromIndex -join ',') + '] nodes [' + ($fromNodes -join ',') + ']')
+}
+
 function Test-NCLaunchPlanMatchesFallback {
     $cases = @(
         @(@('N.S.Alpha', 'N.S.Beta'), '/*/N.S/(Alpha*)|(Beta*)/*'),
@@ -998,6 +1022,7 @@ function Test-NCDiscoveryViewKey {
 $expected = 0
 switch -Exact ($Case) {
     'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 35 }
+    'UidIndex' { Test-NCUidIndex; $expected = 1 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

@@ -20,4 +20,10 @@ public sealed class NightlyCoreTests
              "NC CoreMatchesFallback.verdicts", "NC CoreMatchesFallback.groupFilter",
              "NC CoreMatchesFallback.projectWalk", "NC CoreMatchesFallback.planner-parts"],
             ScriptHarnessOptions.Default, cancellationToken);
+
+    [Test]
+    public Task UidIndex(CancellationToken cancellationToken) =>
+        ScriptHarness.RunHarnessCaseAsync("test-nightly-core.ps1", "NC", nameof(UidIndex), 1,
+            ["NC UidIndex.matchesLegacy"],
+            ScriptHarnessOptions.Default, cancellationToken);
 }
