@@ -39,6 +39,7 @@ function New-Fx {
     [void](Git-Fx $seed @('config','core.autocrlf','false'))
     [void][IO.Directory]::CreateDirectory((Join-Path $seed 'scripts'))
     Copy-Item "$PSScriptRoot/lib" (Join-Path $seed 'scripts/lib') -Recurse
+    Copy-C487NightlyCoreDependency -Root $seed
     foreach ($file in @('nightly-run.ps1','nightly-tests.ps1','release-cut.ps1','release-candidate.ps1','select-test-rosters.ps1')) {
         Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $seed "scripts/$file")
     }

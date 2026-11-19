@@ -22,6 +22,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    # The summary needs the compiled core, which Windows PowerShell cannot load: run it in pwsh.
+    $forward = @('-NoProfile', '-File', $PSCommandPath, '-RunDirectory', $RunDirectory, '-Top', [string]$Top)
+    if ($RecoverExecutedManifest) { $forward += '-RecoverExecutedManifest' }
+    if (-not [string]::IsNullOrWhiteSpace($TimingRoot)) { $forward += @('-TimingRoot', $TimingRoot) }
+    & pwsh @forward
+    exit $LASTEXITCODE
+}
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'test-phase-evidence.ps1')

@@ -52,6 +52,19 @@ function New-C487Root {
     return (ConvertTo-NightlyCanonicalPath -Path $ResultsDirectory)
 }
 
+# A checkout that runs nightly-tests.ps1 needs the compiled core (scripts/lib/Antiphon.Nightly), which builds
+# against src/Antiphon.IO.WriteBehind: copy that project's sources next to a copied scripts/lib. The bytes are
+# the repository's, so the checkout shares the already built core.
+function Copy-C487NightlyCoreDependency {
+    param([string]$Root)
+    $source = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../src/Antiphon.IO.WriteBehind'))
+    $target = Join-Path $Root (Join-Path 'src' 'Antiphon.IO.WriteBehind')
+    New-Item -ItemType Directory -Path $target -Force | Out-Null
+    foreach ($file in @(Get-ChildItem -LiteralPath $source -File | Where-Object { $_.Extension -eq '.cs' -or $_.Extension -eq '.csproj' })) {
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $target $file.Name) -Force
+    }
+}
+
 function New-C487OwnedClone {
     param([string]$Root, [string]$Origin = 'https://github.com/michal-ciechan/Antiphon')
     $clone = Join-Path $Root 'checkout'
@@ -66,6 +79,7 @@ function New-C487OwnedClone {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-tests.ps1') -Destination (Join-Path $scripts 'nightly-tests.ps1') -Force
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\nightly-report.ps1') -Destination (Join-Path $scripts 'nightly-report.ps1') -Force
     Copy-Item -LiteralPath $PSScriptRoot -Destination (Join-Path $scripts 'lib') -Recurse -Force
+    Copy-C487NightlyCoreDependency -Root $clone
     return $clone
 }
 
