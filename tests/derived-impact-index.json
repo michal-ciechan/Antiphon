@@ -760,14 +760,14 @@
       "reason": "cap",
       "owed": 182,
       "first": [
+        "ModelAvailabilityManualTests",
         "AgentTaskAgentKindTests",
         "AgentTaskAutoTitleTests",
         "AgentTaskCallerResolutionTests",
         "ChannelOutboundIsolatedTests",
         "ComplexityCreateTests",
         "DispatchConcurrencyAdmissionTests",
-        "HeldStandingAgentChainTests",
-        "AgentTaskCheckInterpreterTests"
+        "HeldStandingAgentChainTests"
       ]
     },
     {
@@ -7051,6 +7051,7 @@
         "AgentTaskConcurrencyLimitTests",
         "AgentTaskDecisionQuestionIntegrationTests",
         "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskGetPollMetricsTests",
         "AgentTaskInputFallbackTests",
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskReplyIntegrationTests",
@@ -7065,7 +7066,6 @@
         "DelegationCapabilityTests",
         "LaunchEnvLayersIntegrationTests",
         "ModelAvailabilityCreateTests",
-        "ModelAvailabilityManualTests",
         "MutationAdmissionTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeTaskCreateTests",
