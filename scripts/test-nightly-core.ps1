@@ -1002,7 +1002,8 @@ function Test-NCProfileLaunchGroupsGolden {
 # DiscoveryWriter.cs (Write-NightlyDiscoveryDocument): the written bytes against UTF-8 (no BOM) of ConvertTo-Json
 # -Depth 12, which Write-NightlyAtomicJson writes, for the same document: every string escape class, surrogate
 # pairs and lone surrogates, categories, excluded nodes, fixture nodes, an empty document, both the create and the
-# replace branch, and a value the compiled writer does not claim (still ConvertTo-Json).
+# replace branch. A value the compiled writer does not claim is refused (no ConvertTo-Json fallback): no file is
+# created, an existing file keeps its bytes, and no temporary file is left.
 function Test-NCDiscoveryWriterMatchesConvertToJson {
     $c = { param([int]$n) [string][char]$n }
     $weird = @('"q"', 'back\slash', ('t' + (& $c 9) + 'n' + (& $c 10) + 'r' + (& $c 13)), ('b' + (& $c 8) + 'f' + (& $c 12)), ('nul' + (& $c 0) + (& $c 1) + (& $c 31)),
@@ -1017,7 +1018,6 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
         weird = (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash ('h' + (& $c 9) + '"'))
         fixture = (ConvertTo-NightlyDiscoveryDocument -Nodes @(Get-NCFixtureNodes 300) -AssemblyHash 'fixture-hash')
         empty = (ConvertTo-NightlyDiscoveryDocument -Nodes @() -AssemblyHash 'h')
-        unclaimed = [ordered]@{ format = 'f'; count = 5; nodes = @() }
     }
     $bad = [Collections.Generic.List[string]]::new()
     $utf8 = [Text.UTF8Encoding]::new($false)
@@ -1028,8 +1028,19 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
             Write-NightlyDiscoveryDocument -Path $path -Document $docs[$name]
             if (-not [Linq.Enumerable]::SequenceEqual([byte[]]$expected, [byte[]][IO.File]::ReadAllBytes($path))) { $bad.Add($name + ' ' + $round) }
         }
-        $claimed = $null -ne [Antiphon.Nightly.DiscoveryWriter]::Prepare($docs[$name])
-        if ($claimed -ne ($name -cne 'unclaimed')) { $bad.Add($name + ' claimed=' + $claimed) }
+        if ($null -eq [Antiphon.Nightly.DiscoveryWriter]::Prepare($docs[$name])) { $bad.Add($name + ' not claimed') }
+    }
+    $unclaimed = [ordered]@{ format = 'f'; count = 5; nodes = @() }
+    if ($null -ne [Antiphon.Nightly.DiscoveryWriter]::Prepare($unclaimed)) { $bad.Add('unclaimed claimed') }
+    $path = Join-Path $root 'discovery-writer-unclaimed.json'
+    foreach ($round in 'create', 'replace') {
+        if ($round -ceq 'replace') { [IO.File]::WriteAllText($path, 'prior') }
+        $msg = 'accepted'
+        try { Write-NightlyDiscoveryDocument -Path $path -Document $unclaimed } catch { $msg = $_.Exception.Message }
+        if ($msg -notlike 'nightly-discovery-write-failed unsupported-value *') { $bad.Add('unclaimed ' + $round + ': ' + $msg) }
+        $left = $null
+        if ([IO.File]::Exists($path)) { $left = [IO.File]::ReadAllText($path) }
+        if (($round -ceq 'create' -and $null -ne $left) -or ($round -ceq 'replace' -and $left -cne 'prior')) { $bad.Add('unclaimed ' + $round + ' left ' + $left) }
     }
     if (@(Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Name -like 'discovery-writer-*' -and $_.Name -notlike '*.json' }).Count -gt 0) { $bad.Add('temporary file left') }
     Assert-NC ($bad.Count -eq 0) 'discoveryWriter' ($bad -join '; ')

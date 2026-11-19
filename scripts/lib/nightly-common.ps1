@@ -399,12 +399,18 @@ function Write-NightlyAtomicJson {
         [Parameter(Mandatory = $true)]$Object,
         # Write-NightlyDiscoveryDocument, after asserting the compiled core: Antiphon.Nightly/DiscoveryWriter.cs
         # makes the same text for the document ConvertTo-NightlyDiscoveryDocument builds and writes it to the
-        # temporary file itself (the text never crosses back as a method argument); it declines any other value.
+        # temporary file itself (the text never crosses back as a method argument). There is no ConvertTo-Json
+        # fallback, as for the summary writer (CARD-2005): a value it does not claim is refused before anything is
+        # written, so an existing file is left as it was.
         [switch]$DiscoveryDocument
     )
     $prepared = $null
-    if ($DiscoveryDocument) { $prepared = [Antiphon.Nightly.DiscoveryWriter]::Prepare($Object) }
-    if ($null -eq $prepared) { $json = $Object | ConvertTo-Json -Depth 12 }
+    if ($DiscoveryDocument) {
+        $prepared = [Antiphon.Nightly.DiscoveryWriter]::Prepare($Object)
+        if ($null -eq $prepared) { throw ('nightly-discovery-write-failed unsupported-value ' + $Path) }
+    } else {
+        $json = $Object | ConvertTo-Json -Depth 12
+    }
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-NightlyPathExists $dir)) {
         [void][System.IO.Directory]::CreateDirectory($dir)

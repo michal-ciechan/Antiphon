@@ -8,8 +8,8 @@
 // indentation, "name": value, Environment.NewLine between lines, [] and {} when empty; in strings \" \\ \b \f \n
 // \r \t, a lower-case hex escape for the other C0 controls and for U+0085, U+2028 and U+2029, all else literal.
 // Only the values that document holds are written: dictionaries with string keys, arrays and lists, strings,
-// booleans and nulls, a few levels deep. Anything else (a PSObject, a number, a deeper value) is not claimed and
-// the caller writes it with ConvertTo-Json as before.
+// booleans and nulls, a few levels deep. Anything else (a PSObject, a number, a deeper value) is not claimed, and
+// Write-NightlyAtomicJson refuses the document without writing anything (no ConvertTo-Json fallback).
 using System;
 using System.Collections;
 using System.Globalization;

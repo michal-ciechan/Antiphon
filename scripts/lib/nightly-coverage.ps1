@@ -457,7 +457,7 @@ function Write-NightlyDiscoveryDocument {
     )
     Assert-NightlyCoreAvailable 'Write-NightlyDiscoveryDocument'
     # Compiled text (Antiphon.Nightly/DiscoveryWriter.cs): the same ConvertTo-Json -Depth 12 bytes through the
-    # same atomic replace; a document holding any other value still goes through ConvertTo-Json.
+    # same atomic replace. A document holding any other value is refused and nothing is written.
     Write-NightlyAtomicJson -Path $Path -Object $Document -DiscoveryDocument
 }
 
