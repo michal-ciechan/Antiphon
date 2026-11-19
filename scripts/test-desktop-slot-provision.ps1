@@ -88,6 +88,20 @@ function Assert-Forbidden([string]$Name, [string]$CaseRoot) {
     }
 }
 
+function Assert-TextReason([string]$Name, [string]$CaseRoot, [string]$Expected) {
+    $reason = Get-SlotTextRefusal $CaseRoot
+    Assert-C0824 ($reason -eq $Expected) ($Name + '.class') $reason
+}
+
+function Assert-EntryRefusal([string]$Name, [string]$CaseRoot, [string]$Expected, [bool]$AlsoRemove) {
+    $result = Invoke-DesktopSlotProvision -Root $CaseRoot -Execute -RemoveEmpty:$AlsoRemove -DiskBudgetGiB 1 -FreeSpaceProvider (New-BytesProvider $script:ample)
+    $text = Get-ResultText $result
+    Assert-C0824 ($result.ExitCode -eq 2) ($Name + '.exit') $text
+    Assert-C0824 ($text.Contains('refused: ' + $Expected)) ($Name + '.message') $text
+    Assert-C0824 (-not $text.Contains('created:')) ($Name + '.no-created') $text
+    Assert-C0824 (-not $text.Contains('removed:')) ($Name + '.no-removed') $text
+}
+
 try {
     Invoke-Case 'forbidden' {
         Assert-Forbidden 'forbidden-src' 'C:\src\Antiphon'
@@ -280,6 +294,130 @@ try {
         Assert-C0824 ($ledgerBlocked.ExitCode -eq 2) 'remove-empty-ledger.exit' $ledgerText
         Assert-C0824 (Test-Path -LiteralPath $ledger) 'remove-empty-ledger.kept' $ledger
         Assert-C0824 (Test-Path -LiteralPath (Join-Path $ledgerRoot 'retained')) 'remove-empty-ledger.retained' $ledgerRoot
+    }
+
+    Invoke-Case 'forbidden-parent' {
+        foreach ($pair in @(
+            @{ Name = 'antiphon'; Root = 'C:\Antiphon' },
+            @{ Name = 'antiphon-slash'; Root = 'C:\Antiphon\' },
+            @{ Name = 'antiphon-fwd'; Root = 'C:/ANTIPHON' },
+            @{ Name = 'src'; Root = 'C:\src' },
+            @{ Name = 'src-slash'; Root = 'C:\src\' },
+            @{ Name = 'src-fwd'; Root = 'C:/src' },
+            @{ Name = 'dotdot-worktrees'; Root = 'C:\Antiphon\worktrees\..' },
+            @{ Name = 'dotdot-src'; Root = 'C:\src\Antiphon\..' }
+        )) {
+            $comparable = ConvertTo-SlotPath $pair.Root
+            Assert-TextReason ('parent-' + $pair.Name) $pair.Root 'forbidden-root'
+            Assert-C0824 (Test-ForbiddenSlotRoot $comparable) ('parent-' + $pair.Name + '.forbidden') $comparable
+            Assert-EntryRefusal ('parent-' + $pair.Name + '.execute') $pair.Root 'forbidden-root' $false
+            Assert-EntryRefusal ('parent-' + $pair.Name + '.remove') $pair.Root 'forbidden-root' $true
+        }
+        $slots = 'C:\Antiphon\slots'
+        Assert-TextReason 'default-root' $slots ''
+        Assert-C0824 (-not (Test-ForbiddenSlotRoot (ConvertTo-SlotPath $slots))) 'default-root.not-forbidden' $slots
+    }
+
+    Invoke-Case 'path-alias' {
+        Write-Host 'UNOBSERVED C0824S2 windows-only: 8.3 expansion, NTFS junctions, Win32 trailing-dot collapse, powershell.exe 5.1'
+        foreach ($pair in @(
+            @{ Name = 'tilde'; Root = 'C:\src\ANTIPH~1\pool'; Reason = 'alias-segment'; Entry = $true },
+            @{ Name = 'dot'; Root = 'C:\src\Antiphon.\pool'; Reason = 'alias-segment'; Entry = $true },
+            @{ Name = 'releases-dot'; Root = 'C:\Antiphon\releases.\pool'; Reason = 'alias-segment'; Entry = $true },
+            @{ Name = 'worktrees-dot'; Root = 'C:\Antiphon\worktrees.'; Reason = 'alias-segment'; Entry = $true },
+            @{ Name = 'space'; Root = 'C:\src\Antiphon \pool'; Reason = 'alias-segment'; Entry = $true },
+            @{ Name = 'unc'; Root = '\\server\share\releases\pool'; Reason = 'unsupported-root'; Entry = $false },
+            @{ Name = 'unc-fwd'; Root = '//server/share/releases/pool'; Reason = 'unsupported-root'; Entry = $true },
+            @{ Name = 'admin'; Root = '\\localhost\C$\src\Antiphon\pool'; Reason = 'unsupported-root'; Entry = $false },
+            @{ Name = 'extended'; Root = '\\?\C:\Antiphon\releases\x'; Reason = 'unsupported-root'; Entry = $false },
+            @{ Name = 'device'; Root = '\\.\C:\src\Antiphon'; Reason = 'unsupported-root'; Entry = $false }
+        )) {
+            Assert-TextReason ('alias-' + $pair.Name) $pair.Root $pair.Reason
+            if ($pair.Entry) {
+                Assert-EntryRefusal ('alias-' + $pair.Name + '.execute') $pair.Root $pair.Reason $false
+                Assert-EntryRefusal ('alias-' + $pair.Name + '.remove') $pair.Root $pair.Reason $true
+            }
+        }
+    }
+
+    Invoke-Case 'reparse-ancestor' {
+        $target = Join-Path $script:tempRoot 'reparse-target'
+        $link = Join-Path $script:tempRoot 'reparse-link'
+        New-Item -ItemType Directory -Path $target | Out-Null
+        New-Item -ItemType SymbolicLink -Path $link -Target $target | Out-Null
+        $caseRoot = Join-Path $link 'pool'
+        $result = Invoke-DesktopSlotProvision -Root $caseRoot -Execute -FreeSpaceProvider (New-BytesProvider $script:ample)
+        $text = Get-ResultText $result
+        $kids = @(Get-ChildItem -LiteralPath $target -Force)
+        Assert-C0824 ($result.ExitCode -eq 2) 'reparse.exit' $text
+        Assert-C0824 ($text.Contains('refused: reparse-ancestor')) 'reparse.message' $text
+        Assert-C0824 ($kids.Count -eq 0) 'reparse.target-empty' ([string]$kids.Count)
+        Assert-C0824 (-not (Test-Path -LiteralPath $caseRoot)) 'reparse.pool-absent' $caseRoot
+    }
+
+    Invoke-Case 'clone-ceiling' {
+        $outer = [System.IO.Path]::GetFullPath((Join-Path $script:tempRoot 'enclosing'))
+        New-GitRepo $outer
+        $before = Get-Longpaths $outer
+        Assert-C0824 ($before.Value -eq 'false') 'clone-ceiling.before' $before.Value
+        $clone = Join-Path (Join-Path $outer 'repos') 'antiphon'
+        New-Item -ItemType Directory -Path (Join-Path $clone '.git') -Force | Out-Null
+        $result = Invoke-DesktopSlotProvision -Root $outer -Execute -FreeSpaceProvider (New-BytesProvider $script:ample)
+        $text = Get-ResultText $result
+        $after = Get-Longpaths $outer
+        Assert-C0824 ($result.ExitCode -eq 2) 'clone-ceiling.exit' $text
+        Assert-C0824 ($text.Contains('refused: clone-unresolved')) 'clone-ceiling.message' $text
+        Assert-C0824 ($after.Value -eq 'false') 'clone-ceiling.outer' $after.Value
+        Assert-C0824 (-not $text.Contains('longpaths=true')) 'clone-ceiling.no-true' $text
+
+        $outerFile = [System.IO.Path]::GetFullPath((Join-Path $script:tempRoot 'enclosing-gitfile'))
+        New-GitRepo $outerFile
+        $fileBefore = Get-Longpaths $outerFile
+        Assert-C0824 ($fileBefore.Value -eq 'false') 'clone-gitfile.before' $fileBefore.Value
+        $fileClone = Join-Path (Join-Path $outerFile 'repos') 'antiphon'
+        New-Item -ItemType Directory -Path $fileClone -Force | Out-Null
+        $gitFile = Join-Path $fileClone '.git'
+        $pointer = 'gitdir: ' + (Join-Path $outerFile '.git')
+        Set-Content -LiteralPath $gitFile -Value $pointer -Encoding Ascii
+        $fileResult = Invoke-DesktopSlotProvision -Root $outerFile -Execute -FreeSpaceProvider (New-BytesProvider $script:ample)
+        $fileText = Get-ResultText $fileResult
+        $fileAfter = Get-Longpaths $outerFile
+        Assert-C0824 ($fileResult.ExitCode -eq 2) 'clone-gitfile.exit' $fileText
+        Assert-C0824 ($fileText.Contains('refused: clone-')) 'clone-gitfile.message' $fileText
+        Assert-C0824 ($fileAfter.Value -eq 'false') 'clone-gitfile.outer' $fileAfter.Value
+        Assert-C0824 (-not $fileText.Contains('longpaths=true')) 'clone-gitfile.no-true' $fileText
+    }
+
+    Invoke-Case 'remove-empty-race' {
+        $caseRoot = [System.IO.Path]::GetFullPath((Join-Path $script:tempRoot 'race'))
+        $made = Invoke-DesktopSlotProvision -Root $caseRoot -Execute -FreeSpaceProvider (New-BytesProvider $script:ample)
+        Assert-C0824 ($made.ExitCode -eq 0) 'remove-empty-race.provision' (Get-ResultText $made)
+        $child = Join-Path (Join-Path $caseRoot 'worktrees') 'racer.txt'
+        $hook = {
+            param($Path)
+            $leaf = Join-Path $Path 'racer.txt'
+            if ($Path.EndsWith('worktrees') -or $Path.EndsWith('worktrees\')) {
+                if (-not (Test-Path -LiteralPath $leaf)) {
+                    Set-Content -LiteralPath $leaf -Value 'stay' -Encoding Ascii
+                }
+            }
+        }
+        $threw = $false
+        $result = $null
+        try {
+            $result = Invoke-DesktopSlotProvision -Root $caseRoot -Execute -RemoveEmpty -BeforeRemove $hook -FreeSpaceProvider (New-BytesProvider $script:ample)
+        } catch {
+            $threw = $true
+            Assert-C0824 $false 'remove-empty-race.no-throw' $_.Exception.Message
+        }
+        if (-not $threw) {
+            $text = Get-ResultText $result
+            Assert-C0824 ($result.ExitCode -eq 2) 'remove-empty-race.exit' $text
+            Assert-C0824 ($text.Contains('refused: remove-empty-blocked')) 'remove-empty-race.message' $text
+        }
+        Assert-C0824 (Test-Path -LiteralPath $child) 'remove-empty-race.child' $child
+        Assert-C0824 (Test-Path -LiteralPath (Join-Path $caseRoot 'worktrees')) 'remove-empty-race.dir' $caseRoot
+        Assert-C0824 (Test-Path -LiteralPath (Join-Path $caseRoot 'repos')) 'remove-empty-race.repos' $caseRoot
     }
 
     Invoke-Case 'ps51-ascii' {
