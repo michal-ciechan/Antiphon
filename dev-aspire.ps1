@@ -28,6 +28,14 @@ if (-not $worktree.IsMainWorktree -and $AllowWorktree) {
     Format-AppHostWorktreeGuardMessage -Classification $worktree -AllowWorktree | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
 }
 
+. (Join-Path $root 'scripts\lib\windows-phone-home-env.ps1')
+$phoneHomeConfigPath = 'C:\Antiphon\runner\phone-home.json'
+$phoneHomeRefusal = Get-WindowsPhoneHomeLaunchRefusal -ConfigPresent (Test-Path -LiteralPath $phoneHomeConfigPath) -ConfigPath $phoneHomeConfigPath
+if ($null -ne $phoneHomeRefusal) {
+    Write-Host $phoneHomeRefusal
+    exit 3
+}
+
 $appHostDir   = "$root\Antiphon.AppHost"
 $settingsFile = "$root\server\appsettings.json"
 
