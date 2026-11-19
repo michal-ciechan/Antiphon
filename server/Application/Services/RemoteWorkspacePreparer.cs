@@ -287,7 +287,7 @@ public sealed class RemoteWorkspacePreparer : IAsyncDisposable
                             && RemoteWorkspaceService.ReturnedBindingMatches(
                                 mirrored.Expectation, mirrored.Path, returned)
                             && await RemoteWorkspaceService.CaptureMirrorBindingAsync(
-                                db, returned, CancellationToken.None);
+                                db, returned, CancellationToken.None, mirrored.SlotId, mirrored.SlotGeneration);
                         if (!captured)
                         {
                             failure = "The runner returned a mirror binding that does not match the preparation; the task stays Queued.";

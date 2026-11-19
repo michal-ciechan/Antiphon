@@ -121,6 +121,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             return new(false, null, "desktop_workspace_binding_contradictory");
         if (task.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly)
             return await PushRefOnlyBranchAsync(task, ct);
+        if (WindowsSlotCheckout.IsPending(task.WorktreePath))
+            return await PushPendingWindowsSlotAsync(task, ct);
         if (string.IsNullOrWhiteSpace(task.WorktreePath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
             return new RemotePushResult(false, null, "the task has no desktop worktree or branch");
 
@@ -143,6 +145,35 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         if (push.ExitCode != 0)
             return new RemotePushResult(false, sha, "git push failed: " + Tail(push.Diagnostic));
         return new RemotePushResult(true, sha, null, repository);
+    }
+
+    /// <summary>
+    /// CARD-0824 S3 D-4. The desktop checkout is the sentinel, so the branch is pushed from the
+    /// repository rather than from a directory that was never created.
+    /// </summary>
+    private async Task<RemotePushResult> PushPendingWindowsSlotAsync(AgentTask task, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(task.RepoPath) || string.IsNullOrWhiteSpace(task.WorktreeBranch))
+            return new(false, null, "the windows slot task has no repository or branch");
+        var repo = task.RepoPath;
+        var full = "refs/heads/" + task.WorktreeBranch;
+        var head = await _git.RunAsync(repo, ["rev-parse", full], ct);
+        if (head.ExitCode != 0)
+            return new(false, null, "could not read the windows slot branch: " + Tail(head.Diagnostic));
+        var sha = head.Output.Trim();
+        var origin = await _git.RunAsync(repo, ["remote", "get-url", "origin"], ct);
+        if (origin.ExitCode != 0 || !RepositoryCloneSource.TryNormalize(origin.Output, out var repository))
+            return new(false, sha, "the repository origin could not be read");
+        var push = await _git.RunAsync(
+            repo,
+            ["push", "origin", full + ":" + full],
+            new LandingGitRunOptions(
+                TimeSpan.FromMinutes(_remotePrepPushBudgetMinutes),
+                new RepositoryChildTag(task.Id, RepositoryChildPurposes.RemotePrepPush)),
+            ct);
+        if (push.ExitCode != 0)
+            return new(false, sha, "git push failed: " + Tail(push.Diagnostic));
+        return new(true, sha, null, repository);
     }
 
     private async Task<RemotePushResult> PushRefOnlyBranchAsync(AgentTask task, CancellationToken ct)
@@ -244,23 +275,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     private WorkspaceSlotDecision DecideWindowsSlot(AgentTask task)
     {
-        if (!TryReadDelegation(out var settings)
-            || !WorkspaceSlotRoles.TryParse(settings.WindowsSlotRoles, out var set, out _))
+        if (!TryReadDelegation(out var settings))
             return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRolesInvalid);
-
-        var verdict = set.Admits(task.Role, task.SourceLandingOperationId);
-        if (verdict.Reason == WorkspaceSlotRoleVerdict.RolesNone)
-            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRolesNone);
-        if (!verdict.Lease)
-            return new WorkspaceSlotDecision(false, verdict.Reason);
-
-        var id = task.RunnerId ?? "";
-        if (string.Equals(id, RunnerPlatformWire.DesktopId, StringComparison.Ordinal))
-            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRunnerDesktop);
-        var ids = settings.WindowsSlotRunnerIds ?? [];
-        if (!ids.Contains(id, StringComparer.Ordinal))
-            return new WorkspaceSlotDecision(false, WorkspaceSlotRoleVerdict.WindowsRunnerNotListed);
-        return new WorkspaceSlotDecision(true, verdict.Reason);
+        return WindowsSlotCheckout.DecideListed(settings, task);
     }
 
     private bool TryReadDelegation(out DelegationSettings settings)
@@ -283,14 +300,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         }
     }
 
-    private static bool IsWindowsRunner(RunnerDescriptor? runner)
-    {
-        if (runner is null)
-            return false;
-        var platform = RunnerPlatformWire.Normalize(runner.Platform)
-            ?? RunnerPlatformWire.Normalize(runner.Capabilities?.Platform);
-        return platform == RunnerPlatformWire.Windows;
-    }
+    private static bool IsWindowsRunner(RunnerDescriptor? runner) => WindowsSlotCheckout.IsWindows(runner);
 
     /// <summary>The detail prefix of every <see cref="AgentTaskEventType.WorkspaceSlotDecision"/> event.</summary>
     public const string SlotDecisionPrefix = "workspace_slot_decision: ";
@@ -465,7 +475,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// An existing row whose store is not the returned store is left unchanged.
     /// </summary>
     public static async Task<bool> CaptureMirrorBindingAsync(
-        AppDbContext db, CompletedCardWorkspaceBinding binding, CancellationToken ct)
+        AppDbContext db, CompletedCardWorkspaceBinding binding, CancellationToken ct,
+        string? slotId = null, int? slotGeneration = null)
     {
         await using var owned = db.Database.CurrentTransaction is null
             ? await db.Database.BeginTransactionAsync(ct) : null;
@@ -507,7 +518,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         ApplyBinding(row, binding);
         await db.SaveChangesAsync(ct);
         await RemoteWorkspaceReadiness.RecordPathAsync(db, binding.TaskId, binding.Attempt,
-            binding.RunnerId, binding.WorktreePath, ct);
+            binding.RunnerId, binding.WorktreePath, ct, slotId, slotGeneration);
         if (owned is not null) await owned.CommitAsync(ct);
         return true;
     }
