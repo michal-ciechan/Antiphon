@@ -1643,9 +1643,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 608,
+      "classes": 609,
       "reason": "cap",
-      "owed": 583,
+      "owed": 584,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1659,9 +1659,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 608,
+      "classes": 609,
       "reason": "cap",
-      "owed": 583,
+      "owed": 584,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2133,9 +2133,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 69,
+      "classes": 70,
       "reason": "cap",
-      "owed": 44,
+      "owed": 45,
       "first": [
         "ScriptHarnessProcessContractTests",
         "ChangeAwareReleaseTests",
@@ -2149,18 +2149,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 46,
+      "classes": 47,
       "reason": "cap",
-      "owed": 21,
+      "owed": 22,
       "first": [
+        "RcLedgerDurationTests",
         "RcLedgerStatusTests",
         "RcReleaseBaselineTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests",
         "WatchQualEtaLineTests",
         "ChangeAwareReleaseTests",
-        "ChangeAwareReleaseBudgetTests",
-        "DirectoryLinkFixtureWindowsTests"
+        "ChangeAwareReleaseBudgetTests"
       ]
     },
     {
@@ -24576,6 +24576,7 @@
         "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
         "LiveLaneRunnerTests",
+        "LongPathsCheckoutScriptTests",
         "NightlyProbeSupervisorTests",
         "NightlyScriptsTests",
         "QualificationEtaTests",
@@ -24590,7 +24591,6 @@
         "RcHistoricalEvidenceTests",
         "RcIncrementalLedgerTests",
         "RcInputManifestTests",
-        "RcLedgerDurationTests",
         "RcStoppedRunSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
