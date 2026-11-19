@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "note": "CARD-1820 D-1 confirmed runtime readers. Each row is a path group a suite test reads or executes, and the suites the selector must select for every path. Append rows; do not drop a confirmed group. These edges are interim until the reverse-reference index (CARD-1820 item 1).",
+  "rows": [
+    {
+      "group": "build-slot",
+      "paths": ["scripts/build-slot.ps1"],
+      "suites": [
+        "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj",
+        "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+      ]
+    },
+    {
+      "group": "run-daemon",
+      "paths": ["scripts/run-daemon.ps1"],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
+      "group": "runner-restart",
+      "paths": ["scripts/restart-session-runner.ps1", "scripts/session-runner-restart-health.ps1"],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
+      "group": "slot-shim",
+      "paths": ["scripts/fixtures/c589-slot-shim.ps1"],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
+      "group": "live-startup-timing",
+      "paths": ["scripts/test-live-startup-timing.ps1"],
+      "suites": ["tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj"]
+    },
+    {
+      "group": "live-lane-manifest",
+      "paths": ["scripts/test-live-lane-manifest.ps1"],
+      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
+    },
+    {
+      "group": "custody-shell",
+      "paths": [
+        "docker/session-runner-grok/antiphon-custody-common.sh",
+        "docker/session-runner-grok/antiphon-custody-enter.sh",
+        "docker/session-runner-grok/antiphon-custody-kill.sh",
+        "docker/session-runner-grok/dind-entrypoint.sh"
+      ],
+      "suites": [
+        "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
+        "tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"
+      ]
+    },
+    {
+      "group": "compose-and-dockerfile",
+      "paths": [
+        "docker-compose.server2-runner.yml",
+        "docker-compose.server2-runner.temp.yml",
+        "docker-compose.runner-grok.yml",
+        "Dockerfile"
+      ],
+      "suites": ["tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj"]
+    },
+    {
+      "group": "compact-boundary",
+      "paths": ["tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl"],
+      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
+    },
+    {
+      "group": "card0418-manifest",
+      "paths": ["tests/Antiphon.Tests/Fixtures/Card0418/manifest.json"],
+      "suites": [
+        "tests/Antiphon.PtyHost.Tests/Antiphon.PtyHost.Tests.csproj",
+        "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj"
+      ]
+    },
+    {
+      "group": "e2e-sources",
+      "paths": [
+        "tests/Antiphon.E2E/DispatchBaseWarningDeliveryE2ETests.cs",
+        "tests/Antiphon.E2E/Fixtures/LandDeliveryFixture.cs"
+      ],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "slow-allowlist",
+      "paths": ["tests/Antiphon.SessionRunner.Tests/slow-tests-allowlist.txt"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "client-src",
+      "paths": ["client/src/App.tsx", "client/src/api/attention.ts"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "apphost-program",
+      "paths": ["Antiphon.AppHost/Program.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    }
+  ]
+}

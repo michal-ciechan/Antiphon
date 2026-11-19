@@ -38,6 +38,18 @@ function Lacks($s,[string]$id,[string]$path) {
     if ($suite.Count -ne 1) { return $false }
     return @($suite[0].inputs | Where-Object { $_.path -ceq $path -and $_.present }).Count -eq 0
 }
+function Ensure-RioProject([string]$id,[string]$text) {
+    if ($created.Contains($id)) { return }
+    [void]$created.Add($id)
+    Put $id $text
+}
+function Test-RioPresentOwned($suite,[string]$path) {
+    if ($null -eq $suite) { return $false }
+    $record=@($suite.inputs | Where-Object { $_.path -ceq $path -and $_.present })
+    if ($record.Count -ne 1) { return $false }
+    $reasons=@($record[0].reason.Split(';'))
+    return ($reasons -cnotcontains 'unmatched-path-fallback') -and ($reasons -cnotcontains 'unresolved-conservative-all-inputs')
+}
 [void](Git @('init','-q','-b','main'))
 [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $sourceRoot=Split-Path -Parent $PSScriptRoot
@@ -125,6 +137,117 @@ switch ($Case) {
         Note (Lacks $s $resilience 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-including-project'
         Note (Lacks $s $antiphon 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-antiphon'
         Note (Lacks $s $e2e 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-e2e'
+    }
+    'RuntimeReaderCensus' {
+        # AppHost is claimed by Observability's project closure so the all-suite
+        # fallback cannot pretend Antiphon.Tests owns Program.cs.
+        $observability='tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj'
+        $table=ConvertFrom-Json -InputObject (Get-TestSelectionBlob $sourceRoot $sourceSha 'scripts/lib/rc-input-reader-census.json') -AsHashtable
+        Note ($table.schemaVersion -eq 1) 'census-schema'
+        $rows=@($table.rows)
+        Note ($rows.Count -ge 14) "census-groups:$($rows.Count)"
+        Ensure-RioProject $observability '<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../../Antiphon.AppHost/Antiphon.AppHost.csproj" /></ItemGroup></Project>'
+        Put 'Antiphon.AppHost/Antiphon.AppHost.csproj' '<Project Sdk="Microsoft.NET.Sdk" />'
+        Put 'Antiphon.AppHost/Program.cs' 'seed program'
+        foreach ($row in $rows) {
+            Note (-not [string]::IsNullOrWhiteSpace([string]$row.group)) 'census-group-name'
+            foreach ($id in @($row.suites)) {
+                Ensure-RioProject $id '<Project Sdk="Microsoft.NET.Sdk" />'
+            }
+            foreach ($path in @($row.paths)) { Put $path 'seed' }
+        }
+        $inv=Read-RcInputInventory $root (Commit) $null
+        Note (@($inv.unresolved).Count -eq 0) "census-unresolved:$(@($inv.unresolved) -join ',')"
+        foreach ($row in $rows) {
+            foreach ($path in @($row.paths)) {
+                foreach ($id in @($row.suites)) {
+                    $suite=@($inv.suites | Where-Object id -CEQ $id)
+                    $owned=$suite.Count -eq 1 -and (Test-RioPresentOwned $suite[0] $path)
+                    Note $owned "census:$($row.group):${id}:$path"
+                }
+            }
+        }
+    }
+    'ScriptChangeSelectsSessionRunner' {
+        $runner='tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj'
+        Ensure-RioProject $runner '<Project Sdk="Microsoft.NET.Sdk" />'
+        Put 'scripts/build-slot.ps1' 'seed slot'
+        $baseline=Commit
+        Put 'scripts/build-slot.ps1' 'changed slot'
+        $s=Select-Manifest (Commit)
+        Note ($s.unresolved.Count -eq 0) "slot-unresolved:$(@($s.unresolved) -join ',')"
+        Note ($s.dirtySuites -ccontains $runner) "slot-selects-session-runner:$(& $shown $s)"
+        Note (Owns $s $runner 'scripts/build-slot.ps1' 'repository-reader-non-code') 'slot-runner-reason'
+        Note ($s.dirtySuites -ccontains $antiphon) 'slot-still-selects-antiphon'
+    }
+    'DockerAndComposeSelectRuntimeSuites' {
+        $runner='tests/Antiphon.SessionRunner.Tests/Antiphon.SessionRunner.Tests.csproj'
+        $pty='tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj'
+        Ensure-RioProject $runner '<Project Sdk="Microsoft.NET.Sdk" />'
+        Ensure-RioProject $pty '<Project Sdk="Microsoft.NET.Sdk" />'
+        Put 'docker/session-runner-grok/antiphon-custody-enter.sh' 'seed custody'
+        Put 'docker-compose.runner-grok.yml' 'seed compose'
+        Put 'Dockerfile' 'seed docker'
+        $baseline=Commit
+        Put 'docker/session-runner-grok/antiphon-custody-enter.sh' 'changed custody'
+        $s=Select-Manifest (Commit)
+        Note ($s.unresolved.Count -eq 0) "docker-unresolved:$(@($s.unresolved) -join ',')"
+        Note ($s.dirtySuites -ccontains $runner) "docker-selects-runner:$(& $shown $s)"
+        Note ($s.dirtySuites -ccontains $pty) "docker-selects-pty:$(& $shown $s)"
+        Note (Owns $s $pty 'docker/session-runner-grok/antiphon-custody-enter.sh' 'repository-reader-non-code') 'docker-pty-reason'
+        $baseline=Git @('rev-parse','HEAD')
+        Put 'docker-compose.runner-grok.yml' 'changed compose'
+        $s=Select-Manifest (Commit)
+        Note ($s.unresolved.Count -eq 0) "compose-unresolved:$(@($s.unresolved) -join ',')"
+        Note ($s.dirtySuites -ccontains $runner) "compose-selects-runner:$(& $shown $s)"
+        Note (Owns $s $runner 'docker-compose.runner-grok.yml' 'repository-reader-non-code') 'compose-runner-reason'
+        $baseline=Git @('rev-parse','HEAD')
+        Put 'Dockerfile' 'changed dockerfile'
+        $s=Select-Manifest (Commit)
+        Note ($s.unresolved.Count -eq 0) "dockerfile-unresolved:$(@($s.unresolved) -join ',')"
+        Note ($s.dirtySuites -ccontains $runner) "dockerfile-selects-runner:$(& $shown $s)"
+        Note (Owns $s $runner 'Dockerfile' 'repository-reader-non-code') 'dockerfile-runner-reason'
+    }
+    'ExplicitForcedRootsNotFallback' {
+        $paths=@(
+            'antiphon.areas.json','.editorconfig','.github/workflows/ci.yml',
+            'tests/derived-impact-index.json','tests/impacted-classes.json')
+        foreach ($path in $paths) { Put $path 'seed' }
+        $baseline=Commit
+        foreach ($path in $paths) {
+            $baseline=Git @('rev-parse','HEAD')
+            Put $path ('changed '+$path)
+            $s=Select-Manifest (Commit)
+            Note ($s.unresolved.Count -eq 0) "forced-unresolved:${path}:$(@($s.unresolved) -join ',')"
+            Note ($s.dirtySuites -ccontains $messaging) "forced-dirties-messaging:${path}:$(& $shown $s)"
+            Note (Owns $s $messaging $path 'forced-full-root') "forced-reason:$path"
+            $suite=@($s.snapshots[1].suites | Where-Object id -CEQ $messaging)
+            $record=@($suite[0].inputs | Where-Object { $_.path -ceq $path -and $_.present })
+            Note ($record.Count -eq 1 -and @($record[0].reason.Split(';')) -cnotcontains 'unmatched-path-fallback') "forced-not-fallback:$path"
+        }
+    }
+    'NugetConfigIgnoreCaseForcesFull' {
+        Put 'server/nuget.config' '<configuration />'
+        $baseline=Commit
+        Put 'server/nuget.config' '<configuration><changed /></configuration>'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note ($s.unresolved.Count -eq 0) "nuget-case-unresolved:$(@($s.unresolved) -join ',')"
+        Note (SameSet $s $ids) "nuget-case-dirties-all:$(& $shown $s)"
+        Note (Owns $s $messaging 'server/nuget.config' 'forced-full-build-graph') 'nuget-case-forced-reason'
+    }
+    'ReaderRootsAreEverySuite' {
+        foreach ($path in @(
+            'docs/**','**/*.md','scripts/**','docker/**','.claude/**',
+            '**/docker-compose*.yml','**/Dockerfile*','client/**')) {
+            $rule=@($map.roots | Where-Object { $_.path -ceq $path })
+            Note ($rule.Count -eq 1) "reader-root:$path"
+            if ($rule.Count -eq 1) {
+                $consumers=@(Get-TestSelectionSorted @($rule[0].consumers))
+                Note (($consumers -join ';') -ceq '*') "reader-star:$path"
+                Note ($rule[0].reason -ceq 'repository-reader-non-code') "reader-reason:$path"
+            }
+        }
     }
     default { throw "unknown case:$Case" }
 }

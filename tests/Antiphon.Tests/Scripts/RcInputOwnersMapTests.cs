@@ -19,4 +19,10 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(60_000)] public Task BuildGraphChangeForcesFull(CancellationToken token) => Run(nameof(BuildGraphChangeForcesFull), token);
     [Test, Timeout(60_000)] public Task LinkedSourceSelectsIncludingProject(CancellationToken token) => Run(nameof(LinkedSourceSelectsIncludingProject), token);
     [Test, Timeout(60_000)] public Task UnrelatedFileSelectsNothing(CancellationToken token) => Run(nameof(UnrelatedFileSelectsNothing), token);
+    [Test, Timeout(60_000)] public Task RuntimeReaderCensus(CancellationToken token) => Run(nameof(RuntimeReaderCensus), token);
+    [Test, Timeout(60_000)] public Task ScriptChangeSelectsSessionRunner(CancellationToken token) => Run(nameof(ScriptChangeSelectsSessionRunner), token);
+    [Test, Timeout(60_000)] public Task DockerAndComposeSelectRuntimeSuites(CancellationToken token) => Run(nameof(DockerAndComposeSelectRuntimeSuites), token);
+    [Test, Timeout(60_000)] public Task ExplicitForcedRootsNotFallback(CancellationToken token) => Run(nameof(ExplicitForcedRootsNotFallback), token);
+    [Test, Timeout(60_000)] public Task NugetConfigIgnoreCaseForcesFull(CancellationToken token) => Run(nameof(NugetConfigIgnoreCaseForcesFull), token);
+    [Test, Timeout(60_000)] public Task ReaderRootsAreEverySuite(CancellationToken token) => Run(nameof(ReaderRootsAreEverySuite), token);
 }
