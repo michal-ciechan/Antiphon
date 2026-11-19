@@ -28,10 +28,11 @@ function ConvertTo-NightlyHistoryFull {
 
 function Get-NightlyHistoryNodeIdentity {
     param([string]$Path)
-    # Compiled (HistoryNodeIdentity.Read, Antiphon.Nightly/HistoryLinks.cs). Windows: one handle query on the node
-    # itself, never a link's target; the volume serial plus file index is the identity, and a reparse point or a
-    # regular file with more than one name is a link. Elsewhere: lstat. Forcing the Windows attribute test on a
-    # non-Windows host still takes dev/ino from that host, so a replaced ancestor changes the cached id.
+    # Compiled (HistoryNodeIdentity.Read, Antiphon.Nightly/HistoryLinks.cs). Windows: a handle query on the node
+    # itself, never a link's target. Link checks use the volume serial plus the 64-bit file index. The hash cache
+    # prefers FileIdInfo's 128-bit id and falls back to that index; unknown is not an identity. A reparse point
+    # or a regular file with more than one name is a link. Elsewhere: lstat. Forcing the Windows attribute test
+    # on a non-Windows host still takes dev/ino from that host, so a replaced ancestor changes the cached id.
     if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyHistoryNodeIdentity' }
     return [Antiphon.Nightly.HistoryNodeIdentity]::Read($Path, ($script:NightlyHistoryForceWindowsIdentity -eq $true))
 }
