@@ -936,9 +936,68 @@ function Test-NCPlannedManifestMatchesFallback {
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'censusTies' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
 }
 
+# DiscoveryViewKey.cs. The view cache key against the JSON text it replaces as a key: two exclusion lists may
+# share a key only where their JSON was equal (order, case, an added or removed field, a value's type), equal
+# content in new objects shares it, and a shape the walk does not vouch for keeps the JSON key. The InProgress
+# scan against the loop it replaces.
+function Test-NCDiscoveryViewKey {
+    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $fresh = { @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) }
+    $row = { param($methods) @([pscustomobject]@{ Suite = 'antiphon'; Class = 'C'; Methods = $methods; Reason = 'r'; Owner = 'o' }) }
+    $deep = 'leaf'; for ($k = 0; $k -lt 10; $k++) { $deep = [pscustomobject]@{ inner = $deep } }
+    $lists = [ordered]@{ real = (& $fresh); again = (& $fresh); empty = @(); null = $null; single = (& $fresh)[0] }
+    $r = (& $fresh); [array]::Reverse($r); $lists.reversed = $r
+    $r = (& $fresh); $r[0].Class = $r[0].Class.ToUpperInvariant(); $lists.upper = $r
+    $r = (& $fresh); $r[0] | Add-Member -NotePropertyName Extra -NotePropertyValue $null; $lists.added = $r
+    $r = (& $fresh); $r[0] = $r[0] | Select-Object Suite, Class, Methods, Reason; $lists.removed = $r
+    $lists.fewer = @((& $fresh) | Select-Object -Skip 1)
+    $lists.hash = @((& $fresh) | ForEach-Object { [ordered]@{ Suite = $_.Suite; Class = $_.Class; Methods = $_.Methods; Reason = $_.Reason; Owner = $_.Owner } })
+    $values = [ordered]@{ none = $null; empty = @(); a = @('a'); upperA = @('A'); scalar = 'a'; ab = @('a', 'b'); ba = @('b', 'a'); joined = @('ab'); int = @(1); long = @([long]1); text = @('1')
+        true = @($true); nullItem = @($null); blank = @(''); quote = @('a"b'); accent = @('caf' + [char]0xE9); nul = @('a' + [char]0 + 'b'); highA = @('x' + [char]0xD800); highB = @('x' + [char]0xD801)
+        list = [Collections.Generic.List[string]]@('a', 'b'); enum = @([DayOfWeek]::Monday); wrapped = @([psobject]::AsPSObject('a')); deep = $deep }
+    foreach ($name in $values.Keys) { $lists['m-' + $name] = (& $row $values[$name]) }
+    $json = @{}; $key = @{}; $bad = [Collections.Generic.List[string]]::new()
+    foreach ($name in $lists.Keys) {
+        $json[$name] = 'profile:' + (ConvertTo-Json -InputObject $lists[$name] -Depth 8 -Compress -WarningAction SilentlyContinue)
+        $key[$name] = [Antiphon.Nightly.DiscoveryViewKey]::PolicyKey($lists[$name])
+        if ($null -eq $key[$name]) { $key[$name] = $json[$name] }
+    }
+    $names = @($lists.Keys)
+    for ($a = 0; $a -lt $names.Count; $a++) {
+        for ($b = $a + 1; $b -lt $names.Count; $b++) {
+            if ([string]::CompareOrdinal($key[$names[$a]], $key[$names[$b]]) -eq 0 -and [string]::CompareOrdinal($json[$names[$a]], $json[$names[$b]]) -ne 0) { $bad.Add('shared ' + $names[$a] + '/' + $names[$b]) }
+        }
+    }
+    if ($key.real -cnotmatch '^profile#[0-9a-f]{64}$' -or $key.real -cne $key.again) { $bad.Add('real rows: ' + $key.real) }
+    foreach ($name in 'm-enum', 'm-wrapped', 'm-deep') { if ($key[$name] -cne $json[$name]) { $bad.Add('vouched ' + $name) } }
+    foreach ($name in 'reversed', 'upper', 'added', 'removed', 'fewer', 'empty', 'null', 'single') { if ($key[$name] -ceq $key.real) { $bad.Add('same as real: ' + $name) } }
+    # One entry: equal content in new objects gets the same view object, different content another one.
+    $nodes = @(Get-NCFixtureNodes 400)
+    $entry = [pscustomobject]@{ Document = [pscustomobject]@{ Nodes = $nodes }; Views = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal) }
+    $first = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions (& $fresh) -ProfileAware
+    if (-not [object]::ReferenceEquals($first, (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions (& $fresh) -ProfileAware))) { $bad.Add('equal content: second view') }
+    if ([object]::ReferenceEquals($first, (Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions $lists.fewer -ProfileAware))) { $bad.Add('different content: same view') }
+    if ($entry.Views.Count -ne 2) { $bad.Add('views ' + $entry.Views.Count) }
+    $node = { param($state) [pscustomobject]@{ Uid = 'u'; State = $state } }
+    $sets = [ordered]@{
+        mixed = @((& $node 'InProgress'), (& $node 'inprogress'), (& $node 'InProgress '), (& $node 'Passed'), (& $node $null), $null, (& $node ('InProgress' + [char]0x200B)), (& $node 1), @{ State = 'InProgress' }, 'InProgress')
+        empty = @(); null = $null; stateList = @((& $node @('InProgress', 'x'))); nodeList = @(, @((& $node 'InProgress')))
+    }
+    foreach ($name in $sets.Keys) {
+        $loop = [Collections.Generic.List[object]]::new()
+        foreach ($n in @($sets[$name])) { if ($n.State -eq 'InProgress') { $loop.Add($n) } }
+        $core = [Antiphon.Nightly.DiscoveryViewKey]::InProgressNodes($sets[$name])
+        if ($name -in 'stateList', 'nodeList') { if ($null -ne $core) { $bad.Add('inProgress ' + $name + ' answered') }; continue }
+        $same = $null -ne $core -and $core.Count -eq $loop.Count
+        for ($k = 0; $same -and $k -lt $loop.Count; $k++) { if (-not [object]::ReferenceEquals($core[$k], $loop[$k])) { $same = $false } }
+        if (-not $same) { $bad.Add('inProgress ' + $name) }
+    }
+    Assert-NC ($bad.Count -eq 0 -and $sets.mixed.Count -eq 10) 'viewKey' ($bad -join '; ')
+}
+
 $expected = 0
 switch -Exact ($Case) {
-    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCPlannedManifestMatchesFallback; $expected = 34 }
+    'CoreMatchesFallback' { Test-NCCoreMatchesFallback; Test-NCDiagnosticsMatchFallback; Test-NCVerdictsMatchFallback; Test-NCLaunchPlanMatchesFallback; Test-NCProjectWalkMatchesFallback; Test-NCParentProcessMatchesFallback; Test-NCEvidenceFilesMatchFallback; Test-NCDocumentsMatchFallback; Test-NCSourceGapsMatchFallback; Test-NCTrxMatchesFallback; Test-NCJsonFilesMatchFallback; Test-NCPlannerPartsGolden; Test-NCPlannedManifestMatchesFallback; Test-NCDiscoveryViewKey; $expected = 35 }
     default { throw ('unknown case: ' + $Case) }
 }
 Complete-C487Harness -ResultsDirectory $root -ExpectedRows $expected

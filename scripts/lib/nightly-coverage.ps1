@@ -16,11 +16,41 @@ $script:NightlySupportedMtp = '2.2.2'
 # inside the arguments cannot terminate the name early.
 $script:NightlyDiagnosticTypeNameClass = '[A-Za-z0-9_.+\x60()<>,\[\] \u00B7-]'
 
+# Per-chunk existence checks without the cmdlet (Test-Path costs about four File.Exists calls). These answer
+# $true only where Test-Path -LiteralPath answers $true as well: a drive-letter path (never relative, so the
+# PowerShell location cannot matter) that .NET finds on disk, in PowerShell 7 on Windows. Anything else is
+# $false here and the caller asks the cmdlet in the same statement, which keeps its answers and its errors
+# for a missing path, a file named with a trailing separator, an unreadable directory, a provider path.
+$script:NightlyDrivePathChecks = ($PSVersionTable.PSVersion.Major -ge 7 -and [System.IO.Path]::DirectorySeparatorChar -eq '\')
+
+function Test-NightlyDriveFile([string]$Path) {
+    return ($script:NightlyDrivePathChecks -and $Path -match '^[A-Za-z]:[\\/]' -and [System.IO.File]::Exists($Path))
+}
+
+function Test-NightlyDriveDirectory([string]$Path) {
+    return ($script:NightlyDrivePathChecks -and $Path -match '^[A-Za-z]:[\\/]' -and [System.IO.Directory]::Exists($Path))
+}
+
+function Test-NightlyDrivePath([string]$Path) {
+    return ($script:NightlyDrivePathChecks -and $Path -match '^[A-Za-z]:[\\/]' -and
+        ([System.IO.File]::Exists($Path) -or [System.IO.Directory]::Exists($Path)))
+}
+
+# LastWriteTimeUtc as Get-Item -LiteralPath reports it, for a plain file only; $null sends the caller to
+# Get-Item (a directory, a hidden or system file that Get-Item refuses without -Force, a stream name).
+function Get-NightlyDriveFileWriteTimeUtc([string]$Path) {
+    # File.Exists, not FileInfo.Exists: a FileInfo drops a trailing separator that Get-Item refuses.
+    if (-not (Test-NightlyDriveFile $Path) -or $Path.IndexOf(':', 2) -ge 0) { return $null }
+    $info = [System.IO.FileInfo]::new($Path)
+    if (([int]$info.Attributes -band 6) -ne 0) { return $null }
+    return $info.LastWriteTimeUtc
+}
+
 # The PowerShell row loop stays: publish-release.ps1, promote-release.ps1 and the release selection worker read a
 # TRX in processes that may have no core (Windows PowerShell 5.1, a script copy without the project).
 function Read-NightlyTrxIdentities {
     param([string]$TrxPath)
-    if (-not (Test-Path -LiteralPath $TrxPath)) {
+    if (-not (Test-NightlyDrivePath $TrxPath) -and -not (Test-Path -LiteralPath $TrxPath)) {
         throw ('missing TRX {0}' -f $TrxPath)
     }
     if (Get-Command Get-TestPhasePathIdentity -ErrorAction SilentlyContinue) {
@@ -349,7 +379,7 @@ function ConvertFrom-NightlyDiagnosticLog {
     param([string]$Path, [string]$Kind)
     # Strict adapter for pinned TUnit 1.44 / MTP 2.2 diagnostic ToString() records.
     # Accepts golden JSON first; otherwise TestNodeUid { Value = ... } plus state properties.
-    if (-not (Test-Path -LiteralPath $Path)) { throw ('missing diagnostic {0}' -f $Path) }
+    if (-not (Test-NightlyDrivePath $Path) -and -not (Test-Path -LiteralPath $Path)) { throw ('missing diagnostic {0}' -f $Path) }
     $text = [System.IO.File]::ReadAllText($Path)
     # Never hand the whole text to a .NET method as an argument: PowerShell 7.4+ passes every method
     # argument to AMSI, a scan of the whole diag per call (~0.6 s for 9 MB). TrimStart() returns the same
@@ -430,13 +460,16 @@ function Write-NightlyDiscoveryDocument {
 
 function Get-NightlyLatestDiagnosticLog {
     param([string]$Directory)
-    if ([string]::IsNullOrWhiteSpace($Directory) -or -not (Test-Path -LiteralPath $Directory)) {
+    if ([string]::IsNullOrWhiteSpace($Directory) -or (-not (Test-NightlyDrivePath $Directory) -and -not (Test-Path -LiteralPath $Directory))) {
         return $null
     }
     Assert-NightlyCoreAvailable 'Get-NightlyLatestDiagnosticLog'
     # Relative to the PowerShell location, as Get-ChildItem resolved it; a file path lists only that file.
     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Directory)
-    if (Test-Path -LiteralPath $full -PathType Leaf) { return [System.IO.Path]::GetFullPath($full) }
+    # A directory .NET finds is not a leaf: the usual case, answered without the cmdlet.
+    if ((Test-NightlyDriveFile $full) -or (-not (Test-NightlyDriveDirectory $full) -and (Test-Path -LiteralPath $full -PathType Leaf))) {
+        return [System.IO.Path]::GetFullPath($full)
+    }
     # Newest .diag, else newest file (NightlyCoverageParts.LatestDiagnosticLog).
     $latest = [Antiphon.Nightly.NightlyCoverageParts]::LatestDiagnosticLog($full)
     if ([string]::IsNullOrEmpty($latest)) { return $null }
@@ -507,7 +540,7 @@ function Test-NightlyFreshEvidence {
         [datetime]$NotBeforeUtc,
         [string]$InvocationId
     )
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Test-NightlyDrivePath $Path) -and -not (Test-Path -LiteralPath $Path)) {
         return [pscustomobject]@{ Ok = $false; Reason = ('missing {0}' -f $Path) }
     }
     $full = ConvertTo-NightlyCanonicalPath -Path $Path
@@ -515,8 +548,12 @@ function Test-NightlyFreshEvidence {
     if (-not (Test-NightlyPathContained -Inner $full -Outer $root)) {
         return [pscustomobject]@{ Ok = $false; Reason = 'wrong-run-directory' }
     }
-    $item = Get-Item -LiteralPath $Path
-    if ($item.LastWriteTimeUtc -lt $NotBeforeUtc.AddSeconds(-1)) {
+    $written = Get-NightlyDriveFileWriteTimeUtc $Path
+    if ($null -eq $written) {
+        $item = Get-Item -LiteralPath $Path
+        $written = $item.LastWriteTimeUtc
+    }
+    if ($written -lt $NotBeforeUtc.AddSeconds(-1)) {
         return [pscustomobject]@{ Ok = $false; Reason = 'stale-timestamp' }
     }
     if (-not [string]::IsNullOrWhiteSpace($InvocationId)) {
@@ -687,7 +724,7 @@ function Get-NightlyDiscoveryIndexEntry {
     # lane writes the same discovery beside each launch, and a rewrite is new bytes.
     param($Index, [string]$Path)
     $key = ''
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    if ((Test-NightlyDriveFile $Path) -or (-not (Test-NightlyDriveDirectory $Path) -and (Test-Path -LiteralPath $Path -PathType Leaf))) {
         Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexEntry'
         # The content digest: a queued write's bytes, else the disk digest reused while the file is provably
         # unchanged (EvidenceFiles.CachedSha256).
@@ -695,13 +732,19 @@ function Get-NightlyDiscoveryIndexEntry {
         if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
     }
     $document = Read-NightlyDiscoveryDocument -Path $Path
-    $inProgress = [Collections.Generic.List[object]]::new()
-    foreach ($n in @($document.Nodes)) {
-        if ($n.State -eq 'InProgress') { $inProgress.Add($n) }
+    # The nodes whose State -eq 'InProgress', in order (DiscoveryViewKey.InProgressNodes). It returns null for a
+    # node list it cannot read as that loop would (a State or a node that is itself a list): the loop then.
+    $inProgressNodes = [Antiphon.Nightly.DiscoveryViewKey]::InProgressNodes($document.Nodes)
+    if ($null -eq $inProgressNodes) {
+        $inProgress = [Collections.Generic.List[object]]::new()
+        foreach ($n in @($document.Nodes)) {
+            if ($n.State -eq 'InProgress') { $inProgress.Add($n) }
+        }
+        $inProgressNodes = $inProgress.ToArray()
     }
     $entry = [pscustomobject]@{
         Document = $document
-        InProgress = $inProgress.ToArray()
+        InProgress = $inProgressNodes
         Views = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     }
     if ($key) { $Index.Entries[$key] = $entry }
@@ -714,7 +757,14 @@ function Get-NightlyDiscoveryIndexView {
     # Test-NightlyClassAssigned (name or bare name, of ClassName or Type).
     param($Entry, $ProfileExclusions = $null, [switch]$ProfileAware)
     $policyKey = 'default'
-    if ($ProfileAware) { $policyKey = 'profile:' + (ConvertTo-Json -InputObject $ProfileExclusions -Depth 8 -Compress) }
+    if ($ProfileAware) {
+        # A digest of the exclusions' content (DiscoveryViewKey.PolicyKey), never their identity: every value,
+        # name, type and position the JSON text carried, so two lists share a view only where their JSON was
+        # equal. Null for a shape it does not vouch for; the JSON text is the key then, as before.
+        $policyKey = $null
+        if (Test-NightlyCoreAvailable) { $policyKey = [Antiphon.Nightly.DiscoveryViewKey]::PolicyKey($ProfileExclusions) }
+        if ($null -eq $policyKey) { $policyKey = 'profile:' + (ConvertTo-Json -InputObject $ProfileExclusions -Depth 8 -Compress) }
+    }
     if ($Entry.Views.ContainsKey($policyKey)) { return $Entry.Views[$policyKey] }
     $nodes = @($Entry.Document.Nodes)
     $exclusionIndex = $null
@@ -1278,7 +1328,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
         $ExpectedSkipRoster = $null
     )
     $reasons = @()
-    if ([string]::IsNullOrWhiteSpace($TrxPath) -or -not (Test-Path -LiteralPath $TrxPath)) {
+    if ([string]::IsNullOrWhiteSpace($TrxPath) -or (-not (Test-NightlyDrivePath $TrxPath) -and -not (Test-Path -LiteralPath $TrxPath))) {
         return [pscustomobject]@{
             coverageComplete = $false
             testsPassed = $false
@@ -1321,7 +1371,7 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     $discoveryEntry = $null
     $discoveryView = $null
     $discoveryPresent = $false
-    if ([string]::IsNullOrWhiteSpace($DiscoveryPath) -or -not (Test-Path -LiteralPath $DiscoveryPath)) {
+    if ([string]::IsNullOrWhiteSpace($DiscoveryPath) -or (-not (Test-NightlyDrivePath $DiscoveryPath) -and -not (Test-Path -LiteralPath $DiscoveryPath))) {
         $reasons += 'missing-discovery'
     } else {
         try {
@@ -1347,10 +1397,12 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     $terminalNodes = @()
     $execPresent = $false
     $execPath = $ExecutionDiagnosticPath
-    if (-not [string]::IsNullOrWhiteSpace($execPath) -and (Test-Path -LiteralPath $execPath) -and (Test-Path -LiteralPath $execPath -PathType Container)) {
+    # A directory .NET finds is a container and a file it finds is not; otherwise both cmdlet answers as before.
+    if (-not [string]::IsNullOrWhiteSpace($execPath) -and ((Test-NightlyDriveDirectory $execPath) -or
+            (-not (Test-NightlyDriveFile $execPath) -and (Test-Path -LiteralPath $execPath) -and (Test-Path -LiteralPath $execPath -PathType Container)))) {
         $execPath = Get-NightlyLatestDiagnosticLog -Directory $execPath
     }
-    if ([string]::IsNullOrWhiteSpace($execPath) -or -not (Test-Path -LiteralPath $execPath)) {
+    if ([string]::IsNullOrWhiteSpace($execPath) -or (-not (Test-NightlyDrivePath $execPath) -and -not (Test-Path -LiteralPath $execPath))) {
         if ($discoveryPresent) { $reasons += 'missing-execution-diagnostic' }
     } else {
         try {
