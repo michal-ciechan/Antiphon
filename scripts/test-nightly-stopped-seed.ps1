@@ -170,11 +170,10 @@ function New-MergeFail([string]$Suite,[string]$Chunk,[string]$Class,[string]$Met
     return [ordered]@{suite=$Suite;chunk=$Chunk;className=$Class;method=$Method;outcome=$Outcome}
 }
 function Invoke-MergeNightlySeeds {
-    param([string[]]$Seeds,[string]$Decision='',[string[]]$Proven=@(),[string]$Repo='',[string]$OutputPath,[string]$ReportPath,[switch]$Strict)
+    param([string[]]$Seeds,[string]$Decision='',[string[]]$Proven=@(),[string]$Repo='',[string]$OutputPath,[string]$ReportPath,[switch]$Strict,[switch]$Cli)
     $scriptPath=Join-Path $PSScriptRoot 'merge-nightly-seeds.ps1'
     if(-not [IO.File]::Exists($scriptPath)){throw 'merge-nightly-seeds.ps1 missing'}
     $argv=New-Object System.Collections.Generic.List[string]
-    [void]$argv.Add('-NoProfile');[void]$argv.Add('-File');[void]$argv.Add($scriptPath)
     foreach($seedPath in @($Seeds)){[void]$argv.Add('-Seed');[void]$argv.Add($seedPath)}
     if(-not [string]::IsNullOrWhiteSpace($Decision)){[void]$argv.Add('-Decision');[void]$argv.Add($Decision)}
     foreach($row in @($Proven)){if(-not [string]::IsNullOrWhiteSpace($row)){[void]$argv.Add('-Proven');[void]$argv.Add($row)}}
@@ -182,8 +181,26 @@ function Invoke-MergeNightlySeeds {
     if($Strict){[void]$argv.Add('-Strict')}
     [void]$argv.Add('-OutputPath');[void]$argv.Add($OutputPath)
     [void]$argv.Add('-ReportPath');[void]$argv.Add($ReportPath)
-    $text=& pwsh @($argv.ToArray()) 2>&1 | Out-String
-    return [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}
+    if($Cli){
+        # End to end, as the operator runs it: pwsh -File parses the arguments and the process exit code is the verdict.
+        $text=& pwsh -NoProfile -File $scriptPath @($argv.ToArray()) 2>&1 | Out-String
+        return [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}
+    }
+    # The same script and arguments in a fresh runspace of this process, without a pwsh start (about 1 s) per call.
+    # The runspace has its own session state, so the script sees none of this harness's functions or variables, and
+    # every path of the script ends in exit 0, 2 or 3, which $LASTEXITCODE reports as the process exit code would.
+    # An error that escapes the script is code 1, as pwsh -File reports it. The -Cli cases keep the CLI covered.
+    $ps=[powershell]::Create()
+    try{
+        [void]$ps.AddScript('param([string]$Script,[string[]]$Arguments) $text=& $Script @Arguments *>&1 | Out-String; [pscustomobject]@{Code=$LASTEXITCODE;Text=$text}')
+        [void]$ps.AddArgument($scriptPath)
+        [void]$ps.AddArgument([string[]]$argv.ToArray())
+        $result=@($ps.Invoke())
+        if($result.Count -eq 0){return [pscustomobject]@{Code=1;Text='merge produced no result'}}
+        return [pscustomobject]@{Code=[int]$result[-1].Code;Text=[string]$result[-1].Text}
+    }catch{
+        return [pscustomobject]@{Code=1;Text=$_.Exception.Message}
+    }finally{$ps.Dispose()}
 }
 function Read-MergeReport([string]$Path){return ([IO.File]::ReadAllText($Path)|ConvertFrom-Json)}
 function Find-MergeIdentity($Report,[string]$Method){return @($Report.identities|Where-Object {[string]$_.method -ceq $Method})[0]}
@@ -1338,7 +1355,7 @@ try {
                 (New-MergeFail 'antiphon' 'g1' $alpha 'M2(canceled)' 'Failed')
             ) @([ordered]@{path='newer.json';sha256=('cd'*32)})
             $out=Join-Path $root 'union-merged.json';$reportPath=Join-Path $root 'union-report.json'
-            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath -Cli
             $doc=$null;$report=$null;$lead='';$methods='';$chunks=''
             if($merged.Code -eq 0){
                 $doc=Read-NightlyStoppedRunSeed $out
@@ -1361,10 +1378,10 @@ try {
                 (New-MergeFail 'antiphon' 'g1' $beta 'M9' 'Failed')
             ) @()
             $badOut=Join-Path $root 'union-bad-out.json';$badReport=Join-Path $root 'union-bad-report.json'
-            $refused=Invoke-MergeNightlySeeds -Seeds @($bad) -OutputPath $badOut -ReportPath $badReport
+            $refused=Invoke-MergeNightlySeeds -Seeds @($bad) -OutputPath $badOut -ReportPath $badReport -Cli
             $refusedOk=($refused.Code -eq 2 -and -not [IO.File]::Exists($badOut) -and -not [IO.File]::Exists($badReport))
             $strictOut=Join-Path $root 'union-strict.json';$strictReport=Join-Path $root 'union-strict-report.json'
-            $strict=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $strictOut -ReportPath $strictReport -Strict
+            $strict=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $strictOut -ReportPath $strictReport -Strict -Cli
             $strictDoc=$null
             if([IO.File]::Exists($strictOut)){$strictDoc=Read-MergeReport $strictReport}
             $strictOk=($strict.Code -eq 3 -and $null -ne $strictDoc -and [int]$strictDoc.unplacedCount -gt 0 -and (@($strictDoc.identities|Where-Object {[string]$_.method -ceq 'M3'})[0].placed) -eq $false)
@@ -1622,7 +1639,7 @@ try {
             ) @((New-MergeFail 'antiphon' 'g1' 'Fixture.Alpha' 'M1' 'Failed')) @()
             $out=Join-Path $root 'print-merged.json'
             $reportPath=Join-Path $root 'print-report.json'
-            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath
+            $merged=Invoke-MergeNightlySeeds -Seeds @($older,$newer) -OutputPath $out -ReportPath $reportPath -Cli
             $fileDigest=''
             if([IO.File]::Exists($out)){$fileDigest=Get-NightlyHistoryDigest $out}
             $note='A test skipped inside a completed chunk looks green; that is an accepted seed-schema limit.'
