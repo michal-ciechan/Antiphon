@@ -34,6 +34,7 @@ public sealed class RunnerWorkspaceSlotPool
     private readonly IWorkspaceSlotFileSystem _fileSystem;
     private readonly IWorkspaceSlotProcessProbe _processes;
     private readonly IWorkspaceSlotDiskProbe _disk;
+    private readonly IWorkspaceSlotFence _fence;
     // The ledger lock bounds every read-modify-write; git work runs outside it, fenced by slot state.
     private readonly SemaphoreSlim _lock = new(1, 1);
     // Repository-level git (fetch, worktree add/remove/lock) is serialized; per-slot git is not.
@@ -45,7 +46,7 @@ public sealed class RunnerWorkspaceSlotPool
         RunnerWorkspaceService service, PhoneHomeWorkspaceSlotSettings settings, int capacity,
         TimeProvider? clock = null, IWorkspaceSlotFileSystem? fileSystem = null,
         IWorkspaceSlotProcessProbe? processes = null, IWorkspaceSlotDiskProbe? disk = null,
-        RunnerRepositoryActivity? activity = null)
+        RunnerRepositoryActivity? activity = null, IWorkspaceSlotFence? fence = null)
     {
         _service = service;
         Settings = settings;
@@ -57,6 +58,7 @@ public sealed class RunnerWorkspaceSlotPool
             : new ProcWorkspaceSlotProcessProbe());
         _disk = disk ?? new PhysicalWorkspaceSlotDiskProbe();
         _activity = activity;
+        _fence = fence ?? new WorkspaceSlotFenceFile(settings.RcFencePath);
         _ledger = new RunnerWorkspaceSlotLedger(service.AllowedRoot + "/workspace-slots");
     }
 
@@ -119,7 +121,9 @@ public sealed class RunnerWorkspaceSlotPool
                 continue;
             }
 
-            var cold = request.Cold || slot.ColdResetPending is not null;
+            // D-10: a qualification lock keeps this lease warm and leaves the cold request pending.
+            var coldRequested = request.Cold || slot.ColdResetPending is not null;
+            var cold = coldRequested && !_fence.Held();
             var reset = await ResetForLeaseAsync(slot, request, cold, ct);
             var verify = reset ?? await VerifyLeaseAsync(slot.Path, request, ct);
             if (verify is null && ProveOwnership(slot).Failure is { } broken)
@@ -143,6 +147,16 @@ public sealed class RunnerWorkspaceSlotPool
                         ? Stamp(pending)
                         : new WorkspaceSlotColdResetRecord { RequestId = "lease:" + request.PreparationId.ToString("D"), Requester = "dispatch", Reason = "cold lease", At = _clock.GetUtcNow() };
                     record.ColdResetPending = null;
+                }
+                else if (coldRequested)
+                {
+                    record.ColdResetPending ??= new WorkspaceSlotColdResetRecord
+                    {
+                        RequestId = "lease:" + request.PreparationId.ToString("D"),
+                        Requester = "dispatch",
+                        Reason = "cold lease",
+                        At = _clock.GetUtcNow(),
+                    };
                 }
             });
             PhaseCut?.Invoke("leased");
@@ -434,7 +448,8 @@ public sealed class RunnerWorkspaceSlotPool
         }
 
         PhaseCut?.Invoke("before-clean");
-        var cold = slot.ColdResetPending is not null;
+        // D-10: warm release continues while the qualification lock is held. The pending cold wipe waits.
+        var cold = slot.ColdResetPending is not null && !_fence.Held();
         var published = await PublishedShaAsync(ct);
         var error = await ResetForFreeAsync(slot, published, cold, ct);
         if (error is null && await CheckFreeAsync(slot, ct) is not null)
@@ -1065,6 +1080,8 @@ public sealed class RunnerWorkspaceSlotPool
     {
         var outcomes = new List<PhoneHomeWorkspaceSlotColdResetOutcome>();
         var run = new List<WorkspaceSlotRecord>();
+        // D-10: a held or unreadable qualification lock records pending and does not consume the request.
+        var fenceHeld = _fence.Held();
         var record = new WorkspaceSlotColdResetRecord
         {
             RequestId = request.RequestId.ToString("D"),
@@ -1080,6 +1097,23 @@ public sealed class RunnerWorkspaceSlotPool
             if (state.ColdResetRequests.Contains(record.RequestId))
             {
                 outcomes.AddRange(targets.Select(id => new PhoneHomeWorkspaceSlotColdResetOutcome(id, "duplicate")));
+                return;
+            }
+
+            if (fenceHeld)
+            {
+                foreach (var id in targets)
+                {
+                    var held = state.Slot(id);
+                    if (held is null || !WorkspaceSlotStates.IsActive(held.State))
+                        outcomes.Add(new(id, "unknown"));
+                    else
+                    {
+                        held.ColdResetPending ??= record;
+                        outcomes.Add(new(id, "pending"));
+                    }
+                }
+
                 return;
             }
 
@@ -1162,6 +1196,8 @@ public sealed class RunnerWorkspaceSlotPool
 
     private Task MarkScheduleAsync() => MutateAsync(state =>
     {
+        // D-10: record the scheduled mark while a qualification lock is held. The wipe itself waits
+        // in the lease and release, which leave ColdResetPending set until the lock is gone.
         if (LatestBoundary(_clock.GetUtcNow()) is not { } boundary)
             return;
         if (state.LastScheduledBoundary is null)
