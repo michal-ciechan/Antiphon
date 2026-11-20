@@ -47,6 +47,8 @@ internal static class WorkTreeIdentity
         {
             if (view.Config.Get<bool>("core.sparseCheckout")?.Value == true)
                 throw new WorkTreeIdentityDeclinedException("sparse");
+            if (UserDefaultIgnoreApplies(view.Config))
+                throw new WorkTreeIdentityDeclinedException("default-ignore");
         }
         finally
         {
@@ -98,6 +100,28 @@ internal static class WorkTreeIdentity
         }
         entries.Sort(EntryOrder.Instance);
         return new Reading(root, tip.Sha, entries);
+    }
+
+    /// <summary>
+    /// Whether git would read the user's default ignore file here: no <c>core.excludesFile</c> in the repository's
+    /// config and a non-empty <c>$XDG_CONFIG_HOME/git/ignore</c> (else <c>$HOME/.config/git/ignore</c>, HOME falling back
+    /// to USERPROFILE on Windows, as Git for Windows does). The hardened git child still reads it (GIT_CONFIG_GLOBAL
+    /// does not stop it), but libgit2 isolated from user config does not, so such a checkout is read through git.
+    /// </summary>
+    internal static bool UserDefaultIgnoreApplies(Configuration repositoryConfig)
+    {
+        if (repositoryConfig.Get<string>("core.excludesFile") is not null) return false;
+        var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        string? file = null;
+        if (!string.IsNullOrEmpty(xdg)) file = Path.Combine(xdg, "git", "ignore");
+        else
+        {
+            var home = Environment.GetEnvironmentVariable("HOME");
+            if (string.IsNullOrEmpty(home) && OperatingSystem.IsWindows()) home = Environment.GetEnvironmentVariable("USERPROFILE");
+            if (!string.IsNullOrEmpty(home)) file = Path.Combine(home, ".config", "git", "ignore");
+        }
+        try { return file is not null && new FileInfo(file) is { Exists: true, Length: > 0 }; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return true; }
     }
 
     /// <summary>git's six-digit octal mode, as <c>git status --porcelain=v2</c> prints it.</summary>

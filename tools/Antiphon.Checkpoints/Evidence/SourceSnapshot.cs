@@ -44,7 +44,10 @@ public sealed class SourceEvidence
 }
 
 
-/// <summary>One path git status lists (tracked change or untracked file), with its HEAD and index entries.</summary>
+/// <summary>
+/// One record git status --porcelain=v2 prints (a tracked change, or an untracked file), with its HEAD and index
+/// entries. A path can appear twice: `git rm --cached` leaves a staged deletion and an untracked file.
+/// </summary>
 public sealed record SourceReadEntry(string Path, string? HeadMode, string? HeadOid, string? IndexMode, string? IndexOid);
 
 /// <summary>A reading of a checkout: its root, HEAD commit and the listed paths.</summary>
@@ -147,8 +150,10 @@ public sealed class SourceSnapshot
     }
 
     /// <summary>
-    /// libgit2 in process; git (<see cref="ReadWithGit"/>) for anything libgit2 declines, cannot load for, or
-    /// fails on, so every layout git reads gets the same identity the script computes.
+    /// libgit2 in process; git (<see cref="ReadWithGit"/>) for a layout libgit2 declines or when libgit2 cannot be
+    /// used in this process at all. Both are properties of the checkout or the process, so both passes of a capture
+    /// take the same reader. A libgit2 read error stays an error (<c>libgit2_failed</c>; I/O as <c>file_io</c>), never
+    /// a quiet switch of reader.
     /// </summary>
     private static SourceRead ReadWithLibGit2(string repository)
     {
@@ -161,10 +166,8 @@ public sealed class SourceSnapshot
         }
         catch (Antiphon.GitInProcess.WorkTreeIdentityException ex) { throw new SourceReadException(ex.Code); }
         catch (Antiphon.GitInProcess.WorkTreeIdentityDeclinedException) { return ReadWithGit(repository); }
-        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex))
-        {
-            return ReadWithGit(repository);
-        }
+        catch (Exception ex) when (ToolLibGit2.IsNativeUnavailable(ex)) { return ReadWithGit(repository); }
+        catch (LibGit2Sharp.LibGit2SharpException) { throw new SourceReadException("libgit2_failed"); }
     }
 
     /// <summary>

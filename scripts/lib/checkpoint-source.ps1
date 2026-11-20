@@ -26,9 +26,10 @@ function Add-CheckpointSourceBytes {
 }
 
 # Fingerprint v2 (the tool's SourceSnapshot computes the same identity from libgit2): SHA-256 over length-framed
-# records: version 2, HEAD, then for each path status lists (ignored files excluded), in git's byte order, the
-# path, its HEAD mode and id, its index mode and id (empty when absent) and its work-tree token. Two git reads
-# per capture: status --porcelain=v2 (HEAD, modes and ids) and ls-files -v (index flags).
+# records: version 2, HEAD, then for each record status prints (ignored files excluded), in git's byte order of
+# paths with a path's tracked record before its untracked one (`git rm --cached` prints both), the path, its HEAD
+# mode and id, its index mode and id (empty when absent) and its work-tree token. Two git reads per capture:
+# status --porcelain=v2 (HEAD, modes and ids) and ls-files -v (index flags).
 function Get-CheckpointWorkTreeToken {
     param([string]$Root, [string]$Relative)
     $full = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($Root, $Relative.TrimEnd('/')))

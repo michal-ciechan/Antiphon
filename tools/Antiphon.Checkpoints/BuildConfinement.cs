@@ -805,10 +805,10 @@ public static class BuildConfinement
         {
             try
             {
-                if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false) is { } dirty)
+                if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false, agrees: AgreesWithGitChild) is { } dirty)
                     return new StatusResult(dirty.Order(StringComparer.Ordinal).ToList(), null);
             }
-            catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex)) { }
+            catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException || ToolLibGit2.IsNativeUnavailable(ex)) { }
         }
         var status = Git(repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"]);
         if (status.Error is not null || status.Exit != 0)
@@ -868,7 +868,8 @@ public static class BuildConfinement
     /// git child for them: toplevel and HEAD as git prints them, the stage listing byte for byte, and the
     /// untracked and ignored path sets (each pinned against git by the LibGit2VsGit verdict tests; callers parse
     /// them into sets). Null for a layout GitInProcess declines (shallow, sparse, gitlinks, a split or version 3+
-    /// index, per-worktree config, a subdirectory for toplevel): git answers those.
+    /// index, per-worktree config, a subdirectory for toplevel), or when the user's default ignore file applies
+    /// (<see cref="AgreesWithGitChild"/>): git answers those.
     /// </summary>
     private static GitResult? InProcessRead(string workingDirectory, IReadOnlyList<string> args)
     {
@@ -886,17 +887,25 @@ public static class BuildConfinement
                         ? new GitResult(0, listing, null) : null;
                 case ["ls-files", "-z", "--others", "--exclude-standard"]:
                 case ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]:
-                    return Antiphon.GitInProcess.InProcessGitStatus.OtherPaths(workingDirectory, ignored: args.Count == 5) is { } paths
+                    return Antiphon.GitInProcess.InProcessGitStatus.OtherPaths(workingDirectory, ignored: args.Count == 5, agrees: AgreesWithGitChild) is { } paths
                         ? new GitResult(0, string.Concat(paths.Order(StringComparer.Ordinal).Select(path => path + "\0")), null) : null;
                 default:
                     return null;
             }
         }
-        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex))
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException || ToolLibGit2.IsNativeUnavailable(ex))
         {
             return null;
         }
     }
+
+    /// <summary>
+    /// The untracked, ignored and tracked-dirty path sets depend on ignore rules. libgit2 here reads only the
+    /// repository's config, as the hardened git child does, but the child also reads the user's default ignore
+    /// file: when that applies, git answers instead.
+    /// </summary>
+    private static bool AgreesWithGitChild(LibGit2Sharp.Configuration repositoryConfig) =>
+        !Antiphon.GitInProcess.WorkTreeIdentity.UserDefaultIgnoreApplies(repositoryConfig);
 
     private static bool TryReadProperty(string token, out string key, out string value)
     {
