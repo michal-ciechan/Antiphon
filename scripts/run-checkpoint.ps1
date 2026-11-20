@@ -127,8 +127,9 @@ function Invoke-CheckpointGit {
     }
     # HEAD and the stage listing at a top level, read from the repository's files (lib/checkpoint-source.ps1);
     # the same guard keeps this function whole when a test extracts it alone. These answers skip git's own
-    # repository checks (safe.directory ownership): its one caller, Get-CheckpointTrackedSnapshot, asks git for
-    # --show-toplevel first, and a new caller must also let a git read vouch for the repository before these.
+    # repository checks (safe.directory ownership): its one caller, Get-CheckpointTrackedSnapshot, asks for
+    # --show-toplevel first (git, or a named tool build's libgit2 read), and a new caller must also let such a read
+    # vouch for the repository before these.
     if (Get-Command -Name Get-CheckpointFileGitRead -CommandType Function -ErrorAction Ignore) {
         $fromFiles = Get-CheckpointFileGitRead $WorkDir $GitArgs
         if ($null -ne $fromFiles) { return @{ Exit = 0; Stdout = [string]$fromFiles; Stderr = ''; Reason = $null } }

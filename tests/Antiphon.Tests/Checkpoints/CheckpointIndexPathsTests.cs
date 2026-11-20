@@ -256,17 +256,20 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
             $head = Invoke-CheckpointGit {{Quote(root)}} @('rev-parse', 'HEAD')
             $listing = Invoke-CheckpointGit {{Quote(root)}} @('ls-files', '-z', '-s')
             'HEAD=' + $head.Exit + ':' + ([string]$head.Stdout).Trim()
-            'LISTING=' + $listing.Exit + ':' + ([string]$listing.Stdout).Replace([string][char]0, '|')
+            # As UTF-8 hex: a console code page cannot change the bytes compared (the listing names caf<e9>.txt).
+            'LISTING=' + $listing.Exit + ':' + [Convert]::ToHexString([Text.Encoding]::UTF8.GetBytes([string]$listing.Stdout))
             """ })
             start.ArgumentList.Add(argument);
         start.Environment["GIT_TRACE2_EVENT"] = trace;
         // The file reads under test, not a named tool build's, and git confined to this repository.
-        foreach (var name in new[] { "ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR" })
+        foreach (var name in new[] { "ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                     "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
             start.Environment.Remove(name);
         var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
         run.Stdout.ShouldContain("HEAD=0:" + GitHead(root));
-        run.Stdout.ShouldContain("LISTING=0:" + CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s").Replace("\0", "|", StringComparison.Ordinal));
+        run.Stdout.ShouldContain("LISTING=0:" + Convert.ToHexString(
+            System.Text.Encoding.UTF8.GetBytes(CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s"))));
         Directory.GetFiles(trace).ShouldBeEmpty("Invoke-CheckpointGit answered both reads from the repository's files");
     }
 
