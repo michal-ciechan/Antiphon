@@ -389,17 +389,20 @@ try {
             $passedFile = Join-Path $ResultsDirectory 'passed.trx'
             $jsonFile = Join-Path $ResultsDirectory 'passed.json'
             $badFile = Join-Path $ResultsDirectory 'bad.txt'
-            [IO.File]::WriteAllText($passedFile, '<TestRun id="1"><Results /></TestRun>')
+            Write-RcOutcomeTrx -Path $passedFile -SummaryOutcome 'Completed' -Total 1 -Executed 1 -Passed 1 -Failed 0 -NotExecuted 0 -Rows @(@{ Id = '1'; ClassName = 'Ns.Sample'; MethodName = 'Method'; Outcome = 'Passed' })
+            [IO.File]::WriteAllText((Join-Path $ResultsDirectory 'weak.trx'), '<TestRun id="1"><Results /></TestRun>')
             [IO.File]::WriteAllText($jsonFile, '{"ok":true}')
             [IO.File]::WriteAllText($badFile, 'not-json')
             $passed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $passedFile
+            $weak = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath (Join-Path $ResultsDirectory 'weak.trx')
             $jsonPassed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $jsonFile
             $drained = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $true } -ResultsPath $passedFile
             $missing = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath (Join-Path $ResultsDirectory 'missing.trx')
             $unparsed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $badFile
             $failed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 2; OutputDrainTimedOut = $false } -ResultsPath $passedFile
             Note ($passed.Outcome -ceq 'Passed' -and [string]::IsNullOrWhiteSpace([string]$passed.Reason)) 'passed-needs-results'
-            Note ($jsonPassed.Outcome -ceq 'Passed') 'json-results-pass'
+            Note ($weak.Outcome -ceq 'NotRun' -and $weak.Reason -ceq 'results-summary-unreadable') 'weak-trx-not-passed'
+            Note ($jsonPassed.Outcome -ceq 'NotRun' -and $jsonPassed.Reason -ceq 'results-summary-unreadable') 'json-without-rows-not-passed'
             Note ($drained.Outcome -ceq 'NotRun' -and $drained.Reason -ceq 'drain-timeout') 'drain-timeout-not-run'
             Note ($missing.Outcome -ceq 'NotRun' -and $missing.Reason -ceq 'results-missing') 'missing-results-not-run'
             Note ($unparsed.Outcome -ceq 'NotRun' -and $unparsed.Reason -ceq 'results-unparseable') 'unparseable-results-not-run'
@@ -448,6 +451,31 @@ try {
             $passShadow=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $pass
             $passReal=Test-RcRealResultsWouldPass -Path $pass
             Note ($passReal -and $passShadow.Outcome -ceq 'Passed') 'real-pass-stays-passed'
+            $missingFailed=Join-Path $ResultsDirectory 'missing-failed.trx'
+            [IO.File]::WriteAllText($missingFailed,'<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="1" name="Ns.Sample.Method"><TestMethod className="Ns.Sample" name="Method" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="1" testName="Ns.Sample.Method" outcome="Passed" /></Results><ResultSummary outcome="Completed"><Counters total="1" executed="1" passed="1" notExecuted="0" /></ResultSummary></TestRun>')
+            Note-RcShadowNotWeaker 'missing-failed-attribute' $missingFailed
+            $otherOutcome=Join-Path $ResultsDirectory 'other-outcome.trx'
+            Write-RcOutcomeTrx -Path $otherOutcome -SummaryOutcome 'Failed' -Total 1 -Executed 1 -Passed 1 -Failed 0 -NotExecuted 0 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Passed' })
+            Note-RcShadowNotWeaker 'summary-not-completed' $otherOutcome
+            $roster=@([pscustomobject]@{ test='Ns.Sample.Method'; platform='linux'; reasonPrefix='not-on-this-host'; reasonClass='platform' })
+            $listed=Join-Path $ResultsDirectory 'listed-skip.trx'
+            Write-RcOutcomeTrx -Path $listed -SummaryOutcome 'Completed' -Total 1 -Executed 0 -Passed 0 -Failed 0 -NotExecuted 1 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='NotExecuted'; DebugTrace='Skipped: not-on-this-host' })
+            $withRoster=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $listed -ExpectedSkipRoster $roster -Platform 'linux'
+            $withoutRoster=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $listed
+            Note ($withRoster.Outcome -ceq 'Passed' -and [string]::IsNullOrWhiteSpace([string]$withRoster.Reason)) 'roster-skip-passes'
+            Note ($withoutRoster.Outcome -cne 'Passed') 'roster-skip-needs-roster'
+            $goodJson=Join-Path $ResultsDirectory 'good.json'
+            [IO.File]::WriteAllText($goodJson,'{"executed":1,"failed":0,"coverageComplete":true,"rows":[{"Outcome":"Passed","Identity":"Ns.Sample.Method"}]}')
+            $good=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $goodJson
+            Note ($good.Outcome -ceq 'Passed') 'json-real-pass'
+            $falseCover=Join-Path $ResultsDirectory 'false-cover.json'
+            [IO.File]::WriteAllText($falseCover,'{"executed":1,"failed":0,"coverageComplete":false,"rows":[{"Outcome":"Passed","Identity":"Ns.Sample.Method"}]}')
+            $falseResult=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $falseCover
+            Note ($falseResult.Outcome -cne 'Passed') 'json-coverage-false'
+            $override=Join-Path $ResultsDirectory 'override.json'
+            [IO.File]::WriteAllText($override,'{"executed":1,"failed":1,"coverageComplete":true,"rows":[{"Outcome":"Failed","Identity":"Ns.Sample.Method"}]}')
+            $overrideResult=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $override
+            Note ($overrideResult.Outcome -cne 'Passed') 'json-coverage-true-does-not-override'
         }
         'TornRevisionStaysNotRun' {
             $repo = Join-Path $ResultsDirectory 'repo'

@@ -1222,7 +1222,7 @@ function Invoke-NightlyScheduledChunk {
             throw
         }
         $phaseWatch.Stop()
-        $chunkRecord = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath
+        $chunkRecord = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform)
         [void](Register-NightlyRcChunkRevision -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Outcome $chunkRecord.Outcome -Reason $chunkRecord.Reason)
         try {
             [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
