@@ -297,7 +297,11 @@ pass the base as a DISPATCH PARAMETER, never as `git checkout -B ...` prose in t
 For a fresh Worktree bound to a card, CARD-0442 automatically selects a clean, committed,
 quiescent tip from that card's unlanded work in the same local Git repository. The create
 response previews the selected task, branch and full SHA; dispatch checks again and cuts a
-different task branch at the observed SHA. A pending sibling land holds dispatch. Divergent
+different task branch at the observed SHA. A pending sibling land holds dispatch when the
+base is automatic or a symbolic ref such as master. A StartRef that is a 40- or
+64-character commit id dispatches at once and keeps the ordinary sibling warning when
+that sibling is not contained; an inspection that stops at the inventory cap dispatches
+with the incomplete-inspection warning. Divergent
 eligible tips refuse creation with `worktree_base_ambiguous`; choose one with `-BaseTask <id>`
 or explicitly omit the history with `-FreshWorktree`. An invalid, dirty, active or unavailable
 explicit source is refused. Inspect the create preview and the dispatch event for changes
@@ -526,8 +530,11 @@ requested ref, then the merge target, then the project's `BaseBranch` / `Git:Def
 `master` when that ref resolves to a commit, then `HEAD` with a warning naming the failed default
 (CARD-0508 S1). CARD-0442 selects an eligible same-card unlanded tip ahead of the ordinary
 default when no repair, StartRef or SourceLanding base is requested. Containment of a kept sibling is patch-aware (`git cherry`): a
-rebase-landed branch is silent. The dispatcher still holds while a sibling land is in flight, and
-still warns when a divergent kept branch is simply not landed. CARD-0540 snapshots full sibling
+rebase-landed branch is silent. The dispatcher holds while a sibling land is in flight when the
+base is automatic or a symbolic ref, and warns when a divergent kept branch is simply not
+landed. A 40- or 64-character commit-id StartRef dispatches during that land: the uncontained
+sibling keeps the ordinary warning, and an inventory-cap inspection keeps the
+incomplete-inspection warning. CARD-0540 snapshots full sibling
 commit IDs and emits one warning per surviving observed tip: identical tips share a deterministic
 representative, strict ancestors are covered by containing tips, and divergent tips remain separate.
 Unknown tips or failed ancestry probes retain visibility. Any original eligible sibling's landing
