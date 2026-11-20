@@ -41,35 +41,13 @@ function Test-ReleaseGateFullSha {
     return ($Sha -cmatch '^[0-9a-f]{40}$')
 }
 
-function ConvertFrom-ReleaseGateRemoteRef {
-    # ls-remote patterns can match suffixes. Only the complete second field is
-    # identity; failed queries and unusable matching records are never absence.
-    param($Result, [string]$Ref)
-    $failed = [pscustomobject]@{ Status = 'Failed'; Sha = '' }
-    if ($null -eq $Result -or [int]$Result.ExitCode -ne 0) { return $failed }
-    $matches = @()
-    foreach ($line in ([string]$Result.Output -split "`n")) {
-        $fields = @($line.Trim() -split '\s+')
-        if ($fields.Count -lt 2) {
-            if ([string]::Equals($line.Trim(), $Ref, [StringComparison]::Ordinal)) { return $failed }
-            continue
-        }
-        if (-not [string]::Equals($fields[1], $Ref, [StringComparison]::Ordinal)) { continue }
-        if ($fields.Count -ne 2 -or -not (Test-ReleaseGateFullSha -Sha $fields[0])) { return $failed }
-        $matches += $fields[0]
-    }
-    if ($matches.Count -gt 1) { return $failed }
-    if ($matches.Count -eq 0) { return [pscustomobject]@{ Status = 'Absent'; Sha = '' } }
-    return [pscustomobject]@{ Status = 'Found'; Sha = [string]$matches[0] }
-}
-
 function Get-ReleaseGateRemoteRef {
     param([string]$WorkingDirectory, [string]$Ref)
     if ($Ref.StartsWith('refs/heads/', [StringComparison]::Ordinal)) { $kind = '--heads' }
     elseif ($Ref.StartsWith('refs/tags/', [StringComparison]::Ordinal)) { $kind = '--tags' }
     else { throw 'remote ref must be fully qualified' }
     $read = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('ls-remote', $kind, 'origin', $Ref)
-    return (ConvertFrom-ReleaseGateRemoteRef -Result $read -Ref $Ref)
+    return ([Antiphon.Nightly.ReleaseGateTags]::RemoteRef($read, $Ref))
 }
 
 function Get-ReleaseGateRemoteHead {
@@ -470,51 +448,6 @@ function Exit-ReleaseGateNativeLock {
 
 # ------------------------------------------------------------------ calver ---
 
-function Test-ReleaseGateTag {
-    param([string]$Tag)
-    if ([string]::IsNullOrWhiteSpace($Tag)) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'empty-tag'; Prerelease = $false; Rc = 0 }
-    }
-    if ($Tag -notmatch $script:ReleaseGateTagPattern) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'tag-shape'; Prerelease = $false; Rc = 0 }
-    }
-    $y = [int]$Matches['y']; $m = [int]$Matches['m']; $d = [int]$Matches['d']; $n = [int]$Matches['n']
-    $k = 0
-    $prerelease = $false
-    if ($Matches.ContainsKey('k') -and -not [string]::IsNullOrWhiteSpace([string]$Matches['k'])) {
-        $k = [int]$Matches['k']
-        $prerelease = $true
-    }
-    if ($m -lt 1 -or $m -gt 12 -or $d -lt 1 -or $d -gt 31) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'tag-date'; Prerelease = $prerelease; Rc = $k }
-    }
-    try { $date = [datetime]::new($y, $m, $d, 0, 0, 0, [System.DateTimeKind]::Utc) } catch {
-        return [pscustomobject]@{ Ok = $false; Reason = 'tag-date'; Prerelease = $prerelease; Rc = $k }
-    }
-    return [pscustomobject]@{ Ok = $true; Reason = ''; Date = $date; Sequence = $n; Tag = $Tag; Prerelease = $prerelease; Rc = $k }
-}
-
-function New-ReleaseGateTag {
-    # D-8: vYYYY.MM.DD.N from the UTC cut date and a positive daily sequence.
-    param([datetime]$CutUtc, [int]$Sequence)
-    if ($Sequence -lt 1) { throw ('release sequence must be positive, got {0}' -f $Sequence) }
-    $u = $CutUtc.ToUniversalTime()
-    return ('v{0:0000}.{1:00}.{2:00}.{3}' -f $u.Year, $u.Month, $u.Day, $Sequence)
-}
-
-function New-ReleaseGatePreReleaseTag {
-    # D-4: vYYYY.MM.DD.N-rc.K. K is a positive integer with no leading zero.
-    param([datetime]$CutUtc, [int]$Sequence, [int]$Rc)
-    if ($Rc -lt 1) { throw ('release rc number must be positive, got {0}' -f $Rc) }
-    return ((New-ReleaseGateTag -CutUtc $CutUtc -Sequence $Sequence) + '-rc.' + [string]$Rc)
-}
-
-function Test-ReleaseGateLongLivedCandidateId {
-    param([string]$CandidateId)
-    if ([string]::IsNullOrWhiteSpace($CandidateId)) { return $false }
-    return ($CandidateId -cmatch $script:ReleaseGateLongLivedCandidateIdPattern)
-}
-
 function Get-ReleaseGateOptionalInt {
     param($Row, [string]$Name)
     if ($null -eq $Row) { return 0 }
@@ -576,9 +509,9 @@ function Get-ReleaseGateRemoteTagInventory {
         $ref = $fields[1]
         if (-not $ref.StartsWith('refs/tags/', [StringComparison]::Ordinal)) { continue }
         $tag = $ref.Substring('refs/tags/'.Length)
-        $parsed = Test-ReleaseGateTag -Tag $tag
+        $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag($tag)
         if (-not $parsed.Ok) { continue }
-        $canonical = New-ReleaseGateTag -CutUtc $parsed.Date -Sequence $parsed.Sequence
+        $canonical = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsed.Date, $parsed.Sequence)
         if ($parsed.Prerelease) { $canonical += '-rc.' + [string]$parsed.Rc }
         if ($tag -cne $canonical) { continue }
         if (-not (Test-ReleaseGateFullSha $fields[0])) { return $failed }
@@ -601,7 +534,7 @@ function Get-ReleaseGatePreReleaseAllocation {
     $occupancy = @($Journal.reservations) + @($RemoteTags | ForEach-Object { [pscustomobject]@{ tag = $_ } })
     foreach ($row in $occupancy) {
         if ($null -eq $row) { continue }
-        $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
+        $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag(([string]$row.tag))
         if ($parsed.Ok -and $parsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
             $n = [int]$parsed.Sequence
             if ($used -notcontains $n) { $used += $n }
@@ -614,7 +547,7 @@ function Get-ReleaseGatePreReleaseAllocation {
         }
         $finalText = Get-ReleaseGateOptionalText -Row $row -Name 'finalTag'
         if (-not [string]::IsNullOrWhiteSpace($finalText)) {
-            $finalParsed = Test-ReleaseGateTag -Tag $finalText
+            $finalParsed = [Antiphon.Nightly.ReleaseGateTags]::Tag($finalText)
             if ($finalParsed.Ok -and -not $finalParsed.Prerelease -and $finalParsed.Date.ToUniversalTime().ToString('yyyy.MM.dd') -eq $day) {
                 $fn = [int]$finalParsed.Sequence
                 if ($closed -notcontains $fn) { $closed += $fn }
@@ -697,9 +630,9 @@ function Get-ReleaseGateTagProposal {
             Journal = $journal
         }
     }
-    if (Test-ReleaseGateLongLivedCandidateId -CandidateId $CandidateId) {
+    if ([Antiphon.Nightly.ReleaseGateTags]::LongLivedCandidateId($CandidateId)) {
         $alloc = Get-ReleaseGatePreReleaseAllocation -Journal $journal -CutUtc $CutUtc -RemoteTags $RemoteTags
-        $pre = New-ReleaseGatePreReleaseTag -CutUtc $CutUtc -Sequence $alloc.Sequence -Rc $alloc.Rc
+        $pre = [Antiphon.Nightly.ReleaseGateTags]::NewPreReleaseTag($CutUtc, $alloc.Sequence, $alloc.Rc)
         return [pscustomobject]@{ Tag = $pre; Sequence = $alloc.Sequence; Rc = $alloc.Rc; Reused = $false; Row = $null; Journal = $journal }
     }
     $day = $CutUtc.ToUniversalTime().ToString('yyyy.MM.dd')
@@ -707,12 +640,12 @@ function Get-ReleaseGateTagProposal {
     $occupancy = @($journal.reservations) + @($RemoteTags | ForEach-Object { [pscustomobject]@{ tag = $_ } })
     foreach ($row in $occupancy) {
         if ($null -eq $row) { continue }
-        $parsed = Test-ReleaseGateTag -Tag ([string]$row.tag)
+        $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag(([string]$row.tag))
         if ($parsed.Ok -and $parsed.Date.ToString('yyyy.MM.dd') -eq $day) { $used += [int]$parsed.Sequence }
     }
     $next = 1
     while ($used -contains $next) { $next++ }
-    return [pscustomobject]@{ Tag = (New-ReleaseGateTag -CutUtc $CutUtc -Sequence $next); Sequence = $next; Rc = 0; Reused = $false; Row = $null; Journal = $journal }
+    return [pscustomobject]@{ Tag = ([Antiphon.Nightly.ReleaseGateTags]::NewTag($CutUtc, $next)); Sequence = $next; Rc = 0; Reused = $false; Row = $null; Journal = $journal }
 }
 
 function New-ReleaseGateTagReservation {
@@ -808,9 +741,9 @@ function Test-ReleaseGatePromotionReservation {
     if ($row.tag -cne $PreReleaseTag) { return (& $fail 'tag-mismatch') }
     if (-not $row.published) { return (& $fail 'unpublished') }
     if ([string]::IsNullOrWhiteSpace($row.releaseId) -or [string]::IsNullOrWhiteSpace($row.releaseUrl)) { return (& $fail 'release-identity') }
-    $parsed = Test-ReleaseGateTag -Tag $PreReleaseTag
+    $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag($PreReleaseTag)
     if (-not $parsed.Ok -or -not $parsed.Prerelease -or
-        $FinalTag -cne (New-ReleaseGateTag -CutUtc $parsed.Date -Sequence $parsed.Sequence) -or
+        $FinalTag -cne ([Antiphon.Nightly.ReleaseGateTags]::NewTag($parsed.Date, $parsed.Sequence)) -or
         (-not [string]::IsNullOrEmpty([string]$row.finalTag) -and $row.finalTag -cne $FinalTag)) { return (& $fail 'final-conflict') }
     return [pscustomobject]@{ Ok = $true; Reason = ''; Journal = $journal; Row = $row }
 }

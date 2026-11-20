@@ -3875,18 +3875,18 @@ function Test-C1311TraceClean([string]$Trace) {
 function Test-C1311_PreReleaseTag {
     # D-3/D-4: -rc.K parses, a long-lived id proposes one, and promote writes the
     # final tag beside it. Stamp publication stays a final tag without --prerelease.
-    $accepted = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc.1'
-    $bareRc = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc'
+    $accepted = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc.1')
+    $bareRc = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc')
     Assert-C487 -Cond (
         [bool]$accepted.Ok -and [bool]$accepted.Prerelease -and [int]$accepted.Rc -eq 1 -and [int]$accepted.Sequence -eq 2 -and
         (-not [bool]$bareRc.Ok) -and [string]$bareRc.Reason -eq 'tag-shape') `
         -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.1 is accepted' -Detail ('rc1=' + [string]$accepted.Reason + '/' + [string]$accepted.Prerelease + ' bare=' + [string]$bareRc.Reason)
 
-    $finalOnly = Test-ReleaseGateTag -Tag 'v2026.10.15.2'
+    $finalOnly = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2')
     Assert-C487 -Cond ([bool]$finalOnly.Ok -and -not [bool]$finalOnly.Prerelease -and [int]$finalOnly.Sequence -eq 2) `
         -Name 'C1311 PreReleaseTag v2026.10.15.2 is accepted' -Detail ([string]$finalOnly.Reason + '/' + [string]$finalOnly.Prerelease)
 
-    $zero = Test-ReleaseGateTag -Tag 'v2026.10.15.2-rc.0'
+    $zero = [Antiphon.Nightly.ReleaseGateTags]::Tag('v2026.10.15.2-rc.0')
     Assert-C487 -Cond ((-not [bool]$zero.Ok) -and [string]$zero.Reason -eq 'tag-shape') `
         -Name 'C1311 PreReleaseTag v2026.10.15.2-rc.0 refuses tag-shape' -Detail ([string]$zero.Reason)
 
@@ -4014,7 +4014,7 @@ function Test-C1311_PreReleaseTag {
     try {
         $fxL = New-C599PublishFx -LongLivedCandidate
         $pubL = Invoke-C599Publish -Fx $fxL -CandidateId $fxL.CandidateId
-        $parsedLong = Test-ReleaseGateTag -Tag ([string]$pubL.Tag)
+        $parsedLong = [Antiphon.Nightly.ReleaseGateTags]::Tag(([string]$pubL.Tag))
         $longPublished = ([int]$pubL.ExitCode -eq 0 -and [bool]$pubL.Published)
         $longTagOk = ($longPublished -and [bool]$parsedLong.Ok -and [bool]$parsedLong.Prerelease)
         $longPeeled = Read-C599Remote -Seams $fxL.Git -Ref ('refs/tags/' + [string]$pubL.Tag)
@@ -4350,42 +4350,42 @@ function Test-C1339_ExactRemoteRefs {
     $exactLine = $fx.Head + "`t" + $ref
     $checks = @()
     foreach ($output in @(($nestedLine + "`n" + $exactLine), ($exactLine + "`n" + $nestedLine))) {
-        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $output } $ref
+        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $output }, $ref)
         $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'exact tag order'
     }
-    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $nestedLine } $ref
+    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $nestedLine }, $ref)
     $checks += New-C1339Check ($r.Status -eq 'Absent') 'nested only tag'
     Assert-C599AMatrix 'C1339 G-1 exact-tag' $checks
 
     [void](Invoke-C1339LocalGit $fx @('push', $fx.Bare, ($fx.B + ':refs/heads/archive/' + $fx.CandidateRef)))
     $headRef = 'refs/heads/' + $fx.CandidateRef
     $headOutput = Invoke-C1339LocalGit $fx @('ls-remote', '--heads', $fx.Bare)
-    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $headOutput } $headRef
+    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $headOutput }, $headRef)
     $suffix = $fx.B + "`trefs/heads/archive/" + $fx.CandidateRef
-    $absent = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $suffix } $headRef
+    $absent = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $suffix }, $headRef)
     Assert-C487 -Cond ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head -and $absent.Status -eq 'Absent') -Name 'C1339 G-2 exact-head'
-    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ($fx.Head + "`t" + $ref.ToUpperInvariant()) } $ref
+    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ($fx.Head + "`t" + $ref.ToUpperInvariant()) }, $ref)
     Assert-C487 -Cond ($r.Status -eq 'Absent') -Name 'C1339 G-3 ordinal-case'
     $checks = @()
     foreach ($sha in @('abcd', ('z' * 40))) {
-        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ($sha + "`t" + $ref) } $ref
+        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ($sha + "`t" + $ref) }, $ref)
         $checks += New-C1339Check ($r.Status -eq 'Failed') $sha
     }
     Assert-C599AMatrix 'C1339 G-4 full-sha' $checks
     $checks = @()
     foreach ($output in @(($exactLine + "`n" + $fx.B + "`t" + $ref), ($fx.B + "`t" + $ref + "`n" + $exactLine))) {
-        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = $output } $ref
+        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = $output }, $ref)
         $checks += New-C1339Check ($r.Status -eq 'Failed') 'conflicting duplicates'
     }
-    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = ("bad unrelated`n" + $exactLine) } $ref
+    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = ("bad unrelated`n" + $exactLine) }, $ref)
     $checks += New-C1339Check ($r.Status -eq 'Found' -and $r.Sha -ceq $fx.Head) 'unrelated malformed record'
     Assert-C599AMatrix 'C1339 G-5 ambiguous-record' $checks
     $checks = @()
     foreach ($output in @('', $exactLine)) {
-        $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 1; Output = $output } $ref
+        $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 1; Output = $output }, $ref)
         $checks += New-C1339Check ($r.Status -eq 'Failed') 'failed query'
     }
-    $r = ConvertFrom-ReleaseGateRemoteRef @{ ExitCode = 0; Output = '' } $ref
+    $r = [Antiphon.Nightly.ReleaseGateTags]::RemoteRef(@{ ExitCode = 0; Output = '' }, $ref)
     $checks += New-C1339Check ($r.Status -eq 'Absent') 'successful empty query'
     Assert-C599AMatrix 'C1339 G-6 query-failure' $checks
 

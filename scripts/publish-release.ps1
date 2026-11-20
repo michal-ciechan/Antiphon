@@ -205,7 +205,7 @@ function Invoke-AntiphonPublishRelease {
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
     $cutUtc = ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty
-    if (Test-ReleaseGateLongLivedCandidateId -CandidateId $CandidateId) { $cutUtc = $attemptUtc }
+    if ([Antiphon.Nightly.ReleaseGateTags]::LongLivedCandidateId($CandidateId)) { $cutUtc = $attemptUtc }
     if ($WhatIf) {
         # Read-only: -WhatIf reports the proposed tag and never reserves it, so
         # publications.json is untouched (not created, not rewritten).
@@ -224,9 +224,9 @@ function Invoke-AntiphonPublishRelease {
         if ($selected.Status -ne 'Absent' -and ($selected.Status -ne 'Found' -or $selected.Sha -cne $sha)) {
             $result.Refusal = 'tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
         }
-        $parsedTag = Test-ReleaseGateTag -Tag $tag
+        $parsedTag = [Antiphon.Nightly.ReleaseGateTags]::Tag($tag)
         if ($parsedTag.Prerelease) {
-            $finalTag = New-ReleaseGateTag -CutUtc $parsedTag.Date -Sequence $parsedTag.Sequence
+            $finalTag = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsedTag.Date, $parsedTag.Sequence)
             $final = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $finalTag
             if ($final.Status -ne 'Absent' -and ($final.Status -ne 'Found' -or $final.Sha -cne $sha)) {
                 $result.Refusal = 'final-tag-conflict'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -344,7 +344,7 @@ function Invoke-AntiphonPublishRelease {
 
     if (-not (Test-ReleaseGateJournalStep -Path $publishJournal -Step 'draft-created')) {
         $createArgs = @{ tag = $tag; notesFile = $notesPath }
-        $parsedTag = Test-ReleaseGateTag -Tag $tag
+        $parsedTag = [Antiphon.Nightly.ReleaseGateTags]::Tag($tag)
         if ($parsedTag.Ok -and $parsedTag.Prerelease) { $createArgs['prerelease'] = $true }
         $create = Invoke-ReleaseGateGitHub -Verb 'release-create' -WorkingDirectory $CheckoutRoot -Arguments $createArgs
         if ([int]$create.ExitCode -ne 0) {

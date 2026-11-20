@@ -85,7 +85,7 @@ function Invoke-AntiphonPromoteRelease {
     if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $ReleaseRoot 'checkout' }
     if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = [string]$env:ANTIPHON_API }
     if ([string]::IsNullOrWhiteSpace($AntiphonApiUrl)) { $AntiphonApiUrl = 'http://localhost:17202' }
-    $parsed = Test-ReleaseGateTag -Tag $Tag
+    $parsed = [Antiphon.Nightly.ReleaseGateTags]::Tag($Tag)
     if (-not $parsed.Ok -or -not [bool]$parsed.Prerelease) {
         $reason = 'tag-shape'
         if (-not $parsed.Ok -and -not [string]::IsNullOrWhiteSpace([string]$parsed.Reason) -and [string]$parsed.Reason -ne 'tag-shape') {
@@ -94,7 +94,7 @@ function Invoke-AntiphonPromoteRelease {
         Write-PromoteLine ('REFUSED: {0} is not a pre-release tag ({1}).' -f $Tag, $reason)
         $result.Refusal = $reason; $result.ExitCode = 3; return [pscustomobject]$result
     }
-    $finalName = New-ReleaseGateTag -CutUtc $parsed.Date -Sequence ([int]$parsed.Sequence)
+    $finalName = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsed.Date, ([int]$parsed.Sequence))
     $result.Tag = $finalName
 
     $pre = Get-ReleaseGateRemoteTag -WorkingDirectory $CheckoutRoot -Tag $Tag
