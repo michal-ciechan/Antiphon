@@ -2,9 +2,12 @@
 // CARD-1836 admission is still PowerShell (scripts/lib/rc-admission.ps1), so this
 // policy lives in the Nightly core. No tag, publish, or promote caller. gateCredit
 // stays false: ledger-basis success is not publication credit.
-// Until TrustedShadowCutsRequired successful Windows shadow cuts exist, only an
-// all-executed Full of the exact tagged SHA is backed. A chain anchor is expired
-// at age >= 7 days, the same full-anchor-expired bound forced-Full already uses.
+// ChainFormEnabled is false until a CARD-1836 D-8 producer exists. A chain with
+// two distinct trusted-cut records then answers chain-form-disabled-until-trusted-cuts.
+// Fewer than two answers shadow-trust-absent. The document integer trustedShadowCuts
+// is not a trust decision. Only an all-executed Full of the exact tagged SHA is
+// backed. A chain anchor is expired at age >= 7 days. Public parse failures,
+// including reader exceptions, answer chain-invalid.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -66,11 +69,23 @@ namespace Antiphon.Nightly
     public static class RcTagBacking
     {
         public const int TrustedShadowCutsRequired = 2;
+        public const bool ChainFormEnabled = false;
         public const int MaxChainLinks = 64;
         public static readonly TimeSpan MaxAnchorAge = TimeSpan.FromDays(7);
         private const int MaxCommits = 4096;
         private const int MaxParents = 16;
         private const int MaxJsonChars = 1048576;
+        private static readonly string[] UtcPatterns =
+        {
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.f'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.ff'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.ffff'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.fffff'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'"
+        };
 
         public static RcTagBackingResult Test(string chainJson)
         {
@@ -78,11 +93,7 @@ namespace Antiphon.Nightly
             {
                 return Decide(Parse(chainJson));
             }
-            catch (ChainInvalid)
-            {
-                return RcTagBackingResult.NotBacked("chain-invalid");
-            }
-            catch (JsonException)
+            catch (Exception ex) when (ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
                 return RcTagBackingResult.NotBacked("chain-invalid");
             }
@@ -179,9 +190,40 @@ namespace Antiphon.Nightly
             var age = chain.UtcNow - completed;
             if (age >= MaxAnchorAge)
                 return RcTagBackingResult.NotBacked("chain-older-than-seven-days");
-            if (chain.TrustedShadowCuts < TrustedShadowCutsRequired)
+            if (CountDistinctTrustedCuts(chain.TrustedCuts) < TrustedShadowCutsRequired)
                 return RcTagBackingResult.NotBacked("shadow-trust-absent");
-            return RcTagBackingResult.Chain(anchor.SourceSha, age);
+            return AnswerChain(anchor.SourceSha, age);
+        }
+
+        private static RcTagBackingResult AnswerChain(string anchorSha, TimeSpan age)
+        {
+#pragma warning disable CS0162 // ChainFormEnabled is false until a CARD-1836 D-8 producer exists.
+            if (ChainFormEnabled)
+                return RcTagBackingResult.Chain(anchorSha, age);
+#pragma warning restore CS0162
+            return RcTagBackingResult.NotBacked("chain-form-disabled-until-trusted-cuts");
+        }
+
+        private static int CountDistinctTrustedCuts(List<TrustedCut> cuts)
+        {
+            var seen = new Dictionary<string, TrustedCut>(StringComparer.Ordinal);
+            foreach (var cut in cuts)
+            {
+                if (seen.TryGetValue(cut.RunId, out var prior))
+                {
+                    if (!prior.Same(cut))
+                        throw new ChainInvalid();
+                    continue;
+                }
+                seen.Add(cut.RunId, cut);
+            }
+            var count = 0;
+            foreach (var cut in seen.Values)
+            {
+                if (cut.Admitted && cut.ExecutedSamples > 0)
+                    count++;
+            }
+            return count;
         }
 
         private static bool IsAncestor(Chain chain, string anchorSha, string taggedSha)
@@ -243,14 +285,15 @@ namespace Antiphon.Nightly
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
                 throw new ChainInvalid();
-            RequireKeys(root, "format", "taggedSha", "utcNow", "trustedShadowCuts", "envelopes", "commits");
+            RequireKeys(root, new[] { "format", "taggedSha", "utcNow", "trustedShadowCuts", "envelopes", "commits" }, new[] { "trustedCuts" });
             if (!string.Equals(RequiredString(root, "format"), "antiphon-rc-tag-chain-v1", StringComparison.Ordinal))
                 throw new ChainInvalid();
             var tagged = RequiredString(root, "taggedSha");
             if (!IsSha(tagged))
                 throw new ChainInvalid();
             var utcNow = ReadUtc(RequiredString(root, "utcNow"));
-            var trusted = RequiredInt(root, "trustedShadowCuts");
+            RequiredInt(root, "trustedShadowCuts");
+            var trustedCuts = ParseTrustedCuts(root);
             var envelopes = root.GetProperty("envelopes");
             if (envelopes.ValueKind != JsonValueKind.Array || envelopes.GetArrayLength() == 0
                 || envelopes.GetArrayLength() > MaxChainLinks)
@@ -292,7 +335,35 @@ namespace Antiphon.Nightly
                 }
                 parents.Add(sha, list);
             }
-            return new Chain(tagged, utcNow, trusted, links, parents);
+            return new Chain(tagged, utcNow, trustedCuts, links, parents);
+        }
+
+        private static List<TrustedCut> ParseTrustedCuts(JsonElement root)
+        {
+            var cuts = new List<TrustedCut>();
+            if (!root.TryGetProperty("trustedCuts", out var array))
+                return cuts;
+            if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() > MaxChainLinks)
+                throw new ChainInvalid();
+            foreach (var item in array.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                    throw new ChainInvalid();
+                RequireKeys(item, "runId", "cutSha", "admitted", "executedSamples");
+                var runId = RequiredString(item, "runId");
+                if (runId.Length == 0 || runId.Length > 128)
+                    throw new ChainInvalid();
+                foreach (var ch in runId)
+                {
+                    if (ch <= ' ' || ch > 126)
+                        throw new ChainInvalid();
+                }
+                var sha = RequiredString(item, "cutSha");
+                if (!IsSha(sha))
+                    throw new ChainInvalid();
+                cuts.Add(new TrustedCut(runId, sha, RequiredBool(item, "admitted"), RequiredInt(item, "executedSamples")));
+            }
+            return cuts;
         }
 
         private static Link ParseLink(JsonElement item)
@@ -327,7 +398,7 @@ namespace Antiphon.Nightly
                 platform,
                 disposition,
                 OptionalString(item, "originRunId"),
-                OptionalString(item, "anchorCompletedAtUtc"),
+                ReadCompletedAt(OptionalString(item, "anchorCompletedAtUtc")),
                 RequiredBool(item, "seed"),
                 RequiredBool(item, "admitted"),
                 RequiredBool(item, "openFailure"),
@@ -337,27 +408,39 @@ namespace Antiphon.Nightly
                 RequiredInt(item, "carriedCount"));
         }
 
-        private static void RequireKeys(JsonElement obj, params string[] keys)
+        private static void RequireKeys(JsonElement obj, params string[] keys) =>
+            RequireKeys(obj, keys, null);
+
+        private static void RequireKeys(JsonElement obj, string[] required, string[] optional)
         {
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var property in obj.EnumerateObject())
             {
                 if (!seen.Add(property.Name))
                     throw new ChainInvalid();
-                var known = false;
-                foreach (var key in keys)
-                {
-                    if (string.Equals(key, property.Name, StringComparison.Ordinal))
-                    {
-                        known = true;
-                        break;
-                    }
-                }
-                if (!known)
+                if (!KnownKey(property.Name, required) && !KnownKey(property.Name, optional))
                     throw new ChainInvalid();
             }
-            if (seen.Count != keys.Length)
-                throw new ChainInvalid();
+            if (required != null)
+            {
+                foreach (var key in required)
+                {
+                    if (!seen.Contains(key))
+                        throw new ChainInvalid();
+                }
+            }
+        }
+
+        private static bool KnownKey(string name, string[] keys)
+        {
+            if (keys == null)
+                return false;
+            foreach (var key in keys)
+            {
+                if (string.Equals(key, name, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
         }
 
         private static string RequiredString(JsonElement obj, string name)
@@ -397,11 +480,24 @@ namespace Antiphon.Nightly
             return number;
         }
 
+        private static string ReadCompletedAt(string text)
+        {
+            if (text == null)
+                return null;
+            ReadUtc(text);
+            return text;
+        }
+
         private static DateTimeOffset ReadUtc(string text)
         {
             if (string.IsNullOrEmpty(text) || text[text.Length - 1] != 'Z')
                 throw new ChainInvalid();
-            if (!DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed)
+            if (!DateTimeOffset.TryParseExact(
+                    text,
+                    UtcPatterns,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var parsed)
                 || parsed.Offset != TimeSpan.Zero)
                 throw new ChainInvalid();
             return parsed;
@@ -424,21 +520,44 @@ namespace Antiphon.Nightly
 
         private sealed class Chain
         {
-            public Chain(string taggedSha, DateTimeOffset utcNow, int trustedShadowCuts, List<Link> links,
+            public Chain(string taggedSha, DateTimeOffset utcNow, List<TrustedCut> trustedCuts, List<Link> links,
                 Dictionary<string, string[]> parents)
             {
                 TaggedSha = taggedSha;
                 UtcNow = utcNow;
-                TrustedShadowCuts = trustedShadowCuts;
+                TrustedCuts = trustedCuts;
                 Links = links;
                 Parents = parents;
             }
 
             public string TaggedSha { get; }
             public DateTimeOffset UtcNow { get; }
-            public int TrustedShadowCuts { get; }
+            public List<TrustedCut> TrustedCuts { get; }
             public List<Link> Links { get; }
             public Dictionary<string, string[]> Parents { get; }
+        }
+
+        private sealed class TrustedCut
+        {
+            public TrustedCut(string runId, string cutSha, bool admitted, int executedSamples)
+            {
+                RunId = runId;
+                CutSha = cutSha;
+                Admitted = admitted;
+                ExecutedSamples = executedSamples;
+            }
+
+            public string RunId { get; }
+            public string CutSha { get; }
+            public bool Admitted { get; }
+            public int ExecutedSamples { get; }
+
+            public bool Same(TrustedCut other) =>
+                other != null
+                && string.Equals(RunId, other.RunId, StringComparison.Ordinal)
+                && string.Equals(CutSha, other.CutSha, StringComparison.Ordinal)
+                && Admitted == other.Admitted
+                && ExecutedSamples == other.ExecutedSamples;
         }
 
         private sealed class Link

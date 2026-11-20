@@ -7,8 +7,9 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1820 S5. A human tag is backed by an all-executed Windows Full of the tagged SHA,
-/// or, once two trusted shadow cuts exist, by a carry chain to a Full younger than 7 days.
+/// CARD-1820 S5. A human tag is backed by an all-executed Windows Full of the tagged SHA.
+/// The chain form stays compiled off until a CARD-1836 D-8 producer exists. A caller
+/// integer is not trust. An anchor age of 7 days or more is not backed.
 /// </summary>
 [Category("Unit")]
 [Timeout(60_000)]
@@ -113,10 +114,9 @@ public sealed class RcTagBackingTests
     {
         var age = TimeSpan.FromDays(7) - TimeSpan.FromSeconds(1);
         var answer = RcTagBacking.Test(YoungChain(trusted: 2, anchorAge: age));
-        answer.Kind.ShouldBe("chain-to-full");
-        answer.AnchorSha.ShouldBe(Anchor);
-        answer.Age.ShouldBe(age);
-        answer.Answer.ShouldBe("chain-to-full(" + Anchor + "," + RcTagBackingResult.FormatAge(age) + ")");
+        answer.Answer.ShouldBe("not-backed(shadow-trust-absent)");
+        answer.Kind.ShouldBe("not-backed");
+        answer.AnchorSha.ShouldBeNull();
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -346,6 +346,7 @@ public sealed class RcTagBackingTests
         var json = WithCuts(
             YoungChain(trusted: 0, anchorAge: TimeSpan.FromDays(1)),
             "[" + Cut("cut-a", CutA) + "," + Cut("cut-b", CutB) + "]");
+        RcTagBacking.ChainFormEnabled.ShouldBeFalse();
         var answer = RcTagBacking.Test(json);
         answer.Answer.ShouldBe("not-backed(chain-form-disabled-until-trusted-cuts)");
         answer.GateCredit.ShouldBeFalse();
