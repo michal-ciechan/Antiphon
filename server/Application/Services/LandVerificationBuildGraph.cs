@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using Antiphon.Server.Domain;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -12,6 +13,9 @@ namespace Antiphon.Server.Application.Services;
 internal sealed class LandVerificationBuildGraph
 {
     private const string ManifestResource = "Antiphon.Server.LandVerificationBuildGraph.manifest.txt";
+
+    /// <summary>Committed manifest the land reads from the target tree. Not itself a build-graph file.</summary>
+    internal const string ManifestPath = "server/Application/Services/LandVerificationBuildGraph.manifest.txt";
 
     private static readonly Lazy<Manifest> Loaded = new(ReadManifest);
 
@@ -56,6 +60,41 @@ internal sealed class LandVerificationBuildGraph
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
     }
 
+    /// <summary>
+    /// Reads an <c>ls-tree -r -z</c> listing. False only when the listing is malformed.
+    /// <paramref name="digest"/> and <paramref name="count"/> are the selected build-graph rows.
+    /// </summary>
+    internal static bool TryReadGraph(string raw, out string digest, out int count)
+    {
+        digest = "";
+        count = 0;
+        if (!raw.EndsWith('\0') || raw.Contains('\uFFFD')) return false;
+        var graph = new LandVerificationBuildGraph();
+        var selected = new List<string>();
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in raw.Split('\0').SkipLast(1))
+        {
+            var tab = row.IndexOf('\t');
+            if (tab < 0) return false;
+            var metadata = row[..tab].Split(' ');
+            var path = row[(tab + 1)..];
+            if (metadata.Length != 3 || !GitObjectId.IsFull(metadata[2]) || !SafePath(path) || !paths.Add(path)) return false;
+            if (!((metadata[0] is "100644" or "100755" or "120000") && metadata[1] == "blob"
+                || metadata[0] == "160000" && metadata[1] == "commit")
+                || metadata[2].All(c => c == '0')) return false;
+            if (!graph.Includes(path)) continue;
+            if (metadata[0] is not ("100644" or "100755") || metadata[1] != "blob") return false;
+            selected.Add(row);
+        }
+        digest = FingerprintOf(selected);
+        count = selected.Count;
+        return true;
+    }
+
+    private static bool SafePath(string path) => path.Length > 0 && !path.Contains('\\')
+        && !path.Any(char.IsControl) && !path.Contains('\uFFFD')
+        && path.Split('/').All(component => component is not ("" or "." or ".."));
+
     private static Manifest ReadManifest()
     {
         try
@@ -63,7 +102,8 @@ internal sealed class LandVerificationBuildGraph
             using var stream = typeof(LandVerificationBuildGraph).Assembly.GetManifestResourceStream(ManifestResource);
             if (stream is null) return new(null, null);
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            return ParseManifest(reader.ReadToEnd());
+            var parsed = ParseManifest(reader.ReadToEnd());
+            return new(parsed.Digest, parsed.Count);
         }
         catch (Exception)
         {
@@ -78,23 +118,25 @@ internal sealed class LandVerificationBuildGraph
     internal static IDisposable UseManifestText(string text)
     {
         var previous = ScopedManifest.Value;
-        ScopedManifest.Value = ParseManifest(text);
+        var parsed = ParseManifest(text);
+        ScopedManifest.Value = new(parsed.Digest, parsed.Count);
         return new ManifestScope(previous);
     }
 
-    private static Manifest ParseManifest(string text)
+    /// <summary>Two lines: 64 uppercase hex, then a non-negative count. Malformed text is nulls, never a throw.</summary>
+    internal static (string? Digest, int? Count) ParseManifest(string text)
     {
         var normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var lines = normalized.Split('\n');
         if (lines.Length > 0 && lines[^1].Length == 0)
             lines = lines[..^1];
-        if (lines.Length != 2) return new(null, null);
+        if (lines.Length != 2) return (null, null);
         var digest = lines[0];
         if (digest.Length != 64 || !digest.All(static c => c is >= '0' and <= '9' or >= 'A' and <= 'F'))
-            return new(null, null);
+            return (null, null);
         if (!int.TryParse(lines[1], NumberStyles.None, CultureInfo.InvariantCulture, out var count) || count < 0)
-            return new(null, null);
-        return new(digest, count);
+            return (null, null);
+        return (digest, count);
     }
 
     private sealed class ManifestScope : IDisposable
