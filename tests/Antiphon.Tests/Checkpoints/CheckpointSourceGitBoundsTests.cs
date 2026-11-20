@@ -198,6 +198,11 @@ public sealed class CheckpointSourceGitBoundsTests : CheckpointTestBase
             "scripts", "lib", "checkpoint-source.ps1");
         start.Environment["C1233_HOST_ASSEMBLY"] = typeof(CheckpointProcessRunner).Assembly.Location;
         start.Environment["C1233_TOOL_ASSEMBLY"] = typeof(SourceSnapshot).Assembly.Location;
+        // pwsh does not read the tool's deps.json, so libgit2's native library is found on the loader path.
+        var native = Path.Combine(Path.GetDirectoryName(typeof(SourceSnapshot).Assembly.Location)!, "runtimes",
+            System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, "native");
+        start.Environment["LD_LIBRARY_PATH"] = native + (start.Environment.TryGetValue("LD_LIBRARY_PATH", out var loader)
+            && !string.IsNullOrEmpty(loader) ? ":" + loader : "");
         using var process = Process.Start(start)!;
         RegisterCheckpointChild(process);
         var wrapperIdentity = Identity(process.Id, nonce);
