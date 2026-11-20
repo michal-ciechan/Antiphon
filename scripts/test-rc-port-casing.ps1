@@ -8,10 +8,11 @@ $ErrorActionPreference = 'Stop'
 function Assert-RcCamelCase {
     param([string]$Label, $Value)
     $json = ConvertTo-Json -InputObject $Value -Depth 8 -Compress
-    if ($json -notmatch '"effectiveMode"') { throw ($Label + ' missing effectiveMode') }
-    if ($json -match '"EffectiveMode"') { throw ($Label + ' has EffectiveMode') }
-    if ($json -notmatch '"gateCredit":false') { throw ($Label + ' gateCredit') }
-    if ($json -notmatch '"effectiveMode":"Full"') { throw ($Label + ' effectiveMode') }
+    # -match is case-insensitive, so it cannot tell effectiveMode from EffectiveMode.
+    if ($json -cnotmatch '"effectiveMode"') { throw ($Label + ' missing effectiveMode') }
+    if ($json -cmatch '"EffectiveMode"') { throw ($Label + ' has EffectiveMode') }
+    if ($json -cnotmatch '"gateCredit":false') { throw ($Label + ' gateCredit') }
+    if ($json -cnotmatch '"effectiveMode":"Full"') { throw ($Label + ' effectiveMode') }
 }
 
 $seed = 'ab' * 32
