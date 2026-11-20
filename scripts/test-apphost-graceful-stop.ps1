@@ -11,6 +11,7 @@ param([string]$Case = '')
 
 $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
+. (Join-Path $here 'lib/apphost-fixture-closure.ps1')
 $script:passed = 0
 $script:failed = 0
 $script:failures = @()
@@ -42,14 +43,18 @@ function New-C716Repo {
 }
 
 function Install-C716Scripts {
-    param([string]$Root)
+    param(
+        [string]$Root,
+        [string]$SourceScripts = ''
+    )
+    if ([string]::IsNullOrWhiteSpace($SourceScripts)) { $SourceScripts = $here }
     $scripts = Join-Path $Root 'scripts'
     New-Item -ItemType Directory -Path $scripts -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Destination (Join-Path $scripts 'restart-apphost.ps1') -Force
-    Copy-Item -LiteralPath (Join-Path $here 'apphost-common.ps1') -Destination (Join-Path $scripts 'apphost-common.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $SourceScripts 'restart-apphost.ps1') -Destination (Join-Path $scripts 'restart-apphost.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $SourceScripts 'apphost-common.ps1') -Destination (Join-Path $scripts 'apphost-common.ps1') -Force
     $lib = Join-Path $scripts 'lib'
     New-Item -ItemType Directory -Path $lib -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $here 'lib/live-startup-timing.ps1') -Destination (Join-Path $lib 'live-startup-timing.ps1') -Force
+    Copy-Item -LiteralPath (Join-Path $SourceScripts 'lib/live-startup-timing.ps1') -Destination (Join-Path $lib 'live-startup-timing.ps1') -Force
     @(
         '# inert CARD-0716'
         'Write-Host "check-daemon-build inert"'
@@ -361,7 +366,8 @@ function Test-T7 {
     $files = @(
         (Join-Path $here 'restart-apphost.ps1'),
         (Join-Path $here 'apphost-common.ps1'),
-        (Join-Path $here 'test-apphost-graceful-stop.ps1')
+        (Join-Path $here 'test-apphost-graceful-stop.ps1'),
+        (Join-Path $here 'lib/apphost-fixture-closure.ps1')
     )
     $reasons = @()
     foreach ($f in $files) {
@@ -646,7 +652,69 @@ function Test-T8 {
     }
 }
 
-$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T12')
+function Test-T13 {
+    # The fixture must contain every literal dot-source of restart-apphost.ps1.
+    # At the hand-maintained copy this fails on lib/windows-phone-home-env.ps1.
+    $fx = $null
+    try {
+        $closure = @(Get-AppHostDotSourceClosure -ScriptsRoot $here -EntryRelative 'restart-apphost.ps1')
+        $joined = ($closure -join "`n")
+        if ($joined -notmatch '(?m)^lib/windows-phone-home-env\.ps1$') {
+            Write-Fail 'T-13' ('parser missed lib/windows-phone-home-env.ps1; closure=' + ($closure -join ', '))
+            return
+        }
+        $fx = New-C716Fixture -Config @{ gracefulClass = 'unreachable' }
+        $missing = @()
+        foreach ($rel in $closure) {
+            $dst = Join-Path (Join-Path $fx.Root 'scripts') ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $dst -PathType Leaf)) { $missing += $rel }
+        }
+        if ($missing.Count -eq 0) { Write-Pass 'T-13' }
+        else { Write-Fail 'T-13' ('fixture missing ' + ($missing -join ', ')) }
+    } catch {
+        Write-Fail 'T-13' $_.Exception.Message
+    } finally {
+        Remove-C716Fixture $fx
+    }
+}
+
+function Test-T14 {
+    # A synthetic new dot-source, and a file that synthetic file itself dot-sources,
+    # must land in the fixture. The hand list cannot see either name.
+    $source = Join-Path ([System.IO.Path]::GetTempPath()) ('c716-syn-' + [guid]::NewGuid().ToString('N'))
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ('c716-syn-dst-' + [guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path (Join-Path $source 'lib') -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path $here 'restart-apphost.ps1') -Destination (Join-Path $source 'restart-apphost.ps1') -Force
+        Copy-Item -LiteralPath (Join-Path $here 'apphost-common.ps1') -Destination (Join-Path $source 'apphost-common.ps1') -Force
+        Copy-Item -LiteralPath (Join-Path $here 'lib/live-startup-timing.ps1') -Destination (Join-Path $source 'lib/live-startup-timing.ps1') -Force
+        $phone = Join-Path $here 'lib/windows-phone-home-env.ps1'
+        if (Test-Path -LiteralPath $phone) {
+            Copy-Item -LiteralPath $phone -Destination (Join-Path $source 'lib/windows-phone-home-env.ps1') -Force
+        }
+        $entryPath = Join-Path $source 'restart-apphost.ps1'
+        $entryText = [System.IO.File]::ReadAllText($entryPath)
+        if (-not $entryText.EndsWith("`n")) { $entryText += "`n" }
+        $entryText += '. (Join-Path $PSScriptRoot ''lib/c716-synthetic-lib.ps1'')' + "`n"
+        [System.IO.File]::WriteAllText($entryPath, $entryText)
+        Set-Content -LiteralPath (Join-Path $source 'lib/c716-synthetic-lib.ps1') -Value '. (Join-Path $PSScriptRoot ''lib/c716-synthetic-nested.ps1'')' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $source 'lib/c716-synthetic-nested.ps1') -Value '# c716 synthetic nested' -Encoding ASCII
+        New-C716Repo -Path $root
+        Install-C716Scripts -Root $root -SourceScripts $source
+        $scripts = Join-Path $root 'scripts'
+        $leaf = Test-Path -LiteralPath (Join-Path $scripts 'lib/c716-synthetic-lib.ps1') -PathType Leaf
+        $nested = Test-Path -LiteralPath (Join-Path $scripts 'lib/c716-synthetic-nested.ps1') -PathType Leaf
+        if ($leaf -and $nested) { Write-Pass 'T-14' }
+        else { Write-Fail 'T-14' ('leaf=' + $leaf + ' nested=' + $nested) }
+    } catch {
+        Write-Fail 'T-14' $_.Exception.Message
+    } finally {
+        if (Test-Path -LiteralPath $source) { Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+$all = @('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T12', 'T13', 'T14')
 if ($Case) {
     $name = $Case
     if ($name -match '^T-([0-9]+)$') { $name = 'T' + $Matches[1] }
