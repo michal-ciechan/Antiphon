@@ -6,16 +6,18 @@ namespace Antiphon.Checkpoints;
 
 /// <summary>
 /// The human-readable git.txt a run keeps beside its evidence (HEAD, branch, status, recent log, and the diff stat
-/// against origin/master), and the branch a run registers under. Read in process with libgit2 (no git child) for
-/// a checkout libgit2 opens at its root; git answers anything else (a subdirectory, a layout libgit2 does not open,
-/// libgit2 not loadable). The diagnostics are git's in substance, not byte for byte (status codes and the diff stat
-/// are libgit2's view); the branch is exactly what `git rev-parse --abbrev-ref HEAD` prints.
+/// against origin/master), and the branch a run registers under. HEAD, branch, log, merge base and diff stat are read
+/// in process with libgit2 for a checkout libgit2 opens at its root; the status stays one `git status --porcelain`
+/// child (libgit2 here does not read the user's or system config, which can change what status shows, such as
+/// core.autocrlf or an ignore file). git answers everything for anything else: a subdirectory, an unusual layout, an
+/// unborn or broken HEAD, an ambiguous branch name, libgit2 not loadable, any error. Log and diff stat are git's in
+/// substance, not byte for byte; the branch is exactly what `git rev-parse --abbrev-ref HEAD` prints.
 /// </summary>
 public static class GitSnapshot
 {
     public static string Capture(string worktree)
     {
-        if (InProcess(worktree, CaptureWith) is { } captured)
+        if (CaptureInProcess(worktree) is { } captured)
             return captured;
         var text = new StringBuilder();
         text.AppendLine("HEAD=" + Run(worktree, "rev-parse", "HEAD"));
@@ -36,12 +38,14 @@ public static class GitSnapshot
 
     /// <summary>`git rev-parse --abbrev-ref HEAD`: the branch name, or HEAD when detached.</summary>
     public static string Branch(string worktree) =>
-        InProcess(worktree, repo => repo.Info.IsHeadUnborn ? null : repo.Info.IsHeadDetached ? "HEAD" : repo.Head.FriendlyName)
-        ?? Run(worktree, "rev-parse", "--abbrev-ref", "HEAD");
+        InProcess(worktree, BranchOf) ?? Run(worktree, "rev-parse", "--abbrev-ref", "HEAD");
 
     /// <summary>`git rev-parse HEAD`.</summary>
     public static string Head(string worktree) =>
         InProcess(worktree, repo => repo.Head.Tip?.Sha) ?? Run(worktree, "rev-parse", "HEAD");
+
+    /// <summary>The snapshot read in process, or null when git must answer (see the class summary).</summary>
+    internal static string? CaptureInProcess(string worktree) => InProcess(worktree, repo => CaptureWith(repo, worktree));
 
     private static string? InProcess(string worktree, Func<Repository, string?> read)
     {
@@ -54,64 +58,57 @@ public static class GitSnapshot
                 || !string.Equals(Path.GetFullPath(repo.Info.WorkingDirectory).TrimEnd('\\', '/'),
                     Path.GetFullPath(worktree).TrimEnd('\\', '/'),
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                || Antiphon.GitInProcess.InProcessGitReads.Unusual(repo))
+                || Antiphon.GitInProcess.InProcessGitReads.Unusual(repo)
+                || repo.Info.IsHeadUnborn || repo.Head.Tip is null)
                 return null;
             return read(repo);
         }
-        catch (Exception ex) when (ex is LibGit2SharpException or IOException or UnauthorizedAccessException
-                                       || ToolLibGit2.IsNativeUnavailable(ex))
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
         {
+            // Any failure (a missing object, an odd path, libgit2 not loadable): git answers, as before.
             return null;
         }
     }
 
-    private static string? CaptureWith(Repository repo)
+    // git prints refs/heads/<name> shortened as far as it stays unambiguous: "heads/<name>" when a ref of that
+    // short name exists elsewhere. Such a name is git's to print.
+    private static string? BranchOf(Repository repo)
     {
-        if (repo.Info.IsHeadUnborn) return null; // git's own messages for an empty repository
+        if (repo.Info.IsHeadDetached) return "HEAD";
+        var name = repo.Head.FriendlyName;
+        foreach (var other in new[] { "refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
+            if (repo.Refs[other] is not null) return null;
+        return name;
+    }
+
+    private static string? CaptureWith(Repository repo, string worktree)
+    {
         var head = repo.Head.Tip;
+        if (BranchOf(repo) is not { } branch) return null;
         var text = new StringBuilder();
         text.AppendLine("HEAD=" + head.Sha);
-        text.AppendLine("branch=" + (repo.Info.IsHeadDetached ? "HEAD" : repo.Head.FriendlyName));
+        text.AppendLine("branch=" + branch);
         text.AppendLine("status:");
-        var status = new StringBuilder();
-        foreach (var entry in repo.RetrieveStatus(new StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = false, IncludeIgnored = false }))
-        {
-            if (entry.State is FileStatus.Unaltered or FileStatus.Ignored) continue;
-            if (status.Length > 0) status.Append('\n');
-            status.Append(Code(entry.State)).Append(' ').Append(entry.FilePath.Replace('\\', '/'));
-        }
-        text.AppendLine(status.ToString());
+        text.AppendLine(Run(worktree, "status", "--porcelain"));
         text.AppendLine("log:");
-        text.AppendLine(string.Join('\n', repo.Commits.Take(5).Select(commit => commit.Sha[..7] + " " + commit.MessageShort)));
+        text.AppendLine(string.Join('\n', repo.Commits.Take(5).Select(commit =>
+            repo.ObjectDatabase.ShortenObjectId(commit) + " " + commit.MessageShort)));
         var upstream = repo.Branches["origin/master"]?.Tip;
         var mergeBase = upstream is null ? null : repo.ObjectDatabase.FindMergeBase(upstream, head);
         if (mergeBase is not null)
         {
             text.AppendLine("diffstat:");
-            var stats = repo.Diff.Compare<PatchStats>(mergeBase.Tree, head.Tree);
+            var stats = repo.Diff.Compare<PatchStats>(mergeBase.Tree, head.Tree,
+                new CompareOptions { Similarity = SimilarityOptions.Renames });
             var lines = stats.Select(file => " " + file.Path.Replace('\\', '/') + " | " + (file.LinesAdded + file.LinesDeleted)).ToList();
-            lines.Add($" {lines.Count} files changed, {stats.TotalLinesAdded} insertions(+), {stats.TotalLinesDeleted} deletions(-)");
+            if (lines.Count > 0)
+                lines.Add(" " + lines.Count + (lines.Count == 1 ? " file changed" : " files changed")
+                    + (stats.TotalLinesAdded > 0 ? ", " + stats.TotalLinesAdded + (stats.TotalLinesAdded == 1 ? " insertion(+)" : " insertions(+)") : "")
+                    + (stats.TotalLinesDeleted > 0 ? ", " + stats.TotalLinesDeleted + (stats.TotalLinesDeleted == 1 ? " deletion(-)" : " deletions(-)") : ""));
             text.AppendLine(string.Join('\n', lines));
         }
 
         return text.ToString();
-    }
-
-    // Porcelain v1's two columns (index, work tree) as libgit2 sees them.
-    private static string Code(FileStatus state)
-    {
-        if (state.HasFlag(FileStatus.Conflicted)) return "UU";
-        if (state == FileStatus.NewInWorkdir) return "??";
-        var index = state.HasFlag(FileStatus.NewInIndex) ? 'A'
-            : state.HasFlag(FileStatus.ModifiedInIndex) ? 'M'
-            : state.HasFlag(FileStatus.DeletedFromIndex) ? 'D'
-            : state.HasFlag(FileStatus.RenamedInIndex) ? 'R'
-            : state.HasFlag(FileStatus.TypeChangeInIndex) ? 'T' : ' ';
-        var work = state.HasFlag(FileStatus.ModifiedInWorkdir) ? 'M'
-            : state.HasFlag(FileStatus.DeletedFromWorkdir) ? 'D'
-            : state.HasFlag(FileStatus.RenamedInWorkdir) ? 'R'
-            : state.HasFlag(FileStatus.TypeChangeInWorkdir) ? 'T' : ' ';
-        return new string([index, work]);
     }
 
     public static string Run(string worktree, params string[] args)

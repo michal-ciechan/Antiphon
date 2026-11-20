@@ -143,6 +143,7 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(root, "loose.txt"), "new\n");
         var head = CheckpointFixtureProcess.Git(root, "rev-parse", "HEAD").Trim();
 
+        GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("this checkout is read in process");
         var text = GitSnapshot.Capture(root);
         text.ShouldContain("HEAD=" + head);
         text.ShouldContain("branch=snap");
@@ -152,11 +153,18 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         GitSnapshot.Head(root).ShouldBe(head);
         GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
 
+        // A branch name a tag also carries: git prints heads/<name>, and so does the snapshot (git answers it).
+        CheckpointFixtureProcess.Git(root, "tag", "snap");
+        GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+        GitSnapshot.Capture(root).ShouldContain("branch=" + CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+        CheckpointFixtureProcess.Git(root, "tag", "-d", "snap");
+
         // Detached: git prints HEAD for the branch.
         CheckpointFixtureProcess.Git(root, "checkout", "-q", "--detach");
         GitSnapshot.Branch(root).ShouldBe("HEAD");
         GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
         GitSnapshot.Capture(root).ShouldContain("branch=HEAD");
+        GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("a detached checkout is read in process too");
     }
 
     private static ReportModel Model(string dir, int exit) => new()
