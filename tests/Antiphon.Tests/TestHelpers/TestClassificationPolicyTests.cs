@@ -362,6 +362,138 @@ public sealed class TestClassificationPolicyTests
         }
     }
 
+    // The stable root must stay out of OwnedTempRoot. A process-exit release that tracks it
+    // deletes every sibling, including another process's live probe.
+    [Test]
+    public async Task C487_probe_release_leaves_fresh_foreign_siblings()
+    {
+        if (string.Equals(Environment.GetEnvironmentVariable("C487_RELEASE_WITNESS_CHILD"), "1", StringComparison.Ordinal))
+        {
+            ReleaseFreshForeignSiblings();
+            return;
+        }
+
+        var scratch = Directory.CreateDirectory(Path.Combine(
+            Path.GetTempPath(), "c487-release-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var child = await RunReleaseWitnessChildAsync(scratch);
+            child.ExitCode.ShouldBe(0, child.Output);
+            AssertFreshForeignSiblings(scratch);
+        }
+        finally
+        {
+            if (Directory.Exists(scratch))
+                StartRefGit.DeleteDirectory(scratch);
+        }
+    }
+
+    [Test]
+    public void C487_probe_stale_sweep_skips_a_probe_named_reparse_point()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "c487-reparse-" + Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(Path.GetTempPath(), "c487-reparse-target-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(target);
+        var marker = Path.Combine(target, "keep.txt");
+        File.WriteAllText(marker, "keep\n");
+        var link = Path.Combine(root, "c487-probe-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateSymbolicLink(link, target);
+        try
+        {
+            File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
+            Directory.SetLastWriteTimeUtc(link, DateTime.UtcNow.AddHours(-25));
+            SweepStaleProbeDirectories(root, DateTimeOffset.UtcNow);
+            Directory.Exists(Path.GetFullPath(link)).ShouldBeTrue("probe-named reparse point must survive the stale sweep");
+            File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue();
+            File.ReadAllText(Path.GetFullPath(marker)).Replace("\r\n", "\n").ShouldBe("keep\n");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                StartRefGit.DeleteDirectory(root);
+            if (Directory.Exists(target))
+                StartRefGit.DeleteDirectory(target);
+        }
+    }
+
+    private static void ReleaseFreshForeignSiblings()
+    {
+        var scratch = Environment.GetEnvironmentVariable("TMPDIR");
+        if (string.IsNullOrEmpty(scratch))
+            throw new InvalidOperationException("release witness child requires TMPDIR");
+        SameDirectory(Path.GetTempPath(), scratch).ShouldBeTrue(
+            "GetTempPath must be the scratch TMPDIR before release");
+        var root = ProbeOwnedRoot();
+        SameDirectory(Path.GetDirectoryName(root)!, scratch).ShouldBeTrue();
+        var fresh = Path.Combine(root, "c487-probe-" + Guid.NewGuid().ToString("N"));
+        var nearMiss = Path.Combine(root, "c487-probe-" + new string('A', 32));
+        var unrelated = Path.Combine(root, "unrelated");
+        Directory.CreateDirectory(fresh);
+        Directory.CreateDirectory(nearMiss);
+        Directory.CreateDirectory(unrelated);
+        File.WriteAllText(Path.Combine(fresh, "live.txt"), "fresh\n");
+        File.WriteAllText(Path.Combine(nearMiss, "live.txt"), "near\n");
+        File.WriteAllText(Path.Combine(unrelated, "o.txt"), "other\n");
+        OwnedTempRoot.ReleaseAll();
+        AssertFreshForeignSiblings(scratch);
+    }
+
+    private static void AssertFreshForeignSiblings(string scratch)
+    {
+        var root = Path.GetFullPath(Path.Combine(scratch, OwnedTempRoot.OwnedPrefix + ProbeOwnedLeaf));
+        Directory.Exists(root).ShouldBeTrue("owned root must survive release");
+        var fresh = Directory.EnumerateDirectories(root)
+            .Select(NormalizeDirectory)
+            .Where(path => IsExactProbeDirectoryName(Path.GetFileName(path)))
+            .ToArray();
+        fresh.Length.ShouldBe(1, "a fresh c487-probe sibling must survive release");
+        var nearMiss = Path.GetFullPath(Path.Combine(root, "c487-probe-" + new string('A', 32)));
+        var unrelated = Path.GetFullPath(Path.Combine(root, "unrelated"));
+        Directory.Exists(nearMiss).ShouldBeTrue("uppercase near-miss must survive release");
+        Directory.Exists(unrelated).ShouldBeTrue("unrelated sibling must survive release");
+        File.ReadAllText(Path.Combine(fresh[0], "live.txt")).Replace("\r\n", "\n").ShouldBe("fresh\n");
+        File.ReadAllText(Path.Combine(nearMiss, "live.txt")).Replace("\r\n", "\n").ShouldBe("near\n");
+        File.ReadAllText(Path.Combine(unrelated, "o.txt")).Replace("\r\n", "\n").ShouldBe("other\n");
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunReleaseWitnessChildAsync(string scratch)
+    {
+        var assembly = typeof(TestClassificationPolicyTests).Assembly.Location;
+        var start = new ProcessStartInfo("dotnet")
+        {
+            WorkingDirectory = scratch,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("exec");
+        start.ArgumentList.Add(assembly);
+        start.ArgumentList.Add("--treenode-filter");
+        start.ArgumentList.Add("/*/*/TestClassificationPolicyTests/C487_probe_release_leaves_fresh_foreign_siblings");
+        start.ArgumentList.Add("--no-ansi");
+        start.Environment["TMPDIR"] = scratch;
+        start.Environment["TMP"] = scratch;
+        start.Environment["TEMP"] = scratch;
+        start.Environment["C487_RELEASE_WITNESS_CHILD"] = "1";
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet exec did not start.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            throw new TimeoutException("c487 release witness child exceeded 5 minutes");
+        }
+
+        return (process.ExitCode, await stdout + await stderr);
+    }
+
     [Test]
     [Arguments("inherits")]
     [Arguments("no-inherits")]
