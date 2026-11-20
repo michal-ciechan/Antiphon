@@ -761,7 +761,8 @@ public sealed class RunCheckpointSourceScriptTests
             // the repository or its objects (a hook's GIT_DIR, a quarantine's GIT_OBJECT_DIRECTORY) or injects `git -c`
             // config passes. Config isolation the host sets (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM) is kept.
             string[] redirects = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
-                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE",
+                "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
             foreach (var name in process.StartInfo.Environment.Keys.Where(key =>
                          redirects.Contains(key, StringComparer.OrdinalIgnoreCase)
                          || key.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase)
@@ -783,8 +784,10 @@ public sealed class RunCheckpointSourceScriptTests
                 // Killed, tree and all, then reported with what it printed; the wait for that is bounded too.
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 var drained = Task.WhenAll(process.WaitForExitAsync(), stdout, stderr);
-                var output = await Task.WhenAny(drained, Task.Delay(TimeSpan.FromSeconds(10))) == drained
-                    ? stdout.Result + stderr.Result : "(output not drained within 10 s of the kill)";
+                _ = drained.ContinueWith(task => task.Exception, TaskScheduler.Default); // observed, whatever wins
+                await Task.WhenAny(drained, Task.Delay(TimeSpan.FromSeconds(10)));
+                var output = (stdout.IsCompletedSuccessfully ? stdout.Result : "(stdout not drained)")
+                    + (stderr.IsCompletedSuccessfully ? stderr.Result : "(stderr not drained)");
                 throw new TimeoutException($"{file} {string.Join(' ', args)} exceeded 90 s ({clock.Elapsed.TotalSeconds:F0} s):\n{output}");
             }
             return (process.ExitCode, await stdout + await stderr);
