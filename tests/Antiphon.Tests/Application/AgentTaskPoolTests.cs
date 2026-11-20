@@ -1183,6 +1183,83 @@ public class AgentTaskPoolTests
     }
 
     [Test]
+    public async Task a_busy_pinned_alias_task_waits_for_its_pool_delegate()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.High, idleMinutes: 0,
+            kind: AgentKind.Codex, connectionString: cs);
+        await using (var db = CreateContext(cs))
+        {
+            var agent = await db.Agents.SingleAsync(a => a.Id == agentId);
+            agent.Status = AgentStatus.Running;
+            agent.PoolIdleSince = null;
+            await db.SaveChangesAsync();
+        }
+
+        var alias = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.High, pinnedAgentId: agentId,
+            kind: AgentKind.Codex, connectionString: cs, requestedModelAlias: ModelAlias.Gpt62Astra);
+
+        (await dispatcher.TryReuseWarmAgentAsync(alias, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent,
+                "a busy pinned pool delegate is waited for; an alias must not open a second session on that row");
+        alias.AgentId.ShouldBe(agentId);
+        alias.AgentSessionId.ShouldBeNull();
+        alias.Status.ShouldBe(AgentTaskStatus.Queued);
+        await using var verify = CreateContext(cs);
+        var pinned = await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agentId);
+        pinned.Status.ShouldBe(AgentStatus.Running);
+        pinned.PersistentSessionId.ShouldBe(sessionId.ToString("D"));
+        (await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
+    public async Task a_ladder_task_pinned_to_alias_history_spawns_fresh()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        using var workspace = new TempWorkspace();
+        var cs = schema.ConnectionString;
+        var (dispatcher, _, provider) = CreateHarness(connectionString: cs);
+        await using var ownedProvider = provider;
+        var (agentId, sessionId) = await SeedWarmAgentAsync(
+            workspace.Path, AgentModelLevel.Frontier, idleMinutes: 10,
+            kind: AgentKind.Codex, connectionString: cs);
+        await SeedTaskOnDelegateAsync(
+            cs, agentId, sessionId, workspace.Path, AgentTaskStatus.Succeeded,
+            DateTime.UtcNow.AddMinutes(-30), kind: AgentKind.Codex,
+            level: AgentModelLevel.Frontier, requestedModelAlias: ModelAlias.Gpt62Astra);
+        var ladder = await SeedQueuedTaskAsync(
+            workspace.Path, AgentModelLevel.Frontier, pinnedAgentId: agentId,
+            kind: AgentKind.Codex, connectionString: cs);
+        ladder.Role = AgentTaskRole.Review;
+        await using (var db = CreateContext(cs))
+        {
+            var row = await db.AgentTasks.SingleAsync(t => t.Id == ladder.Id);
+            row.Role = AgentTaskRole.Review;
+            await db.SaveChangesAsync();
+        }
+
+        (await dispatcher.TryReuseWarmAgentAsync(ladder, DateTime.UtcNow, CancellationToken.None))
+            .ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh,
+                "a Frontier Review pinned to a row that already ran an alias must not inherit that process");
+        ladder.AgentId.ShouldBe(agentId, "the pin stays; the spawn path relaunches this row");
+        ladder.AgentSessionId.ShouldNotBe(sessionId);
+        ladder.AgentSessionId.ShouldBeNull();
+        ladder.Status.ShouldBe(AgentTaskStatus.Queued);
+        await using var verify = CreateContext(cs);
+        (await verify.Agents.AsNoTracking().SingleAsync(a => a.Id == agentId)).Status
+            .ShouldBe(AgentStatus.Idle);
+        (await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == sessionId)).Status
+            .ShouldBe(SessionStatus.Running);
+    }
+
+    [Test]
     public async Task the_release_sweep_kills_a_running_worktree_delegate_with_no_open_task()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
