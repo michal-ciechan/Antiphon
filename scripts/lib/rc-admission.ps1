@@ -3,9 +3,8 @@
 # graph and its COMPLETE executed algorithm closure have separately been admitted.
 . (Join-Path $PSScriptRoot 'rc-chunk-digest.ps1')
 . (Join-Path $PSScriptRoot 'rc-historical-evidence.ps1')
-# The forced-Full policy is compiled (Antiphon.Nightly.RcForcedFull).
+# The forced-Full policy and the ledger are compiled (Antiphon.Nightly.RcForcedFull, RcLedger).
 if (-not $script:NightlyCoreAvailable) { . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable }
-. (Join-Path $PSScriptRoot 'rc-ledger.ps1')
 
 function Get-RcAdmissionAlgorithmCoverage {
     param([string[]]$CoveredPaths=@('scripts/impacted-classes.ps1','scripts/lib/release-impact.ps1'))

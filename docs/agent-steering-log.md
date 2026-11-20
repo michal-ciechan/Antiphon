@@ -366,6 +366,29 @@ If they all use pwsh, port the code and make the entry script load and require t
 
 ---
 
+## 2026-11-20 - Ported code is plain C# tested in C#, not C# called from test scripts
+
+**What the agent did:** It ported `rc-forced-full.ps1`, the release manifest and publication gate, and
+`rc-ledger.ps1` to C# written against PowerShell's object types (`PSObject`, `LanguagePrimitives`). It kept their
+tests as `test-*.ps1` scripts launched by `ScriptHarness`, and edited those scripts to unwrap the "Exception
+calling..." text that C# exceptions carry inside pwsh. It also left `rc-ledger-stamp-duration.ps1` as a ps1 entry
+script, and began rewriting `test-rc-boundary.ps1` the same way.
+
+**Why the agent picked it:** The test scripts already held the cases and the PowerShell-to-C# differential checks,
+so redirecting their calls looked like the shortest path to a green run.
+
+**What the owner preferred:** "Why is PowerShell still a reference? Shouldn't these be C# by now?" This repeats the
+2026-11-19 rule (no test launches a ps1; ported slices move their cases into in-process C# tests and delete the
+script cases) and the 2026-11-20 choice of plain C# types.
+
+**Principle:** A port is not done while PowerShell is still its caller or its test. Moving the logic but keeping
+pwsh as the harness preserves the layer the port exists to remove.
+
+**Candidate guidance:** "When a slice is ported, write it in plain C# types, move its test cases into C# tests that
+call it in-process, make its entry script a CLI subcommand, and delete the ps1 files in the same change."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the

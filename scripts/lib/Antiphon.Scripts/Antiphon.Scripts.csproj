@@ -16,5 +16,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../CheckpointProcessRunner.cs" Link="CheckpointProcessRunner.cs" />
+    <!-- Self-contained plain C#: the rc ledger (rc-ledger-stamp). -->
+    <Compile Include="../Antiphon.Nightly/RcLedger.cs" Link="RcLedger.cs" />
   </ItemGroup>
 </Project>

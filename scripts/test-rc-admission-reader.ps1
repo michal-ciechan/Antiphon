@@ -104,7 +104,7 @@ switch ($Case) {
         Require ($LASTEXITCODE -eq 0) 'import-exit'
         $report=Get-Content -Raw -LiteralPath (Join-Path $destination 'admission-report.json') | ConvertFrom-Json
         Require ($report.admitted -eq 0 -and $report.dirty -eq 1 -and $report.forceFull -and -not $report.gateCredit) 'import-full'
-        $ledger=Read-RcLedger (Join-Path $destination 'shards/antiphon.json')
+        $ledger=[Antiphon.Nightly.RcLedger]::Read((Join-Path $destination 'shards/antiphon.json'))
         Require ($ledger.identities.Count -eq 1 -and $ledger.identities[0].outcome -ceq 'unproven') 's1-unproven'
     }
     default { throw 'unknown reader case' }
