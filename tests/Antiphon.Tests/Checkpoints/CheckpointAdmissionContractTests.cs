@@ -129,20 +129,27 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
     public void Repository_found_from_its_files_names_what_rev_parse_names(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        string[] Git(string directory)
+        // A temp path through a link is declined by design (git climbs the real path): nothing to compare there.
+        for (var up = new DirectoryInfo(TempDir()); up != null; up = up.Parent)
+            if ((up.Attributes & FileAttributes.ReparsePoint) != 0)
+                Skip.Test("the temp directory's path holds a link");
+        // The same directory, whatever its spelling (git prints the long, real path; a short 8.3 name or another
+        // spelling of the same folder still agrees): a marker written through one is seen through the other.
+        static void SameDirectory(string mine, string git, string label)
         {
-            var lines = CheckpointFixtureProcess.Git(directory, "rev-parse", "--show-toplevel", "--absolute-git-dir")
-                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            return [Path.GetFullPath(lines[0]).TrimEnd('\\', '/'), Path.GetFullPath(lines[1]).TrimEnd('\\', '/')];
+            var marker = ".same-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(Path.Combine(mine, marker), "");
+            try { File.Exists(Path.Combine(git, marker)).ShouldBeTrue(label + ": " + mine + " vs " + git); }
+            finally { File.Delete(Path.Combine(mine, marker)); }
         }
         void Agrees(string directory, string label)
         {
             var found = CheckpointProcessRunner.FindRepository(directory);
             found.ShouldNotBeNull(label);
-            var expected = Git(directory);
-            string.Equals(Path.GetFullPath(found[0]).TrimEnd('\\', '/'), expected[0], comparison).ShouldBeTrue(label + " top level: " + found[0] + " vs " + expected[0]);
-            string.Equals(Path.GetFullPath(found[1]).TrimEnd('\\', '/'), expected[1], comparison).ShouldBeTrue(label + " git dir: " + found[1] + " vs " + expected[1]);
+            var lines = CheckpointFixtureProcess.Git(directory, "rev-parse", "--show-toplevel", "--absolute-git-dir")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            SameDirectory(found[0], lines[0], label + " top level");
+            SameDirectory(found[1], lines[1], label + " git dir");
         }
 
         var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
@@ -152,7 +159,8 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
         Agrees(root, "checkout root");
         var sub = Directory.CreateDirectory(Path.Combine(root, "sub", "deeper")).FullName;
-        Agrees(sub, "subdirectory");
+        if (OperatingSystem.IsWindows()) Agrees(sub, "subdirectory");
+        else CheckpointProcessRunner.FindRepository(sub).ShouldBeNull("off Windows git stops at filesystem boundaries the files cannot show");
 
         // A linked worktree: a .git file naming its git dir under the main repository's worktrees/.
         var linked = Path.Combine(TempDir(), "linked");
@@ -170,6 +178,19 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         CheckpointProcessRunner.FindRepository(root).ShouldBeNull("core.worktree moves the top level");
         CheckpointFixtureProcess.Git(root, "config", "--unset", "core.worktree");
         Agrees(root, "after core.worktree is unset");
+
+        // A valueless "bare" line is true to git: no work tree to name.
+        var config = Path.Combine(root, ".git", "config");
+        var original = File.ReadAllText(config);
+        File.WriteAllText(config, original + "[core]\n\tbare\n");
+        CheckpointProcessRunner.FindRepository(root).ShouldBeNull("a valueless bare line");
+        File.WriteAllText(config, original);
+        Agrees(root, "after the bare line is gone");
+
+        // A .git file git's read_gitfile would reject ("gitdir:" with no space) is git's to report.
+        var odd = Directory.CreateDirectory(Path.Combine(TempDir(), "odd")).FullName;
+        File.WriteAllText(Path.Combine(odd, ".git"), "gitdir:" + Path.Combine(root, ".git") + "\n");
+        CheckpointProcessRunner.FindRepository(odd).ShouldBeNull("gitdir: without its space");
     }
 
     [Test]

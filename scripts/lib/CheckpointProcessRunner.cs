@@ -312,9 +312,11 @@ namespace Antiphon.Checkpoints
                 }
                 if (File.Exists(dotGit))
                 {
-                    var pointer = File.ReadAllText(dotGit).Trim();
-                    if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return null;
-                    var target = pointer.Substring("gitdir:".Length).Trim();
+                    // Exactly git's gitfile form (read_gitfile): one "gitdir: <path>" line; anything else is git's.
+                    var pointer = File.ReadAllText(dotGit).TrimEnd('\r', '\n');
+                    if (!pointer.StartsWith("gitdir: ", StringComparison.Ordinal) || pointer.IndexOfAny(new[] { '\r', '\n' }) >= 0) return null;
+                    var target = pointer.Substring("gitdir: ".Length);
+                    if (target.Length == 0) return null;
                     if (HasParentSegment(target)) return null;
                     gitDir = Path.GetFullPath(Path.Combine(here, target));
                     if (AnyLinkOnPath(gitDir) || !LooksLikeGitDir(gitDir)) return null;
@@ -341,8 +343,24 @@ namespace Antiphon.Checkpoints
             return new RepositoryFiles { GitDir = gitDir, TopLevel = top, ConfigFiles = files };
         }
 
-        private static readonly System.Text.RegularExpressions.Regex BareSetting = new System.Text.RegularExpressions.Regex(
-            @"bare\s*=\s*(true|yes|on|1)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        // A "bare" line in config whose value is not false (a valueless "bare" is true, as are quoted and numeric
+        // forms git accepts): the repository has no work tree to name.
+        private static readonly System.Text.RegularExpressions.Regex BareLine = new System.Text.RegularExpressions.Regex(
+            @"^\s*bare\s*(?:=\s*(?<value>[^;#\r\n]*))?\s*(?:[;#].*)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static bool SaysBare(string config)
+        {
+            foreach (System.Text.RegularExpressions.Match line in BareLine.Matches(config))
+            {
+                var value = line.Groups["value"].Value.Trim().Trim('"').Trim();
+                if (!(value.Equals("false", StringComparison.OrdinalIgnoreCase) || value.Equals("no", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("off", StringComparison.OrdinalIgnoreCase) || value == "0"))
+                    return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// [top level, absolute git dir] for this directory as `git rev-parse --show-toplevel --absolute-git-dir`
@@ -350,8 +368,9 @@ namespace Antiphon.Checkpoints
         /// files with no git child. Null when git must answer: a variable that moves git's repository or discovery
         /// (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, GIT_CEILING_DIRECTORIES, GIT_DISCOVERY_ACROSS_FILESYSTEM), a ".."
         /// in the path, any doubt FindRepositoryFiles has, a git dir with no work tree (bare, or a directory inside
-        /// .git), or config that mentions a work tree or a bare setting (core.worktree, extensions.worktreeConfig,
-        /// core.bare true). git rejects a repository it does not trust (safe.directory) at its next read, as here.
+        /// .git), config that mentions a work tree or a bare setting (core.worktree, extensions.worktreeConfig,
+        /// core.bare not false), or, off Windows, a start below its top level (git stops at filesystem boundaries
+        /// the files cannot show). git rejects a repository it does not trust (safe.directory) at its next read.
         /// </summary>
         public static string[] FindRepository(string start)
         {
@@ -360,14 +379,20 @@ namespace Antiphon.Checkpoints
                 foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
                     if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name))) return null;
                 if (string.IsNullOrEmpty(start) || HasParentSegment(start)) return null;
-                var found = FindRepositoryFiles(Path.GetFullPath(start));
+                var full = Path.GetFullPath(start);
+                var found = FindRepositoryFiles(full);
                 if (found == null || found.TopLevel == null) return null;
+                // Off Windows git stops climbing at a filesystem boundary (no GIT_DISCOVERY_ACROSS_FILESYSTEM), which
+                // these files cannot see: there, only a directory that is itself the top level is answered. On
+                // Windows a mounted folder is a reparse point, already declined.
+                if (!OperatingSystem.IsWindows()
+                    && !string.Equals(found.TopLevel.TrimEnd('/'), full.TrimEnd('/'), StringComparison.Ordinal)) return null;
                 foreach (var file in found.ConfigFiles)
                 {
                     if (Directory.Exists(file)) return null;
                     if (!File.Exists(file)) continue;
                     var text = File.ReadAllText(file);
-                    if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0 || BareSetting.IsMatch(text)) return null;
+                    if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
                 }
                 return new[] { found.TopLevel, found.GitDir };
             }

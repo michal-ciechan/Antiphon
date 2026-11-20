@@ -64,8 +64,10 @@ function Get-CheckpointSourceOnce {
     [byte[]]$status = Get-CheckpointGitBytes $Repository @('status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--ignore-submodules=none', '--no-renames')
     # Porcelain omits worktree edits hidden by index flags. Refuse to
     # certify any such index until its working content has been verified.
-    # A plain version-2 index in the git dir git reported answers from the file (git status just accepted this
-    # repository; that index can carry only the assume-unchanged flag); anything else asks ls-files -v
+    # A plain version-2 index in the snapshot's git dir answers from the file (git status just accepted this
+    # repository; that index can carry only the assume-unchanged flag). That git dir is git's own rev-parse answer,
+    # or FindRepository's from the same files git's discovery reads, which declines core.worktree (the case where
+    # git would read another index) and every layout it cannot settle as git does. Anything else asks ls-files -v
     # (CheckpointIndexPaths.AnyHiddenEntry), as does a session holding an older type without that method.
     $hidden = $null
     $indexPaths = 'Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]

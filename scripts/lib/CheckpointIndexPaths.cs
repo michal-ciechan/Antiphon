@@ -76,8 +76,9 @@ namespace Antiphon.Checkpoints
 
         // Whether `git ls-files -v -z` at this checkout root would tag any entry assume-unchanged (lower case), for
         // the script's source snapshot, which refuses an index that hides edits. Called with the toplevel and the
-        // absolute git dir git itself reported, right after a git status there succeeded; the index is read only when
-        // <root>/.git leads to that same git dir (core.worktree can send git elsewhere). A plain version-2 index
+        // absolute git dir (git's rev-parse answer, or CheckpointProcessRunner.FindRepository's, which declines
+        // core.worktree), right after a git status there succeeded; the index is read only when <root>/.git leads to
+        // that same git dir (core.worktree can send git elsewhere). A plain version-2 index
         // carries only that flag (skip-worktree and intent-to-add need version 3): true when any entry has it, false
         // when none does. Null (ask ls-files -v) for anything else: another git dir, a version 3 or 4 index, a split
         // or sparse index, an unmerged or gitlink entry, no index.
