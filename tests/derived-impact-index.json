@@ -2418,11 +2418,11 @@
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
         "AgentTaskLandMonitoringTests",
+        "AgentTaskPoolTests",
         "ComplexityDispatcherTests",
         "DefaultRunnerRerouteTests",
         "AgentTaskCardBindingTests",
-        "PhoneHomeQueuedTurnTests",
-        "AgentTaskConcurrencyLimitTests"
+        "PhoneHomeQueuedTurnTests"
       ]
     }
   ],
