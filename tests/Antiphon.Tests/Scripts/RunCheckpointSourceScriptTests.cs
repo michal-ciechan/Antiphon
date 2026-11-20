@@ -570,7 +570,8 @@ public sealed class RunCheckpointSourceScriptTests
             }
             string Git(params string[] args)
             {
-                var result = Run("git", repo, args);
+                var result = RunAsync("git", repo, args, Isolated(Path.Combine(SeedRoot(), "global.gitconfig")))
+                    .GetAwaiter().GetResult();
                 result.Exit.ShouldBe(0, "seed git " + string.Join(' ', args) + ": " + result.Output);
                 return result.Output;
             }
@@ -611,6 +612,7 @@ public sealed class RunCheckpointSourceScriptTests
             try
             {
                 Directory.CreateDirectory(External);
+                File.WriteAllText(Path.Combine(External, "global.gitconfig"), "");
                 CopyTree(seeded.Directory, Repo);
                 File.WriteAllText(Path.Combine(External, "shim.ps1"), """
                     param()
@@ -711,8 +713,12 @@ public sealed class RunCheckpointSourceScriptTests
                 // Every tool-read run is traced and must start no git status: a named build that silently falls back
                 // to git fails the case instead of only costing its time.
                 ["GIT_TRACE2_EVENT"] = _gitReader ? null : trace,
-                // No user default ignore file: the tool would hand that layout to git (as git's own reader reads it).
+                // No user or system git config and no user default ignore file: the host's (an index version, a split
+                // index, fsmonitor, an ignore file) would make the tool hand the layout to git, so the no-git-status
+                // check below would depend on the host. Git's own reader sees the same isolated config.
                 ["XDG_CONFIG_HOME"] = Path.Combine(External, "xdg"),
+                ["GIT_CONFIG_GLOBAL"] = Path.Combine(External, "global.gitconfig"),
+                ["GIT_CONFIG_NOSYSTEM"] = "1",
             };
             if (nativeCwd is not null)
             {
@@ -758,12 +764,20 @@ public sealed class RunCheckpointSourceScriptTests
         // Whether this trace2 file records a `git status` child: its start event's argv names the status command.
         private static bool GitStatusStarted(string file)
         {
-            foreach (var text in File.ReadLines(file))
+            using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            while (reader.ReadLine() is { } text)
             {
-                using var line = JsonDocument.Parse(text);
-                if (!line.RootElement.TryGetProperty("event", out var kind) || kind.GetString() != "start") continue;
-                return line.RootElement.TryGetProperty("argv", out var argv)
-                    && argv.EnumerateArray().Any(argument => argument.GetString() == "status");
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                JsonDocument line;
+                try { line = JsonDocument.Parse(text); }
+                catch (JsonException) { continue; } // a line its writer had not finished
+                using (line)
+                {
+                    if (!line.RootElement.TryGetProperty("event", out var kind) || kind.GetString() != "start") continue;
+                    return line.RootElement.TryGetProperty("argv", out var argv)
+                        && argv.EnumerateArray().Any(argument => argument.GetString() == "status");
+                }
             }
             return false;
         }
@@ -787,6 +801,13 @@ public sealed class RunCheckpointSourceScriptTests
 
         private static (int Exit, string Output) Run(string file, string cwd, IReadOnlyList<string> args) =>
             RunAsync(file, cwd, args, null).GetAwaiter().GetResult();
+
+        // git with no global or system config (an empty global file, no system file).
+        private static Dictionary<string, string?> Isolated(string globalConfig)
+        {
+            if (!File.Exists(globalConfig)) File.WriteAllText(globalConfig, "");
+            return new Dictionary<string, string?> { ["GIT_CONFIG_GLOBAL"] = globalConfig, ["GIT_CONFIG_NOSYSTEM"] = "1" };
+        }
 
         private static async Task<(int Exit, string Output)> RunAsync(string file, string cwd,
             IReadOnlyList<string> args, IReadOnlyDictionary<string, string?>? environment)
