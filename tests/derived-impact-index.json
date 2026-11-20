@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "AgentTaskLandRegistrationSafetyTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 155,
+      "classes": 156,
       "reason": "cap",
-      "owed": 130,
+      "owed": 131,
       "first": [
         "CheckpointConfinementLedgerTests",
         "CheckpointLargeStampTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 340,
+      "classes": 341,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 15,
+      "classes": 16,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 11,
+      "classes": 12,
       "reason": "allowlist"
     },
     {
@@ -222,7 +222,7 @@
     },
     {
       "path": "global.json",
-      "classes": 10,
+      "classes": 11,
       "reason": "allowlist"
     },
     {
@@ -487,9 +487,9 @@
     },
     {
       "path": "server/Application/Interfaces/ISessionRunnerDirectory.cs",
-      "classes": 48,
+      "classes": 49,
       "reason": "cap",
-      "owed": 23,
+      "owed": 24,
       "first": [
         "SeatOccupancySamplerTests",
         "C1514HostLoadHistoryTests",
@@ -727,18 +727,18 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandService.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
+        "C0824RefOnlyProducerLifecycleTests",
         "CheckpointSourceApprovalTests",
         "DispatchHeldAttentionTests",
         "LandRestartReplayTests",
         "RepositoryLeaseWaitersWiringTests",
         "RunnerTaskSettlementTests",
         "WorktreeResiduePublicationLaneTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -1432,9 +1432,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentTask.cs",
-      "classes": 427,
+      "classes": 428,
       "reason": "cap",
-      "owed": 402,
+      "owed": 403,
       "first": [
         "AgentTaskAutoTitleTests",
         "AgentTaskLandNotificationRecoveryTests",
@@ -1662,9 +1662,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 611,
+      "classes": 612,
       "reason": "cap",
-      "owed": 586,
+      "owed": 587,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1678,9 +1678,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 611,
+      "classes": 612,
       "reason": "cap",
-      "owed": 586,
+      "owed": 587,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2395,9 +2395,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/ScratchGitRepo.cs",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "AgentTaskServiceIntegrationTests",
         "CardFileGitFailureAcceptanceTests",
@@ -2411,9 +2411,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 526,
+      "classes": 527,
       "reason": "cap",
-      "owed": 501,
+      "owed": 502,
       "first": [
         "PhoneHomeStrandedQueueTests",
         "RunnerSlotEndpointTests",
@@ -4052,6 +4052,18 @@
       "path": "scripts/refresh-server2-github-token.ps1",
       "classes": [
         "RefreshGithubTokenScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/regenerate-derived-impact-index.ps1",
+      "classes": [
+        "LandGeneratedArtifactTests"
+      ]
+    },
+    {
+      "path": "scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj",
+      "classes": [
+        "LandGeneratedArtifactTests"
       ]
     },
     {
@@ -6978,8 +6990,8 @@
         "AgentTaskLandVerificationEvidenceTests",
         "AgentTaskLandingStateTests",
         "AgentTaskWorktreeLockOutcomeTests",
-        "C0824RefOnlyProducerLifecycleTests",
         "DelegationWorktreeTests",
+        "LandGeneratedArtifactTests",
         "LandMergeWriterTests",
         "LandRequestWriteDiagnosticTests",
         "LandVerificationBuildSlotTests",
@@ -8790,6 +8802,12 @@
         "OutputDistillationDeliveryTests",
         "SourceBundleManifestTests",
         "WorktreeDefaultCallerTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/DerivedImpactIndexRegen.cs",
+      "classes": [
+        "LandGeneratedArtifactTests"
       ]
     },
     {
@@ -20828,7 +20846,8 @@
       "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorkingTreeVerdictTests.cs",
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
-        "DispatchConcurrencyAdmissionTests"
+        "DispatchConcurrencyAdmissionTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
@@ -24472,7 +24491,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs",
       "classes": [
-        "DerivedImpactIndexTests"
+        "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
@@ -27414,13 +27434,15 @@
     {
       "path": "tests/derived-impact-index-known-os-gated.txt",
       "classes": [
-        "DerivedImpactIndexTests"
+        "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests"
       ]
     },
     {
       "path": "tests/derived-impact-index.json",
       "classes": [
         "DerivedImpactIndexTests",
+        "LandGeneratedArtifactTests",
         "ReleaseImpactEnvelopeTests"
       ]
     },
