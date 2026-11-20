@@ -110,13 +110,6 @@ function Get-NightlyBareTypeParts {
     }
 }
 
-function New-NightlyClassGroupFilter {
-    param([string]$Namespace, [string[]]$TypeNames)
-    $ordered = @($TypeNames | Sort-Object)
-    $parts = foreach ($type in $ordered) { '(' + $type + '*)' }
-    return ('/*/' + $Namespace + '/' + ($parts -join '|') + '/*')
-}
-
 function Test-NightlyClassGroupFilter {
     param([string[]]$Classes, [string]$GroupFilter)
     if ([string]::IsNullOrWhiteSpace($GroupFilter)) { return $false }
@@ -199,36 +192,6 @@ function Get-NightlyLaunchClassCost {
         [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
 }
 
-function Get-NightlyPackedItemSeconds {
-    param($Item)
-    if ($Item.PSObject.Properties.Name -contains 'Seconds') { return [double]$Item.Seconds }
-    return [double]$script:NightlyLaunchNodeSeconds
-}
-
-function Split-NightlyItemsBySeconds {
-    # First fit, largest first. An item at or over the target stays alone.
-    param([object[]]$Items, [double]$TargetSeconds, [int]$MaxOperands)
-    Assert-NightlyCoreAvailable 'Split-NightlyItemsBySeconds'
-    # Compiled (PlannerParts.cs NightlyPlannerParts.SplitBySeconds): the Sort-Object order of
-    # Get-NightlyPackedItemSeconds descending then [string]Key (same List.Sort, same comparison),
-    # then the NightlyLaunchPlan.FirstFitBins placement.
-    return @([Antiphon.Nightly.NightlyPlannerParts]::SplitBySeconds([object[]]@($Items), $TargetSeconds, $MaxOperands, [double]$script:NightlyLaunchNodeSeconds))
-}
-
-function Get-NightlyPrefixUnsafeNames {
-    # A name that prefixes another name cannot be a (Name*) OR operand.
-    # Compiled (PlannerParts.cs NightlyPlannerParts.PrefixUnsafeNames): an ordinal HashSet[string].
-    param([string[]]$Names)
-    Assert-NightlyCoreAvailable 'Get-NightlyPrefixUnsafeNames'
-    return ,([Antiphon.Nightly.NightlyPlannerParts]::PrefixUnsafeNames($Names))
-}
-
-function New-NightlyMethodGroupFilter {
-    param([string]$Namespace, [string]$TypeName, [string[]]$Methods)
-    $parts = foreach ($method in @($Methods | Sort-Object)) { '(' + $method + '*)' }
-    return ('/*/' + $Namespace + '/' + $TypeName + '/' + ($parts -join '|'))
-}
-
 function Test-NightlyMethodGroupFilter {
     param([string[]]$Classes, [string]$MethodFilter)
     if ([string]::IsNullOrWhiteSpace($MethodFilter) -or @($Classes).Count -ne 1) { return $false }
@@ -239,45 +202,7 @@ function Test-NightlyMethodGroupFilter {
     $operands = @(foreach ($op in [regex]::Matches($matched.Groups[3].Value, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) { $op.Groups[1].Value })
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($op in $operands) { if (-not $seen.Add([string]$op)) { return $false } }
-    return ((Get-NightlyPrefixUnsafeNames -Names $operands).Count -eq 0)
-}
-
-function Split-NightlyOversizedClass {
-    # CARD-1410: exact-method chunks. Methods that prefix a sibling launch
-    # alone on the plain exact form; the rest pack into (Name*) OR groups.
-    param($Parts, [object[]]$Nodes, [string[]]$UniverseMethods, [string]$SourceId, [ref]$Index)
-    $unsafe = Get-NightlyPrefixUnsafeNames -Names $UniverseMethods
-    $items = New-Object System.Collections.ArrayList
-    foreach ($method in @($Nodes | Group-Object { [string]$_.Method })) {
-        $methodNodes = @($method.Group)
-        $cost = Get-NightlyLaunchClassCost -Nodes $methodNodes -TypeName $Parts.Type -Bare $Parts.Bare
-        [void]$items.Add([pscustomobject]@{ Key = [string]$method.Name; Method = [string]$method.Name; Nodes = $methodNodes; Seconds = [double]$cost.Seconds; Unsafe = $unsafe.Contains([string]$method.Name) })
-    }
-    $bins = @(Split-NightlyItemsBySeconds -Items @($items | Where-Object { -not $_.Unsafe }) -TargetSeconds ([double]$script:NightlyLaunchTargetSeconds) -MaxOperands ([int]$script:NightlyLaunchMaxGroupOperands))
-    foreach ($item in @($items | Where-Object { $_.Unsafe } | Sort-Object Method)) {
-        $alone = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = [double]$item.Seconds; Closed = $true }
-        [void]$alone.Items.Add($item)
-        $bins += $alone
-    }
-    foreach ($bin in $bins) {
-        $methods = @($bin.Items | ForEach-Object { [string]$_.Method } | Sort-Object)
-        $chunkNodes = @($bin.Items | ForEach-Object { $_.Nodes } | ForEach-Object { $_ })
-        $exactFilter = ''
-        $methodFilter = ''
-        if ($methods.Count -eq 1) { $exactFilter = '/*/{0}/{1}/{2}' -f $Parts.Namespace, $Parts.Type, $methods[0] }
-        else { $methodFilter = New-NightlyMethodGroupFilter -Namespace $Parts.Namespace -TypeName $Parts.Type -Methods $methods }
-        $Index.Value = [int]$Index.Value + 1
-        [pscustomobject]@{
-            id = ('{0}-split-{1}' -f $SourceId, $Index.Value)
-            classes = @($Parts.Bare)
-            exactFilter = $exactFilter
-            groupFilter = ''
-            methodFilter = $methodFilter
-            nodes = $chunkNodes
-            nodeCount = $chunkNodes.Count
-            seconds = [Math]::Round([double]$bin.Seconds, 1)
-        }
-    }
+    return (([Antiphon.Nightly.NightlyPlannerParts]::PrefixUnsafeNames($operands)).Count -eq 0)
 }
 
 function Complete-NightlyBoundaryLaunchGroups {
@@ -299,101 +224,11 @@ function Complete-NightlyBoundaryLaunchGroups {
     return $Chunks
 }
 
-function New-NightlyBoundaryPackedChunks {
-    # Same bin pack as ConvertTo-NightlyProfileLaunchGroups, from a prebuilt class index.
-    # Sort-Object stays here: its order is the PowerShell culture order.
-    param($Leaves, $Classes, $Universe, $PrefixCache)
-    $exact = New-Object System.Collections.ArrayList
-    $classItems = New-Object System.Collections.ArrayList
-    $oversized = New-Object System.Collections.ArrayList
-    $sourceId = 'all'
-    foreach ($leaf in @($Leaves)) {
-        $id = [string]$leaf.id
-        $mark = $id.IndexOf('-profile-')
-        if ($mark -gt 0) { $sourceId = $id.Substring(0, $mark) }
-        if (-not [string]::IsNullOrWhiteSpace([string]$leaf.exactFilter)) {
-            $leafParts = Get-NightlyBareTypeParts -ClassName ([string]@($leaf.classes)[0])
-            $leafCost = Get-NightlyLaunchClassCost -Nodes @($leaf.nodes) -TypeName $(if ($leafParts) { $leafParts.Type } else { '' }) -Bare $(if ($leafParts) { $leafParts.Bare } else { '' })
-            Add-Member -InputObject $leaf -NotePropertyName seconds -NotePropertyValue ([Math]::Round([double]$leafCost.Seconds, 1)) -Force
-            [void]$exact.Add($leaf)
-            continue
-        }
-        $bare = [string]@($leaf.classes)[0]
-        $rec = $Classes[$bare]
-        $parts = [pscustomobject]@{
-            Bare = [string]$rec.Bare
-            Namespace = [string]$rec.Namespace
-            Type = [string]$rec.Type
-            Key = [string]$rec.Bare
-            NodeCount = [int]$rec.NodeCount
-            Seconds = [double]$rec.Seconds
-        }
-        $classBudget = [double]$script:NightlyLaunchLoneClassBudgetSeconds
-        if ($parts.Namespace -ceq 'Antiphon.E2E' -or $parts.Namespace.StartsWith('Antiphon.E2E.', [StringComparison]::Ordinal)) { $classBudget = 1500 }
-        if ([int]$rec.NodeCount -gt 0 -and [double]$rec.Seconds -gt $classBudget) {
-            [void]$oversized.Add([pscustomobject]@{ Parts = $parts; Nodes = @($rec.Nodes) })
-            continue
-        }
-        [void]$classItems.Add($parts)
-    }
-    $byNs = @{}
-    foreach ($item in @($classItems)) {
-        if (-not $byNs.ContainsKey($item.Namespace)) { $byNs[$item.Namespace] = New-Object System.Collections.ArrayList }
-        [void]$byNs[$item.Namespace].Add($item)
-    }
-    $groups = New-Object System.Collections.ArrayList
-    $index = 0
-    foreach ($ns in (@($byNs.Keys) | Sort-Object)) {
-        if (-not $PrefixCache.ContainsKey([string]$ns)) {
-            $names = @()
-            if ($Universe.Contains([string]$ns)) { $names = @($Universe[[string]$ns]) }
-            $PrefixCache[[string]$ns] = Get-NightlyPrefixUnsafeNames -Names $names
-        }
-        $unsafe = $PrefixCache[[string]$ns]
-        $pool = @($byNs[$ns] | Where-Object { -not $unsafe.Contains([string]$_.Type) })
-        $bins = @(Split-NightlyItemsBySeconds -Items $pool -TargetSeconds ([double]$script:NightlyLaunchTargetSeconds) -MaxOperands ([int]$script:NightlyLaunchMaxGroupOperands))
-        foreach ($item in @($byNs[$ns] | Where-Object { $unsafe.Contains([string]$_.Type) } | Sort-Object Bare)) {
-            $alone = [pscustomobject]@{ Items = (New-Object System.Collections.ArrayList); Seconds = [double]$item.Seconds; Closed = $true }
-            [void]$alone.Items.Add($item)
-            $bins += $alone
-        }
-        foreach ($bin in $bins) {
-            $items = @($bin.Items)
-            if ($items.Count -eq 0) { continue }
-            $index++
-            $types = @($items | ForEach-Object { [string]$_.Type })
-            $bares = @($items | ForEach-Object { [string]$_.Bare } | Sort-Object)
-            $sumNodes = 0
-            foreach ($item in $items) { $sumNodes += [int]$item.NodeCount }
-            $filter = ''
-            if ($types.Count -ge 2) { $filter = New-NightlyClassGroupFilter -Namespace $ns -TypeNames $types }
-            [void]$groups.Add([pscustomobject]@{
-                id = ('{0}-group-{1}' -f $sourceId, $index)
-                classes = $bares
-                exactFilter = ''
-                groupFilter = $filter
-                methodFilter = ''
-                nodes = @()
-                nodeCount = $sumNodes
-                seconds = [Math]::Round([double]$bin.Seconds, 1)
-            })
-        }
-    }
-    $splitIndex = 0
-    foreach ($big in @($oversized | Sort-Object { [string]$_.Parts.Bare })) {
-        $universeMethods = @($big.Nodes | ForEach-Object { [string]$_.Method })
-        foreach ($chunk in @(Split-NightlyOversizedClass -Parts $big.Parts -Nodes $big.Nodes -UniverseMethods $universeMethods -SourceId $sourceId -Index ([ref]$splitIndex))) {
-            [void]$groups.Add($chunk)
-        }
-    }
-    foreach ($leaf in @($exact)) { [void]$groups.Add($leaf) }
-    return @($groups.ToArray())
-}
-
 function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
     # Compiled discovery index, once per pack. rc-boundary.ps1 still resolves ids and digests.
     param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
-    $index = [Antiphon.Nightly.NightlyLaunchPlan]::IndexBoundaryDiscovery([object[]]$DiscoveryNodes, (Get-NightlyClassCostTable),
+    $costTable = Get-NightlyClassCostTable
+    $index = [Antiphon.Nightly.NightlyLaunchPlan]::IndexBoundaryDiscovery([object[]]$DiscoveryNodes, $costTable,
         [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
         [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
     if ($index.Error) { throw [string]$index.Error }
@@ -433,7 +268,13 @@ function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
     $result = [Collections.Generic.List[object]]::new()
     $prefixCache = @{}
     foreach ($boundary in $ordered) {
-        $chunks = @(New-NightlyBoundaryPackedChunks -Leaves $partitions[$boundary].ToArray() -Classes $classes -Universe $index.Universe -PrefixCache $prefixCache)
+        # Compiled (LaunchPlanner.BoundaryPackedChunks): the profile planner's pack over this boundary's leaves.
+        $pack = [Antiphon.Nightly.LaunchPlanner]::BoundaryPackedChunks($partitions[$boundary].ToArray(), $classes, $index.Universe, $prefixCache, $costTable,
+            [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds, [double]$script:NightlyLaunchLaneSlowNodeSeconds,
+            [double]$script:NightlyLaunchHeavyFamilyFactor, [double]$script:NightlyLaunchTargetSeconds, [double]$script:NightlyLaunchLoneClassBudgetSeconds,
+            [int]$script:NightlyLaunchMaxGroupOperands)
+        if ($null -ne $pack.Error) { throw [string]$pack.Error }
+        $chunks = @($pack.Groups)
         foreach ($chunk in $chunks) {
             $packed = [Antiphon.Nightly.NightlyLaunchPlan]::ChunkMembershipForChunk($chunk.nodes, $chunk.classes, $classes, $index.JsonByUid, $expected, $seen)
             if ($packed.Error) { throw [string]$packed.Error }

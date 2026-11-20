@@ -616,7 +616,7 @@ function Test-NCLaunchPlanMatchesFallback {
         [pscustomobject]@{ Key = 'c'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'd'; Seconds = 0.1 }, [pscustomobject]@{ Key = 'e'; Seconds = 89.9 })
     Assert-NCGolden 'packing' {
         foreach ($cap in @(2, 3, 0)) {
-            foreach ($bin in @(Split-NightlyItemsBySeconds -Items $items -TargetSeconds 120 -MaxOperands $cap)) {
+            foreach ($bin in @(@([Antiphon.Nightly.NightlyPlannerParts]::SplitBySeconds($items, 120, $cap, [double]$script:NightlyLaunchNodeSeconds)))) {
                 [ordered]@{ cap = $cap; keys = (@($bin.Items | ForEach-Object { $_.Key }) -join ','); seconds = $bin.Seconds; closed = $bin.Closed; type = $bin.Items.GetType().Name }
             }
         }
@@ -925,12 +925,12 @@ function Test-NCPlannerPartsGolden {
         $prefix = @(@('Alpha', 'AlphaBeta', 'alpha', 'Beta', 'Beta', ''), @('Run', 'Run2', 'Runner', 'Ru'), @(([string][char]0x00E9), ([string][char]0x00E9 + 'x'), 'e'), @())
         Assert-NCGolden 'planner-parts' {
             foreach ($cap in @(1000, 3)) {
-                foreach ($bin in @(Split-NightlyItemsBySeconds -Items $items -TargetSeconds $(if ($cap -eq 3) { 120 } else { 1e9 }) -MaxOperands $cap)) {
+                foreach ($bin in @(@([Antiphon.Nightly.NightlyPlannerParts]::SplitBySeconds($items, $(if ($cap -eq 3) { 120 } else { 1e9 }), $cap, [double]$script:NightlyLaunchNodeSeconds)))) {
                     [ordered]@{ cap = $cap; idx = (@($bin.Items | ForEach-Object { $_.Idx }) -join ','); seconds = $bin.Seconds; closed = $bin.Closed }
                 }
             }
             foreach ($names in $prefix) {
-                $unsafe = Get-NightlyPrefixUnsafeNames -Names $names
+                $unsafe = [Antiphon.Nightly.NightlyPlannerParts]::PrefixUnsafeNames($names)
                 [string[]]$sorted = @($unsafe); [Array]::Sort($sorted, [StringComparer]::Ordinal)
                 [ordered]@{ type = $unsafe.GetType().Name; unsafe = $sorted }
             }

@@ -122,6 +122,16 @@ namespace Antiphon.Nightly
                 else return Result(NullMethodCall, null);
             }
 
+            return Pack(byNs, exact, oversized, sourceId, ns => NightlyPlannerParts.PrefixUnsafeNames(UniverseNames(universe[ns])), cost,
+                targetSeconds, maxOperands, nodeSeconds);
+        }
+
+        // The pack shared by both planners: per namespace (Sort-Object order) a first-fit bin pack of the classes
+        // whose type prefixes no sibling, each prefix-unsafe class alone, then the oversized classes split into
+        // exact-method chunks, then the exact leaves.
+        private static PSObject Pack(Hashtable byNs, List<object> exact, List<Oversized> oversized, string sourceId,
+            Func<string, HashSet<string>> unsafeFor, CostModel cost, double targetSeconds, int maxOperands, double nodeSeconds)
+        {
             var compare = CultureInfo.CurrentCulture.CompareInfo;
             Comparison<string> byCulture = (a, b) => compare.Compare(a, b, CompareOptions.IgnoreCase);
             var groups = new List<object>();
@@ -131,7 +141,7 @@ namespace Antiphon.Nightly
             namespaces.Sort(byCulture);
             foreach (var ns in namespaces)
             {
-                var unsafeTypes = NightlyPlannerParts.PrefixUnsafeNames(UniverseNames(universe[ns]));
+                var unsafeTypes = unsafeFor(ns);
                 var nsItems = (List<ClassItem>)byNs[ns];
                 var byPs = new Dictionary<object, ClassItem>(ReferenceEqualityComparer.Instance);
                 var pool = new List<object>();
@@ -187,6 +197,84 @@ namespace Antiphon.Nightly
             }
             foreach (var leaf in exact) groups.Add(leaf);
             return Result(null, groups.ToArray());
+        }
+
+        /// <summary>
+        /// New-NightlyBoundaryPackedChunks: the same pack over one boundary's leaves, from the boundary discovery index
+        /// (NightlyLaunchPlan.IndexBoundaryDiscovery). A class leaf takes its record's cost; a namespace's prefix-unsafe
+        /// types come from the index universe and are computed once per namespace across one pack's boundaries
+        /// (prefixCache). { Error, Groups }.
+        /// </summary>
+        public static PSObject BoundaryPackedChunks(object[] leaves, IDictionary classes, IDictionary universe, IDictionary prefixCache,
+            IDictionary costTable, double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor,
+            double targetSeconds, double loneClassBudgetSeconds, int maxOperands)
+        {
+            var cost = new CostModel
+            {
+                Table = costTable, NodeSeconds = nodeSeconds, SlowNodeSeconds = slowNodeSeconds,
+                LaneSlowNodeSeconds = laneSlowNodeSeconds, HeavyFactor = heavyFactor
+            };
+            var exact = new List<object>();
+            var classItems = new List<ClassItem>();
+            var oversized = new List<Oversized>();
+            var sourceId = "all";
+            foreach (var leaf in leaves ?? new object[] { null })
+            {
+                var id = PsValue.Str(PsValue.Prop(leaf, "id"));
+                // $id.IndexOf('-profile-'): String.IndexOf(string), current culture, as PowerShell calls it.
+                var mark = id.IndexOf("-profile-");
+                if (mark > 0) sourceId = id.Substring(0, mark);
+                if (!string.IsNullOrWhiteSpace(PsValue.Str(PsValue.Prop(leaf, "exactFilter"))))
+                {
+                    var leafParts = NightlyLaunchPlan.BareTypeParts(FirstClass(leaf));
+                    var leafCost = cost.Of(PsValue.AsArray(PsValue.Prop(leaf, "nodes")),
+                        leafParts == null ? "" : (string)leafParts.Properties["Type"].Value,
+                        leafParts == null ? "" : (string)leafParts.Properties["Bare"].Value);
+                    AddNoteForce(leaf, "seconds", Math.Round(leafCost.Seconds, 1));
+                    exact.Add(leaf);
+                    continue;
+                }
+                var rec = classes == null ? null : classes[FirstClass(leaf)];
+                var item = new ClassItem
+                {
+                    Bare = PsValue.Str(PsValue.Prop(rec, "Bare")), Namespace = PsValue.Str(PsValue.Prop(rec, "Namespace")),
+                    Type = PsValue.Str(PsValue.Prop(rec, "Type")),
+                    NodeCount = (int)LanguagePrimitives.ConvertTo(PsValue.Prop(rec, "NodeCount"), typeof(int), CultureInfo.InvariantCulture),
+                    Seconds = (double)LanguagePrimitives.ConvertTo(PsValue.Prop(rec, "Seconds"), typeof(double), CultureInfo.InvariantCulture),
+                };
+                item.Ps = new PSObject();
+                item.Ps.Properties.Add(new PSNoteProperty("Bare", item.Bare));
+                item.Ps.Properties.Add(new PSNoteProperty("Namespace", item.Namespace));
+                item.Ps.Properties.Add(new PSNoteProperty("Type", item.Type));
+                item.Ps.Properties.Add(new PSNoteProperty("Key", item.Bare));
+                item.Ps.Properties.Add(new PSNoteProperty("NodeCount", item.NodeCount));
+                item.Ps.Properties.Add(new PSNoteProperty("Seconds", item.Seconds));
+                // CARD-1584: lone E2E classes stay below 25 minutes.
+                var classBudget = loneClassBudgetSeconds;
+                if (string.Equals(item.Namespace, "Antiphon.E2E", StringComparison.Ordinal) || item.Namespace.StartsWith("Antiphon.E2E.", StringComparison.Ordinal)) classBudget = 1500;
+                if (item.NodeCount > 0 && item.Seconds > classBudget)
+                {
+                    oversized.Add(new Oversized { Parts = item, Nodes = PsValue.AsArray(PsValue.Prop(rec, "Nodes")) });
+                    continue;
+                }
+                classItems.Add(item);
+            }
+            var byNs = new Hashtable(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in classItems)
+            {
+                if (!byNs.ContainsKey(item.Namespace)) byNs[item.Namespace] = new List<ClassItem>();
+                ((List<ClassItem>)byNs[item.Namespace]).Add(item);
+            }
+            HashSet<string> UnsafeFor(string ns)
+            {
+                if (!prefixCache.Contains(ns))
+                {
+                    var names = universe != null && universe.Contains(ns) ? UniverseNames(universe[ns]) : new string[0];
+                    prefixCache[ns] = NightlyPlannerParts.PrefixUnsafeNames(names);
+                }
+                return (HashSet<string>)Unwrap(prefixCache[ns]);
+            }
+            return Pack(byNs, exact, oversized, sourceId, UnsafeFor, cost, targetSeconds, maxOperands, nodeSeconds);
         }
 
         /// <summary>
