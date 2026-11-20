@@ -41,6 +41,10 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(60_000)] public Task ExistingCsprojIsNotANewCsproj(CancellationToken token) => Run(nameof(ExistingCsprojIsNotANewCsproj), token);
     [Test, Timeout(60_000)] public Task HelperProjectBodySelectsReferencers(CancellationToken token) => Run(nameof(HelperProjectBodySelectsReferencers), token);
     [Test, Timeout(90_000)] public Task E2EAddedTestSelectsSuites(CancellationToken token) => Run(nameof(E2EAddedTestSelectsSuites), token);
+    // A net-zero rename, a moved test and an added [Arguments] row must select. The [Test] count does not.
+    [Test, Timeout(90_000)] public Task E2EIdentityChangeSelectsSuites(CancellationToken token) => Run(nameof(E2EIdentityChangeSelectsSuites), token);
+    // A renamed literal owner path must fail closed. Absence of the census is that miss.
+    [Test, Timeout(60_000)] public Task OwnerLiteralPathsFailClosed(CancellationToken token) => Run(nameof(OwnerLiteralPathsFailClosed), token);
     [Test, Timeout(60_000)] public Task CanaryEditSelectsPtySuite(CancellationToken token) => Run(nameof(CanaryEditSelectsPtySuite), token);
     [Test, Timeout(120_000)] public Task EnabledFalseMatchesBaseSelection(CancellationToken token) => Run(nameof(EnabledFalseMatchesBaseSelection), token);
 }

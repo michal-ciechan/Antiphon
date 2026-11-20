@@ -550,6 +550,102 @@ switch ($Case) {
         $s=Select-Manifest (Commit)
         Note ($s.dirtySuites.Count -eq 0) "e2e-body-still-defers:$(& $shown $s)"
     }
+    'E2EIdentityChangeSelectsSuites' {
+        # class|method|Arguments identities, not the [Test] count. A net-zero
+        # rename, a same-identity move between files and an added [Arguments]
+        # row select every suite. A later body edit still defers.
+        $renamed='tests/Antiphon.E2E/RenameProbeTests.cs'
+        Put $renamed 'class RenameE2EProbeTests { [Test] void OriginalMethod() { int x = 1; } }'
+        $baseline=Commit
+        Put $renamed 'class RenameE2EProbeTests { [Test] void RenamedMethod() { int x = 1; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-rename-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-rename-stays-shadow'
+        Note ([string]::IsNullOrEmpty([string]$s.creditBlockedBy)) "e2e-rename-credit:$($s.creditBlockedBy)"
+        $left='tests/Antiphon.E2E/MoveLeftProbeTests.cs'
+        $right='tests/Antiphon.E2E/MoveRightProbeTests.cs'
+        Put $left 'class MovedE2EProbeTests { [Test] void MovedMethod() { int x = 1; } }'
+        Put $right 'class MovedE2EProbeTests { void Holder() { int x = 1; } }'
+        $baseline=Commit
+        Put $left 'class MovedE2EProbeTests { void Holder() { int x = 1; } }'
+        Put $right 'class MovedE2EProbeTests { [Test] void MovedMethod() { int x = 1; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-move-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-move-stays-shadow'
+        $rows='tests/Antiphon.E2E/ArgumentsProbeTests.cs'
+        Put $rows 'class ArgumentsE2EProbeTests { [Test] void RowMethod() { int x = 1; } }'
+        $baseline=Commit
+        Put $rows 'class ArgumentsE2EProbeTests { [Test] [Arguments("added-row")] void RowMethod() { int x = 1; } }'
+        $s=Select-Manifest (Commit)
+        $ids=@($s.snapshots[1].suites.id)
+        Note (SameSet $s $ids) "e2e-arguments-selects-all:$(& $shown $s)"
+        Note (-not $s.gateCredit -and [string]$s.activation -ceq 'shadow-only') 'e2e-arguments-stays-shadow'
+        Note ([string]::IsNullOrEmpty([string]$s.creditBlockedBy)) "e2e-arguments-credit:$($s.creditBlockedBy)"
+        $baseline=Git @('rev-parse','HEAD')
+        Put $rows 'class ArgumentsE2EProbeTests { [Test] [Arguments("added-row")] void RowMethod() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "e2e-identity-body-still-defers:$(& $shown $s)"
+    }
+    'OwnerLiteralPathsFailClosed' {
+        # Every literal owner path, exceptPaths prefix and owner-glob prefix
+        # must exist. Renaming the canary, the E2E directory or tests/Shared
+        # fails closed and names the missing path. At base the census is absent.
+        $censusRoot=Join-Path $ResultsDirectory 'owner-literal'
+        function Rio-Literal([string]$Relative) {
+            return Join-Path $censusRoot ($Relative -replace '/',[IO.Path]::DirectorySeparatorChar)
+        }
+        foreach ($dir in @('tests/Antiphon.E2E','tests/Shared','tests/Antiphon.Tests/Agents','tests/fixtures','docs/reviews')) {
+            [void][IO.Directory]::CreateDirectory((Rio-Literal $dir))
+        }
+        $canaryRel='tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs'
+        [IO.File]::WriteAllText((Rio-Literal $canaryRel),'class Canary {}')
+        $mapObj=@{
+            schemaVersion=1
+            suiteProjects='tests/**/*.csproj'
+            testOnly=@{
+                enabled=$true
+                paths=@('tests/**/*.cs','tests/fixtures/**')
+                exceptPaths=@('tests/Shared/**')
+                exceptReasons=@('forced-full-root')
+                productEdgeReasons=@('runtime-reader-scan')
+            }
+            roots=@(
+                @{path=$canaryRel; consumers=@('tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj'); reason='runtime-reader-scan'}
+                @{path='tests/Antiphon.E2E/**/*.cs'; consumers=@('*'); reason='runtime-reader-unproven'; walker=$true}
+                @{path='docs/**'; except=@('docs/reviews/**'); consumers=@('*'); reason='repository-reader-non-code'}
+            )
+        }
+        $json=$mapObj | ConvertTo-Json -Depth 8
+        $intact=$false
+        $renamed=$false
+        $prefixGone=$false
+        $exceptGone=$false
+        $message=''
+        if (Get-Command Get-RcMissingOwnerLiteralPaths -ErrorAction SilentlyContinue) {
+            $missing=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $censusRoot -MapJson $json)
+            $intact=($missing.Count -eq 0)
+            [IO.File]::Delete((Rio-Literal $canaryRel))
+            $missing=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $censusRoot -MapJson $json)
+            $message=$missing -join ' | '
+            $renamed=@($missing | Where-Object { $_ -like "missing-literal-path:*$canaryRel*" }).Count -ge 1
+            [IO.File]::WriteAllText((Rio-Literal $canaryRel),'class Canary {}')
+            [IO.Directory]::Delete((Rio-Literal 'tests/Antiphon.E2E'))
+            $missing=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $censusRoot -MapJson $json)
+            $message=$missing -join ' | '
+            $prefixGone=@($missing | Where-Object { $_ -like 'missing-literal-path:*tests/Antiphon.E2E*' }).Count -ge 1
+            [void][IO.Directory]::CreateDirectory((Rio-Literal 'tests/Antiphon.E2E'))
+            [IO.Directory]::Delete((Rio-Literal 'tests/Shared'))
+            $missing=@(Get-RcMissingOwnerLiteralPaths -RepositoryRoot $censusRoot -MapJson $json)
+            $message=$missing -join ' | '
+            $exceptGone=@($missing | Where-Object { $_ -like 'missing-literal-path:*tests/Shared*' }).Count -ge 1
+        }
+        Note $intact "literal-intact-not-quiet:$message"
+        Note $renamed "literal-rename-not-detected:$message"
+        Note $prefixGone "literal-prefix-not-detected:$message"
+        Note $exceptGone "literal-except-not-detected:$message"
+    }
     'CanaryEditSelectsPtySuite' {
         # A body edit of the canary file selects the Pty suite that reads it.
         # The owning Antiphon.Tests project still defers.
