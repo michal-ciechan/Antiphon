@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "note": "Directory walks the line scanner cannot bind to one repository directory. A filtered listing is not a whole-repo walk. repoWalkSuites stays empty unless a project reads every tracked path.",
+  "repoWalkSuites": [],
+  "walks": [
+    {
+      "suite": "tests/Antiphon.Tests/Antiphon.Tests.csproj",
+      "globs": ["src/**/*.cs", "server/**/*.cs"],
+      "kind": "filtered-listing",
+      "evidence": "DerivedImpactIndexBuilder.TrackedPaths runs git ls-files on the checkout, then IsWalkedSource keeps only .cs under src/, server/, and tests/. tests/**/*.cs is already the derived-impact-scan owner row."
+    },
+    {
+      "suite": "tests/Antiphon.E2E/Antiphon.E2E.csproj",
+      "globs": ["client/src/**"],
+      "kind": "bounded-walk",
+      "evidence": "AntiphonAppFixture.FindRepositoryRoot walks parents until it finds client/, then EnumerateFiles reads only client/src. That is not a whole-repo walk."
+    }
+  ]
+}

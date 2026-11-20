@@ -51,8 +51,11 @@ function Test-RioPresentOwned($suite,[string]$path) {
     return ($reasons -cnotcontains 'unmatched-path-fallback') -and ($reasons -cnotcontains 'unresolved-conservative-all-inputs')
 }
 function UnownedRows($s,[string]$path) {
-    if ($null -eq $s -or $null -eq $s.unowned) { return @() }
-    return @(@($s.unowned) | Where-Object { $null -ne $_ -and [string]$_.path -ceq $path })
+    # The comma keeps a one-row result an array. A bare return unwraps it,
+    # and an ordered dictionary's Count is its key count.
+    if ($null -eq $s -or $null -eq $s.unowned) { return ,@() }
+    $hits=@(@($s.unowned) | Where-Object { $null -ne $_ -and [string]$_.path -ceq $path })
+    return ,$hits
 }
 [void](Git @('init','-q','-b','main'))
 [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
@@ -215,15 +218,23 @@ switch ($Case) {
     'LinkedSourceSelectsIncludingProject' {
         Put 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'changed linked helper'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "link-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($antiphon,$resilience,$gitinprocess)) "link-selects-including:$(& $shown $s)"
+        # Server.Git walks the same Antiphon.Tests tree, so the link is not only the Compile edge.
+        $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
+        Note (SameSet $s @($antiphon,$resilience,$gitinprocess,$serverGit)) "link-selects-including:$(& $shown $s)"
         Note (Owns $s $resilience 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'Compile') 'link-compile-edge'
+        Note (Owns $s $serverGit 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'antiphon-tests-source-scan') 'link-server-git-walk'
         Note (Lacks $s $messaging 'tests/Antiphon.Tests/TestHelpers/Linked.cs') 'link-misses-messaging'
     }
     'UnrelatedFileSelectsNothing' {
         Put 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' 'changed unlinked sibling'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "sibling-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($antiphon,$gitinprocess)) "sibling-selects-owner-only:$(& $shown $s)"
-        Note (Lacks $s $resilience 'tests/Antiphon.Tests/TestHelpers/Sibling.cs') 'sibling-not-a-compile-link'
+        # The unlinked sibling is still not a Compile edge. The directory walk owns it.
+        $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
+        Note (SameSet $s @($antiphon,$gitinprocess,$resilience,$serverGit)) "sibling-selects-directory-walkers:$(& $shown $s)"
+        Note (Owns $s $resilience 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' 'antiphon-tests-source-scan') 'sibling-resilience-walk'
+        $siblingSuite=@($s.snapshots[1].suites | Where-Object id -CEQ $resilience)
+        $siblingRecord=@($siblingSuite[0].inputs | Where-Object { $_.path -ceq 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' -and $_.present })
+        Note ($siblingRecord.Count -eq 1 -and @($siblingRecord[0].reason.Split(';')) -cnotcontains 'Compile') 'sibling-not-a-compile-link'
         $baseline=Git @('rev-parse','HEAD')
         Put 'tests/Antiphon.Messaging.Tests/Own.cs' 'changed unrelated'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "unrelated-resolved:$(@($s.unresolved) -join ',')"

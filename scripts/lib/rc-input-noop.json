@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "rows": [
+    {
+      "path": "docs/reviews/**",
+      "reason": "no test reads review notes",
+      "evidence": "literal and directory census of tests/**/*.cs matched zero tracked paths under docs/reviews"
+    },
+    {
+      "path": "docs/superpowers/reviews/**",
+      "reason": "no test reads review notes",
+      "evidence": "literal and directory census of tests/**/*.cs matched zero tracked paths under docs/superpowers/reviews"
+    }
+  ]
+}
