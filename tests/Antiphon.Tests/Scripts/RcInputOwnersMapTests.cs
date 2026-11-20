@@ -13,7 +13,15 @@ public sealed class RcInputOwnersMapTests
             ["RIO " + name + ".contract"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(10)), token);
 
-    [Test, Timeout(60_000)] public Task UnknownPathDirtiesAll(CancellationToken token) => Run(nameof(UnknownPathDirtiesAll), token);
+    // UnknownPathDirtiesAll required unmatched-path-fallback to select every suite.
+    // An unknown path now selects nothing and is flagged.
+    [Test, Timeout(60_000)] public Task UnknownPathSelectsNothing(CancellationToken token) => Run(nameof(UnknownPathSelectsNothing), token);
+    [Test, Timeout(60_000)] public Task NewCsprojNobodyReferencesIsFlagged(CancellationToken token) => Run(nameof(NewCsprojNobodyReferencesIsFlagged), token);
+    [Test, Timeout(60_000)] public Task NoOpPathSelectsNothingAndIsSilent(CancellationToken token) => Run(nameof(NoOpPathSelectsNothingAndIsSilent), token);
+    [Test, Timeout(60_000)] public Task DirectoryWalkReadersSelectSuites(CancellationToken token) => Run(nameof(DirectoryWalkReadersSelectSuites), token);
+    [Test, Timeout(60_000)] public Task RepoWalkingProjectSelectedForAnyPath(CancellationToken token) => Run(nameof(RepoWalkingProjectSelectedForAnyPath), token);
+    [Test, Timeout(60_000)] public Task UnownedPathBlocksCarryCredit(CancellationToken token) => Run(nameof(UnownedPathBlocksCarryCredit), token);
+    [Test, Timeout(60_000)] public Task NamedDocSelectsReadingSuite(CancellationToken token) => Run(nameof(NamedDocSelectsReadingSuite), token);
     [Test, Timeout(60_000)] public Task ServerChangeDirtiesAntiphonAndE2E(CancellationToken token) => Run(nameof(ServerChangeDirtiesAntiphonAndE2E), token);
     [Test, Timeout(60_000)] public Task DocsChangeDirtiesRepoReaders(CancellationToken token) => Run(nameof(DocsChangeDirtiesRepoReaders), token);
     [Test, Timeout(60_000)] public Task BuildGraphChangeForcesFull(CancellationToken token) => Run(nameof(BuildGraphChangeForcesFull), token);
