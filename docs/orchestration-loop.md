@@ -681,6 +681,63 @@ The operator's standing rules for every orchestrator seat, in full. The `orchest
 12. **Old finished-work deletion is OK without asking (operator, 2026-11-20).** Build outputs (`bin-*`, `obj`, `publish`), temp trees such as `/tmp` task mirrors and `c487-probe-*` leftovers, and old logs and caches may be deleted when the owner task has finished, the files are about 24 to 48 hours old, and no live holder has them open.
     Delete only by exact literal path: `Remove-Item -LiteralPath` in a loop that re-verifies each path (expected parent, exact leaf pattern, the directory is not a link, `GetFullPath` equals the string, and the path is not held open). Run that loop through a Custom delegate on the owning host, with explicit authority, a list regenerated fresh, and a report of counts and bytes freed.
     Never `rm` a variable or a glob, never `rm -rf` a computed parent (the safety watchdog stops it), and never delete live worktrees or sessions, `.git` of a live repo, databases, Docker volumes, `/state`, secrets or credentials, anything younger than the threshold, or anything with no identified owner. Worked examples: [server2 /tmp growth](investigations/2026-11-19-server2-tmp-growth.md), [server2 housekeeping census](investigations/2026-11-19-server2-housekeeping-census.md).
+13. **Fast-track lane (operator, 2026-11-20).** `[fast]` in a task title is a request; the classifier decides; a mislabelled `[fast]` is demoted to NORMAL and noted. Full rules: [Fast-track lane](#fast-track-lane-operator-2026-11-20).
+
+<a id="fast-track-lane-operator-2026-11-20"></a>
+#### Fast-track lane (operator 2026-11-20)
+
+Orchestrator rules, usable today with no server change. Before dispatch, classify the branch by hand (I-1). Approved defaults are the plan's D-1..D-9 and O-1..O-8 (`docs/superpowers/plans/2026-11-20-fast-track-lane-plan.md`). **FT-2** and **FT-5** stay convention until those slices land. FT-2 makes a docs-only land trust a current committed target manifest and skip the build; until it lands, a FAST-DOC or FAST-DOC-CONTRACT land still builds. FT-5 regenerates `tests/derived-impact-index.json` inside the land; until it lands, regenerate that index once per landing wave (I-5), not once per branch. `delegate.ps1 -Fast` does not exist until FT-6. Today the request is the title bracket, and the same request is the card label `fast`.
+
+**Marker.** `[fast]` at the start of a task title is a request. The classifier decides the lane from the changed paths. A mislabelled `[fast]` whose computed lane is NORMAL is demoted to the normal pipeline and the demotion is written on the card revision. Review stays on for a demotion. That demotion is the escape hatch.
+
+**Worst path wins.** Each path gets one class. The change takes the most expensive class: NORMAL, then FAST-TEST, then FAST-DOC-CONTRACT, then FAST-DOC. Any one NORMAL path makes the whole change NORMAL. Admit status `A/M/D/R` on regular `100644` files only. Classify a rename on both names. Mode changes, symlinks, gitlinks and executable bits are NORMAL.
+
+**Audit.** Record the lane and the class on the card revision when the lane is chosen and when a request is demoted.
+
+**Cap (O-5).** At most 8 fast lands between post-land early-warning runs. Any red on master from a fast land stops further fast lands until that Debug lands.
+
+Patterns below are ordinal and case-sensitive. The first match wins for a path. Copied from the plan's eligibility table.
+
+**NORMAL (never fast). Any one of these makes the change NORMAL.**
+
+| Glob / condition | Safety reason |
+|---|---|
+| any status other than `A/M/D/R`, any mode other than `100644`/`000000` per side | type, exec-bit, symlink and gitlink changes alter build or runtime (`LandVerificationPolicy.cs:53-59`) |
+| `server/**`, `src/**`, `client/**`, `tools/**` | product and tool code |
+| `scripts/**` (includes `scripts/lib/**` nightly, `scripts/regenerate-derived-impact-index/**`) | scripts run on the landing, nightly, rc and deploy paths, and some carry pins |
+| `docker/**`, `deploy/**`, `**/Dockerfile*`, `docker-compose*.yml` | images and stack |
+| `**/*.csproj`, `**/*.*proj`, `**/*.props`, `**/*.targets`, `**/*.sln*`, `**/*.rsp`, `**/Directory.Build.*`, `global.json`, `nuget.config`, `**/packages.lock.json`, `**/*.globalconfig`, `.editorconfig` | the build graph (`LandVerificationBuildGraph.Includes`), plus analyzer config |
+| `**/Migrations/**`, `**/AppDbContext.cs`, `**/*Model.cs` | migrations (Merge migrations row) |
+| `tests/Shared/**`, `tests/**/TestHelpers/**`, any `tests/**` file named in another project's `<Compile Include>` | shared and linked test infrastructure (CARD-1996; change-impact D-7) |
+| `tests/test-execution-policy.json`, `tests/linux-test-roster.json`, `tests/Antiphon.Tests/slow-tests-allowlist.txt`, `tests/**/*.json` other than the generated index | policy, roster and pin inputs (Merge verification guard union) |
+| `tests/Shared/TestClassificationGuardTests.cs`, `tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`, `tests/Shared/NativeLinuxPolicyWitness.cs`, `tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs` | classification and selector guards ([Merge verification is short](#merge-verification-is-short-2026-11-18)) |
+| `tests/Antiphon.E2E/**` | boots real Program and needs Chromium, which server2 lacks; its narrow row cannot run on the fast lane's host |
+| `tests/**` non-`.cs` files (fixtures, data) | fixtures can be read by scripts or product code; no reader census exists yet |
+| `.claude/**`, `server/Bundles/**`, `AGENTS.md`, `CLAUDE.md` | agent instructions served at runtime and pinned by bundle tests; also outside the land docs skip (`DocumentationPath`) |
+| `docs/cards/**` | generated from the board (CARD-0004); a hand edit is wrong in any lane |
+| `docs/**` non-`.md` (for example `docs/investigations/evidence/card-0462/Reproduce.csproj`, `docs/schemas/**`) | build-graph files and test-read data under `docs/` (G7) |
+| `.gitattributes`, `.gitignore`, `antiphon.areas.json`, `.github/**`, `**/appsettings*.json` | repository, scope or runtime configuration |
+| any path matching a secret-handling name: `**/*secret*`, `**/*credential*`, `**/*.pem`, `**/*.key`, `**/*.pfx` | secrets custody (`docs/agent-credentials.md`); never fast, even in docs |
+| any path no rule below names | default-deny (the change-impact "Unowned" rule, mapped to NORMAL) |
+
+**FAST-TEST.** `tests/<Project>/**/*.cs`, where `<Project>` is a test project other than `Antiphon.E2E`, and the path is not in the NORMAL table. `tests/derived-impact-index.json` is generated. On its own it does not make a change NORMAL. Until FT-5 it counts as FAST-TEST.
+
+**FAST-DOC-CONTRACT.** `README.md`, or a `docs/**/*.md` path the reader lookup says is read. Read means a path edge in `tests/derived-impact-index.json`, an entry in `cappedPaths`, or a path under `docs/superpowers/plans/**`, `docs/investigations/**`, or `docs/superpowers/mutations/**`. A capped path (`orchestration-loop.md`, `ops-http.md`, `agent-card-lifecycle.md`, `README.md`, and any other `cappedPaths` entry) runs the index's first 25 reader classes. The owed rest waits for the post-land early warning and the rc run (D-9, O-2).
+
+**FAST-DOC.** `docs/reviews/**/*.md`, `docs/superpowers/reviews/**/*.md`, and any `docs/**/*.md` with no reader under the FAST-DOC-CONTRACT rule.
+
+**Not fast:** `AGENTS.md`, `CLAUDE.md`, `.claude/**`, `scripts/**`, policy and pin files, product and tool code (`server/**`, `src/**`, `client/**`, `tools/**`), a pin or manifest reseal, and any path no rule names.
+
+**Interim procedure (I-1..I-8), until FT-2 and FT-5 are mechanical.**
+
+1. **I-1.** Classify with `git diff --name-only origin/master...<branch>` against the tables above before dispatch. Any NORMAL path means the normal pipeline. Write the lane in the brief and put `[fast]` in the title only when the lane is fast. Record the lane and class on the card revision.
+2. **I-2. FAST-DOC.** Docs task, no checkpoint rows and no Code build. Automated check only: `scripts/check-evidence-diff.ps1`, `git merge-tree --write-tree origin/master HEAD`, and `checkpoint import --plan` when a `### Checkpoints` table changed. No Opus Review and no Review task. Report `next: land`. Plain `-Land`. The land still builds until FT-2.
+3. **I-3. FAST-DOC-CONTRACT.** Same as I-2, plus one row: the reader classes from `scripts/impacted-classes.ps1 -Range <base>..<tip>` (one build of `tests/Antiphon.Tests`). A capped path runs its first 25 classes and defers the rest (D-9).
+4. **I-4. FAST-TEST.** Code builds the touched test project and runs the touched classes (standing rule 8: one red witness plus one narrow green). Do not run `regenerate-derived-impact-index.ps1`, do not commit `tests/derived-impact-index.json`, and do not run the guard batch or DerivedImpactIndexTests. Review is a short Sonnet diff-only review, 15 minutes, no checkpoint rerun, aimed at whether the test can fail. Repairs of existing failing tests follow the fixture-only precedent and have no Review. The land build stays (D-6).
+5. **I-5.** After each landing wave, and always before an rc cut or a Merge batch, one small Code task runs the regenerator and DerivedImpactIndexTests and lands the index alone. That one regeneration replaces one replay per branch. Between waves, DerivedImpactIndexTests is red on master: declare it inherited in Merge and rc briefs.
+6. **I-6.** A branch that already committed the index and now conflicts joins a Merge batch with its peers. The batch regenerates once. It does not get a per-branch replay.
+7. **I-7.** At most 8 fast lands between post-land early-warning runs (O-5). Any red on master from a fast land stops fast lands until its Debug lands.
+8. **I-8.** Never fast: every NORMAL row above, including `AGENTS.md`, `CLAUDE.md`, `.claude/**`, `scripts/**`, policy, product code, and a pin or manifest reseal.
 
 <a id="merge-verification-is-short-2026-11-18"></a>
 #### Merge verification is short (2026-11-18)
