@@ -267,11 +267,11 @@ try {
                 suites = [pscustomobject]@{ probe = [pscustomobject]@{ name = 'Probe'; mode = 'native'; assembly = 'Probe'; project = 'tests/Probe/Probe.csproj' } }
                 projects = @('tests/Probe/Probe.csproj')
             }
-            $policyObject.policyHash = [string]([Antiphon.Nightly.NightlyPolicy]::Hash($policyObject))
+            $policyObject.policyHash = [string]([Antiphon.Nightly.NightlyPolicy]::HashText(($policyObject | ConvertTo-Json -Depth 6)))
             $policyPath = Join-Path $repo 'tests/test-execution-policy.json'
             [IO.File]::WriteAllText($policyPath, ($policyObject | ConvertTo-Json -Depth 6))
             $reread = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-            Note (([Antiphon.Nightly.NightlyPolicy]::Hash($reread)) -ceq [string]$reread.policyHash) 'policy-hash'
+            Note (([Antiphon.Nightly.NightlyPolicy]::HashText([IO.File]::ReadAllText($policyPath))) -ceq [string]$reread.policyHash) 'policy-hash'
             [void](Invoke-C487FixtureGit $repo @('add', 'tests/Probe/Probe.csproj', 'tests/test-execution-policy.json'))
             [void](Invoke-C487FixtureGit $repo @('commit', '-qm', 'probe'))
             $sha = [string](Invoke-C487FixtureGit $repo @('rev-parse', 'HEAD'))

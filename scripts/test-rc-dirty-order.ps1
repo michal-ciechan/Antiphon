@@ -116,12 +116,13 @@ function Assert-OffSwitch($order) {
     if (Test-Path -LiteralPath $library) {
         $body=[IO.File]::ReadAllText($library)
         Note (-not $body.Contains('publish-release')) 'library-does-not-publish'
-        Note (-not $body.Contains('Resolve-NightlyStoppedSeedOrder')) 'full-seed-function-not-replaced'
+        Note (-not $body.Contains('Resolve-NightlyStoppedSeedOrder') -and -not $body.Contains('StoppedSeedOrder')) 'full-seed-function-not-replaced'
         Note (-not $body.Contains('nightly-tests-impl')) 'library-does-not-pack'
         Note (-not $body.Contains('FixProven')) 'library-does-not-honor-fix-proven'
     }
-    $seed=Join-Path $PSScriptRoot 'lib/nightly-stopped-run-seed.ps1'
-    Note (([IO.File]::ReadAllText($seed)).Contains('function Resolve-NightlyStoppedSeedOrder')) 'full-seed-function-remains'
+    # The full stopped-seed order is compiled (DispatchSchedule.StoppedSeedOrder in the nightly core).
+    $seed=Join-Path $PSScriptRoot 'lib/Antiphon.Nightly/DispatchSchedule.cs'
+    Note (([IO.File]::ReadAllText($seed)).Contains('public static PSObject StoppedSeedOrder(')) 'full-seed-function-remains'
 }
 try {
     switch ($Case) {

@@ -25,7 +25,7 @@ $script:ProtectedInputs = @(
     'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = '99297dde12befbe23fd15dff6f60b3c99c0df82bca5a2817f2c6bef5e4fef6df'
+$script:PinnedInputDigest = 'e1946c2e83b620dadccd2bc2605b46f813130780d876cc41ddc62d64390ce074'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
