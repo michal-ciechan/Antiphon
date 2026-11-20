@@ -856,7 +856,8 @@ public static class BuildConfinement
                 paths.Add(parts[i]);
             }
         }
-        return new StatusResult(paths.Distinct(StringComparer.Ordinal).ToList(), null);
+        // Ordinal order, as the in-process answer and run-checkpoint.ps1's two readers list them.
+        return new StatusResult(paths.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList(), null);
     }
 
     private readonly record struct GitResult(int Exit, string Stdout, string? Error);
@@ -923,17 +924,17 @@ public static class BuildConfinement
     }
 
     /// <summary>
-    /// The untracked, ignored and tracked-dirty path sets depend on ignore rules. libgit2 here reads only the
-    /// repository's config, as the hardened git child does, but the child also reads the user's default ignore
-    /// file: when that applies, git answers instead.
-    /// </summary>
-    /// <summary>
     /// libgit2's status names a path its bytes do not decode as UTF-8 with U+FFFD in it (CARD-1608): such a listing
     /// is not read in process, so git answers and its strict decode fails closed (git-encoding) instead of a renamed
     /// path being stamped absent. A real name containing U+FFFD goes to git too, which reads it correctly.
     /// </summary>
     private static bool AnyLossyName(IEnumerable<string> paths) => paths.Any(path => path.Contains((char)0xFFFD));
 
+    /// <summary>
+    /// The untracked, ignored and tracked-dirty path sets depend on ignore rules. libgit2 here reads only the
+    /// repository's config, as the hardened git child does, but the child also reads the user's default ignore
+    /// file: when that applies, git answers instead.
+    /// </summary>
     private static bool AgreesWithGitChild(LibGit2Sharp.Configuration repositoryConfig) =>
         !Antiphon.GitInProcess.WorkTreeIdentity.UserDefaultIgnoreApplies(repositoryConfig);
 

@@ -74,30 +74,16 @@ namespace Antiphon.Checkpoints.Script
         // Whether the named build loads with every entry point; throws (with the reason) when it does not.
         public static bool Ready(string toolAssembly) => Of(toolAssembly) != null;
 
-        // The same deadlines as the git children these calls stand for (Invoke-CheckpointGit's 15 s per read; the git
-        // snapshot's 30 s per call, two status passes): a call past it throws TimeoutException and the script
-        // leaves the rest of its run to git. The abandoned read finishes or dies with the process.
-        private static T Bounded<T>(Func<T> call, int milliseconds)
-        {
-            var task = System.Threading.Tasks.Task.Run(call);
-            try
-            {
-                if (!task.Wait(milliseconds)) throw new TimeoutException("checkpoint tool read exceeded " + milliseconds + " ms");
-            }
-            catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
-            {
-                var inner = ex.InnerException is TargetInvocationException { InnerException: { } invoked } ? invoked : ex.InnerException;
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
-            }
-            return task.Result;
-        }
+        // These calls run in this thread with no deadline, as the tool's own snapshot and confinement reads do: a
+        // read abandoned at a deadline would keep walking with the repository and its files open while git repeated
+        // it (on Windows, open handles can fail the run's later deletes). The git children keep their deadlines.
 
         // The tool's observation of this repository as [commit, dirtyFiles, fingerprint, captureStatus, errorCode].
         // The tool itself turns every read failure into an unknown observation with a code.
         public static string[] Capture(string toolAssembly, string repository)
         {
             var tool = Of(toolAssembly);
-            var observation = Bounded(() => tool.Capture.Invoke(tool.Snapshot, new object[] { repository }), 60000);
+            var observation = tool.Capture.Invoke(tool.Snapshot, new object[] { repository });
             var shape = observation.GetType();
             string Field(string name)
             {
@@ -112,14 +98,14 @@ namespace Antiphon.Checkpoints.Script
         public static string Read(string toolAssembly, string workingDirectory, string[] args)
         {
             var tool = Of(toolAssembly);
-            return Bounded(() => (string)tool.Read.Invoke(null, new object[] { workingDirectory, args }), 15000);
+            return (string)tool.Read.Invoke(null, new object[] { workingDirectory, args });
         }
 
         // The tracked paths `git status --porcelain=v2 -z --untracked-files=no` lists; null when git must answer.
         public static string[] TrackedStatus(string toolAssembly, string repository)
         {
             var tool = Of(toolAssembly);
-            return Bounded(() => (string[])tool.TrackedStatus.Invoke(null, new object[] { repository }), 15000);
+            return (string[])tool.TrackedStatus.Invoke(null, new object[] { repository });
         }
     }
 }

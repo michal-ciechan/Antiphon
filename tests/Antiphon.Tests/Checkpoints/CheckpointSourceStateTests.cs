@@ -33,6 +33,26 @@ public sealed class CheckpointSourceStateTests
     }
 
     [Test]
+    public void tool_snapshot_of_a_non_utf8_name_is_unknown_not_stamped_absent()
+    {
+        // Linux only: a file name byte that is not UTF-8 (NTFS names are UTF-16). libgit2 names it with U+FFFD, a
+        // path that does not exist; the snapshot must not certify it as absent (CARD-1608), it declines to git,
+        // whose strict decode fails closed.
+        if (OperatingSystem.IsWindows())
+            Skip.Test("non-UTF-8 file names need a byte-named filesystem");
+        using var repo = new GitFixture();
+        var before = Directory.GetFiles(repo.Root).Length;
+        var touch = new ProcessStartInfo("/bin/sh") { WorkingDirectory = repo.Root, UseShellExecute = false };
+        foreach (var argument in new[] { "-c", "printf 'x' > \"$(printf 'bad\\377name')\"" })
+            touch.ArgumentList.Add(argument);
+        using (var made = Process.Start(touch)!) { made.WaitForExit(); made.ExitCode.ShouldBe(0); }
+        Directory.GetFiles(repo.Root).Length.ShouldBe(before + 1, "the byte-named file exists");
+
+        var observation = new SourceSnapshot().Capture(repo.Root);
+        observation.CaptureStatus.ShouldBe("unknown", $"a renamed path stamped absent is not a known source ({observation.ErrorCode})");
+    }
+
+    [Test]
     public void clean_and_ignored_outputs_match_head()
     {
         using var repo = new GitFixture();

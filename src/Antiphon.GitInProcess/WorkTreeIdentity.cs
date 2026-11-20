@@ -79,6 +79,10 @@ internal static class WorkTreeIdentity
         {
             if (item.State is FileStatus.Unaltered or FileStatus.Ignored) continue;
             if (item.State.HasFlag(FileStatus.Conflicted)) throw new WorkTreeIdentityException("unmerged_index");
+            // libgit2 names a path whose bytes are not UTF-8 with U+FFFD in it, and that renamed path would be stamped
+            // absent: git reads it instead, and its strict decode fails closed (CARD-1608). A real name containing
+            // U+FFFD goes to git too, which reads it correctly.
+            if (item.FilePath.Contains((char)0xFFFD)) throw new WorkTreeIdentityDeclinedException("path-encoding");
             // libgit2 reports paths with native separators on Windows; a backslash elsewhere is part of the name.
             var relative = OperatingSystem.IsWindows() ? item.FilePath.Replace('\\', '/') : item.FilePath;
             // A tracked or staged path has a HEAD and/or index side. Only a blob or symlink in HEAD is a HEAD entry:

@@ -31,8 +31,9 @@ function Get-CheckpointToolAssembly {
     if ($ready) { return $named } else { return $null }
 }
 
-# A tool call that throws or passes its deadline leaves every later read of this run to git: one reader from there
-# on, not a mix decided call by call.
+# A tool call that throws leaves every later read of this run to git, rather than trying the tool again call by call.
+# Readings already taken by the tool stay as they are; the tool's in-process answers are pinned against git's (the
+# LibGit2VsGit verdict tests), so a later git reading of an unchanged tree agrees with them.
 function Disable-CheckpointToolReads {
     param([string]$Tool, $Failure)
     $message = if ($null -ne $Failure.Exception.InnerException) { $Failure.Exception.InnerException.Message } else { $Failure.Exception.Message }
