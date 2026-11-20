@@ -12,7 +12,7 @@ V-2: `ModelAliasTests`, `ModelLevelAliasDisplayTests`, `LaunchModelArgumentAppen
 V-3: `CodexRunnerImageContractTests` checks the version, the npm integrity, and the install order. The captured `0.160.0` trust-screen byte string stays.
 V-4: `CodexCliObservationTests.C959_Ladder_and_exact_models_share_floor` only. The rest of that class keeps its `0.159.1` and `0.160.0` sample banners.
 V-5: `CodexDelegateDispatchTests` launched slugs and escalation text.
-R-1: The nine-class guard union once. `WindowsUnitPlatformAdmissionTests` is not a row: its Linux skip is not a pass on this runner. C1729 stays VIOLATIONS 0 / LISTED 162.
+R-1: The nine-class guard union once. `WindowsUnitPlatformAdmissionTests` is not a row: its Linux skip is not a pass on this runner. C1729 stays VIOLATIONS 0 / LISTED 162. The named classes execute 81. `TaskPlatformGuidanceTests` is 5 cases. `RunnerDefaultGuidanceTests`, 4 cases in the same file, is outside this union.
 R-2: `DerivedImpactIndexTests` alone, after the derived-impact driver is built and the index commit is the HEAD under test.
 R-3: The touched client ladder files through `scripts/test-client.ps1`. This worktree has no vitest, so that script installs client dependencies once.
 R-4: Recompute nightly pins and report them. `scripts/audit-land-verification-graph.ps1 -Check`. `scripts/check-evidence-diff.ps1` over base..HEAD. `git fetch origin master` then `git merge-tree --write-tree origin/master HEAD`. No `-Update` and no merge. Re-pin only if a guard fails.
@@ -40,6 +40,6 @@ Run through the checkpoint tool with `--expected-source-sha` set to committed HE
 | CP-3 | all | CP-1 | image-pin | `/*/*/CodexRunnerImageContractTests/*` | V-3 | all listed, 0 failed/skipped | 21 | 6 | true |
 | CP-4 | all | CP-1 | sol-floor | `/*/*/CodexCliObservationTests/C959_Ladder_and_exact_models_share_floor*` | V-4 | 1 pass, 0 failed/skipped | 1 | 4 | true |
 | CP-5 | all | CP-1 | codex-dispatch | `/*/*/CodexDelegateDispatchTests/*` | V-5 | all listed, 0 failed/skipped | 23 | 8 | true |
-| CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | 85 pass, 0 failed/skipped | 85 | 8 | true |
+| CP-6 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | 81 pass, 0 failed/skipped | 81 | 8 | true |
 | CP-7 | all | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-2 | all listed, 0 failed/skipped | 27 | 8 | true |
 | CP-8 | all | n/a | client-ladder | `pwsh -NoProfile -File scripts/test-client.ps1 src/features/delegations/taskVisuals.test.ts src/features/orchestrator/pipelineStageModel.test.ts src/features/delegations/TaskChip.test.tsx src/features/delegations/DelegationsBoard.test.tsx src/features/delegations/DelegationsHistory.test.tsx src/features/orchestrator/ModelAvailabilityPanel.test.tsx` | R-3 | exit 0 | n/a | 8 | true |
