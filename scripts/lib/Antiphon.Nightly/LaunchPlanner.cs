@@ -458,6 +458,97 @@ namespace Antiphon.Nightly
             ps.Members.Add(new PSNoteProperty(name, value));
         }
 
+        /// <summary>
+        /// Get-NightlyProfileExecutionChunks: the launch leaves of a profile. Per chunk, the discovery nodes of its classes
+        /// bucketed by bare class (NightlyDiscovery.BucketByBareClass); a class with no excluded node is one leaf, a class
+        /// with some excluded nodes is one exact-method leaf per required method, so sibling methods run without the
+        /// excluded one. Grouping is Group-Object's: current-culture case-insensitive keys named by their first member,
+        /// emitted in key order, members (wrapped) in input order. { id, classes, exactFilter, nodes } each.
+        /// </summary>
+        public static object[] ProfileExecutionChunks(object[] discoveryNodes, object[] chunks, object exclusions)
+        {
+            var exclusionIndex = NightlyPolicy.ExclusionIndex(exclusions);
+            var compare = CultureInfo.CurrentCulture.CompareInfo;
+            Comparison<string> byCulture = (a, b) => compare.Compare(a, b, CompareOptions.IgnoreCase);
+            var leaves = new List<object>();
+            var index = 0;
+            foreach (var chunk in chunks ?? new object[0])
+            {
+                var chunkId = PsValue.Str(PsValue.Prop(chunk, "id"));
+                var classItems = PsValue.AsArray(PsValue.Prop(chunk, "classes"));
+                var required = new string[classItems.Length];
+                for (var i = 0; i < classItems.Length; i++) required[i] = classItems[i] == null ? null : PsValue.Str(classItems[i]);
+                var buckets = NightlyDiscovery.BucketByBareClass(discoveryNodes ?? new object[0], required, exclusionIndex);
+                foreach (var group in GroupObject(buckets, b => PsValue.Str(PsValue.Prop(b, "Bare")), byCulture))
+                {
+                    var bare = group.Name;
+                    var bucket = group.Members[0];
+                    var members = PsValue.AsArray(PsValue.Prop(bucket, "Nodes"));
+                    var requiredNodes = PsValue.AsArray(PsValue.Prop(bucket, "Required"));
+                    if (requiredNodes.Length == 0) continue;
+                    if (requiredNodes.Length == members.Length)
+                    {
+                        leaves.Add(Leaf(chunkId, ++index, bare, "", new object[0]));
+                        continue;
+                    }
+                    // Preserve sibling methods without launching the excluded method. The filter type is the bare
+                    // metadata name: TUnit does not put constructor arguments on the treenode path.
+                    foreach (var method in GroupObject(requiredNodes, n => PsValue.Str(PsValue.Prop(n, "Method")), byCulture))
+                    {
+                        var dot = bare.LastIndexOf('.');
+                        if (dot < 1) throw new NightlyRefusal("profile-discovery-namespace-required");
+                        var node = method.Members[0];
+                        var filter = "/*/" + bare.Substring(0, dot) + "/" + bare.Substring(dot + 1) + "/" + PsValue.Str(PsValue.Prop(node, "Method"));
+                        leaves.Add(Leaf(chunkId, ++index, bare, filter, method.Members.ToArray()));
+                    }
+                }
+            }
+            return leaves.ToArray();
+        }
+
+        private static PSObject Leaf(string chunkId, int index, string bare, string exactFilter, object[] nodes)
+        {
+            var leaf = new PSObject();
+            leaf.Properties.Add(new PSNoteProperty("id", chunkId + "-profile-" + index.ToString(CultureInfo.CurrentCulture)));
+            leaf.Properties.Add(new PSNoteProperty("classes", new object[] { bare }));
+            leaf.Properties.Add(new PSNoteProperty("exactFilter", exactFilter));
+            leaf.Properties.Add(new PSNoteProperty("nodes", nodes));
+            return leaf;
+        }
+
+        private sealed class ObjectGroup
+        {
+            public string Name;
+            public int Position;
+            public readonly List<object> Members = new List<object>();
+        }
+
+        // Group-Object (PowerShell 7): current-culture case-insensitive keys named by their first member, a stable sort
+        // by key, members wrapped in PSObjects in input order.
+        private static List<ObjectGroup> GroupObject(IEnumerable items, Func<object, string> key, Comparison<string> byCulture)
+        {
+            var byKey = new Dictionary<string, ObjectGroup>(StringComparer.Create(CultureInfo.CurrentCulture, true));
+            var found = new List<ObjectGroup>();
+            foreach (var item in items)
+            {
+                var k = key(item) ?? "";
+                if (!byKey.TryGetValue(k, out var group))
+                {
+                    group = new ObjectGroup { Name = k, Position = found.Count };
+                    byKey.Add(k, group);
+                    found.Add(group);
+                }
+                group.Members.Add(item is PSObject ? item : PSObject.AsPSObject(item));
+            }
+            var ordered = new List<ObjectGroup>(found);
+            ordered.Sort((a, b) =>
+            {
+                var order = byCulture(a.Name, b.Name);
+                return order != 0 ? order : a.Position.CompareTo(b.Position);
+            });
+            return ordered;
+        }
+
         private static PSObject Result(string error, object[] groups)
         {
             var o = new PSObject();

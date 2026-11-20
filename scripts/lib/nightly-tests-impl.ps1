@@ -57,46 +57,6 @@ function Get-NightlyExecutionPlatform {
     return $platform
 }
 
-function Get-NightlyProfileExecutionChunks {
-    param([object[]]$DiscoveryNodes, [object[]]$Chunks, [object[]]$Exclusions)
-    # Class-level: one pass buckets the nodes by bare class, and chunk membership
-    # and exclusion rows are resolved once per class rather than once per node
-    # (a full suite is ~19,000 nodes in a few hundred classes). Grouping keeps
-    # Group-Object's semantics by running it over one item per class: keys are
-    # case-insensitive, named by their first node, and ordered as Group-Object
-    # orders them on this PowerShell; nodes keep discovery order within a class.
-    Assert-NightlyCoreAvailable 'Get-NightlyProfileExecutionChunks'
-    $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($Exclusions)
-    $index = 0
-    foreach ($chunk in $Chunks) {
-        $required = @($chunk.classes)
-        # Compiled first pass (NightlyCore.cs); Group-Object stays here for its ordering.
-        $bucketList = [Antiphon.Nightly.NightlyDiscovery]::BucketByBareClass(@($DiscoveryNodes), [string[]]$required, $exclusionIndex)
-        foreach ($group in @($bucketList | Group-Object Bare)) {
-            $bare = [string]$group.Name
-            $bucket = @($group.Group)[0]
-            $members = $bucket.Nodes
-            $requiredNodes = @($bucket.Required)
-            if ($requiredNodes.Count -eq 0) { continue }
-            if ($requiredNodes.Count -eq $members.Count) {
-                [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = ''; nodes = @() }
-            } else {
-                # Preserve sibling methods without launching the excluded method.
-                # Exact leaves avoid the combined-filter discovery hint ambiguity.
-                # The filter type is the bare metadata name: TUnit does not put
-                # constructor arguments on the treenode path.
-                foreach ($method in @($requiredNodes | Group-Object { $_.Method })) {
-                    $node = @($method.Group)[0]
-                    $dot = $bare.LastIndexOf('.')
-                    if ($dot -lt 1) { throw 'profile-discovery-namespace-required' }
-                    $filter = '/*/{0}/{1}/{2}' -f $bare.Substring(0, $dot), $bare.Substring($dot + 1), $node.Method
-                    [pscustomobject]@{ id = ('{0}-profile-{1}' -f $chunk.id, (++$index)); classes = @($bare); exactFilter = $filter; nodes = @($method.Group) }
-                }
-            }
-        }
-    }
-}
-
 # CARD-1410. Launch groups pack by estimated serial seconds. A class with a
 # row in nightly-class-costs.json (refreshed from TRX) uses it; any other
 # class uses the node model below. With CARD-1404 group-10 prices the recorded
@@ -287,7 +247,7 @@ function Get-NightlyProfileLaunchPlan {
         [string]$SuiteId = 'antiphon',
         $PolicyObject = $null
     )
-    $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $DiscoveryNodes -Chunks $Chunks -Exclusions $Exclusions)
+    $leaves = @([Antiphon.Nightly.LaunchPlanner]::ProfileExecutionChunks($DiscoveryNodes, $Chunks, $Exclusions))
     $plan = @(ConvertTo-NightlyProfileLaunchGroups -Leaves $leaves -DiscoveryNodes $DiscoveryNodes)
     # CARD-1567: the 60-minute native watchdog detects hangs, not ordinary
     # packing overflow. A single expanded method may itself exceed the

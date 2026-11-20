@@ -783,7 +783,7 @@ function Test-C1044_FixtureClassChunks {
     $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')
     $nodes = @($parsed.Nodes)
     $hold = @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @('Other'); Reason = 'held method'; Owner = 'C1044' })
-    $chunks = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $hold)
+    $chunks = @([Antiphon.Nightly.LaunchPlanner]::ProfileExecutionChunks($nodes, @([pscustomobject]@{ id = 'all'; classes = @() }), $hold))
     $invalid = @()
     $launched = @()
     foreach ($chunk in $chunks) {
@@ -1645,7 +1645,7 @@ function Test-C1397_RcAntiphonLaunchGroups {
         }
         $all = @([pscustomobject]@{ id = 'all'; classes = @() })
         $nodeArray = @($nodes.ToArray())
-        $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions)
+        $leaves = @([Antiphon.Nightly.LaunchPlanner]::ProfileExecutionChunks($nodeArray, $all, $exclusions))
         $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $true -Native $true)
         $nightlyEx = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'nightly', 'antiphon', 'windows'))
         $nightlyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $nightlyEx -ProfileAware $false -Native $true)
