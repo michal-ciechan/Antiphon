@@ -28,7 +28,8 @@ public static class ModelAlias
     public const string Gpt56Luna = "gpt-5.6-luna";
 
     /// <summary>
-    /// Every alias <see cref="ModelLevelAliases"/> launches for <see cref="AgentTaskService.DelegatableKinds"/>.
+    /// Every alias <see cref="ModelLevelAliases"/> launches for <see cref="AgentTaskService.DelegatableKinds"/>,
+    /// plus the one off-ladder Codex alias <c>gpt-6.2-astra</c> a caller can select explicitly.
     /// <c>ListAvailable</c> is this set minus currently held rows.
     /// </summary>
     public static readonly IReadOnlyList<(AgentKind Kind, string Alias)> DelegatableAliases =
@@ -41,6 +42,7 @@ public static class ModelAlias
         (AgentKind.Codex, Gpt6Astra),
         (AgentKind.Codex, Gpt62Sol),
         (AgentKind.Codex, Gpt56Luna),
+        (AgentKind.Codex, Gpt62Astra),
     ];
 
     /// <summary>
@@ -175,7 +177,7 @@ public static class ModelAlias
     private static bool IsGrok46(string folded) =>
         folded is "grok 4 6" or "grok 46";
 
-    // Folded "gpt 6 2 astra" is the catalogued 6.2 Astra slug. It is not a ladder rung.
+    // Folded "gpt 6 2 astra" is selectable on demand and is not a ladder rung.
     // Bare "astra" stays on the older arm below. The backend 400s bare -m astra.
     private static bool IsAstra62(string folded) =>
         folded is "gpt 6 2 astra" or "gpt62 astra";

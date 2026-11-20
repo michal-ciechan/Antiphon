@@ -7384,7 +7384,7 @@ public sealed partial class AgentTaskDispatcher
                 ProjectProviderEndpoints: projectProviderEndpoints,
                 AgentProviderEndpointMode: agent.ProviderEndpointMode,
                 AgentProviderEndpoint: ProviderEndpoint.Parse(agent.ProviderEndpointJson),
-                TierModelAlias: TierAliasFor(kind, task.ModelLevel)));
+                TierModelAlias: LaunchTierAlias(task, kind)));
     }
 
     /// <summary>
@@ -7438,10 +7438,11 @@ public sealed partial class AgentTaskDispatcher
         // CARD-0182 D2 / CARD-0140 D4: an exact ModelId wins, so the tier alias is omitted and
         // the resolver appends the catalogue-validated model. Two --model flags would otherwise
         // reach the process. The alias is offered through TierModelAlias, never ExtraArgs, so a
-        // blank ModelArgumentName can drop it.
+        // blank ModelArgumentName can drop it. A blank ModelId still prefers an explicit
+        // RequestedModelAlias over the tier ladder.
         var extraArgs = ComposeDelegateArgs(task, agent, session, attachedBundleKeys, out var grokRulesPayload);
         var tierModelAlias = string.IsNullOrWhiteSpace(agent.ModelId)
-            ? TierAliasFor(session.AgentKind, task.ModelLevel)
+            ? LaunchTierAlias(task, session.AgentKind)
             : null;
 
         Guid? apiKeyProjectId = task.ProjectId;
@@ -7476,6 +7477,11 @@ public sealed partial class AgentTaskDispatcher
         await _db.SaveChangesAsync(ct);
         return resolved.Spec;
     }
+
+    private static string? LaunchTierAlias(AgentTask task, AgentKind kind) =>
+        string.IsNullOrWhiteSpace(task.RequestedModelAlias)
+            ? TierAliasFor(kind, task.ModelLevel)
+            : task.RequestedModelAlias.Trim();
 
     private static string? TierAliasFor(AgentKind kind, AgentModelLevel level) =>
         kind == AgentKind.Codex

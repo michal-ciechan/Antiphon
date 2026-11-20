@@ -13,14 +13,16 @@ public static class DispatchModelAlias
 
     /// <summary>
     /// Canonical alias a queued task launches at <paramref name="level"/> on <paramref name="agentId"/>.
-    /// A specialist's recorded alias wins; then a standing agent's exact <see cref="Agent.ModelId"/>
-    /// when it normalizes; otherwise the tier ladder. The dispatcher tick checks this alias against
-    /// the holds.
+    /// A specialist's recorded alias wins; then an explicit <see cref="AgentTask.RequestedModelAlias"/>;
+    /// then a standing agent's exact <see cref="Agent.ModelId"/> when it normalizes; otherwise the
+    /// tier ladder. The dispatcher tick checks this alias against the holds.
     /// </summary>
     public static async Task<string> ForTaskAsync(
         AppDbContext db, AgentTask task, AgentModelLevel level, Guid? agentId, CancellationToken ct)
     {
         if (task.SpecialistModelAlias is { } snapshot) return snapshot;
+        if (!string.IsNullOrWhiteSpace(task.RequestedModelAlias))
+            return task.RequestedModelAlias.Trim();
         if (agentId is not Guid id) return Resolve(task.AgentKind, level, null);
         var modelId = await db.Agents.AsNoTracking()
             .Where(a => a.Id == id)

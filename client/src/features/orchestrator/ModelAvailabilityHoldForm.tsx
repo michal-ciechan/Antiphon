@@ -27,6 +27,7 @@ const ALIASES_BY_KIND: Record<string, { value: string; label: string }[]> = {
     { value: 'gpt-6-astra', label: 'gpt-6-astra' },
     { value: 'gpt-6.2-sol', label: 'gpt-6.2-sol' },
     { value: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
+    { value: 'gpt-6.2-astra', label: 'gpt-6.2-astra' },
   ],
 }
 
@@ -81,7 +82,7 @@ export function ModelAvailabilityHoldForm() {
         }}
         w={140}
       />
-      <Select label="Alias" data={aliases} value={alias} onChange={setAlias} w={160} />
+      <Select label="Alias" data={aliases} value={alias} onChange={setAlias} w={180} />
       <TextInput
         label="Until (local)"
         type="datetime-local"

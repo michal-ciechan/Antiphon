@@ -841,6 +841,15 @@ public sealed class AgentTaskService
                     + "-Complexity without -Kind/-Level, or pass the pair without -Complexity.");
             }
 
+            if (!string.IsNullOrWhiteSpace(request.Model))
+            {
+                throw new ValidationException(
+                    "model",
+                    "complexity cannot be combined with model. An explicit alias is a single candidate "
+                    + "the caller chose and is never silently rerouted. Pass -Complexity without -Model, "
+                    + "or pass -Model without -Complexity.");
+            }
+
             if (request.IgnoreModelDisabled)
             {
                 throw new ValidationException(
@@ -1056,6 +1065,8 @@ public sealed class AgentTaskService
         Guid? routingPinId = null;
         AgentModelLevel level;
         AgentKind agentKind;
+        string? requestedModelAlias = null;
+        var explicitHoldApplied = false;
         if (request.Complexity is { } complexity)
         {
             routingWalk = defaultRoutingWalk ?? await _complexityRouting!.WalkAsync(
@@ -1129,7 +1140,10 @@ public sealed class AgentTaskService
 
                 if (_modelAvailability is not null)
                 {
-                    var alias = ModelLevelAliases.For(agentKind, level);
+                    explicitHoldApplied = true;
+                    requestedModelAlias = ExplicitDelegatableAlias(
+                        agentKind, request.Model, pinnedStandingAgent?.ModelId);
+                    var alias = requestedModelAlias ?? ModelLevelAliases.For(agentKind, level);
                     try
                     {
                         await _modelAvailability.RequireAsync(agentKind, alias, ct);
@@ -1245,8 +1259,12 @@ public sealed class AgentTaskService
 
             if (_modelAvailability is not null)
             {
-                var alias = ModelLevelAliases.For(agentKind, level);
-                if (pinnedStandingAgent is { ModelId: { Length: > 0 } modelId }
+                explicitHoldApplied = true;
+                requestedModelAlias = ExplicitDelegatableAlias(
+                    agentKind, request.Model, pinnedStandingAgent?.ModelId);
+                var alias = requestedModelAlias ?? ModelLevelAliases.For(agentKind, level);
+                if (requestedModelAlias is null
+                    && pinnedStandingAgent is { ModelId: { Length: > 0 } modelId }
                     && ModelAlias.Normalize(agentKind, modelId) is { } pinned)
                 {
                     alias = pinned;
@@ -1298,6 +1316,25 @@ public sealed class AgentTaskService
                         throw;
                     }
                 }
+            }
+        }
+
+        requestedModelAlias ??= ExplicitDelegatableAlias(
+            agentKind, request.Model, pinnedStandingAgent?.ModelId);
+        if (requestedModelAlias is not null
+            && !explicitHoldApplied
+            && _modelAvailability is not null
+            && !request.IgnoreModelDisabled)
+        {
+            try
+            {
+                await _modelAvailability.RequireAsync(agentKind, requestedModelAlias, ct);
+            }
+            catch (ModelDisabledException ex)
+            {
+                await RegisterCreateRefusalWaitAsync(
+                    caller, agentKind, requestedModelAlias, request, ex, ct);
+                throw;
             }
         }
 
@@ -1536,6 +1573,7 @@ public sealed class AgentTaskService
             RoutingPinId = routingPinId,
             ExplicitAgentKind = explicitAskKind,
             ExplicitModelLevel = explicitAskLevel,
+            RequestedModelAlias = requestedModelAlias,
             Workspace = workspace,
             DenyDirectEdits = request.DenyDirectEdits,
             WorkingDirectory = reusedDirectory ?? resolved.WorkingDirectory,
@@ -5033,6 +5071,44 @@ public sealed class AgentTaskService
             BlockedAt = UtcNow(),
         }, ct);
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Canonical explicit alias, or null when the caller omitted one. Unknown text, <c>*</c>,
+    /// and a slug the resolved kind does not delegate are 422. A standing model that normalizes
+    /// to a different alias is 422.
+    /// </summary>
+    private static string? ExplicitDelegatableAlias(AgentKind kind, string? raw, string? standingModelId)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var normalized = ModelAlias.Normalize(kind, raw);
+        var known = ModelAlias.DelegatableAliases
+            .Where(entry => entry.Kind == kind)
+            .Select(entry => entry.Alias)
+            .ToArray();
+        if (normalized is null
+            || normalized == ModelAlias.KindWide
+            || Array.IndexOf(known, normalized) < 0)
+        {
+            throw new ValidationException(
+                "model",
+                $"'{raw.Trim()}' is not a delegatable alias for {kind}. Known: {string.Join(", ", known)}.",
+                "model_alias_unknown");
+        }
+
+        if (!string.IsNullOrWhiteSpace(standingModelId)
+            && ModelAlias.Normalize(kind, standingModelId) is { } standing
+            && !string.Equals(standing, normalized, StringComparison.Ordinal))
+        {
+            throw new ValidationException(
+                "model",
+                $"explicit alias '{normalized}' conflicts with standing model '{standing}'.",
+                "model_alias_conflict");
+        }
+
+        return normalized;
     }
 
     private static string BuildTitle(CreateAgentTaskRequest request)

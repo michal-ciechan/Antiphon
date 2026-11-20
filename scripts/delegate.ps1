@@ -61,6 +61,12 @@ param(
     [ValidateSet('ClaudeCode', 'Grok', 'Codex')]
     [string]$Kind,
 
+    # Optional explicit delegatable alias, for example gpt-6.2-astra. Sent only when set.
+    # Omitted keeps the tier ladder. Unknown text, *, and a slug the kind does not delegate
+    # are the server's 422. No ValidateSet: the server owns that refusal.
+    [Parameter(ParameterSetName = 'Create')]
+    [string]$Model,
+
     # Named Delegation Capability (CARD-0398). The NAME, never the secret. Loads the DPAPI store
     # and sends X-Antiphon-Task-Token. Never assigns ANTIPHON_TASK_TOKEN. Also accepted as
     # $env:ANTIPHON_CAPABILITY. Refused if a task token is already set.
@@ -1226,6 +1232,12 @@ switch ($PSCmdlet.ParameterSetName) {
                 + '-Complexity without -Kind/-Level, or pass the pair without -Complexity.')
             exit 1
         }
+        if ($Complexity -and $Model) {
+            Write-Error ('complexity cannot be combined with model. An explicit alias is a single ' `
+                + 'candidate the caller chose and is never silently rerouted. Pass -Complexity without ' `
+                + '-Model, or pass -Model without -Complexity.')
+            exit 1
+        }
 
         # CARD-0644 D-1: two workspace switches are ambiguous. Refused here, before any POST, rather
         # than letting the first one silently win.
@@ -1390,6 +1402,8 @@ switch ($PSCmdlet.ParameterSetName) {
         # Sent only when chosen - an omitted -Kind leaves the decision to the role policy, which
         # ships unset and therefore resolves to ClaudeCode.
         if ($Kind) { $body['agentKind'] = $Kind }
+        # Sent only when chosen. An omitted -Model keeps the tier ladder.
+        if ($Model) { $body['model'] = $Model }
         if ($Card) { $body['card'] = $Card }
         if (-not $Dir) { $Dir = Get-AntiphonCheckoutRoot }
         if ($Dir) { $body['workingDirectory'] = $Dir }
