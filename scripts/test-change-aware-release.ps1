@@ -110,8 +110,8 @@ function Get-FxDiscovery {
     $run = [Antiphon.Checkpoints.CheckpointProcessRunner]::Run($start,60000,$false)
     [IO.File]::WriteAllText((Join-Path $dir 'console.log'),$run.Stdout+$run.Stderr)
     if ($run.Exit -ne 0) { throw 'fixture-discovery-failed' }
-    $parsed = ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) discovery
-    return ConvertTo-NightlyDiscoveryDocument $parsed.Nodes (Get-NightlyAssemblyHash $FilterHost)
+    $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read(([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($dir)), 'discovery')
+    return [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($parsed.Nodes, (Get-NightlyAssemblyHash $FilterHost))
 }
 function Invoke-FxRoster($Selection, $Discovery, $Label) {
     $full = @(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'},@{class='Antiphon.Tests.FilterHost.C1313Offline';method='Rows'})

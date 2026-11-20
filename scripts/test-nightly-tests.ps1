@@ -47,10 +47,10 @@ function New-C487FreshProbeEvidence {
     $trx = Join-Path $RunDirectory 'all.trx'
     Copy-Item -LiteralPath (Join-Path $root 'all.trx') -Destination $trx -Force
     (Get-Item -LiteralPath $trx).LastWriteTimeUtc = [datetime]::UtcNow
-    $discDiag = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery
+    $discDiag = [Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'discovery.diag'), 'discovery')
     $discPath = Join-Path $RunDirectory 'discovery.json'
-    $doc = ConvertTo-NightlyDiscoveryDocument -Nodes @($discDiag.Nodes) -AssemblyHash 'c487-probe-hash'
-    Write-NightlyDiscoveryDocument -Path $discPath -Document $doc
+    $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($discDiag.Nodes), 'c487-probe-hash')
+    [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($discPath, $doc)
     $execPath = Join-Path $RunDirectory 'execution.diag'
     Copy-Item -LiteralPath (Join-Path $root 'execution.diag') -Destination $execPath -Force
     return [pscustomobject]@{
@@ -58,7 +58,7 @@ function New-C487FreshProbeEvidence {
         DiscoveryPath = $discPath
         ExecutionPath = $execPath
         Discovery = $discDiag
-        Execution = (ConvertFrom-NightlyDiagnosticLog -Path $execPath -Kind execution)
+        Execution = ([Antiphon.Nightly.NightlyDiagnosticLog]::Read($execPath, 'execution'))
     }
 }
 
@@ -318,10 +318,10 @@ function Test-C487_G040 {
     $parsedDisc = $null
     $parseThrew = $false
     try {
-        $parsedDisc = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery
+        $parsedDisc = [Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'discovery.diag'), 'discovery')
     } catch {
         $parseThrew = $true
-        Assert-C487 -Cond $false -Name 'G040 real discovery parse' -Detail $_.Exception.Message
+        Assert-C487 -Cond $false -Name 'G040 real discovery parse' -Detail (Get-NightlyRefusalText $_)
     }
     if (-not $parseThrew) {
         $discUids = @($parsedDisc.Nodes | ForEach-Object { [string]$_.Uid })
@@ -333,10 +333,10 @@ function Test-C487_G040 {
     $parsedExec = $null
     $execThrew = $false
     try {
-        $parsedExec = ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution
+        $parsedExec = [Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'execution.diag'), 'execution')
     } catch {
         $execThrew = $true
-        Assert-C487 -Cond $false -Name 'G040 real execution parse' -Detail $_.Exception.Message
+        Assert-C487 -Cond $false -Name 'G040 real execution parse' -Detail (Get-NightlyRefusalText $_)
     }
     if (-not $execThrew) {
         $execUids = @($parsedExec.Nodes | ForEach-Object { [string]$_.Uid })
@@ -350,9 +350,9 @@ function Test-C487_G040 {
     Set-Content -LiteralPath $bogus -Value 'not a diagnostic' -Encoding ASCII
     $garbageThrew = $false
     try {
-        [void](ConvertFrom-NightlyDiagnosticLog -Path $bogus -Kind discovery)
+        [void]([Antiphon.Nightly.NightlyDiagnosticLog]::Read($bogus, 'discovery'))
     } catch {
-        $garbageThrew = ($_.Exception.Message -match 'unknown diagnostic format|version-drift')
+        $garbageThrew = ((Get-NightlyRefusalText $_) -match 'unknown diagnostic format|version-drift')
     }
     Assert-C487 -Cond $garbageThrew -Name 'G040 garbage diagnostic fail-closed' -Detail 'no throw'
     $headerOnly = Join-Path $ResultsDirectory ('g040-header-' + [guid]::NewGuid().ToString('N') + '.diag')
@@ -360,9 +360,9 @@ function Test-C487_G040 {
     Set-Content -LiteralPath $headerOnly -Value $headerText -Encoding ASCII
     $unknownThrew = $false
     try {
-        [void](ConvertFrom-NightlyDiagnosticLog -Path $headerOnly -Kind discovery)
+        [void]([Antiphon.Nightly.NightlyDiagnosticLog]::Read($headerOnly, 'discovery'))
     } catch {
-        $unknownThrew = ($_.Exception.Message -match 'unknown diagnostic format')
+        $unknownThrew = ((Get-NightlyRefusalText $_) -match 'unknown diagnostic format')
     }
     Assert-C487 -Cond $unknownThrew -Name 'G040 unknown diagnostic format'
 
@@ -680,8 +680,8 @@ function Assert-C1044Rejects {
     param([string]$Name, [string]$Text, [string]$Pattern)
     $path = Write-C1044Diagnostic -Name ($Name -replace ' ', '-') -Text $Text
     $errorText = ''
-    try { $null = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
-    catch { $errorText = $_.Exception.Message }
+    try { $null = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery') }
+    catch { $errorText = (Get-NightlyRefusalText $_) }
     Assert-C487 -Cond ($errorText -match $Pattern) -Name ('C1044 ' + $Name) -Detail $errorText
 }
 
@@ -697,8 +697,8 @@ function Test-C1044_MultilineDiscovery {
         $path = Write-C1044Diagnostic -Name $variant -Text (Get-C1044MultilineText -Newline $newline)
         $nodes = @()
         $errorText = ''
-        try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
-        catch { $errorText = $_.Exception.Message }
+        try { $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) }
+        catch { $errorText = (Get-NightlyRefusalText $_) }
         Assert-C487 -Cond (Test-C1044Inventory -Nodes $nodes) -Name ('C1044 ' + $variant + ' complete inventory') -Detail $errorText
         Assert-C487 -Cond (Test-C1044Metadata -Nodes $nodes) -Name ('C1044 ' + $variant + ' exact metadata')
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes
@@ -746,7 +746,7 @@ function Test-C1044_DiscoveryReconciliation {
             [System.IO.File]::ReadAllText($output) -ceq 'sentinel-existing-output') -Name 'C1044 producer sentinel unchanged' -Detail $errorText
         $script:C1044ProducerText = Get-C1044MultilineText -Newline "`n"
         $null = Invoke-NightlyProduceDiscovery @producerArgs
-        $published = Read-NightlyDiscoveryDocument -Path $output
+        $published = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($output)
         Assert-C487 -Cond (Test-C1044Metadata -Nodes $published.Nodes) -Name 'C1044 producer publishes complete multiline inventory'
     } finally {
         $script:NightlySeams = $savedSeams
@@ -776,8 +776,8 @@ function Test-C1044_FixtureTypeName {
     $path = Write-C1044Diagnostic -Name 'fixture-typename' -Text (Get-C1044DiscoveryText -Records $records)
     $nodes = @()
     $errorText = ''
-    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
-    catch { $errorText = $_.Exception.Message }
+    try { $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) }
+    catch { $errorText = (Get-NightlyRefusalText $_) }
     $fixtureNode = @($nodes | Where-Object { $_.Uid -ceq 'fixture-uid' })
     $genericNode = @($nodes | Where-Object { $_.Uid -ceq 'generic-uid' })
     Assert-C487 -Cond ($nodes.Count -eq 2 -and $fixtureNode.Count -eq 1 -and $fixtureNode[0].Type -ceq $fixture -and $fixtureNode[0].Method -ceq 'ListsFiles' -and $genericNode.Count -eq 1 -and $genericNode[0].Type -ceq $generic) `
@@ -802,7 +802,7 @@ function Test-C1044_FixtureClassChunks {
         (New-C1044DiscoveryRecord -Uid 'plain-uid' -TypeName 'Ordinary' -Method 'Plain')
     )
     $path = Write-C1044Diagnostic -Name 'fixture-chunks' -Text (Get-C1044DiscoveryText -Records $records)
-    $parsed = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery
+    $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')
     $nodes = @($parsed.Nodes)
     $hold = @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @('Other'); Reason = 'held method'; Owner = 'C1044' })
     $chunks = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $hold)
@@ -825,7 +825,7 @@ function Test-C1044_FixtureClassChunks {
     $rosterError = ''
     $filterOk = $false
     try {
-        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-hash'
+        $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-hash')
         $memberClass = 'Antiphon.Tests.Application.' + $fixture
         $roster = New-NightlyExactRoster -Discovery $doc -Members @([pscustomobject]@{ class = $memberClass; method = 'ListsFiles' })
         foreach ($row in @($roster.Chunks)) {
@@ -879,25 +879,25 @@ function Test-C1044_UnattendedCases {
 function Test-C1044_ParserCompatibility {
     $root = Get-C487ProbeRoot
     $golden = [System.IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
-    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'discovery.diag') -Kind discovery).Nodes)
+    $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'discovery.diag'), 'discovery')).Nodes)
     Assert-C487 -Cond (Test-C1044Inventory -Nodes $nodes) -Name 'C1044 golden discovery inventory'
     Assert-C487 -Cond (Test-C1044Metadata -Nodes $nodes) -Name 'C1044 golden discovery metadata'
     $execText = [System.IO.File]::ReadAllText((Join-Path $root 'execution.diag'))
-    $execution = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution).Nodes)
+    $execution = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'execution.diag'), 'execution')).Nodes)
     Assert-C487 -Cond (Test-C1044Inventory -Nodes $execution -Execution) -Name 'C1044 golden terminal inventory'
     $withDiscovery = Write-C1044Diagnostic -Name 'nonterminal' -Text ($execText + "`n" + $golden)
-    $filtered = @((ConvertFrom-NightlyDiagnosticLog -Path $withDiscovery -Kind execution).Nodes)
+    $filtered = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($withDiscovery, 'execution')).Nodes)
     Assert-C487 -Cond ((Test-C1044Inventory -Nodes $filtered -Execution) -and
         @($filtered | Where-Object { $_.State -in @('InProgress', 'Discovered') }).Count -eq 0) -Name 'C1044 nonterminal updates filtered'
     $prefixed = [regex]::Replace($golden, '(?m)^TestNodeUpdateMessage', '2026-10-04T12:00:00.000+00:00 Pinned.Logger INFORMATION TestNodeUpdateMessage')
     $path = Write-C1044Diagnostic -Name 'prefixed' -Text $prefixed
-    Assert-C487 -Cond (Test-C1044Metadata -Nodes (ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) -Name 'C1044 prefixed envelopes accepted'
+    Assert-C487 -Cond (Test-C1044Metadata -Nodes ([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) -Name 'C1044 prefixed envelopes accepted'
     $multilineExec = $execText.Replace('DisplayName = Plain,', "DisplayName = Plain { },`n`ncontinued [, name,").TrimEnd([char[]]"`r`n")
     $path = Write-C1044Diagnostic -Name 'execution-multiline' -Text $multilineExec
-    Assert-C487 -Cond (Test-C1044Inventory -Nodes (ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes -Execution) -Name 'C1044 multiline terminal inventory'
+    Assert-C487 -Cond (Test-C1044Inventory -Nodes ([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes -Execution) -Name 'C1044 multiline terminal inventory'
     $jsonPath = Join-Path $ResultsDirectory 'roundtrip.json'
-    Write-NightlyDiscoveryDocument -Path $jsonPath -Document (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-hash')
-    $roundtrip = ConvertFrom-NightlyDiagnosticLog -Path $jsonPath -Kind discovery
+    [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($jsonPath, ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-hash')))
+    $roundtrip = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($jsonPath, 'discovery')
     Assert-C487 -Cond ((Test-C1044Metadata -Nodes $roundtrip.Nodes) -and $roundtrip.AssemblyHash -ceq 'fixture-hash') -Name 'C1044 discovery JSON roundtrip'
     $manual = @($nodes | Where-Object { $_.Type -eq 'Manual' })[0]
     Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition -Node $manual).Disposition -eq 'excluded') -Name 'C1044 default OptIn excluded'
@@ -960,7 +960,7 @@ function Test-D13_RealTimeoutCancelled {
             -Name "D13 real $state native identity"
         $path = Write-C1044Diagnostic -Name "c1375-$state" -Text (
             $decoded.MtpHeader + $decoded.TunitHeader + $decoded.Record)
-        $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+        $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes)
         Assert-C487 -Cond ($nodes.Count -eq 1 -and $nodes[0].Uid -ceq $uid -and
             $nodes[0].ClassName -ceq $class -and $nodes[0].Method -ceq $method -and $nodes[0].Outcome -ceq 'Failed') `
             -Name "D13 real $state parsed identity"
@@ -999,7 +999,7 @@ function Test-D13_ErrorTerminal {
         $nl = $(if ($style -eq 'LF') { "`n" } else { "`r`n" })
         $text = (Get-D13FailureText).Replace("`r`n", "`n").Replace("`n", $nl)
         $path = Write-C1044Diagnostic -Name ('d13-' + $style) -Text $text
-        $parsed = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+        $parsed = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes)
         Assert-C487 -Cond ($parsed.Count -eq 1 -and $parsed[0].Uid -ceq $uid -and
             $parsed[0].ClassName -ceq $class -and $parsed[0].Method -ceq $method -and
             $parsed[0].Outcome -ceq 'Failed') -Name ('D13 ' + $style + ' failure identity')
@@ -1029,20 +1029,20 @@ function Test-D13_ErrorTerminal {
 function Test-D13_ExecutionCompatibility {
     $root = Get-C487ProbeRoot
     $text = [IO.File]::ReadAllText((Join-Path $root 'execution.diag'))
-    $pass = @((ConvertFrom-NightlyDiagnosticLog -Path (Join-Path $root 'execution.diag') -Kind execution).Nodes)
+    $pass = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read((Join-Path $root 'execution.diag'), 'execution')).Nodes)
     $skipPath = Write-C1044Diagnostic -Name 'd13-skips' -Text ($text.Replace('PassedTestNodeStateProperty', 'SkippedTestNodeStateProperty'))
-    $skip = @((ConvertFrom-NightlyDiagnosticLog -Path $skipPath -Kind execution).Nodes)
+    $skip = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($skipPath, 'execution')).Nodes)
     Assert-C487 -Cond ($pass.Count -eq 8 -and $skip.Count -eq 8 -and
         @($pass | Where-Object { $_.Outcome -cne 'Passed' }).Count -eq 0 -and
         @($skip | Where-Object { $_.Outcome -cne 'Skipped' }).Count -eq 0 -and
         (Test-C1044Inventory -Nodes $pass -Execution) -and (Test-C1044Inventory -Nodes $skip -Execution)) -Name 'D13 pass and skip unchanged'
     $legacyPath = Write-C1044Diagnostic -Name 'd13-legacy' -Text ((Get-D13FailureText).Replace('ErrorTestNodeStateProperty', 'FailedTestNodeStateProperty'))
-    $legacy = @((ConvertFrom-NightlyDiagnosticLog -Path $legacyPath -Kind execution).Nodes)
+    $legacy = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($legacyPath, 'execution')).Nodes)
     Assert-C487 -Cond ($legacy.Count -eq 1 -and $legacy[0].Outcome -ceq 'Failed' -and
         $legacy[0].Method -ceq 'C488_ApprovalPollingCannotConfirm') -Name 'D13 legacy Failed retained'
     $discovery = [IO.File]::ReadAllText((Join-Path $root 'discovery.diag'))
     $mixedPath = Write-C1044Diagnostic -Name 'd13-mixed' -Text ($text + "`n" + $discovery + "`n" + (Get-D13FailureText))
-    $mixed = @((ConvertFrom-NightlyDiagnosticLog -Path $mixedPath -Kind execution).Nodes)
+    $mixed = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($mixedPath, 'execution')).Nodes)
     Assert-C487 -Cond ($mixed.Count -eq 9 -and @($mixed | Where-Object { $_.Outcome -eq 'Failed' }).Count -eq 1 -and
         @($mixed | Where-Object { $_.Outcome -in @('Discovered', 'InProgress') }).Count -eq 0) -Name 'D13 nonterminal updates omitted'
 }
@@ -1053,7 +1053,7 @@ function Test-D13_ExecutionGuards {
         $changed = $(if ($variant -eq 'duplicate') { $text + "`n" + $text } else { $text.Replace('2.2.2', '9.0.0') })
         $path = Write-C1044Diagnostic -Name ('d13-' + $variant) -Text $changed
         $errorText = ''
-        try { $null = ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution } catch { $errorText = $_.Exception.Message }
+        try { $null = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution') } catch { $errorText = (Get-NightlyRefusalText $_) }
         if ($variant -eq 'duplicate') {
             Assert-C487 -Cond ($errorText -match 'duplicate execution uid') -Name 'D13 duplicate Error refuses' -Detail $errorText
         } else {
@@ -1061,11 +1061,11 @@ function Test-D13_ExecutionGuards {
         }
     }
     $path = Write-C1044Diagnostic -Name 'd13-guard-error' -Text $text
-    $parsed = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+    $parsed = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes)
     $requiredUid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.C488_ApprovalPollingCannotConfirm.1.1.0'
     $omittedUid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.OtherMethod.1.1.0'
     $omitPath = Write-C1044Diagnostic -Name 'd13-guard-omit' -Text ($text.Replace($requiredUid, $omittedUid))
-    $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $omitPath -Kind execution).Nodes)
+    $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($omitPath, 'execution')).Nodes)
     $missing = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows $nodes -RequiredUids @($requiredUid)
     Assert-C487 -Cond ($nodes.Count -eq 1 -and $nodes[0].Uid -ceq $omittedUid -and
         -not $missing.Ok -and @($missing.Missing).Count -eq 1 -and [string]$missing.Missing[0] -ceq $requiredUid) `
@@ -1101,9 +1101,9 @@ function ConvertFrom-D13StateText {
     $errorText = ''
     $nodes = @()
     try {
-        $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes)
+        $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes)
     } catch {
-        $errorText = [string]$_.Exception.Message
+        $errorText = [string](Get-NightlyRefusalText $_)
     }
     return [pscustomobject]@{ Nodes = @($nodes); Error = $errorText }
 }
@@ -1534,8 +1534,8 @@ function Test-C1391_SplicedRecord {
     $path = Write-C1044Diagnostic -Name 'c1391-two-discovery' -Text ($header + $first + $second)
     $nodes = @()
     $errorText = ''
-    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
-    catch { $errorText = $_.Exception.Message }
+    try { $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) }
+    catch { $errorText = (Get-NightlyRefusalText $_) }
     $alpha = @($nodes | Where-Object { $_.Uid -ceq 'uid-a' -and $_.Type -ceq 'Alpha' })
     $beta = @($nodes | Where-Object { $_.Uid -ceq 'uid-b' -and $_.Type -ceq 'Beta' })
     $discoveryOk = ($errorText -eq '' -and $nodes.Count -eq 2 -and $alpha.Count -eq 1 -and $beta.Count -eq 1)
@@ -1545,8 +1545,8 @@ function Test-C1391_SplicedRecord {
     $path = Write-C1044Diagnostic -Name 'c1391-two-passed' -Text ($header + $passedA + $passedB)
     $exec = @()
     $execError = ''
-    try { $exec = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution).Nodes) }
-    catch { $execError = $_.Exception.Message }
+    try { $exec = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution')).Nodes) }
+    catch { $execError = (Get-NightlyRefusalText $_) }
     $passedLeft = @($exec | Where-Object { $_.Uid -ceq 'uid-a' -and $_.Outcome -ceq 'Passed' })
     $passedRight = @($exec | Where-Object { $_.Uid -ceq 'uid-b' -and $_.Outcome -ceq 'Passed' })
     $execOk = ($execError -eq '' -and $exec.Count -eq 2 -and $passedLeft.Count -eq 1 -and $passedRight.Count -eq 1)
@@ -1555,8 +1555,8 @@ function Test-C1391_SplicedRecord {
     $path = Write-C1044Diagnostic -Name 'c1391-splice' -Text ($header + $truncated + $first)
     $spliced = @()
     $spliceError = ''
-    try { $spliced = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
-    catch { $spliceError = $_.Exception.Message }
+    try { $spliced = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) }
+    catch { $spliceError = (Get-NightlyRefusalText $_) }
     $borrowed = @($spliced | Where-Object { $_.Uid -ceq 'truncated' -or $_.Type -ceq 'Alpha' })
     $spliceOk = ($spliceError -match 'truncated diagnostic record|malformed discovery record' -and $spliced.Count -eq 0 -and $borrowed.Count -eq 0)
     Assert-C487 -Cond ($discoveryOk -and $execOk -and $spliceOk) -Name 'C1391 same-line records split and a truncated splice does not borrow' `
@@ -1577,8 +1577,8 @@ function Test-C1391_OddTypeName {
     $path = Write-C1044Diagnostic -Name 'c1391-odd-balanced' -Text (Get-C1044DiscoveryText -Records $records)
     $nodes = @()
     $errorText = ''
-    try { $nodes = @((ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery).Nodes) }
-    catch { $errorText = $_.Exception.Message }
+    try { $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery')).Nodes) }
+    catch { $errorText = (Get-NightlyRefusalText $_) }
     $balancedNode = @($nodes | Where-Object { $_.Uid -ceq 'balanced-uid' })
     $genericNode = @($nodes | Where-Object { $_.Uid -ceq 'generic-uid' })
     $ok = ($nodes.Count -eq 2 -and $balancedNode.Count -eq 1 -and $balancedNode[0].Type -ceq $balanced -and $genericNode.Count -eq 1 -and $genericNode[0].Type -ceq $generic)

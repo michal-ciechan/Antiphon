@@ -26,7 +26,7 @@ $script:ProtectedInputs = @(
     'scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = '659ea09e42513920ce1e46c4479ef092728db7702b687a65742768d67d46886e'
+$script:PinnedInputDigest = 'ddfd0a19e6c5634f8660f9b7f67836917b1a80874b7503bcdd29b5fc10812f82'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
@@ -251,7 +251,7 @@ function Read-Census($root) {
     # So the core is loaded and verified through the checkout's loader first, and
     # the loader is re-bound to the checkout after the pinned scripts are dotted;
     # the pinned census functions stay the ones from $root.
-    $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
+    $discovery = [Antiphon.Nightly.NightlyDiagnosticLog]::Read("$root/scripts/fixtures/nightly/c487-probe/discovery.diag", 'discovery')
     $reader = {
         param($root, $discovery, $checkout)
         $loader = $root

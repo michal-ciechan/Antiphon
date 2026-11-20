@@ -1278,8 +1278,8 @@ function Invoke-NightlyScheduledChunk {
                 # The full discovery remains the suite union authority;
                 # the leaf verdict checks just this chunk's method expansions.
                 $discPath = Join-Path $LogRoot ('{0}-{1}-selection.discovery.json' -f $suiteId, $chunk.id)
-                $leaf = ConvertTo-NightlyDiscoveryDocument -Nodes $chunk.nodes -AssemblyHash $profileDiscovery.assemblyHash
-                Write-NightlyDiscoveryDocument -Path $discPath -Document $leaf
+                $leaf = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($chunk.nodes, $profileDiscovery.assemblyHash)
+                [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($discPath, $leaf)
             }
         }
         if ((Test-NightlyPathExists $trxPath) -and -not (Test-NightlyPathExists $discPath)) {
@@ -1300,7 +1300,7 @@ function Invoke-NightlyScheduledChunk {
         }
         $required = @()
         if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
-        $execDiagPath = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
+        $execDiagPath = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
         $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
             -ExecutionDiagnosticPath $execDiagPath `
             -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
@@ -1385,7 +1385,7 @@ function Invoke-NightlyScheduledChunk {
         $rootPid = 0
         if ($null -ne $run.PSObject.Properties['Pid'] -and $null -ne $run.Pid) { $rootPid = [int]$run.Pid }
         if ($isNative) {
-            $hangDiag = Get-NightlyLatestDiagnosticLog -Directory $execDiagDir
+            $hangDiag = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
             try { $finished = [bool](Test-NightlyExecutionFinished -TrxPath $trxPath -DiagnosticPath $hangDiag) } catch { $finished = $false }
             $identities = @()
             $images = @()
@@ -2183,7 +2183,7 @@ function Invoke-NightlyExactRoster {
         }
         [IO.File]::WriteAllText((Join-Path $dir 'console.log'), $run.Stdout + $run.Stderr)
         if ($run.TimedOut) { throw 'exact-execution-timeout' }
-        $actual = ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) execution
+        $actual = [Antiphon.Nightly.NightlyDiagnosticLog]::Read(([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($dir)), 'execution')
         $trxRows = @(Read-NightlyTrxIdentities $trx)
         $cross = Test-NightlyTrxDiagnosticCrossCheck $trxRows $actual.Nodes
         $verdict = Test-NightlyExactCoverage $chunk.RequiredUids $actual.Nodes

@@ -189,9 +189,9 @@ function Get-RealTreeNodes {
     if ([string]::IsNullOrWhiteSpace($DiscoveryLog) -or [string]::IsNullOrWhiteSpace($AssemblyPath)) {
         throw 'real target requires -DiscoveryLog and -AssemblyPath'
     }
-    $parsed = ConvertFrom-NightlyDiagnosticLog -Path $DiscoveryLog -Kind discovery
-    $document = ConvertTo-NightlyDiscoveryDocument -Nodes @($parsed.Nodes) -AssemblyHash (Get-NightlyAssemblyHash $AssemblyPath)
-    return @((ConvertFrom-NightlyDiscoveryDocument $document 'antiphon-tunit-discovery-v1').Nodes)
+    $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($DiscoveryLog, 'discovery')
+    $document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), (Get-NightlyAssemblyHash $AssemblyPath))
+    return @(([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($document, 'antiphon-tunit-discovery-v1')).Nodes)
 }
 
 function Assert-SerializerEquivalentOrder {

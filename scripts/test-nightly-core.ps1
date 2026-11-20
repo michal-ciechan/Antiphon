@@ -66,7 +66,7 @@ function Assert-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses
 function Test-NCGolden([string]$Name, [scriptblock]$Body, [string[]]$Witnesses = @(), [string]$Normalize = '', [switch]$NeutralPathSeparators) {
     $core = Test-NightlyCoreAvailable
     $actual = ''
-    try { $actual = (& $Body) | ConvertTo-Json -Depth 14 -Compress } catch { $actual = 'throw: ' + $_.Exception.Message }
+    try { $actual = (& $Body) | ConvertTo-Json -Depth 14 -Compress } catch { $actual = 'throw: ' + (Get-NightlyRefusalText $_) }
     # A run-specific directory (results root) is written as <root>, so the golden does not depend on it.
     if ($Normalize) { $actual = $actual.Replace($Normalize.Replace('\', '\\'), '<root>').Replace($Normalize, '<root>') }
     $goldenPath = Join-Path $PSScriptRoot ('fixtures/nightly/core-golden/' + $Name + '.json')
@@ -168,7 +168,7 @@ function Get-NCSortedCross($Cross) {
 }
 
 function Get-NCOutcome([scriptblock]$Body) {
-    try { return (& $Body) } catch { return ('REFUSED ' + $_.Exception.Message) }
+    try { return (& $Body) } catch { return ('REFUSED ' + (Get-NightlyRefusalText $_)) }
 }
 
 # The reflected short envelope the C1325 fixtures build on (as in test-nightly-tests.ps1).
@@ -265,13 +265,13 @@ function Test-NCDiagnosticsMatchFallback {
     }
     $r = Invoke-NCBothWays {
         $perRecord = foreach ($record in $records) {
-            $property = Get-NightlyDiagnosticStateProperty -Record $record
-            $state = Get-NightlyDiagnosticStateName -Record $record -StateProperty $property
+            $property = [Antiphon.Nightly.NightlyDiagnostics]::StateProperty($record)
+            $state = [Antiphon.Nightly.NightlyDiagnostics]::StateName([string]$property.Name)
             [ordered]@{
                 property = $property; state = $state
-                split = @(Get-NightlyDiagnosticRecords -Text $record)
-                asState = Get-NCOutcome { ConvertFrom-NightlyDiagnosticRecord -Record $record -State $(if ($state) { $state } else { 'Failed' }) -StateProperty $property }
-                asDiscovered = Get-NCOutcome { ConvertFrom-NightlyDiagnosticRecord -Record $record -State 'Discovered' -StateProperty $property }
+                split = @([Antiphon.Nightly.NightlyDiagnostics]::Records($record))
+                asState = Get-NCOutcome { [Antiphon.Nightly.NightlyDiagnosticLog]::Record($record, $(if ($state) { $state } else { 'Failed' }), $property) }
+                asDiscovered = Get-NCOutcome { [Antiphon.Nightly.NightlyDiagnosticLog]::Record($record, 'Discovered', $property) }
             }
         }
         [ordered]@{ records = @($perRecord) }
@@ -280,8 +280,8 @@ function Test-NCDiagnosticsMatchFallback {
     $logs = Test-NCGolden 'diagnosticLogs' {
         @(foreach ($path in $paths) {
             [ordered]@{
-                execution = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind execution }
-                discovery = Get-NCOutcome { ConvertFrom-NightlyDiagnosticLog -Path $path -Kind discovery }
+                execution = Get-NCOutcome { [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'execution') }
+                discovery = Get-NCOutcome { [Antiphon.Nightly.NightlyDiagnosticLog]::Read($path, 'discovery') }
             }
         })
     } @('discovery-count-mismatch', 'empty diagnostic') $root -NeutralPathSeparators
@@ -295,7 +295,7 @@ function Test-NCDiagnosticsMatchFallback {
         cells = @(foreach ($v in $values) { ConvertTo-TestPhaseCsvCell -Value $v })
         native = @(Get-TestPhaseNativeIds -Text $stdout); nativeEmpty = @(Get-TestPhaseNativeIds -Text '')
         bag = @(Get-NightlyIdentityBagKey -ClassName 'A.B.C(x)' -TypeName 'T' -MethodName 'M', (Get-NightlyIdentityBagKey -ClassName ' ' -TypeName 'N.Type' -MethodName 'Run'))
-        outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { ConvertTo-NightlyNormalizedOutcome -Outcome $o })
+        outcomes = @(foreach ($o in @('Passed', ' FAIL ', 'error', 'NotRunnable', 'pending', '', 'weird')) { [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($o) })
         sha = Get-NightlyFileSha256 -Path $hashed
         csvRow = (@($row.Keys | ForEach-Object { ConvertTo-TestPhaseCsvCell -Value $row[$_] }) -join ',')
     } } 'summaryHelpers'
@@ -433,7 +433,7 @@ function Test-NCCoveragePartsMatchFallback {
     $g = Test-NCGolden 'coverageParts' {
         $digests = foreach ($roster in $rosters) { try { Get-NightlyExpectedSkipRosterDigest -Entries $roster } catch { 'throw:' + $_.Exception.Message } }
         $latest = foreach ($name in $cases.Keys) {
-            $found = Get-NightlyLatestDiagnosticLog -Directory (Join-Path $logs $name)
+            $found = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest((Join-Path $logs $name))
             if ($null -eq $found) { $name + '=null' } else { $name + '=' + [IO.Path]::GetFileName($found) }
         }
         $verdicts = foreach ($exit in @(0, 8)) {
@@ -731,16 +731,16 @@ function Test-NCDocumentsMatchFallback {
     }
     $nodes.Add([ordered]@{ uid = 'dict-node'; type = 'T'; method = 'M'; excluded = $true; categories = @('A', 'B') })
     $r = Invoke-NCBothWays {
-        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes.ToArray() -AssemblyHash 'abc'
+        $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes.ToArray(), 'abc')
         $json = $doc | ConvertTo-Json -Depth 12 -Compress
-        $back = ConvertFrom-NightlyDiscoveryDocument -Object ($json | ConvertFrom-Json) -ExpectedFormat $script:NightlyDiscoveryFormat
+        $back = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument(($json | ConvertFrom-Json), [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat)
         $refusals = @(foreach ($bad in @(
             @([pscustomobject]@{ uid = 'Same'; type = 'T'; method = 'M' }, [pscustomobject]@{ uid = 'same'; type = 'T'; method = 'M' }),
             @([pscustomobject]@{ uid = ''; type = 'T'; method = 'M' }),
             @([pscustomobject]@{ uid = 'u'; type = 'T'; method = ' ' }),
             $null)) {
-            $o = [pscustomobject]@{ format = $script:NightlyDiscoveryFormat; tunitVersion = $script:NightlySupportedTunit; mtpVersion = $script:NightlySupportedMtp; assemblyHash = 'h'; nodes = $bad }
-            try { [void](ConvertFrom-NightlyDiscoveryDocument -Object $o -ExpectedFormat $script:NightlyDiscoveryFormat); 'accepted' } catch { $_.Exception.Message }
+            $o = [pscustomobject]@{ format = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat; tunitVersion = [Antiphon.Nightly.NightlyDiagnosticLog]::SupportedTunit; mtpVersion = [Antiphon.Nightly.NightlyDiagnosticLog]::SupportedMtp; assemblyHash = 'h'; nodes = $bad }
+            try { [void]([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($o, [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat)); 'accepted' } catch { Get-NightlyRefusalText $_ }
         })
         [ordered]@{ json = $json; back = $back; canonical = (ConvertTo-NightlyCanonicalJson -Object $doc); refusals = $refusals }
     } 'discoveryDocuments'
@@ -997,9 +997,9 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
             State = $(if ($i % 3 -eq 0) { '' } else { $w }); Excluded = ($i % 2 -eq 0); Categories = @($weird | Select-Object -Skip $i -First (1 + ($i % 3))) }
     })
     $docs = [ordered]@{
-        weird = (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash ('h' + (& $c 9) + '"'))
-        fixture = (ConvertTo-NightlyDiscoveryDocument -Nodes @(Get-NCFixtureNodes 300) -AssemblyHash 'fixture-hash')
-        empty = (ConvertTo-NightlyDiscoveryDocument -Nodes @() -AssemblyHash 'h')
+        weird = ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, ('h' + (& $c 9) + '"')))
+        fixture = ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@(Get-NCFixtureNodes 300), 'fixture-hash'))
+        empty = ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@(), 'h'))
     }
     $bad = [Collections.Generic.List[string]]::new()
     $utf8 = [Text.UTF8Encoding]::new($false)
@@ -1007,7 +1007,7 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
         $path = Join-Path $root ('discovery-writer-' + $name + '.json')
         $expected = $utf8.GetBytes(($docs[$name] | ConvertTo-Json -Depth 12))
         foreach ($round in 'create', 'replace') {
-            Write-NightlyDiscoveryDocument -Path $path -Document $docs[$name]
+            [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($path, $docs[$name])
             if (-not [Linq.Enumerable]::SequenceEqual([byte[]]$expected, [byte[]][IO.File]::ReadAllBytes($path))) { $bad.Add($name + ' ' + $round) }
         }
         if ($null -eq [Antiphon.Nightly.DiscoveryWriter]::Prepare($docs[$name])) { $bad.Add($name + ' not claimed') }
@@ -1018,7 +1018,7 @@ function Test-NCDiscoveryWriterMatchesConvertToJson {
     foreach ($round in 'create', 'replace') {
         if ($round -ceq 'replace') { [IO.File]::WriteAllText($path, 'prior') }
         $msg = 'accepted'
-        try { Write-NightlyDiscoveryDocument -Path $path -Document $unclaimed } catch { $msg = $_.Exception.Message }
+        try { [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($path, $unclaimed) } catch { $msg = (Get-NightlyRefusalText $_) }
         if ($msg -notlike 'nightly-discovery-write-failed unsupported-value *') { $bad.Add('unclaimed ' + $round + ': ' + $msg) }
         $left = $null
         if ([IO.File]::Exists($path)) { $left = [IO.File]::ReadAllText($path) }
@@ -1217,7 +1217,7 @@ function Get-NCDiscoveryInventoryText([string]$Uid) {
 
 function Read-NCDiscoveryOutcome([string]$Path) {
     try {
-        $doc = Read-NightlyDiscoveryDocument -Path $Path
+        $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($Path)
         $nodes = @($doc.Nodes)
         $uid = ''
         if ($nodes.Count -gt 0) { $uid = [string]$nodes[0].Uid }
@@ -1260,7 +1260,7 @@ function Test-NCDiscoveryCacheAgrees {
     $after = [Antiphon.Nightly.HistoryNodeIdentity]::Read($path, $false)
     $again = Get-NightlyDiscoveryIndexEntry -Index $index -Path $path
     $againUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($again.Document.Nodes))
-    $disk = Read-NightlyDiscoveryDocument -Path $path
+    $disk = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($path)
     $diskUids = @(Get-NightlyRequiredDiscoveryUids -DiscoveryNodes @($disk.Nodes))
     $row = [pscustomobject]@{ Uid = 'u1'; Outcome = 'Passed'; ClassName = 'N.C'; Type = 'C'; Method = 'M' }
     $cachedCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($again.Document.Nodes) -TerminalRows @($row) -RequiredUids $againUids
@@ -1294,7 +1294,7 @@ function Test-NCDiscoveryParserTolerance {
     $text = Get-NCDiscoveryInventoryText 'u1'
     $produced = Join-Path $dir 'produced.discovery.json'
     $node = [pscustomobject]@{ uid = 'u1'; type = 'C'; namespace = 'N'; method = 'M'; categories = @(); state = 'Discovered' }
-    Write-NightlyDiscoveryDocument -Path $produced -Document (ConvertTo-NightlyDiscoveryDocument -Nodes @($node) -AssemblyHash 'hash')
+    [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($produced, ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($node), 'hash')))
     $bytes = [IO.File]::ReadAllBytes($produced)
     $producedText = [Text.Encoding]::UTF8.GetString($bytes)
     $noBom = -not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)

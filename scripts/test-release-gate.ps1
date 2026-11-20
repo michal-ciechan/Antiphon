@@ -718,14 +718,14 @@ function Test-C599_MetadataParsers {
     )
     $discPath = Join-Path $root 'discovery.json'
     Write-C487Discovery -Path $discPath -Nodes $jsonNodes
-    $doc = Read-NightlyDiscoveryDocument -Path $discPath
+    $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($discPath)
     Assert-C487 -Cond (@($doc.Nodes).Count -eq 2) -Name 'C599 MetadataParsers json parser reads both nodes' -Detail ([string]@($doc.Nodes).Count)
     $optin = @($doc.Nodes | Where-Object { $_.Uid -eq 'u1' })[0]
     Assert-C487 -Cond ($optin.Categories -contains 'OptIn') -Name 'C599 MetadataParsers json parser preserves the raw OptIn category'
     Assert-C487 -Cond ([bool]$optin.Excluded) -Name 'C599 MetadataParsers json OptIn still excluded in the default lane'
 
     $rec = 'TestNodeUid { Value = u1 }, TypeName = BoardE2ETests, MethodName = Board_loads, Namespace = E2E, TestMetadataProperty { Key = OptIn }'
-    $diag = ConvertFrom-NightlyDiagnosticRecord -Record $rec -State 'Discovered'
+    $diag = [Antiphon.Nightly.NightlyDiagnosticLog]::Record($rec, 'Discovered', $null)
     Assert-C487 -Cond ([string]$diag.Uid -eq 'u1') -Name 'C599 MetadataParsers diagnostic parser reads the same uid' -Detail $diag.Uid
     Assert-C487 -Cond ($diag.Categories -contains 'OptIn') -Name 'C599 MetadataParsers diagnostic parser preserves the raw category'
     Assert-C487 -Cond ([string]$diag.ClassName -eq [string]$optin.ClassName) -Name 'C599 MetadataParsers both parsers agree on the class identity' -Detail ($diag.ClassName + ' vs ' + $optin.ClassName)
@@ -747,13 +747,13 @@ function Test-C599_MetadataParsers {
 
     # A truncated record is an error, never a silently dropped row.
     $truncated = ''
-    try { [void](ConvertFrom-NightlyDiagnosticRecord -Record 'TestNodeUid { Value = u9 }' -State 'Discovered') } catch { $truncated = $_.Exception.Message }
+    try { [void]([Antiphon.Nightly.NightlyDiagnosticLog]::Record('TestNodeUid { Value = u9 }', 'Discovered', $null)) } catch { $truncated = (Get-NightlyRefusalText $_) }
     Assert-C487 -Cond ($truncated -match 'truncated') -Name 'C599 MetadataParsers truncated diagnostic record throws' -Detail $truncated
 
     $dupPath = Join-Path $root 'dup.json'
     Write-C487Discovery -Path $dupPath -Nodes @($jsonNodes[0], $jsonNodes[0])
     $dupMsg = ''
-    try { [void](Read-NightlyDiscoveryDocument -Path $dupPath) } catch { $dupMsg = $_.Exception.Message }
+    try { [void]([Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($dupPath)) } catch { $dupMsg = (Get-NightlyRefusalText $_) }
     Assert-C487 -Cond ($dupMsg -match 'duplicate discovery uid') -Name 'C599 MetadataParsers duplicate uid throws' -Detail $dupMsg
 }
 

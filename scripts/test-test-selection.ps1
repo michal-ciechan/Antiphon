@@ -294,8 +294,8 @@ function Get-C1313FilterDiscovery {
     $dir=Join-Path $ResultsDirectory 'discovery';[void](New-Item -ItemType Directory $dir)
     $r=Invoke-C1313FilterChild @('--list-tests','--no-progress','--no-ansi','--diagnostic','--diagnostic-output-directory',$dir,'--results-directory',$dir) (Join-Path $dir 'stdout.txt')
     if($r.Exit -ne 0){throw 'discovery child failed'}
-    $parsed=ConvertFrom-NightlyDiagnosticLog (Get-NightlyLatestDiagnosticLog $dir) discovery
-    return ConvertTo-NightlyDiscoveryDocument $parsed.Nodes (Get-NightlyAssemblyHash $FilterHost)
+    $parsed=[Antiphon.Nightly.NightlyDiagnosticLog]::Read(([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($dir)), 'discovery')
+    return [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($parsed.Nodes, (Get-NightlyAssemblyHash $FilterHost))
 }
 function Test-C1313_ExactExpandedExecution {
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"

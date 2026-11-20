@@ -18,11 +18,11 @@ foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc
 # The caller produces this fresh diagnostic with a gated, foreground
 # dotnet run --no-build --list-tests. No Windows-only native owner is needed.
 $parseWatch = [Diagnostics.Stopwatch]::StartNew()
-$parsed = ConvertFrom-NightlyDiagnosticLog -Path $DiscoveryLogPath -Kind discovery
-$document = ConvertTo-NightlyDiscoveryDocument -Nodes @($parsed.Nodes) -AssemblyHash (Get-NightlyAssemblyHash $AssemblyPath)
-Write-NightlyDiscoveryDocument -Path (Join-Path $ResultsDirectory 'discovery.json') -Document $document
+$parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($DiscoveryLogPath, 'discovery')
+$document = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument(@($parsed.Nodes), (Get-NightlyAssemblyHash $AssemblyPath))
+[Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument((Join-Path $ResultsDirectory 'discovery.json'), $document)
 $parseWatch.Stop()
-$nodes = @((ConvertFrom-NightlyDiscoveryDocument $document 'antiphon-tunit-discovery-v1').Nodes)
+$nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($document, 'antiphon-tunit-discovery-v1')).Nodes)
 $byClass = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
 $byNamespace = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
 $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

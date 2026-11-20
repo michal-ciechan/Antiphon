@@ -107,7 +107,7 @@ function New-FFHistoricalFixture {
     # The singleton is intentionally another suite. It must never define antiphon membership.
     Write-FFJson (Join-Path $run 'timing/groups-planned.json') ([ordered]@{ version=1; suite='observability'; runId='retained-run'; attempt='1'; groups=@([ordered]@{ chunk='all-group-105'; classes=@('Foreign.WrongSuiteTests'); plannedTestIds=@('wrong') }) })
     foreach ($suite in $nodesBySuite.Keys) {
-        Write-FFJson (Join-Path $run ($suite+'-profile.discovery.json')) (ConvertTo-NightlyDiscoveryDocument -Nodes $nodesBySuite[$suite] -AssemblyHash 'fixture-assembly')
+        Write-FFJson (Join-Path $run ($suite+'-profile.discovery.json')) ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodesBySuite[$suite], 'fixture-assembly'))
     }
     [pscustomobject]@{ Run=$run; Summary=$summary; Nodes=$nodesBySuite; Classes=$classes; Fallback=$fallback }
 }
@@ -172,7 +172,7 @@ function Test-FFChunkAccounting([string]$Variant) {
     }
     $summary=[ordered]@{runId='accounting';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'}
     Write-FFJson (Join-Path $run 'summary.json') $summary
-    Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+    Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-assembly'))
     if ($Variant -cnotin @('missing','crash-unbound')) { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='accounting';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
     $defs=''; $results=''
     foreach ($n in $nodes) {
@@ -201,7 +201,7 @@ function Test-OrdinaryFailedChunk {
         $nodes=@((New-FFNode 'Antiphon.Tests.Accounting.FailedTests' 'Run' 'failed'),(New-FFNode 'Antiphon.Tests.Accounting.PassedTests' 'Run' 'passed'))
         $row=[ordered]@{id='antiphon';chunk='all';exitCode=2;result='FAIL';timedOut=$false}
         Write-FFJson (Join-Path $run 'summary.json') ([ordered]@{runId='ordinary';attempt='1';completedAt='2026-10-29T00:00:00Z';sha=('a'*40);profile='rc';platform='windows';policyHash=('b'*64);suites=@($row);timingRoot='timing'})
-        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-assembly'))
         if ($retainedPlan) { Write-FFJson (Join-Path $run 'timing/groups-planned-antiphon.json') ([ordered]@{version=1;suite='antiphon';runId='ordinary';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);assemblyDigest='fixture-assembly';groups=@([ordered]@{chunk='all';classes=@($nodes.ClassName);plannedTestIds=@($nodes.Uid)})}) }
         $defs=''; $results=''
         foreach ($n in $nodes) {
@@ -243,7 +243,7 @@ function Test-WindowsShapedHistory {
         if ($raw.Length -lt 4 -or $raw[0] -ne 0xEF -or $raw[1] -ne 0xBB -or $raw[2] -ne 0xBF -or -not ($raw -contains 13)) { throw 'witness-bytes' }
         $body = '<TestRun><TestDefinitions><UnitTest id="shaped"><TestMethod className="Antiphon.Tests.Accounting.ShapedTests" name="Run" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="shaped" outcome="Failed" /></Results></TestRun>'
         [IO.File]::WriteAllText((Join-Path $run 'antiphon-all.trx'), $body)
-        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') (ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash 'fixture-assembly')
+        Write-FFJson (Join-Path $run 'antiphon-profile.discovery.json') ([Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-assembly'))
         $exp = [Antiphon.Nightly.PriorFailureHistory]::Export($run,(Join-Path $root 'shaped-history.json'))
         $ok = ($exp.History.sourceRunId -ceq 'retained-run' -and @($exp.History.members | Where-Object { $_.className -ceq 'Antiphon.Tests.Accounting.ShapedTests' }).Count -eq 1)
     } catch {
@@ -727,8 +727,8 @@ function Invoke-FFPreparedArm {
     $plannedBytes = @{}
     foreach ($s in $Fixture.suites) {
         $discPath = Join-Path $LogRoot ($s.id+'-profile.discovery.json')
-        $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $s.nodes -AssemblyHash 'fixture'
-        Write-NightlyDiscoveryDocument -Path $discPath -Document $doc
+        $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($s.nodes, 'fixture')
+        [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($discPath, $doc)
         if ($s.PSObject.Properties.Name -notcontains 'SharedDiscoveryIndex') {
             $s | Add-Member -NotePropertyName SharedDiscoveryIndex -NotePropertyValue (New-NightlyDiscoveryIndex)
         }

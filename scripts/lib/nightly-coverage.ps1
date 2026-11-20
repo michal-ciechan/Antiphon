@@ -7,10 +7,6 @@ $script:AntiphonNightlyCoverageLoaded = $true
 # The core this scope already verified stays bound to its own loader (a pinned reader root has only some sources).
 if (-not $script:NightlyCoreAvailable) { . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable }
 
-$script:NightlyDiscoveryFormat = 'antiphon-tunit-discovery-v1'
-$script:NightlyExecutionFormat = 'antiphon-tunit-execution-v1'
-$script:NightlySupportedTunit = '1.44.0'
-$script:NightlySupportedMtp = '2.2.2'
 # TUnit 1.44 GetClassTypeName: nested '+', generic backtick arity, constructor
 # arguments, and a middle dot where a string argument contained '.'.
 # The field ends at ", MethodName = " followed by MethodArity, so a comma
@@ -140,349 +136,6 @@ function Read-NightlyTrxIdentities {
     return $rows.ToArray()
 }
 
-function ConvertFrom-NightlyDiscoveryDocument {
-    param($Object, [string]$ExpectedFormat)
-    if ($null -eq $Object) { throw 'empty discovery document' }
-    $format = [string]$Object.format
-    if ($format -ne $ExpectedFormat) {
-        throw ('unknown discovery format {0}' -f $format)
-    }
-    $tunit = [string]$Object.tunitVersion
-    $mtp = [string]$Object.mtpVersion
-    if ($tunit -ne $script:NightlySupportedTunit -or $mtp -ne $script:NightlySupportedMtp) {
-        throw ('version-drift tunit={0} mtp={1}' -f $tunit, $mtp)
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$Object.assemblyHash)) {
-        throw 'missing assemblyHash'
-    }
-    Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiscoveryDocument'
-    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs).
-    $compiled = [Antiphon.Nightly.NightlyDocuments]::DiscoveryNodes($Object.nodes)
-    if ($compiled.Error) { throw $compiled.Error }
-    return [pscustomobject]@{
-        Format = $format
-        TunitVersion = $tunit
-        MtpVersion = $mtp
-        AssemblyHash = [string]$Object.assemblyHash
-        Nodes = $compiled.Nodes
-    }
-}
-
-function Read-NightlyDiscoveryDocument {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { throw ('missing discovery {0}' -f $Path) }
-    # NightlyJson.ReadDiscovery reads the file. DiscoveryWriter.WriteFile is the producer:
-    # Invoke-NightlyProduceDiscovery parses the --list-tests diagnostic, then the writer emits UTF-8 with no
-    # BOM, commas only between values, and no comments. A UTF-8 BOM, a trailing comma, and a UTF-16 document
-    # that starts with a BOM are accepted (the old ConvertFrom-Json reader accepted them). UTF-16 without a
-    # BOM is refused with reason utf-16. Comments are refused. There is no ConvertFrom-Json fallback.
-    # discovery-unreadable names the file and the reason (utf-16, comment, not-object, trailing-content,
-    # invalid-json, unreadable).
-    Assert-NightlyCoreAvailable 'Read-NightlyDiscoveryDocument'
-    $full = [IO.Path]::GetFullPath($Path)
-    $read = [Antiphon.Nightly.NightlyJson]::ReadDiscovery($full)
-    if ($null -eq $read.Document) {
-        if ($read.Reason -ceq 'empty') { throw ('empty discovery {0}' -f $Path) }
-        throw ('discovery-unreadable: {0}: {1}' -f $Path, $read.Reason)
-    }
-    return (ConvertFrom-NightlyDiscoveryDocument -Object $read.Document -ExpectedFormat $script:NightlyDiscoveryFormat)
-}
-
-function Read-NightlyExecutionDocument {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { throw ('missing execution inventory {0}' -f $Path) }
-    $raw = [System.IO.File]::ReadAllText($Path)
-    if ([string]::IsNullOrWhiteSpace($raw)) { throw ('empty execution inventory {0}' -f $Path) }
-    $obj = $raw | ConvertFrom-Json
-    $format = [string]$obj.format
-    if ($format -ne $script:NightlyExecutionFormat) {
-        throw ('unknown execution format {0}' -f $format)
-    }
-    $tunit = [string]$obj.tunitVersion
-    $mtp = [string]$obj.mtpVersion
-    if ($tunit -ne $script:NightlySupportedTunit -or $mtp -ne $script:NightlySupportedMtp) {
-        throw ('version-drift tunit={0} mtp={1}' -f $tunit, $mtp)
-    }
-    $nodes = @()
-    $uids = @{}
-    foreach ($n in @($obj.nodes)) {
-        $uid = [string]$n.uid
-        $state = [string]$n.state
-        if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated execution record' }
-        if ($uids.ContainsKey($uid)) { throw ('duplicate execution uid {0}' -f $uid) }
-        $uids[$uid] = $true
-        $nodes += [pscustomobject]@{ Uid = $uid; State = $state }
-    }
-    return [pscustomobject]@{
-        Format = $format
-        AssemblyHash = [string]$obj.assemblyHash
-        Nodes = $nodes
-    }
-}
-
-function Test-NightlyPinnedDiagnosticVersions {
-    param([string]$Text)
-    $tunitOk = ($Text -match "Version:\s+'1\.44\.0") -or ($Text -match 'TUnit v1\.44\.0')
-    $mtpOk = ($Text -match 'Version:\s+2\.2\.2')
-    if (-not $tunitOk -or -not $mtpOk) {
-        throw ('version-drift tunit/mtp header missing or unsupported')
-    }
-}
-
-function Get-NightlyDiagnosticStateProperty {
-    param([string]$Record)
-    # Enters the TestNode's own property list, not the update-message properties or display text, and matches the
-    # pinned identifier -> optional location -> state transition; state-looking words in free text are not
-    # property boundaries, and a second complete transition (unescaped free text) answers absent
-    # (Antiphon.Nightly NightlyDiagnostics).
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticStateProperty' }
-    return [Antiphon.Nightly.NightlyDiagnostics]::StateProperty($Record)
-}
-
-function Get-NightlyDiagnosticStateName {
-    param([string]$Record, $StateProperty = $null)
-    if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
-    # Passed, Skipped, Discovered and InProgress as named; Failed, Error, Timeout and Cancelled are Failed; else ''.
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticStateName' }
-    return [Antiphon.Nightly.NightlyDiagnostics]::StateName([string]$StateProperty.Name)
-}
-
-function Get-NightlyDiagnosticFailureMessage {
-    param([string]$Record, $StateProperty = $null)
-    if ($null -eq $StateProperty) { $StateProperty = Get-NightlyDiagnosticStateProperty -Record $Record }
-    if ($StateProperty.ExplanationStart -lt 0 -or $StateProperty.Name -cin @('Passed', 'Skipped', 'Discovered', 'InProgress')) { return $null }
-    $tail = $Record.Substring($StateProperty.ExplanationStart)
-    # The pinned property is the last item in TestNode.Properties. Remove only
-    # its structural suffix, never whitespace belonging to the explanation.
-    $suffix = ' \} \] \} \}\s*\z'
-    if ($StateProperty.Name -ceq 'Timeout') {
-        # Native MTP 2.2.2 prints a null Timeout as empty text.
-        $suffix = ', Timeout = (?:(?:\d+\.)?\d{2}:\d{2}:\d{2}(?:\.\d+)?)?' + $suffix
-    }
-    $close = [regex]::Match($tail, $suffix)
-    if (-not $close.Success) { return $null }
-    $body = $tail.Substring(0, $close.Index)
-    $marker = ', Exception = '
-    $candidates = @()
-    $offset = 0
-    while (($offset = $body.IndexOf($marker, $offset, [StringComparison]::Ordinal)) -ge 0) {
-        $message = $body.Substring(0, $offset)
-        $exception = $body.Substring($offset + $marker.Length)
-        if (Test-NightlyDiagnosticExceptionTail -Message $message -ExceptionText $exception `
-            -AllowEmpty ($StateProperty.Name -cin @('Timeout', 'Cancelled'))) {
-            $candidates += $message
-        }
-        $offset += $marker.Length
-    }
-    # ToString() does not escape messages or stacks. More than one valid split
-    # is real ambiguity, not permission to publish the first or last candidate.
-    if ($candidates.Count -eq 1 -and $candidates[0].Length -gt 0) { return $candidates[0] }
-    return $null
-}
-
-function Test-NightlyDiagnosticExceptionTail {
-    param([string]$Message, [string]$ExceptionText, [bool]$AllowEmpty = $false)
-    if ($AllowEmpty -and $ExceptionText.Length -eq 0) { return $true }
-    if ($ExceptionText -ceq '<null>') { return $true }
-    $echoType = 'TUnit.Engine.Exceptions.TestFailedException: '
-    if ($ExceptionText.StartsWith($echoType, [StringComparison]::Ordinal)) {
-        $prefix = '[Test Failure] '
-        if (-not $Message.StartsWith($prefix, [StringComparison]::Ordinal)) { return $false }
-        $echo = $echoType + $Message.Substring($prefix.Length)
-        if (-not $ExceptionText.StartsWith($echo, [StringComparison]::Ordinal)) { return $false }
-        $stack = $ExceptionText.Substring($echo.Length)
-        return ($stack.Length -eq 0 -or $stack -cmatch '^\r?\n   at ')
-    }
-    # Reflected Error/Timeout/Cancelled shapes may carry a regular exception
-    # rather than TUnit's echo, or <null>. Its first line must be a type/message;
-    # any remaining text must start with a stack frame.
-    return ($ExceptionText -cmatch '\A[A-Za-z_][A-Za-z0-9_.+`]*Exception: [^\r\n]*(?:\r?\n   at [\s\S]*)?\z')
-}
-
-function Test-NightlyDiagnosticTypeNameComplete {
-    # A node name is a complete identifier, optionally followed by one balanced
-    # constructor-argument suffix. Commas belong inside those arguments.
-    param([string]$Name)
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Test-NightlyDiagnosticTypeNameComplete' }
-    return [Antiphon.Nightly.NightlyDiagnostics]::TypeNameComplete($Name)
-}
-
-function ConvertFrom-NightlyDiagnosticRecord {
-    param([string]$Record, [string]$State, $StateProperty = $null)
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiagnosticRecord' }
-    $converted = [Antiphon.Nightly.NightlyDiagnostics]::ConvertRecord($Record, $State)
-    if ($converted.Error) { throw $converted.Error }
-    $node = $converted.Node
-    # Native MTP failure explanations include the multiline failure message.
-    # Timeout and Cancelled are failed states. Only a unique validated field
-    # boundary supplies Message; ambiguous or malformed text keeps Failed.
-    if ($State -eq 'Failed') {
-        $message = Get-NightlyDiagnosticFailureMessage -Record $Record -StateProperty $StateProperty
-        if ($null -ne $message) {
-            $node | Add-Member -NotePropertyName Message -NotePropertyValue $message
-        }
-    }
-    return $node
-}
-
-function ConvertFrom-NightlyExecutionJson {
-    param($Object)
-    $format = [string]$Object.format
-    if ($format -ne $script:NightlyExecutionFormat) {
-        throw ('unknown execution format {0}' -f $format)
-    }
-    $tunit = [string]$Object.tunitVersion
-    $mtp = [string]$Object.mtpVersion
-    if ($tunit -ne $script:NightlySupportedTunit -or $mtp -ne $script:NightlySupportedMtp) {
-        throw ('version-drift tunit={0} mtp={1}' -f $tunit, $mtp)
-    }
-    $nodes = @()
-    $uids = @{}
-    foreach ($n in @($Object.nodes)) {
-        $uid = [string]$n.uid
-        $state = [string]$n.state
-        if ([string]::IsNullOrWhiteSpace($uid)) { throw 'truncated execution record' }
-        $norm = ConvertTo-NightlyNormalizedOutcome -Outcome $state
-        if ($state -eq 'InProgress' -or $state -eq 'Discovered' -or $norm -eq 'NotExecuted') { continue }
-        if ($uids.ContainsKey($uid)) { throw ('duplicate execution uid {0}' -f $uid) }
-        $uids[$uid] = $true
-        $typeName = [string]$n.type
-        $method = [string]$n.method
-        $ns = [string]$n.namespace
-        $className = [string]$n.className
-        if ([string]::IsNullOrWhiteSpace($className)) {
-            $className = $(if ([string]::IsNullOrWhiteSpace($ns)) { $typeName } else { '{0}.{1}' -f $ns, $typeName })
-        }
-        $nodes += [pscustomobject]@{
-            Uid = $uid
-            State = $state
-            Outcome = $state
-            Type = $typeName
-            Method = $method
-            Namespace = $ns
-            ClassName = $className
-            Excluded = $false
-            Categories = @()
-        }
-    }
-    return [pscustomobject]@{ Nodes = $nodes }
-}
-
-function Get-NightlyDiagnosticRecords {
-    param([string]$Text)
-    # A record ends at the next structural node update or logging header, never
-    # at display-name punctuation, and keeps the original physical line endings.
-    # Every TestNodeUpdateMessage envelope starts a record, including a second
-    # envelope on the same line. A bare TestNode { Uid in explanation text does not.
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyDiagnosticRecords' }
-    return [Antiphon.Nightly.NightlyDiagnostics]::Records($Text)
-}
-
-function ConvertFrom-NightlyDiagnosticLog {
-    param([string]$Path, [string]$Kind)
-    # Strict adapter for pinned TUnit 1.44 / MTP 2.2 diagnostic ToString() records.
-    # Accepts golden JSON first; otherwise TestNodeUid { Value = ... } plus state properties.
-    if (-not (Test-NightlyDrivePath $Path) -and -not (Test-Path -LiteralPath $Path)) { throw ('missing diagnostic {0}' -f $Path) }
-    $text = [System.IO.File]::ReadAllText($Path)
-    # Never hand the whole text to a .NET method as an argument: PowerShell 7.4+ passes every method
-    # argument to AMSI, a scan of the whole diag per call (~0.6 s for 9 MB). TrimStart() returns the same
-    # string (no copy) when nothing leads; empty after it is IsNullOrWhiteSpace (both char.IsWhiteSpace),
-    # and trailing whitespace cannot change the culture-sensitive StartsWith that Trim() fed before. That
-    # StartsWith skips collation-ignorable characters (U+200B, U+0085...), so a first-character test is not it.
-    $trimmed = $text.TrimStart()
-    if ($trimmed.Length -eq 0) { throw ('empty diagnostic {0}' -f $Path) }
-    if ($trimmed.StartsWith('{')) {
-        $obj = $text | ConvertFrom-Json
-        if ($Kind -eq 'discovery') {
-            return (ConvertFrom-NightlyDiscoveryDocument -Object $obj -ExpectedFormat $script:NightlyDiscoveryFormat)
-        }
-        if ($Kind -eq 'execution') {
-            return (ConvertFrom-NightlyExecutionJson -Object $obj)
-        }
-        return $obj
-    }
-    Assert-NightlyCoreAvailable 'ConvertFrom-NightlyDiagnosticLog'
-    Test-NightlyPinnedDiagnosticVersions -Text $text
-    # Compiled record loop (NightlyCore.cs, DiagScan.cs): the refusals in record order. It also counts the raw
-    # markers independently of framing/acceptance (even an orphan or an ambiguous marker in display text must
-    # prevent a partial inventory), so the text crosses into .NET once (AMSI scan above). Failure messages are
-    # attached here per record; they never refuse, so the order is unchanged.
-    $nodes = [Collections.Generic.List[object]]::new()
-    $parsed = [Antiphon.Nightly.DiagScan]::ParseRecords($text, $Kind, $Path)
-    $discoveredCount = [int]$parsed.DiscoveredCount
-    if ($parsed.Error) { throw $parsed.Error }
-    foreach ($failed in $parsed.Failed) {
-        $message = Get-NightlyDiagnosticFailureMessage -Record $failed.Record -StateProperty $failed.StateProperty
-        if ($null -ne $message) {
-            $failed.Node | Add-Member -NotePropertyName Message -NotePropertyValue $message
-        }
-    }
-    $recognized = [bool]$parsed.Recognized
-    $nodes.AddRange([object[]]$parsed.Nodes)
-    if (-not $recognized) {
-        throw ('unknown diagnostic format {0}' -f $Path)
-    }
-    if ($Kind -eq 'discovery' -and $discoveredCount -ne $nodes.Count) {
-        throw ('discovery-count-mismatch discovered={0} parsed={1} path={2}' -f $discoveredCount, $nodes.Count, $Path)
-    }
-    return [pscustomobject]@{ Nodes = $nodes.ToArray() }
-}
-
-function ConvertTo-NightlyNormalizedOutcome {
-    param([string]$Outcome)
-    # Passed, Failed (also fail, error), Skipped, NotExecuted (also notrunnable, pending), else Unknown.
-    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'ConvertTo-NightlyNormalizedOutcome' }
-    return [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome($Outcome)
-}
-
-function ConvertTo-NightlyDiscoveryDocument {
-    param(
-        [object[]]$Nodes,
-        [string]$AssemblyHash
-    )
-    if ([string]::IsNullOrWhiteSpace($AssemblyHash)) { throw 'missing assemblyHash' }
-    Assert-NightlyCoreAvailable 'ConvertTo-NightlyDiscoveryDocument'
-    # Compiled node loop (Antiphon.Nightly/NightlyDocuments.cs).
-    $mapped = [Antiphon.Nightly.NightlyDocuments]::DocumentNodes($Nodes)
-    return [ordered]@{
-        format = $script:NightlyDiscoveryFormat
-        tunitVersion = $script:NightlySupportedTunit
-        mtpVersion = $script:NightlySupportedMtp
-        assemblyHash = $AssemblyHash
-        nodes = $mapped
-    }
-}
-
-function Write-NightlyDiscoveryDocument {
-    param(
-        [string]$Path,
-        $Document
-    )
-    Assert-NightlyCoreAvailable 'Write-NightlyDiscoveryDocument'
-    # Compiled text (Antiphon.Nightly/DiscoveryWriter.cs): the same ConvertTo-Json -Depth 12 bytes through the
-    # same atomic replace. A document holding any other value is refused and nothing is written.
-    Write-NightlyAtomicJson -Path $Path -Object $Document -DiscoveryDocument
-}
-
-function Get-NightlyLatestDiagnosticLog {
-    param([string]$Directory)
-    if ([string]::IsNullOrWhiteSpace($Directory) -or (-not (Test-NightlyDrivePath $Directory) -and -not (Test-Path -LiteralPath $Directory))) {
-        return $null
-    }
-    Assert-NightlyCoreAvailable 'Get-NightlyLatestDiagnosticLog'
-    # Relative to the PowerShell location, as Get-ChildItem resolved it; a file path lists only that file.
-    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Directory)
-    # A directory .NET finds is not a leaf: the usual case, answered without the cmdlet.
-    if ((Test-NightlyDriveFile $full) -or (-not (Test-NightlyDriveDirectory $full) -and (Test-Path -LiteralPath $full -PathType Leaf))) {
-        return [System.IO.Path]::GetFullPath($full)
-    }
-    # Newest .diag, else newest file (NightlyCoverageParts.LatestDiagnosticLog).
-    $latest = [Antiphon.Nightly.NightlyCoverageParts]::LatestDiagnosticLog($full)
-    if ([string]::IsNullOrEmpty($latest)) { return $null }
-    return $latest
-}
-
 function Get-NightlyAssemblyHash {
     param([string]$ExePath)
     $dll = [System.IO.Path]::ChangeExtension($ExePath, '.dll')
@@ -525,18 +178,18 @@ function Invoke-NightlyProduceDiscovery {
         -WorkingDirectory $WorkingDirectory -TimeoutMilliseconds $TimeoutMilliseconds `
         -Environment $Environment -LogPath $LogPath
     if ([bool]$run.TimedOut) { throw 'discovery list-tests timed out' }
-    $diagPath = Get-NightlyLatestDiagnosticLog -Directory $DiagnosticDirectory
+    $diagPath = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($DiagnosticDirectory)
     if ([string]::IsNullOrWhiteSpace($diagPath)) {
         throw ('missing diagnostic discovery log in {0}' -f $DiagnosticDirectory)
     }
-    $parsed = ConvertFrom-NightlyDiagnosticLog -Path $diagPath -Kind discovery
+    $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($diagPath, 'discovery')
     $nodes = @($parsed.Nodes)
     if ($nodes.Count -eq 0) { throw 'empty discovery' }
     $hashSource = $ExePath
     if (-not [string]::IsNullOrWhiteSpace($AssemblyPath)) { $hashSource = $AssemblyPath }
     $hash = Get-NightlyAssemblyHash -ExePath $hashSource
-    $doc = ConvertTo-NightlyDiscoveryDocument -Nodes $nodes -AssemblyHash $hash
-    Write-NightlyDiscoveryDocument -Path $OutputPath -Document $doc
+    $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, $hash)
+    [Antiphon.Nightly.NightlyDiagnosticLog]::WriteDiscoveryDocument($OutputPath, $doc)
     return $doc
 }
 
@@ -738,7 +391,7 @@ function Get-NightlyDiscoveryIndexEntry {
         $key = [Antiphon.Nightly.EvidenceFiles]::CachedSha256($Path)
         if ($Index.Entries.ContainsKey($key)) { return $Index.Entries[$key] }
     }
-    $document = Read-NightlyDiscoveryDocument -Path $Path
+    $document = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($Path)
     # The nodes whose State -eq 'InProgress', in order (DiscoveryViewKey.InProgressNodes). It returns null for a
     # node list it cannot read as that loop would (a State or a node that is itself a list): the loop then.
     $inProgressNodes = [Antiphon.Nightly.DiscoveryViewKey]::InProgressNodes($document.Nodes)
@@ -1129,7 +782,7 @@ function Get-NightlyExpectedSkipSourceGaps {
 function Find-NightlyExpectedSkipEntry {
     param($Row, [string]$Platform, [object[]]$Entries)
     if ($null -eq $Row -or [string]::IsNullOrWhiteSpace($Platform)) { return $null }
-    if ((ConvertTo-NightlyNormalizedOutcome -Outcome ([string]$Row.Outcome)) -cne 'NotExecuted') { return $null }
+    if (([Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome(([string]$Row.Outcome))) -cne 'NotExecuted') { return $null }
     $trace = ''
     if ($Row.PSObject.Properties.Name -contains 'DebugTrace') { $trace = [string]$Row.DebugTrace }
     $identity = [string]$Row.Identity
@@ -1407,13 +1060,13 @@ function ConvertTo-NightlyNativeSuiteVerdict {
     # A directory .NET finds is a container and a file it finds is not; otherwise both cmdlet answers as before.
     if (-not [string]::IsNullOrWhiteSpace($execPath) -and ((Test-NightlyDriveDirectory $execPath) -or
             (-not (Test-NightlyDriveFile $execPath) -and (Test-Path -LiteralPath $execPath) -and (Test-Path -LiteralPath $execPath -PathType Container)))) {
-        $execPath = Get-NightlyLatestDiagnosticLog -Directory $execPath
+        $execPath = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execPath)
     }
     if ([string]::IsNullOrWhiteSpace($execPath) -or (-not (Test-NightlyDrivePath $execPath) -and -not (Test-Path -LiteralPath $execPath))) {
         if ($discoveryPresent) { $reasons += 'missing-execution-diagnostic' }
     } else {
         try {
-            $exec = ConvertFrom-NightlyDiagnosticLog -Path $execPath -Kind execution
+            $exec = [Antiphon.Nightly.NightlyDiagnosticLog]::Read($execPath, 'execution')
             $terminalNodes = @($exec.Nodes)
             $execPresent = $true
         } catch {
@@ -1514,7 +1167,7 @@ function Test-NightlyExactCoverage {
         $uid = [string]$node.Uid
         if (-not $seen.Add($uid)) { [void]$reasons.Add('duplicate-uid') }
         if (-not $required.Contains($uid)) { [void]$reasons.Add('extra-uid') }
-        $outcome = ConvertTo-NightlyNormalizedOutcome ([string]$node.Outcome)
+        $outcome = [Antiphon.Nightly.NightlyClassNames]::NormalizedOutcome(([string]$node.Outcome))
         if ($outcome -eq 'Skipped') { [void]$reasons.Add('required-skip') }
         elseif ($outcome -ne 'Passed') { [void]$reasons.Add('failed-outcome') }
     }
@@ -1524,7 +1177,7 @@ function Test-NightlyExactCoverage {
 
 function New-NightlyExactRoster {
     param($Discovery, [object[]]$Members, [string[]]$ClassifiedUids = $null)
-    $parsed = ConvertFrom-NightlyDiscoveryDocument $Discovery $script:NightlyDiscoveryFormat
+    $parsed = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($Discovery, [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat)
     if (@($parsed.Nodes).Count -eq 0) { throw 'empty-discovery' }
     $selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($member in $Members) {
