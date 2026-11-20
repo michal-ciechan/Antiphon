@@ -22,4 +22,10 @@ public sealed class RcIncrementalShadowTests
     [Test, Timeout(60_000)] public Task EmptyDigestIsUnproven(CancellationToken token) => Run(nameof(EmptyDigestIsUnproven), token);
     [Test, Timeout(60_000)] public Task MissingCarryableIsDirty(CancellationToken token) => Run(nameof(MissingCarryableIsDirty), token);
     [Test, Timeout(60_000)] public Task EvidenceDerivesSampleFailure(CancellationToken token) => Run(nameof(EvidenceDerivesSampleFailure), token);
+
+    // CARD-1836 S8b follow-up round 2. D-1 and D-2 must fail on ccf2dbb0.
+    // AbsentEvidenceKeepsCarriesUntilWired pins the current fail-open.
+    [Test, Timeout(60_000)] public Task NonBooleanProvenanceFailureInvalidates(CancellationToken token) => Run(nameof(NonBooleanProvenanceFailureInvalidates), token);
+    [Test, Timeout(60_000)] public Task CarriedChunkResultInvalidatesCarries(CancellationToken token) => Run(nameof(CarriedChunkResultInvalidatesCarries), token);
+    [Test, Timeout(60_000)] public Task AbsentEvidenceKeepsCarriesUntilWired(CancellationToken token) => Run(nameof(AbsentEvidenceKeepsCarriesUntilWired), token);
 }
