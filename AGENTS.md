@@ -102,4 +102,8 @@ concurrency token by default.
 - For real external sites, use the shared CDP browser lane and read the site note first. Prefer real clicks/keystrokes, clear blocking consent UI, and update the per-site note after learning a durable quirk.
 - Never print, echo, log, or manually paste a secret. Use the approved vault relay/fill path. Do not expose mail credentials or a user's Codex home; Codex rollout deletion goes through its CLI.
 
+### Housekeeping
+
+- **Old finished-work files (operator, 2026-11-20):** deleting build outputs (`bin-*`, `obj`, `publish`), temp trees such as `/tmp` task mirrors and `c487-probe-*` test leftovers, and old logs and caches is OK without asking when the owner task has finished, the path is about 24 to 48 hours old, and no live holder has it open. Delete by exact literal path: `pwsh` `Remove-Item -LiteralPath` in a loop that re-verifies each path (expected parent, exact leaf pattern, directory not a link, `GetFullPath` equals the string, not held open). Never `rm` a variable or a glob, and never `rm -rf` a computed parent (the safety watchdog stops it). Run it through a Custom delegate on the host that owns the files, with explicit authority, a list regenerated fresh, and a report of counts and bytes freed. Never delete live worktrees or sessions, `.git` of a live repo, databases, Docker volumes, `/state`, secrets or credentials, anything younger than the threshold, or anything with no identified owner. Worked examples: [server2 /tmp growth](docs/investigations/2026-11-19-server2-tmp-growth.md), [server2 housekeeping census](docs/investigations/2026-11-19-server2-housekeeping-census.md).
+
 <!-- AGENTS-CORE-END: CARD-0254 -->
