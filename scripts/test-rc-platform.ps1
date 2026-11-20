@@ -2,7 +2,7 @@
 # CARD-1323: offline policy and frozen Windows authority witnesses. No publication.
 param([string]$Case, [string]$ResultsDirectory, [string]$CompiledRosterPath)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
+foreach ($name in @('nightly-common', 'nightly-coverage', 'release-gate', 'release-authority', 'test-selection', 'c487-harness')) {
     . "$PSScriptRoot/lib/$name.ps1"
 }
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -16,7 +16,7 @@ function Same-C1323Set($Actual, $Expected) {
     return ((@($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (@($Expected | Sort-Object -CaseSensitive) -join "`n"))
 }
 function Write-C1323Policy($Object, $Path) {
-    $Object.policyHash = Get-NightlyPolicyHash $Object
+    $Object.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($Object)
     [IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 40))
 }
 function Invoke-C1323Git($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
@@ -56,19 +56,19 @@ function Test-C1323_PlatformPolicy {
     $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = 'MixedTests'; methods = @('Live'); reason = 'legacy live method'; owner = 'fixture' }
     $nodes = @(New-C1323Nodes)
     $expectedWindows = @($nodes.uid | Where-Object { $_ -ne 'legacy-live' })
-    $windows = @(Get-NightlyProfileExclusions $policy 'rc' 'e2e' -Platform windows)
+    $windows = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'windows'))
     $actualWindows = @(Get-C1323Required $nodes $windows)
     $retained = Same-C1323Set $actualWindows $expectedWindows
     Assert-C1323 $retained 'windows-retains-69-and-siblings' ($actualWindows -join ',')
     if (-not $retained) { return }
-    $linux = @(Get-NightlyProfileExclusions $policy 'rc' 'e2e' -Platform linux)
+    $linux = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'linux'))
     Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes $linux) @('unclassified', 'legacy-sibling')) 'linux-excludes-exactly-69'
     $scoped = @($linux | Where-Object Owner -eq 'CARD-1323')
     Assert-C1323 ($scoped.Count -eq 3 -and @($scoped | Where-Object { -not $_.Reason -or -not $_.Owner }).Count -eq 0) 'exclusion-reasons-and-owners'
-    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes @(Get-NightlyProfileExclusions $policy 'rc' 'e2e')) $expectedWindows) 'default-is-windows'
+    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'windows'))) $expectedWindows) 'default-is-windows'
     $path = Join-Path $ResultsDirectory 'policy.json'
     Write-C1323Policy $policy $path
-    $loaded = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+    $loaded = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
     Assert-C1323 ($loaded.SchemaVersion -eq 4) 'schema4-loads'
     $bytes = [IO.File]::ReadAllBytes($path)
     $authorityPolicy = ConvertFrom-ReleaseAuthorityPolicyBytes $bytes
@@ -81,7 +81,7 @@ function Test-C1323_PlatformPolicy {
     if ($policy.suites.observability) {
         $missing = Copy-C1323Object $policy
         $missing.profiles.rc.requiredSuites = @($missing.profiles.rc.requiredSuites | Where-Object { $_ -cne 'observability' })
-        $missing.policyHash = Get-NightlyPolicyHash $missing
+        $missing.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($missing)
         $message = ''
         try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([Text.Encoding]::UTF8.GetBytes(($missing | ConvertTo-Json -Depth 40)))) } catch { $message = $_.Exception.Message }
         $observabilityRequired = $message -ceq 'policy-rc-suite-missing:observability'
@@ -96,9 +96,9 @@ function Test-C1323_PlatformPolicy {
         $row = @($bad.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0]
         $row.platform = $invalid[$i]
         Write-C1323Policy $bad $path
-        $read = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+        $read = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
         $message = ''
-        try { [void](Get-NightlyProfileExclusions $read.Object 'rc' 'antiphon' -Platform windows) } catch { $message = $_.Exception.Message }
+        try { [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($read.Object, 'rc', 'antiphon', 'windows')) } catch { $message = $_.Exception.Message }
         if ($message -notmatch 'exclusion.*platform') { $missed += "$i=$message" }
     }
     Assert-C1323 ($missed.Count -eq 0) 'invalid-platforms-refuse-before-filtering' ($missed -join ';')
@@ -107,15 +107,15 @@ function Test-C1323_PlatformPolicy {
         $bad = Copy-C1323Object $policy
         @($bad.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].$field = ''
         $message = ''
-        try { [void](Get-NightlyProfileExclusions $bad 'rc' 'antiphon' -Platform windows) } catch { $message = $_.Exception.Message }
+        try { [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($bad, 'rc', 'antiphon', 'windows')) } catch { $message = $_.Exception.Message }
         if ($message -notmatch 'reason and owner') { $missed += $field }
     }
     Assert-C1323 ($missed.Count -eq 0) 'invalid-attribution-refuses-before-filtering' ($missed -join ',')
     $changed = Copy-C1323Object $policy
     @($changed.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].platform = 'windows'
-    Assert-C1323 ((Get-NightlyPolicyHash $changed) -cne (Get-NightlyPolicyHash $policy)) 'platform-only-hash-changes'
+    Assert-C1323 (([Antiphon.Nightly.NightlyPolicy]::Hash($changed)) -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))) 'platform-only-hash-changes'
     [IO.File]::WriteAllText($path, ($changed | ConvertTo-Json -Depth 40))
-    $message = ''; try { [void](Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path) } catch { $message = $_.Exception.Message }
+    $message = ''; try { [void]([Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)) } catch { $message = $_.Exception.Message }
     Assert-C1323 ($message -match 'stale policy hash') 'stale-platform-hash-refuses'
     $message = ''; try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))) } catch { $message = $_.Exception.Message }
     Assert-C1323 ($message -eq 'policy-hash-stale') 'authority-stale-hash-refuses'
@@ -123,10 +123,10 @@ function Test-C1323_PlatformPolicy {
     $historical.schemaVersion = 3
     $historical.profiles.rc.exclusions = @($historical.profiles.rc.exclusions | Where-Object owner -ne 'CARD-1323')
     Write-C1323Policy $historical $path
-    $old = Read-NightlyExecutionPolicy -RepoRoot $repoRoot -PolicyPath $path
+    $old = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
     $oldAuthority = ConvertFrom-ReleaseAuthorityPolicyBytes ([IO.File]::ReadAllBytes($path))
-    Assert-C1323 ($old.SchemaVersion -eq 3 -and (Same-C1323Set $oldAuthority.RequiredSuites $expectedSuites) -and (Same-C1323Set (Get-C1323Required $nodes @(Get-NightlyProfileExclusions $old.Object 'rc' 'e2e' -Platform linux)) $expectedWindows)) 'schema3-compatibility'
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    Assert-C1323 ($old.SchemaVersion -eq 3 -and (Same-C1323Set $oldAuthority.RequiredSuites $expectedSuites) -and (Same-C1323Set (Get-C1323Required $nodes @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($old.Object, 'rc', 'e2e', 'linux'))) $expectedWindows)) 'schema3-compatibility'
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $shipRows = @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')
     $ownedKeys = @($shipRows | ForEach-Object { $_.suite + '|' + $_.class + '|' + $_.platform })
     $expectedOwnedKeys = @(
@@ -144,7 +144,7 @@ function Test-C1323_PlatformPolicy {
     $nativeHelper = @($c1614 | Where-Object { [string]$_.suite -ceq 'agents-pty' -and [string]$_.class -ceq 'LinuxCgroupContainmentTests' -and [string]$_.platform -ceq 'windows' -and [string]$_.reason -like 'Linux-only by construction:*' -and (Same-C1323Set @($_.methods) @('C1614_Helper_written_tree_is_read_by_production_reader')) })
     $inboxMethods = @($inbox | ForEach-Object { $_.methods })
     Assert-C1323 ($c1614.Count -eq 5 -and $nativeHost.Count -eq 1 -and $nativeHelper.Count -eq 1 -and $inbox.Count -eq 1 -and @($inboxMethods) -contains 'Inbox_is_unsupported_and_never_becomes_no_start_proof' -and @($inboxMethods) -contains 'C1614_Windows_tracked_linger_releases_job' -and [string]$inbox[0].reason -notlike 'Linux-only by construction:*' -and $life.Count -eq 1 -and $boot.Count -eq 1 -and $shipped.Hash -ceq [string]$shipped.Object.policyHash) 'card-1614-mixed-platform-rows'
-    $shippedCensus = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $shipped.Object
+    $shippedCensus = [Antiphon.Nightly.NightlyPolicy]::TestProjectUniverse($repoRoot, $shipped.Object)
     Assert-C1323 ($shippedCensus.Ok -and $shipped.Object.selectionCatalog.path -ceq 'tests/test-selection-policy.json' -and @($shipped.Object.profiles.rc.exclusions | Where-Object class -eq 'ChannelOutboundIsolatedTests').Count -eq 1 -and @($shipped.Object.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1313').Count -gt 0) 'master-inventory-preserved' $shippedCensus.Message
 
     $root = Join-Path $ResultsDirectory 'git-policy'
@@ -396,7 +396,7 @@ function Test-C1415_SkipExclusions {
     # CARD-1425: the CARD-1281 producer-pack cases run from an in-test fixture, so they are
     # required on every platform and only the two Windows-only rows remain.
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $ns = 'Antiphon.Tests.Application'
     $methods = [ordered]@{
         AdvisoryChangePolicyTests = @('C1303_R12_LandRefusesUnavailableCorrectedEvidence', 'C1281_ReceiptCorrection', 'C1281_IncompleteNeverClean', 'C1281_AdvisoryDoesNotRerun')
@@ -428,7 +428,7 @@ function Test-C1415_SkipExclusions {
     Assert-C1323 ($missing.Count -eq 0) 'c1415-excluded-methods-exist' ($missing -join ',')
     $packLaunched = @()
     foreach ($platform in @('windows', 'linux')) {
-        $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $platform)
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', 'antiphon', $platform))
         $expected = if ($platform -eq 'windows') { $windowsOnly } else { @() }
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
         $excluded = @($census.Excluded | ForEach-Object { $_.uid })
@@ -458,7 +458,7 @@ function Test-C1415_SkipExclusions {
 
 function Test-LinuxSessionRunnerAdmission {
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     # Independent expanded roster; check it against source rather than deriving expectations
     # from the exclusions under test. These are Linux checkpoint obligations, not Windows ones.
     $roster = [ordered]@{
@@ -501,7 +501,7 @@ function Test-LinuxSessionRunnerAdmission {
     $rows = @($shipped.Object.profiles.rc.exclusions | Where-Object { $_.suite -ceq 'session-runner' -and $_.class -cin @($roster.Keys) })
     Assert-C1323 ($rows.Count -eq 3 -and (Same-C1323Set $rows.class @($roster.Keys)) -and @($rows | Where-Object { $_.platform -cne 'windows' -or @($_.methods | Where-Object { $_ }).Count -gt 0 -or -not $_.reason -or -not $_.owner }).Count -eq 0) 'linux-runner-three-windows-rows'
     foreach ($platform in @('windows', 'linux')) {
-        $exclusions = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'session-runner' -Platform $platform)
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', 'session-runner', $platform))
         $expectedRequired = if ($platform -ceq 'windows') { @('portable-sibling') } else { @($nodes.Uid) }
         $expectedExcluded = if ($platform -ceq 'windows') { $linuxUids } else { @() }
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
@@ -769,7 +769,7 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
         'PlanCoverageCommandTests/existing_outside_project_is_refused_by_root_boundary'
         'RunnerWorkspaceBindingTests/C1032_StoreIdentityRefused'
     )
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $catalog = Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $shipped.Object.selectionCatalog.hash
     $shippedRows = @($shipped.Object.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })
     $inventory = @($shippedRows | ForEach-Object {
@@ -818,9 +818,9 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
     $cache = @{}
     function Test-ExcludedNode($node, [string]$platform) {
         $key = $node.Suite + '|' + $platform
-        if (-not $cache.ContainsKey($key)) { $cache[$key] = @(Get-NightlyProfileExclusions $shipped.Object 'rc' $node.Suite -Platform $platform) }
+        if (-not $cache.ContainsKey($key)) { $cache[$key] = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', $node.Suite, $platform)) }
         $probe = [pscustomobject]@{ ClassName = $node.Class; Type = $node.Class; Method = $node.Method }
-        return (Test-NightlyProfileNodeExcluded $probe $cache[$key])
+        return ([Antiphon.Nightly.NightlyPolicy]::NodeExcluded($probe, $cache[$key]))
     }
     $linuxOnly = @($nodes | Where-Object { -not $_.Gap -and $_.Class -cne 'PortableCensusSiblingTests' })
     $windowsLaunched = @($linuxOnly | Where-Object { -not (Test-ExcludedNode $_ 'windows') })
@@ -852,7 +852,7 @@ function New-C1686Root($Name, $Files) {
 
 function Test-C1686_LinuxOnlyCensus {
     # Fixture trees and policies: the census must fail for a marker without a row and a row without a marker.
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $prefix = 'Linux-only by construction: fixture.'
     $alpha = "namespace Fixture;`n`n[NativeLinuxOnly(`"needs a FIFO (see [man 7 fifo])`")]`n[Category(`"Unit`")]`npublic sealed class AlphaTests`n{`n    [Test]`n    public void Runs() { }`n}`n"
     $beta = "namespace Fixture;`n`npublic sealed partial class BetaTests`n{`n    private sealed class Rig`n    {`n    }`n`n    [NativeLinuxOnly(`"procfs, see https://man7.org/linux/man-pages/man5/proc.5.html`")]`n    [Test]`n    [Arguments(`"a`", Categories = [`"c-a`"])]`n    public async Task First(string mode) { }`n`n    // [Test, NativeLinuxOnly(`"a comment is not a marker`")]`n    [Test]`n    public void Portable() { }`n`n    [NativeLinuxOnly(`"setsid`")] [Test] public Task Second() => Task.CompletedTask;`n}`n"
@@ -1091,15 +1091,15 @@ function Test-C1199_WindowsRequiredRoster {
     $legacy = @($roster | Where-Object { $_ -like '*.shape_conflict_rule' }).Count
     Assert-C1323 $rosterOk 'c1199-roster-35' ("count=" + $roster.Count + " unique=" + $groups.Count + " shape_conflict_rule=" + $legacy)
 
-    $shipped = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
+    $shipped = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $exclusionCache = @{}
     function Test-C1199Excluded([string]$ClassName, [string]$Method, [string]$Platform) {
         $key = 'antiphon|' + $Platform
         if (-not $exclusionCache.ContainsKey($key)) {
-            $exclusionCache[$key] = @(Get-NightlyProfileExclusions $shipped.Object 'rc' 'antiphon' -Platform $Platform)
+            $exclusionCache[$key] = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($shipped.Object, 'rc', 'antiphon', $Platform))
         }
         $probe = [pscustomobject]@{ ClassName = $ClassName; Type = $ClassName; Method = $Method }
-        return (Test-NightlyProfileNodeExcluded $probe $exclusionCache[$key])
+        return ([Antiphon.Nightly.NightlyPolicy]::NodeExcluded($probe, $exclusionCache[$key]))
     }
     $windowsMiss = @()
     $linuxMiss = @()

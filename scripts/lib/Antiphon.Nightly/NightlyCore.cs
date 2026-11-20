@@ -884,7 +884,7 @@ namespace Antiphon.Nightly
         }
     }
 
-    /// <summary>Repository scans from nightly-policy.ps1.</summary>
+    /// <summary>Repository scans for NightlyPolicy.</summary>
     /// <summary>Get-NightlyParentProcess on Windows: the parent id Win32_Process reports, without a CIM query.</summary>
     public static class NightlyProcesses
     {
@@ -949,7 +949,7 @@ namespace Antiphon.Nightly
     public static class NightlyRepository
     {
         /// <summary>
-        /// The *.csproj files Get-NightlyIsTestProjectPaths considers: what Get-ChildItem -Recurse -File lists
+        /// The *.csproj files NightlyPolicy.TestProjectPaths considers: what Get-ChildItem -Recurse -File lists
         /// (no hidden items, directory links not followed), minus any whose path below the root has a segment
         /// equal to bin or obj (case-insensitively) or starting with bin- (ordinally). Excluded directories are
         /// pruned rather than walked; unreadable directories are skipped, as -ErrorAction SilentlyContinue did.

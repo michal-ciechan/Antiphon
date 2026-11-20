@@ -1,7 +1,7 @@
 #requires -Version 7.0
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','rc-boundary','c487-harness')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary','c487-harness')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $root = New-C487Root $ResultsDirectory

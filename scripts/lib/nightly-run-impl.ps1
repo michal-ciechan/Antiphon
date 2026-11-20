@@ -10,7 +10,6 @@ $script:AntiphonNightlyRunImplLoaded = $true
 # only this file would otherwise see an empty profile list and refuse every run.
 . (Join-Path $PSScriptRoot 'release-gate.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
 . (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
 # The resolver has to be defined in this scope. Loading it inside

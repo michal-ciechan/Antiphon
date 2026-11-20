@@ -3,7 +3,7 @@
 param([string]$Case, [string]$ResultsDirectory, [switch]$PrintInputDigest)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
-. "$PSScriptRoot/lib/nightly-policy.ps1"
+. "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/c487-harness.ps1"
@@ -22,7 +22,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 # the checkout matches the pin. Each root's discovery.diag is parsed here, with
 # the same core, and handed in.
 $script:ProtectedInputs = @(
-    'scripts/lib/nightly-common.ps1','scripts/lib/nightly-policy.ps1','scripts/lib/nightly-coverage.ps1',
+    'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
 $script:PinnedInputDigest = '99297dde12befbe23fd15dff6f60b3c99c0df82bca5a2817f2c6bef5e4fef6df'
@@ -238,7 +238,7 @@ function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Age
     $policyPath = Join-Path $Root 'tests/test-execution-policy.json'
     $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json -AsHashtable
     $policy.profiles.rc.exclusions += @{ suite='antiphon'; class=$Class; reason='fixture'; owner='CARD-1545' }
-    $policy.policyHash = Get-NightlyPolicyHash $policy
+    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policy)
     [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50) + "`n")
 }
 function Read-Census($root) {
@@ -247,18 +247,19 @@ function Read-Census($root) {
     # The pinned root has NightlyCore.cs and not src/Antiphon.IO.WriteBehind, so
     # its loader's build identity is null. A core already loaded from this checkout
     # then fails Assert-NightlyLoadedCoreIdentity with required-identity-unavailable.
-    # Re-bind the loader to the checkout after the pinned scripts are dotted; the
-    # pinned census functions stay the ones from $root.
+    # So the core is loaded and verified through the checkout's loader first, and
+    # the loader is re-bound to the checkout after the pinned scripts are dotted;
+    # the pinned census functions stay the ones from $root.
     $discovery = ConvertFrom-NightlyDiagnosticLog -Path "$root/scripts/fixtures/nightly/c487-probe/discovery.diag" -Kind discovery
     $reader = {
         param($root, $discovery, $checkout)
+        $loader = $root
+        if (-not [string]::IsNullOrWhiteSpace($checkout)) { $loader = $checkout }
+        . "$loader/scripts/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
         . "$root/scripts/lib/nightly-common.ps1"
-        . "$root/scripts/lib/nightly-policy.ps1"
         . "$root/scripts/lib/nightly-coverage.ps1"
-        if (-not [string]::IsNullOrWhiteSpace($checkout) -and $checkout -ne $root) {
-            . "$checkout/scripts/lib/nightly-core.ps1"
-        }
-        $policyRead = Read-NightlyExecutionPolicy -PolicyPath "$root/tests/test-execution-policy.json"
+        . "$loader/scripts/lib/nightly-core.ps1"
+        $policyRead = [Antiphon.Nightly.NightlyPolicy]::Read('', "$root/tests/test-execution-policy.json")
         $policy = $policyRead.Object
         $nodes = @($discovery.Nodes)
         $nodes += @(
@@ -266,7 +267,7 @@ function Read-Census($root) {
             @{ Uid='sentinel-ordinary'; ClassName='Antiphon.Tests.Ordinary'; Method='Plain'; Categories=@('Unit') },
             @{ Uid='sentinel-excluded'; ClassName='Antiphon.Tests.Agents.ClaudeAdapterIntegrationTests'; Method='RoundTrip'; Categories=@('Integration') }
         )
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy -Profile rc -SuiteId antiphon -Platform linux)
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'antiphon', 'linux'))
         $census = Get-NightlyDiscoveryCensus -DiscoveryNodes $nodes -ProfileExclusions $exclusions -ProfileAware
         return [ordered]@{ Hash=$policyRead.Hash; Required=@($census.Required.uid | Sort-Object); Excluded=@($census.Excluded.uid | Sort-Object) } | ConvertTo-Json -Compress -Depth 8
     }

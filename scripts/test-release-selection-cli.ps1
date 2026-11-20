@@ -5,7 +5,7 @@
 # without a baseline; each refusal is the worker's). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-authority', 'release-selection', 'test-selection', 'c487-harness') {
+foreach ($name in 'nightly-common', 'nightly-coverage', 'release-gate', 'release-authority', 'release-selection', 'test-selection', 'c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path -Parent $PSScriptRoot
@@ -160,7 +160,7 @@ function Write-RSPolicy([string]$Root, [scriptblock]$EditPolicy, [scriptblock]$E
         $policy.selectionCatalog.hash = $catalog.catalogHash
     }
     if ($EditPolicy) { & $EditPolicy $policy }
-    $policy.policyHash = Get-NightlyPolicyHash $policy
+    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policy)
     [IO.File]::WriteAllText($policyPath, (ConvertTo-Json $policy -Depth 30))
 }
 

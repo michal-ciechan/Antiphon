@@ -12,7 +12,7 @@ $AssemblyPath = [IO.Path]::GetFullPath($AssemblyPath)
 $ResultsDirectory = [IO.Path]::GetFullPath($ResultsDirectory)
 if (Test-Path -LiteralPath $ResultsDirectory) { throw 'fresh results directory required' }
 [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
-foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','rc-boundary')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 # The caller produces this fresh diagnostic with a gated, foreground

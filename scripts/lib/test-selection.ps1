@@ -1,5 +1,7 @@
 #requires -Version 7.0
 # CARD-1313. Selection intent is data, never execution or release authority.
+# The policy helpers are compiled (Antiphon.Nightly.NightlyPolicy): load the core.
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 function ConvertTo-TestSelectionCanonicalJson {
     param($Value)
     if ($null -eq $Value) { return 'null' }
@@ -274,9 +276,9 @@ function Get-TestSelectionCore {
     $policyText=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $policyPath
     $policy=$policyText|ConvertFrom-Json
     if($policy.schemaVersion -notin @(3,4)){throw 'policy-schema-unsupported'}
-    if($policy.policyHash -cne (Get-NightlyPolicyHash $policy)){throw 'policy-hash-stale'}
-    [void](Get-NightlyPolicyProfile $policy $Profile)
-    Test-NightlyProjectDispositions $policy
+    if($policy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))){throw 'policy-hash-stale'}
+    [void]([Antiphon.Nightly.NightlyPolicy]::Profile($policy, $Profile))
+    [Antiphon.Nightly.NightlyPolicy]::ProjectDispositions($policy)
     if($policy.selectionCatalog.path -cne 'tests/test-selection-policy.json'){throw 'catalog-path-unsupported'}
     $catalogPath=[string]$policy.selectionCatalog.path
     $catalog=ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $CandidateSha $catalogPath)
@@ -297,7 +299,7 @@ function Get-TestSelectionCore {
     if($oldTree){
         $baselineCatalog=ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $BaselineSha $catalogPath)
         $baselinePolicy=Get-TestSelectionBlob $RepositoryRoot $BaselineSha $policyPath | ConvertFrom-Json
-        if($baselinePolicy.policyHash -cne (Get-NightlyPolicyHash $baselinePolicy) -or $baselinePolicy.selectionCatalog.hash -cne $baselineCatalog.catalogHash){throw 'baseline-policy-hash-stale'}
+        if($baselinePolicy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($baselinePolicy)) -or $baselinePolicy.selectionCatalog.hash -cne $baselineCatalog.catalogHash){throw 'baseline-policy-hash-stale'}
     }
     $fallback=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if((Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$BaselineSha,$CandidateSha) @(0,1)).Exit -eq 1){[void]$fallback.Add('baseline-not-ancestor')}

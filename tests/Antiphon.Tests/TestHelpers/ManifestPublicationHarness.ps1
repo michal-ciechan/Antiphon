@@ -1102,7 +1102,7 @@ function New-MpScopedPolicy {
         $chunks | Add-Member -NotePropertyName $name -NotePropertyValue @($row) -Force
     }
     $obj | Add-Member -NotePropertyName chunks -NotePropertyValue $chunks -Force
-    $obj.policyHash = Get-NightlyPolicyHash -Object $obj
+    $obj.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, ($obj | ConvertTo-Json -Depth 30), $utf8)
 }
@@ -1881,7 +1881,7 @@ try {
     # Same load order as scripts/nightly-tests.ps1. The impl file does not import policy or coverage.
     $lib = Join-Path $Repo 'scripts/lib'
     . (Join-Path $lib 'nightly-common.ps1')
-    . (Join-Path $lib 'nightly-policy.ps1')
+    . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $lib 'nightly-coverage.ps1')
     . (Join-Path $lib 'release-gate.ps1')
     . (Join-Path $lib 'release-selection.ps1')

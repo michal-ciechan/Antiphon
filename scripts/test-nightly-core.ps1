@@ -4,7 +4,7 @@
 # what it returned when it was removed (scripts/fixtures/nightly/core-golden). ASCII-only.
 param([string]$Case = '', [string]$ResultsDirectory = '')
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','test-phase-evidence','c487-harness') {
+foreach ($name in 'nightly-common','nightly-coverage','nightly-tests-impl','test-phase-evidence','c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path -Parent $PSScriptRoot
@@ -112,12 +112,12 @@ function Get-NCFixtureNodes([int]$Take) {
 }
 
 function Test-NCCoreMatchesFallback {
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $nodes = @(Get-NCFixtureNodes 4000)
     # Default-lane categories and a duplicate UID, so the non-profile and duplicate paths run too.
     $nodes[3].Categories = @('OptIn'); $nodes[5].Categories = @('Explicit'); $nodes[7].Excluded = $true
     $nodes += $nodes[11]
-    $real = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows)
+    $real = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
     # Method rows, a whole-class row after a method row (first declaring row wins), an absent method list.
     $rules = @($real) + @(
         [pscustomobject]@{ Class = $nodes[200].Type; Methods = @($nodes[200].Method); Reason = 'method'; Owner = 'a' },
@@ -570,7 +570,7 @@ function Get-NCValueTypes($Value) {
 }
 
 function Test-NCVerdictsMatchFallback {
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $nodes = @(Get-NCFixtureNodes 1500)
     $outcomes = @('Passed', 'Failed', 'pass', ' Error ', 'Skipped', 'NotExecuted', 'pending', 'weird', '', $null)
     $trx = [Collections.Generic.List[object]]::new()
@@ -596,7 +596,7 @@ function Test-NCVerdictsMatchFallback {
     } @('failed-row', 'zero-terminal-rows', 'sha-mismatch')
     $r = Invoke-NCBothWays {
         $entry.Views.Clear()
-        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) -ProfileAware
+        $view = Get-NightlyDiscoveryIndexView -Entry $entry -ProfileExclusions @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows')) -ProfileAware
         [ordered]@{
             perClassSet = @(foreach ($set in $classSets) { [ordered]@{
                 cross = Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set)
@@ -665,7 +665,7 @@ function Test-NCProjectWalkMatchesFallback {
     # Hidden is the attribute on Windows and the leading dot on Linux, which ignores the attribute; .NET reports both.
     $hidden = Get-Item -LiteralPath (Join-Path $tree '.hidden') -Force
     $hidden.Attributes = $hidden.Attributes -bor [IO.FileAttributes]::Hidden
-    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $tree) } 'projectWalk'
+    $r = Invoke-NCBothWays { @([Antiphon.Nightly.NightlyPolicy]::TestProjectPaths($tree)) } 'projectWalk'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('Kept') -and -not $r.Fallback.Contains('Skip')) 'projectWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     # In a git checkout the walk skips ignored directories (nested ones too); untracked projects are kept.
     $repo = Join-Path $root 'nc-git-projects'
@@ -677,7 +677,7 @@ function Test-NCProjectWalkMatchesFallback {
     [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), "out/`ncache/`n")
     [IO.File]::WriteAllText((Join-Path $repo 'deep/a/.gitignore'), "scratch/`n")
     $null = & git -C $repo init -q 2>&1
-    $r = Invoke-NCBothWays { @(Get-NightlyIsTestProjectPaths -RepoRoot $repo) } 'gitIgnoredWalk'
+    $r = Invoke-NCBothWays { @([Antiphon.Nightly.NightlyPolicy]::TestProjectPaths($repo)) } 'gitIgnoredWalk'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback -ceq '["deep/a/Kept.csproj","kept/Untracked.csproj"]') 'gitIgnoredWalk' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
 }
 
@@ -1174,8 +1174,8 @@ function Test-NCPlannedManifestMatchesFallback {
 # content in new objects shares it, and a shape the walk does not vouch for keeps the JSON key. The InProgress
 # scan against the loop it replaces.
 function Test-NCDiscoveryViewKey {
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-    $fresh = { @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows) }
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+    $fresh = { @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows')) }
     $row = { param($methods) @([pscustomobject]@{ Suite = 'antiphon'; Class = 'C'; Methods = $methods; Reason = 'r'; Owner = 'o' }) }
     $deep = 'leaf'; for ($k = 0; $k -lt 10; $k++) { $deep = [pscustomobject]@{ inner = $deep } }
     $lists = [ordered]@{ real = (& $fresh); again = (& $fresh); empty = @(); null = $null; single = (& $fresh)[0] }

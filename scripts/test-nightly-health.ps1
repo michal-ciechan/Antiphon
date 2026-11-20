@@ -8,7 +8,6 @@ $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-health.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
 

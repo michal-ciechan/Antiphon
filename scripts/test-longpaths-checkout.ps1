@@ -14,7 +14,6 @@ if ([string]::IsNullOrWhiteSpace($env:TEMP)) {
 }
 . (Join-Path $here 'lib/c487-harness.ps1')
 . (Join-Path $here 'lib/nightly-common.ps1')
-. (Join-Path $here 'lib/nightly-policy.ps1')
 . (Join-Path $here 'lib/nightly-coverage.ps1')
 . (Join-Path $here 'lib/release-gate.ps1')
 . (Join-Path $here 'lib/nightly-run-impl.ps1')

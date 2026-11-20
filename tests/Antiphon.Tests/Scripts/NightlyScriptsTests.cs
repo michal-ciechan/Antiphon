@@ -58,7 +58,6 @@ public sealed class NightlyScriptsTests
                      "test-nightly-run.ps1", "test-nightly-tests.ps1", "test-nightly-health.ps1",
                      "deploy-nightly-watchdog.ps1", "test-deploy-nightly-watchdog.ps1",
                      Path.Combine("lib", "nightly-common.ps1"),
-                     Path.Combine("lib", "nightly-policy.ps1"),
                      Path.Combine("lib", "nightly-coverage.ps1"),
                      Path.Combine("lib", "nightly-run-impl.ps1"),
                      Path.Combine("lib", "nightly-tests-impl.ps1"),

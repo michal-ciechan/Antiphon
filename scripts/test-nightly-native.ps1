@@ -8,7 +8,7 @@ if (-not $IsWindows) { throw 'Windows native fixture required; this case cannot 
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-owned-process.ps1')
-. (Join-Path $PSScriptRoot 'lib/nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'lib/nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 Add-Type -LiteralPath ([IO.Path]::ChangeExtension($FixtureExecutable, '.dll'))
 $null = New-Item -ItemType Directory -Path $ResultsDirectory -Force
 $script:owners = @()
@@ -159,9 +159,9 @@ try {
             Assert-Environment ($observed.Count -eq 0) 'all-cleared map excludes parent and cleared names'
             Assert-ParentEnvironment
             Set-EnvironmentSentinel 'ANTIPHON_HEADED_TESTS' '1'
-            $policyPath = Get-NightlyPolicyPath -RepoRoot (Split-Path $PSScriptRoot -Parent)
+            $policyPath = [Antiphon.Nightly.NightlyPolicy]::PolicyPath((Split-Path $PSScriptRoot -Parent))
             $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-            $map = Get-NightlySafeChildEnvironment -PolicyObject $policy -SuiteId 'antiphon'
+            $map = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy, 'antiphon', $null)
             $cleared = @($policy.safeEnvironment.clear | Where-Object { [string]$map[$_] -eq '' })
             Assert-Native ($cleared.Count -gt 0) 'real policy clear list admitted'
             $observed = @(Read-ChildEnvironment 'policy' (@('C1045_PARENT_ONLY') + $cleared) -Environment $map)

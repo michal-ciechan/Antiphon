@@ -8,5 +8,5 @@
     "properties": {},
     "required": []
   },
-  "content": "#!/bin/bash\nset -uo pipefail\n# CARD-0599 D-7: scheduled/rc credit comes from the runner's own schedule context.\nSLOT=\"${WM_SCHEDULE_PATH:-}\"\nif [ \"$SLOT\" != \"u/lndcobra/antiphon_release_candidates\" ]; then SLOT=manual; fi\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\release-cut.ps1 -Ref rc/2026-10-18 -ScheduleSlot $SLOT -JobId ${WM_JOB_ID:-}\"\nexit $?\n"
+  "content": "#!/bin/bash\nset -uo pipefail\n# CARD-0599 D-7: scheduled/rc credit comes from the runner's own schedule context.\nSLOT=\"${WM_SCHEDULE_PATH:-}\"\nif [ \"$SLOT\" != \"u/lndcobra/antiphon_release_candidates\" ]; then SLOT=manual; fi\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"pwsh -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\release-cut.ps1 -Ref rc/2026-10-18 -ScheduleSlot $SLOT -JobId ${WM_JOB_ID:-}\"\nexit $?\n"
 }

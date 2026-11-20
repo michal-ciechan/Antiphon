@@ -29,6 +29,8 @@
 
 if ($script:AntiphonReleaseAuthorityLoaded) { return }
 $script:AntiphonReleaseAuthorityLoaded = $true
+# The policy rules are compiled (Antiphon.Nightly.NightlyPolicy): load the core. Its sources are pinned below.
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 
 $script:ReleaseAuthorityPolicyPath = 'tests/test-execution-policy.json'
 $script:ReleaseAuthorityRcSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
@@ -51,9 +53,15 @@ $script:ReleaseAuthorityScripts = @(
     'promote-release.ps1',
     'lib/release-gate.ps1',
     'lib/release-authority.ps1',
-    'lib/nightly-policy.ps1',
     'lib/nightly-coverage.ps1',
-    'lib/nightly-common.ps1'
+    'lib/nightly-common.ps1',
+    'lib/nightly-core.ps1'
+)
+# The policy rules (NightlyPolicy) and the other compiled helpers these scripts call live in the nightly core:
+# every source the core is built from is pinned as well, one digest per project tree.
+$script:ReleaseAuthoritySourceTrees = @(
+    'lib/Antiphon.Nightly',
+    '../src/Antiphon.IO.WriteBehind'
 )
 
 # ------------------------------------------------------------------ helpers ---
@@ -207,17 +215,17 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     if ($null -eq $obj) { throw 'policy-unparseable' }
     $version = $obj.schemaVersion
     if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -notin @(2, 3, 4)) { throw 'policy-schema-unsupported' }
-    $computed = Get-NightlyPolicyHash -Object $obj
+    $computed = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
     $stated = [string]$obj.policyHash
     if ([string]::IsNullOrWhiteSpace($stated) -or -not [string]::Equals($stated, $computed, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'policy-hash-stale'
     }
-    try { $profile = Get-NightlyPolicyProfile -PolicyObject $obj -Profile 'rc' } catch { throw 'policy-rc-profile-missing' }
+    try { $profile = [Antiphon.Nightly.NightlyPolicy]::Profile($obj, 'rc') } catch { throw 'policy-rc-profile-missing' }
     $suites = @($profile.RequiredSuites | ForEach-Object { [string]$_ })
     $required = @($script:ReleaseAuthorityRcSuites)
     if ([int]$version -ge 3) {
         $required += 'markdown-pdf'
-        Test-NightlyProjectDispositions -PolicyObject $obj
+        [Antiphon.Nightly.NightlyPolicy]::ProjectDispositions($obj)
         # Historical policies predate the standalone CARD-1564 assembly.
         # Once declared, it must carry its own RC qualification obligation.
         if (@($obj.projectDispositions | Where-Object project -ceq 'tests/Antiphon.Observability.Tests/Antiphon.Observability.Tests.csproj').Count -gt 0) {
@@ -240,13 +248,13 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     $unknown = @($suites | Where-Object { $required -notcontains $_ })
     if ($missing.Count -gt 0) { throw ('policy-rc-suite-missing:' + ($missing -join '+')) }
     if ($unknown.Count -gt 0) { throw ('policy-rc-suite-unknown:' + ($unknown -join '+')) }
-    $map = Get-NightlySuiteMap -PolicyObject $obj
+    $map = [Antiphon.Nightly.NightlyPolicy]::SuiteMap($obj)
     foreach ($id in $suites) { if (-not $map.ContainsKey($id)) { throw ('policy-rc-suite-undefined:' + $id) } }
     $exclusions = @()
     foreach ($id in $suites) {
         # Creation and validation share this reader. The release obligation stays
         # Windows regardless of the coordinator's operating system.
-        foreach ($row in @(Get-NightlyProfileExclusions -PolicyObject $obj -Profile 'rc' -SuiteId $id -Platform windows)) {
+        foreach ($row in @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($obj, 'rc', $id, 'windows'))) {
             $exclusions += [ordered]@{ suite = $row.Suite; class = $row.Class; methods = @($row.Methods); reason = $row.Reason; owner = $row.Owner }
         }
     }
@@ -282,7 +290,29 @@ function Get-ReleaseAuthorityScriptHashes {
         $p = Join-Path $ScriptsRoot $rel
         $out[$rel] = (Get-NightlyFileSha256 -Path $p)
     }
+    foreach ($rel in $script:ReleaseAuthoritySourceTrees) {
+        $out[$rel] = (Get-ReleaseAuthoritySourceTreeDigest -Root (Join-Path $ScriptsRoot $rel))
+    }
     return $out
+}
+
+# One project's sources: SHA-256 over "<relative path> <file SHA-256>" lines of its .cs and .csproj files (bin and
+# obj excluded), in ordinal path order. A missing tree digests as the empty list.
+function Get-ReleaseAuthoritySourceTreeDigest {
+    param([string]$Root)
+    $lines = New-Object System.Collections.Generic.List[string]
+    if ([IO.Directory]::Exists($Root)) {
+        $full = [IO.Path]::GetFullPath($Root)
+        $rels = New-Object System.Collections.Generic.List[string]
+        foreach ($file in [IO.Directory]::EnumerateFiles($full, '*', [IO.SearchOption]::AllDirectories)) {
+            $rel = $file.Substring($full.Length).Replace([char]92, '/').TrimStart('/')
+            if ($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$') { continue }
+            $rels.Add($rel)
+        }
+        $rels.Sort([StringComparer]::Ordinal)
+        foreach ($rel in $rels) { $lines.Add($rel + ' ' + (Get-NightlyFileSha256 -Path (Join-Path $full $rel))) }
+    }
+    return (Get-NightlySha256Text -Text ($lines -join "`n"))
 }
 
 function Get-ReleaseAuthorityFileDigest {
@@ -359,7 +389,7 @@ function Get-ReleaseAuthorityRequiredUids {
     $required = @()
     foreach ($n in @($Nodes)) {
         $node = [pscustomobject]@{ ClassName = [string]$n.class; Type = [string]$n.class; Method = [string]$n.method }
-        if (Test-NightlyProfileNodeExcluded -Node $node -Exclusions $rows) { continue }
+        if ([Antiphon.Nightly.NightlyPolicy]::NodeExcluded($node, $rows)) { continue }
         $required += [string]$n.uid
     }
     return $required

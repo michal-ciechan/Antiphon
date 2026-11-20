@@ -8,5 +8,5 @@
     "properties": {},
     "required": []
   },
-  "content": "#!/bin/bash\nset -uo pipefail\n# CARD-0599 D-7: scheduled credit comes from the runner's own schedule context.\nTRIGGER=manual\nif [ \"${WM_SCHEDULE_PATH:-}\" = \"u/lndcobra/antiphon_nightly_tests\" ]; then TRIGGER=scheduled; fi\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"powershell -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-run.ps1 -Trigger $TRIGGER -Profile nightly\"\nexit $?\n"
+  "content": "#!/bin/bash\nset -uo pipefail\n# CARD-0599 D-7: scheduled credit comes from the runner's own schedule context.\nTRIGGER=manual\nif [ \"${WM_SCHEDULE_PATH:-}\" = \"u/lndcobra/antiphon_nightly_tests\" ]; then TRIGGER=scheduled; fi\nssh -i /tmp/windmill/worker_to_windows -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes lndco@host.docker.internal \"pwsh -NoProfile -ExecutionPolicy Bypass -File C:\\src\\Antiphon\\scripts\\nightly-run.ps1 -Trigger $TRIGGER -Profile nightly\"\nexit $?\n"
 }

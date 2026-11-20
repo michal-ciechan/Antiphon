@@ -27,7 +27,6 @@ param(
 $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-health.ps1')
 
 $result = Invoke-AntiphonNightlyHealth -StateRoot $StateRoot -SeamsPath $SeamsPath `

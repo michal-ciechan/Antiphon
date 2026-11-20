@@ -118,7 +118,7 @@ $out = [ordered]@{
 try {
     $lib = Join-Path $repo 'scripts/lib'
     . (Join-Path $lib 'nightly-common.ps1')
-    . (Join-Path $lib 'nightly-policy.ps1')
+    . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $lib 'nightly-coverage.ps1')
     . (Join-Path $lib 'nightly-tests-impl.ps1')
     . (Join-Path $lib 'qualification-supervisor-heartbeat.ps1')
@@ -201,7 +201,7 @@ try {
             if (-not $second.hangSuspected) { Add-Problem 'hang-not-recorded' }
             if ([int]$assigned.WatchdogSeconds -ge 1860 -and [int]$assigned.WatchdogSeconds -le 2100) { Add-Problem 'thirty-one-minute-cap' }
         } elseif ($mode -eq 'cap') {
-            $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+            $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
             $hasCal = $policy.Object.PSObject.Properties.Name -contains 'watchdogCalibration'
             $out.policyUntouched = ((-not $hasCal) -and [int]$policy.Object.watchdogs.antiphon -eq 3600000 -and [int]$policy.Object.watchdogs.e2e -eq 7200000)
             if (-not $out.policyUntouched) { Add-Problem 'policy-watchdog-changed' }
@@ -683,10 +683,10 @@ $NightlySeams = @{
             } else {
                 Add-Member -InputObject $policyObj -NotePropertyName chunks -NotePropertyValue $pricedChunks -Force
             }
-            $policyObj.policyHash = Get-NightlyPolicyHash -Object $policyObj
+            $policyObj.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policyObj)
             [System.IO.File]::WriteAllText($refusedPolicy, ($policyObj | ConvertTo-Json -Depth 100))
             $reparsed = [System.IO.File]::ReadAllText($refusedPolicy) | ConvertFrom-Json
-            $reparsed.policyHash = Get-NightlyPolicyHash -Object $reparsed
+            $reparsed.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($reparsed)
             [System.IO.File]::WriteAllText($refusedPolicy, ($reparsed | ConvertTo-Json -Depth 100))
             $refusedSeam = @'
 $NightlySeams = @{

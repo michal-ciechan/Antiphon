@@ -202,7 +202,7 @@ public sealed class TestPhaseSupervisorTests
         $work = $args[1]
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'nightly-tests-impl.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
@@ -328,7 +328,7 @@ public sealed class TestPhaseSupervisorTests
         $probe = $args[2]
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'nightly-tests-impl.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
@@ -347,11 +347,11 @@ public sealed class TestPhaseSupervisorTests
             }
             return $true
         }
-        $discovery = Get-NightlySafeChildEnvironment -PolicyObject $policy -SuiteId 'antiphon'
+        $discovery = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy, 'antiphon', $null)
         Remove-TestPhaseVariables -Environment $discovery
-        $build = Get-NightlySafeChildEnvironment -PolicyObject $policy -SuiteId 'antiphon'
+        $build = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy, 'antiphon', $null)
         Remove-TestPhaseVariables -Environment $build
-        $client = Get-NightlySafeChildEnvironment -PolicyObject $policy -SuiteId 'client'
+        $client = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy, 'client', $null)
         Remove-TestPhaseVariables -Environment $client
         $phase = @{}
         foreach ($key in @($discovery.Keys)) { $phase[[string]$key] = [string]$discovery[$key] }
@@ -403,7 +403,7 @@ public sealed class TestPhaseSupervisorTests
         $work = $args[1]
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
         $timing = Join-Path $work 'timing'

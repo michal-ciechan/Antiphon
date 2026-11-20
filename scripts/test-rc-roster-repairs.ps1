@@ -2,12 +2,12 @@
 # Offline CARD-1561/1566/1567 witnesses. No provider or qualification launch.
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'nightly-tests-impl', 'c487-harness')) {
+foreach ($name in @('nightly-common', 'nightly-coverage', 'nightly-tests-impl', 'c487-harness')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $repo = Split-Path $PSScriptRoot -Parent
 $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
-$policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+$policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
 function New-Node($Type, $Method, $Uid) {
     [pscustomobject]@{ ClassName = "Antiphon.Tests.Application.$Type"; Namespace = 'Antiphon.Tests.Application'; Type = $Type; Method = $Method; Uid = $Uid; Categories = @('Integration'); Excluded = $false }
 }
@@ -25,8 +25,8 @@ function Test-Mirror {
         'C1032_RecoveryQueuesBusyAndReady','C1032_RecoveryCrashHandoffs','C1032_RecoveryInertServerComposition')
     $nodes = @($methods | ForEach-Object { New-Node 'CardWorktreeMirrorCleanupTests' $_ $_ })
     $nodes += New-Node 'CardWorktreeMirrorCleanupTests' 'FuturePortableSibling' 'sibling'
-    $win = @(Get-NightlyProfileExclusions $policy.Object 'rc' 'antiphon' -Platform windows)
-    $linux = @(Get-NightlyProfileExclusions $policy.Object 'rc' 'antiphon' -Platform linux)
+    $win = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
+    $linux = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'linux'))
     $wc = Get-NightlyDiscoveryCensus $nodes $win -ProfileAware
     $lc = Get-NightlyDiscoveryCensus $nodes $linux -ProfileAware
     Assert-C487 ($wc.RequiredCount -eq 1 -and $wc.ExcludedCount -eq 27 -and $lc.RequiredCount -eq 28 -and $lc.ExcludedCount -eq 0) 'C1561 platform required UID sets' ($wc | ConvertTo-Json -Depth 3 -Compress)
@@ -41,7 +41,7 @@ function Test-Explicit {
     $offline = New-Node 'RunnerGrokAdapterReadyTestsPty' 'OfflineSibling' 'offline'
     $offline.ClassName = $live.ClassName
     foreach ($platform in @('windows','linux')) {
-        $ex = @(Get-NightlyProfileExclusions $policy.Object 'rc' 'antiphon' -Platform $platform)
+        $ex = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', $platform))
         $c = Get-NightlyDiscoveryCensus @($live,$offline) $ex -ProfileAware
         $d = Get-NightlyDiscoveryDisposition $live $ex -ProfileAware
         Assert-C487 ($c.RequiredCount -eq 1 -and $c.ExcludedCount -eq 1 -and $d.Owner -eq 'CARD-1566' -and $d.Reason -like '*WQ-3*') ('C1566 owned manual disposition ' + $platform)

@@ -26,7 +26,7 @@ $script:LiveLaneImmutableSeedPaths = @(
 $script:LiveLaneProtectedPaths = @(
     'tests/test-execution-policy.json',
     'scripts/lib/nightly-common.ps1',
-    'scripts/lib/nightly-policy.ps1',
+    'scripts/lib/Antiphon.Nightly/NightlyPolicy.cs',
     'scripts/lib/nightly-coverage.ps1'
 )
 # Discovery child budget. Loaded-host n=3 discovery 71966, 74696, 79685 ms (p95 = 79685).
@@ -38,7 +38,7 @@ $script:LiveLaneScratchLedger = @()
 # would define the readers only until that function returned.
 . (Join-Path $PSScriptRoot 'nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $PSScriptRoot 'nightly-tests-impl.ps1')
 $script:LiveLaneNightlyReady = $true
 
@@ -1412,7 +1412,7 @@ function Invoke-LiveLaneGateScan {
 function Get-LiveLaneRcExclusionIndex {
     param([string]$RepoRoot)
     Initialize-LiveLaneNightly -RepoRoot $RepoRoot
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $RepoRoot
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($RepoRoot, '')
     $platform = 'linux'
     if (-not $IsLinux) { $platform = 'windows' }
     $ids = @()
@@ -1421,7 +1421,7 @@ function Get-LiveLaneRcExclusionIndex {
     $ids = @($ids | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     $rows = @()
     foreach ($id in $ids) {
-        $rows += @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId $id -Platform $platform)
+        $rows += @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', $id, $platform))
     }
     return @($rows)
 }
@@ -2672,8 +2672,8 @@ function Invoke-LiveLaneCensus {
             $afterPolicyFile = Join-Path $afterRoot 'tests/test-execution-policy.json'
             if ($Mutant.ContainsKey('policyPath') -and -not [string]::IsNullOrWhiteSpace([string]$Mutant.policyPath)) { $afterPolicyFile = [string]$Mutant.policyPath }
             $afterObj = [System.IO.File]::ReadAllText($afterPolicyFile) | ConvertFrom-Json
-            $beforeHash = Get-NightlyPolicyHash -Object $beforeObj
-            $afterHash = Get-NightlyPolicyHash -Object $afterObj
+            $beforeHash = [Antiphon.Nightly.NightlyPolicy]::Hash($beforeObj)
+            $afterHash = [Antiphon.Nightly.NightlyPolicy]::Hash($afterObj)
         } else {
             $beforeHash = Get-LiveLanePolicyHashProcess -RepoRoot $repo -PolicyRoot $before
             $afterPolicyArg = ''
@@ -2744,7 +2744,7 @@ function Get-LiveLaneExclusionsFromObject {
     $rows = @()
     foreach ($id in @($ids | Sort-Object -Unique)) {
         if ([string]::IsNullOrWhiteSpace($id)) { continue }
-        $rows += @(Get-NightlyProfileExclusions -PolicyObject $PolicyObject -Profile 'rc' -SuiteId $id -Platform $Platform)
+        $rows += @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($PolicyObject, 'rc', $id, $Platform))
     }
     return @($rows)
 }
@@ -2808,7 +2808,7 @@ function Get-LiveLaneDispositionSets {
             Excluded = $false
         }
         $isExcluded = $false
-        if ($ProfileAware) { $isExcluded = Test-NightlyProfileNodeExcluded -Node $node -Exclusions $Exclusions }
+        if ($ProfileAware) { $isExcluded = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded($node, $Exclusions) }
         else { $isExcluded = Test-NightlyDiscoveryExcluded -Node $node }
         if ($isExcluded) { $excluded += $node.Uid } else { $required += $node.Uid }
     }
@@ -2854,7 +2854,7 @@ function New-LiveLanePolicyMutant {
     $obj = [System.IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
     & $Edit $obj
     Initialize-LiveLaneNightly -RepoRoot $RepoRoot
-    $hash = Get-NightlyPolicyHash -Object $obj
+    $hash = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
     $obj.policyHash = $hash
     ($obj | ConvertTo-Json -Depth 30) | Set-Content -LiteralPath $policyPath -Encoding utf8
     return @{ Root = $scratch; PolicyPath = $policyPath }

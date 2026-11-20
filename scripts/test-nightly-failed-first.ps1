@@ -2,7 +2,7 @@
 # CARD-1514: hermetic evidence export/resolution through the production planner.
 param([string]$Case = '', [string]$ResultsDirectory = '', [switch]$SmallLoopProbe)
 $ErrorActionPreference = 'Stop'
-foreach ($name in 'nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','c487-harness') {
+foreach ($name in 'nightly-common','nightly-coverage','nightly-tests-impl','c487-harness') {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 . (Join-Path $PSScriptRoot 'lib/qualification-supervisor-heartbeat.ps1')
@@ -37,13 +37,13 @@ function New-FFNode([string]$Class, [string]$Method = 'Run', [string]$Uid = '') 
 }
 function New-FFReplay {
     $phase = [Diagnostics.Stopwatch]::StartNew()
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $listing = Join-Path $PSScriptRoot 'fixtures/nightly/c1410-antiphon-listing.txt'
     # 19,012 New-FFNode objects (same shape, same bare-name rule), built in C#.
     $nodes = [AntiphonFixture.FFText]::ReplayNodes($listing)
     $phases.fixtureSeconds = $phase.Elapsed.TotalSeconds
     $phase.Restart()
-    $ex = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform windows)
+    $ex = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
     $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodes.ToArray() -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $ex -ProfileAware $true -Native $true -SuiteId antiphon -PolicyObject $policy.Object)
     $phases.plannerSeconds = $phase.Elapsed.TotalSeconds
     Write-FFJson (Join-Path $root 'replay.json') ([ordered]@{ nodes=$nodes.Count; chunks=$chunks.Count; listingDigest=(Get-FileHash -LiteralPath $listing).Hash; costDigest=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'lib/nightly-class-costs.json')).Hash; policyHash=$policy.Hash;phases=$phases })
@@ -186,12 +186,12 @@ function Test-FFChunkAccounting([string]$Variant) {
     $suite=@([pscustomobject]@{id='antiphon';nodes=$nodes;chunks=@([pscustomobject]@{id='all';classes=@($nodes.ClassName);nodes=$nodes});exclusions=@()})
     $full=[Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'Full',$null,$null)
     if ($Variant -ceq 'missing-bound') {
-        $partial=[Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+        $partial=[Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
         return ($history.membershipComplete -and @($full.members).Count -eq 2 -and @($full.unresolved).Count -eq 0 -and @($partial.members).Count -eq 2 -and @($history.fallbackChunks).Count -eq 1)
     }
     $reason=@{crash='summary-detail';'crash-unbound'='summary-detail';exit='summary-nonzero-exit';result='summary-failed-result';detail='summary-detail';short='short-trx';missing='missing-trx'}[$Variant]
     $wholeChunk=($Variant -cin @('missing','crash-unbound') -or (@($full.members).Count -eq 2 -and @($full.unresolved | Where-Object { $_.className -cin @($nodes.ClassName) }).Count -eq 2))
-    return ($wholeChunk -and @($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'prior-failure-sweep-unresolved'))
+    return ($wholeChunk -and @($full.unresolved).Count -gt 0 -and -not $history.membershipComplete -and @($history.fallbackChunks | Where-Object { $_.reason.Split(',') -ccontains $reason }).Count -eq 1 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'prior-failure-sweep-unresolved'))
 }
 function Test-OrdinaryFailedChunk {
     foreach ($retainedPlan in @($true,$false)) {
@@ -217,7 +217,7 @@ function Test-OrdinaryFailedChunk {
         Assert-FF ($history.membershipComplete -and @($full.unresolved).Count -eq 0 -and @($full.members).Count -eq 1 -and $full.members[0].className -ceq $nodes[0].ClassName -and @($history.fallbackChunks).Count -eq 0) ('ordinary-'+$variant+'-full')
         $accepted=$false; $detail=''
         try {
-            $partial=[Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+            $partial=[Antiphon.Nightly.PriorFailureHistory]::Resolve($history,$suite,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
             $accepted=(@($partial.members).Count -eq 1 -and $partial.members[0].className -ceq $nodes[0].ClassName -and @($partial.members[0].requiredUids).Count -eq 1 -and $partial.members[0].requiredUids[0] -ceq 'failed' -and @($partial.unresolved).Count -eq 0)
         } catch { $detail=(Get-NightlyRefusalText $_) }
         Assert-FF $accepted ('ordinary-'+$variant+'-partial') $detail
@@ -269,10 +269,10 @@ function Test-RefusesIncompleteEvidence {
         $plan=@(Get-NightlyProfileLaunchPlan -DiscoveryNodes $nodes -Chunks @([pscustomobject]@{id='all';classes=@()}) -Exclusions @() -SuiteId $suite)
         $current += [pscustomobject]@{id=$suite; nodes=$nodes; chunks=$plan; exclusions=@()}
     }
-    $control=[Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+    $control=[Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
     Assert-FF (@($control.warnings | Where-Object { [string]$_ -clike 'PARTIAL MISSING EXCLUSION CONTEXT:*' }).Count -eq 1) 'missingContextWarning'
     $candidateSha=git -C $repo rev-parse HEAD
-    $candidatePolicy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $candidatePolicy=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     Assert-FF (@($control.members).Count -ge 34 -and @($control.unresolved).Count -eq 0 -and $h.sourceSha -cne $candidateSha -and $h.policyHash -cne $candidatePolicy.Hash) 'validControl'
     foreach ($variant in 'exit','result','detail','short','crash','crash-unbound','missing-bound') { Assert-FF (Test-FFChunkAccounting $variant) ('chunk-'+$variant) }
     # No timeout, diagnostic, failing summary marker or retained plan can mask this witness.
@@ -283,56 +283,56 @@ function Test-RefusesIncompleteEvidence {
     $full=[Antiphon.Nightly.PriorFailureHistory]::Resolve($wrong.History,$current,'Full',$null,$null)
     $un=@($full.unresolved | Where-Object { $_.suite -ceq 'antiphon' -and $_.chunk -ceq 'all-group-105' -and $_.reason -ceq 'historical-membership-unavailable' })
     Assert-FF (-not $wrong.History.membershipComplete -and $un.Count -eq 1 -and @($wrong.History.members | Where-Object { $_.className -ceq 'Foreign.WrongSuiteTests' }).Count -eq 0 -and @($wrong.History.members).Count -eq 34) 'wrongSuiteFull'
-    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($wrong.History,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'historical-membership-unavailable') 'wrongSuitePartial'
+    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($wrong.History,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'historical-membership-unavailable') 'wrongSuitePartial'
     [IO.File]::WriteAllText((Join-Path $fx.Run 'timing/groups-planned-antiphon.json'),$retainedPlan)
     $name='Antiphon.Tests.Application.TerminalRunnerSeatReleaseTests'
     $missing=Copy-FFObject $current
     $missing[0].nodes=@($missing[0].nodes | Where-Object { $_.ClassName -cne $name })
     $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$missing,'Full',$null,$null)
     Assert-FF (@($r.unresolved | Where-Object { $_.className -ceq $name -and $_.reason -ceq 'current-class-missing' }).Count -eq 1) 'missingFull'
-    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$missing,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'current-class-missing') 'missingPartial'
+    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$missing,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'current-class-missing') 'missingPartial'
     $renamed=Copy-FFObject $missing; $renamed[0].nodes += New-FFNode ($name+'Renamed')
-    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$renamed,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'current-class-missing') 'renamed'
+    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($h,$renamed,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'current-class-missing') 'renamed'
     # D-21 uses real rc exclusions even when the run caller supplies nightly's empty rows.
-    $policy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $whole='Antiphon.Tests.Card0168InteractiveProbeTests'
     $methodClass='Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests'
     $executionPlatform='windows'
     if ([IO.Path]::DirectorySeparatorChar -eq '/') { $executionPlatform='linux' }
-    $policyRows=@(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile rc -SuiteId antiphon -Platform $executionPlatform)
+    $policyRows=@([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', $executionPlatform))
     $methodRow=@($policyRows | Where-Object { $_.Class -ceq 'TestDbFixtureLazyInitializationTests' })[0]
     $exHistory=Copy-FFObject $h
     $exHistory.members=@([pscustomobject]@{suite='antiphon';className=$whole;reasons=@('prior-failure');observations=@()})
     $exNodes=@(New-FFNode $whole)
     $exSuite=@([pscustomobject]@{id='antiphon';nodes=$exNodes;chunks=@([pscustomobject]@{id='all';classes=@($whole);nodes=$exNodes});exclusions=@()})
-    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'entirely-excluded-class') 'excluded'
+    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'entirely-excluded-class') 'excluded'
     $exHistory.members[0].className=$methodClass
     $exNodes=@(foreach ($method in $methodRow.Methods) { New-FFNode $methodClass $method })
     $exNodes += New-FFNode $methodClass 'A_db_free_exact_method_selection_constructs_and_starts_no_database'
     $exSuite[0].nodes=$exNodes; $exSuite[0].chunks=@([pscustomobject]@{id='all';classes=@($methodClass);nodes=$exNodes})
-    $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+    $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
     Assert-FF (@($r.members[0].requiredUids).Count -eq 1 -and @($r.excludedUids).Count -eq 3 -and $r.exclusionProfile -ceq 'rc' -and $r.policyDigest -ceq $policy.Hash -and $r.exclusionPolicyFileDigest -ceq ([Antiphon.Nightly.PriorFailureHistory]::Digest($policy.Path)) -and $r.exclusionPlatform -ceq $executionPlatform -and @($r.excludedUids | Where-Object { $_.reason -cne $methodRow.Reason -or $_.owner -cne $methodRow.Owner }).Count -eq 0) 'methodExclusions'
-    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',([pscustomobject]@{profile='nightly'}),(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'partial-exclusion-profile-mismatch') 'exclusionMismatch'
+    Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',([pscustomobject]@{profile='nightly'}),([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'partial-exclusion-profile-mismatch') 'exclusionMismatch'
     $goodContext=@{profile='rc';policyDigest=$policy.Hash;exclusionPolicyFileDigest=([Antiphon.Nightly.PriorFailureHistory]::Digest($policy.Path));exclusionPlatform=$executionPlatform}
     $bindingsOk=$true
     foreach ($dictionary in @($true,$false)) {
         $context=$goodContext
         if (-not $dictionary) { $context=[pscustomobject]$goodContext }
-        $bound=[Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$context,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+        $bound=[Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$context,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
         if (@($bound.members[0].requiredUids).Count -ne 1 -or @($bound.excludedUids).Count -ne 3) { $bindingsOk=$false }
         foreach ($field in 'policyDigest','exclusionPolicyFileDigest','exclusionPlatform') {
             $context=$goodContext.Clone(); $context[$field]='mismatching-context'
             if (-not $dictionary) { $context=[pscustomobject]$context }
-            if (-not (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$context,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'partial-exclusion-profile-mismatch')) { $bindingsOk=$false }
+            if (-not (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($exHistory,$exSuite,'PriorFailureSweep',$context,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'partial-exclusion-profile-mismatch')) { $bindingsOk=$false }
         }
     }
     Assert-FF $bindingsOk 'contextBindings'
     $noChunk=Copy-FFObject $h
     foreach ($m in $noChunk.members) { foreach ($o in $m.observations) { $o.chunk='' } }
-    $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($noChunk,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot)))
+    $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($noChunk,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), '')))
     Assert-FF (@($r.members | Where-Object { $_.className -ceq $name }).Count -eq 1) 'noOldChunk'
     $empty=Copy-FFObject $h; $empty.members=@(); $empty.unresolved=@(); $empty.fallbackChunks=@()
-    Assert-FF (@(([Antiphon.Nightly.PriorFailureHistory]::Resolve($empty,$current,'Full',$null,$null)).members).Count -eq 0 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($empty,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'empty-history')) 'empty'
+    Assert-FF (@(([Antiphon.Nightly.PriorFailureHistory]::Resolve($empty,$current,'Full',$null,$null)).members).Count -eq 0 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($empty,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'empty-history')) 'empty'
     Assert-FF ((Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Read($path,('0'*64),'') } 'history-digest-mismatch') -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Read('') } 'empty-history-path')) 'digest'
     $bad=Copy-FFObject $h; $bad.format='unsupported'; $badPath=Join-Path $root 'bad.json'; Write-FFJson $badPath $bad
     Assert-FF (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Read($badPath) } 'history-schema') 'schema'
@@ -379,7 +379,7 @@ function Test-RefusesIncompleteEvidence {
     [IO.File]::WriteAllText($diagPath,'truncated diagnostic')
     $mal=$null
     try { $mal=[Antiphon.Nightly.PriorFailureHistory]::Export($fx.Run,(Join-Path $root 'malformed.json')) } catch { }
-    Assert-FF ($null -ne $mal -and -not $mal.History.membershipComplete -and @($mal.History.unresolved).Count -gt 0 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($mal.History,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'historical-membership-unavailable')) 'malformedFallback'
+    Assert-FF ($null -ne $mal -and -not $mal.History.membershipComplete -and @($mal.History.unresolved).Count -gt 0 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($mal.History,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'historical-membership-unavailable')) 'malformedFallback'
     [IO.File]::WriteAllText($diagPath,$old)
     $planPath=Join-Path $fx.Run 'timing/groups-planned-antiphon.json'
     Write-FFJson $planPath ([ordered]@{version=1;suite='antiphon';runId='different-run';attempt='1';sourceDigest=('a'*40);policyDigest=('b'*64);groups=@()})
@@ -387,9 +387,9 @@ function Test-RefusesIncompleteEvidence {
     Remove-Item -LiteralPath $planPath
     $caseHistory=Copy-FFObject $h; $caseHistory.members[0].className=$caseHistory.members[0].className.ToLowerInvariant()
     $r=[Antiphon.Nightly.PriorFailureHistory]::Resolve($caseHistory,$current,'Full',$null,$null)
-    Assert-FF (@($r.unresolved).Count -eq 1 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($caseHistory,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'current-class-missing')) 'caseSensitive'
+    Assert-FF (@($r.unresolved).Count -eq 1 -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($caseHistory,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'current-class-missing')) 'caseSensitive'
     $selector=Copy-FFObject $h; $selector.members[0].className='Antiphon.Tests.*'
-    Assert-FF ((Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($selector,$current,'Full',$null,$null) } 'history-class-identity') -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($selector,$current,'PriorFailureSweep',$null,(Read-NightlyExecutionPolicy -RepoRoot (Split-Path -Parent $PSScriptRoot))) } 'history-class-identity')) 'invalidSelector'
+    Assert-FF ((Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($selector,$current,'Full',$null,$null) } 'history-class-identity') -and (Test-FFRefusal { [Antiphon.Nightly.PriorFailureHistory]::Resolve($selector,$current,'PriorFailureSweep',$null,([Antiphon.Nightly.NightlyPolicy]::Read((Split-Path -Parent $PSScriptRoot), ''))) } 'history-class-identity')) 'invalidSelector'
     $execPath=Join-Path $fx.Run 'execution.json'
     Write-FFJson $execPath ([ordered]@{format='antiphon-tunit-execution-v1';tunitVersion='1.44.0';mtpVersion='2.2.2';nodes=@([ordered]@{uid='diag-7';state='InProgress'})})
     $fx.Summary.suites[-1].execution='execution.json'; Write-FFJson (Join-Path $fx.Run 'summary.json') $fx.Summary
@@ -401,7 +401,7 @@ function Test-RefusesIncompleteEvidence {
 }
 function New-FFGlobalFixture {
     $replay = New-FFReplay
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $all = [Collections.Generic.List[object]]::new()
     $all.Add($replay)
     foreach ($s in @(@('session-runner','Antiphon.SessionRunner.Tests.GrokRulesHttpAcceptanceTests'),@('agents-pty','Antiphon.Agents.Pty.Tests.FakeClaudeContractTests'),@('e2e','Antiphon.E2E.BoardE2ETests'))) {
@@ -678,7 +678,7 @@ function Invoke-FFPreparedArm {
     $script:QualificationTimingRoot = $TimingRoot
     $invocationId = 'conservation-run'; $Attempt = 1; $Sha = 'a'*40; $GitRef = 'origin/master'
     $Profile = 'rc'; $profileAware = $true
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo; $policyHash = $policy.Hash
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, ''); $policyHash = $policy.Hash
     $startedAt = [datetime]::UtcNow.AddSeconds(-1)
     $qualificationBuildSeconds = 1.25
     $coverageComplete = $true; $testsPassed = $true; $overallFailed = $false
@@ -791,7 +791,7 @@ function Invoke-FFPreparedArm {
     return $output
 }
 function New-FFSmallFixture {
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $suites = @()
     foreach ($sid in @('antiphon','session-runner')) {
         $nodes = @((New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Ordinary')),(New-FFNode ('Fixture.'+$sid.Replace('-','')+'.Priority')))
@@ -899,9 +899,9 @@ function Invoke-FFPreparationArm {
     param([string]$Name, [string]$HistoryKind, [string]$Failure = 'discovery', [switch]$WriteFault)
     $RepoRoot=$repo; $LogRoot=Join-Path $root $Name; [void][IO.Directory]::CreateDirectory($LogRoot)
     $TimingRoot=Join-Path $LogRoot 'timing'; $script:QualificationTimingRoot=$TimingRoot
-    $policy=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $policy=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $Profile='rc';$profileAware=$true;$platform='windows';$policyHash=$policy.Hash
-    $suiteMap=Get-NightlySuiteMap -PolicyObject $policy.Object
+    $suiteMap=[Antiphon.Nightly.NightlyPolicy]::SuiteMap($policy.Object)
     $ids=@('antiphon','session-runner','agents-pty')
     if($Failure -ceq 'e2e'){$ids=@('antiphon','e2e','agents-pty')}
     foreach($id in $ids){$policy.Object.profiles.rc.exclusions += [pscustomobject]@{suite=$id;class='Fixture.Never';reason='fixture';owner='CARD-1514'}}
@@ -1153,7 +1153,7 @@ function New-FFLoopHistory($Fixture) {
 function Invoke-FFActualLoop {
     param($Fixture, [string]$Name, $History, [string]$Variant='pass', [switch]$NoExclusions)
     $dir=Join-Path $root $Name; [void][IO.Directory]::CreateDirectory($dir)
-    $p=Read-NightlyExecutionPolicy -RepoRoot $repo
+    $p=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
     $p.Object.profiles.rc.requiredSuites=@($Fixture.suites.id)
     $p.Object | Add-Member -NotePropertyName chunks -NotePropertyValue ([pscustomobject]@{}) -Force
     foreach ($suite in $Fixture.suites) {
@@ -1167,7 +1167,7 @@ function Invoke-FFActualLoop {
     if (-not $NoExclusions) {
         foreach($suite in $Fixture.suites){$p.Object.profiles.rc.exclusions += [pscustomobject]@{suite=$suite.id;class='Fixture.Never';reason='fixture';owner='CARD-1514'}}
     }
-    $p.Object.policyHash=Get-NightlyPolicyHash $p.Object
+    $p.Object.policyHash=[Antiphon.Nightly.NightlyPolicy]::Hash($p.Object)
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
     $bySuite=@{}
     foreach($s in $Fixture.suites){$bySuite[$s.id]=[AntiphonFixture.FFText]::IndexByUid($s.nodes)}

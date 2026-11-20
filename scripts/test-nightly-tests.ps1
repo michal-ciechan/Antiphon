@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Continue'
 $here = $PSScriptRoot
 $lib = Join-Path $here 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-policy.ps1')
+. (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'nightly-tests-impl.ps1')
 . (Join-Path $lib 'c487-harness.ps1')
@@ -398,7 +398,7 @@ function Test-C487_G043 {
 function Test-C487_G044 {
     foreach ($n in @('ANTIPHON_HEADED_TESTS', 'ANTIPHON_HEADED_LONG_TESTS', 'ANTIPHON_CARD0133_RUN_P3')) {
         $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
-        $envMap = Get-NightlySafeChildEnvironment -PolicyObject $pol -SuiteId 'antiphon' -BaseEnvironment @{ $n = '1' }
+        $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'antiphon', @{ $n = '1' })
         $mapOk = [string]$envMap[$n] -eq ''
         $prevSeams = $script:NightlySeams
         $script:NightlySeams = $null
@@ -426,18 +426,18 @@ function Test-C487_G044 {
 function Test-C487_G045 {
     foreach ($n in @('ANTIPHON_TG_TEST_TOKEN', 'ANTIPHON_DISTILLER_APPLY_CANARY')) {
         $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
-        $envMap = Get-NightlySafeChildEnvironment -PolicyObject $pol -SuiteId 'antiphon' -BaseEnvironment @{ $n = 'SECRETVALUE' }
+        $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'antiphon', @{ $n = 'SECRETVALUE' })
         Assert-C487 -Cond ([string]$envMap[$n] -eq '') -Name ('G045 credential {0}' -f $n)
     }
 }
 
 function Test-C487_G046 {
-    Assert-C487 -Cond (-not (Test-NightlyCredentialLeak -Text 'log' -Sentinels @('SECRETVALUE'))) -Name 'G046 no leak in empty'
+    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyPolicy]::CredentialLeak('log', @('SECRETVALUE')))) -Name 'G046 no leak in empty'
 }
 
 function Test-C487_G047 {
     $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
-    $envMap = Get-NightlySafeChildEnvironment -PolicyObject $pol -SuiteId 'messaging'
+    $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'messaging', $null)
     Assert-C487 -Cond ($envMap['ANTIPHON_BROKER_TESTS'] -eq '1') -Name 'G047 broker enabled'
 }
 
@@ -563,7 +563,7 @@ function Get-C487ScriptCensusDrift {
 
 function Test-C487_G056 {
     $pol = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-    $census = @(Get-NightlyScriptCensus -PolicyObject $pol)
+    $census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($pol))
     $expected = $script:C487ScriptCensusInventory
     $drift = @(Get-C487ScriptCensusDrift -Census $census -Expected $expected)
     # The comparison must see a dropped row and an unlisted added row, or a green proves nothing.
@@ -835,7 +835,7 @@ function Test-C1044_FixtureClassChunks {
         $rosterError = [string]$_.Exception.Message
     }
     $fixtureNode = @($nodes | Where-Object { $_.Uid -ceq 'lists-uid' })[0]
-    $policy = Test-NightlyProfileNodeExcluded -Node $fixtureNode -Exclusions @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @(); Reason = 'held class'; Owner = 'C1044' })
+    $policy = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded($fixtureNode, @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @(); Reason = 'held class'; Owner = 'C1044' }))
     $trx = @([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.CardFilePolicyApiTests'; MethodName = 'ListsFiles'; Outcome = 'Passed' })
     $terminal = @([pscustomobject]@{ ClassName = ('Antiphon.Tests.Application.' + $fixture); Type = $fixture; Method = 'ListsFiles'; Outcome = 'Passed'; Uid = 'lists-uid' })
     $cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes $terminal -RequiredClasses @('Antiphon.Tests.Application.CardFilePolicyApiTests')
@@ -1593,8 +1593,8 @@ function Test-C1397_RcAntiphonLaunchGroups {
     $detail = ''
     $ok = $false
     try {
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         $exclusions += [pscustomobject]@{
             Suite = 'antiphon'
             Class = 'C1397HeldTestsExtra'
@@ -1676,7 +1676,7 @@ function Test-C1397_RcAntiphonLaunchGroups {
         $nodeArray = @($nodes.ToArray())
         $leaves = @(Get-NightlyProfileExecutionChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions)
         $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $true -Native $true)
-        $nightlyEx = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'nightly' -SuiteId 'antiphon' -Platform 'windows')
+        $nightlyEx = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'nightly', 'antiphon', 'windows'))
         $nightlyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $nightlyEx -ProfileAware $false -Native $true)
         $emptyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions @() -ProfileAware $true -Native $true)
         $guardedPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $false -Native $true)
@@ -1867,8 +1867,8 @@ function Test-C1404_Group10MeasuredBudget {
         }
         $uids = @($nodes | ForEach-Object { $_.Uid } | Sort-Object -Unique)
         if ($nodes.Count -ne 158 -or $uids.Count -ne 158) { [void]$reasons.Add('fixture-census') }
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         if ($exclusions.Count -eq 0) { [void]$reasons.Add('rc-exclusions') }
         foreach ($node in $nodes) {
             if (Test-NightlyDiscoveryExcluded -Node $node -ProfileExclusions $exclusions -ProfileAware) { [void]$reasons.Add('excluded:' + $node.Uid) }
@@ -1981,8 +1981,8 @@ function Test-C1584_E2EExpandedBudget {
             $removed = @($expected | Where-Object { $_ -cnotin $actual })
             throw ('expanded-source-roster-changed: added=' + ($added -join ';') + ' removed=' + ($removed -join ';'))
         }
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'e2e' -Platform 'windows')
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'e2e', 'windows'))
         $required = @($nodes | Where-Object { -not (Test-NightlyDiscoveryExcluded $_ $exclusions -ProfileAware) })
         $reasons = New-Object System.Collections.Generic.List[string]
         # Exact census of the committed roster. The added identity is
@@ -2099,8 +2099,8 @@ function Test-C1577_Group71MeasuredBudget {
                 [void]$reasons.Add('cost-row:' + $type)
             }
         }
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         if ($exclusions.Count -eq 0) { throw 'missing rc exclusions' }
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
         $covered = @{}
@@ -2248,8 +2248,8 @@ function Test-G2865_Group28Group65MeasuredBudget {
                 [void]$reasons.Add('cost-row:' + $type)
             }
         }
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
         $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
         if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
@@ -2328,7 +2328,7 @@ function Test-C1410_MeasuredCostGroups {
     $detail = ''
     $ok = $false
     try {
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
         $target = 900.0
         $watchdogSeconds = 3600.0
         $listing = Join-Path $repo (Join-Path 'scripts' (Join-Path 'fixtures' (Join-Path 'nightly' 'c1410-antiphon-listing.txt')))
@@ -2363,10 +2363,10 @@ function Test-C1410_MeasuredCostGroups {
             }
         }
         $nodeArray = @($nodes.ToArray())
-        $exclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'rc' -SuiteId 'antiphon' -Platform 'windows')
+        $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         $all = @([pscustomobject]@{ id = 'all'; classes = @() })
         $plan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $exclusions -ProfileAware $true -Native $true)
-        $nightlyEx = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile 'nightly' -SuiteId 'antiphon' -Platform 'windows')
+        $nightlyEx = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'nightly', 'antiphon', 'windows'))
         $nightlyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions $nightlyEx -ProfileAware $false -Native $true)
         $emptyPlan = @(Resolve-NightlySuiteChunks -DiscoveryNodes $nodeArray -Chunks $all -Exclusions @() -ProfileAware $true -Native $true)
 
@@ -2741,7 +2741,7 @@ function Test-C1698_SummaryRecordsToolchain {
 function Test-C1698_SummaryJsonRecordsToolchain {
     $fx = New-Efx
     $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
-    foreach ($p in @(Get-NightlyPolicyProjectUniverse -PolicyObject $policy)) {
+    foreach ($p in @([Antiphon.Nightly.NightlyPolicy]::ProjectUniverse($policy))) {
         $src = Join-Path $repo $p
         $dest = Join-Path $fx.Clone $p
         if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { continue }

@@ -249,7 +249,6 @@ try {
             Note ($testsImpl -notmatch 'publish-release\.ps1' -and $runImpl -notmatch 'Incremental') 'wiring-adds-no-mode-or-publish'
         }
         'OneEvidenceRootPerRun' {
-            . (Join-Path $PSScriptRoot 'lib/nightly-policy.ps1')
             . (Join-Path $PSScriptRoot 'lib/nightly-run-impl.ps1')
             $root = Join-Path $ResultsDirectory 'e2e'
             $repo = Join-Path $root 'checkout'
@@ -268,11 +267,11 @@ try {
                 suites = [pscustomobject]@{ probe = [pscustomobject]@{ name = 'Probe'; mode = 'native'; assembly = 'Probe'; project = 'tests/Probe/Probe.csproj' } }
                 projects = @('tests/Probe/Probe.csproj')
             }
-            $policyObject.policyHash = [string](Get-NightlyPolicyHash -Object $policyObject)
+            $policyObject.policyHash = [string]([Antiphon.Nightly.NightlyPolicy]::Hash($policyObject))
             $policyPath = Join-Path $repo 'tests/test-execution-policy.json'
             [IO.File]::WriteAllText($policyPath, ($policyObject | ConvertTo-Json -Depth 6))
             $reread = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-            Note ((Get-NightlyPolicyHash -Object $reread) -ceq [string]$reread.policyHash) 'policy-hash'
+            Note (([Antiphon.Nightly.NightlyPolicy]::Hash($reread)) -ceq [string]$reread.policyHash) 'policy-hash'
             [void](Invoke-C487FixtureGit $repo @('add', 'tests/Probe/Probe.csproj', 'tests/test-execution-policy.json'))
             [void](Invoke-C487FixtureGit $repo @('commit', '-qm', 'probe'))
             $sha = [string](Invoke-C487FixtureGit $repo @('rev-parse', 'HEAD'))

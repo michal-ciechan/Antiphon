@@ -3980,12 +3980,6 @@
       ]
     },
     {
-      "path": "scripts/lib/nightly-policy.ps1",
-      "classes": [
-        "SelectorLineEndingAttributeTests"
-      ]
-    },
-    {
       "path": "scripts/lib/release-authority.ps1",
       "classes": [
         "ReleaseImpactScriptTests"

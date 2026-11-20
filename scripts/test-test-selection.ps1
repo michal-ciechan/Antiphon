@@ -2,7 +2,7 @@
 param([string]$Case, [string]$ResultsDirectory, [string]$FilterHost)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
-. "$PSScriptRoot/lib/nightly-policy.ps1"
+. "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/test-selection.ps1"
 . "$PSScriptRoot/lib/release-authority.ps1"
@@ -12,8 +12,8 @@ $ResultsDirectory = New-C487Root -ResultsDirectory $ResultsDirectory
 $script:C1313GitFixtures = [Collections.Generic.List[string]]::new()
 
 function Test-C1313_ProjectAndCatalogUniverse {
-    $policy = Read-NightlyExecutionPolicy -RepoRoot $repoRoot
-    $census = Test-NightlyPolicyProjectUniverse -RepoRoot $repoRoot -PolicyObject $policy.Object
+    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
+    $census = [Antiphon.Nightly.NightlyPolicy]::TestProjectUniverse($repoRoot, $policy.Object)
     Assert-C487 -Cond $census.Ok -Name 'C1313 project-universe' -Detail ($census | ConvertTo-Json -Compress)
     $roles = $policy.Object.projectDispositions
     $probePaths = @('scripts/fixtures/nightly/c1375-probe/Probe.csproj', 'tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj')
@@ -33,14 +33,14 @@ function Test-C1313_ProjectAndCatalogUniverse {
     $root=Join-Path $ResultsDirectory 'universe';[void](New-Item -ItemType Directory $root)
     foreach($path in $census.Disk){$file=Join-Path $root $path;[void](New-Item -ItemType Directory (Split-Path $file) -Force);[IO.File]::WriteAllText($file,'<Project><IsTestProject>true</IsTestProject></Project>')}
     $extra=Join-Path $root 'tests/New.Fixture/New.Fixture.csproj';[void](New-Item -ItemType Directory (Split-Path $extra));[IO.File]::WriteAllText($extra,'<Project><IsTestProject>true</IsTestProject></Project>')
-    $bad=Test-NightlyPolicyProjectUniverse $root $policy.Object
+    $bad=[Antiphon.Nightly.NightlyPolicy]::TestProjectUniverse($root, $policy.Object)
     Assert-C487 -Cond (-not $bad.Ok -and $bad.Missing -contains 'tests/New.Fixture/New.Fixture.csproj') -Name 'C1313 unclassified-project'
     $catalog.catalogHash='0'*64;$msg='';try{[void](Assert-TestSelectionCatalog $catalog)}catch{$msg=$_.Exception.Message}
     Assert-C487 -Cond ($msg -eq 'catalog-hash-stale') -Name 'C1313 stale-catalog-refused'
 }
 
 function Test-C1313_LiveEligibility {
-    $policy=Read-NightlyExecutionPolicy $repoRoot
+    $policy=[Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
     $catalog=Read-TestSelectionCatalog "$repoRoot/tests/test-selection-policy.json" $policy.Object.selectionCatalog.hash
     $classes=@('ClaudeHeadedLongTests','GrokMidTurnInterruptCanaryTests','GrokSizeCaptureTests','HerdrPaneDisposalGuardedLiveTests')
     $exclusions=@($policy.Object.profiles.rc.exclusions | Where-Object {$classes -ccontains $_.class})
@@ -59,8 +59,8 @@ function Test-C1313_LiveEligibility {
 }
 
 function Test-C1313_MixedDeliveryInventory {
-    $policy=Read-NightlyExecutionPolicy $repoRoot
-    $exclusions=@(Get-NightlyProfileExclusions $policy.Object 'rc' 'agents-pty')
+    $policy=[Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
+    $exclusions=@([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'agents-pty', 'windows'))
     $fake=[pscustomobject]@{Uid='fake';ClassName='Antiphon.Agents.Pty.Tests.ClaudeVerifiedDeliveryTests';Type='ClaudeVerifiedDeliveryTests';Method='Fake_evidence_appears_then_submit_completes_a_turn';Categories=@()}
     $real=[pscustomobject]@{Uid='real';ClassName=$fake.ClassName;Type=$fake.Type;Method='Real_evidence_appears_then_submit_completes_a_turn';Categories=@('OptIn','Headed')}
     Assert-C487 -Cond ((Get-NightlyDiscoveryDisposition $fake $exclusions -ProfileAware).Disposition -eq 'required' -and (Get-NightlyDiscoveryDisposition $real $exclusions -ProfileAware).Disposition -eq 'excluded') -Name 'C1313 fake-required-real-excluded'
@@ -92,7 +92,7 @@ function New-C1313Candidate($Fx,[string[]]$Paths,[string]$Content='changed'){
 function New-C1313PolicyCandidate($Fx,$Catalog){
     $Catalog.catalogHash=Get-TestSelectionCatalogHash $Catalog
     $p=Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw|ConvertFrom-Json -AsHashtable
-    $p.selectionCatalog.hash=$Catalog.catalogHash;$p.policyHash=Get-NightlyPolicyHash $p
+    $p.selectionCatalog.hash=$Catalog.catalogHash;$p.policyHash=[Antiphon.Nightly.NightlyPolicy]::Hash($p)
     [void](Invoke-C1313Git $Fx.Root @('read-tree',$Fx.B))
     Write-C1313File $Fx.Root 'tests/test-selection-policy.json' ($Catalog|ConvertTo-Json -Depth 30)
     Write-C1313File $Fx.Root 'tests/test-execution-policy.json' ($p|ConvertTo-Json -Depth 30)
@@ -367,12 +367,10 @@ function New-C1313CrlfScriptRoot {
     [void](New-Item -ItemType Directory (Join-Path $scripts 'lib') -Force)
     $pinned=@('scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     # Direct dot-sources plus the lib files test-selection.ps1 loads from its own directory.
-    # nightly-common.ps1 and nightly-policy.ps1 dot-source nightly-core.ps1 beside themselves.
+    # nightly-common.ps1 dot-sources nightly-core.ps1 beside itself.
     $copied=@(
         'scripts/select-test-rosters.ps1',
         'scripts/lib/nightly-common.ps1',
-        'scripts/lib/nightly-core.ps1',
-        'scripts/lib/nightly-policy.ps1',
         'scripts/lib/nightly-core.ps1',
         'scripts/lib/test-selection.ps1',
         'scripts/lib/checkpoint-process-runner.ps1',
@@ -388,8 +386,18 @@ function New-C1313CrlfScriptRoot {
         [IO.File]::WriteAllBytes($dest,[Text.Encoding]::UTF8.GetBytes($text))
     }
     [IO.File]::Copy((Join-Path $repoRoot 'scripts/lib/CheckpointProcessRunner.cs'),(Join-Path $scripts 'lib/CheckpointProcessRunner.cs'))
-    # nightly-common.ps1 loads nightly-core.ps1; without the Antiphon.Nightly project beside it, this copy
-    # runs the PowerShell implementations.
+    # The policy rules are compiled: the copy carries the core's sources byte for byte, so it loads the same
+    # cached build (the build is keyed by those bytes).
+    foreach($tree in @('scripts/lib/Antiphon.Nightly','src/Antiphon.IO.WriteBehind')){
+        $from=Join-Path $repoRoot $tree
+        foreach($file in [IO.Directory]::EnumerateFiles($from,'*',[IO.SearchOption]::AllDirectories)){
+            $rel=$file.Substring($from.Length).Replace([char]92,'/').TrimStart('/')
+            if($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$'){continue}
+            $dest=Join-Path (Join-Path $root $tree) $rel
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $dest))
+            [IO.File]::Copy($file,$dest)
+        }
+    }
     return $scripts
 }
 function Test-C1313_SelectorLineEndings {

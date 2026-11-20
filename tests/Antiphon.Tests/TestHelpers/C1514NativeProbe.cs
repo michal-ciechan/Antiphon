@@ -36,12 +36,12 @@ internal static class C1514NativeProbe
         $repo, $work, $probe = $args
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
+        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'nightly-tests-impl.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
         . (Join-Path $lib 'nightly-owned-process.ps1')
-        $environment = Get-NightlySafeChildEnvironment -PolicyObject ([pscustomobject]@{}) -SuiteId 'probe'
+        $environment = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment(([pscustomobject]@{}), 'probe', $null)
         Remove-TestPhaseVariables -Environment $environment
         $diag = Join-Path $work 'discovery'
         New-Item -ItemType Directory -Path $diag | Out-Null

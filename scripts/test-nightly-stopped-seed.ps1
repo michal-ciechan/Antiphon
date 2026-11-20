@@ -22,7 +22,6 @@ if($Case.Contains(',')){
 }
 . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'lib/nightly-policy.ps1')
 . (Join-Path $PSScriptRoot 'lib/nightly-dispatch.ps1')
 # Only these cases run executor code (its outcome, its launch packer, its public entry); the others need none of it.
 if($Case -cin @('ScheduleConservesAllChunks','PublicHopsForwardAcknowledgement','RealPackerRegroupKeepsFailedFirst','RealPackerFailedMethodFollows')){
@@ -412,7 +411,7 @@ try {
             foreach($kind in @('run','tests')){
                 $wrapperRoot=Join-Path $fxRoot ('wrapper-'+$kind);$lib=Join-Path $wrapperRoot 'lib';[void][IO.Directory]::CreateDirectory($lib)
                 Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('nightly-'+$kind+'.ps1')) -Destination $wrapperRoot
-                foreach($name in @('nightly-common','nightly-policy','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
+                foreach($name in @('nightly-common','nightly-coverage','release-gate','release-selection')){[IO.File]::WriteAllText((Join-Path $lib ($name+'.ps1')),'')}
                 $function='Invoke-AntiphonNightly'+$(if($kind -eq 'run'){'Run'}else{'Tests'})
                 $command=Get-Command $function
                 $parameterBlock=$command.ScriptBlock.Ast.Body.ParamBlock

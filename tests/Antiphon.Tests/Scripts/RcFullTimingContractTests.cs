@@ -423,7 +423,6 @@ public sealed class RcFullTimingContractTests
         $work = $args[1]
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'test-phase-evidence.ps1')
         function New-RcNode([string]$uid, [string]$className) {
@@ -945,7 +944,6 @@ public sealed class RcFullTimingContractTests
         $env:PATH = $bin + [IO.Path]::PathSeparator + $env:PATH
         $lib = Join-Path $repo 'scripts/lib'
         . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-policy.ps1')
         . (Join-Path $lib 'nightly-coverage.ps1')
         . (Join-Path $lib 'release-gate.ps1')
         . (Join-Path $lib 'release-selection.ps1')

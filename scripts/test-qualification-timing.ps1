@@ -477,7 +477,6 @@ function Invoke-QualificationWitness {
 $repo = Split-Path -Parent $PSScriptRoot
 $lib = Join-Path $repo 'scripts/lib'
 . (Join-Path $lib 'nightly-common.ps1')
-. (Join-Path $lib 'nightly-policy.ps1')
 . (Join-Path $lib 'nightly-coverage.ps1')
 . (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'release-selection.ps1')
@@ -999,7 +998,6 @@ param([string]$Repo, [string]$LogRoot, [string]$Seam, [string]$Marker, [string]$
 $ErrorActionPreference = 'Stop'
 $env:QTIMING_LAUNCH_MARKER = $Marker
 . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
-. (Join-Path $Repo 'scripts/lib/nightly-policy.ps1')
 . (Join-Path $Repo 'scripts/lib/nightly-coverage.ps1')
 . (Join-Path $Repo 'scripts/lib/release-gate.ps1')
 . (Join-Path $Repo 'scripts/lib/release-selection.ps1')
@@ -1318,7 +1316,6 @@ try {
 param([string]$Lib, [string]$Log, [string]$Timing, [string]$Trx, [string]$Marker)
 $ErrorActionPreference = "Stop"
 . (Join-Path $Lib "nightly-common.ps1")
-. (Join-Path $Lib "nightly-policy.ps1")
 . (Join-Path $Lib "nightly-coverage.ps1")
 . (Join-Path $Lib "release-gate.ps1")
 . (Join-Path $Lib "release-selection.ps1")

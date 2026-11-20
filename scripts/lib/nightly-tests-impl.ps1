@@ -7,7 +7,7 @@ $script:AntiphonNightlyTestsImplLoaded = $true
 . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
 . (Join-Path $PSScriptRoot 'nightly-dispatch.ps1')
 . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
-. (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 . (Join-Path $PSScriptRoot 'qualification-supervisor-heartbeat.ps1')
 . (Join-Path $PSScriptRoot 'rc-run-evidence.ps1')
 
@@ -66,7 +66,7 @@ function Get-NightlyProfileExecutionChunks {
     # case-insensitive, named by their first node, and ordered as Group-Object
     # orders them on this PowerShell; nodes keep discovery order within a class.
     Assert-NightlyCoreAvailable 'Get-NightlyProfileExecutionChunks'
-    $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $Exclusions
+    $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($Exclusions)
     $index = 0
     foreach ($chunk in $Chunks) {
         $required = @($chunk.classes)
@@ -941,7 +941,7 @@ function Prepare-NightlySuiteExecution {
     param([string]$ExecutionSuiteId)
     $suiteId = $ExecutionSuiteId
     $suite = $suiteMap[$suiteId]
-    $profileExclusions = @(Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId $suiteId -Platform $platform)
+    $profileExclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, $Profile, $suiteId, $platform))
     $label = [string]$suite.name
     if ([string]::IsNullOrWhiteSpace($label)) { $label = $suiteId }
     $isNative = Test-NightlySuiteIsNative -Suite $suite -SuiteId $suiteId
@@ -997,7 +997,7 @@ function Prepare-NightlySuiteExecution {
 
     if ($suiteId -eq 'e2e') {
         $bundle = Join-Path $RepoRoot (Join-Path 'client' (Join-Path 'dist' 'index.html'))
-        $prereqEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+        $prereqEnv = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
         Remove-TestPhaseVariables -Environment $prereqEnv
         $prereq = Test-NightlyE2EPrerequisites -RepoRoot $RepoRoot -LogRoot $LogRoot -Environment $prereqEnv -BundlePath $bundle
         $preflight.e2e = @($prereq.Rows)
@@ -1025,7 +1025,7 @@ function Prepare-NightlySuiteExecution {
     $suiteDiscoveryIndex = New-NightlyDiscoveryIndex
     if ($isNative -and (($profileAware -and $profileExclusions.Count -gt 0) -or $dispatchNeedsDiscovery)) {
         $profileDiscoveryPath = Join-Path $LogRoot ($suiteId + '-profile.discovery.json')
-        $profileEnv = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+        $profileEnv = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
         Remove-TestPhaseVariables -Environment $profileEnv
         $profileDiscStarted = Get-NightlyUtcNow
         $profileDiscWatch = [Diagnostics.Stopwatch]::StartNew()
@@ -1117,7 +1117,7 @@ function Invoke-NightlyScheduledChunk {
     $logPath = Join-Path $LogRoot ('{0}-{1}-tests.log' -f $suiteId, $chunk.id)
     $trxPath = Join-Path $LogRoot ('{0}-{1}.trx' -f $suiteId, $chunk.id)
     $jsonPath = Join-Path $LogRoot ('{0}-{1}.json' -f $suiteId, $chunk.id)
-    $envMap = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId $suiteId
+    $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, $suiteId, $null)
     Remove-TestPhaseVariables -Environment $envMap
     $envMap['C487_INVOCATION'] = $invocationId
     $envMap['C487_RUN_DIR'] = $LogRoot
@@ -1153,7 +1153,7 @@ function Invoke-NightlyScheduledChunk {
             throw
         }
     } elseif ($suiteId -eq 'scripts') {
-        $census = @(Get-NightlyScriptCensus -PolicyObject $policy.Object)
+        $census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($policy.Object))
         $scriptFail = $false
         foreach ($row in $census) {
             $disp = [string]$row.disposition
@@ -1687,7 +1687,7 @@ function Invoke-AntiphonNightlyTests {
     }
 
     try {
-        $policy = Read-NightlyExecutionPolicy -RepoRoot $RepoRoot -PolicyPath $PolicyPath
+        $policy = [Antiphon.Nightly.NightlyPolicy]::Read($RepoRoot, $PolicyPath)
     } catch {
         Write-Error $_.Exception.Message
         return [pscustomobject]@{
@@ -1702,11 +1702,11 @@ function Invoke-AntiphonNightlyTests {
     # the compatible nightly answer. An unknown profile, or rc asked of a v1 policy, is a
     # hard refusal rather than a silent fall back to the nightly seven.
     try {
-        $profileRow = Get-NightlyPolicyProfile -PolicyObject $policy.Object -Profile $Profile
-        $requiredSuites = @(Get-NightlyProfileRequiredSuites -PolicyObject $policy.Object -Profile $Profile)
+        $profileRow = [Antiphon.Nightly.NightlyPolicy]::Profile($policy.Object, $Profile)
+        $requiredSuites = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($policy.Object, $Profile))
         # Validate every exclusion before any child command; each suite resolves
         # its own rows below so same-named classes in other suites stay required.
-        [void](Get-NightlyProfileExclusions -PolicyObject $policy.Object -Profile $Profile -SuiteId '' -Platform $platform)
+        [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, $Profile, '', $platform))
     } catch {
         Write-Error $_.Exception.Message
         return [pscustomobject]@{
@@ -1724,7 +1724,7 @@ function Invoke-AntiphonNightlyTests {
         Write-Error $msg
         return [pscustomobject]@{ ExitCode = 2; coverageComplete = $false; testsPassed = $false; Error = $msg; Profile = $Profile }
     }
-    $universe = Test-NightlyPolicyProjectUniverse -RepoRoot $RepoRoot -PolicyObject $policy.Object
+    $universe = [Antiphon.Nightly.NightlyPolicy]::TestProjectUniverse($RepoRoot, $policy.Object)
     if (-not $universe.Ok) {
         Write-Error $universe.Message
         return [pscustomobject]@{
@@ -1743,7 +1743,7 @@ function Invoke-AntiphonNightlyTests {
         } else {
             $joined = ($Suites | ForEach-Object { [string]$_ }) -join ','
             if ($joined -match '^[\s,]*$') { throw 'empty suite selection' }
-            $selectedSuites = @(Resolve-NightlySelectedSuites -PolicyObject $policy.Object -Suites $Suites)
+            $selectedSuites = @([Antiphon.Nightly.NightlyPolicy]::ResolveSelectedSuites($policy.Object, $Suites))
         }
     } catch {
         Write-Error $_.Exception.Message
@@ -1756,7 +1756,7 @@ function Invoke-AntiphonNightlyTests {
         }
     }
 
-    $suiteUniverse = Test-NightlyRequiredSuitesPresent -Selected $selectedSuites -Required $requiredSuites
+    $suiteUniverse = [Antiphon.Nightly.NightlyPolicy]::RequiredSuitesPresent($selectedSuites, $requiredSuites)
     if (-not $suiteUniverse.Ok) {
         $coverageComplete = $false
         $reasons += ('partial-selection missing {0}' -f ($suiteUniverse.Missing -join ','))
@@ -1920,7 +1920,7 @@ function Invoke-AntiphonNightlyTests {
                     if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable([string]$phaseName))) { $phaseInherited = $true }
                 }
                 if ($phaseInherited) {
-                    $dotnetArgs.Environment = Get-NightlySafeChildEnvironment -PolicyObject $policy.Object -SuiteId 'antiphon'
+                    $dotnetArgs.Environment = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy.Object, 'antiphon', $null)
                     Remove-TestPhaseVariables -Environment $dotnetArgs.Environment
                 }
                 $dotnetStarted = Get-NightlyUtcNow
@@ -1942,7 +1942,7 @@ function Invoke-AntiphonNightlyTests {
             $qualificationBuildSeconds = [math]::Round($buildWatch.Elapsed.TotalSeconds, 3)
             Write-NightlyPrerequisitePhases -LogRoot $LogRoot -NpmCiStarted $npmCiStarted -NpmCiSeconds $npmCiSeconds -NpmBuildStarted $npmBuildStarted -NpmBuildSeconds $npmBuildSeconds -LintStarted $lintStarted -LintSeconds $lintSeconds -DotnetStarted $dotnetStarted -DotnetSeconds $dotnetSeconds
 
-            $suiteMap = Get-NightlySuiteMap -PolicyObject $policy.Object
+            $suiteMap = [Antiphon.Nightly.NightlyPolicy]::SuiteMap($policy.Object)
     if ($dotnetOk) {
         foreach ($evidenceSuiteId in @($selectedSuites)) {
             $evidenceSuite = $null

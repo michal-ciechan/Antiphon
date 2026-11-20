@@ -102,7 +102,7 @@ public sealed class NativeLinuxPolicyMatcherParityTests
         builder.AppendLine("param([string]$Repo)");
         builder.AppendLine("$ErrorActionPreference = 'Stop'");
         builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-common.ps1')");
-        builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-policy.ps1')");
+        builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-core.ps1'); Assert-NightlyCoreAvailable 'parity'");
         builder.AppendLine(". (Join-Path $Repo 'scripts/lib/nightly-coverage.ps1')");
         builder.AppendLine("$rows = @(");
         builder.AppendLine("  [pscustomobject]@{ Class = 'PhoneHomeMirrorJoinTests'; Methods = @() }");
@@ -117,7 +117,7 @@ public sealed class NativeLinuxPolicyMatcherParityTests
         {
             var cls = node.ClassName.Replace("'", "''", StringComparison.Ordinal);
             var method = node.Method.Replace("'", "''", StringComparison.Ordinal);
-            builder.AppendLine($"$hit = Test-NightlyProfileNodeExcluded ([pscustomobject]@{{ ClassName = '{cls}'; Type = ''; Method = '{method}' }}) $rows");
+            builder.AppendLine($"$hit = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded(([pscustomobject]@{{ ClassName = '{cls}'; Type = ''; Method = '{method}' }}), $rows)");
             builder.AppendLine($"Write-Output ('{cls}|{method}|' + $hit)");
         }
 
@@ -129,11 +129,11 @@ public sealed class NativeLinuxPolicyMatcherParityTests
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "nightly-policy.ps1")))
+            if (File.Exists(Path.Combine(dir.FullName, "scripts", "lib", "Antiphon.Nightly", "NightlyPolicy.cs")))
                 return dir.FullName;
             dir = dir.Parent;
         }
 
-        throw new InvalidOperationException("scripts/lib/nightly-policy.ps1 not found");
+        throw new InvalidOperationException("scripts/lib/Antiphon.Nightly/NightlyPolicy.cs not found");
     }
 }

@@ -4,7 +4,8 @@
 
 if ($script:AntiphonNightlyCoverageLoaded) { return }
 $script:AntiphonNightlyCoverageLoaded = $true
-. (Join-Path $PSScriptRoot 'nightly-core.ps1')
+# The core this scope already verified stays bound to its own loader (a pinned reader root has only some sources).
+if (-not $script:NightlyCoreAvailable) { . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable }
 
 $script:NightlyDiscoveryFormat = 'antiphon-tunit-discovery-v1'
 $script:NightlyExecutionFormat = 'antiphon-tunit-execution-v1'
@@ -612,7 +613,7 @@ function Test-NightlyDiscoveryExcluded {
     param($Node, $ProfileExclusions = $null, [switch]$ProfileAware)
     if ($null -eq $Node) { return $false }
     if ($ProfileAware) {
-        return (Test-NightlyProfileNodeExcluded -Node $Node -Exclusions $ProfileExclusions)
+        return ([Antiphon.Nightly.NightlyPolicy]::NodeExcluded($Node, $ProfileExclusions))
     }
     if ([bool]$Node.Excluded) { return $true }
     foreach ($c in @($Node.Categories)) {
@@ -684,7 +685,7 @@ function Get-NightlyDiscoveryCensus {
     Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryCensus'
     # Profile rows are resolved once per class (same dispositions as Get-NightlyDiscoveryDisposition).
     $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
     $rows = [Antiphon.Nightly.NightlyDiscovery]::CensusRows(@($DiscoveryNodes), $exclusionIndex)
     $required = [Collections.Generic.List[object]]::new()
     $excluded = [Collections.Generic.List[object]]::new()
@@ -709,7 +710,7 @@ function Get-NightlyRequiredDiscoveryUids {
     param([object[]]$DiscoveryNodes, [string[]]$RequiredClasses = @(), $ProfileExclusions = $null, [switch]$ProfileAware)
     Assert-NightlyCoreAvailable 'Get-NightlyRequiredDiscoveryUids'
     $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
     return [Antiphon.Nightly.NightlyDiscovery]::RequiredUids(@($DiscoveryNodes), $RequiredClasses, $exclusionIndex)
 }
 
@@ -774,7 +775,7 @@ function Get-NightlyDiscoveryIndexView {
     if ($Entry.Views.ContainsKey($policyKey)) { return $Entry.Views[$policyKey] }
     $nodes = @($Entry.Document.Nodes)
     $exclusionIndex = $null
-    if ($ProfileAware) { $exclusionIndex = New-NightlyProfileExclusionIndex -Exclusions $ProfileExclusions }
+    if ($ProfileAware) { $exclusionIndex = [Antiphon.Nightly.NightlyPolicy]::ExclusionIndex($ProfileExclusions) }
     Assert-NightlyCoreAvailable 'Get-NightlyDiscoveryIndexView'
     $pass = [Antiphon.Nightly.NightlyDiscovery]::IndexView($nodes, $exclusionIndex)
     $view = [pscustomobject]@{

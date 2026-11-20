@@ -48,8 +48,8 @@ function Get-ReleaseSelectionContract {
     Add-TestSelectionBlobPrefetch $RepositoryRoot $Sha @('tests/test-execution-policy.json', 'tests/test-selection-policy.json',
         'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1', 'global.json')
     $policy = Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-execution-policy.json' | ConvertFrom-Json
-    if ($policy.policyHash -cne (Get-NightlyPolicyHash $policy)) { throw 'policy-hash-stale' }
-    [void](Get-NightlyPolicyProfile $policy $Profile)
+    if ($policy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))) { throw 'policy-hash-stale' }
+    [void]([Antiphon.Nightly.NightlyPolicy]::Profile($policy, $Profile))
     $catalog = ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-selection-policy.json')
     if ($policy.selectionCatalog.hash -cne $catalog.catalogHash) { throw 'catalog-pin-mismatch' }
     $selectors = @{}
@@ -189,7 +189,7 @@ function Assert-ReleaseSelectionCommit {
 function New-ReleaseSelectionAttemptCore {
     param([hashtable]$Request)
     if ($PSVersionTable.PSVersion.Major -lt 7) { throw 'selection-pwsh-required' }
-    . (Join-Path $PSScriptRoot 'nightly-policy.ps1')
+    . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     . (Join-Path $PSScriptRoot 'release-gate.ps1')
     . (Join-Path $PSScriptRoot 'release-authority.ps1')
     . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')

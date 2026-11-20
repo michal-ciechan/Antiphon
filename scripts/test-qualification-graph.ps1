@@ -86,11 +86,11 @@ if ($Case -ceq 'FullCensusUnchanged') {
         $preserved = $seedText | ConvertFrom-Json
         if ($preserved.baseSha -cne $context.baseSha) { throw 'commission-base-mismatch' }
         . "$PSScriptRoot/lib/nightly-common.ps1"
-        . "$PSScriptRoot/lib/nightly-policy.ps1"
+        . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
         $baseline = (Read-CommissionGit @('show', ($context.baseSha + ':tests/test-execution-policy.json'))) | ConvertFrom-Json
-        if ((Get-NightlyPolicyHash $baseline) -cne $baseline.policyHash -or
+        if (([Antiphon.Nightly.NightlyPolicy]::Hash($baseline)) -cne $baseline.policyHash -or
             (ConvertTo-NightlyCanonicalJson $baseline) -cne (ConvertTo-NightlyCanonicalJson $preserved.policy)) { throw 'commission-baseline-policy-mismatch' }
-        $candidate = (Read-NightlyExecutionPolicy -RepoRoot $repo).Object
+        $candidate = ([Antiphon.Nightly.NightlyPolicy]::Read($repo, '')).Object
         $rows = @($candidate.scriptCensus | Where-Object { $_.path -ceq $preserved.allowedRow.path })
         if ($rows.Count -ne 1 -or (ConvertTo-NightlyCanonicalJson $rows[0]) -cne
             (ConvertTo-NightlyCanonicalJson $preserved.allowedRow)) { throw 'commission-allowed-row-mismatch' }
@@ -383,10 +383,10 @@ $r = Read-PinnedGraph (Json $g) (Json $cat) $schema
 Check ($r.Accepted -and (Get-QualificationUidSetDigest $changedUids) -ceq $changedDigest -and $changedDigest -cne $expected.uidSetDigest -and
     (Get-QualificationUidSetDigest @('a', 'A')) -ceq (Independent-Hash '["A","a"]')) 'uid-members-changed'
 . "$PSScriptRoot/lib/nightly-common.ps1"
-. "$PSScriptRoot/lib/nightly-policy.ps1"
+. "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 $preservation = Load 'preservation.json' | ConvertFrom-Json
-$policy = (Read-NightlyExecutionPolicy -RepoRoot $repo).Object
-$census = @(Get-NightlyScriptCensus $policy)
+$policy = ([Antiphon.Nightly.NightlyPolicy]::Read($repo, '')).Object
+$census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($policy))
 $newRows = @($census | Where-Object { $_.path -ceq 'scripts/test-qualification-graph.ps1' })
 Check ($newRows.Count -eq 1 -and (Json $newRows[0]) -ceq (Json $preservation.allowedRow) -and
     @($census | Where-Object { $_.path -ceq 'scripts/lib/qualification-graph.ps1' }).Count -eq 0) 'script-census'

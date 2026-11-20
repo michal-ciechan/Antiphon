@@ -14,7 +14,6 @@ $ErrorActionPreference='Stop'
 if ($Json) { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) }
 try {
     . "$PSScriptRoot/lib/nightly-common.ps1"
-    . "$PSScriptRoot/lib/nightly-policy.ps1"
     . "$PSScriptRoot/lib/test-selection.ps1"
     $selection=Get-TestSelection $RepositoryRoot $BaselineSha $CandidateSha $Profile
     if ($TimingRoots) {

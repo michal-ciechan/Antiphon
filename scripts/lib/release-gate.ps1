@@ -12,6 +12,8 @@
 
 if ($script:AntiphonReleaseGateLoaded) { return }
 $script:AntiphonReleaseGateLoaded = $true
+# The policy and canonical-JSON helpers are compiled (Antiphon.Nightly): load the core.
+. (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
 
 $script:ReleaseGateProfiles = @('nightly', 'rc')
 $script:ReleaseGateCreditKinds = @('master-scheduled', 'rc-release')
@@ -865,7 +867,7 @@ function New-ReleaseGateManifest {
 function Test-ReleaseGateManifestAllowlist {
     param($Manifest)
     $extra = @()
-    $map = ConvertTo-NightlyPolicyMap -Object $Manifest
+    $map = [Antiphon.Nightly.NightlyPolicy]::Map($Manifest)
     foreach ($key in @($map.Keys)) {
         if ($script:ReleaseGateManifestAllowlist -notcontains [string]$key) { $extra += [string]$key }
     }

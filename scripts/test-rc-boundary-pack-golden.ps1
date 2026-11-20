@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $golden = Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden'
-foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','nightly-tests-impl','rc-boundary')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $utf8 = [Text.UTF8Encoding]::new($false)

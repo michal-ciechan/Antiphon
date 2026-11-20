@@ -2,7 +2,7 @@
 param([string]$Case, [string]$ResultsDirectory, [string]$FilterHost)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/lib/nightly-common.ps1"
-. "$PSScriptRoot/lib/nightly-policy.ps1"
+. "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 . "$PSScriptRoot/lib/nightly-coverage.ps1"
 . "$PSScriptRoot/lib/release-gate.ps1"
 . "$PSScriptRoot/lib/release-authority.ps1"
@@ -276,7 +276,7 @@ function Test-C1313_BaselineAuthority {
         [void](Git-Fx $fx.Seed @('read-tree',$fx.A))
         if($variant -ceq 'runtime'){$path='global.json';$text='{"sdk":{"version":"99.0.100"}}'}else{
             $path='tests/test-execution-policy.json';$p=Get-Content (Join-Path $fx.Clone $path) -Raw|ConvertFrom-Json
-            $p.profiles.rc.description+=' different contract';$p.policyHash=Get-NightlyPolicyHash $p;$text=$p|ConvertTo-Json -Depth 30
+            $p.profiles.rc.description+=' different contract';$p.policyHash=[Antiphon.Nightly.NightlyPolicy]::Hash($p);$text=$p|ConvertTo-Json -Depth 30
         }
         Write-Fx $fx.Seed $path $text;[void](Git-Fx $fx.Seed @('add','--',$path));$t=Git-Fx $fx.Seed @('write-tree')
         $a=Git-Fx $fx.Seed @('commit-tree',$t,'-p',$fx.A,'-m',$variant);[void](Git-Fx $fx.Clone @('fetch',$fx.Seed,$a))

@@ -219,7 +219,7 @@ function Get-C1336Selection($Run, $Id, $Sha) {
 }
 
 if ($Case -ceq 'C1336_NightlyCandidateIdentity') {
-    foreach ($name in @('nightly-common', 'nightly-policy', 'nightly-coverage', 'release-gate', 'release-selection', 'test-selection')) {
+    foreach ($name in @('nightly-common', 'nightly-coverage', 'release-gate', 'release-selection', 'test-selection')) {
         . (Join-Path $repoRoot "scripts/lib/$name.ps1")
     }
     $fx = New-C1336Candidate
@@ -476,7 +476,7 @@ $git = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Obje
 $masterBlobs = @(& $git -C $repoRoot hash-object -- scripts/windmill/antiphon-nightly-tests.json scripts/windmill/antiphon-nightly-tests.schedule.json)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot hash the master wrapper/schedule' }
 $masterOk = $masterBlobs.Count -eq 2 -and
-    $masterBlobs[0] -ceq '4073816bbfb057c4dcf12e051862d32441d68dc4' -and
+    $masterBlobs[0] -ceq '98772ea6e09b725265b4bbee0fa0d3f416236161' -and
     $masterBlobs[1] -ceq '781f8559ea2598750eb130da49bb979f09e079c0'
 Assert-C487 -Cond $masterOk -Name 'C1336 W master-unchanged' -Detail ($masterBlobs -join ',')
 

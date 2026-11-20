@@ -806,7 +806,7 @@ namespace Antiphon.Nightly
         /// Maps a history's (or a seed's) members onto the current suites: { members, unresolved, exclusionProfile,
         /// policyDigest, exclusionPolicyFileDigest, exclusionPlatform, excludedUids, warnings }. Full mode warns about each
         /// unresolved member. PriorFailureSweep (validated history only) uses the history's profile exclusions from policy
-        /// ({ Path, Object, Hash } as Read-NightlyExecutionPolicy returns it), checked against exclusionContext, and refuses
+        /// ({ Path, Object, Hash } as NightlyPolicy.Read returns it), checked against exclusionContext, and refuses
         /// unless every member resolves.
         /// </summary>
         public static PSObject Resolve(object history, object[] suites, string qualificationMode, object exclusionContext, object policy)
@@ -821,11 +821,11 @@ namespace Antiphon.Nightly
             {
                 if (exclusionContext == null) warnings.Add("PARTIAL MISSING EXCLUSION CONTEXT: derived from validated history; S4a/S5 must supply bound context at every receiving hop.");
                 exclusionProfile = Str(history, "profile");
-                var contextMap = NightlyPolicyRows.Map(exclusionContext);
+                var contextMap = NightlyPolicy.Map(exclusionContext);
                 if ((exclusionProfile != "rc" && exclusionProfile != "nightly") || (exclusionContext != null && PsValue.Str(contextMap[(object)"profile"]) != exclusionProfile))
                     throw Refuse("partial-exclusion-profile-mismatch");
                 if (policy == null) throw Refuse("partial-exclusion-policy-required");
-                NightlyPolicyRows.ProfileRow(PsValue.Prop(policy, "Object"), exclusionProfile);
+                NightlyPolicy.Profile(PsValue.Prop(policy, "Object"), exclusionProfile);
                 policyFileDigest = Digest(Str(policy, "Path"));
                 if (exclusionContext != null)
                 {
@@ -845,7 +845,7 @@ namespace Antiphon.Nightly
             {
                 exclusionsBySuite = new Hashtable(StringComparer.OrdinalIgnoreCase);
                 foreach (var suite in suites ?? new object[0])
-                    exclusionsBySuite[Str(suite, "id")] = NightlyPolicyRows.ProfileExclusions(PsValue.Prop(policy, "Object"), exclusionProfile, Str(suite, "id"), platform);
+                    exclusionsBySuite[Str(suite, "id")] = NightlyPolicy.ProfileExclusions(PsValue.Prop(policy, "Object"), exclusionProfile, Str(suite, "id"), platform);
             }
             var map = PriorFailures.Map(history, suites, exclusionsBySuite, exclusionProfile);
             var unresolved = PsValue.AsArray(PsValue.Prop(map, "unresolved"));
@@ -865,100 +865,6 @@ namespace Antiphon.Nightly
             }
             return Obj("members", members, "unresolved", unresolved, "exclusionProfile", exclusionProfile, "policyDigest", policyDigest,
                 "exclusionPolicyFileDigest", policyFileDigest, "exclusionPlatform", platform, "excludedUids", PsValue.Prop(map, "excludedUids"), "warnings", warnings.ToArray());
-        }
-    }
-
-    /// <summary>
-    /// The policy's profile exclusion rows (nightly-policy.ps1 Get-NightlyPolicyProfile and Get-NightlyProfileExclusions)
-    /// for the history resolver's sweep. The PowerShell functions stay for scripts that run without the core.
-    /// </summary>
-    internal static class NightlyPolicyRows
-    {
-        private static NightlyRefusal Refuse(string reason) => new NightlyRefusal(reason);
-
-        /// <summary>ConvertTo-NightlyPolicyMap: a dictionary's keys or an object's note properties, first wins.</summary>
-        public static OrderedDictionary Map(object o)
-        {
-            var map = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
-            if (o == null) return map;
-            if (PsOps.Base(o) is IDictionary d)
-            {
-                foreach (DictionaryEntry e in d)
-                {
-                    var name = PsValue.Str(e.Key);
-                    if (!string.IsNullOrWhiteSpace(name) && !map.Contains(name)) map.Add(name, e.Value);
-                }
-                return map;
-            }
-            foreach (var p in PSObject.AsPSObject(o).Properties)
-            {
-                if (!(p is PSNoteProperty) || string.IsNullOrWhiteSpace(p.Name) || map.Contains(p.Name)) continue;
-                map.Add(p.Name, p.Value);
-            }
-            return map;
-        }
-
-        /// <summary>The profile's policy row (null for nightly on a schema-v1 policy); refuses an unknown or undefined profile.</summary>
-        public static object ProfileRow(object policy, string profile)
-        {
-            var name = (profile ?? "").Trim().ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(name)) name = "nightly";
-            if (name != "nightly" && name != "rc") throw Refuse("unknown profile " + name);
-            object profiles = null;
-            if (policy != null && PSObject.AsPSObject(policy).Properties["profiles"] != null) profiles = PsValue.Prop(policy, "profiles");
-            if (profiles == null)
-            {
-                if (name == "nightly") return null;
-                throw Refuse("profile " + name + " requires policy schema 2");
-            }
-            var row = PsValue.Prop(profiles, name) ?? throw Refuse("profile " + name + " is not defined");
-            var required = 0;
-            foreach (var id in PsValue.AsArray(PsValue.Prop(row, "requiredSuites"))) if (!string.IsNullOrWhiteSpace(PsValue.Str(id))) required++;
-            if (required == 0) throw Refuse("profile " + name + " names no required suites");
-            return row;
-        }
-
-        /// <summary>The profile's declared exclusions for one suite and platform: { Suite, Class, Methods, Reason, Owner } rows.</summary>
-        public static object[] ProfileExclusions(object policy, string profile, string suiteId, string platform)
-        {
-            if (platform != "windows" && platform != "linux") throw Refuse("unsupported exclusion platform " + platform);
-            var name = string.IsNullOrWhiteSpace(profile) ? "nightly" : profile.Trim().ToLowerInvariant();
-            var row = ProfileRow(policy, profile);
-            var rows = new List<object>();
-            if (row == null) return rows.ToArray();
-            foreach (var exclusion in PsValue.AsArray(PsValue.Prop(row, "exclusions")))
-            {
-                if (exclusion == null) continue;
-                var reason = PsValue.Str(PsValue.Prop(exclusion, "reason"));
-                var owner = PsValue.Str(PsValue.Prop(exclusion, "owner"));
-                var cls = PsValue.Str(PsValue.Prop(exclusion, "class"));
-                if (string.IsNullOrWhiteSpace(reason) || string.IsNullOrWhiteSpace(owner)) throw Refuse("profile " + name + " exclusion for " + cls + " needs reason and owner");
-                // Every row is validated before filtering: another suite or host must not hide a malformed exclusion.
-                object rowPlatform = null;
-                var hasPlatform = false;
-                if (PsOps.Base(exclusion) is IDictionary d)
-                {
-                    foreach (DictionaryEntry e in d) if (PsValue.Str(e.Key) == "platform") { hasPlatform = true; rowPlatform = e.Value; break; }
-                }
-                else
-                {
-                    foreach (var p in PSObject.AsPSObject(exclusion).Properties) if (p is PSNoteProperty && p.Name == "platform") { hasPlatform = true; rowPlatform = p.Value; break; }
-                }
-                if (hasPlatform && (!(PsOps.Base(rowPlatform) is string text) || (text != "windows" && text != "linux")))
-                    throw Refuse("profile " + name + " exclusion for " + cls + " has invalid platform");
-                if (!string.IsNullOrWhiteSpace(suiteId) && !string.Equals(PsValue.Str(PsValue.Prop(exclusion, "suite")), suiteId, StringComparison.OrdinalIgnoreCase)) continue;
-                if (rowPlatform != null && PsValue.Str(rowPlatform) != platform) continue;
-                var methods = new List<object>();
-                foreach (var m in PsValue.AsArray(PsValue.Prop(exclusion, "methods"))) if (!string.IsNullOrWhiteSpace(PsValue.Str(m))) methods.Add(PsValue.Str(m));
-                var o = new PSObject();
-                o.Properties.Add(new PSNoteProperty("Suite", PsValue.Str(PsValue.Prop(exclusion, "suite"))));
-                o.Properties.Add(new PSNoteProperty("Class", cls));
-                o.Properties.Add(new PSNoteProperty("Methods", methods.ToArray()));
-                o.Properties.Add(new PSNoteProperty("Reason", reason));
-                o.Properties.Add(new PSNoteProperty("Owner", owner));
-                rows.Add(o);
-            }
-            return rows.ToArray();
         }
     }
 }

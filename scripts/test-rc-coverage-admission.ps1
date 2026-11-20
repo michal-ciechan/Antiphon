@@ -2,10 +2,10 @@
 # Offline admission regression from Debug d8f70e4c. No provider or qualification run.
 param([string]$ResultsDirectory, [string]$Case)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-policy','nightly-coverage','c487-harness')) { . "$PSScriptRoot/lib/$name.ps1" }
+foreach ($name in @('nightly-common','nightly-coverage','c487-harness')) { . "$PSScriptRoot/lib/$name.ps1" }
 $repo = Split-Path $PSScriptRoot -Parent
 $ResultsDirectory = New-C487Root $ResultsDirectory
-$policy = Read-NightlyExecutionPolicy -RepoRoot $repo
+$policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
 $inventory = @(
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1614_Released_launch_failure_exits_within_ttl'; owner='CARD-1614' }
     @{ s='pty-host'; c='LinuxCustodyReleaseHostTests'; m='C1614_Root_exit_with_live_descendants_does_not_terminate'; owner='CARD-1614' }
@@ -114,7 +114,7 @@ Assert-C487 ($scopeFailures.Count -eq 0) 'CoverageAdmission class-scope-rejected
 $exclusions = @{}
 foreach ($suite in @($nodes.s | Sort-Object -Unique)) {
     foreach ($platform in @('windows','linux')) {
-        $exclusions["$suite|$platform"] = @(Get-NightlyProfileExclusions $policy.Object 'rc' $suite -Platform $platform)
+        $exclusions["$suite|$platform"] = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', $suite, $platform))
     }
 }
 $missing = @(); $wrong = @(); $terminal = @(); $portable = @(); $linuxMissing = @()
