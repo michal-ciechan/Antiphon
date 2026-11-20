@@ -62,7 +62,7 @@ public sealed partial class AgentTaskDispatcher
             .Where(a => a.IsPoolDelegate
                 && a.Status == AgentStatus.Idle
                 && a.PoolIdleSince != null
-                && !_db.AgentTasks.Any(t => t.AgentId == a.Id && t.RequestedModelAlias != null)
+                && !PoolDelegateRelease.WithRequestedAlias(_db).Any(t => t.AgentId == a.Id)
                 && a.ModelLevel == task.ModelLevel
                 && a.PoolProjectId == task.ProjectId
                 && a.Kind == task.AgentKind

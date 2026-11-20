@@ -38,6 +38,13 @@ internal static class PoolDelegateRelease
     internal static bool MayWarmPool(string? requestedModelAlias) =>
         string.IsNullOrWhiteSpace(requestedModelAlias);
 
+    /// <summary>
+    /// Tasks launched with a requested model alias. The shop, the desktop warm query, and a
+    /// pinned pool follow-up share this predicate: that row's process still carries the alias.
+    /// </summary>
+    internal static IQueryable<AgentTask> WithRequestedAlias(AppDbContext db) =>
+        db.AgentTasks.Where(t => t.RequestedModelAlias != null);
+
     // Scope the reservation to its still-open blocked attempt. Continuation or explicit
     // cancellation releases only that attempt; another blocked task's custody survives.
     internal static IQueryable<AgentTaskPark> Reservations(AppDbContext db) => db.AgentTaskParks.Where(p =>
