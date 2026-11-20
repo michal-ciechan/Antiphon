@@ -426,7 +426,18 @@ function Get-RcTestOnlyPolicy {
         }
         $roots.Add(@{pattern=(New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$'));except=@($except);reason=[string]$root.reason;walker=([bool]$root.walker);consumers=@($root.consumers)})
     }
-    return @{enabled=[bool]$policy.enabled;paths=@($(foreach ($item in @($policy.paths)) { New-RcInputPattern $item }));exceptPaths=@($(foreach ($item in @($policy.exceptPaths)) { New-RcInputPattern $item }));exceptReasons=$exceptReasons;productEdges=$productEdges;roots=@($roots)}
+    # List[object] cannot be passed through @(): PowerShell throws "Argument types do not match".
+    $pathPatterns=[Collections.Generic.List[regex]]::new()
+    foreach ($item in @($policy.paths)) {
+        if ($item -isnot [string] -or -not $item) { throw 'invalid-test-only-class' }
+        $pathPatterns.Add((New-RcInputPattern $item))
+    }
+    $exceptPathPatterns=[Collections.Generic.List[regex]]::new()
+    foreach ($item in @($policy.exceptPaths)) {
+        if ($item -isnot [string] -or -not $item) { throw 'invalid-test-only-class' }
+        $exceptPathPatterns.Add((New-RcInputPattern $item))
+    }
+    return @{enabled=[bool]$policy.enabled;paths=$pathPatterns.ToArray();exceptPaths=$exceptPathPatterns.ToArray();exceptReasons=$exceptReasons;productEdges=$productEdges;roots=$roots.ToArray()}
 }
 
 function Test-RcRootCarves($Root, [string]$Path) {
