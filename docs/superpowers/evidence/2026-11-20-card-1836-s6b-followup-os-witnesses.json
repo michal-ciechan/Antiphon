@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "baseSha": "fc45631910173cbba5f458498ac2479a85066b4f",
+  "headSha": "983da5cb93c09ec0ed54a7c1031aee548f525bbc",
+  "inspectedPaths": [
+    {
+      "path": "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
+      "disposition": "portable",
+      "reason": "Follow-up shadow recording stays portable C#. Revision bytes are written then renamed. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/lib/nightly-run-impl.ps1",
+      "disposition": "portable",
+      "reason": "One evidence root is derived from the run directory and passed through the hop. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/lib/nightly-tests-impl.ps1",
+      "disposition": "portable",
+      "reason": "Build, launch, discovery and chunk hooks take the passed evidence root. Launch registration is before the phase stopwatch. No new OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/lib/rc-run-evidence.ps1",
+      "disposition": "portable",
+      "reason": "The wrapper logs one swallowed reason per run and classifies chunk outcome. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/nightly-tests.ps1",
+      "disposition": "portable",
+      "reason": "Adds the RcEvidenceRoot parameter and forwards it. No OS branch.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "scripts/test-rc-run-evidence.ps1",
+      "disposition": "test-only",
+      "reason": "Follow-up witnesses. The fault git stub is selected with RuntimeInformation and is not production.",
+      "helpers": [],
+      "candidates": []
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RcRunEvidenceTests.cs",
+      "disposition": "test-only",
+      "reason": "Follow-up witness class. No production OS selection.",
+      "helpers": [],
+      "candidates": []
+    }
+  ],
+  "witnesses": [],
+  "restartImpact": {
+    "required": true,
+    "paths": [
+      "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
+      "scripts/lib/nightly-run-impl.ps1",
+      "scripts/lib/nightly-tests-impl.ps1",
+      "scripts/lib/rc-run-evidence.ps1"
+    ],
+    "additionalPaths": [
+      "scripts/nightly-tests.ps1"
+    ],
+    "reason": "The follow-up edits scripts/lib, including nightly-run-impl.ps1. A later rc pick owes the Windows startup probe. This task does not run it.",
+    "nativeObligation": {
+      "status": "pending",
+      "targetOS": "Windows",
+      "sourceSha": "983da5cb93c09ec0ed54a7c1031aee548f525bbc",
+      "command": "Windows startup probe for scripts/lib rc-run-evidence before an rc pick. Not run on this Linux task.",
+      "reason": "Shadow recording was verified on Linux. The startup census path is unobserved on Windows."
+    }
+  }
+}
