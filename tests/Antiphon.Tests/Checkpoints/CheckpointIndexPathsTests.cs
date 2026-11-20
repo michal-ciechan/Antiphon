@@ -149,6 +149,32 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         lines["BROKEN_PREFLIGHT"].ShouldBe("git-failed", "a repository git refuses is never answered from its index");
     }
 
+    [Test]
+    [Timeout(60_000)]
+    public void Hidden_entry_answer_comes_only_from_the_git_dir_git_reports(CancellationToken cancellationToken)
+    {
+        var created = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(created, "init", "-q");
+        var root = Path.GetFullPath(CheckpointFixtureProcess.Git(created, "rev-parse", "--show-toplevel").Trim());
+        Write(root, "a.txt");
+        CheckpointFixtureProcess.Git(root, "add", "a.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        var gitDir = CheckpointFixtureProcess.Git(root, "rev-parse", "--absolute-git-dir").Trim();
+
+        CheckpointIndexPaths.AnyHiddenEntry(root, gitDir).ShouldBe(false, "plain index, no flags");
+        CheckpointIndexPaths.AnyHiddenEntry(root, Path.Combine(TempDir(), "other.git")).ShouldBeNull("not the git dir git reported");
+        CheckpointIndexPaths.AnyHiddenEntry(root, "").ShouldBeNull("git reported no git dir");
+
+        CheckpointFixtureProcess.Git(root, "update-index", "--assume-unchanged", "a.txt");
+        CheckpointIndexPaths.AnyHiddenEntry(root, gitDir).ShouldBe(true, "assume-unchanged is the version-2 flag ls-files -v prints lower case");
+        CheckpointFixtureProcess.Git(root, "update-index", "--no-assume-unchanged", "a.txt");
+
+        CheckpointFixtureProcess.Git(root, "update-index", "--skip-worktree", "a.txt");
+        CheckpointIndexPaths.AnyHiddenEntry(root, gitDir).ShouldBeNull("version 3 index: ls-files -v decides");
+        CheckpointFixtureProcess.Git(root, "update-index", "--no-skip-worktree", "a.txt");
+        CheckpointIndexPaths.AnyHiddenEntry(root, gitDir).ShouldBe(false);
+    }
+
     private static bool GitTracks(string root, string full) =>
         CheckpointFixtureProcess.Git(root, "ls-files", "-z", "--", full).Length != 0;
 

@@ -75,17 +75,24 @@ namespace Antiphon.Checkpoints
         }
 
         // Whether `git ls-files -v -z` at this checkout root would tag any entry assume-unchanged (lower case), for
-        // the script's source snapshot, which refuses an index that hides edits. Called with git's own toplevel right
-        // after a git status there succeeded. A plain version-2 index carries only that flag (skip-worktree and
-        // intent-to-add need version 3): true when any entry has it, false when none does. Null (ask ls-files -v) for
-        // anything else: a version 3 or 4 index, a split or sparse index, an unmerged or gitlink entry, no index, a
-        // gitdir it cannot locate.
-        public static bool? AnyHiddenEntry(string root)
+        // the script's source snapshot, which refuses an index that hides edits. Called with the toplevel and the
+        // absolute git dir git itself reported, right after a git status there succeeded; the index is read only when
+        // <root>/.git leads to that same git dir (core.worktree can send git elsewhere). A plain version-2 index
+        // carries only that flag (skip-worktree and intent-to-add need version 3): true when any entry has it, false
+        // when none does. Null (ask ls-files -v) for anything else: another git dir, a version 3 or 4 index, a split
+        // or sparse index, an unmerged or gitlink entry, no index.
+        public static bool? AnyHiddenEntry(string root, string gitDir)
         {
-            if (string.IsNullOrEmpty(root)) return null;
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(gitDir)) return null;
             try
             {
-                var data = ReadIndex(Path.GetFullPath(root).TrimEnd('\\', '/'));
+                var top = Path.GetFullPath(root).TrimEnd('\\', '/');
+                var found = GitDirectory(top);
+                var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                if (found == null || !string.Equals(Path.GetFullPath(found).TrimEnd('\\', '/'),
+                        Path.GetFullPath(gitDir).TrimEnd('\\', '/'), comparison))
+                    return null;
+                var data = ReadIndex(top);
                 if (data == null) return null;
                 return ListIndex(data, out var assumeUnchanged) == null ? (bool?)null : assumeUnchanged;
             }

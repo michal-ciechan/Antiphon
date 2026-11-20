@@ -53,16 +53,18 @@ function Get-CheckpointWorkTreeToken {
 }
 
 function Get-CheckpointSourceOnce {
-    param([string]$Repository)
+    param([string]$Repository, [string]$GitDir = '')
     $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
     [byte[]]$status = Get-CheckpointGitBytes $Repository @('status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--ignore-submodules=none', '--no-renames')
     # Porcelain omits worktree edits hidden by index flags. Refuse to
     # certify any such index until its working content has been verified.
-    # A plain version-2 index answers from the file (git status just accepted this repository; that index can carry
-    # only the assume-unchanged flag); anything else asks ls-files -v (CheckpointIndexPaths.AnyHiddenEntry).
+    # A plain version-2 index in the git dir git reported answers from the file (git status just accepted this
+    # repository; that index can carry only the assume-unchanged flag); anything else asks ls-files -v
+    # (CheckpointIndexPaths.AnyHiddenEntry), as does a session holding an older type without that method.
     $hidden = $null
-    if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
-        $hidden = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyHiddenEntry($Repository)
+    $indexPaths = 'Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]
+    if ($null -ne $indexPaths -and $null -ne $indexPaths.GetMethod('AnyHiddenEntry', [Type[]]@([string], [string]))) {
+        $hidden = $indexPaths::AnyHiddenEntry($Repository, $GitDir)
     }
     if ($true -eq $hidden) { throw 'indexed_path_hidden' }
     if ($null -eq $hidden) {
@@ -145,29 +147,12 @@ function Get-CheckpointSource {
     try {
         # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).
         $drivers = New-CheckpointDriverScope
-        # The toplevel git resolves for this path, cached for the process (case-sensitively off Windows) and stamped
-        # with that checkout's .git time, so a changed .git (repointed, reconfigured) is resolved again.
-        if ($null -eq $script:CheckpointSourceToplevels) {
-            $comparer = if ($IsWindows) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
-            $script:CheckpointSourceToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
-        }
-        $root = $null
-        $cached = $null
-        if ($script:CheckpointSourceToplevels.TryGetValue($Repository, [ref]$cached)) {
-            $split = $cached.IndexOf('|')
-            $candidate = $cached.Substring($split + 1)
-            $dotGit = Join-Path $candidate '.git'
-            $stamp = if (Test-Path -LiteralPath $dotGit) { [string][System.IO.File]::GetLastWriteTimeUtc($dotGit).Ticks } else { '' }
-            if ($stamp -ne '' -and $stamp -ceq $cached.Substring(0, $split)) { $root = $candidate }
-        }
-        if ($null -eq $root) {
-            $root = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel')))).Trim()
-            $dotGit = Join-Path $root '.git'
-            $stamp = if (Test-Path -LiteralPath $dotGit) { [string][System.IO.File]::GetLastWriteTimeUtc($dotGit).Ticks } else { '' }
-            if ($stamp -ne '') { $script:CheckpointSourceToplevels[$Repository] = $stamp + '|' + $root }
-        }
-        $first = Get-CheckpointSourceOnce $root
-        $second = Get-CheckpointSourceOnce $root
+        # The toplevel and the git dir git uses, in one read: the index-file flag check trusts only that git dir.
+        $located = ([System.Text.Encoding]::UTF8.GetString((Get-CheckpointGitBytes $Repository @('rev-parse', '--show-toplevel', '--absolute-git-dir')))) -split "`n"
+        $root = ([string]$located[0]).Trim()
+        $gitDir = if ($located.Count -gt 1) { ([string]$located[1]).Trim() } else { '' }
+        $first = Get-CheckpointSourceOnce $root $gitDir
+        $second = Get-CheckpointSourceOnce $root $gitDir
         if ($first.commit -cne $second.commit -or $first.dirtyFiles -ne $second.dirtyFiles -or $first.fingerprint -cne $second.fingerprint) { throw 'capture_changed' }
         return $second
     } catch {
