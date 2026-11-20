@@ -20,6 +20,28 @@ function Invoke-RcDirtyCore {
     }
 }
 
+function ConvertTo-RcCamelCase {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string] -or $Value.GetType().IsValueType) { return $Value }
+    if ($Value -is [Collections.IDictionary]) { return $Value }
+    if ($Value -is [Collections.IEnumerable]) {
+        $copy = [Collections.Generic.List[object]]::new()
+        foreach ($item in @($Value)) { $copy.Add((ConvertTo-RcCamelCase $item)) }
+        return ,$copy.ToArray()
+    }
+    $out = [ordered]@{}
+    foreach ($property in @($Value.PSObject.Properties)) {
+        $kind = [string]$property.MemberType
+        if ($kind -ne 'Property' -and $kind -ne 'NoteProperty') { continue }
+        $name = [string]$property.Name
+        if ([string]::IsNullOrEmpty($name)) { continue }
+        $camel = $name.Substring(0, 1).ToLowerInvariant() + $name.Substring(1)
+        $out[$camel] = ConvertTo-RcCamelCase $property.Value
+    }
+    return [pscustomobject]$out
+}
+
 function Get-RcDirtyLaunchOrder {
     param(
         [AllowEmptyCollection()][AllowNull()][object[]]$Obligations = @(),
@@ -30,7 +52,8 @@ function Get-RcDirtyLaunchOrder {
     if ($null -eq $Obligations) { $Obligations = @() }
     if ($null -eq $Attempts) { $Attempts = @() }
     if ($null -eq $Fixes) { $Fixes = @() }
-    return (Invoke-RcDirtyCore {
+    $result = Invoke-RcDirtyCore {
         [Antiphon.Nightly.RcDirtyOrder]::Launch($Obligations, $Attempts, $Fixes, $RepositoryRoot, $CandidateSha)
-    }.GetNewClosure())
+    }.GetNewClosure()
+    return (ConvertTo-RcCamelCase $result)
 }

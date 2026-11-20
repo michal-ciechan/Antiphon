@@ -236,6 +236,12 @@ namespace Antiphon.Nightly
         {
             if (value == null) return "";
             if (value is string text) return text;
+            if (value is Array array)
+            {
+                var parts = new string[array.Length];
+                for (var i = 0; i < array.Length; i++) parts[i] = Text(array.GetValue(i));
+                return string.Join(" ", parts);
+            }
             return Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
         }
 
@@ -251,6 +257,9 @@ namespace Antiphon.Nightly
                 case ushort number: return number;
                 case uint number: return number;
                 case ulong number when number <= long.MaxValue: return (long)number;
+                case double number: return Convert.ToInt64(number);
+                case float number: return Convert.ToInt64(number);
+                case decimal number: return Convert.ToInt64(number);
                 case string text when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed):
                     return parsed;
                 default:
