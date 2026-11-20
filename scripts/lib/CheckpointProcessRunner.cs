@@ -88,23 +88,26 @@ namespace Antiphon.Checkpoints
                     var config = new ProcessStartInfo(start.FileName) { WorkingDirectory = start.WorkingDirectory };
                     foreach (var pair in start.Environment) config.Environment[pair.Key] = pair.Value;
                     HardenGit(config);
-                    // The read's own leading -c settings and -C directories: the lookup reads the repository and
-                    // the config the read will use (a caller's -c include.path included).
+                    // The read's whole leading option block (-c, -C, --git-dir, --work-tree, ...): the lookup reads
+                    // the repository and the config the read will use (a caller's -c include.path included).
                     var leading = ReadLeadingOptions(start.ArgumentList);
-                    foreach (var setting in leading.Settings) { config.ArgumentList.Add("-c"); config.ArgumentList.Add(setting); }
-                    foreach (var directory in leading.Directories) { config.ArgumentList.Add("-C"); config.ArgumentList.Add(directory); }
+                    foreach (var option in leading.Prefix) config.ArgumentList.Add(option);
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
                     var settings = DriverSettings(config, driverSettingsCacheMs < 0 ? DriverSettingsCacheMilliseconds : driverSettingsCacheMs, deadline.Token, beforeStart, !leading.Other);
+                    // The disabling pairs go after the read's own leading options, just before its subcommand: git
+                    // applies command-line config in order, so a caller's -c (an include naming a driver) cannot
+                    // switch a driver back on after it.
+                    var at = leading.Prefix.Count;
                     foreach (var entry in settings.Split('\0'))
                     {
                         var split = entry.IndexOf('\n');
                         if (split < 1) continue;
                         var key = entry.Substring(0, split);
                         if (!(key.StartsWith("filter.", StringComparison.OrdinalIgnoreCase) || key.StartsWith("diff.", StringComparison.OrdinalIgnoreCase))) continue;
-                        start.ArgumentList.Insert(0, key + (key.EndsWith(".required", StringComparison.OrdinalIgnoreCase) ? "=false" : "="));
-                        start.ArgumentList.Insert(0, "-c");
+                        start.ArgumentList.Insert(at++, "-c");
+                        start.ArgumentList.Insert(at++, key + (key.EndsWith(".required", StringComparison.OrdinalIgnoreCase) ? "=false" : "="));
                     }
                 }
                 return RunCoreAsync(start, readStdout, deadline.Token, beforeStart).GetAwaiter().GetResult();
@@ -209,10 +212,12 @@ namespace Antiphon.Checkpoints
             return stdout;
         }
 
-        // The global options a git command line opens with, up to its subcommand: -c settings and -C directories in
-        // order, and whether any other global option (--git-dir, --work-tree, --no-pager, ...) is among them.
+        // The global options a git command line opens with, up to its subcommand: all of them as given (Prefix),
+        // the -c settings and -C directories among them in order, and whether any other global option (--git-dir,
+        // --work-tree, --no-pager, ...) is there too.
         private sealed class LeadingOptions
         {
+            public readonly List<string> Prefix = new List<string>();
             public readonly List<string> Settings = new List<string>();
             public readonly List<string> Directories = new List<string>();
             public bool Other;
@@ -224,13 +229,20 @@ namespace Antiphon.Checkpoints
             for (var i = 0; i < arguments.Count; i++)
             {
                 var argument = arguments[i];
-                if ((argument == "-c" || argument == "-C") && i + 1 < arguments.Count)
+                if (!argument.StartsWith("-", StringComparison.Ordinal)) break;
+                options.Prefix.Add(argument);
+                // Global options whose value is the next argument.
+                if ((argument == "-c" || argument == "-C" || argument == "--git-dir" || argument == "--work-tree"
+                    || argument == "--namespace" || argument == "--config-env") && i + 1 < arguments.Count)
                 {
-                    (argument == "-c" ? options.Settings : options.Directories).Add(arguments[++i]);
+                    var value = arguments[++i];
+                    options.Prefix.Add(value);
+                    if (argument == "-c") options.Settings.Add(value);
+                    else if (argument == "-C") options.Directories.Add(value);
+                    else options.Other = true;
                     continue;
                 }
-                if (argument.StartsWith("-", StringComparison.Ordinal)) options.Other = true;
-                break;
+                options.Other = true;
             }
             return options;
         }
@@ -334,9 +346,11 @@ namespace Antiphon.Checkpoints
                 var commonPointer = Path.Combine(gitDir, "commondir");
                 if (File.Exists(commonPointer))
                 {
-                    // gitDir's path has no link on it (checked above), so collapsing a "../.." commondir by text
-                    // lands where git's does.
-                    var common = Path.GetFullPath(Path.Combine(gitDir, File.ReadAllText(commonPointer).Trim()));
+                    // gitDir's path has no link on it (checked above), so collapsing the leading "../" run git
+                    // writes ("../..") lands where git's does; a ".." anywhere after that is git's to resolve.
+                    var commonText = File.ReadAllText(commonPointer).Trim();
+                    if (commonText.Split('/', '\\').SkipWhile(segment => segment == "..").Any(segment => segment == "..")) return false;
+                    var common = Path.GetFullPath(Path.Combine(gitDir, commonText));
                     if (AnyLinkOnPath(common)) return false;
                     files.Add(Path.Combine(common, "config"));
                     files.Add(Path.Combine(common, "config.worktree"));

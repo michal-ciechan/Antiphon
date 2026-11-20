@@ -155,7 +155,12 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         Lookups(root, executable: gitPath).ShouldBe(1, "a path to an executable is not plain git");
         Lookups(sub, ["--no-pager"]).ShouldBe(1, "another global option before the subcommand");
         Lookups(sub, ["-C", ".."]).ShouldBe(1, "a .. segment, which git resolves after links");
-        Lookups(root, ["-c", "include.path=" + Path.Combine(root, "none.gitconfig")]).ShouldBe(1, "a caller's -c include");
+        var callerDrivers = Path.Combine(TempDir(), "caller.gitconfig");
+        File.WriteAllText(callerDrivers, "[filter \"cli\"]\n\tclean = cli-driver-must-not-run\n");
+        Lookups(root, ["-c", "include.path=" + callerDrivers]).ShouldBe(1, "a caller's -c include");
+        var read = starts.Single(args => args.Contains("status"));
+        Array.IndexOf(read, "filter.cli.clean=").ShouldBeGreaterThan(Array.IndexOf(read, "include.path=" + callerDrivers),
+            "the disabling pair comes after the caller's include, so the include cannot switch the driver back on");
         var junk = Directory.CreateDirectory(Path.Combine(sub, "junk", ".git")).FullName;
         Directory.CreateDirectory(Path.Combine(junk, "objects"));
         Directory.CreateDirectory(Path.Combine(junk, "refs"));
