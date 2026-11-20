@@ -224,6 +224,15 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         CheckpointProcessRunner.ReadHead(fresh).ShouldBeNull("an unborn branch");
         CheckpointFixtureProcess.Git(root, "update-index", "--skip-worktree", "a.txt");
         CheckpointIndexPaths.StageListing(Path.Combine(root, ".git")).ShouldBeNull("a version 3 index");
+        var config = Path.Combine(root, ".git", "config");
+        var original = File.ReadAllText(config);
+        try
+        {
+            File.WriteAllText(config, original + "[extensions]\n\trefStorage = files\n");
+            CheckpointProcessRunner.ReadHead(root).ShouldBeNull("a repository extension");
+            CheckpointProcessRunner.TopLevelRepository(root).ShouldBeNull("a repository extension");
+        }
+        finally { File.WriteAllText(config, original); }
 
         // run-checkpoint.ps1's own Invoke-CheckpointGit (extracted, with the source library loaded) starts no git for
         // either read and returns what git prints.
@@ -242,6 +251,7 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
             $tokens = $null; $parseErrors = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$parseErrors)
             $fn = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-CheckpointGit' }, $true)
+            if (@($parseErrors).Count -gt 0 -or $null -eq $fn) { throw 'Invoke-CheckpointGit could not be extracted from run-checkpoint.ps1' }
             Invoke-Expression $fn.Extent.Text
             $head = Invoke-CheckpointGit {{Quote(root)}} @('rev-parse', 'HEAD')
             $listing = Invoke-CheckpointGit {{Quote(root)}} @('ls-files', '-z', '-s')
@@ -250,6 +260,9 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
             """ })
             start.ArgumentList.Add(argument);
         start.Environment["GIT_TRACE2_EVENT"] = trace;
+        // The file reads under test, not a named tool build's, and git confined to this repository.
+        foreach (var name in new[] { "ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR" })
+            start.Environment.Remove(name);
         var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
         run.Stdout.ShouldContain("HEAD=0:" + GitHead(root));

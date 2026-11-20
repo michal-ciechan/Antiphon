@@ -396,8 +396,9 @@ namespace Antiphon.Checkpoints
                     var text = File.ReadAllText(file);
                     if (text.IndexOf("worktree", StringComparison.OrdinalIgnoreCase) >= 0
                         || text.IndexOf("include", StringComparison.OrdinalIgnoreCase) >= 0
-                        // Another ref backend (extensions.refStorage): HEAD and refs are not the files read here.
-                        || text.IndexOf("refstorage", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
+                        // Any repository extension (refStorage, objectFormat, a partial clone's promisor...): git may
+                        // read HEAD, refs or the index another way, or refuse an extension it does not know.
+                        || text.IndexOf("extensions", StringComparison.OrdinalIgnoreCase) >= 0 || SaysBare(text)) return null;
                 }
                 return found;
             }
