@@ -105,6 +105,8 @@ function New-C1336Candidate {
     [void](Git-C1336 $root @('clone', '--bare', $seed, $origin))
     $clone = Join-Path $root 'checkout'
     [void](Git-C1336 $root @('clone', $origin, $clone))
+    # -NoSync refuses a prepared checkout unless local core.longpaths is true.
+    [void](Git-C1336 $clone @('config', '--local', 'core.longpaths', 'true'))
     # Fail fixture prerequisites before the behavioral red witness.
     Assert-ReleaseSelectionCommit $clone $a
     $contract = Get-ReleaseSelectionContract $clone $a 'rc'
