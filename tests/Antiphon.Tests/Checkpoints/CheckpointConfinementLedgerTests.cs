@@ -622,7 +622,13 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         File.WriteAllText(path, content.ReplaceLineEndings("\n"));
     }
 
-    private static void Git(string root, params string[] args) => _ = CheckpointFixtureProcess.Git(root, args);
+    // Fixture setup: the common setup commands run in process (FixtureGitInProcess), anything else in a git child.
+    // The ledger code under test hardens its own git to no user or system config, the view libgit2 has here.
+    private static void Git(string root, params string[] args)
+    {
+        if (FixtureGitInProcess.TryRun(root, args) is null)
+            _ = CheckpointFixtureProcess.Git(root, args);
+    }
 
     private sealed class RecordingSlotClient(Action onAcquire, Action onRelease) : IBuildSlotClient
     {
