@@ -160,9 +160,9 @@ public partial class AgentTaskDispatchBaseGuardTests
         (await db.AgentSessions.AsNoTracking().CountAsync(s => s.Id == held.AgentSessionId, ct)).ShouldBe(0);
         var holds = await db.AgentTaskEvents.AsNoTracking().Where(e =>
             e.AgentTaskId == held.Id && e.Type == AgentTaskEventType.Held).ToListAsync(ct);
-        holds.Count(e => e.Detail == "Held: same-card base inspection is pending.").ShouldBe(2);
+        holds.Count(e => e.Detail == "Held: same-card base inspection is pending.").ShouldBe(1);
         var landHolds = holds.Where(e => e.Detail.Contains("is landing", StringComparison.Ordinal)).ToList();
-        landHolds.Count.ShouldBe(2, "each completed observation restores the semantic land hold");
+        landHolds.Count.ShouldBe(1, "the second observation repeats the landing sentence and dedupes");
         landHolds.Select(e => e.Detail).Distinct().ShouldHaveSingleItem()
             .ShouldContain(DelegationReportFormatter.Short(pending.Id));
         (await ScratchGitRepo.GitInAsync(repo.Path, "show-ref", "--verify", "--quiet",

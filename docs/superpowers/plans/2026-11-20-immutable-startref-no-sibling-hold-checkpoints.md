@@ -16,7 +16,8 @@ A git inspection error still holds.
 
 The peek that follows a consumed sibling-land result repeats that landing sentence, so
 exact-text dedupe keeps one Held event. The stale-observation path still records the
-pending sentence.
+pending sentence. `T0442_V20_pending_land_precedes_source_selection_in_every_mode`
+keeps one pending sentence and one landing sentence across its two inspections.
 
 ## Performance budget
 
@@ -35,6 +36,9 @@ No repeat block after green. No whole Unit lane. Cost floor is the sum of
   SHA: 1 executed, 1 failed, status `Queued`.
 - One leased green run of those three methods before the checkpoint tool, so a fixture
   miss does not spend the cold checkpoint build.
+- CP-2 at `bffadcd8d6f144d075ec39d078fb3eb069179f57` failed only
+  `T0442_V20_pending_land_precedes_source_selection_in_every_mode` (6 executed, 6 failed:
+  pending sentence was 1). One leased rerun of that method after the count change: 6 passed.
 
 ## Verification design
 
