@@ -7,6 +7,8 @@
   <ItemGroup>
     <Compile Include="../../scripts/lib/CheckpointProcessRunner.cs" Link="Checkpoints/CheckpointProcessRunner.cs" />
     <PackageReference Include="System.Management" Version="9.0.21" />
+    <!-- SafeDelete's tracked-path checks read the index file in process instead of starting git. -->
+    <ProjectReference Include="../Antiphon.GitInProcess/Antiphon.GitInProcess.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../scripts/lib/DiagnosticTextRedactor.cs" Link="Diagnostics/DiagnosticTextRedactor.cs" />

@@ -264,6 +264,8 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
         var owner = FindOwner(start);
         if (owner is null)
             return allowOutsideRepository ? null : "not-a-repository";
+        if (TrackedInProcess(owner, [full], gitExecutable) is { } tracked)
+            return tracked ? "tracked" : null;
 
         var git = string.IsNullOrWhiteSpace(gitExecutable) ? "git" : gitExecutable;
         var top = RunGit(git, owner, ["-C", owner, "rev-parse", "--show-toplevel"], timeoutMs);
@@ -285,6 +287,43 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 ? "not-a-repository"
                 : "git-failed";
         return listed.Stdout.Length == 0 ? null : "tracked";
+    }
+
+    // Whether `git ls-files -z -- <paths>` run at the owning checkout's root would print anything: is any index
+    // entry at or under one of the paths. Read from the index file in process (GitInProcess.IndexListing, git's own
+    // ls-files bytes), so a delete starts no git child. Still re-read on every call: nothing is cached. Null when
+    // git must answer: a custom git executable or a supplied runner (a test's observer or fake) is in use, the
+    // filesystem is not the native one, a path holds a character git would read as a pathspec glob or lies
+    // outside the checkout, or the index is a layout GitInProcess declines. Case-insensitive on Windows, which can
+    // only call more paths tracked (a refusal to delete), never fewer.
+    private bool? TrackedInProcess(string owner, IReadOnlyCollection<string> fullPaths, string? gitExecutable)
+    {
+        if (!string.IsNullOrWhiteSpace(gitExecutable)
+            || context.Git is not CheckpointNativeGitRunner { RunsRealGit: true }
+            || context.Io is not CheckpointNativeIo)
+            return null;
+        var relatives = new List<string>(fullPaths.Count);
+        foreach (var full in fullPaths)
+        {
+            if (full.IndexOfAny(['*', '?', '[']) >= 0 || !OperatingSystem.IsWindows() && full.Contains('\\'))
+                return null;
+            var relative = Path.GetRelativePath(owner, full).Replace('\\', '/');
+            if (relative == ".") relative = "";
+            if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
+                return null;
+            relatives.Add(relative.TrimEnd('/'));
+        }
+        string? listing;
+        try { listing = Antiphon.GitInProcess.InProcessGitStatus.IndexListing(owner, stage: false); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        if (listing is null) return null;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var entry in listing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            foreach (var relative in relatives)
+                if (relative.Length == 0 || entry.Equals(relative, comparison)
+                    || entry.StartsWith(relative + "/", comparison))
+                    return true;
+        return false;
     }
 
     // CreateProcess rejects a command line at 32,767 characters, and cmd.exe at 8,191.
@@ -337,6 +376,8 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
                 return "path-unsafe";
             paths.Add(full);
         }
+        if (TrackedInProcess(owner, paths, gitExecutable) is { } tracked)
+            return tracked ? "tracked" : null;
 
         var prefix = new[] { "-C", owner, "ls-files", "-z", "--" };
         var batch = new List<string>(prefix);

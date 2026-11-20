@@ -13,5 +13,7 @@
     <InternalsVisibleTo Include="Antiphon.GitInProcess.Tests" />
     <!-- The checkpoint tool's source identity reads the checkout through WorkTreeIdentity. -->
     <InternalsVisibleTo Include="Antiphon.Checkpoints" />
+    <!-- SafeDelete's tracked-path checks read IndexListing. -->
+    <InternalsVisibleTo Include="Antiphon.HostCleanup" />
   </ItemGroup>
 </Project>

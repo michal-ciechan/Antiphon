@@ -13,8 +13,17 @@ public sealed class CheckpointNativeGitRunner : ICheckpointGitRunner
 {
     private readonly Func<ProcessStartInfo, int, bool, CheckpointProcessRunner.Result> _run;
 
-    public CheckpointNativeGitRunner(Func<ProcessStartInfo, int, bool, CheckpointProcessRunner.Result>? run = null) =>
+    public CheckpointNativeGitRunner(Func<ProcessStartInfo, int, bool, CheckpointProcessRunner.Result>? run = null)
+    {
         _run = run ?? ((start, timeout, git) => CheckpointProcessRunner.Run(start, timeout, git: git));
+        RunsRealGit = run is null;
+    }
+
+    /// <summary>
+    /// No custom runner was supplied: this runs the real git, so its index reads may be answered in process
+    /// instead (SafeDelete). A supplied runner (a test's observer or fake) always gets the git request.
+    /// </summary>
+    public bool RunsRealGit { get; }
 
     public CheckpointGitResult Run(CheckpointGitRequest request)
     {
