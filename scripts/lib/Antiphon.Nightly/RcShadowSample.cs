@@ -2,6 +2,7 @@
 // Behaviour matches scripts/lib/rc-shadow-sample.ps1 at the port base. No trust record is written.
 #nullable disable
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -291,8 +292,8 @@ namespace Antiphon.Nightly
             var reasons = new List<string>();
             foreach (var field in ContractFields)
             {
-                var currentValue = RcPort.Field(current, field);
-                var baselineValue = RcPort.Field(baseline, field);
+                var currentValue = ContractField(current, field);
+                var baselineValue = ContractField(baseline, field);
                 var currentKnown = ContractValue(field, currentValue);
                 var baselineKnown = ContractValue(field, baselineValue);
                 if (!currentKnown) reasons.Add("contract-current-unknown:" + field);
@@ -307,10 +308,72 @@ namespace Antiphon.Nightly
 
         static void Extra(List<string> reasons, string side, object contract)
         {
-            foreach (var field in RcPort.Names(contract))
+            foreach (var field in ContractNames(contract))
             {
                 if (!ContractFieldSet.Contains(field)) reasons.Add("contract-" + side + "-unknown:" + field);
             }
+        }
+
+        // Get-RcFullField reads $Object.Keys, which a key named Keys shadows.
+        // A shadowed string enumerates as characters, so no contract field matches.
+        // The real indexer is used only when that enumeration yields the field name.
+        static object ContractField(object source, string name)
+        {
+            source = RcPort.See(source);
+            if (source is IDictionary dictionary && TryShadowedKeys(dictionary, out var shadowed))
+            {
+                foreach (var key in EnumerateShadow(shadowed, true))
+                {
+                    if (key is string text && string.Equals(text, name, StringComparison.Ordinal))
+                        return RcPort.See(dictionary[text]);
+                }
+                return null;
+            }
+            return RcPort.Field(source, name);
+        }
+
+        // Get-RcFullFieldNames is @($Object.Keys). @() does not unroll a string.
+        static List<string> ContractNames(object source)
+        {
+            source = RcPort.See(source);
+            if (source is IDictionary dictionary && TryShadowedKeys(dictionary, out var shadowed))
+            {
+                var names = new List<string>();
+                foreach (var key in EnumerateShadow(shadowed, false))
+                {
+                    if (key is string text) names.Add(text);
+                }
+                return names;
+            }
+            return RcPort.Names(source);
+        }
+
+        static bool TryShadowedKeys(IDictionary dictionary, out object shadowed)
+        {
+            shadowed = null;
+            if (!dictionary.Contains("Keys")) return false;
+            shadowed = dictionary["Keys"];
+            return true;
+        }
+
+        static IEnumerable EnumerateShadow(object shadowed, bool unrollString)
+        {
+            if (shadowed is string text)
+            {
+                if (!unrollString)
+                {
+                    yield return text;
+                    yield break;
+                }
+                foreach (var character in text) yield return character.ToString();
+                yield break;
+            }
+            if (shadowed is IEnumerable list)
+            {
+                foreach (var item in list) yield return item;
+                yield break;
+            }
+            yield return shadowed;
         }
 
         static bool ContractValue(string field, object value)

@@ -21,6 +21,28 @@ function Invoke-RcShadowCore {
     }
 }
 
+function ConvertTo-RcCamelCase {
+    param($Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string] -or $Value.GetType().IsValueType) { return $Value }
+    if ($Value -is [Collections.IDictionary]) { return $Value }
+    if ($Value -is [Collections.IEnumerable]) {
+        $copy = [Collections.Generic.List[object]]::new()
+        foreach ($item in @($Value)) { $copy.Add((ConvertTo-RcCamelCase $item)) }
+        return ,$copy.ToArray()
+    }
+    $out = [ordered]@{}
+    foreach ($property in @($Value.PSObject.Properties)) {
+        $kind = [string]$property.MemberType
+        if ($kind -ne 'Property' -and $kind -ne 'NoteProperty') { continue }
+        $name = [string]$property.Name
+        if ([string]::IsNullOrEmpty($name)) { continue }
+        $camel = $name.Substring(0, 1).ToLowerInvariant() + $name.Substring(1)
+        $out[$camel] = ConvertTo-RcCamelCase $property.Value
+    }
+    return [pscustomobject]$out
+}
+
 function Get-RcShadowField {
     param($Object, [string]$Name)
     $value = [Antiphon.Nightly.RcShadowSample]::Field($Object, $Name)
@@ -35,9 +57,10 @@ function New-RcShadowProposal {
     )
     # GetNewClosure rebinds $script: to the closure module, so copy the root into a local first.
     $checkout = $script:RcShadowCheckoutRoot
-    return (Invoke-RcShadowCore {
+    $result = Invoke-RcShadowCore {
         [Antiphon.Nightly.RcShadowSample]::Proposal($Chunks, $Seed, $ProposalPath, $checkout)
-    }.GetNewClosure())
+    }.GetNewClosure()
+    return (ConvertTo-RcCamelCase $result)
 }
 
 function Test-RcShadowPilotEligible {
@@ -64,7 +87,7 @@ function Get-RcShadowTrustDecision {
         [string]$ContractDigest = '',
         [string]$TrustRecordPath = ''
     )
-    return (Invoke-RcShadowCore {
+    $result = Invoke-RcShadowCore {
         [Antiphon.Nightly.RcShadowSample]::Trust(
             $CurrentContract,
             $BaselineContract,
@@ -79,5 +102,6 @@ function Get-RcShadowTrustDecision {
             $CurrentSample,
             $ContractDigest,
             $TrustRecordPath)
-    }.GetNewClosure())
+    }.GetNewClosure()
+    return (ConvertTo-RcCamelCase $result)
 }
