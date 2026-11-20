@@ -95,15 +95,14 @@ public sealed class CodexGpt62LadderTests
         ModelAlias.Normalize(AgentKind.Codex, Sol61).ShouldBe(ModelAlias.Gpt61Sol);
 
         ModelAlias.CanonicalHoldAlias(Sol62).ShouldBe(Sol62);
-        ModelAlias.CanonicalHoldAlias(Astra62).ShouldBeNull("6.2 Astra is not a launched rung");
+        ModelAlias.CanonicalHoldAlias(Astra62).ShouldBe(Astra62);
         ModelAlias.CanonicalHoldAlias(Sol61).ShouldBeNull("6.1 Sol remains recognizable, not current");
 
         var codex = ModelAlias.DelegatableAliases
             .Where(entry => entry.Kind == AgentKind.Codex)
             .Select(entry => entry.Alias)
             .ToArray();
-        codex.ShouldBe([ModelAlias.Gpt6Astra, Sol62, ModelAlias.Gpt56Luna]);
-        codex.ShouldNotContain(Astra62);
+        codex.ShouldBe([ModelAlias.Gpt6Astra, Sol62, ModelAlias.Gpt56Luna, Astra62]);
         codex.ShouldNotContain(Sol61);
     }
 

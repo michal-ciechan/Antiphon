@@ -127,6 +127,7 @@ public class ModelAliasTests
     [Arguments("grok-4.7", "grok-4.7")]
     [Arguments("gpt-6-astra", "gpt-6-astra")]
     [Arguments("gpt-6.2-sol", "gpt-6.2-sol")]
+    [Arguments("gpt-6.2-astra", "gpt-6.2-astra")]
     [Arguments("*", "*")]
     public void CanonicalHoldAlias_accepts_known_aliases_and_star(string raw, string expected)
     {
@@ -141,7 +142,6 @@ public class ModelAliasTests
     [Arguments("gpt-5.6-sol")]
     [Arguments("gpt-6-sol")]
     [Arguments("gpt-6.1-sol")]
-    [Arguments("gpt-6.2-astra")]
     [Arguments("gpt-5.6-terra")]
     [Arguments("bogus")]
     [Arguments("")]
@@ -180,6 +180,6 @@ public class ModelAliasTests
         ModelAlias.DelegatableAliases
             .Where(entry => entry.Kind == AgentKind.Codex)
             .Select(entry => entry.Alias)
-            .ShouldBe(["gpt-6-astra", "gpt-6.2-sol", "gpt-5.6-luna"]);
+            .ShouldBe(["gpt-6-astra", "gpt-6.2-sol", "gpt-5.6-luna", "gpt-6.2-astra"]);
     }
 }

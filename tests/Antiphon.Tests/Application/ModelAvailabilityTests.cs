@@ -283,8 +283,8 @@ public class ModelAvailabilityTests
             available.ShouldContain("grok-4.7");
             available.ShouldContain("gpt-6-astra");
             available.ShouldContain("gpt-6.2-sol");
+            available.ShouldContain("gpt-6.2-astra");
             available.ShouldNotContain("gpt-6.1-sol");
-            available.ShouldNotContain("gpt-6.2-astra");
             available.ShouldNotContain("gpt-5.6-sol");
         }
         finally
