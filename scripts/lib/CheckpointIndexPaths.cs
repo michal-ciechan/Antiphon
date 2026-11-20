@@ -13,9 +13,10 @@ namespace Antiphon.Checkpoints
     // script's tracked-path guards start no git process after the first. The caller passes the toplevel git itself
     // reported for this checkout in this run (`rev-parse --show-toplevel`, which validates the repository's
     // metadata and ownership and resolves core.worktree from any config source); without it, or when it is not this
-    // checkout, git answers. Null too for: a path with a pathspec glob character, one Path.GetFullPath would change
-    // (trailing dots or spaces on Windows), one outside the checkout or beyond a symlinked parent; a gitdir it cannot
-    // locate; a missing index; and any index that is not a plain version-2 SHA-1 index with a valid checksum, only
+    // checkout, git answers. Paths are looked up in their normalised form, the file the write would open (Windows drops
+    // trailing dots and spaces). Null too for: a path with a pathspec glob character, one outside the checkout or
+    // beyond a symlinked parent; a gitdir it cannot locate; a missing index; and any index that is not a plain
+    // version-2 SHA-1 index with a valid checksum, only
     // stage-0 regular, executable or symlink entries and no required extension (the same rules as GitInProcess'
     // index listing, pinned against git there). Case-insensitive on Windows, which can only call more paths tracked
     // (a refusal), never fewer. The index is re-read on every call.
@@ -38,8 +39,9 @@ namespace Antiphon.Checkpoints
                 {
                     if (string.IsNullOrEmpty(path) || path.IndexOfAny(new[] { '*', '?', '[' }) >= 0 || !windows && path.IndexOf('\\') >= 0)
                         return null;
+                    // The form the write itself opens: on Windows "bin.\x" opens "bin\x" (trailing dots and spaces
+                    // dropped), which git's pathspec would not match, so the lookup uses the normalised path.
                     var full = Path.GetFullPath(path);
-                    if (!string.Equals(Separators(full), Separators(path), comparison)) return null;
                     var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
                     if (relative == ".") relative = "";
                     if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
@@ -101,8 +103,6 @@ namespace Antiphon.Checkpoints
             return Directory.Exists(full) ? full : null;
         }
 
-        // A path with one separator style and no trailing separator, for comparing it with its full form.
-        private static string Separators(string path) => path.Replace('\\', '/').TrimEnd('/');
 
         // Paths of a plain version-2 SHA-1 index, in file order; null for anything else (see the class comment).
         internal static List<string> ListIndex(byte[] data)

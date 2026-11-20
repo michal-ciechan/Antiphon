@@ -203,10 +203,18 @@ function Test-CheckpointStampRefusal {
     if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
     $owner = Find-CheckpointGitDir $parent
     if ($null -eq $owner) { return $null }
-    # git vouches for the checkout once per run (metadata, ownership, core.worktree): its toplevel is cached.
-    if ($null -eq $script:CheckpointVerifiedToplevels) { $script:CheckpointVerifiedToplevels = @{} }
-    if ($script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
-        $toplevel = [string]$script:CheckpointVerifiedToplevels[$owner]
+    # git vouches for the checkout (metadata, ownership, core.worktree) and its toplevel is cached for this run,
+    # keyed by the checkout (case-sensitively off Windows) and stamped with the .git entry's time: a .git that
+    # changes (config rewritten, gitdir repointed) is vouched for again.
+    if ($null -eq $script:CheckpointVerifiedToplevels) {
+        $comparer = if ($IsWindows) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+        $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
+    }
+    $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
+    $vouched = $null
+    $toplevel = $null
+    if ($script:CheckpointVerifiedToplevels.TryGetValue($owner, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal) -and $vouched.Length -gt $gitStamp.Length + 1) {
+        $toplevel = $vouched.Substring($gitStamp.Length + 1)
     } else {
         $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
         if ($top.Reason) { return [string]$top.Reason }
@@ -216,7 +224,7 @@ function Test-CheckpointStampRefusal {
         }
         $toplevel = ([string]$top.Stdout).Trim()
         if ([string]::IsNullOrWhiteSpace($toplevel)) { return 'git-failed' }
-        $script:CheckpointVerifiedToplevels[$owner] = $toplevel
+        $script:CheckpointVerifiedToplevels[$owner] = $gitStamp + '|' + $toplevel
     }
     # The index file's answer when it is a plain one for that same checkout (CheckpointIndexPaths); git otherwise.
     if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
@@ -274,15 +282,23 @@ function Test-CheckpointPreflight {
     # loaded by run-checkpoint.ps1): git vouches once per run (metadata, ownership, core.worktree) and its toplevel
     # is cached. Git answers anything else, and every call when this function runs without that type.
     if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
-        if ($null -eq $script:CheckpointVerifiedToplevels) { $script:CheckpointVerifiedToplevels = @{} }
-        if (-not $script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
-            $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
-            if (-not $top.Reason -and [int]$top.Exit -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$top.Stdout)) {
-                $script:CheckpointVerifiedToplevels[$owner] = ([string]$top.Stdout).Trim()
-            }
+        # Same per-run cache as Test-CheckpointStampRefusal; a failed vouch is cached too (empty toplevel), so later
+        # calls go straight to ls-files instead of asking rev-parse again.
+        if ($null -eq $script:CheckpointVerifiedToplevels) {
+            $comparer = if ($IsWindows) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+            $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
         }
-        if ($script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
-            $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]$fullRoots, [string]$script:CheckpointVerifiedToplevels[$owner])
+        $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
+        $vouched = $null
+        if (-not ($script:CheckpointVerifiedToplevels.TryGetValue($owner, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal))) {
+            $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
+            $verified = if (-not $top.Reason -and [int]$top.Exit -eq 0) { ([string]$top.Stdout).Trim() } else { '' }
+            $vouched = $gitStamp + '|' + $verified
+            $script:CheckpointVerifiedToplevels[$owner] = $vouched
+        }
+        $verified = $vouched.Substring($gitStamp.Length + 1)
+        if (-not [string]::IsNullOrWhiteSpace($verified)) {
+            $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]$fullRoots, $verified)
             if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
         }
     }

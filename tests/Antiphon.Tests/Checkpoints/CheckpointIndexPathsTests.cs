@@ -18,8 +18,10 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
     [Timeout(120_000)]
     public void Index_answer_matches_git_ls_files_wherever_it_answers(CancellationToken cancellationToken)
     {
-        var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
-        CheckpointFixtureProcess.Git(root, "init", "-q");
+        var created = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(created, "init", "-q");
+        // Paths built from git's own toplevel: a short (8.3) or symlinked temp path would not match it otherwise.
+        var root = Path.GetFullPath(CheckpointFixtureProcess.Git(created, "rev-parse", "--show-toplevel").Trim());
         Write(root, "tracked.txt");
         Write(root, "src/app/Program.cs");
         Write(root, "src/app/bin/output.dll");
@@ -54,7 +56,7 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
             .ShouldBeNull("outside the checkout");
         if (OperatingSystem.IsWindows())
             CheckpointIndexPaths.AnyTracked(root, [Path.Combine(root, "tracked.txt.")], top)
-                .ShouldBeNull("a path Path.GetFullPath would change (trailing dot)");
+                .ShouldBe(true, "Windows opens tracked.txt for tracked.txt. (git's pathspec would say untracked)");
 
         // A repository with no index yet is git's to answer.
         var fresh = Directory.CreateDirectory(Path.Combine(TempDir(), "fresh")).FullName;
@@ -80,6 +82,71 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "config", "core.worktree", elsewhere);
         var moved = CheckpointFixtureProcess.Git(root, "rev-parse", "--show-toplevel").Trim();
         CheckpointIndexPaths.AnyTracked(root, [Path.Combine(root, "tracked.txt")], moved).ShouldBeNull("core.worktree");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Script_guards_vouch_once_per_run_and_never_trust_an_index_git_refuses(CancellationToken cancellationToken)
+    {
+        var created = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(created, "init", "-q");
+        var root = Path.GetFullPath(CheckpointFixtureProcess.Git(created, "rev-parse", "--show-toplevel").Trim());
+        Write(root, "src/kept.txt");
+        Write(root, "loose/new.txt");
+        CheckpointFixtureProcess.Git(root, "add", "src/kept.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        var broken = Directory.CreateDirectory(Path.Combine(TempDir(), "broken")).FullName;
+        CheckpointFixtureProcess.Git(broken, "init", "-q");
+        Write(broken, "src/kept.txt");
+        CheckpointFixtureProcess.Git(broken, "add", "src/kept.txt");
+        CheckpointFixtureProcess.Git(broken, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        // A HEAD git cannot read: git refuses the repository, though its index is a valid plain index.
+        File.WriteAllText(Path.Combine(broken, ".git", "HEAD"), "garbage\n");
+        var trace = Directory.CreateDirectory(Path.Combine(TempDir(), "trace2")).FullName;
+
+        static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+        var lib = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib");
+        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
+        var command = $$"""
+            $ErrorActionPreference = 'Stop'
+            . {{Quote(Path.Combine(lib, "checkpoint-process-runner.ps1"))}}
+            . {{Quote(Path.Combine(lib, "checkpoint-index-paths.ps1"))}}
+            if (-not ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type])) { throw 'index paths type not loaded' }
+            $tokens = $null; $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$errors)
+            foreach ($name in 'Find-CheckpointGitDir', 'Invoke-CheckpointGit', 'Test-CheckpointComponentLink', 'Test-CheckpointStampRefusal', 'Test-CheckpointPreflight') {
+                $fn = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) | Where-Object Name -eq $name | Select-Object -First 1
+                if ($null -eq $fn) { throw "missing $name" }
+                Invoke-Expression $fn.Extent.Text
+            }
+            $env:GIT_TRACE2_EVENT = {{Quote(trace)}}
+            'STAMP_TRACKED=' + (Test-CheckpointStampRefusal {{Quote(Path.Combine(root, "src", "kept.txt"))}})
+            'STAMP_NEW=' + (Test-CheckpointStampRefusal {{Quote(Path.Combine(root, "loose", "stamp.json"))}})
+            'PREFLIGHT_TRACKED=' + (Test-CheckpointPreflight {{Quote(root)}} @({{Quote(Path.Combine(root, "src"))}}))
+            'PREFLIGHT_NEW=' + (Test-CheckpointPreflight {{Quote(root)}} @({{Quote(Path.Combine(root, "loose"))}}))
+            Remove-Item Env:GIT_TRACE2_EVENT
+            'BROKEN_STAMP=' + (Test-CheckpointStampRefusal {{Quote(Path.Combine(broken, "src", "other.json"))}})
+            'BROKEN_PREFLIGHT=' + (Test-CheckpointPreflight {{Quote(broken)}} @({{Quote(Path.Combine(broken, "loose"))}}))
+            """;
+        var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", command })
+            start.ArgumentList.Add(argument);
+        var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
+        run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+        var lines = run.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.Contains('=')).ToDictionary(line => line[..line.IndexOf('=')], line => line[(line.IndexOf('=') + 1)..]);
+        lines["STAMP_TRACKED"].ShouldBe("tracked");
+        lines["STAMP_NEW"].ShouldBe("");
+        lines["PREFLIGHT_TRACKED"].ShouldBe("tracked");
+        lines["PREFLIGHT_NEW"].ShouldBe("");
+        var events = Directory.GetFiles(trace).Select(File.ReadAllText).ToList();
+        events.Count(text => text.Contains("\"rev-parse\"", StringComparison.Ordinal)).ShouldBe(1, "git vouches once for the run");
+        events.Count(text => text.Contains("\"ls-files\"", StringComparison.Ordinal)).ShouldBe(0, "the index answered every guard");
+        lines["BROKEN_STAMP"].ShouldBeOneOf("not-a-repository", "git-failed");
+        lines["BROKEN_PREFLIGHT"].ShouldBe("git-failed", "a repository git refuses is never answered from its index");
     }
 
     private static bool GitTracks(string root, string full) =>
