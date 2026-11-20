@@ -222,6 +222,8 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             "one driver lookup for the whole snapshot, not one before every read");
         argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)).ShouldBe(2,
             "both capture passes ran");
+        argvs.Count(text => text.Contains("\"ls-files\"", StringComparison.Ordinal)).ShouldBe(0,
+            "a plain version-2 index answers the hidden-flag check without ls-files -v");
         argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)
             && text.Contains("\"filter.scope.clean=\"", StringComparison.Ordinal)).ShouldBe(2,
             "the reused answer still disables the driver on every read");

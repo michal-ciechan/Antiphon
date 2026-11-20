@@ -57,24 +57,9 @@ namespace Antiphon.Checkpoints
                     }
                     relatives.Add(relative);
                 }
-                var gitDir = GitDirectory(root);
-                if (gitDir == null) return null;
-                var index = Path.Combine(gitDir, "index");
-                if (!File.Exists(index)) return null;
-                byte[] data;
-                using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                {
-                    if (stream.Length > int.MaxValue / 2) return null;
-                    data = new byte[stream.Length];
-                    var read = 0;
-                    while (read < data.Length)
-                    {
-                        var n = stream.Read(data, read, data.Length - read);
-                        if (n <= 0) return null;
-                        read += n;
-                    }
-                }
-                var entries = ListIndex(data);
+                var data = ReadIndex(root);
+                if (data == null) return null;
+                var entries = ListIndex(data, out _);
                 if (entries == null) return null;
                 foreach (var entry in entries)
                     foreach (var relative in relatives)
@@ -86,6 +71,50 @@ namespace Antiphon.Checkpoints
                 || ex is NotSupportedException || ex is DecoderFallbackException)
             {
                 return null;
+            }
+        }
+
+        // Whether `git ls-files -v -z` at this checkout root would tag any entry assume-unchanged (lower case), for
+        // the script's source snapshot, which refuses an index that hides edits. Called with git's own toplevel right
+        // after a git status there succeeded. A plain version-2 index carries only that flag (skip-worktree and
+        // intent-to-add need version 3): true when any entry has it, false when none does. Null (ask ls-files -v) for
+        // anything else: a version 3 or 4 index, a split or sparse index, an unmerged or gitlink entry, no index, a
+        // gitdir it cannot locate.
+        public static bool? AnyHiddenEntry(string root)
+        {
+            if (string.IsNullOrEmpty(root)) return null;
+            try
+            {
+                var data = ReadIndex(Path.GetFullPath(root).TrimEnd('\\', '/'));
+                if (data == null) return null;
+                return ListIndex(data, out var assumeUnchanged) == null ? (bool?)null : assumeUnchanged;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException
+                || ex is NotSupportedException || ex is DecoderFallbackException)
+            {
+                return null;
+            }
+        }
+
+        // The checkout's index file bytes, or null when its gitdir or index cannot be found or read whole.
+        private static byte[] ReadIndex(string root)
+        {
+            var gitDir = GitDirectory(root);
+            if (gitDir == null) return null;
+            var index = Path.Combine(gitDir, "index");
+            if (!File.Exists(index)) return null;
+            using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                if (stream.Length > int.MaxValue / 2) return null;
+                var data = new byte[stream.Length];
+                var read = 0;
+                while (read < data.Length)
+                {
+                    var n = stream.Read(data, read, data.Length - read);
+                    if (n <= 0) return null;
+                    read += n;
+                }
+                return data;
             }
         }
 
@@ -105,8 +134,10 @@ namespace Antiphon.Checkpoints
 
 
         // Paths of a plain version-2 SHA-1 index, in file order; null for anything else (see the class comment).
-        internal static List<string> ListIndex(byte[] data)
+        // assumeUnchanged: some entry carries the assume-valid bit (0x8000), which `ls-files -v` prints lower case.
+        internal static List<string> ListIndex(byte[] data, out bool assumeUnchanged)
         {
+            assumeUnchanged = false;
             const int Header = 12, Hash = 20, Fixed = 62;
             if (data.Length < Header + Hash || data[0] != (byte)'D' || data[1] != (byte)'I' || data[2] != (byte)'R' || data[3] != (byte)'C'
                 || BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(4)) != 2)
@@ -122,6 +153,7 @@ namespace Antiphon.Checkpoints
                 var mode = BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(at + 24));
                 var flags = BinaryPrimitives.ReadUInt16BigEndian(data.AsSpan(at + 60));
                 if ((flags & 0x7000) != 0) return null;
+                if ((flags & 0x8000) != 0) assumeUnchanged = true;
                 if (mode != 0x81A4 && mode != 0x81ED && mode != 0xA000) return null;
                 var nameStart = at + Fixed;
                 int nameLength = flags & 0xFFF;
