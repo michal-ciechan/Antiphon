@@ -231,10 +231,9 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
     }
 
     // FixtureGitInProcess.TryRun (used by CheckpointFixtureGitEnvironment.Git, OutputCleanupTests and
-    // CheckpointConfinementLedgerTests) sets fixture
-    // repositories up in process for the common shapes (init [-q] -b, add -A, add [-f] -- <paths>, the fixture commit,
-    // rev-parse HEAD). What it does in process must leave the repository git
-    // itself sees as the git commands would have.
+    // CheckpointConfinementLedgerTests) sets fixture repositories up in process for the common shapes (init [-q] -b,
+    // add -A, add [-f] -- <paths>, the fixture commit, rev-parse HEAD). What it does in process must leave the
+    // repository git itself sees as the git commands would have.
     [Test]
     [Timeout(120_000)]
     public void fixture_setup_in_process_leaves_what_git_would(CancellationToken cancellationToken)

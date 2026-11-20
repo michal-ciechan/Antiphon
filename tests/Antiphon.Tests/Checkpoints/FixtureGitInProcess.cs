@@ -4,12 +4,12 @@ namespace Antiphon.Tests.Checkpoints;
 /// Fixture repository setup done with libgit2 in the test process instead of a git child, for the setup commands
 /// the checkpoint fixtures run most. Used by <see cref="CheckpointFixtureGitEnvironment"/> (whose git children read
 /// no user or system config) and by OutputCleanupTests and CheckpointConfinementLedgerTests (whose git children read
-/// the machine's config). libgit2 here
-/// reads no user or system config and no global attributes file (LibGit2ConfigIsolation): that is the view the
+/// the machine's config). libgit2 here reads no user or system config and no global attributes file (the assembly
+/// hook LibGit2ConfigIsolationAssemblyHook applies LibGit2ConfigIsolation before any test): that is the view the
 /// checkpoint code under test hardens its own git to (GIT_CONFIG_NOSYSTEM, an empty GIT_CONFIG_GLOBAL,
-/// core.attributesFile on the null device: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a repository
-/// set up in process stores its bytes as that code expects. A git child that reads a machine's line-ending config can
-/// store them differently (legacy_hostile_config_produces_hardened_status_differential).
+/// core.attributesFile on the null device: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a
+/// repository set up in process stores its bytes as that code expects. A git child that reads a machine's line-ending
+/// config can store them differently (legacy_hostile_config_produces_hardened_status_differential).
 /// </summary>
 internal static class FixtureGitInProcess
 {
