@@ -83,8 +83,8 @@
       "reason": "cap",
       "owed": 132,
       "first": [
+        "CardFilePrivacyPersistenceTests",
         "CheckpointConfinementLedgerTests",
-        "CheckpointFixtureGitEnvironmentTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
@@ -2564,10 +2564,10 @@
         "CardFilePrivacyGitTests",
         "CardFilePrivacyOwnershipAcceptanceTests",
         "CardFilePrivacyOwnershipTests",
-        "CardFilePrivacyPersistenceTests",
         "CardFilePrivacySyncAcceptanceTests",
         "CardFilePrivacySyncTests",
         "CardTaskFileServiceTests",
+        "CheckpointFixtureGitEnvironmentTests",
         "CheckpointOutputConfinementTests",
         "CheckpointSourceStateTests",
         "CheckpointTrackedBaselineTests",
@@ -24178,6 +24178,12 @@
       "classes": [
         "CheckpointRecoveryWindowsTests",
         "CheckpointRunOwnershipTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/FixtureGitInProcess.cs",
+      "classes": [
+        "OutputCleanupTests"
       ]
     },
     {
