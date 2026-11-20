@@ -79,7 +79,9 @@ public sealed class RunCheckpointSourceScriptTests
     [Test, ParallelLimiter<ScriptModelSpawnLimit>]
     public async Task C835_DiagnosticReceipts()
     {
-        using var fixture = new Fixture();
+        // The script's own git reader, end to end: clean, tracked and untracked identities agree across the line,
+        // source.json and git.txt.
+        using var fixture = new Fixture(gitReader: true);
         var clean = await fixture.RunAsync();
         clean.Exit.ShouldBe(0, clean.Output);
         clean.Source.GetProperty("state").GetString().ShouldBe("clean", "clean-receipt");
@@ -476,6 +478,9 @@ public sealed class RunCheckpointSourceScriptTests
         public int SlotCalls => File.Exists(Path.Combine(External, "slot-calls.txt"))
             ? File.ReadAllLines(Path.Combine(External, "slot-calls.txt")).Length : 0;
         private int _round;
+        // The script's own git reader (true) or the test run's checkpoint tool build (CheckpointFixtures.UseToolReads):
+        // C835_DiagnosticReceipts keeps the git reader end to end; the git reader's own suites pin it against the tool.
+        private readonly bool _gitReader;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
         // One seeded repository per seed text per test run, copied into each fixture without seven git processes per
@@ -590,8 +595,9 @@ public sealed class RunCheckpointSourceScriptTests
                 CopyTree(directory, Path.Combine(destination, Path.GetFileName(directory)));
         }
 
-        public Fixture(string seed = "seed", string repoName = "source")
+        public Fixture(string seed = "seed", string repoName = "source", bool gitReader = false)
         {
+            _gitReader = gitReader;
             Repo = Path.Combine(Root, repoName);
             // The seed first, so a failed seed leaves nothing under Root; any later failure removes Root.
             var seeded = Seed(seed);
@@ -680,6 +686,7 @@ public sealed class RunCheckpointSourceScriptTests
             var environment = new Dictionary<string, string?>
             {
                 ["C835_CALLS"] = Path.Combine(External, "calls.txt"),
+                ["ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY"] = _gitReader ? null : Antiphon.Tests.Checkpoints.CheckpointFixtures.ToolAssemblyPath,
                 ["C835_REPO"] = Repo,
                 ["C835_BUILD_EXIT"] = buildExit.ToString(),
                 ["C835_RUN_LOG_COLLISION"] = interruptRunLog
