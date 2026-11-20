@@ -95,10 +95,58 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
 
     public string Git(string repository, params string[] args)
     {
-        var stdout = RunGit(repository, args);
+        var stdout = InProcess(repository, args) ?? RunGit(repository, args);
         if (args.Length > 0 && string.Equals(args[0], "init", StringComparison.Ordinal))
             SettleNewRepository(repository, args);
         return stdout;
+    }
+
+    // The fixture setup commands the checkpoint classes run most, done with libgit2 in this process (no git child):
+    // `init -b <branch>`, `add -A`, `add -f -- <paths>`, the fixture commit (`-c user.email=.. -c user.name=..
+    // -c commit.gpgsign=false commit -m <message> --no-verify`) and `rev-parse HEAD`. Fixture setup is not what
+    // these tests prove: the repository state is git's (libgit2 here reads no user or system config, as the
+    // isolated git children do: LibGit2ConfigIsolation), and the tool and script under test still read it their
+    // own way. Null for any other shape or any libgit2 failure: git runs it, as before. Output is git's only for
+    // rev-parse; the other commands' callers do not read theirs.
+    private static string? InProcess(string repository, string[] args)
+    {
+        try
+        {
+            switch (args)
+            {
+                case ["init", "-b", var branch] when !string.IsNullOrWhiteSpace(branch) && !Directory.Exists(Path.Combine(repository, ".git")):
+                    LibGit2Sharp.Repository.Init(repository);
+                    File.WriteAllText(Path.Combine(repository, ".git", "HEAD"), "ref: refs/heads/" + branch + "\n");
+                    return "";
+                case ["add", "-A"]:
+                    using (var repo = new LibGit2Sharp.Repository(repository))
+                        LibGit2Sharp.Commands.Stage(repo, "*");
+                    return "";
+                case ["add", "-f", "--", ..] when args.Length > 3:
+                    using (var repo = new LibGit2Sharp.Repository(repository))
+                        LibGit2Sharp.Commands.Stage(repo, args.Skip(3).Select(path => Path.GetRelativePath(repository, Path.GetFullPath(path, repository)).Replace('\\', '/')),
+                            new LibGit2Sharp.StageOptions { IncludeIgnored = true });
+                    return "";
+                case ["-c", var email, "-c", var name, "-c", "commit.gpgsign=false", "commit", "-m", var message, "--no-verify"]
+                    when email.StartsWith("user.email=", StringComparison.Ordinal) && name.StartsWith("user.name=", StringComparison.Ordinal):
+                    using (var repo = new LibGit2Sharp.Repository(repository))
+                    {
+                        var who = new LibGit2Sharp.Signature(name["user.name=".Length..], email["user.email=".Length..], DateTimeOffset.Now);
+                        repo.Commit(message, who, who);
+                    }
+                    return "";
+                case ["rev-parse", "HEAD"]:
+                    using (var repo = new LibGit2Sharp.Repository(repository))
+                        return repo.Head.Tip is { } tip ? tip.Sha + "\n" : null;
+                default:
+                    return null;
+            }
+        }
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException
+                                       or DllNotFoundException or TypeInitializationException)
+        {
+            return null;
+        }
     }
 
     // A new fixture repository stores its bytes as written (core.autocrlf=false) and starts no background
