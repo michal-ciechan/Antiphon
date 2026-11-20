@@ -138,6 +138,18 @@ function New-CountedPilot {
     return $pilot
 }
 
+function New-ClosedFlagEvidence {
+    param([string]$Field, $Value)
+    $row = [ordered]@{
+        chunkId = 'c1'
+        outcome = 'passed'
+        provenance = 'verified'
+    }
+    # Assign even when the value is null so the key is present.
+    $row[$Field] = $Value
+    return @{ sampled = @('c1'); results = @($row) }
+}
+
 function Assert-DerivedFailure {
     param([string]$Label, $Evidence, [string]$Kind, [string]$ChunkId, [string]$TrustPath)
     $decision = Get-RcShadowTrustDecision -Carries @('c2', 'c1') -Evidence $Evidence -CurrentSample 'roster' -TrustRecordPath $TrustPath
@@ -459,6 +471,146 @@ try {
                 $both = Get-RcShadowTrustDecision -Carries @('c1') -SampleFailure $caller -Evidence @{ sampled = @('c1'); results = @() }
                 Note ((Join-Ids $both.reasons) -ceq 'sample-failed') ('duplicate sample-failed reasons=' + (Join-Ids $both.reasons))
                 Note ((Get-RcShadowField $both.preservedSampleFailure 'outcome') -ceq 'failed') 'derived failure replaced the caller flag'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'NonBooleanProvenanceFailureInvalidates' {
+            # D-1. Only boolean false is a clean flag. A present string, number,
+            # null, or object is a failure, including after a JSON round-trip.
+            # unexpectedSkip uses the same rule.
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                Assert-DerivedFailure 'string provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' 'true') 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'string false provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' 'false') 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'number provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' 1) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'number zero provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' 0) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'null provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' $null) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'object provenanceFailure' (New-ClosedFlagEvidence 'provenanceFailure' ([pscustomobject]@{ bad = $true })) 'provenance-failure' 'c1' $trustPath
+                $jsonString = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","provenanceFailure":"true"}]}'
+                $jsonNumber = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","provenanceFailure":1}]}'
+                $jsonNull = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","provenanceFailure":null}]}'
+                $jsonObject = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","provenanceFailure":{"bad":true}}]}'
+                Assert-DerivedFailure 'json string provenanceFailure' ($jsonString | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'json number provenanceFailure' ($jsonNumber | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'json null provenanceFailure' ($jsonNull | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'json object provenanceFailure' ($jsonObject | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'string unexpectedSkip' (New-ClosedFlagEvidence 'unexpectedSkip' 'true') 'unexpected-skip' 'c1' $trustPath
+                Assert-DerivedFailure 'number unexpectedSkip' (New-ClosedFlagEvidence 'unexpectedSkip' 1) 'unexpected-skip' 'c1' $trustPath
+                Assert-DerivedFailure 'null unexpectedSkip' (New-ClosedFlagEvidence 'unexpectedSkip' $null) 'unexpected-skip' 'c1' $trustPath
+                Assert-DerivedFailure 'object unexpectedSkip' (New-ClosedFlagEvidence 'unexpectedSkip' ([pscustomobject]@{ bad = $true })) 'unexpected-skip' 'c1' $trustPath
+                $clean = Get-RcShadowTrustDecision -Carries @('c1') -Evidence (New-ClosedFlagEvidence 'provenanceFailure' $false) -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($clean.carriesInvalidated -eq $false) 'boolean false provenanceFailure invalidated carries'
+                Note ($clean.reason -ceq 'pilot-count') ('boolean false provenance reason=' + $clean.reason)
+                Note ($clean.trustGranted -eq $false -and $clean.gateCredit -eq $false -and $clean.effectiveMode -ceq 'Full' -and $clean.incrementalValidation -ceq 'Shadow') 'boolean false provenance granted trust'
+                $jsonFalse = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","provenanceFailure":false}]}'
+                $cleanJson = Get-RcShadowTrustDecision -Carries @('c1') -Evidence ($jsonFalse | ConvertFrom-Json) -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($cleanJson.carriesInvalidated -eq $false) 'json boolean false provenanceFailure invalidated carries'
+                Note ($cleanJson.reason -ceq 'pilot-count') ('json false provenance reason=' + $cleanJson.reason)
+                Note ($cleanJson.trustGranted -eq $false -and $cleanJson.gateCredit -eq $false -and $cleanJson.effectiveMode -ceq 'Full' -and $cleanJson.incrementalValidation -ceq 'Shadow') 'json false provenance granted trust'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'CarriedChunkResultInvalidatesCarries' {
+            # D-2. A carry is not launched unless sampled names it. Any result
+            # row for another carry is a contradiction, including a passed row,
+            # and invalidates every carry. A dirty unsampled row stays dropped.
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $passedSample = @{ chunkId = 's1'; outcome = 'passed'; provenance = 'verified' }
+                $failedCarry = @{
+                    sampled = @('s1')
+                    results = @(
+                        $passedSample
+                        @{ chunkId = 'c2'; outcome = 'failed'; provenance = 'verified' }
+                    )
+                }
+                $failed = Get-RcShadowTrustDecision -Carries @('c1', 'c2') -Evidence $failedCarry -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($failed.carriesInvalidated -eq $true) ('failed carried row left carries valid reason=' + $failed.reason)
+                Note ((Join-Ids $failed.invalidatedCarries) -ceq 'c1|c2') ('failed carried carries=' + (Join-Ids $failed.invalidatedCarries))
+                Note ((Join-Ids $failed.reasons) -ceq 'sample-failed') ('failed carried reasons=' + (Join-Ids $failed.reasons))
+                Note ((Get-RcShadowField $failed.preservedSampleFailure 'kind') -ceq 'carried-result') ('failed carried kind=' + (Get-RcShadowField $failed.preservedSampleFailure 'kind'))
+                Note ((Get-RcShadowField $failed.preservedSampleFailure 'chunkId') -ceq 'c2') ('failed carried chunk=' + (Get-RcShadowField $failed.preservedSampleFailure 'chunkId'))
+                Note ($failed.trustGranted -eq $false -and $failed.gateCredit -eq $false -and $failed.effectiveMode -ceq 'Full' -and $failed.incrementalValidation -ceq 'Shadow') 'failed carried row granted trust'
+                Note ($failed.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) 'failed carried row wrote a trust record'
+                $passedCarry = @{
+                    sampled = @('s1')
+                    results = @(
+                        $passedSample
+                        @{ chunkId = 'c2'; outcome = 'passed'; provenance = 'verified' }
+                    )
+                }
+                $passed = Get-RcShadowTrustDecision -Carries @('c1', 'c2') -Evidence $passedCarry -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($passed.carriesInvalidated -eq $true) ('passed carried row left carries valid reason=' + $passed.reason)
+                Note ((Join-Ids $passed.invalidatedCarries) -ceq 'c1|c2') ('passed carried carries=' + (Join-Ids $passed.invalidatedCarries))
+                Note ((Join-Ids $passed.reasons) -ceq 'sample-failed') ('passed carried reasons=' + (Join-Ids $passed.reasons))
+                Note ((Get-RcShadowField $passed.preservedSampleFailure 'kind') -ceq 'carried-result') ('passed carried kind=' + (Get-RcShadowField $passed.preservedSampleFailure 'kind'))
+                Note ((Get-RcShadowField $passed.preservedSampleFailure 'chunkId') -ceq 'c2') ('passed carried chunk=' + (Get-RcShadowField $passed.preservedSampleFailure 'chunkId'))
+                Note ($passed.trustGranted -eq $false -and $passed.gateCredit -eq $false -and $passed.effectiveMode -ceq 'Full' -and $passed.incrementalValidation -ceq 'Shadow') 'passed carried row granted trust'
+                $dirty = @{
+                    sampled = @('s1')
+                    results = @(
+                        $passedSample
+                        @{ chunkId = 'dirty'; outcome = 'failed'; provenance = 'verified' }
+                    )
+                }
+                $dropped = Get-RcShadowTrustDecision -Carries @('c1', 'c2') -Evidence $dirty -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($dropped.carriesInvalidated -eq $false) ('dirty unsampled row invalidated carries reason=' + $dropped.reason)
+                Note ($dropped.reason -ceq 'pilot-count') ('dirty unsampled reason=' + $dropped.reason)
+                $launched = @{
+                    sampled = @('s1')
+                    results = @($passedSample)
+                }
+                $kept = Get-RcShadowTrustDecision -Carries @('s1', 'c2') -Evidence $launched -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($kept.carriesInvalidated -eq $false) ('launched carry sample invalidated carries reason=' + $kept.reason)
+                Note ($kept.reason -ceq 'pilot-count') ('launched carry reason=' + $kept.reason)
+                Note ($kept.trustGranted -eq $false -and $kept.gateCredit -eq $false -and $kept.effectiveMode -ceq 'Full' -and $kept.incrementalValidation -ceq 'Shadow') 'launched carry sample granted trust'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'AbsentEvidenceKeepsCarriesUntilWired' {
+            # F-1 precondition, current behavior. S6c/S6d must flip this case
+            # before the library decides a carry: absent evidence stays valid,
+            # and a pilot with no cchunk or stratumCount stays eligible at 30.
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $absent = @(
+                    @{ label = 'null evidence'; evidence = $null; sample = 'roster' }
+                    @{ label = 'empty evidence'; evidence = @{}; sample = 'roster' }
+                    @{ label = 'string evidence'; evidence = 'not-a-record'; sample = 'executed' }
+                    @{ label = 'wrong-case keys'; evidence = @{ Sampled = @('c1'); Results = @() }; sample = 'executed' }
+                )
+                foreach ($row in $absent) {
+                    $decision = Get-RcShadowTrustDecision -Carries @('c1', 'c2') -Evidence $row.evidence -CurrentSample $row.sample -TrustRecordPath $trustPath
+                    Note ($decision.carriesInvalidated -eq $false) ($row.label + ' invalidated carries reason=' + $decision.reason)
+                    Note ((Join-Ids $decision.invalidatedCarries) -ceq '') ($row.label + ' carries=' + (Join-Ids $decision.invalidatedCarries))
+                    Note ($decision.reason -ceq 'pilot-count') ($row.label + ' reason=' + $decision.reason)
+                    Note ($null -eq $decision.preservedSampleFailure) ($row.label + ' preserved a sample failure')
+                    Note ($decision.trustGranted -eq $false -and $decision.gateCredit -eq $false -and $decision.effectiveMode -ceq 'Full' -and $decision.incrementalValidation -ceq 'Shadow') ($row.label + ' granted trust')
+                    Note ($decision.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) ($row.label + ' wrote a trust record')
+                }
+                $floor = @{
+                    cutId = 'floor-1'; platform = 'windows'; sample = 'executed'; shadowPilot = $true
+                    discrepancy = $false; openFailure = $false; nativeReceipts = 'current'; fullOverdue = $false
+                    contractDigest = $script:Digest; n = 30; nExecuted = 30
+                }
+                Note (Test-RcShadowPilotEligible -Pilot $floor -ContractDigest $script:Digest) 'incomplete pilot without cchunk or stratumCount was ineligible'
+                $second = @{
+                    cutId = 'floor-2'; platform = 'windows'; sample = 'executed'; shadowPilot = $true
+                    discrepancy = $false; openFailure = $false; nativeReceipts = 'current'; fullOverdue = $false
+                    contractDigest = $script:Digest; n = 30; nExecuted = 30
+                }
+                $counted = Get-RcShadowTrustDecision -Pilots @($floor, $second) -Carries @('c1') -Evidence $null -CurrentSample 'executed' -ContractDigest $script:Digest -TrustRecordPath $trustPath
+                Note ($counted.observedPilots -eq 2) ('incomplete pilots observed=' + $counted.observedPilots)
+                Note ($counted.carriesInvalidated -eq $false) ('incomplete pilots invalidated carries reason=' + $counted.reason)
+                Note ($counted.reason -ceq 'operator-trust-required') ('incomplete pilots reason=' + $counted.reason)
+                Note ($counted.trustGranted -eq $false -and $counted.gateCredit -eq $false -and $counted.effectiveMode -ceq 'Full' -and $counted.incrementalValidation -ceq 'Shadow') 'incomplete pilots granted trust'
+                Note ($counted.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) 'incomplete pilots wrote a trust record'
             } finally {
                 if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
             }
