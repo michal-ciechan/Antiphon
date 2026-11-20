@@ -47,26 +47,96 @@ function Write-RcOutcomeTrx {
     [IO.File]::WriteAllText($Path,$xml)
 }
 function Test-RcRealResultsWouldPass {
-    param([string]$Path)
+    # The real native branch. A stand-in that repeats the shadow parse cannot see discovery, diagnostics, or freshness.
+    param(
+        [string]$Path,
+        [string]$DiscoveryPath = '',
+        [string]$ExecutionDiagnosticPath = '',
+        [string]$RunDirectory = '',
+        [datetime]$NotBeforeUtc = ([datetime]::MinValue),
+        [string[]]$RequiredClasses = @()
+    )
     try {
-        $text=[IO.File]::ReadAllText($Path)
-        if($text -notmatch '<TestRun[\s>]'){ return $false }
-        $summary=Read-NightlyTrxRunSummary -Path $Path
-        if(-not $summary.Present -or [string]::IsNullOrWhiteSpace([string]$summary.Outcome) -or $summary.Outcome -cne 'Completed'){ return $false }
-        $doc=New-Object System.Xml.XmlDocument
-        $doc.XmlResolver=$null
-        $doc.Load($Path)
-        $counters=$doc.SelectSingleNode('//*[local-name()="Counters"]')
-        if($null -eq $counters){ return $false }
-        if([string]::IsNullOrWhiteSpace($counters.GetAttribute('executed')) -or [string]::IsNullOrWhiteSpace($counters.GetAttribute('failed'))){ return $false }
-        $rows=@(Read-NightlyTrxIdentities -TrxPath $Path)
-        $verdict=ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -Platform 'linux' -ExpectedSkipRoster @()
-        $executedRows=[int]$verdict.passed + [int]$verdict.failed
-        if([int]$summary.Executed -ne $executedRows -or [int]$summary.Failed -ne [int]$verdict.failed){ return $false }
-        if(-not (Test-NightlyCounterAgreement -Verdict $verdict -ReportedTotal @($rows).Count -ReportedFailed ([int]$summary.Failed))){ return $false }
-        if(-not [bool]$verdict.testsPassed -or -not [bool]$verdict.coverageComplete -or [int]$summary.Failed -ne 0){ return $false }
-        return $true
+        if ([string]::IsNullOrWhiteSpace($RunDirectory)) { $RunDirectory = Split-Path -Parent $Path }
+        if ($NotBeforeUtc.Year -lt 1900) { $NotBeforeUtc = [datetime]::UtcNow.AddMinutes(-5) }
+        $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $Path -DiscoveryPath $DiscoveryPath -ExecutionDiagnosticPath $ExecutionDiagnosticPath -RunDirectory $RunDirectory -NotBeforeUtc $NotBeforeUtc -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -RequiredClasses $RequiredClasses -Platform 'linux' -ExpectedSkipRoster @()
+        return ([bool]$verdict.testsPassed -and [bool]$verdict.coverageComplete)
     } catch { return $false }
+}
+function Initialize-RcNativeWriters {
+    # nightly-common.ps1 is dot-sourced by the case, at script scope. A function-scoped dot disappears on return.
+    if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
+        throw 'nightly-common-required'
+    }
+    if (-not (Get-Command ConvertTo-NightlyNativeSuiteVerdict -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
+    }
+}
+function New-RcNativeCheckFixture {
+    param(
+        [string]$Directory,
+        [object[]]$Rows,
+        [object[]]$Discovery,
+        [object[]]$Execution,
+        [switch]$OmitDiscovery,
+        [switch]$StaleTrx,
+        [string]$FailedAttribute = ''
+    )
+    Initialize-RcNativeWriters
+    [void][IO.Directory]::CreateDirectory($Directory)
+    $trx = Join-Path $Directory 'chunk.trx'
+    $total = @($Rows).Count
+    $failedRows = @($Rows | Where-Object { [string]$_.Outcome -ceq 'Failed' }).Count
+    Write-RcOutcomeTrx -Path $trx -SummaryOutcome 'Completed' -Total $total -Executed $total -Passed ($total - $failedRows) -Failed $failedRows -NotExecuted 0 -Rows $Rows
+    if (-not [string]::IsNullOrWhiteSpace($FailedAttribute)) {
+        $text = [IO.File]::ReadAllText($trx).Replace('failed="0"', ('failed="' + $FailedAttribute + '"'))
+        [IO.File]::WriteAllText($trx, $text)
+    }
+    $disc = ''
+    if (-not $OmitDiscovery) {
+        $disc = Join-Path $Directory 'chunk.discovery.json'
+        Write-C487Discovery -Path $disc -Nodes $Discovery
+    }
+    $exec = Join-Path $Directory 'chunk.execution.json'
+    Write-C487Execution -Path $exec -Nodes $Execution
+    $log = Join-Path $Directory 'chunk.log'
+    $invocation = 'rc-native-invocation'
+    [IO.File]::WriteAllText($log, ('C487_INVOCATION=' + $invocation + [Environment]::NewLine))
+    $now = [datetime]::UtcNow
+    if ($StaleTrx) { (Get-Item -LiteralPath $trx).LastWriteTimeUtc = $now.AddHours(-3) }
+    else { (Get-Item -LiteralPath $trx).LastWriteTimeUtc = $now }
+    (Get-Item -LiteralPath $log).LastWriteTimeUtc = $now
+    $notBefore = $now.AddMinutes(-5)
+    if ($StaleTrx) { $notBefore = $now.AddMinutes(-30) }
+    return [pscustomobject]@{ Directory = $Directory; Trx = $trx; Discovery = $disc; Execution = $exec; Log = $log; Invocation = $invocation; NotBefore = $notBefore }
+}
+function Get-RcNativeVerdict {
+    param($Fixture, [string[]]$RequiredClasses = @())
+    return ConvertTo-NightlyNativeSuiteVerdict -TrxPath $Fixture.Trx -DiscoveryPath $Fixture.Discovery -ExecutionDiagnosticPath $Fixture.Execution -RunDirectory $Fixture.Directory -NotBeforeUtc $Fixture.NotBefore -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -RequiredClasses $RequiredClasses -Platform 'linux' -ExpectedSkipRoster @()
+}
+function Get-RcBoundChunkOutcome {
+    param($Fixture, $NativeVerdict, $Fresh)
+    $run = @{ ExitCode = 0; OutputDrainTimedOut = $false }
+    $shadow = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $Fixture.Trx
+    if (Get-Command Resolve-NightlyRcChunkOutcome -ErrorAction SilentlyContinue) {
+        return Resolve-NightlyRcChunkOutcome -Run $run -ResultsPath $Fixture.Trx -NativeVerdict $NativeVerdict -Fresh $Fresh
+    }
+    return $shadow
+}
+function Note-RcNativeGap {
+    param([string]$Label, $Fixture, [string[]]$RequiredClasses = @(), [string]$RealReason = '')
+    $real = Get-RcNativeVerdict -Fixture $Fixture -RequiredClasses $RequiredClasses
+    $fresh = Test-NightlyFreshEvidence -Path $Fixture.Log -RunDirectory $Fixture.Directory -NotBeforeUtc $Fixture.NotBefore -InvocationId $Fixture.Invocation
+    $shadow = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $Fixture.Trx
+    $bound = Get-RcBoundChunkOutcome -Fixture $Fixture -NativeVerdict $real -Fresh $fresh
+    $realPass = [bool]$real.testsPassed -and [bool]$real.coverageComplete -and [bool]$fresh.Ok
+    $reasonText = ((@($real.reasons) | ForEach-Object { [string]$_ }) -join ',')
+    if (-not [string]::IsNullOrWhiteSpace($RealReason)) {
+        Note ($reasonText -match [regex]::Escape($RealReason)) ($Label + ' real-reason ' + $reasonText)
+    }
+    Note (-not $realPass) ($Label + ' real-did-not-fail ' + $reasonText + ' fresh=' + [string]$fresh.Reason)
+    Note ($shadow.Outcome -ceq 'Passed') ($Label + ' shadow-parse=' + [string]$shadow.Outcome)
+    Note ($bound.Outcome -cne 'Passed') ($Label + ' shadow=' + [string]$shadow.Outcome + ' real=failure bound=' + [string]$bound.Outcome + ' reason=' + [string]$bound.Reason)
 }
 function Note-RcShadowNotWeaker {
     param([string]$Label,[string]$Path)
@@ -419,6 +489,9 @@ try {
             Note ($testsImpl.Contains('Get-NightlyRcChunkOutcome')) 'chunk-outcome-is-wired'
         }
         'ShadowPassedIsAtLeastTheRealCheck' {
+            if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
+                . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
+            }
             if(-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)){
                 . (Join-Path $PSScriptRoot 'lib/nightly-watchdog-admission.ps1')
             }
@@ -446,11 +519,10 @@ try {
             $json=Join-Path $ResultsDirectory 'weak.json'
             [IO.File]::WriteAllText($json,'{"ok":true}')
             Note-RcShadowNotWeaker 'json-summary-unreadable' $json
-            $pass=Join-Path $ResultsDirectory 'real-pass.trx'
-            Write-RcOutcomeTrx -Path $pass -SummaryOutcome 'Completed' -Total 1 -Executed 1 -Passed 1 -Failed 0 -NotExecuted 0 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Passed' })
-            $passShadow=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $pass
-            $passReal=Test-RcRealResultsWouldPass -Path $pass
-            Note ($passReal -and $passShadow.Outcome -ceq 'Passed') 'real-pass-stays-passed'
+            $passFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'real-pass') -Rows @(@{ Id='1'; ClassName='Ns.ClassA'; MethodName='MethodA'; Outcome='Passed' }) -Discovery @(@{ uid='uid-a'; type='ClassA'; method='MethodA'; namespace='Ns'; state='Discovered' }) -Execution @(@{ uid='uid-a'; state='Passed'; type='ClassA'; method='MethodA'; namespace='Ns'; className='Ns.ClassA' })
+            $passShadow=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $passFx.Trx
+            $passReal=Test-RcRealResultsWouldPass -Path $passFx.Trx -DiscoveryPath $passFx.Discovery -ExecutionDiagnosticPath $passFx.Execution -RunDirectory $passFx.Directory -NotBeforeUtc $passFx.NotBefore -RequiredClasses @('Ns.ClassA')
+            Note ($passReal -and $passShadow.Outcome -ceq 'Passed') ('real-pass-stays-passed shadow=' + $passShadow.Outcome)
             $missingFailed=Join-Path $ResultsDirectory 'missing-failed.trx'
             [IO.File]::WriteAllText($missingFailed,'<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="1" name="Ns.Sample.Method"><TestMethod className="Ns.Sample" name="Method" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="1" testName="Ns.Sample.Method" outcome="Passed" /></Results><ResultSummary outcome="Completed"><Counters total="1" executed="1" passed="1" notExecuted="0" /></ResultSummary></TestRun>')
             Note-RcShadowNotWeaker 'missing-failed-attribute' $missingFailed
@@ -476,6 +548,51 @@ try {
             [IO.File]::WriteAllText($override,'{"executed":1,"failed":1,"coverageComplete":true,"rows":[{"Outcome":"Failed","Identity":"Ns.Sample.Method"}]}')
             $overrideResult=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $override
             Note ($overrideResult.Outcome -cne 'Passed') 'json-coverage-true-does-not-override'
+        }
+        'ShadowPassedMatchesNativeBranch' {
+            if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
+                . (Join-Path $PSScriptRoot 'lib/nightly-common.ps1')
+            }
+            $classA = @{ Id = '1'; ClassName = 'Ns.ClassA'; MethodName = 'MethodA'; Outcome = 'Passed' }
+            $discA = @{ uid = 'uid-a'; type = 'ClassA'; method = 'MethodA'; namespace = 'Ns'; state = 'Discovered' }
+            $discB = @{ uid = 'uid-b'; type = 'ClassB'; method = 'MethodB'; namespace = 'Ns'; state = 'Discovered' }
+            $execA = @{ uid = 'uid-a'; state = 'Passed'; type = 'ClassA'; method = 'MethodA'; namespace = 'Ns'; className = 'Ns.ClassA' }
+            $execB = @{ uid = 'uid-b'; state = 'Passed'; type = 'ClassB'; method = 'MethodB'; namespace = 'Ns'; className = 'Ns.ClassB' }
+            $passFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'bound-pass') -Rows @($classA) -Discovery @($discA) -Execution @($execA)
+            $passReal = Get-RcNativeVerdict -Fixture $passFx -RequiredClasses @('Ns.ClassA')
+            $passFresh = Test-NightlyFreshEvidence -Path $passFx.Log -RunDirectory $passFx.Directory -NotBeforeUtc $passFx.NotBefore -InvocationId $passFx.Invocation
+            $passBound = Get-RcBoundChunkOutcome -Fixture $passFx -NativeVerdict $passReal -Fresh $passFresh
+            Note (([bool]$passReal.testsPassed) -and ([bool]$passReal.coverageComplete) -and ([bool]$passFresh.Ok) -and ($passBound.Outcome -ceq 'Passed')) ('real-pass-stays-passed bound=' + [string]$passBound.Outcome + ' reasons=' + ((@($passReal.reasons) | ForEach-Object { [string]$_ }) -join ','))
+            $staleFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'stale-trx') -Rows @($classA) -Discovery @($discA) -Execution @($execA) -StaleTrx
+            Note-RcNativeGap -Label 'stale-trx' -Fixture $staleFx -RequiredClasses @('ClassA') -RealReason 'stale-timestamp'
+            $missingClassFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'missing-class') -Rows @($classA) -Discovery @($discA, $discB) -Execution @($execA, $execB)
+            Note-RcNativeGap -Label 'missing-required-class' -Fixture $missingClassFx -RequiredClasses @('ClassA', 'ClassB') -RealReason 'missing-required-class'
+            $mismatchExec = @{ uid = 'uid-a'; state = 'Passed'; type = 'ClassA'; method = 'MethodB'; namespace = 'Ns'; className = 'Ns.ClassA' }
+            $mismatchFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'mismatch') -Rows @($classA) -Discovery @($discA) -Execution @($mismatchExec)
+            Note-RcNativeGap -Label 'trx-diagnostic-mismatch' -Fixture $mismatchFx -RequiredClasses @('ClassA') -RealReason 'trx-diagnostic-mismatch'
+            $noDiscFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'missing-discovery') -Rows @($classA) -Discovery @($discA) -Execution @($execA) -OmitDiscovery
+            Note-RcNativeGap -Label 'missing-discovery' -Fixture $noDiscFx -RequiredClasses @('ClassA') -RealReason 'missing-discovery'
+            foreach ($badFailed in @('x', '+0')) {
+                $badFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory ('failed-' + ($badFailed -replace '\+', 'plus'))) -Rows @($classA) -Discovery @($discA) -Execution @($execA) -FailedAttribute $badFailed
+                $bad = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $badFx.Trx
+                Note ($bad.Outcome -ceq 'NotRun' -and $bad.Reason -ceq 'results-summary-unreadable') ('non-numeric-failed ' + $badFailed + ' shadow=' + [string]$bad.Outcome + ' reason=' + [string]$bad.Reason)
+            }
+            if (Get-Command Resolve-NightlyRcChunkOutcome -ErrorAction SilentlyContinue) {
+                $closed = Resolve-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $passFx.Trx -NativeVerdict $null -Fresh $null
+                Note ($closed.Outcome -ceq 'NotRun' -and $closed.Reason -ceq 'results-unreadable') ('unreadable-real shadow=' + [string]$closed.Outcome)
+                $half = Resolve-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $passFx.Trx -NativeVerdict $passReal -Fresh $null
+                Note ($half.Outcome -ceq 'NotRun') ('unreadable-fresh shadow=' + [string]$half.Outcome)
+            } else {
+                Note $false 'unreadable-real-not-run'
+            }
+            $testsImpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
+            $verdictAt = $testsImpl.IndexOf('ConvertTo-NightlyNativeSuiteVerdict')
+            $freshAt = $testsImpl.IndexOf('Test-NightlyFreshEvidence')
+            $resolveAt = $testsImpl.LastIndexOf('Resolve-NightlyRcChunkOutcome')
+            Note (($resolveAt -gt $verdictAt) -and ($resolveAt -gt $freshAt)) ('recorded-after-real-check resolve=' + $resolveAt)
+            Note (([regex]::Matches($testsImpl, 'Register-NightlyRcChunkRevision')).Count -eq 1) 'one-chunk-record'
+            $evidence = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/rc-run-evidence.ps1'))
+            Note ($evidence.Contains("effectiveMode = 'Full'") -and $evidence.Contains('gateCredit = $false') -and $evidence.Contains("bindingState = 'diagnostic-only'") -and $evidence.Contains('publish = $false')) 'shadow-guarantees-unchanged'
         }
         'TornRevisionStaysNotRun' {
             $repo = Join-Path $ResultsDirectory 'repo'
