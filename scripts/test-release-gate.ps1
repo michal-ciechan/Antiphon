@@ -4204,10 +4204,10 @@ function Test-C599_E2EWatchdog {
     # CARD-1345: the shipped policy resolves the rc e2e suite to 120 minutes.
     # The rc session-runner suite gets 30 minutes; antiphon and the fallback stay put.
     $ship = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
-    $e2e = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'e2e' -Fallback 3600000
-    $antiphon = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'antiphon' -Fallback 3600000
-    $session = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'session-runner' -Fallback 3600000
-    $missing = Get-NightlyWatchdogMs -PolicyObject $ship.Object -Key 'not-a-suite' -Fallback 3600000
+    $e2e = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($ship.Object, 'e2e', 3600000)
+    $antiphon = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($ship.Object, 'antiphon', 3600000)
+    $session = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($ship.Object, 'session-runner', 3600000)
+    $missing = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($ship.Object, 'not-a-suite', 3600000)
     Assert-C487 -Cond ($e2e -eq 7200000) -Name 'C599 resolved e2e watchdog is 7200000' -Detail ([string]$e2e)
     Assert-C487 -Cond ($antiphon -eq 3600000) -Name 'C599 antiphon watchdog stays 3600000' -Detail ([string]$antiphon)
     Assert-C487 -Cond ($session -eq 1800000) -Name 'C599 resolved session-runner watchdog is 1800000' -Detail ([string]$session)

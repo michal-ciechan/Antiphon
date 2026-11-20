@@ -266,7 +266,7 @@ function Get-NightlyProfileLaunchPlan {
         foreach ($class in @($launch.classes)) {
             if ([string]$class -clike 'Antiphon.E2E.*') { $suiteForWatchdog = 'e2e' }
         }
-        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteForWatchdog -PlannedSeconds $seconds -Basis 'default' -PolicyObject $PolicyObject
+        $admission = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteForWatchdog, $seconds, 'default', '', $null, $null, $PolicyObject)
         if (-not $admission.Admitted) {
             $watchdogText = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0}', [double]$admission.WatchdogSeconds)
             throw ('watchdog-admission-refused id={0} reason={1} watchdogSeconds={2}' -f $launch.id, $admission.Reason, $watchdogText)
@@ -347,14 +347,6 @@ function Test-NightlyE2EPrerequisites {
         if (-not $present) { $ok = $false }
     }
     return [pscustomobject]@{ Ok = $ok; Rows = $rows }
-}
-
-function Get-NightlyWatchdogMs {
-    param($PolicyObject, [string]$Key, [int]$Fallback)
-    if ($PolicyObject.watchdogs -and $PolicyObject.watchdogs.$Key) {
-        return [int]$PolicyObject.watchdogs.$Key
-    }
-    return $Fallback
 }
 
 function Resolve-NightlyTestHost {
@@ -963,7 +955,7 @@ function Invoke-NightlyScheduledChunk {
         if ($null -ne $chunk.PSObject.Properties['costBasis'] -and -not [string]::IsNullOrWhiteSpace([string]$chunk.costBasis)) {
             $costBasis = [string]$chunk.costBasis
         }
-        $admission = Resolve-NightlyLaunchWatchdog -SuiteId $suiteId -PlannedSeconds $plannedSeconds -Basis $costBasis -PolicyObject $policy.Object
+        $admission = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteId, $plannedSeconds, $costBasis, '', $null, $null, $policy.Object)
         if (-not $admission.Admitted) {
             throw ('watchdog-admission-refused id={0} reason={1}' -f $chunk.id, $admission.Reason)
         }
@@ -1149,7 +1141,7 @@ function Invoke-NightlyScheduledChunk {
         }
         $resolvedHang = Resolve-NightlyCompletedHang -TimedOut $true -Finished $finished -SuiteId $suiteId -Children $childText
         $completedHang = [bool]$resolvedHang.CompletedButHung
-        $timeoutDisposition = Get-NightlyWatchdogTimeoutDisposition -TrxPresent (Test-Path -LiteralPath $trxPath) -TerminalAccounting $false -CompletedButHung:$completedHang
+        $timeoutDisposition = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition((Test-Path -LiteralPath $trxPath), $false, [bool]($completedHang))
         $coverageComplete = [bool]$timeoutDisposition.CoverageComplete
         $testsPassed = [bool]$timeoutDisposition.TestsPassed
         if ($completedHang) {

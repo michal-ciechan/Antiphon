@@ -123,15 +123,10 @@ try {
     . (Join-Path $lib 'nightly-tests-impl.ps1')
     . (Join-Path $lib 'qualification-supervisor-heartbeat.ps1')
 
-    $needed = @(
-        'Resolve-NightlyLaunchWatchdog',
-        'Get-NightlyWatchdogErrorFactors',
-        'Get-NightlyWatchdogSeconds',
-        'Test-NightlyWatchdogKilled',
-        'Get-NightlyWatchdogTimeoutDisposition',
-        'Read-QualificationDiagnosticProgress'
-    )
+    # The admission itself is compiled (Antiphon.Nightly.NightlyWatchdog).
+    $needed = @('Read-QualificationDiagnosticProgress')
     $missing = @()
+    if (-not ('Antiphon.Nightly.NightlyWatchdog' -as [type])) { $missing += 'NightlyWatchdog' }
     foreach ($name in $needed) {
         if (-not (Get-Command $name -ErrorAction SilentlyContinue)) { $missing += $name }
     }
@@ -189,12 +184,12 @@ try {
             $first = Update-QualificationSupervisorHeartbeat -NowUtc $origin -Processes $proc -ChunkRootPid 10 -Previous $null -Trx 1 -Bytes 50 -Newest 'chunk.diag' -PlannedSeconds $null
             $later = $origin.AddMinutes(35)
             $second = Update-QualificationSupervisorHeartbeat -NowUtc $later -Processes $proc -ChunkRootPid 10 -Previous $first -Trx 1 -Bytes 50 -Newest 'chunk.diag' -PlannedSeconds $null
-            $assigned = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'default'
+            $assigned = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'default', '', $null, $null, $null)
             $out.assignedWatchdog = [double]$assigned.WatchdogSeconds
             $out.hangSuspected = [bool]$second.hangSuspected
             $out.elapsed = 2100
-            $out.killed = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 2100 -WatchdogSeconds ([double]$assigned.WatchdogSeconds) -Terminal $false)
-            $out.shortCapKilled = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 2100 -WatchdogSeconds 2100 -Terminal $false)
+            $out.killed = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(2100, ([double]$assigned.WatchdogSeconds), $false))
+            $out.shortCapKilled = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(2100, 2100, $false))
             if ($out.killed) { Add-Problem 'quiet-healthy-killed' }
             if (-not $out.shortCapKilled) { Add-Problem 'short-cap-predicate-stuck-false' }
             if ([double]$assigned.WatchdogSeconds -ne 3600) { Add-Problem 'assigned-watchdog-is-not-the-suite-cap' }
@@ -208,7 +203,7 @@ try {
             $impl = [IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
             $refuseAt = $impl.IndexOf('watchdog-admission-refused')
             $timeoutAt = $impl.IndexOf('admission.WatchdogMilliseconds')
-            $out.wired = ($refuseAt -ge 0 -and $timeoutAt -gt $refuseAt -and $impl.Contains('Get-NightlyWatchdogTimeoutDisposition'))
+            $out.wired = ($refuseAt -ge 0 -and $timeoutAt -gt $refuseAt -and $impl.Contains('NightlyWatchdog]::TimeoutDisposition('))
             if (-not $out.wired) { Add-Problem 'watchdog-not-paired' }
 
             function New-Walls([int]$Count, [double]$Wall, [string]$Outcome) {
@@ -227,47 +222,47 @@ try {
             }
             $stratum = New-Stratum
             $g103Samples = @(New-Walls 19 900 'Passed') + @([pscustomobject]@{ Wall = 1936.0; Outcome = 'Failed'; Censored = $false; FailureCount = 1 })
-            $g103Factors = Get-NightlyWatchdogErrorFactors -Samples $g103Samples -PlannedSeconds 900
+            $g103Factors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($g103Samples, 900)
             $out.g103E95 = [double]$g103Factors.E95
             $out.g103Emax = [double]$g103Factors.Emax
             $out.g103FailedKept = [int]$g103Factors.FailedKept
-            $g103 = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $g103 = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = [int]$g103Factors.N; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$g103Factors.E95; Emax = [double]$g103Factors.Emax
                 M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$g103Factors.Censored
-            })
+            }), $null)
             $out.g103Watchdog = [double]$g103.WatchdogSeconds
-            $out.g103Killed = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$g103.WatchdogSeconds) -Terminal $true)
+            $out.g103Killed = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(1936, ([double]$g103.WatchdogSeconds), $true))
             if ([int]$g103Factors.FailedKept -ne 1) { Add-Problem 'failed-wall-dropped' }
             if ([double]$g103.WatchdogSeconds -ne 2040) { Add-Problem ('g103-watchdog ' + $g103.WatchdogSeconds) }
             if ($out.g103Killed) { Add-Problem 'g103-killed' }
             if (-not $g103.Admitted) { Add-Problem 'g103-not-admitted' }
 
             $deadlineSamples = @(New-Walls 19 120 'Passed') + @([pscustomobject]@{ Wall = 900.0; Outcome = 'Failed'; Censored = $false; FailureCount = 3 })
-            $deadlineFactors = Get-NightlyWatchdogErrorFactors -Samples $deadlineSamples -PlannedSeconds 120
+            $deadlineFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($deadlineSamples, 120)
             $out.deadlineFailedKept = [int]$deadlineFactors.FailedKept
-            $deadline = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 120 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $deadline = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 120, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = [int]$deadlineFactors.N; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$deadlineFactors.E95; Emax = [double]$deadlineFactors.Emax
                 M = 60.0; C = 120.0; Wmax = 960.0; Censored = $false
-            })
+            }), $null)
             $out.deadlineWatchdog = [double]$deadline.WatchdogSeconds
-            $out.deadlineKilled = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 900 -WatchdogSeconds ([double]$deadline.WatchdogSeconds) -Terminal $true)
+            $out.deadlineKilled = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(900, ([double]$deadline.WatchdogSeconds), $true))
             if ([double]$deadline.WatchdogSeconds -ne 960) { Add-Problem ('deadline-watchdog ' + $deadline.WatchdogSeconds) }
             if ($out.deadlineKilled) { Add-Problem 'deadline-failures-killed' }
             if ([int]$deadlineFactors.FailedKept -ne 1) { Add-Problem 'deadline-failure-dropped' }
 
-            $replay = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'default' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $replay = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'default', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = (1936.0 / 900.0); M = 60.0; C = 900.0; Wmax = 2040.0; Censored = $false
-            })
+            }), $null)
             $out.replayWatchdog = [double]$replay.WatchdogSeconds
-            $out.replayKilled = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$replay.WatchdogSeconds) -Terminal $true)
+            $out.replayKilled = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(1936, ([double]$replay.WatchdogSeconds), $true))
             if ([double]$replay.WatchdogSeconds -ne 3600 -or [string]$replay.Reason -ne 'unmeasured-cost') { Add-Problem 'unmeasured-replay-not-3600' }
             if ($out.replayKilled) { Add-Problem 'unmeasured-replay-killed' }
 
             foreach ($basisName in @('pace', 'default', 'conservative-bound', 'observed-bound')) {
-                $row = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 50 -Basis $basisName -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+                $row = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 50, $basisName, 'hash-a', $stratum, ([pscustomobject]@{
                     N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-                })
-                $killedPace = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 920 -WatchdogSeconds ([double]$row.WatchdogSeconds) -Terminal $true)
+                }), $null)
+                $killedPace = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(920, ([double]$row.WatchdogSeconds), $true))
                 if ($basisName -eq 'pace') { $out.paceWatchdog = [double]$row.WatchdogSeconds; $out.paceKilled = $killedPace }
                 if ($basisName -eq 'conservative-bound') { $out.conservativeWatchdog = [double]$row.WatchdogSeconds }
                 if ($basisName -eq 'observed-bound') { $out.observedWatchdog = [double]$row.WatchdogSeconds }
@@ -275,9 +270,9 @@ try {
                     Add-Problem ('basis-reduced ' + $basisName + ' ' + $row.WatchdogSeconds)
                 }
             }
-            $unknown = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 50 -Basis 'default'
+            $unknown = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 50, 'default', '', $null, $null, $null)
             $out.unknownWatchdog = [double]$unknown.WatchdogSeconds
-            $out.unknownKilledAt700 = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 700 -WatchdogSeconds ([double]$unknown.WatchdogSeconds) -Terminal $false)
+            $out.unknownKilledAt700 = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(700, ([double]$unknown.WatchdogSeconds), $false))
             if ([double]$unknown.WatchdogSeconds -ne 3600) { Add-Problem 'unknown-cost-not-3600' }
             if ($out.unknownKilledAt700) { Add-Problem 'unknown-cost-used-600' }
 
@@ -285,53 +280,53 @@ try {
             foreach ($key in @('suite', 'uidDigest', 'costDigest', 'executionDigest', 'assemblyDigest', 'os', 'runtime', 'host', 'loadBand', 'fixtureMode', 'concurrency')) {
                 $flipped = New-Stratum
                 $flipped.$key = 'other'
-                $row = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $flipped -Calibration ([pscustomobject]@{
+                $row = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $flipped, ([pscustomobject]@{
                     N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$g103Factors.E95; Emax = [double]$g103Factors.Emax
                     M = 60.0; C = 900.0; Wmax = 2040.0; Censored = $false
-                })
+                }), $null)
                 if ([double]$row.WatchdogSeconds -ne 3600) { Add-Problem ('stratum-mismatch-applied ' + $key) }
                 $mismatch = [double]$row.WatchdogSeconds
             }
             $out.stratumMismatchWatchdog = $mismatch
 
             $n19Samples = @(New-Walls 19 900 'Passed')
-            $n19Factors = Get-NightlyWatchdogErrorFactors -Samples $n19Samples -PlannedSeconds 900
-            $n19 = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $n19Factors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($n19Samples, 900)
+            $n19 = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = [int]$n19Factors.N; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 900.0; Wmax = 2040.0; Censored = $false
-            })
+            }), $null)
             $out.n19Watchdog = [double]$n19.WatchdogSeconds
             if ([double]$n19.WatchdogSeconds -ne 3600) { Add-Problem 'n19-reduced' }
 
-            $hashRow = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-b' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $hashRow = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-b', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$g103Factors.E95; Emax = [double]$g103Factors.Emax
                 M = 60.0; C = 900.0; Wmax = 2040.0; Censored = $false
-            })
+            }), $null)
             $out.hashMismatchWatchdog = [double]$hashRow.WatchdogSeconds
             if ([double]$hashRow.WatchdogSeconds -ne 3600) { Add-Problem 'hash-mismatch-applied' }
 
             $censoredSamples = @(New-Walls 20 900 'Passed') + @([pscustomobject]@{ Wall = 1936.0; Outcome = 'Failed'; Censored = $true })
-            $censoredFactors = Get-NightlyWatchdogErrorFactors -Samples $censoredSamples -PlannedSeconds 900
-            $censored = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $censoredFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($censoredSamples, 900)
+            $censored = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$censoredFactors.Censored
-            })
+            }), $null)
             $out.censoredWatchdog = [double]$censored.WatchdogSeconds
             if (-not $censoredFactors.Censored -or [double]$censored.WatchdogSeconds -ne 3600) { Add-Problem 'censored-wall-reduced' }
 
-            $clamp = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -Calibration ([pscustomobject]@{
+            $clamp = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$g103Factors.E95; Emax = [double]$g103Factors.Emax
                 M = 60.0; C = 900.0; Wmax = 1800.0; Censored = $false
-            })
+            }), $null)
             $out.clampAdmitted = [bool]$clamp.Admitted
             $out.clampWatchdog = [double]$clamp.WatchdogSeconds
             if ($clamp.Admitted -or [double]$clamp.WatchdogSeconds -eq 1800) { Add-Problem 'watchdog-clamped-down' }
             if ([string]$clamp.Reason -ne 'policy-max-mismatch') { Add-Problem 'policy-max-reason' }
 
-            $at = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'default'
-            $above = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2401 -Basis 'default'
-            $e2eAt = Resolve-NightlyLaunchWatchdog -SuiteId 'e2e' -PlannedSeconds 1800 -Basis 'default'
-            $e2eAbove = Resolve-NightlyLaunchWatchdog -SuiteId 'e2e' -PlannedSeconds 1801 -Basis 'default'
-            $legacy = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds $null -Basis 'default'
-            $nan = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds ([double]::NaN) -Basis 'default'
+            $at = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'default', '', $null, $null, $null)
+            $above = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2401, 'default', '', $null, $null, $null)
+            $e2eAt = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('e2e', 1800, 'default', '', $null, $null, $null)
+            $e2eAbove = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('e2e', 1801, 'default', '', $null, $null, $null)
+            $legacy = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', $null, 'default', '', $null, $null, $null)
+            $nan = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', ([double]::NaN), 'default', '', $null, $null, $null)
             $out.pAtAdmitted = [bool]$at.Admitted
             $out.pAboveAdmitted = [bool]$above.Admitted
             $out.e2eWatchdog = [double]$e2eAt.WatchdogSeconds
@@ -349,24 +344,24 @@ try {
             $suiteIds = @($policy.Object.Watchdogs.Keys | Sort-Object)
             $suitePairingOk = $true
             foreach ($suiteName in $suiteIds) {
-                $capSeconds = Get-NightlySuiteWatchdogSeconds -PolicyObject $policy.Object -SuiteId $suiteName
-                $ceiling = Get-NightlyLaunchEstimateCeilingSeconds -SuiteId $suiteName
+                $capSeconds = [Antiphon.Nightly.NightlyWatchdog]::SuiteWatchdogSeconds($policy.Object, $suiteName)
+                $ceiling = [Antiphon.Nightly.NightlyWatchdog]::LaunchEstimateCeilingSeconds($suiteName)
                 $atPlan = $capSeconds
                 if ($ceiling -lt $atPlan) { $atPlan = $ceiling }
-                $rowAt = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds $atPlan -Basis 'default' -PolicyObject $policy.Object
+                $rowAt = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteName, $atPlan, 'default', '', $null, $null, $policy.Object)
                 if (-not $rowAt.Admitted -or [double]$rowAt.WatchdogSeconds -ne $capSeconds) {
                     Add-Problem ('suite-watchdog-pairing ' + $suiteName + ' at=' + $atPlan + ' W=' + $rowAt.WatchdogSeconds + ' adm=' + $rowAt.Admitted)
                     $suitePairingOk = $false
                 }
-                $rowOver = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds ($capSeconds + 1) -Basis 'default' -PolicyObject $policy.Object
+                $rowOver = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteName, ($capSeconds + 1), 'default', '', $null, $null, $policy.Object)
                 if ($rowOver.Admitted) {
                     Add-Problem ('suite-above-watchdog-admitted ' + $suiteName + ' P=' + ($capSeconds + 1) + ' W=' + $rowOver.WatchdogSeconds)
                     $suitePairingOk = $false
                 }
             }
             $out.suitePairingOk = $suitePairingOk
-            $sessionAt = Resolve-NightlyLaunchWatchdog -SuiteId 'session-runner' -PlannedSeconds 1800 -Basis 'default' -PolicyObject $policy.Object
-            $sessionOver = Resolve-NightlyLaunchWatchdog -SuiteId 'session-runner' -PlannedSeconds 2400 -Basis 'default' -PolicyObject $policy.Object
+            $sessionAt = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('session-runner', 1800, 'default', '', $null, $null, $policy.Object)
+            $sessionOver = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('session-runner', 2400, 'default', '', $null, $null, $policy.Object)
             $out.sessionRunnerAtAdmitted = [bool]$sessionAt.Admitted
             $out.sessionRunnerAboveAdmitted = [bool]$sessionOver.Admitted
             if (-not $sessionAt.Admitted -or [double]$sessionAt.WatchdogSeconds -ne 1800) { Add-Problem ('session-runner-at-cap W=' + $sessionAt.WatchdogSeconds) }
@@ -378,20 +373,20 @@ try {
                 'messaging' = 'messagingAboveAdmitted'
             }
             foreach ($suiteName in @($namedOver.Keys)) {
-                $row = Resolve-NightlyLaunchWatchdog -SuiteId $suiteName -PlannedSeconds 1800 -Basis 'default' -PolicyObject $policy.Object
+                $row = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch($suiteName, 1800, 'default', '', $null, $null, $policy.Object)
                 $out[$namedOver[$suiteName]] = [bool]$row.Admitted
                 if ($row.Admitted) { Add-Problem ($suiteName + '-1800-admitted W=' + $row.WatchdogSeconds) }
             }
 
-            $lowFactor = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $lowFactor = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 0.2; Emax = 0.2; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
-            $tinyFactor = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            }), $policy.Object)
+            $tinyFactor = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 0.01; Emax = 0.01; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
-            $emaxOrder = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            }), $policy.Object)
+            $emaxOrder = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 2.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.lowFactorWatchdog = [double]$lowFactor.WatchdogSeconds
             $out.lowFactorReason = [string]$lowFactor.Reason
             $out.lowFactorAdmitted = [bool]$lowFactor.Admitted
@@ -412,12 +407,12 @@ try {
             $badKilled = $false
             foreach ($badWall in @('1936,5', $null, 'n/a', '0', '-4')) {
                 $badSamples = @(New-Walls 20 900 'Passed') + @([pscustomobject]@{ Wall = $badWall; Outcome = 'Failed'; Censored = $false })
-                $badFactors = Get-NightlyWatchdogErrorFactors -Samples $badSamples -PlannedSeconds 900
-                $badRow = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                $badFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($badSamples, 900)
+                $badRow = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                     N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$badFactors.E95; Emax = [double]$badFactors.Emax
                     M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$badFactors.Censored
-                })
-                $killedBad = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$badRow.WatchdogSeconds) -Terminal $true)
+                }), $policy.Object)
+                $killedBad = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(1936, ([double]$badRow.WatchdogSeconds), $true))
                 $badWatch = [double]$badRow.WatchdogSeconds
                 $badKilled = $killedBad
                 $label = 'null'
@@ -431,7 +426,7 @@ try {
             $out.badWallWatchdog = $badWatch
             $out.badWallKilled = $badKilled
             $zeroSamples = @(New-Walls 19 900 'Passed') + @([pscustomobject]@{ Wall = [double]0; Outcome = 'Passed'; Censored = $false })
-            $zeroFactors = Get-NightlyWatchdogErrorFactors -Samples $zeroSamples -PlannedSeconds 900
+            $zeroFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($zeroSamples, 900)
             $out.zeroWallN = [int]$zeroFactors.N
             $out.zeroWallCensored = [bool]$zeroFactors.Censored
             if ([int]$zeroFactors.N -ne 19 -or -not $zeroFactors.Censored) {
@@ -441,41 +436,41 @@ try {
             try {
                 [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('de-DE')
                 $cultureSamples = @(New-Walls 19 900 'Passed') + @([pscustomobject]@{ Wall = [double]1936.5; Outcome = 'Failed'; Censored = $false })
-                $cultureFactors = Get-NightlyWatchdogErrorFactors -Samples $cultureSamples -PlannedSeconds 900
+                $cultureFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($cultureSamples, 900)
                 $out.cultureDoubleKept = ((-not $cultureFactors.Censored) -and [int]$cultureFactors.FailedKept -eq 1 -and [int]$cultureFactors.N -eq 20)
                 if (-not $out.cultureDoubleKept) { Add-Problem ('culture-double-dropped N=' + $cultureFactors.N + ' failed=' + $cultureFactors.FailedKept + ' censored=' + $cultureFactors.Censored) }
             } finally {
                 [Threading.Thread]::CurrentThread.CurrentCulture = $savedCulture
             }
 
-            $aboveSuite = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $aboveSuite = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.measuredAboveSuite = [double]$aboveSuite.WatchdogSeconds
             $out.measuredAboveAdmitted = [bool]$aboveSuite.Admitted
             if (-not $aboveSuite.Admitted -or [double]$aboveSuite.WatchdogSeconds -ne 4800) {
                 Add-Problem ('measured-clamped-to-suite W=' + $aboveSuite.WatchdogSeconds + ' adm=' + $aboveSuite.Admitted)
             }
-            $boundAbove = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $boundAbove = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 2400.0; Wmax = 3600.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.boundAboveAdmitted = [bool]$boundAbove.Admitted
             if ($boundAbove.Admitted -or [string]$boundAbove.Reason -ne 'policy-max-mismatch') {
                 Add-Problem ('ceiling-above-wmax-admitted W=' + $boundAbove.WatchdogSeconds + ' reason=' + $boundAbove.Reason)
             }
-            $overBound = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 1200 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $overBound = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 1200, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 60.0; C = 900.0; Wmax = 4800.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.plannedAboveBoundAdmitted = [bool]$overBound.Admitted
             if ($overBound.Admitted -or [string]$overBound.Reason -ne 'launch-estimate-ceiling') {
                 Add-Problem ('planned-above-bound-admitted W=' + $overBound.WatchdogSeconds + ' reason=' + $overBound.Reason)
             }
-            $smallFactors = Get-NightlyWatchdogErrorFactors -Samples (New-Walls 20 180 'Passed') -PlannedSeconds 900
+            $smallFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors((New-Walls 20 180 'Passed'), 900)
             $out.clampedE95 = [double]$smallFactors.E95
             if ([double]$smallFactors.E95 -lt 1) { Add-Problem ('e95-clamp-removed ' + $smallFactors.E95) }
 
-            $rounded = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 900 -MarginSeconds 60
-            $low = Get-NightlyWatchdogSeconds -E95 1 -Emax (1936.0 / 900.0) -PlannedSeconds 100 -MarginSeconds 60
+            $rounded = [Antiphon.Nightly.NightlyWatchdog]::WatchdogSeconds(1, (1936.0 / 900.0), 900, 60)
+            $low = [Antiphon.Nightly.NightlyWatchdog]::WatchdogSeconds(1, (1936.0 / 900.0), 100, 60)
             $out.rounding2040 = ([double]$rounded -eq 2040)
             $out.monotonic = ([double]$low -le [double]$rounded)
             if (-not $out.rounding2040) { Add-Problem ('rounding ' + $rounded) }
@@ -548,31 +543,31 @@ try {
                 }
             }
 
-            $smallPlan = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 60 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $smallPlan = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 60, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.smallPlanWatchdog = [double]$smallPlan.WatchdogSeconds
             $out.smallPlanReason = [string]$smallPlan.Reason
             if (-not $smallPlan.Admitted -or [double]$smallPlan.WatchdogSeconds -ne 600 -or [string]$smallPlan.Reason -ne 'measured') {
                 Add-Problem ('small-plan-floor W=' + $smallPlan.WatchdogSeconds + ' reason=' + $smallPlan.Reason + ' adm=' + $smallPlan.Admitted)
             }
-            $emptyCal = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{})
+            $emptyCal = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{}), $policy.Object)
             $out.emptyCalibrationWatchdog = [double]$emptyCal.WatchdogSeconds
             $out.emptyCalibrationReason = [string]$emptyCal.Reason
             if (-not $emptyCal.Admitted -or [double]$emptyCal.WatchdogSeconds -ne 3600 -or [string]$emptyCal.Reason -ne 'unmeasured-cost') {
                 Add-Problem ('empty-calibration W=' + $emptyCal.WatchdogSeconds + ' reason=' + $emptyCal.Reason + ' adm=' + $emptyCal.Admitted)
             }
-            $missingField = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $missingField = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0; Censored = $false
-            })
+            }), $policy.Object)
             $out.missingFieldWatchdog = [double]$missingField.WatchdogSeconds
             $out.missingFieldReason = [string]$missingField.Reason
             if (-not $missingField.Admitted -or [double]$missingField.WatchdogSeconds -ne 3600 -or [string]$missingField.Reason -ne 'unmeasured-cost') {
                 Add-Problem ('missing-field-calibration W=' + $missingField.WatchdogSeconds + ' reason=' + $missingField.Reason + ' adm=' + $missingField.Admitted)
             }
-            $noCensoredField = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 2400 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+            $noCensoredField = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 2400, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                 N = 20; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = 1.0; Emax = 1.0; M = 0.0; C = 2400.0; Wmax = 4800.0
-            })
+            }), $policy.Object)
             $out.missingCensoredFieldAdmitted = ([bool]$noCensoredField.Admitted -and [string]$noCensoredField.Reason -eq 'measured' -and [double]$noCensoredField.WatchdogSeconds -eq 4800)
             if (-not $out.missingCensoredFieldAdmitted) {
                 Add-Problem ('missing-censored-field W=' + $noCensoredField.WatchdogSeconds + ' reason=' + $noCensoredField.Reason + ' adm=' + $noCensoredField.Admitted)
@@ -584,12 +579,12 @@ try {
             $invalidPlans = @($null, 0, [double]::NaN, '1,5')
             foreach ($badPlan in $invalidPlans) {
                 $invalidSamples = @(New-Walls 20 900 'Passed') + @([pscustomobject]@{ Wall = 1936.0; Outcome = 'Failed'; Censored = $false })
-                $invalidFactors = Get-NightlyWatchdogErrorFactors -Samples $invalidSamples -PlannedSeconds $badPlan
-                $invalidRow = Resolve-NightlyLaunchWatchdog -SuiteId 'antiphon' -PlannedSeconds 900 -Basis 'measured' -PolicyHash 'hash-a' -LaunchStratum $stratum -PolicyObject $policy.Object -Calibration ([pscustomobject]@{
+                $invalidFactors = [Antiphon.Nightly.NightlyWatchdog]::ErrorFactors($invalidSamples, $badPlan)
+                $invalidRow = [Antiphon.Nightly.NightlyWatchdog]::ResolveLaunch('antiphon', 900, 'measured', 'hash-a', $stratum, ([pscustomobject]@{
                     N = [int]$invalidFactors.N; BoundPolicyHash = 'hash-a'; Stratum = $stratum; E95 = [double]$invalidFactors.E95; Emax = [double]$invalidFactors.Emax
                     M = 60.0; C = 900.0; Wmax = 2040.0; Censored = [bool]$invalidFactors.Censored
-                })
-                $invalidKilled = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 1936 -WatchdogSeconds ([double]$invalidRow.WatchdogSeconds) -Terminal $true)
+                }), $policy.Object)
+                $invalidKilled = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(1936, ([double]$invalidRow.WatchdogSeconds), $true))
                 $invalidWatch = [double]$invalidRow.WatchdogSeconds
                 $planLabel = 'null'
                 if ($null -ne $badPlan) { $planLabel = [string]$badPlan }
@@ -604,20 +599,20 @@ try {
         } elseif ($mode -eq 'timeout') {
             $partial = Join-Path $work 'partial.diag'
             [IO.File]::WriteAllText($partial, "TestNodeUid { Value = uid-partial } InProgressTestNodeStateProperty { Explanation = running }`n")
-            $disp = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $false -TerminalAccounting $false
+            $disp = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition($false, $false, $false)
             $out.coverageComplete = [bool]$disp.CoverageComplete
             $out.testsPassed = [bool]$disp.TestsPassed
             $out.incomplete = [bool]$disp.Incomplete
             $out.reason = [string]$disp.Reason
             $out.notPass = (-not [bool]$disp.Pass)
             $out.partialRetained = [IO.File]::Exists($partial)
-            $out.killedAtCap = [bool](Test-NightlyWatchdogKilled -ElapsedSeconds 3600 -WatchdogSeconds 3600 -Terminal $false)
+            $out.killedAtCap = [bool]([Antiphon.Nightly.NightlyWatchdog]::Killed(3600, 3600, $false))
             if ($disp.CoverageComplete -or $disp.TestsPassed -or -not $disp.Incomplete -or [string]$disp.Reason -ne 'watchdog-timeout' -or $disp.Pass) {
                 Add-Problem 'timeout-marked-complete'
             }
             if (-not $out.partialRetained) { Add-Problem 'partial-diagnostic-deleted' }
             if (-not $out.killedAtCap) { Add-Problem 'cap-did-not-fire' }
-            $withTrx = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $true
+            $withTrx = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition($true, $true, $false)
             $out.trxPresentCoverageComplete = [bool]$withTrx.CoverageComplete
             if ($withTrx.CoverageComplete -or $withTrx.TestsPassed -or $withTrx.Pass -or -not $withTrx.Incomplete) {
                 Add-Problem 'trx-present-marked-complete'

@@ -1732,7 +1732,7 @@ function Test-C1397_RcAntiphonLaunchGroups {
         $cardGone = -not $classKey.Contains('Card0168InteractiveProbeTests') -and -not $exactText.Contains('Card0168InteractiveProbeTests')
         $effortGone = -not $classKey.Contains('ClaudeEffortPromptCanaryTests') -and -not $exactText.Contains('ClaudeEffortPromptCanaryTests')
         $dbNotGrouped = -not $classKey.Contains('TestDbFixtureLazyInitializationTests')
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 3600000
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'antiphon', 3600000)
         $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all' -and @($nightlyPlan[0].classes).Count -eq 0)
         $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all' -and @($emptyPlan[0].classes).Count -eq 0)
         $guardOk = (@($guardedPlan).Count -eq 1 -and [string]$guardedPlan[0].id -eq 'all' -and @($guardedPlan[0].classes).Count -eq 0)
@@ -1845,7 +1845,7 @@ function Test-C1404_Group10MeasuredBudget {
             if ([Antiphon.Nightly.NightlyCensus]::Excluded($node, $exclusions, $true)) { [void]$reasons.Add('excluded:' + $node.Uid) }
         }
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'antiphon', 0)
         if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
         if ($chunks.Count -ne 8) { [void]$reasons.Add('launch-count') }
 
@@ -2012,7 +2012,7 @@ function Test-C1584_E2EExpandedBudget {
         }
         if ($covered.Count -ne $required.Count -or @($covered.Values | Where-Object { $_ -ne 1 }).Count -ne 0) { $reasons.Add('census') }
         foreach ($node in $required) { if (-not $covered.ContainsKey($node.Uid)) { $reasons.Add('missing-node') } }
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'e2e' -Fallback 0
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'e2e', 0)
         if ($watchdog -ne 7200000) { $reasons.Add('watchdog') }
         # A future four-row method cannot silently defeat the E2E ceiling.
         $oversizeNodes = @(1..4 | ForEach-Object { [pscustomobject]@{
@@ -2105,7 +2105,7 @@ function Test-C1577_Group71MeasuredBudget {
             [void]$shapes.Add($chunk.id + ':' + $hits.Count + '/' + [Math]::Round($seconds, 1) + 's')
         }
         if ($covered.Count -ne $nodes.Count -or @($covered.Values | Where-Object { $_ -ne 1 }).Count -ne 0) { [void]$reasons.Add('census') }
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'antiphon', 0)
         if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
         $detail = 'nodes=' + $nodes.Count + ' launches=' + $chunks.Count + ' maxBoundSeconds=' + [Math]::Round($maxSeconds, 1) + ' watchdog=' + $watchdog + ' groups=' + ($shapes -join ',') + ' reasons=' + ($reasons -join ',')
         Write-Host $detail
@@ -2223,7 +2223,7 @@ function Test-G2865_Group28Group65MeasuredBudget {
         $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
         $exclusions = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows'))
         $chunks = @(Resolve-NightlySuiteChunks -DiscoveryNodes @($nodes.ToArray()) -Chunks @([pscustomobject]@{ id = 'all'; classes = @() }) -Exclusions $exclusions -ProfileAware $true -Native $true)
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 0
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'antiphon', 0)
         if ($watchdog -ne 3600000) { [void]$reasons.Add('watchdog') }
         $byType = @{}
         foreach ($node in $nodes) {
@@ -2448,7 +2448,7 @@ function Test-C1410_MeasuredCostGroups {
         try {
             [void]@(Get-NightlyNativeExecutionArguments -TrxPath (Join-Path $ResultsDirectory 'c1410-bad.trx') -DiagnosticDirectory $ResultsDirectory -Classes @($synthetic) -MethodFilter '/*/Antiphon.Tests.C1410/C1410LandSplitTests/(Run*)|(RunLater*)')
         } catch { if ([string]$_.Exception.Message -ceq 'invalid-method-filter') { $rejected = $true } }
-        $watchdog = Get-NightlyWatchdogMs -PolicyObject $policy.Object -Key 'antiphon' -Fallback 3600000
+        $watchdog = [Antiphon.Nightly.NightlyWatchdog]::PolicyWatchdogMilliseconds($policy.Object, 'antiphon', 3600000)
         $nightlyOk = ($nightlyEx.Count -eq 0 -and @($nightlyPlan).Count -eq 1 -and [string]$nightlyPlan[0].id -eq 'all')
         $emptyOk = (@($emptyPlan).Count -eq 1 -and [string]$emptyPlan[0].id -eq 'all')
         $launches = @($plan).Count
@@ -2971,11 +2971,11 @@ function Test-Group4CompletedHang {
     Assert-C487 -Cond ($null -ne $clean -and -not [bool]$clean.CompletedButHung) -Name 'group4 a finished run that exited is not a hang'
 
     $disp = $null
-    try { $disp = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $false -CompletedButHung } catch { $disp = $null }
+    try { $disp = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition($true, $false, $true) } catch { $disp = $null }
     $dispOk = ($null -ne $disp -and [string]$disp.Reason -eq 'completed-but-hung' -and -not [bool]$disp.CoverageComplete -and -not [bool]$disp.TestsPassed -and [bool]$disp.Incomplete -and -not [bool]$disp.Pass)
     Assert-C487 -Cond $dispOk -Name 'group4 completed hang stays a red test gate'
 
-    $still = Get-NightlyWatchdogTimeoutDisposition -TrxPresent $true -TerminalAccounting $false
+    $still = [Antiphon.Nightly.NightlyWatchdog]::TimeoutDisposition($true, $false, $false)
     Assert-C487 -Cond ([string]$still.Reason -eq 'watchdog-timeout' -and -not [bool]$still.TestsPassed -and -not [bool]$still.CoverageComplete) -Name 'group4 generic watchdog disposition is unchanged'
 
     $formatted = ''
