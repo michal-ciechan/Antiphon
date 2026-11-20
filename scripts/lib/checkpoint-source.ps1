@@ -105,7 +105,11 @@ function Get-CheckpointSourceOnce {
     try {
         Add-CheckpointSourceBytes $hash ([byte[]]@(2))
         Add-CheckpointSourceBytes $hash ($utf8.GetBytes($commit))
-        foreach ($entry in @($entries | Sort-Object { [System.Convert]::ToHexString($utf8.GetBytes($_.Path)) } -CaseSensitive)) {
+        # git's byte order of paths; a path's tracked record before its untracked one (`git rm --cached` prints both).
+        $ordered = @($entries | Sort-Object -CaseSensitive -Property @(
+            @{ Expression = { [System.Convert]::ToHexString($utf8.GetBytes($_.Path)) } },
+            @{ Expression = { if ($_.HeadMode -eq '' -and $_.IndexMode -eq '') { 1 } else { 0 } } }))
+        foreach ($entry in $ordered) {
             Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.Path))
             Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.HeadMode))
             Add-CheckpointSourceBytes $hash ($utf8.GetBytes($entry.HeadOid))

@@ -57,10 +57,11 @@ public sealed class SourceReadException(string code) : Exception(code)
 }
 
 /// <summary>
-/// Source identity, fingerprint v2: SHA-256 over length-framed records, version 2, HEAD, then for each path git
-/// status lists (ignored files excluded) in git's byte order: the path, its HEAD mode and id, its index mode and
-/// id (empty when absent) and its work-tree content (<see cref="WorkTreeToken"/>). The checkout is read with
-/// libgit2 in process (no git child); scripts/lib/checkpoint-source.ps1 reads the same facts from
+/// Source identity, fingerprint v2: SHA-256 over length-framed records, version 2, HEAD, then for each record git
+/// status --porcelain=v2 prints (ignored files excluded) in git's byte order of paths, a path's tracked record
+/// before its untracked one: the path, its HEAD mode and id, its index mode and id (empty when absent) and its
+/// work-tree content (<see cref="WorkTreeToken"/>). The checkout is read with libgit2 in process (no git child),
+/// or through git for a layout libgit2 declines; scripts/lib/checkpoint-source.ps1 reads the same facts from
 /// <c>git status --porcelain=v2</c> and must produce the same identity. Captured twice; any difference is
 /// <c>capture_changed</c>.
 /// </summary>
@@ -102,7 +103,9 @@ public sealed class SourceSnapshot
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Add(hash, [2]);
         Add(hash, StrictUtf8.GetBytes(read.Commit));
-        foreach (var entry in read.Entries.OrderBy(e => StrictUtf8.GetBytes(e.Path), ByteArrayComparer.Instance))
+        // git's byte order of paths; a path's tracked record before its untracked one (`git rm --cached`).
+        foreach (var entry in read.Entries.OrderBy(e => StrictUtf8.GetBytes(e.Path), ByteArrayComparer.Instance)
+                     .ThenBy(e => string.IsNullOrEmpty(e.HeadMode) && string.IsNullOrEmpty(e.IndexMode) ? 1 : 0))
         {
             Add(hash, StrictUtf8.GetBytes(entry.Path));
             Add(hash, StrictUtf8.GetBytes(entry.HeadMode ?? ""));
@@ -143,9 +146,13 @@ public sealed class SourceSnapshot
         return "file:" + digest + (executable ? ":x" : "");
     }
 
+    /// <summary>
+    /// libgit2 in process; git (<see cref="ReadWithGit"/>) for anything libgit2 declines, cannot load for, or
+    /// fails on, so every layout git reads gets the same identity the script computes.
+    /// </summary>
     private static SourceRead ReadWithLibGit2(string repository)
     {
-        ToolLibGit2.EnsureIsolated();
+        if (!ToolLibGit2.Available) return ReadWithGit(repository);
         try
         {
             var reading = Antiphon.GitInProcess.WorkTreeIdentity.Read(repository);
@@ -153,7 +160,90 @@ public sealed class SourceSnapshot
                 .Select(e => new SourceReadEntry(e.Path, e.HeadMode, e.HeadOid, e.IndexMode, e.IndexOid)).ToList());
         }
         catch (Antiphon.GitInProcess.WorkTreeIdentityException ex) { throw new SourceReadException(ex.Code); }
-        catch (LibGit2Sharp.LibGit2SharpException) { throw new SourceReadException("libgit2_failed"); }
+        catch (Antiphon.GitInProcess.WorkTreeIdentityDeclinedException) { return ReadWithGit(repository); }
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex))
+        {
+            return ReadWithGit(repository);
+        }
+    }
+
+    /// <summary>
+    /// The script's reading (scripts/lib/checkpoint-source.ps1), through hardened git: toplevel, then
+    /// <c>status --porcelain=v2 --branch</c> for HEAD and each record's modes and ids, and <c>ls-files -v</c> for
+    /// index flags that hide edits. One filter/textconv driver lookup for the three reads.
+    /// </summary>
+    internal static SourceRead ReadWithGit(string repository)
+    {
+        using var drivers = CheckpointProcessRunner.DriverSettingsScope();
+        var root = StrictUtf8.GetString(RunGit(repository, ["rev-parse", "--show-toplevel"])).Trim();
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathRooted(root))
+            throw new SourceReadException("root_invalid");
+        var status = RunGit(root, ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all",
+            "--ignore-submodules=none", "--no-renames"]);
+        CheckIndexFlags(RunGit(root, ["ls-files", "-v", "-z"]));
+        string? commit = null;
+        var entries = new List<SourceReadEntry>();
+        var index = 0;
+        while (index < status.Length)
+        {
+            var end = Array.IndexOf(status, (byte)0, index);
+            if (end <= index) throw new SourceReadException("status_invalid");
+            var record = StrictUtf8.GetString(status, index, end - index);
+            index = end + 1;
+            if (record.StartsWith("# ", StringComparison.Ordinal))
+            {
+                if (record.StartsWith("# branch.oid ", StringComparison.Ordinal)) commit = record[13..];
+                continue;
+            }
+            if (record.StartsWith("1 ", StringComparison.Ordinal))
+            {
+                // 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+                var fields = record.Split(' ', 9);
+                if (fields.Length != 9 || fields[8].Length == 0) throw new SourceReadException("status_invalid");
+                if (fields[2] != "N...") throw new SourceReadException("submodule_unsupported");
+                const string Absent = "000000";
+                entries.Add(new SourceReadEntry(fields[8],
+                    fields[3] == Absent ? null : fields[3], fields[3] == Absent ? null : fields[6],
+                    fields[4] == Absent ? null : fields[4], fields[4] == Absent ? null : fields[7]));
+            }
+            else if (record.StartsWith("? ", StringComparison.Ordinal))
+                entries.Add(new SourceReadEntry(record[2..], null, null, null, null));
+            else if (record.StartsWith("u ", StringComparison.Ordinal))
+                throw new SourceReadException("unmerged_index");
+            else
+                throw new SourceReadException("status_invalid");
+        }
+        if (commit is null || !FullOid.IsMatch(commit)) throw new SourceReadException("head_invalid");
+        return new SourceRead(root, commit, entries);
+    }
+
+    private static void CheckIndexFlags(byte[] bytes)
+    {
+        var index = 0;
+        while (index < bytes.Length)
+        {
+            var end = Array.IndexOf(bytes, (byte)0, index);
+            if (end < index + 3 || bytes[index + 1] != (byte)' ')
+                throw new SourceReadException("index_flags_invalid");
+            var flag = bytes[index];
+            if (flag == (byte)'S' || flag is >= (byte)'a' and <= (byte)'z')
+                throw new SourceReadException("indexed_path_hidden");
+            if (flag is < (byte)'A' or > (byte)'Z')
+                throw new SourceReadException("index_flags_invalid");
+            index = end + 1;
+        }
+    }
+
+    private static byte[] RunGit(string repository, IReadOnlyList<string> args)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = repository };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        CheckpointProcessRunner.BytesResult result;
+        try { result = CheckpointProcessRunner.RunBytes(start, 30_000, git: true); }
+        catch (System.ComponentModel.Win32Exception) { throw new SourceReadException("git_start"); }
+        if (result.TimedOut) throw new SourceReadException("git_timeout");
+        if (result.Exit != 0) throw new SourceReadException("git_exit");
+        return result.Stdout;
     }
 
     private static void Add(IncrementalHash hash, ReadOnlySpan<byte> bytes)

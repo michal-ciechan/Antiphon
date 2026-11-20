@@ -177,11 +177,13 @@ public sealed class CheckpointSourceStateTests
         new SourceSnapshot(_ => new SourceRead(repo.Root, head, [new SourceReadEntry("../outside.txt", null, null, null, null)]))
             .Capture(repo.Root).ErrorCode.ShouldBe("path_escape", "listed-path-stays-inside");
 
-        // A version 4 index is not read in process: unknown, not a guess.
+        // A version 4 index is not read in process: libgit2 declines and git reads it (same identity as v2).
+        var asVersion2 = new SourceSnapshot().Capture(repo.Root);
         repo.Git("update-index", "--index-version", "4");
-        new SourceSnapshot().Capture(repo.Root).ErrorCode.ShouldBe("libgit2_unsupported", "index-version-4");
+        var asVersion4 = new SourceSnapshot().Capture(repo.Root);
+        asVersion4.CaptureStatus.ShouldBe("known", "index-version-4-through-git");
+        asVersion4.Fingerprint.ShouldBe(asVersion2.Fingerprint, "index-version-does-not-change-identity");
         repo.Git("update-index", "--index-version", "2");
-        new SourceSnapshot().Capture(repo.Root).CaptureStatus.ShouldBe("known", "index-version-2-again");
 
         var noHead = Path.Combine(Path.GetTempPath(), "c835-unborn-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(noHead);
@@ -254,6 +256,53 @@ public sealed class CheckpointSourceStateTests
         {
             repo.Git("worktree", "remove", "--force", linked);
         }
+    }
+
+    [Test]
+    [Arguments("rm-cached")]
+    [Arguments("directory-to-file")]
+    [Arguments("intent-to-add")]
+    [Arguments("index-version-4")]
+    public void script_and_tool_agree_where_git_status_is_special(string shape)
+    {
+        using var repo = new GitFixture();
+        switch (shape)
+        {
+            case "rm-cached":
+                // git prints the path twice: a staged deletion and an untracked file.
+                repo.Git("rm", "-q", "--cached", "seed.txt");
+                break;
+            case "directory-to-file":
+                // HEAD holds a directory where the index now holds a file: git prints mH=000000.
+                repo.Write("folder/inner.txt", "inner\n");
+                repo.Git("add", "folder/inner.txt");
+                repo.Git("commit", "-qm", "folder");
+                repo.Git("rm", "-q", "-r", "--cached", "folder");
+                Directory.Delete(Path.Combine(repo.Root, "folder"), recursive: true);
+                repo.Write("folder", "now a file\n");
+                repo.Git("add", "folder");
+                break;
+            case "intent-to-add":
+                // A version 3 index: libgit2 declines and the tool reads through git, as the script does.
+                repo.Write("planned.txt", "planned\n");
+                repo.Git("add", "-N", "planned.txt");
+                break;
+            case "index-version-4":
+                repo.Write("seed.txt", "edited\n");
+                repo.Git("update-index", "--index-version", "4");
+                break;
+        }
+        var tool = new SourceSnapshot().Capture(repo.Root);
+        tool.CaptureStatus.ShouldBe("known", shape);
+        var source = Path.Combine(GitFixture.ProjectRoot, "scripts", "lib", "checkpoint-source.ps1");
+        var command = ". '" + source.Replace("'", "''") + "'; Get-CheckpointSource -Repository '" +
+            repo.Root.Replace("'", "''") + "' | ConvertTo-Json -Compress";
+        using var json = JsonDocument.Parse(GitFixture.Run("pwsh", repo.Root, "-NoProfile", "-Command", command));
+        var script = json.RootElement;
+        script.GetProperty("captureStatus").GetString().ShouldBe("known", shape);
+        script.GetProperty("dirtyFiles").GetInt32().ShouldBe(tool.DirtyFiles!.Value, shape);
+        script.GetProperty("fingerprint").GetString().ShouldBe(tool.Fingerprint, shape);
+        if (shape == "rm-cached") tool.DirtyFiles.ShouldBe(2, "a staged deletion and an untracked file");
     }
 
     [Test]

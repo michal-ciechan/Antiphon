@@ -215,7 +215,10 @@ namespace Antiphon.Checkpoints
             // auto-maintenance for this child. These settings do not identify or
             // remove a Windows pipe holder. Desktop C1313_BaselineAuthority still
             // has to read holder= before that hang can be called fixed.
-            foreach (var setting in new[] { "core.fsmonitor=false", "core.hooksPath=" + nullPath, "diff.external=", "core.attributesFile=" + nullPath, "gc.auto=0", "maintenance.auto=false" })
+            // core.excludesFile: GIT_CONFIG_GLOBAL does not stop git reading the user's default ignore file
+            // (~/.config/git/ignore); the checkpoint's in-process libgit2 reads (isolated from user config) and
+            // these children must agree on which untracked files exist. This can only list more files, never fewer.
+            foreach (var setting in new[] { "core.fsmonitor=false", "core.hooksPath=" + nullPath, "diff.external=", "core.attributesFile=" + nullPath, "core.excludesFile=" + nullPath, "gc.auto=0", "maintenance.auto=false" })
             { start.ArgumentList.Insert(0, setting); start.ArgumentList.Insert(0, "-c"); }
         }
 

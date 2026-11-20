@@ -801,13 +801,15 @@ public static class BuildConfinement
     {
         // The tracked paths status lists (renames as both paths, conflicts included), read in process; git for a
         // layout GitInProcess declines.
-        ToolLibGit2.EnsureIsolated();
-        try
+        if (ToolLibGit2.Available)
         {
-            if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false) is { } dirty)
-                return new StatusResult(dirty.Order(StringComparer.Ordinal).ToList(), null);
+            try
+            {
+                if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false) is { } dirty)
+                    return new StatusResult(dirty.Order(StringComparer.Ordinal).ToList(), null);
+            }
+            catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex)) { }
         }
-        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException) { }
         var status = Git(repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"]);
         if (status.Error is not null || status.Exit != 0)
             return new StatusResult([], status.Error ?? "git-status");
@@ -871,7 +873,7 @@ public static class BuildConfinement
     private static GitResult? InProcessRead(string workingDirectory, IReadOnlyList<string> args)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory)) return null;
-        ToolLibGit2.EnsureIsolated();
+        if (!ToolLibGit2.Available) return null;
         try
         {
             switch (args)
@@ -890,7 +892,7 @@ public static class BuildConfinement
                     return null;
             }
         }
-        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException || ToolLibGit2.IsUnavailable(ex))
         {
             return null;
         }

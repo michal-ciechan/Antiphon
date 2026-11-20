@@ -312,10 +312,25 @@ public sealed class CheckpointDelete(CheckpointCleanupContext context)
             if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
                 return null;
             relatives.Add(relative.TrimEnd('/'));
+            // git refuses a pathspec beyond a symbolic link (a delete it used to refuse): leave those to git.
+            var parent = owner;
+            var parts = relative.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            for (var i = 0; i < parts.Length - 1; i++)
+            {
+                parent = Path.Combine(parent, parts[i]);
+                try
+                {
+                    if (!Io.DirectoryExists(parent) && !Io.FileExists(parent)) break;
+                    if ((File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0) return null;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+            }
         }
         string? listing;
         try { listing = Antiphon.GitInProcess.InProcessGitStatus.IndexListing(owner, stage: false); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DllNotFoundException
+            or TypeInitializationException or BadImageFormatException or EntryPointNotFoundException
+            or LibGit2Sharp.LibGit2SharpException) { return null; }
         if (listing is null) return null;
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var entry in listing.Split('\0', StringSplitOptions.RemoveEmptyEntries))
