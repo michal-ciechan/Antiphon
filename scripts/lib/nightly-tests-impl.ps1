@@ -1108,6 +1108,7 @@ function Invoke-NightlyScheduledChunk {
     $chunkTestsPassed=$true
     $chunkCoverageComplete=$true
     $exitTolerated = $false
+    $recordNativeChunk = $false
     try {
     $chunkIndex++
     $chunkStartedAt = (Get-NightlyUtcNow).ToString('o')
@@ -1222,8 +1223,7 @@ function Invoke-NightlyScheduledChunk {
             throw
         }
         $phaseWatch.Stop()
-        $chunkRecord = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform)
-        [void](Register-NightlyRcChunkRevision -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Outcome $chunkRecord.Outcome -Reason $chunkRecord.Reason)
+        $recordNativeChunk = $true
         try {
             [void](Publish-NightlyChunkObservation -Run $run -LogRoot $LogRoot -TrxPath $trxPath -Suite $suiteId -Chunk ([string]$chunk.id) -RunId $invocationId -Attempt ([string]$Attempt) -HostWallSeconds ([double]$phaseWatch.Elapsed.TotalSeconds) -CoverageComplete $coverageComplete -TestsPassed $testsPassed)
         } catch {
@@ -1356,6 +1356,14 @@ function Invoke-NightlyScheduledChunk {
         } elseif ($exitTolerated -and [bool]$nativeVerdict.coverageComplete) {
             $row.result = 'pass'
         }
+    }
+    if ($recordNativeChunk) {
+        if ($isNative) {
+            $chunkRecord = Resolve-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform) -NativeVerdict $nativeVerdict -Fresh $fresh
+        } else {
+            $chunkRecord = Get-NightlyRcChunkOutcome -Run $run -ResultsPath $trxPath -ExpectedSkipRoster $expectedSkipRoster -Platform ([string]$platform)
+        }
+        [void](Register-NightlyRcChunkRevision -EvidenceRoot $RcEvidenceRoot -LogRoot $LogRoot -Suite ([string]$suiteId) -Chunk ([string]$chunk.id) -Outcome $chunkRecord.Outcome -Reason $chunkRecord.Reason)
     }
     if ($suiteId -eq 'client') {
         if (-not (Test-Path -LiteralPath $jsonPath)) {

@@ -232,6 +232,13 @@ function Get-NightlyRcTrxChunkOutcome {
     if ($null -eq $counters -or [string]::IsNullOrWhiteSpace($counters.GetAttribute('executed')) -or [string]::IsNullOrWhiteSpace($counters.GetAttribute('failed'))) {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-summary-unreadable' }
     }
+    # Integer style accepts "+0". A failed counter that is not digits is NotRun, never zero.
+    $failedAttribute = [string]$counters.GetAttribute('failed')
+    $parsedFailed = 0
+    $failedStyle = [Globalization.NumberStyles]::None
+    if ($failedAttribute -notmatch '^[0-9]+$' -or -not [int]::TryParse($failedAttribute, $failedStyle, [Globalization.CultureInfo]::InvariantCulture, [ref]$parsedFailed)) {
+        return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-summary-unreadable' }
+    }
     if ([string]$summary.Outcome -cne 'Completed') {
         return [pscustomobject]@{ Outcome = 'Failed'; Reason = 'summary-outcome' }
     }
@@ -239,7 +246,7 @@ function Get-NightlyRcTrxChunkOutcome {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unreadable' }
     }
     try {
-        return ConvertTo-NightlyRcCheckedOutcome -Rows $rows -ReportedTotal ([int]$summary.Total) -ReportedExecuted ([int]$summary.Executed) -ReportedFailed ([int]$summary.Failed) -CallerCoverageComplete $true -ExpectedSkipRoster $ExpectedSkipRoster -Platform $Platform
+        return ConvertTo-NightlyRcCheckedOutcome -Rows $rows -ReportedTotal ([int]$summary.Total) -ReportedExecuted ([int]$summary.Executed) -ReportedFailed $parsedFailed -CallerCoverageComplete $true -ExpectedSkipRoster $ExpectedSkipRoster -Platform $Platform
     } catch {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unreadable' }
     }
@@ -347,6 +354,54 @@ function Get-NightlyRcChunkOutcome {
         return Get-NightlyRcJsonChunkOutcome -Parsed $parsed -ExpectedSkipRoster $ExpectedSkipRoster -Platform $Platform
     }
     return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unparseable' }
+}
+
+function Get-NightlyRcMemberValue {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Object.Keys)) {
+            if ([string]$key -ceq $Name) { return $Object[$key] }
+        }
+        return $null
+    }
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($null -eq $prop) { return $null }
+    return $prop.Value
+}
+
+function ConvertTo-NightlyRcBoundChunkOutcome {
+    # Passed only when the shadow parse and the real native result and the log freshness all say so.
+    param($Shadow, $NativeVerdict = $null, $Fresh = $null)
+    $outcome = [string](Get-NightlyRcMemberValue -Object $Shadow -Name 'Outcome')
+    if ([string]::IsNullOrWhiteSpace($outcome)) {
+        return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unreadable' }
+    }
+    if ($outcome -cne 'Passed') { return $Shadow }
+    $testsPassed = Get-NightlyRcMemberValue -Object $NativeVerdict -Name 'testsPassed'
+    $coverageComplete = Get-NightlyRcMemberValue -Object $NativeVerdict -Name 'coverageComplete'
+    $freshOk = Get-NightlyRcMemberValue -Object $Fresh -Name 'Ok'
+    if (($testsPassed -isnot [bool]) -or ($coverageComplete -isnot [bool]) -or ($freshOk -isnot [bool])) {
+        return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unreadable' }
+    }
+    if ($testsPassed -and $coverageComplete -and $freshOk) { return $Shadow }
+    $reason = ''
+    foreach ($item in @(Get-NightlyRcMemberValue -Object $NativeVerdict -Name 'reasons')) {
+        $text = [string]$item
+        if (-not [string]::IsNullOrWhiteSpace($text)) { $reason = $text; break }
+    }
+    if ([string]::IsNullOrWhiteSpace($reason)) {
+        $freshReason = [string](Get-NightlyRcMemberValue -Object $Fresh -Name 'Reason')
+        if (-not [string]::IsNullOrWhiteSpace($freshReason)) { $reason = $freshReason }
+    }
+    if ([string]::IsNullOrWhiteSpace($reason)) { $reason = 'coverage-incomplete' }
+    return [pscustomobject]@{ Outcome = 'Failed'; Reason = $reason }
+}
+
+function Resolve-NightlyRcChunkOutcome {
+    param($Run, [string]$ResultsPath, $ExpectedSkipRoster = $null, [string]$Platform = '', $NativeVerdict = $null, $Fresh = $null)
+    $shadow = Get-NightlyRcChunkOutcome -Run $Run -ResultsPath $ResultsPath -ExpectedSkipRoster $ExpectedSkipRoster -Platform $Platform
+    return ConvertTo-NightlyRcBoundChunkOutcome -Shadow $shadow -NativeVerdict $NativeVerdict -Fresh $Fresh
 }
 
 
