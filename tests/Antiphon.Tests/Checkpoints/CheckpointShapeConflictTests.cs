@@ -123,10 +123,11 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             if (shape != "clean-build")
             {
                 var receiptPath = Path.Combine(root, ".antiphon", "script-results", shape + "-script-fixed", "source.json");
-                receipt = ReadReceipt(Path.GetDirectoryName(receiptPath)!, shape + "-script", script.Exit, GitOut(root, "rev-parse", "HEAD").Trim());
+                var head = GitOut(root, "rev-parse", "HEAD").Trim();
+                receipt = ReadReceipt(Path.GetDirectoryName(receiptPath)!, shape + "-script", script.Exit, head);
                 if (receipt.Exit == 2)
                 {
-                    var validation = await ValidateReceiptAsync(receiptPath, GitOut(root, "rev-parse", "HEAD").Trim(), cancellationToken);
+                    var validation = await ValidateReceiptAsync(receiptPath, head, cancellationToken);
                     validation.Exit.ShouldBe(2, validation.Output);
                     validation.Output.ShouldContain("CHECKPOINT SOURCE INVALID reason=source_ineligible");
                 }
@@ -372,9 +373,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         var root = Path.Combine(scope, "repo");
         Directory.CreateDirectory(root);
         _git = CheckpointFixtureGitEnvironment.Create(Path.Combine(scope, "git-isolation"));
-        Git(root, "init", "-b", "card1199");
-        Git(root, "config", "core.autocrlf", "false");
-        var ignore = "bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n";
+        Git(root, "init", "-b", "card1199"); // core.autocrlf=false too (CheckpointFixtureGitEnvironment.Git)
+        var ignore ="bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n";
         if (shape == "ignored-descendant")
             ignore += "user.dat\n";
         Write(root, ".gitignore", ignore);
@@ -560,6 +560,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
@@ -579,6 +580,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "-Evidence", receipt, "-ExpectedSourceSha", head,
         })
             start.ArgumentList.Add(arg);
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }

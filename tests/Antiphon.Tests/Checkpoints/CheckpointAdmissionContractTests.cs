@@ -211,6 +211,7 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             """ })
             start.ArgumentList.Add(argument);
         start.Environment["GIT_TRACE2_EVENT"] = trace;
+        start.Environment.Remove("ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY"); // the git reader under test
         var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
         run.Stdout.ShouldContain("SCOPE_CLOSED=True");
@@ -227,6 +228,71 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         argvs.Count(text => text.Contains("\"status\"", StringComparison.Ordinal)
             && text.Contains("\"filter.scope.clean=\"", StringComparison.Ordinal)).ShouldBe(2,
             "the reused answer still disables the driver on every read");
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task Script_reads_through_a_named_tool_build_start_no_git(CancellationToken cancellationToken)
+    {
+        var root = Directory.CreateDirectory(Path.Combine(TempDir(), "repo")).FullName;
+        CheckpointFixtureProcess.Git(root, "init", "-q");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "one\n");
+        CheckpointFixtureProcess.Git(root, "add", "tracked.txt");
+        CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        File.WriteAllText(Path.Combine(root, "tracked.txt"), "two\n");
+        File.WriteAllText(Path.Combine(root, "untracked.txt"), "new\n");
+        // No user default ignore file in play: the tool would decline to libgit2 and ask git for that layout.
+        var xdg = Directory.CreateDirectory(Path.Combine(TempDir(), "xdg")).FullName;
+        var tool = new SourceSnapshot().Capture(root);
+        tool.CaptureStatus.ShouldBe("known", tool.ErrorCode);
+        var expected = $"CAPTURE=known:2:{tool.Fingerprint}";
+
+        async Task<(string Stdout, int GitProcesses)> SnapshotAsync(string label, Action<System.Diagnostics.ProcessStartInfo> name)
+        {
+            var trace = Directory.CreateDirectory(Path.Combine(TempDir(), "trace-" + label)).FullName;
+            static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
+            var source = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-source.ps1");
+            var start = new System.Diagnostics.ProcessStartInfo("pwsh")
+            {
+                WorkingDirectory = root, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            };
+            foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", $$"""
+                $ErrorActionPreference = 'Stop'
+                . {{Quote(source)}}
+                $first = Get-CheckpointSource {{Quote(root)}}
+                $second = Get-CheckpointSource {{Quote(root)}}
+                'CAPTURE=' + $first.captureStatus + ':' + $first.dirtyFiles + ':' + $first.fingerprint + ':' + $first.errorCode
+                'CAPTURE=' + $second.captureStatus + ':' + $second.dirtyFiles + ':' + $second.fingerprint + ':' + $second.errorCode
+                $listing = Get-CheckpointToolRead {{Quote(root)}} @('ls-files', '-z', '-s')
+                'LISTING=' + ($null -eq $listing) + ':' + ([string]$listing).Replace([string][char]0, '|')
+                $status = Get-CheckpointToolTrackedStatus {{Quote(root)}}
+                'STATUS=' + ($null -eq $status) + ':' + (@($status) -join ',')
+                """ })
+                start.ArgumentList.Add(argument);
+            start.Environment["GIT_TRACE2_EVENT"] = trace;
+            start.Environment["XDG_CONFIG_HOME"] = xdg;
+            name(start);
+            var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
+            run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
+            return (run.Stdout, Directory.GetFiles(trace).Length);
+        }
+
+        var gitListing = CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s").Replace("\0", "|", StringComparison.Ordinal);
+        gitListing.ShouldContain("tracked.txt");
+
+        var named = await SnapshotAsync("named", CheckpointFixtures.UseToolReads);
+        named.Stdout.Split('\n').Count(line => line.TrimEnd().Equals(expected + ":", StringComparison.Ordinal)).ShouldBe(2, named.Stdout);
+        named.Stdout.ShouldContain("LISTING=False:" + gitListing, Case.Sensitive, "the stage listing byte for byte as git prints it");
+        named.Stdout.ShouldContain("STATUS=False:tracked.txt", Case.Sensitive, "tracked status lists the modified file only");
+        named.GitProcesses.ShouldBe(0, "the tool's libgit2 readers answered every read in process (one load per run)");
+
+        var unloadable = await SnapshotAsync("unloadable", start =>
+            start.Environment["ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY"] = Path.Combine(TempDir(), "missing", "Antiphon.Checkpoints.dll"));
+        unloadable.Stdout.Split('\n').Count(line => line.TrimEnd().Equals(expected + ":", StringComparison.Ordinal)).ShouldBe(2, unloadable.Stdout);
+        unloadable.Stdout.ShouldContain("LISTING=True:", Case.Sensitive, "a build that cannot load answers nothing; git does");
+        unloadable.Stdout.ShouldContain("STATUS=True:", Case.Sensitive);
+        unloadable.GitProcesses.ShouldBeGreaterThan(0, "a build that cannot load leaves the snapshot to the git reader");
     }
 
     [Test]

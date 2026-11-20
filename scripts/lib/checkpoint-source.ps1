@@ -2,9 +2,15 @@
 # CARD-0835 source identity. Keep this file ASCII-only.
 . (Join-Path $PSScriptRoot 'checkpoint-process-runner.ps1')
 . (Join-Path $PSScriptRoot 'checkpoint-index-paths.ps1')
+. (Join-Path $PSScriptRoot 'checkpoint-tool-reads.ps1')
 
 function Get-CheckpointGitBytes {
     param([string]$Repository, [string[]]$Arguments)
+    # A read the named tool build answers in process (rev-parse --show-toplevel, for run-checkpoint.ps1's root).
+    if ($Arguments.Count -eq 2 -and $Arguments[0] -ceq 'rev-parse' -and $Arguments[1] -ceq '--show-toplevel') {
+        $answered = Get-CheckpointToolRead $Repository $Arguments
+        if ($null -ne $answered) { return ,([System.Text.Encoding]::UTF8.GetBytes([string]$answered)) }
+    }
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'git'
     $psi.WorkingDirectory = $Repository
@@ -143,6 +149,10 @@ function Get-CheckpointSourceOnce {
 
 function Get-CheckpointSource {
     param([string]$Repository = (Get-Location).Path)
+    # A run that names a checkpoint tool build reads its source the one way the tool does (checkpoint-tool-reads.ps1);
+    # the git reader below answers every other run, and this one when that build cannot be loaded.
+    $viaTool = Get-CheckpointToolSource $Repository
+    if ($null -ne $viaTool) { return $viaTool }
     $drivers = $null
     try {
         # One filter/textconv driver lookup for this snapshot's reads (CheckpointProcessRunner.DriverSettingsScope).

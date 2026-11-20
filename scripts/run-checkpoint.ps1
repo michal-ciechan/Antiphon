@@ -118,6 +118,13 @@ function Find-CheckpointGitDir {
 
 function Invoke-CheckpointGit {
     param([string]$WorkDir, [string[]]$GitArgs)
+    # A confinement read the named checkpoint tool build answers in process (lib/checkpoint-tool-reads.ps1), as the
+    # stdout git would print; the guard keeps this function whole when a test extracts it without that library.
+    if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY) -and
+        (Get-Command -Name Get-CheckpointToolRead -CommandType Function -ErrorAction Ignore)) {
+        $answered = Get-CheckpointToolRead $WorkDir $GitArgs
+        if ($null -ne $answered) { return @{ Exit = 0; Stdout = [string]$answered; Stderr = ''; Reason = $null } }
+    }
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName = 'git'
     $psi.WorkingDirectory = $WorkDir
@@ -211,9 +218,11 @@ function Test-CheckpointStampRefusal {
         $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
     }
     $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
+    # One spelling per checkout (C:/x and C:\x are one key on Windows).
+    $ownerKey = try { [System.IO.Path]::GetFullPath($owner).TrimEnd('\', '/') } catch { $owner }
     $vouched = $null
     $toplevel = $null
-    if ($script:CheckpointVerifiedToplevels.TryGetValue($owner, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal) -and $vouched.Length -gt $gitStamp.Length + 1) {
+    if ($script:CheckpointVerifiedToplevels.TryGetValue($ownerKey, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal) -and $vouched.Length -gt $gitStamp.Length + 1) {
         $toplevel = $vouched.Substring($gitStamp.Length + 1)
     } else {
         $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
@@ -224,7 +233,7 @@ function Test-CheckpointStampRefusal {
         }
         $toplevel = ([string]$top.Stdout).Trim()
         if ([string]::IsNullOrWhiteSpace($toplevel)) { return 'git-failed' }
-        $script:CheckpointVerifiedToplevels[$owner] = $gitStamp + '|' + $toplevel
+        $script:CheckpointVerifiedToplevels[$ownerKey] = $gitStamp + '|' + $toplevel
     }
     # The index file's answer when it is a plain one for that same checkout (CheckpointIndexPaths); git otherwise.
     if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
@@ -289,12 +298,13 @@ function Test-CheckpointPreflight {
             $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
         }
         $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
+        $ownerKey = try { [System.IO.Path]::GetFullPath($owner).TrimEnd('\', '/') } catch { $owner }
         $vouched = $null
-        if (-not ($script:CheckpointVerifiedToplevels.TryGetValue($owner, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal))) {
+        if (-not ($script:CheckpointVerifiedToplevels.TryGetValue($ownerKey, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal))) {
             $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
             $verified = if (-not $top.Reason -and [int]$top.Exit -eq 0) { ([string]$top.Stdout).Trim() } else { '' }
             $vouched = $gitStamp + '|' + $verified
-            $script:CheckpointVerifiedToplevels[$owner] = $vouched
+            $script:CheckpointVerifiedToplevels[$ownerKey] = $vouched
         }
         $verified = $vouched.Substring($gitStamp.Length + 1)
         if (-not [string]::IsNullOrWhiteSpace($verified)) {
@@ -997,6 +1007,11 @@ function Get-CheckpointTrackedSnapshot {
 
 function Get-CheckpointTrackedStatus {
     param([string]$Repo)
+    if (-not [string]::IsNullOrWhiteSpace($env:ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY) -and
+        (Get-Command -Name Get-CheckpointToolTrackedStatus -CommandType Function -ErrorAction Ignore)) {
+        $inProcess = Get-CheckpointToolTrackedStatus $Repo
+        if ($null -ne $inProcess) { return @{ Error = $null; Paths = [string[]]$inProcess } }
+    }
     $raw = Invoke-CheckpointGit $Repo @('status', '--porcelain=v2', '-z', '--untracked-files=no')
     if ($raw.Reason -or [int]$raw.Exit -ne 0) { return @{ Error = 'git-status'; Paths = @() } }
     $parts = ([string]$raw.Stdout).Split([char]0, [System.StringSplitOptions]::RemoveEmptyEntries)

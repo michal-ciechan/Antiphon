@@ -797,19 +797,41 @@ public static class BuildConfinement
 
     private readonly record struct StatusResult(List<string> Paths, string? Error);
 
+    /// <summary>
+    /// For run-checkpoint.ps1 when its run names this build (ANTIPHON_CHECKPOINT_TOOL_ASSEMBLY, CheckpointToolReads.cs):
+    /// a confinement read this tool answers in process, as the git stdout it stands for; null when git must answer
+    /// (another command form, a declined layout). The script parses it exactly as it parses git's.
+    /// </summary>
+    public static string? ScriptRead(string workingDirectory, string[] args) =>
+        InProcessRead(workingDirectory, args) is { } answered ? answered.Stdout : null;
+
+    /// <summary>
+    /// For run-checkpoint.ps1 (see <see cref="ScriptRead"/>): the tracked paths
+    /// <c>git status --porcelain=v2 -z --untracked-files=no</c> lists, in ordinal order; null when git must answer.
+    /// </summary>
+    public static string[]? ScriptTrackedStatus(string repository) => InProcessStatus(repository)?.ToArray();
+
+    private static List<string>? InProcessStatus(string repository)
+    {
+        // The tracked paths status lists (renames as both paths, conflicts included), read in process; null for a
+        // layout GitInProcess declines.
+        if (!ToolLibGit2.Available) return null;
+        try
+        {
+            return Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false, agrees: AgreesWithGitChild)
+                is { } dirty ? dirty.Order(StringComparer.Ordinal).ToList() : null;
+        }
+        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException || ToolLibGit2.IsNativeUnavailable(ex))
+        {
+            return null;
+        }
+    }
+
     private static StatusResult ReadStatus(string repository)
     {
-        // The tracked paths status lists (renames as both paths, conflicts included), read in process; git for a
-        // layout GitInProcess declines.
-        if (ToolLibGit2.Available)
-        {
-            try
-            {
-                if (Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false, agrees: AgreesWithGitChild) is { } dirty)
-                    return new StatusResult(dirty.Order(StringComparer.Ordinal).ToList(), null);
-            }
-            catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException || ToolLibGit2.IsNativeUnavailable(ex)) { }
-        }
+        // In process, or git for a layout GitInProcess declines.
+        if (InProcessStatus(repository) is { } dirty)
+            return new StatusResult(dirty, null);
         var status = Git(repository, ["status", "--porcelain=v2", "-z", "--untracked-files=no"]);
         if (status.Error is not null || status.Exit != 0)
             return new StatusResult([], status.Error ?? "git-status");

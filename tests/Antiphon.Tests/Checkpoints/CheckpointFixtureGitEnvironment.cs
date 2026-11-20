@@ -97,8 +97,35 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
     {
         var stdout = RunGit(repository, args);
         if (args.Length > 0 && string.Equals(args[0], "init", StringComparison.Ordinal))
-            RunGit(repository, "config", "core.autocrlf", "false");
+            SettleNewRepository(repository, args);
         return stdout;
+    }
+
+    // A new fixture repository stores its bytes as written (core.autocrlf=false) and starts no background
+    // `git maintenance run --auto` after each fixture commit (maintenance.auto=false, which could also write .git
+    // while a leg reads it). Written into the new repository's own config file, as `git config` would, without a
+    // git process: only for an init of this folder itself (options only, or a branch name) whose config names
+    // neither key yet. Anything else (a path argument, a separate git dir, a re-init) goes through git as before.
+    private void SettleNewRepository(string repository, string[] args)
+    {
+        var config = Path.Combine(repository, ".git", "config");
+        var own = true;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i] is "-b" or "--initial-branch") { i++; continue; }
+            if (!args[i].StartsWith('-') || args[i].StartsWith("--separate-git-dir", StringComparison.Ordinal)) own = false;
+        }
+        if (own && File.Exists(config))
+        {
+            var text = File.ReadAllText(config);
+            if (!text.Contains("autocrlf", StringComparison.OrdinalIgnoreCase)
+                && !text.Contains("[maintenance", StringComparison.OrdinalIgnoreCase))
+            {
+                File.AppendAllText(config, "\n[core]\n\tautocrlf = false\n[maintenance]\n\tauto = false\n");
+                return;
+            }
+        }
+        RunGit(repository, "config", "core.autocrlf", "false");
     }
 
     // Direct children can drop inherited Git variables. ProcessDriver can only assign.

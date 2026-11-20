@@ -490,6 +490,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             "-Evidence", receipt, "-ExpectedSourceSha", head,
         })
             start.ArgumentList.Add(arg);
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
@@ -561,6 +562,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
             "-MinExecuted", minExecuted, "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }

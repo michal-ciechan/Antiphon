@@ -85,10 +85,9 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         if (!OperatingSystem.IsWindows())
             Skip.Test("CARD-1310 confined Windows build leaves UseAppHost unset");
 
-        var root = InitGitRepo();
         // Prepare and the script stat with system git config disabled. A host autocrlf commit
-        // then looks dirty. Store the fixture bytes as written.
-        Git(root, "config", "core.autocrlf", "false");
+        // then looks dirty. InitGitRepo stores the fixture bytes as written (core.autocrlf=false).
+        var root = InitGitRepo();
         Write(root, ".gitignore", "bin-*/\nobj/\n.antiphon/\n");
         Write(root, "App/App.csproj", """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -213,6 +212,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await RunScriptAsync(start, cancellationToken);
     }
@@ -291,6 +291,7 @@ public sealed class CheckpointOutputConfinementTests : CheckpointTestBase
         var path = Environment.GetEnvironmentVariable("Path") ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         start.Environment["Path"] = shimBin + Path.PathSeparator + path;
         start.Environment["C1310_DOTNET_LOG"] = log;
+        CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await RunConfinedScriptAsync(start, cancellationToken);
     }
