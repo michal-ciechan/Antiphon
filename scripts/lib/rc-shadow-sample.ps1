@@ -3,14 +3,17 @@
 # Persists a fixed-seed sample roster before launch. Does not launch, publish,
 # promote, write a trust record, or change IncrementalValidation from Shadow.
 # effectiveMode stays Full and gateCredit stays false.
-# A present provenanceFailure or unexpectedSkip that is not boolean false is a
-# failure. That includes a string, a number, null, and an object. Boolean false
-# is clean, and a missing flag is clean.
+# A present provenanceFailure or unexpectedSkip that is not the single boolean
+# false is a failure. That includes a string, a number, null, an object, and
+# any array, including a one-element array of false. Boolean false is clean,
+# and a missing flag is clean. A case-variant of either flag name fails closed.
 # A carry is not launched unless sampled names it. A result row for a carry id
 # outside sampled fails closed as carried-result, including a passed row, and
 # invalidates every carry. A carry id listed in sampled is the launched sample
 # and follows the ordinary row rules. An unsampled row that is not a carry
-# stays dropped.
+# stays dropped. Once sampled or results is present, a row whose chunkId is
+# not a non-empty string fails closed as unreadable-chunk-id, whatever its
+# outcome. A non-string carry entry fails closed. It is not skipped.
 # PRECONDITION for S6c/S6d: before this library feeds any carry decision, absent
 # or unrecognised sample evidence must invalidate every carry when Carries is
 # nonempty or CurrentSample is roster or executed. A pilot without cchunk and
@@ -26,7 +29,9 @@ function Get-RcShadowField {
     if ($Object -is [Collections.IDictionary]) {
         foreach ($key in @($Object.Keys)) {
             if ($key -is [string] -and [string]::Equals($key, $Name, [StringComparison]::Ordinal)) {
-                return $Object[$key]
+                # The comma keeps a one-element array from unrolling to its element.
+                $value = $Object[$key]
+                return ,$value
             }
         }
         return $null
@@ -34,11 +39,40 @@ function Get-RcShadowField {
     if ($Object -is [pscustomobject]) {
         foreach ($property in @($Object.PSObject.Properties)) {
             if ([string]::Equals($property.Name, $Name, [StringComparison]::Ordinal)) {
-                return $property.Value
+                $value = $property.Value
+                return ,$value
             }
         }
     }
     return $null
+}
+
+function Get-RcShadowNames {
+    param($Object)
+    $names = [Collections.Generic.List[string]]::new()
+    if ($Object -is [Collections.IDictionary]) {
+        foreach ($key in @($Object.Keys)) {
+            if ($key -is [string]) { $names.Add($key) }
+        }
+    } elseif ($Object -is [pscustomobject]) {
+        foreach ($property in @($Object.PSObject.Properties)) {
+            $names.Add([string]$property.Name)
+        }
+    }
+    return ,$names.ToArray()
+}
+
+function Test-RcShadowEmptyCollection {
+    param($Value)
+    if ($null -eq $Value) { return $true }
+    if ($Value -is [string]) { return $false }
+    if ($Value -is [System.Array]) { return $Value.Length -eq 0 }
+    return $false
+}
+
+function Test-RcShadowReadableChunkId {
+    param($Value)
+    return ($Value -is [string]) -and -not [string]::IsNullOrWhiteSpace($Value)
 }
 
 function Test-RcShadowText {
@@ -268,8 +302,22 @@ function Test-RcShadowWholeNumber {
 
 function Test-RcShadowClosedFlag {
     param($Row, [string]$Name)
-    # Missing is clean. Boolean false is clean. Any other present value fails.
-    if (-not (Test-RcShadowKey $Row $Name)) { return $false }
+    # Missing is clean. The single boolean false is clean. Any other present
+    # value fails, including an array whose only element is false. A case-variant
+    # of the name fails closed even when the exact key is boolean false.
+    $exact = $false
+    $variant = $false
+    # Assign the name array. Wrapping the call in @() keeps that array as one item.
+    $flagNames = Get-RcShadowNames $Row
+    foreach ($key in $flagNames) {
+        if ([string]::Equals($key, $Name, [StringComparison]::Ordinal)) {
+            $exact = $true
+        } elseif ([string]::Equals($key, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+            $variant = $true
+        }
+    }
+    if ($variant) { return $true }
+    if (-not $exact) { return $false }
     $value = Get-RcShadowField $Row $Name
     return -not ($value -is [bool] -and -not $value)
 }
@@ -297,6 +345,7 @@ function Get-RcShadowSampleEvidenceFailure {
     param($Evidence, [object[]]$Carries = @())
     $carried = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($carry in @($Carries)) {
+        if ($null -ne $carry -and $carry -isnot [string]) { throw 'shadow-carry-id' }
         if ($carry -is [string] -and -not [string]::IsNullOrEmpty($carry)) {
             [void]$carried.Add($carry)
         }
@@ -308,7 +357,7 @@ function Get-RcShadowSampleEvidenceFailure {
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if ($sawSampled) {
         $sampled = Get-RcShadowField $Evidence 'sampled'
-        if ($null -eq $sampled) {
+        if (Test-RcShadowEmptyCollection $sampled) {
             return [pscustomobject]@{ kind = 'empty-results'; chunkId = '' }
         }
         foreach ($id in @($sampled)) {
@@ -324,7 +373,7 @@ function Get-RcShadowSampleEvidenceFailure {
     $rows = [Collections.Generic.List[object]]::new()
     if ($sawResults) {
         $results = Get-RcShadowField $Evidence 'results'
-        if ($null -eq $results) {
+        if (Test-RcShadowEmptyCollection $results) {
             $chunkId = ''
             if ($ids.Count -gt 0) { $chunkId = [string]$ids[0] }
             return [pscustomobject]@{ kind = 'empty-results'; chunkId = $chunkId }
@@ -332,6 +381,10 @@ function Get-RcShadowSampleEvidenceFailure {
         foreach ($row in @($results)) {
             if ($null -eq $row) {
                 return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = '' }
+            }
+            $rowId = Get-RcShadowField $row 'chunkId'
+            if (-not (Test-RcShadowReadableChunkId $rowId)) {
+                return [pscustomobject]@{ kind = 'unreadable-chunk-id'; chunkId = '' }
             }
             $rows.Add($row)
         }
@@ -342,7 +395,10 @@ function Get-RcShadowSampleEvidenceFailure {
     foreach ($id in $ids) { [void]$launched.Add($id) }
     foreach ($row in $rows) {
         $rowId = Get-RcShadowField $row 'chunkId'
-        if ($rowId -isnot [string] -or -not $carried.Contains($rowId)) { continue }
+        if (-not (Test-RcShadowReadableChunkId $rowId)) {
+            return [pscustomobject]@{ kind = 'unreadable-chunk-id'; chunkId = '' }
+        }
+        if (-not $carried.Contains($rowId)) { continue }
         if ($sawSampled -and $launched.Contains($rowId)) { continue }
         return [pscustomobject]@{ kind = 'carried-result'; chunkId = $rowId }
     }
