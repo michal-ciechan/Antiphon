@@ -479,17 +479,29 @@ public sealed class RunCheckpointSourceScriptTests
         private int _round;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
-        // One seeded repository per seed text per test run, copied into each fixture: the same commit (one HEAD per
-        // seed, distinct seeds distinct HEADs) without seven git processes per fixture. A copy's index stat data no
-        // longer matches its files, so git compares their contents and still finds the tree clean.
+        // One seeded repository per seed text per test run, copied into each fixture without seven git processes per
+        // fixture. Fixtures with the same seed share one commit and HEAD; a test that needs a distinct HEAD uses a
+        // distinct seed (as C1035 does). A copy's index stat data no longer matches its files, so git compares their
+        // contents and still finds the tree clean. A seed that fails to build is not kept: the next fixture retries.
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<(string Directory, string Head)>> Seeds =
             new(StringComparer.Ordinal);
         private static readonly Lazy<string> SeedRoot = new(() =>
         {
+            // Seed roots a killed test host left behind (ProcessExit never ran) are swept after half a day.
+            try
+            {
+                foreach (var stale in Directory.EnumerateDirectories(Path.GetTempPath(), "c835-seeds-*"))
+                    if (Directory.GetLastWriteTimeUtc(stale) < DateTime.UtcNow.AddHours(-12))
+                        GitFixtureCleanup.Delete(stale);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             var root = Path.Combine(Path.GetTempPath(), "c835-seeds-" + Guid.NewGuid().ToString("N"));
             AppDomain.CurrentDomain.ProcessExit += (_, _) => GitFixtureCleanup.Delete(root);
             return root;
         });
+
+        private static (string Directory, string Head) Seed(string seed) =>
+            Seeds.GetOrAdd(seed, text => new Lazy<(string, string)>(() => Seeded(text), LazyThreadSafetyMode.PublicationOnly)).Value;
 
         private static (string Directory, string Head) Seeded(string seed)
         {
@@ -501,20 +513,26 @@ public sealed class RunCheckpointSourceScriptTests
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.WriteAllText(target, value);
             }
-            Run("git", repo, ["init", "-q"]);
-            Run("git", repo, ["config", "user.name", "Checkpoint Test"]);
-            Run("git", repo, ["config", "user.email", "checkpoint@example.invalid"]);
-            Run("git", repo, ["config", "core.autocrlf", "false"]);
+            string Git(params string[] args)
+            {
+                var result = Run("git", repo, args);
+                result.Exit.ShouldBe(0, "seed git " + string.Join(' ', args) + ": " + result.Output);
+                return result.Output;
+            }
+            Git("init", "-q");
+            Git("config", "user.name", "Checkpoint Test");
+            Git("config", "user.email", "checkpoint@example.invalid");
+            Git("config", "core.autocrlf", "false");
             // No background maintenance writing this .git while fixtures copy it.
-            Run("git", repo, ["config", "maintenance.auto", "false"]);
-            Put(".gitignore","bin-*/\nobj/\n.antiphon/\n");
+            Git("config", "maintenance.auto", "false");
+            Put(".gitignore", "bin-*/\nobj/\n.antiphon/\n");
             Put("tracked.txt", seed);
             Put("tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs",
                 File.ReadAllText(Path.Combine(ProjectRoot, "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs")));
             Put("sample/sample.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
-            Run("git", repo, ["add", "."]);
-            Run("git", repo, ["commit", "-qm", "seed"]);
-            var head = Run("git", repo, ["rev-parse", "HEAD"]).Output.Trim();
+            Git("add", ".");
+            Git("commit", "-qm", "seed");
+            var head = Git("rev-parse", "HEAD").Trim();
             head.ShouldMatch("^[0-9a-f]{40,64}$", "seed repository committed");
             return (repo, head);
         }
@@ -531,9 +549,18 @@ public sealed class RunCheckpointSourceScriptTests
         public Fixture(string seed = "seed", string repoName = "source")
         {
             Repo = Path.Combine(Root, repoName);
-            Directory.CreateDirectory(External);
-            var seeded = Seeds.GetOrAdd(seed, text => new Lazy<(string, string)>(() => Seeded(text))).Value;
-            CopyTree(seeded.Directory, Repo);
+            // The seed first, so a failed seed leaves nothing under Root; a failed copy removes what it made.
+            var seeded = Seed(seed);
+            try
+            {
+                Directory.CreateDirectory(External);
+                CopyTree(seeded.Directory, Repo);
+            }
+            catch
+            {
+                GitFixtureCleanup.Delete(Root);
+                throw;
+            }
             Head = seeded.Head;
             File.WriteAllText(Path.Combine(External, "shim.ps1"), """
                 param()
