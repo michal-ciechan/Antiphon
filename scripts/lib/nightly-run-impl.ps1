@@ -22,43 +22,13 @@ if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyConti
 
 function Get-NightlyDefaultStateRoot { return 'C:\Antiphon\nightly' }
 
-# reset --hard rewrites only index entries whose blob or stat changed. A reused clone that
-# was checked out before an eol attribute landed keeps the old bytes for every unchanged
-# blob: rc run ae84478d reused a 2026-10-18 core.autocrlf=true clone, so 169 *.ps1 stayed
-# CRLF after *.ps1 eol=lf and C1313 refused the selector. Rewrite exactly the paths whose
-# working bytes differ from what the current attributes check out. checkout-index -f skips
-# a stat-clean file, so each stale file is removed first. -u refreshes its index stat.
-function Get-NightlyStaleEolPaths {
-    param([string]$LsFilesEolOutput, [ref]$SkippedCount)
-    $stale = New-Object System.Collections.Generic.List[string]
-    foreach ($line in ([string]$LsFilesEolOutput -split "`n")) {
-        $line = $line.TrimEnd("`r")
-        if ($line -notmatch '^i/(\S*)\s+w/(\S*)\s+attr/([^\t]*)\t(.+)$') { continue }
-        $index = $Matches[1]; $work = $Matches[2]; $attr = ' ' + $Matches[3].Trim() + ' '; $path = $Matches[4]
-        if ($index -ne 'lf' -or $attr -match ' -text ') { continue }
-        $wantLf = $attr -match ' eol=lf '
-        $wantCrlf = $attr -match ' eol=crlf '
-        if (($wantLf -and ($work -eq 'crlf' -or $work -eq 'mixed')) -or
-            ($wantCrlf -and ($work -eq 'lf' -or $work -eq 'mixed'))) {
-            # A quoted path carries C escapes; leave it rather than guess its name.
-            if ($path.StartsWith('"')) {
-                if ($null -ne $SkippedCount) { $SkippedCount.Value++ }
-                continue
-            }
-            $stale.Add($path)
-        }
-    }
-    # No unary comma: callers wrap in @(), and @(,@()) would be one empty element.
-    return $stale.ToArray()
-}
-
 function Repair-NightlyCheckoutLineEndings {
     param([string]$CheckoutRoot)
     $eol = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments @('-c', 'core.quotePath=false', 'ls-files', '--eol')
     if ([int]$eol.ExitCode -ne 0) { throw ('git ls-files --eol failed with exit {0}' -f $eol.ExitCode) }
     $skipped = 0
     $stale = New-Object System.Collections.Generic.List[string]
-    foreach ($path in @(Get-NightlyStaleEolPaths -LsFilesEolOutput ([string]$eol.Output) -SkippedCount ([ref]$skipped))) {
+    foreach ($path in @([Antiphon.Nightly.NightlyRunParts]::StaleEolPaths(([string]$eol.Output), ([ref]$skipped)))) {
         # Windows PowerShell 5.1 can decode Git's UTF-8 stdout with the OEM code
         # page. Never pass an unresolvable name to checkout-index: it fails the
         # whole sync. LiteralPath also preserves spaces and wildcard characters.
@@ -76,44 +46,6 @@ function Repair-NightlyCheckoutLineEndings {
         $write = Invoke-NightlyGit -WorkingDirectory $CheckoutRoot -Arguments (@('checkout-index', '-f', '-u', '--') + $batch)
         if ([int]$write.ExitCode -ne 0) { throw ('git checkout-index for stale line endings failed with exit {0}' -f $write.ExitCode) }
     }
-}
-
-function New-NightlyRunDirectoryName {
-    param([datetime]$Utc, [string]$RunId)
-    $stamp = $Utc.ToUniversalTime().ToString('yyyy-MM-dd-HHmm')
-    $short = $RunId
-    if ($short.Length -gt 8) { $short = $short.Substring(0, 8) }
-    return ('{0}-{1}' -f $stamp, $short)
-}
-
-function Get-NightlyStatePaths {
-    param([string]$StateRoot)
-    return [pscustomobject]@{
-        StateRoot = $StateRoot
-        LastAttempt = Join-Path $StateRoot 'last-run.json'
-        LastGreen = Join-Path $StateRoot 'last-complete-green.json'
-        Lock = Join-Path $StateRoot 'run.lock'
-        Logs = Join-Path $StateRoot 'logs'
-    }
-}
-
-function Test-NightlyCompleteGreenPredicate {
-    <#
-      CARD-0599 D-2. The predicate now names the credit kind it is being asked about.
-      Called without -CreditKind it answers the historical question - does this state
-      earn MASTER readiness credit - so every existing caller keeps its meaning and an
-      RC run can never back into master's own readiness. -CreditKind 'rc-release' asks
-      the separate release question. An unknown profile/trigger/ref combination earns
-      nothing; there is no default kind.
-    #>
-    param($State, [string]$CreditKind = 'master-scheduled')
-    if (-not $State) { return $false }
-    $want = ([string]$CreditKind).Trim().ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($want)) { $want = 'master-scheduled' }
-    if ($script:ReleaseGateCreditKinds -notcontains $want) { return $false }
-    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($State)
-    if (-not $verdict.Ok) { return $false }
-    return ([string]$verdict.CreditKind -eq $want)
 }
 
 function Write-NightlyHopFailure {
@@ -192,96 +124,6 @@ function Invoke-NightlyWatchedCommand {
 
 . (Join-Path $PSScriptRoot 'release-selection.ps1')
 
-function New-NightlyTestsHopArgumentList {
-    # The rc profile always reaches nightly-tests.ps1 through the selection hop.
-    # Keep this the only builder so a seed witness and the run core share one list.
-    param(
-        [string]$TestsScript,
-        [string]$CheckoutRoot,
-        [string]$RunDir,
-        [string]$Sha,
-        [string]$GitRefLabel,
-        [string]$Trigger,
-        [string]$Profile,
-        [string]$RunId,
-        [string]$Repository,
-        [string]$SelectionMode,
-        [string]$BaselineSha,
-        [string]$BaselineReceiptPath,
-        [string]$QualificationPath,
-        [string]$TimingRoot,
-        [string]$TrainManifestPath,
-        [string]$ReleaseIntentPath,
-        [string]$SelectionAttemptPath,
-        [string]$SelectionAttemptDigest,
-        [string]$SelectionPath,
-        [string]$SelectionDigest,
-        [int]$Attempt = 1,
-        [string]$ReleaseRoot,
-        [string]$CandidateId,
-        [string]$ExpectedSha,
-        [string[]]$Suites,
-        [string]$SeamsPath,
-        [string]$PriorFailuresPath,
-        [string]$PriorFailuresDigest,
-        [switch]$AcceptCrossCandidateSeed,
-        [string]$SeedSourceCandidateId,
-        [string]$RcEvidenceRoot
-    )
-    $testArgs = @(
-        '-NoProfile', '-NonInteractive', '-File', $TestsScript,
-        '-RepoRoot', $CheckoutRoot,
-        '-LogRoot', $RunDir,
-        '-Sha', $Sha,
-        '-GitRef', $GitRefLabel,
-        '-Trigger', $Trigger,
-        '-Profile', $Profile,
-        '-RunId', $RunId
-    )
-    if ($SelectionAttemptPath) {
-        $testArgs += '-Repository'; $testArgs += [string]$Repository
-        $testArgs += '-SelectionMode'; $testArgs += [string]$SelectionMode
-        $testArgs += '-BaselineSha'; $testArgs += [string]$BaselineSha
-        $testArgs += '-BaselineReceiptPath'; $testArgs += [string]$BaselineReceiptPath
-        $testArgs += '-QualificationPath'; $testArgs += [string]$QualificationPath
-        $testArgs += '-TimingRoot'; $testArgs += [string]$TimingRoot
-        $testArgs += '-TrainManifestPath'; $testArgs += [string]$TrainManifestPath
-        $testArgs += '-ReleaseIntentPath'; $testArgs += [string]$ReleaseIntentPath
-        $testArgs += '-SelectionAttemptPath'; $testArgs += [string]$SelectionAttemptPath
-        $testArgs += '-SelectionAttemptDigest'; $testArgs += [string]$SelectionAttemptDigest
-        $testArgs += '-SelectionPath'; $testArgs += [string]$SelectionPath
-        $testArgs += '-SelectionDigest'; $testArgs += [string]$SelectionDigest
-        $testArgs += '-Attempt'; $testArgs += [string]$Attempt
-        $testArgs += '-ReleaseRoot'; $testArgs += $ReleaseRoot
-        $testArgs += '-CandidateId'; $testArgs += $CandidateId
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string]$TimingRoot) -and ($testArgs -notcontains '-TimingRoot')) {
-        $testArgs += '-TimingRoot'
-        $testArgs += [string]$TimingRoot
-    }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha)) {
-        $testArgs += '-ExpectedSha'
-        $testArgs += $ExpectedSha
-    }
-    if ($Suites -and $Suites.Count -gt 0) {
-        $testArgs += '-Suites'
-        $testArgs += ($Suites -join ',')
-    }
-    if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
-        $testArgs += '-SeamsPath'
-        $testArgs += $SeamsPath
-    }
-    if (-not [string]::IsNullOrWhiteSpace($RcEvidenceRoot)) {
-        $testArgs += '-RcEvidenceRoot'
-        $testArgs += $RcEvidenceRoot
-    }
-    if ($PriorFailuresPath) { $testArgs += @('-PriorFailuresPath', $PriorFailuresPath, '-PriorFailuresDigest', $PriorFailuresDigest) }
-    if ($AcceptCrossCandidateSeed) { $testArgs += '-AcceptCrossCandidateSeed' }
-    if ($SeedSourceCandidateId) { $testArgs += @('-SeedSourceCandidateId', $SeedSourceCandidateId) }
-    if ($testArgs -notcontains '-Attempt') { $testArgs += @('-Attempt', [string]$Attempt) }
-    return ,$testArgs
-}
-
 function Invoke-AntiphonNightlyRunCore {
     param(
         [string[]]$Suites,
@@ -329,7 +171,7 @@ function Invoke-AntiphonNightlyRunCore {
     if ([string]::IsNullOrWhiteSpace($RunId)) { $RunId = New-NightlyRunId }
     if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = 'nightly' }
     $Profile = $Profile.Trim().ToLowerInvariant()
-    $paths = Get-NightlyStatePaths -StateRoot $StateRoot
+    $paths = [Antiphon.Nightly.NightlyRunParts]::StatePaths($StateRoot)
     if ([string]::IsNullOrWhiteSpace($LogRoot)) { $LogRoot = $paths.Logs }
     if ([string]::IsNullOrWhiteSpace($TimingRoot) -and [string]::IsNullOrWhiteSpace($SelectionAttemptPath)) {
         if (-not (Get-Command Resolve-QualificationTimingRoot -ErrorAction SilentlyContinue)) {
@@ -779,7 +621,7 @@ function Invoke-AntiphonNightlyRunCore {
 
         # S6b shadow: one evidence root for this run, derived once and passed to every hook.
         $phase = 'tests'
-        $runName = New-NightlyRunDirectoryName -Utc (Get-NightlyUtcNow) -RunId $RunId
+        $runName = [Antiphon.Nightly.NightlyRunParts]::RunDirectoryName((Get-NightlyUtcNow), $RunId)
         $runDir = Join-Path $LogRoot $runName
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
         $rcEvidenceRoot = Join-Path $runDir 'rc-run-evidence'
@@ -813,7 +655,7 @@ function Invoke-AntiphonNightlyRunCore {
             $testsScript = Join-Path $PSScriptRoot '..\nightly-tests.ps1'
         }
         $gitRefLabel = ('origin/{0}' -f $Ref)
-        $testArgs = New-NightlyTestsHopArgumentList -TestsScript $testsScript -CheckoutRoot $CheckoutRoot -RunDir $runDir -Sha $sha -GitRefLabel $gitRefLabel -Trigger $Trigger -Profile $Profile -RunId $RunId -Repository $Repository -SelectionMode $SelectionMode -BaselineSha $BaselineSha -BaselineReceiptPath $BaselineReceiptPath -QualificationPath $QualificationPath -TimingRoot $TimingRoot -TrainManifestPath $TrainManifestPath -ReleaseIntentPath $ReleaseIntentPath -SelectionAttemptPath $SelectionAttemptPath -SelectionAttemptDigest $SelectionAttemptDigest -SelectionPath $SelectionPath -SelectionDigest $SelectionDigest -Attempt $Attempt -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId -ExpectedSha $ExpectedSha -Suites $Suites -SeamsPath $SeamsPath -PriorFailuresPath $PriorFailuresPath -PriorFailuresDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -RcEvidenceRoot $rcEvidenceRoot
+        $testArgs = [Antiphon.Nightly.NightlyRunParts]::TestsHopArguments([Antiphon.Nightly.TestsHopRequest]@{ TestsScript = $testsScript; CheckoutRoot = $CheckoutRoot; RunDir = $runDir; Sha = $sha; GitRefLabel = $gitRefLabel; Trigger = $Trigger; Profile = $Profile; RunId = $RunId; Repository = $Repository; SelectionMode = $SelectionMode; BaselineSha = $BaselineSha; BaselineReceiptPath = $BaselineReceiptPath; QualificationPath = $QualificationPath; TimingRoot = $TimingRoot; TrainManifestPath = $TrainManifestPath; ReleaseIntentPath = $ReleaseIntentPath; SelectionAttemptPath = $SelectionAttemptPath; SelectionAttemptDigest = $SelectionAttemptDigest; SelectionPath = $SelectionPath; SelectionDigest = $SelectionDigest; Attempt = $Attempt; ReleaseRoot = $ReleaseRoot; CandidateId = $CandidateId; ExpectedSha = $ExpectedSha; Suites = $Suites; SeamsPath = $SeamsPath; PriorFailuresPath = $PriorFailuresPath; PriorFailuresDigest = $PriorFailuresDigest; AcceptCrossCandidateSeed = [bool]($AcceptCrossCandidateSeed); SeedSourceCandidateId = $SeedSourceCandidateId; RcEvidenceRoot = $rcEvidenceRoot })
         Write-NightlyRunLine ('running {0}' -f $testsScript)
         $script:NightlyHopCommand = 'pwsh ' + ($testArgs -join ' ')
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot

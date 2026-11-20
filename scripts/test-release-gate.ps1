@@ -909,13 +909,13 @@ function Test-C599_CreditVerdicts {
     $master = New-C599State
     $v = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($master)
     Assert-C487 -Cond ([string]$v.CreditKind -eq 'master-scheduled') -Name 'C599 CreditVerdicts control master green earns master credit' -Detail (@($v.Reasons) -join ';')
-    Assert-C487 -Cond (Test-NightlyCompleteGreenPredicate -State $master) -Name 'C599 CreditVerdicts predicate default asks the master question'
-    Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $master -CreditKind 'rc-release')) -Name 'C599 CreditVerdicts master green never earns release credit'
+    Assert-C487 -Cond ([Antiphon.Nightly.NightlyRunParts]::CompleteGreenPredicate($master, 'master-scheduled')) -Name 'C599 CreditVerdicts predicate default asks the master question'
+    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyRunParts]::CompleteGreenPredicate($master, 'rc-release'))) -Name 'C599 CreditVerdicts master green never earns release credit'
 
     $rc = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha $ShaB -Candidate $CandidateId
     $vr = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($rc)
     Assert-C487 -Cond ([string]$vr.CreditKind -eq 'rc-release') -Name 'C599 CreditVerdicts control rc green earns release credit' -Detail (@($vr.Reasons) -join ';')
-    Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $rc)) -Name 'C599 CreditVerdicts rc green never earns master credit'
+    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyRunParts]::CompleteGreenPredicate($rc, 'master-scheduled'))) -Name 'C599 CreditVerdicts rc green never earns master credit'
 
     foreach ($field in @('coverageComplete', 'testsPassed', 'reportDelivered')) {
         $bad = New-C599State
@@ -948,8 +948,8 @@ function Test-C599_CreditVerdicts {
     $noExpected = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha '' -Candidate $CandidateId
     Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noExpected)).CreditKind -eq '') -Name 'C599 CreditVerdicts rc without a pinned expectedSha earns nothing'
 
-    Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $master -CreditKind 'invented-kind')) -Name 'C599 CreditVerdicts an invented credit kind earns nothing'
-    Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $null)) -Name 'C599 CreditVerdicts a null state earns nothing'
+    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyRunParts]::CompleteGreenPredicate($master, 'invented-kind'))) -Name 'C599 CreditVerdicts an invented credit kind earns nothing'
+    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyRunParts]::CompleteGreenPredicate($null, 'master-scheduled'))) -Name 'C599 CreditVerdicts a null state earns nothing'
 }
 
 function Test-C599_SelectionHopExitCodes {

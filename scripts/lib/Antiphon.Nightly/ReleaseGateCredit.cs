@@ -33,7 +33,7 @@ namespace Antiphon.Nightly
         }
 
         // Join-Path: on Windows '/' becomes '\'; at most one separator is dropped from each side of the join.
-        private static string Join(string parent, string child)
+        internal static string Join(string parent, string child)
         {
             var sep = Path.DirectorySeparatorChar;
             string Normal(string s) => sep == '\\' ? (s ?? "").Replace('/', '\\') : (s ?? "");
