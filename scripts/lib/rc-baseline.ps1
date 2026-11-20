@@ -57,7 +57,7 @@ function Get-RcReleaseBaseline {
             foreach ($field in @('refName','sourceSha','path','digest','evidenceRoot')) {
                 if ($pointer[$field] -isnot [string] -or -not $pointer[$field]) { throw 'baseline-pointer-invalid' }
             }
-            if ($pointer.sourceSha -cnotmatch '\A[0-9a-f]{40}\z' -or -not (Test-RcFullDigest $pointer.digest) -or
+            if ($pointer.sourceSha -cnotmatch '\A[0-9a-f]{40}\z' -or -not ([Antiphon.Nightly.RcForcedFull]::IsDigest($pointer.digest)) -or
                 ($pointer.refName -cnotmatch '\Arefs/heads/release/\d+\.\d+\.\d+\z' -and $pointer.refName -cne $pointer.sourceSha)) { throw 'baseline-pointer-invalid' }
             if ($seen.ContainsKey($pointer.refName)) { throw 'baseline-pointer-conflict' }
             $seen.Add($pointer.refName,$pointer)
@@ -109,7 +109,7 @@ function Get-RcReleaseBaseline {
         [void](Read-RcAdmissionJson $HistoryPath $HistoryDigest)
         if ((Resolve-RcBaselineCommit $RepositoryRoot $chosen.pointer.refName) -cne $chosen.pointer.sourceSha -or
             (Invoke-TestSelectionGit $RepositoryRoot @('merge-base','--is-ancestor',$chosen.pointer.sourceSha,$CandidateSha) @(0,1)).Exit -ne 0) { throw 'baseline-ref-moved' }
-        $forced=Get-RcForcedFullDecision $CurrentContext.contract $read.envelope.contract $read.envelope.history $read.envelope.fullAnchor -UtcNow $UtcNow
+        $forced=[Antiphon.Nightly.RcForcedFull]::Decision($CurrentContext.contract, $read.envelope.contract, $read.envelope.history, $read.envelope.fullAnchor, $UtcNow, $false)
         $reasons=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
         foreach ($reason in (@($read.admission.reasons)+@($forced.reasons))) { [void]$reasons.Add($reason) }
         if ($history.failures.Count) { [void]$reasons.Add('post-baseline-failures') }

@@ -31,7 +31,7 @@ function Copy-RcPlanOrigin {
     param($Origin,[string]$Suite)
     Assert-TestSelectionKeys $Origin @('suite','envelopeDigest','runId','sourceSha','chunkId','wallSeconds')
     foreach ($field in @('suite','runId','chunkId')) { Assert-RcDigestText $Origin[$field] ('origin-'+$field) }
-    if ($Origin.suite -cne $Suite -or -not (Test-RcFullDigest $Origin.envelopeDigest) -or
+    if ($Origin.suite -cne $Suite -or -not ([Antiphon.Nightly.RcForcedFull]::IsDigest($Origin.envelopeDigest)) -or
         $Origin.sourceSha -cnotmatch '\A[0-9a-f]{40}\z' -or
         $Origin.wallSeconds -isnot [ValueType] -or $Origin.wallSeconds -is [bool] -or
         -not [double]::IsFinite([double]$Origin.wallSeconds) -or [double]$Origin.wallSeconds -lt 0) { throw 'invalid-origin' }
@@ -172,7 +172,7 @@ function New-RcIncrementalPlan {
         (Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',($ExpectedSha+'^{tree}'))).Stdout.Trim() -cne $Request.treeId) { throw 'candidate-binding-mismatch' }
     if ($Request.platform -cnotin @('windows','linux') -or $Request.rcLine -cnotmatch '\Arc/\d{4}-\d{2}-\d{2}\z') { throw 'invalid-plan-context' }
     foreach ($field in @('exclusionDigest','contractDigest','boundaryMapDigest','historyDigest')) {
-        if (-not (Test-RcFullDigest $Request[$field])) { throw ('missing-plan-binding:'+ $field) }
+        if (-not ([Antiphon.Nightly.RcForcedFull]::IsDigest($Request[$field]))) { throw ('missing-plan-binding:'+ $field) }
     }
     Assert-RcDigestText $Request.sampleSeed 'sample-seed'
     if (($Request.sampleBudget -isnot [int] -and $Request.sampleBudget -isnot [long]) -or $Request.sampleBudget -lt 0) { throw 'invalid-sample-budget' }
@@ -253,7 +253,7 @@ function Write-RcPlanFileOnce {
 }
 function Assert-RcIncrementalPlan {
     param($Plan,[string]$ExpectedDigest)
-    if ($Plan.format -cne 'antiphon-rc-incremental-plan-v1' -or -not (Test-RcFullDigest $ExpectedDigest) -or $Plan.digest -cne $ExpectedDigest) { throw 'plan-digest-mismatch' }
+    if ($Plan.format -cne 'antiphon-rc-incremental-plan-v1' -or -not ([Antiphon.Nightly.RcForcedFull]::IsDigest($ExpectedDigest)) -or $Plan.digest -cne $ExpectedDigest) { throw 'plan-digest-mismatch' }
     $body=@{}; foreach ($key in $Plan.Keys) { if ($key -cne 'digest') { $body[$key]=$Plan[$key] } }
     if ((Get-RcPlanValueDigest $body) -cne $ExpectedDigest) { throw 'plan-digest-mismatch' }
     $effective=New-RcExactPartition $Plan.request.suites -ForceExecution
@@ -279,7 +279,7 @@ function Read-RcPlanPointer {
     Assert-TestSelectionKeys $pointer @('format','planDigest','sequence','path','sha256')
     if ($pointer.format -cne 'antiphon-rc-plan-index-v1' -or $pointer.planDigest -cne $ExpectedDigest -or
         ($pointer.sequence -isnot [int] -and $pointer.sequence -isnot [long]) -or $pointer.sequence -le 0 -or
-        $pointer.path -cne ('revisions/'+$pointer.sequence+'/revision.json') -or -not (Test-RcFullDigest $pointer.sha256)) { throw 'invalid-revision-pointer' }
+        $pointer.path -cne ('revisions/'+$pointer.sequence+'/revision.json') -or -not ([Antiphon.Nightly.RcForcedFull]::IsDigest($pointer.sha256))) { throw 'invalid-revision-pointer' }
     return $pointer
 }
 function Write-RcPlanRevision {

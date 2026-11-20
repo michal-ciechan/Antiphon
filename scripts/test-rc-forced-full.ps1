@@ -6,8 +6,13 @@ if (-not [string]::IsNullOrWhiteSpace($ResultsDirectory)) {
     [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
 }
 . (Join-Path $PSScriptRoot 'lib/c487-harness.ps1')
-. (Join-Path $PSScriptRoot 'lib/rc-forced-full.ps1')
-Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'lib/nightly-core.ps1'); $null = Test-NightlyCoreAvailable
+# The policy is compiled (Antiphon.Nightly.RcForcedFull). The cases build the decision's arguments as a hashtable.
+function Invoke-RfDecision([hashtable]$A) {
+    $now = [DateTimeOffset]::UtcNow
+    if ($A.ContainsKey('UtcNow')) { $now = $A['UtcNow'] }
+    return [Antiphon.Nightly.RcForcedFull]::Decision($A['CurrentContract'], $A['BaselineContract'], $A['Evidence'], $A['FullAnchor'], $now, [bool]$A['ForceFull'])
+}Set-StrictMode -Version Latest
 $script:Errors = [Collections.Generic.List[string]]::new()
 function Note([bool]$Ok, [string]$Why) { if (-not $Ok) { $script:Errors.Add($Why) } }
 $script:Now = [DateTimeOffset]'2026-11-13T12:00:00Z'
@@ -53,7 +58,7 @@ try {
     switch ($Case) {
         'ContractOrUnknownForcesFull' {
             $argsMap = New-Args
-            Expect-Decision (Get-RcForcedFullDecision @argsMap) @() 'complete equal contract'
+            Expect-Decision (Invoke-RfDecision $argsMap) @() 'complete equal contract'
             $before = $argsMap | ConvertTo-Json -Depth 10 -Compress
             # Every contract input is mandatory, even when absent or malformed on BOTH sides.
             foreach ($field in @($argsMap.CurrentContract.Keys)) {
@@ -69,22 +74,22 @@ try {
                 }
                 $changed.CurrentContract[$field] = $replacement
                 $reason = if ($field -ceq 'format') { 'contract-current-unknown:format' } else { 'contract-changed:' + $field }
-                Expect-Decision (Get-RcForcedFullDecision @changed) @($reason) ('changed ' + $field)
+                Expect-Decision (Invoke-RfDecision $changed) @($reason) ('changed ' + $field)
                 foreach ($side in @('CurrentContract','BaselineContract')) {
                     $missing = New-Args
                     $missing[$side].Remove($field)
                     $prefix = if ($side -ceq 'CurrentContract') { 'current' } else { 'baseline' }
-                    Expect-Decision (Get-RcForcedFullDecision @missing) @('contract-' + $prefix + '-unknown:' + $field) ('missing ' + $side + '.' + $field)
+                    Expect-Decision (Invoke-RfDecision $missing) @('contract-' + $prefix + '-unknown:' + $field) ('missing ' + $side + '.' + $field)
                 }
                 $unknown = New-Args
                 $unknown.CurrentContract[$field] = $null
                 $unknown.BaselineContract[$field] = $null
-                Expect-Decision (Get-RcForcedFullDecision @unknown) @(('contract-baseline-unknown:' + $field), ('contract-current-unknown:' + $field)) ('unknown both ' + $field)
+                Expect-Decision (Invoke-RfDecision $unknown) @(('contract-baseline-unknown:' + $field), ('contract-current-unknown:' + $field)) ('unknown both ' + $field)
             }
             foreach ($bad in @('', 42, @('a'), ('x' * 64), (('a' * 64) + "`n"))) {
                 $invalid = New-Args
                 $invalid.CurrentContract.policyHash = $bad
-                Expect-Decision (Get-RcForcedFullDecision @invalid) @('contract-current-unknown:policyHash') 'invalid hash type/value'
+                Expect-Decision (Invoke-RfDecision $invalid) @('contract-current-unknown:policyHash') 'invalid hash type/value'
             }
             foreach ($row in @(
                 @('baselineState','absent','baseline-unproven'), @('baselineState','unrelated','baseline-unproven'),
@@ -94,22 +99,22 @@ try {
                 @('shadowState','discrepancy','shadow-discrepancy'), @('shadowState','unknown','shadow-unproven'))) {
                 $uncertain = New-Args
                 $uncertain.Evidence[$row[0]] = $row[1]
-                Expect-Decision (Get-RcForcedFullDecision @uncertain) @($row[2]) ($row -join ':')
+                Expect-Decision (Invoke-RfDecision $uncertain) @($row[2]) ($row -join ':')
                 $missing = New-Args
                 $missing.Evidence.Remove($row[0])
                 $reason = if ($row[0] -ceq 'shadowState') { 'shadow-unproven' } else { $row[2] }
-                Expect-Decision (Get-RcForcedFullDecision @missing) @($reason) ('absent ' + $row[0])
+                Expect-Decision (Invoke-RfDecision $missing) @($reason) ('absent ' + $row[0])
             }
             $many = New-Args
             $many.ForceFull = $true
             $many.Evidence.historyState = 'missing'
             $many.CurrentContract.policyHash = 'b' * 64
-            Expect-Decision (Get-RcForcedFullDecision @many) @('contract-changed:policyHash','explicit-force-full','history-unproven') 'all sorted reasons'
+            Expect-Decision (Invoke-RfDecision $many) @('contract-changed:policyHash','explicit-force-full','history-unproven') 'all sorted reasons'
             Note (($argsMap | ConvertTo-Json -Depth 10 -Compress) -ceq $before) 'policy mutated its input'
             # Forward-compatible extra fields must not silently escape this complete contract.
             $extra = New-Args
             $extra.CurrentContract['unrecognizedInput'] = 'new semantics'
-            Expect-Decision (Get-RcForcedFullDecision @extra) @('contract-current-unknown:unrecognizedInput') 'unrecognized contract field'
+            Expect-Decision (Invoke-RfDecision $extra) @('contract-current-unknown:unrecognizedInput') 'unrecognized contract field'
         }
         'AnchorAgeCannotRenewThroughCarry' {
             foreach ($row in @(
@@ -121,20 +126,20 @@ try {
                 @('2026-11-12T12:00:00', @('full-anchor-time-unknown')))) {
                 $argsMap = New-Args
                 $argsMap.FullAnchor = New-Anchor $row[0]
-                Expect-Decision (Get-RcForcedFullDecision @argsMap) $row[1] ('anchor time ' + $row[0])
+                Expect-Decision (Invoke-RfDecision $argsMap) $row[1] ('anchor time ' + $row[0])
             }
             $missing = New-Args
             $missing.FullAnchor = $null
-            Expect-Decision (Get-RcForcedFullDecision @missing) @('full-anchor-unproven') 'no anchor'
+            Expect-Decision (Invoke-RfDecision $missing) @('full-anchor-unproven') 'no anchor'
             foreach ($field in @('kind','admissionState','sourceSha','closureDigest')) {
                 $missing = New-Args
                 $missing.FullAnchor.Remove($field)
-                Expect-Decision (Get-RcForcedFullDecision @missing) @('full-anchor-unproven') ('anchor missing ' + $field)
+                Expect-Decision (Invoke-RfDecision $missing) @('full-anchor-unproven') ('anchor missing ' + $field)
             }
             foreach ($field in @('sourceSha','closureDigest')) {
                 $invalid = New-Args
                 $invalid.FullAnchor[$field] += "`n"
-                Expect-Decision (Get-RcForcedFullDecision @invalid) @('full-anchor-unproven') ('anchor malformed ' + $field)
+                Expect-Decision (Invoke-RfDecision $invalid) @('full-anchor-unproven') ('anchor malformed ' + $field)
             }
             $carry = New-Args
             $carry.FullAnchor = New-Anchor '2026-11-01T12:00:00Z'
@@ -142,16 +147,16 @@ try {
             $carry.Evidence['releaseCreatedAtUtc'] = '2026-11-13T11:59:00Z'
             $carry.Evidence['sampleCompletedAtUtc'] = '2026-11-13T11:59:00Z'
             $original = $carry.FullAnchor | ConvertTo-Json -Compress
-            $decision = Get-RcForcedFullDecision @carry
+            $decision = Invoke-RfDecision $carry
             Expect-Decision $decision @('full-anchor-expired') 'carry/release/sample cannot renew'
             Note (($decision.fullAnchor | ConvertTo-Json -Compress) -ceq $original) 'original Full anchor not retained'
             $carry.FullAnchor.kind = 'carried'
-            Expect-Decision (Get-RcForcedFullDecision @carry) @('full-anchor-unproven') 'carried result is not Full'
+            Expect-Decision (Invoke-RfDecision $carry) @('full-anchor-unproven') 'carried result is not Full'
         }
         'ExecutedFullCanCloseWithReasons' {
             $closure = New-Closure
             $before = $closure | ConvertTo-Json -Depth 10 -Compress
-            $result = Get-RcExecutedFullAnchor -Closure $closure -UtcNow $script:Now
+            $result = [Antiphon.Nightly.RcForcedFull]::ExecutedFullAnchor($closure, $script:Now)
             Note ($result.eligible -eq $true -and @($result.reasons).Count -eq 0) 'fresh all-executed Full rejected because of pre-run reasons'
             Note (($result.forcedFull -join '|') -ceq 'explicit-force-full|full-anchor-expired') 'pre-run reasons erased'
             if ($result.fullAnchor) {
@@ -159,7 +164,7 @@ try {
                 Note ($result.fullAnchor.sourceSha -ceq ('2' * 40) -and $result.fullAnchor.closureDigest -ceq ('b' * 64)) 'new anchor lost origin'
                 $next = New-Args
                 $next.FullAnchor = $result.fullAnchor
-                Expect-Decision (Get-RcForcedFullDecision @next) @() 'newly executed Full resets age'
+                Expect-Decision (Invoke-RfDecision $next) @() 'newly executed Full resets age'
             } else { Note $false 'no new anchor' }
             Note (($closure | ConvertTo-Json -Depth 10 -Compress) -ceq $before) 'closure mutated'
             foreach ($row in @(
@@ -174,19 +179,19 @@ try {
                 @('closureDigest',$null,'closure-origin-unknown'), @('completedAtUtc','2026-11-14T00:00:00Z','closure-time-future'))) {
                 $bad = New-Closure
                 $bad[$row[0]] = $row[1]
-                $refused = Get-RcExecutedFullAnchor -Closure $bad -UtcNow $script:Now
+                $refused = [Antiphon.Nightly.RcForcedFull]::ExecutedFullAnchor($bad, $script:Now)
                 Note ($refused.eligible -eq $false -and $null -eq $refused.fullAnchor) ('ineligible anchor: ' + $row[0])
                 Note (($refused.reasons -join '|') -ceq $row[2]) ('closure reason ' + $row[0] + ': ' + ($refused.reasons -join '|'))
             }
             foreach ($field in @('requiredCount','executedCount','expectedSkipCount','carriedCount','failedCount','unexpectedSkipCount')) {
                 $bad = New-Closure
                 $bad.Remove($field)
-                $refused = Get-RcExecutedFullAnchor -Closure $bad -UtcNow $script:Now
+                $refused = [Antiphon.Nightly.RcForcedFull]::ExecutedFullAnchor($bad, $script:Now)
                 Note (-not $refused.eligible -and ($refused.reasons -join '|') -ceq 'closure-counts-unknown') ('missing count ' + $field)
             }
             $bad = New-Closure
             $bad.completedAtUtc = $null
-            $refused = Get-RcExecutedFullAnchor -Closure $bad -UtcNow $script:Now
+            $refused = [Antiphon.Nightly.RcForcedFull]::ExecutedFullAnchor($bad, $script:Now)
             Note (-not $refused.eligible -and ($refused.reasons -join '|') -ceq 'closure-time-unknown') 'missing execution time'
         }
         default { throw ('unknown case ' + $Case) }

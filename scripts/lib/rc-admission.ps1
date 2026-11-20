@@ -3,7 +3,8 @@
 # graph and its COMPLETE executed algorithm closure have separately been admitted.
 . (Join-Path $PSScriptRoot 'rc-chunk-digest.ps1')
 . (Join-Path $PSScriptRoot 'rc-historical-evidence.ps1')
-. (Join-Path $PSScriptRoot 'rc-forced-full.ps1')
+# The forced-Full policy is compiled (Antiphon.Nightly.RcForcedFull).
+if (-not $script:NightlyCoreAvailable) { . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable }
 . (Join-Path $PSScriptRoot 'rc-ledger.ps1')
 
 function Get-RcAdmissionAlgorithmCoverage {
@@ -107,9 +108,9 @@ function Get-RcCarryAdmissionDecision {
     if ($outcomes.Count -eq 0 -or $outcomes.Count -ne @($After.cases).Count -or @($outcomes | Where-Object { $_ -isnot [string] -or $_ -cne 'Passed' }).Count) {
         [void]$reasons.Add('cases-not-passed')
     }
-    if (-not (Test-RcFullDigest $Facts.algorithmDigest) -or $Facts.algorithmDigest -cne $Facts.currentAlgorithmDigest) { [void]$reasons.Add('algorithm-binding-mismatch') }
+    if (-not ([Antiphon.Nightly.RcForcedFull]::IsDigest($Facts.algorithmDigest)) -or $Facts.algorithmDigest -cne $Facts.currentAlgorithmDigest) { [void]$reasons.Add('algorithm-binding-mismatch') }
     if ($Facts.releaseStatus -cne 'complete') { [void]$reasons.Add('release-evidence-incomplete') }
-    $anchor=ConvertTo-RcFullUtcTime $Facts.anchorAtUtc
+    $anchor=[Antiphon.Nightly.RcForcedFull]::UtcTime($Facts.anchorAtUtc)
     if ($Facts.anchorVerified -isnot [bool] -or -not $Facts.anchorVerified -or $null -eq $anchor -or $anchor -gt $UtcNow -or ($UtcNow-$anchor) -ge [TimeSpan]::FromDays(7)) {
         [void]$reasons.Add('full-anchor-invalid-or-expired')
     }
@@ -126,7 +127,7 @@ function Get-RcAdmissionFileDigest {
 }
 function Read-RcAdmissionJson {
     param([string]$Path,[string]$ExpectedDigest)
-    if (-not (Test-RcFullDigest $ExpectedDigest)) { throw 'admission-seal-required' }
+    if (-not ([Antiphon.Nightly.RcForcedFull]::IsDigest($ExpectedDigest))) { throw 'admission-seal-required' }
     $file=[IO.FileInfo]::new($Path)
     if (-not $file.Exists -or $file.Length -gt 16777216 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'admission-file-invalid' }
     # Bounded metadata only; never summary.json. Hash the exact bytes parsed.
@@ -230,7 +231,7 @@ function Read-RcAdmission {
         if ($anchorProof.format -cne 'antiphon-rc-full-anchor-v1' -or $anchorObject.digest -cne $envelope.fullAnchor.closureDigest -or
             $anchorProof.sourceSha -cne $envelope.fullAnchor.sourceSha -or $anchorProof.completedAtUtc -cne $envelope.fullAnchor.completedAtUtc -or
             $anchorProof.mode -cne 'Full' -or $anchorProof.carriedCount -ne 0 -or $anchorProof.outcome -cne 'Passed' -or
-            $anchorProof.requiredCount -le 0 -or $anchorProof.requiredCount -ne $anchorProof.executedCount -or -not (Test-RcFullDigest $anchorProof.caseDigest)) { throw 'full-anchor-unproven' }
+            $anchorProof.requiredCount -le 0 -or $anchorProof.requiredCount -ne $anchorProof.executedCount -or -not ([Antiphon.Nightly.RcForcedFull]::IsDigest($anchorProof.caseDigest))) { throw 'full-anchor-unproven' }
         if ((Invoke-TestSelectionGit $RepositoryRoot @('merge-base',$anchorProof.sourceSha,$ExpectedSha)).Stdout.Trim() -cne $anchorProof.sourceSha) { throw 'full-anchor-lineage' }
         $historyObject=Get-RcAdmissionObject $inventory $EvidenceRoot $envelope.historyPath
         $historyProof=Read-RcAdmissionJson $historyObject.path $historyObject.digest
@@ -240,7 +241,7 @@ function Read-RcAdmission {
             $historyProof.failures -isnot [array] -or $historyProof.failures.Count -ne 0) { throw 'failure-history-unproven' }
         # Nonempty failure history conservatively requires execution; no contained
         # fix is inferred from a later green result or a caller-supplied flag.
-        $forced=Get-RcForcedFullDecision $CurrentContext.contract $envelope.contract $envelope.history $envelope.fullAnchor -UtcNow $UtcNow
+        $forced=[Antiphon.Nightly.RcForcedFull]::Decision($CurrentContext.contract, $envelope.contract, $envelope.history, $envelope.fullAnchor, $UtcNow, $false)
         foreach ($r in $forced.reasons) { [void]$reasons.Add($r) }
         $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $proofPath=$envelope.proofPath; $before=$null; $caseOutcomes=@(); $top=$null
@@ -277,7 +278,7 @@ function Read-RcAdmission {
             }
             if ($stages.Count -ne 4) { throw 'source-build-launch-unproven' }
             foreach ($digest in @('assemblyDigest','buildOutputDigest','discoveryOutputDigest','launchOutputDigest')) {
-                if (-not (Test-RcFullDigest $proof[$digest]) -or $proof[$digest] -cne $proof.assemblyDigest) { throw 'source-build-launch-unproven' }
+                if (-not ([Antiphon.Nightly.RcForcedFull]::IsDigest($proof[$digest])) -or $proof[$digest] -cne $proof.assemblyDigest) { throw 'source-build-launch-unproven' }
             }
             $receipts=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             foreach ($ref in $proof.receipts) {
