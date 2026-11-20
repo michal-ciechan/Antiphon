@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "baseSha": "fc45631910173cbba5f458498ac2479a85066b4f",
-  "headSha": "983da5cb93c09ec0ed54a7c1031aee548f525bbc",
+  "baseSha": "e0f381c48e840fb2ee614fd63571f8b26ca4a01d",
+  "headSha": "baa78e9ab3b1b88d2423c88528fa98ab09f3bdc7",
   "inspectedPaths": [
     {
       "path": "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
@@ -22,7 +22,20 @@
       "disposition": "portable",
       "reason": "Build, launch, discovery and chunk hooks take the passed evidence root. Launch registration is before the phase stopwatch. No new OS branch.",
       "helpers": [],
-      "candidates": []
+      "candidates": [
+        {
+          "revision": "base",
+          "line": 44,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing $IsLinux host label. This follow-up does not change that line."
+        },
+        {
+          "revision": "head",
+          "line": 53,
+          "disposition": "non-behavior",
+          "reason": "Pre-existing $IsLinux host label. The follow-up inserted lines above it and did not change that line."
+        }
+      ]
     },
     {
       "path": "scripts/lib/rc-run-evidence.ps1",
@@ -51,6 +64,13 @@
       "reason": "Follow-up witness class. No production OS selection.",
       "helpers": [],
       "candidates": []
+    },
+    {
+      "path": "docs/superpowers/evidence/2026-11-20-card-1836-s6b-followup-os-witnesses.json",
+      "disposition": "test-only",
+      "reason": "This declaration file. The checker requires every changed non-document path in the inventory. No production OS selection.",
+      "helpers": [],
+      "candidates": []
     }
   ],
   "witnesses": [],
@@ -69,7 +89,7 @@
     "nativeObligation": {
       "status": "pending",
       "targetOS": "Windows",
-      "sourceSha": "983da5cb93c09ec0ed54a7c1031aee548f525bbc",
+      "sourceSha": "baa78e9ab3b1b88d2423c88528fa98ab09f3bdc7",
       "command": "Windows startup probe for scripts/lib rc-run-evidence before an rc pick. Not run on this Linux task.",
       "reason": "Shadow recording was verified on Linux. The startup census path is unobserved on Windows."
     }
