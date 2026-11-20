@@ -494,11 +494,19 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         foreach (var args in TreeForms(head))
             InProcessGitReads.TryAnswer(repo.Full("sub"), args).ShouldBeNull("subdirectory " + string.Join(' ', args));
 
-        // No index file yet (a fresh repository): git prints nothing, this leaves it to git.
+        // No index file yet (a fresh repository): git prints nothing, and so does this, without a git child.
         var fresh = Path.Combine(repo.Root, "..", "fresh");
         Directory.CreateDirectory(fresh);
         await Repo.RunGitAsync(fresh, "init", "-q", "-b", "master");
-        foreach (var args in IndexForms) InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment()).ShouldBeNull("no index");
+        File.Exists(Path.Combine(fresh, ".git", "index")).ShouldBeFalse("a fresh repository has no index file");
+        foreach (var args in IndexForms)
+        {
+            var git = await Repo.RunGitAsync(fresh, args);
+            git.Output.ShouldBe("", "git lists nothing: " + string.Join(' ', args));
+            var answer = InProcessGitStatus.TryAnswer(fresh, args, ChildEnvironment());
+            answer.ShouldNotBeNull("no index: " + string.Join(' ', args));
+            answer.Output.ShouldBe(git.Output, "no index: " + string.Join(' ', args));
+        }
 
         // A control character in an index path (git refuses to write one on Windows, so the name is patched in with a
         // fresh checksum): git prints it raw, this leaves it to git.

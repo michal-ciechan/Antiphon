@@ -236,7 +236,11 @@ internal static class InProcessGitStatus
         => Read(checkout, null, repo =>
         {
             byte[] data;
-            using (var stream = new FileStream(Path.Combine(repo.Info.Path, "index"), FileMode.Open, FileAccess.Read,
+            var index = Path.Combine(repo.Info.Path, "index");
+            // No index file yet (a fresh repository nothing was ever added to): git lists nothing, and neither does
+            // this. One created in between is read below like any other.
+            if (!File.Exists(index)) return "";
+            using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read,
                        FileShare.ReadWrite | FileShare.Delete))
             {
                 if (stream.Length > int.MaxValue / 2) return null;
