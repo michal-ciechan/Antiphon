@@ -27,6 +27,7 @@
     <Compile Include="..\Antiphon.Tests\TestHelpers\ControlledTimeProvider.cs" Link="TestHelpers\ControlledTimeProvider.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\ProductionRunnerGuard.cs" Link="TestHelpers\ProductionRunnerGuard.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\PtyBackendEnvGuard.cs" Link="TestHelpers\PtyBackendEnvGuard.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\RequestedModelAliasSchema.cs" Link="TestHelpers\RequestedModelAliasSchema.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\SharedStoreWarmup.cs" Link="TestHelpers\SharedStoreWarmup.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbBakedImages.cs" Link="TestHelpers\TestDbBakedImages.cs" />
     <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbClonePool.cs" Link="TestHelpers\TestDbClonePool.cs" />
