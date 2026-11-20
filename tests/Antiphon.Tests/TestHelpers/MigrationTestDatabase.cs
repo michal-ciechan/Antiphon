@@ -27,11 +27,15 @@ internal static class MigrationTestDatabase
     /// <summary>
     /// Drops additive objects whose Down methods throw, and their history rows, so a cloned tip
     /// can return to <see cref="LastReversibleMigration"/> before an older reversible migration runs.
-    /// An empty land-verification addition is detached first. A recorded failure is refused with
-    /// the migration's own message and is not dropped.
+    /// An empty requested-model alias is detached first, then an empty land-verification addition.
+    /// A stored value is refused with the migration's own message and is not dropped.
+    /// Historical seeds that insert the current <c>AgentTask</c> shape into a pre-alias schema are
+    /// covered by <see cref="RequestedModelAliasSchema"/> on every fixture context, because those
+    /// seeds never reach this rewind helper.
     /// </summary>
     public static async Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default)
     {
+        await DetachRequestedModelAliasAsync(db, ct);
         await DetachLandVerificationFailureAsync(db, ct);
         await db.Database.ExecuteSqlRawAsync(
             """
@@ -59,6 +63,37 @@ internal static class MigrationTestDatabase
                 '20261107104114_HostLoadRetentionCatchup',
                 '20261108121426_Card1773TranscriptPromptStampIndex',
                 '20261110213738_Card1294ShadowCohort');
+            """, ct);
+    }
+
+    /// <summary>
+    /// <c>AddRequestedModelAlias.Down</c> always throws. A tip clone that never stored an alias
+    /// drops the empty column and the history row here. A stored alias is refused with that same
+    /// message; this helper does not call Down and does not discard the row.
+    /// </summary>
+    private static async Task DetachRequestedModelAliasAsync(AppDbContext db, CancellationToken ct)
+    {
+        var present = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'AgentTasks'
+              AND column_name = 'RequestedModelAlias'
+            """).SingleAsync(ct);
+        if (present == 0)
+            return;
+
+        var recorded = await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM "AgentTasks"
+            WHERE "RequestedModelAlias" IS NOT NULL
+            """).SingleAsync(ct);
+        if (recorded > 0)
+            throw new NotSupportedException(
+                "An explicit requested model alias cannot be discarded by a downgrade.");
+
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            ALTER TABLE "AgentTasks" DROP COLUMN IF EXISTS "RequestedModelAlias";
+            DELETE FROM "__EFMigrationsHistory"
+            WHERE "MigrationId" = '20261120091515_AddRequestedModelAlias';
             """, ct);
     }
 

@@ -64,6 +64,12 @@
       "basis": "conservative-bound",
       "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
+    "Antiphon.E2E.DelegationScratchCallerTests": {
+      "nodes": 1,
+      "seconds": 300,
+      "basis": "conservative-bound",
+      "source": "CARD-1584: unmeasured class; explicit provisional 300 s per expanded case for isolated app/browser/container setup until release-owned Windows timing replaces it. Not a measured duration or p95. CARD-2004 A-1 adds Copied_delegate_loads_the_caller_helper_before_the_server_call. Denominator: committed expanded source census 195 total, 188 required, seven policy-excluded."
+    },
     "Antiphon.E2E.DelegationSequencingE2ETests": {
       "nodes": 1,
       "seconds": 300,
