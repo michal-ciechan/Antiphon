@@ -24516,6 +24516,14 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RcPortCorpus.cs",
+      "classes": [
+        "RcDirtyOrderCSharpTests",
+        "RcShadowDirtyDifferentialTests",
+        "RcShadowSampleCSharpTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs",
       "classes": [
         "ReleaseImpactProjectTests",
