@@ -482,26 +482,50 @@ public sealed class RunCheckpointSourceScriptTests
         // One seeded repository per seed text per test run, copied into each fixture without seven git processes per
         // fixture. Fixtures with the same seed share one commit and HEAD; a test that needs a distinct HEAD uses a
         // distinct seed (as C1035 does). A copy's index stat data no longer matches its files, so git compares their
-        // contents and still finds the tree clean. A seed that fails to build is not kept: the next fixture retries.
+        // contents and still finds the tree clean. A seed that fails to build is dropped: the next fixture retries.
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<(string Directory, string Head)>> Seeds =
             new(StringComparer.Ordinal);
+        // A live seed root holds its owner file open (exclusive) for the life of its process; the sweep below deletes
+        // only a root whose owner file it can take, so a host that is still running (or paused) keeps its seeds.
+        private static FileStream? _seedOwner;
         private static readonly Lazy<string> SeedRoot = new(() =>
         {
             // Seed roots a killed test host left behind (ProcessExit never ran) are swept after half a day.
-            try
-            {
-                foreach (var stale in Directory.EnumerateDirectories(Path.GetTempPath(), "c835-seeds-*"))
-                    if (Directory.GetLastWriteTimeUtc(stale) < DateTime.UtcNow.AddHours(-12))
-                        GitFixtureCleanup.Delete(stale);
-            }
+            IEnumerable<string> stale = [];
+            try { stale = Directory.EnumerateDirectories(Path.GetTempPath(), "c835-seeds-*").ToList(); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            foreach (var candidate in stale)
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(candidate) >= DateTime.UtcNow.AddHours(-12)) continue;
+                    try { using var probe = new FileStream(Path.Combine(candidate, ".owner"), FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+                    catch (FileNotFoundException) { }
+                    GitFixtureCleanup.Delete(candidate);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
             var root = Path.Combine(Path.GetTempPath(), "c835-seeds-" + Guid.NewGuid().ToString("N"));
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => GitFixtureCleanup.Delete(root);
+            Directory.CreateDirectory(root);
+            _seedOwner = new FileStream(Path.Combine(root, ".owner"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                _seedOwner?.Dispose();
+                GitFixtureCleanup.Delete(root);
+            };
             return root;
         });
 
-        private static (string Directory, string Head) Seed(string seed) =>
-            Seeds.GetOrAdd(seed, text => new Lazy<(string, string)>(() => Seeded(text), LazyThreadSafetyMode.PublicationOnly)).Value;
+        private static (string Directory, string Head) Seed(string seed)
+        {
+            var lazy = Seeds.GetOrAdd(seed, text => new Lazy<(string, string)>(() => Seeded(text)));
+            try { return lazy.Value; }
+            catch
+            {
+                Seeds.TryRemove(new KeyValuePair<string, Lazy<(string Directory, string Head)>>(seed, lazy));
+                throw;
+            }
+        }
 
         private static (string Directory, string Head) Seeded(string seed)
         {
@@ -549,63 +573,63 @@ public sealed class RunCheckpointSourceScriptTests
         public Fixture(string seed = "seed", string repoName = "source")
         {
             Repo = Path.Combine(Root, repoName);
-            // The seed first, so a failed seed leaves nothing under Root; a failed copy removes what it made.
+            // The seed first, so a failed seed leaves nothing under Root; any later failure removes Root.
             var seeded = Seed(seed);
+            Head = seeded.Head;
             try
             {
                 Directory.CreateDirectory(External);
                 CopyTree(seeded.Directory, Repo);
+                File.WriteAllText(Path.Combine(External, "shim.ps1"), """
+                    param()
+                    $items = @($args)
+                    Add-Content -LiteralPath $env:C835_CALLS -Value ([string]$items[0])
+                    $phase = [string]$items[0]
+                    if ($env:C1035_OBSERVATIONS) {
+                        $cwd = [Environment]::CurrentDirectory
+                        $marker = [IO.File]::ReadAllText([IO.Path]::Combine($cwd, 'tracked.txt'))
+                        $observation = @{ phase = $phase; cwd = $cwd; marker = $marker; arguments = $items }
+                        Add-Content -LiteralPath $env:C1035_OBSERVATIONS -Value ($observation | ConvertTo-Json -Compress)
+                    }
+                    if ($env:C835_DRIFT -eq $phase) {
+                        Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed during driver'
+                    }
+                    if ($env:C835_DRIFT -eq ('head-' + $phase)) {
+                        git -C $env:C835_REPO commit --allow-empty -qm 'move head during driver'
+                    }
+                    if ($env:C835_DRIFT -eq ('restore-' + $phase)) {
+                        git -C $env:C835_REPO restore -- tracked.txt
+                    }
+                    if ($env:C835_DRIFT -eq ('same-count-' + $phase)) {
+                        Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'second dirty value'
+                    }
+                    if ($phase -eq 'build') {
+                        if ($env:C835_RUN_LOG_COLLISION) {
+                            [void][IO.Directory]::CreateDirectory($env:C835_RUN_LOG_COLLISION)
+                        }
+                        exit [int]$env:C835_BUILD_EXIT
+                    }
+                    $result = ''
+                    for ($i = 0; $i -lt $items.Count; $i++) {
+                        if ($items[$i] -eq '--results-directory') { $result = [string]$items[$i + 1] }
+                    }
+                    if ($env:C835_TRX -and $result) { Copy-Item -LiteralPath $env:C835_TRX -Destination (Join-Path $result 'run.trx') }
+                    exit 0
+                    """);
+                File.WriteAllText(Path.Combine(External, "slot-shim.ps1"), """
+                    param([string]$Method, [string]$Uri, [string]$BodyJson)
+                    Add-Content -LiteralPath $env:C835_SLOT_CALLS -Value $Method
+                    if ($env:C835_SLOT_DRIFT -eq '1') {
+                        Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed while waiting for slot'
+                    }
+                    return @{ Status = 200; Body = '{"unlimited":true,"maxCpuCount":4}' }
+                    """);
             }
             catch
             {
                 GitFixtureCleanup.Delete(Root);
                 throw;
             }
-            Head = seeded.Head;
-            File.WriteAllText(Path.Combine(External, "shim.ps1"), """
-                param()
-                $items = @($args)
-                Add-Content -LiteralPath $env:C835_CALLS -Value ([string]$items[0])
-                $phase = [string]$items[0]
-                if ($env:C1035_OBSERVATIONS) {
-                    $cwd = [Environment]::CurrentDirectory
-                    $marker = [IO.File]::ReadAllText([IO.Path]::Combine($cwd, 'tracked.txt'))
-                    $observation = @{ phase = $phase; cwd = $cwd; marker = $marker; arguments = $items }
-                    Add-Content -LiteralPath $env:C1035_OBSERVATIONS -Value ($observation | ConvertTo-Json -Compress)
-                }
-                if ($env:C835_DRIFT -eq $phase) {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed during driver'
-                }
-                if ($env:C835_DRIFT -eq ('head-' + $phase)) {
-                    git -C $env:C835_REPO commit --allow-empty -qm 'move head during driver'
-                }
-                if ($env:C835_DRIFT -eq ('restore-' + $phase)) {
-                    git -C $env:C835_REPO restore -- tracked.txt
-                }
-                if ($env:C835_DRIFT -eq ('same-count-' + $phase)) {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'second dirty value'
-                }
-                if ($phase -eq 'build') {
-                    if ($env:C835_RUN_LOG_COLLISION) {
-                        [void][IO.Directory]::CreateDirectory($env:C835_RUN_LOG_COLLISION)
-                    }
-                    exit [int]$env:C835_BUILD_EXIT
-                }
-                $result = ''
-                for ($i = 0; $i -lt $items.Count; $i++) {
-                    if ($items[$i] -eq '--results-directory') { $result = [string]$items[$i + 1] }
-                }
-                if ($env:C835_TRX -and $result) { Copy-Item -LiteralPath $env:C835_TRX -Destination (Join-Path $result 'run.trx') }
-                exit 0
-                """);
-            File.WriteAllText(Path.Combine(External, "slot-shim.ps1"), """
-                param([string]$Method, [string]$Uri, [string]$BodyJson)
-                Add-Content -LiteralPath $env:C835_SLOT_CALLS -Value $Method
-                if ($env:C835_SLOT_DRIFT -eq '1') {
-                    Set-Content -LiteralPath (Join-Path $env:C835_REPO 'tracked.txt') -Value 'changed while waiting for slot'
-                }
-                return @{ Status = 200; Body = '{"unlimited":true,"maxCpuCount":4}' }
-                """);
         }
 
         public void Write(string path, string value)
