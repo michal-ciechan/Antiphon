@@ -245,8 +245,9 @@ internal static class InProcessGitStatus
             byte[] data;
             var index = Path.Combine(repo.Info.Path, "index");
             // No index yet (a fresh repository nothing was ever added to): git lists nothing, and neither does this.
-            // One created in between is read below like any other.
+            // One created since Read looked passes the same plain-index check as any other before it is read.
             if (NoIndexYet(repo.Info.Path)) return "";
+            if (!PlainIndex(repo.Info.Path)) return null;
             using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read,
                        FileShare.ReadWrite | FileShare.Delete))
             {
@@ -326,6 +327,11 @@ internal static class InProcessGitStatus
         bool indexOnly = false) where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
+        // GIT_COMMON_DIR moves git's objects, refs and config elsewhere, and the hardened git children of the direct
+        // callers (SafeDelete, the checkpoint confinement) keep it: git's to answer. They drop GIT_DIR, GIT_WORK_TREE
+        // and GIT_INDEX_FILE, so those children read this checkout's own index, as this does; TryAnswer checks a
+        // child environment that may keep them.
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GIT_COMMON_DIR"))) return null;
         try
         {
             using var repo = new Repository(checkout);
@@ -375,7 +381,6 @@ internal static class InProcessGitStatus
         return GitText.PathsEqual(Path.GetFullPath(target, Path.GetFullPath(checkout)), repo.Info.Path);
     }
 
-    /// <summary>An index file of version 2 and no split-index shared file beside it.</summary>
     /// <summary>
     /// Nothing at all at &lt;gitdir&gt;/index (not a file, not a directory) and no shared index: a repository nothing
     /// was ever added to, where git lists nothing. Anything else odd there is git's to report.
@@ -386,6 +391,7 @@ internal static class InProcessGitStatus
         return !File.Exists(index) && !Directory.Exists(index) && !Directory.EnumerateFiles(gitDir, "sharedindex.*").Any();
     }
 
+    /// <summary>An index file of version 2 and no split-index shared file beside it.</summary>
     private static bool PlainIndex(string gitDir)
     {
         Span<byte> header = stackalloc byte[8];
