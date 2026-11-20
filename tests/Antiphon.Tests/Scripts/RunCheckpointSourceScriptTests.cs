@@ -158,12 +158,11 @@ public sealed class RunCheckpointSourceScriptTests
     public async Task C835_DriftAndReuse()
     {
         using var fixture = new Fixture();
-        var trace = Path.Combine(fixture.External, "trace2");
-        Directory.CreateDirectory(trace);
-        var built = await fixture.RunAsync(expectedSha: fixture.Head, gitTrace: trace);
-        Directory.GetFiles(trace).Count(file => File.ReadAllText(file).Contains("\"status\"", StringComparison.Ordinal))
-            .ShouldBe(0, "the named tool build answered every source snapshot (no git status child)");
+        var built = await fixture.RunAsync(expectedSha: fixture.Head);
         built.Exit.ShouldBe(0, built.Output);
+        // Positive control for the no-git-status check every tool-read run makes (RunAsync): this run's other git
+        // children (the stamp guard's rev-parse) were traced, so an empty trace cannot pass it by accident.
+        built.TracedGitChildren.ShouldBeGreaterThan(0, "the run's git children are traced");
         var reused = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
         reused.Exit.ShouldBe(0, reused.Output);
         reused.Line.ShouldContain("build=reused", Case.Sensitive, "matching-stamp-reused");
@@ -675,9 +674,12 @@ public sealed class RunCheckpointSourceScriptTests
         public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
             string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
             bool useSlot = false, bool slotDrift = false, string? nativeCwd = null,
-            bool interruptRunLog = false, string? gitTrace = null)
+            bool interruptRunLog = false)
         {
             var round = ++_round;
+            var trace = Path.Combine(External, "trace2-" + round);
+            Directory.CreateDirectory(trace);
+            Directory.CreateDirectory(Path.Combine(External, "xdg"));
             // Rebuilds require fresh output ownership. NoBuild deliberately keeps
             // the most recently selected output so stamp reuse/refusal stays real.
             if (!noBuild) _outputPath = round == 1 ? "bin-c835/" : $"bin-c835-{round}/";
@@ -706,7 +708,11 @@ public sealed class RunCheckpointSourceScriptTests
                 ["C585_STAMP"] = "round-" + round,
                 ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
                 ["C1035_OBSERVATIONS"] = nativeCwd is null ? null : Observations,
-                ["GIT_TRACE2_EVENT"] = gitTrace,
+                // Every tool-read run is traced and must start no git status: a named build that silently falls back
+                // to git fails the case instead of only costing its time.
+                ["GIT_TRACE2_EVENT"] = _gitReader ? null : trace,
+                // No user default ignore file: the tool would hand that layout to git (as git's own reader reads it).
+                ["XDG_CONFIG_HOME"] = Path.Combine(External, "xdg"),
             };
             if (nativeCwd is not null)
             {
@@ -742,7 +748,24 @@ public sealed class RunCheckpointSourceScriptTests
             using var json = JsonDocument.Parse(await File.ReadAllTextAsync(evidence));
             var lines = result.Output.Split('\n');
             var line = lines.Single(value => value.StartsWith("CHECKPOINT CP-2 commit=", StringComparison.Ordinal));
-            return new Result(result.Exit, result.Output, line, evidence, json.RootElement.Clone());
+            var traced = Directory.GetFiles(trace);
+            if (!_gitReader)
+                traced.Count(GitStatusStarted).ShouldBe(0,
+                    "the named tool build answered every source snapshot (no git status child): " + result.Output);
+            return new Result(result.Exit, result.Output, line, evidence, json.RootElement.Clone(), traced.Length);
+        }
+
+        // Whether this trace2 file records a `git status` child: its start event's argv names the status command.
+        private static bool GitStatusStarted(string file)
+        {
+            foreach (var text in File.ReadLines(file))
+            {
+                using var line = JsonDocument.Parse(text);
+                if (!line.RootElement.TryGetProperty("event", out var kind) || kind.GetString() != "start") continue;
+                return line.RootElement.TryGetProperty("argv", out var argv)
+                    && argv.EnumerateArray().Any(argument => argument.GetString() == "status");
+            }
+            return false;
         }
 
         public Task<(int Exit, string Output)> ValidateAsync(string evidence, string? expectedSha = null) =>
@@ -809,5 +832,5 @@ public sealed class RunCheckpointSourceScriptTests
         }
     }
 
-    private sealed record Result(int Exit, string Output, string Line, string Evidence, JsonElement Source);
+    private sealed record Result(int Exit, string Output, string Line, string Evidence, JsonElement Source, int TracedGitChildren);
 }
