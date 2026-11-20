@@ -939,7 +939,14 @@ public sealed partial class AgentTaskDispatcher
                 if (siblingGuard is null)
                 {
                     heldThisTick.Add((task.Id, HoldKind.SiblingInspectionPending));
-                    await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionPending, lastHeld, ct);
+                    // A consumed land result clears the peek, so the next tick would replace the
+                    // landing sentence with the pending sentence and write another Held event.
+                    var pendingDetail = DispatchHoldDetails.SiblingInspectionPending;
+                    if (lastHeld.TryGetValue(task.Id, out var previousHold)
+                        && previousHold.StartsWith("held: ", StringComparison.Ordinal)
+                        && previousHold.Contains(" is landing and is not yet in ", StringComparison.Ordinal))
+                        pendingDetail = previousHold;
+                    await TraceHeldAsync(task, pendingDetail, lastHeld, ct);
                     if (!_siblingInspections.TryEnqueue(siblingIntent))
                         await TraceHeldAsync(task, DispatchHoldDetails.SiblingInspectionCapacity, lastHeld, ct);
                     continue;

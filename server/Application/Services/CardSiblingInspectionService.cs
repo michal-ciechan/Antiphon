@@ -4,6 +4,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -115,6 +116,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         var unresolvedPending = new List<CardSiblingInventory.Pending>();
         string? metadata = null;
         var baseRef = task.WorktreeBaseRequestedRef ?? task.MergeTargetRef;
+        var immutableStart = IsCommitId(task.WorktreeBaseRequestedRef);
         var identifier = "the card";
         UnlandedSibling Describe(AgentTask row, string? sha, LandRequestState? state = null) =>
             new(row.Id, row.WorktreeBranch!, baseRef!, identifier, sha is null ? "unknown" : sha[..8],
@@ -168,6 +170,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 && merged.TryGetValue(branch, out var mergedSha) && sha == mergedSha;
             var common = await inspection.CommonAsync(task.RepoPath);
             var reviewedExemptions = new HashSet<Guid>();
+            var immutableWarned = new HashSet<Guid>();
             // Every request identity is visited before grouping refs or reducing warnings.
             foreach (var pending in unresolvedPending.ToArray())
             {
@@ -183,7 +186,16 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                     continue;
                 }
                 if (!commits.TryGetValue(row.WorktreeBranch!, out var sha))
+                {
+                    if (immutableStart)
+                    {
+                        if (immutableWarned.Add(row.Id))
+                            warnings.Add(Describe(row, null, pending.Request.State));
+                        unresolvedPending.Remove(pending);
+                        continue;
+                    }
                     return Result(Describe(row, null, pending.Request.State), "pending_land_unknown");
+                }
                 if (IsMerged(row.WorktreeBranch!)
                     || await inspection.ContainsAsync(sha, target) == DelegationWorktreeService.CommitContainment.Contained)
                 {
@@ -191,9 +203,18 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                     unresolvedPending.Remove(pending);
                     continue;
                 }
+                if (immutableStart)
+                {
+                    // The cut is this commit. A later sibling land does not move it.
+                    if (immutableWarned.Add(row.Id))
+                        warnings.Add(Describe(row, sha, pending.Request.State));
+                    unresolvedPending.Remove(pending);
+                    continue;
+                }
                 return Result(Describe(row, sha, pending.Request.State), "pending_land");
             }
             var candidates = rows.Where(row => !reviewedExemptions.Contains(row.Id)
+                && !immutableWarned.Contains(row.Id)
                 && commits.ContainsKey(row.WorktreeBranch!)
                 && !IsMerged(row.WorktreeBranch!)).ToArray();
             expensive = candidates.Select(t => commits[t.WorktreeBranch!]).Distinct(StringComparer.Ordinal).Count();
@@ -223,7 +244,10 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 warnings.Add(Describe(row, sha, row.CurrentLandRequestId is Guid requestId
                     ? inventory.Requests.GetValueOrDefault(requestId)?.State : null));
             }
-            var tips = warnings.Select(w => w.FullTipSha!).Distinct(StringComparer.Ordinal).ToArray();
+            var tips = new List<string>();
+            foreach (var sha in warnings.Select(w => w.FullTipSha))
+                if (sha is { Length: > 0 } && !tips.Contains(sha))
+                    tips.Add(sha);
             var edges = new List<(string Ancestor, string Descendant)>();
             string? enrichmentReason = null;
             try
@@ -244,8 +268,9 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 {
                     if (inspection.Remaining < TimeSpan.FromMilliseconds(100)) break;
                     var warning = warnings[i];
+                    if (warning.FullTipSha is null) continue;
                     var count = await inspection.RunAsync(task.RepoPath, "rev-list", "--count", $"{target}..{warning.FullTipSha}");
-                    var subject = await inspection.RunAsync(task.RepoPath, "log", "-1", "--format=%s", warning.FullTipSha!);
+                    var subject = await inspection.RunAsync(task.RepoPath, "log", "-1", "--format=%s", warning.FullTipSha);
                     if (count.Succeeded && subject.Succeeded && int.TryParse(count.Output.Trim(), out var n))
                         warnings[i] = warning with { CommitsAbove = n, Subject = subject.Output.Trim() };
                 }
@@ -255,8 +280,10 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         }
         catch (WorktreeBaseInspectionLimitException ex)
         {
-            return Result(unresolvedPending.FirstOrDefault() is { } pending
-                ? Describe(pending.Task, null, pending.Request.State) : null, ex.Reason);
+            UnlandedSibling? hold = null;
+            if (!immutableStart && unresolvedPending.FirstOrDefault() is { } pending)
+                hold = Describe(pending.Task, null, pending.Request.State);
+            return Result(hold, ex.Reason);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -269,6 +296,9 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 ? Describe(pending.Task, null, pending.Request.State) : null, "git_inspection_error");
         }
     }
+
+    private static bool IsCommitId(string? value) =>
+        GitObjectId.TryNormalize(value, out _);
 
     private static bool SameRepo(AgentTask task, AgentTask sibling) =>
         DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.RepoPath)
