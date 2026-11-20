@@ -98,13 +98,14 @@ public static class GitSnapshot
         if (mergeBase is not null)
         {
             text.AppendLine("diffstat:");
-            var stats = repo.Diff.Compare<PatchStats>(mergeBase.Tree, head.Tree,
+            var patch = repo.Diff.Compare<Patch>(mergeBase.Tree, head.Tree,
                 new CompareOptions { Similarity = SimilarityOptions.Renames });
-            var lines = stats.Select(file => " " + file.Path.Replace('\\', '/') + " | " + (file.LinesAdded + file.LinesDeleted)).ToList();
+            var lines = patch.Select(file => " " + file.Path.Replace('\\', '/') + " | "
+                + (file.IsBinaryComparison ? "Bin" : (file.LinesAdded + file.LinesDeleted).ToString(System.Globalization.CultureInfo.InvariantCulture))).ToList();
             if (lines.Count > 0)
                 lines.Add(" " + lines.Count + (lines.Count == 1 ? " file changed" : " files changed")
-                    + (stats.TotalLinesAdded > 0 ? ", " + stats.TotalLinesAdded + (stats.TotalLinesAdded == 1 ? " insertion(+)" : " insertions(+)") : "")
-                    + (stats.TotalLinesDeleted > 0 ? ", " + stats.TotalLinesDeleted + (stats.TotalLinesDeleted == 1 ? " deletion(-)" : " deletions(-)") : ""));
+                    + (patch.LinesAdded > 0 ? ", " + patch.LinesAdded + (patch.LinesAdded == 1 ? " insertion(+)" : " insertions(+)") : "")
+                    + (patch.LinesDeleted > 0 ? ", " + patch.LinesDeleted + (patch.LinesDeleted == 1 ? " deletion(-)" : " deletions(-)") : ""));
             text.AppendLine(string.Join('\n', lines));
         }
 
