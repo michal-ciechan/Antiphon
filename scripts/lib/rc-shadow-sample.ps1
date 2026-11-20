@@ -3,6 +3,21 @@
 # Persists a fixed-seed sample roster before launch. Does not launch, publish,
 # promote, write a trust record, or change IncrementalValidation from Shadow.
 # effectiveMode stays Full and gateCredit stays false.
+# A present provenanceFailure or unexpectedSkip that is not boolean false is a
+# failure. That includes a string, a number, null, and an object. Boolean false
+# is clean, and a missing flag is clean.
+# A carry is not launched unless sampled names it. A result row for a carry id
+# outside sampled fails closed as carried-result, including a passed row, and
+# invalidates every carry. A carry id listed in sampled is the launched sample
+# and follows the ordinary row rules. An unsampled row that is not a carry
+# stays dropped.
+# PRECONDITION for S6c/S6d: before this library feeds any carry decision, absent
+# or unrecognised sample evidence must invalidate every carry when Carries is
+# nonempty or CurrentSample is roster or executed. A pilot without cchunk and
+# stratumCount must be ineligible. This slice does not do that.
+# AbsentEvidenceKeepsCarriesUntilWired records the current fail-open so a later
+# slice must flip it deliberately. A present sampled or results key still fails
+# closed. Do not describe absent evidence as fail-closed.
 . (Join-Path $PSScriptRoot 'rc-forced-full.ps1')
 
 function Get-RcShadowField {
@@ -251,22 +266,25 @@ function Test-RcShadowWholeNumber {
     return $number -ge 0 -and $number -le [int]::MaxValue
 }
 
+function Test-RcShadowClosedFlag {
+    param($Row, [string]$Name)
+    # Missing is clean. Boolean false is clean. Any other present value fails.
+    if (-not (Test-RcShadowKey $Row $Name)) { return $false }
+    $value = Get-RcShadowField $Row $Name
+    return -not ($value -is [bool] -and -not $value)
+}
+
 function Test-RcShadowResultRow {
     param($Row, [string]$ChunkId)
-    $skip = Get-RcShadowField $Row 'unexpectedSkip'
     $outcome = Get-RcShadowField $Row 'outcome'
-    if (($skip -is [bool] -and $skip) -or ($outcome -is [string] -and $outcome -ceq 'skipped')) {
-        return [pscustomobject]@{ kind = 'unexpected-skip'; chunkId = $ChunkId }
-    }
-    if ($null -ne $skip -and $skip -isnot [bool]) {
+    if ((Test-RcShadowClosedFlag $Row 'unexpectedSkip') -or ($outcome -is [string] -and $outcome -ceq 'skipped')) {
         return [pscustomobject]@{ kind = 'unexpected-skip'; chunkId = $ChunkId }
     }
     if ($outcome -isnot [string] -or [string]::IsNullOrEmpty($outcome)) {
         return [pscustomobject]@{ kind = 'missing-outcome'; chunkId = $ChunkId }
     }
     $provenance = Get-RcShadowField $Row 'provenance'
-    $provenanceFailure = Get-RcShadowField $Row 'provenanceFailure'
-    if (($provenanceFailure -is [bool] -and $provenanceFailure) -or $provenance -isnot [string] -or $provenance -cne 'verified') {
+    if ((Test-RcShadowClosedFlag $Row 'provenanceFailure') -or $provenance -isnot [string] -or $provenance -cne 'verified') {
         return [pscustomobject]@{ kind = 'provenance-failure'; chunkId = $ChunkId }
     }
     if ($outcome -cne 'passed') {
@@ -276,7 +294,13 @@ function Test-RcShadowResultRow {
 }
 
 function Get-RcShadowSampleEvidenceFailure {
-    param($Evidence)
+    param($Evidence, [object[]]$Carries = @())
+    $carried = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($carry in @($Carries)) {
+        if ($carry -is [string] -and -not [string]::IsNullOrEmpty($carry)) {
+            [void]$carried.Add($carry)
+        }
+    }
     $sawSampled = Test-RcShadowKey $Evidence 'sampled'
     $sawResults = Test-RcShadowKey $Evidence 'results'
     if (-not $sawSampled -and -not $sawResults) { return $null }
@@ -311,6 +335,16 @@ function Get-RcShadowSampleEvidenceFailure {
             }
             $rows.Add($row)
         }
+    }
+    # A result for a carry that this roster did not launch is a contradiction.
+    # A passed row fails closed too. A carry listed in sampled stays ordinary.
+    $launched = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in $ids) { [void]$launched.Add($id) }
+    foreach ($row in $rows) {
+        $rowId = Get-RcShadowField $row 'chunkId'
+        if ($rowId -isnot [string] -or -not $carried.Contains($rowId)) { continue }
+        if ($sawSampled -and $launched.Contains($rowId)) { continue }
+        return [pscustomobject]@{ kind = 'carried-result'; chunkId = $rowId }
     }
     if ($ids.Count -gt 0 -and $rows.Count -eq 0) {
         return [pscustomobject]@{ kind = 'empty-results'; chunkId = [string]$ids[0] }
@@ -443,8 +477,9 @@ function Get-RcShadowTrustDecision {
             if ([string]$reason -clike 'contract-*') { [void]$reasons.Add([string]$reason) }
         }
     }
-    # The caller flag can only add a failure. Missing, skipped, or unproven sample evidence fails closed.
-    $derivedFailure = Get-RcShadowSampleEvidenceFailure -Evidence $Evidence
+    # The caller flag can only add a failure. A present sampled or results key
+    # fails closed. Absent evidence still leaves carries valid until S6c/S6d.
+    $derivedFailure = Get-RcShadowSampleEvidenceFailure -Evidence $Evidence -Carries $Carries
     if ($null -ne $SampleFailure -or $null -ne $derivedFailure) { [void]$reasons.Add('sample-failed') }
     if ($RosterChanged) { [void]$reasons.Add('sample-roster-changed') }
     $preservedFailure = $SampleFailure

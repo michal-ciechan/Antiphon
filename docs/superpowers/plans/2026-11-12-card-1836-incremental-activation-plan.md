@@ -244,6 +244,8 @@ Goal: add `scripts/lib/rc-shadow-sample.ps1`, `scripts/test-rc-shadow-sample.ps1
 
 Red witnesses V-11: `SampleSizeStrataAndReplay`; `MismatchInvalidatesCarries`; `NoCarryAndOnePilotDoNotGrantTrust`. Verify exact fixed-seed roster, boundaries, changed contract/trust refusal, zero carries and preservation of a failed sample.
 
+S6c/S6d precondition, not implemented here: before this library feeds a carry decision, absent or unrecognised sample evidence must invalidate every carry when Carries is nonempty or CurrentSample is roster or executed, and a pilot without cchunk and stratumCount must be ineligible. `AbsentEvidenceKeepsCarriesUntilWired` pins the current fail-open. A result row for a carry that `sampled` did not launch fails closed, including a passed row.
+
 ### S6b — prospective build/source evidence and result writer
 
 Goal: add `scripts/lib/rc-run-evidence.ps1`, `scripts/test-rc-run-evidence.ps1`, `RcRunEvidenceTests`; wire source/input snapshots, output seals and immutable per-chunk revisions into `nightly-tests-impl.ps1` and owned-checkout boundaries in `nightly-run-impl.ps1`. This also runs during explicit Full bootstrap. Revalidate source/build/output at admission and closure; carry cannot avoid current discovery. Do not change native custody implementation.
@@ -252,13 +254,13 @@ Red witnesses V-12: `BuildSourceAndLaunchOutputMustJoin`; `ChangedInputsDuringRu
 
 ### S6c — scheduler uses the exact launch set
 
-Goal: integrate S6a/S8b through `scripts/lib/nightly-dispatch.ps1` and `nightly-tests-impl.ps1`; add `scripts/test-rc-incremental-dispatch.ps1`, `RcIncrementalDispatchTests`. Introduce a separate verified Incremental schedule; require its permutation to equal L and preserve the old Full schedule guard. Exercise the real prepare/schedule/complete functions with fixture launch delegates.
+Goal: integrate S6a/S8b through `scripts/lib/nightly-dispatch.ps1` and `nightly-tests-impl.ps1`; add `scripts/test-rc-incremental-dispatch.ps1`, `RcIncrementalDispatchTests`. Introduce a separate verified Incremental schedule; require its permutation to equal L and preserve the old Full schedule guard. Exercise the real prepare/schedule/complete functions with fixture launch delegates. Before any carry decision, honour the S8b precondition: absent sample evidence invalidates carries, and a pilot without cchunk and stratumCount is ineligible. Flip `AbsentEvidenceKeepsCarriesUntilWired` in that slice.
 
 Red witnesses V-13: `ActualScheduleOmitsOnlyVerifiedCarries`; `MissingDuplicateOrAddedLaunchRefuses`; `AllCarriedSuiteCompletesWithoutFakeLaunch`. R-5: `NightlyCoreTests`, `LiveLaneRunnerTests`; native existing ActualLoop/JournalCustody methods are CP-18, not falsely portable proof.
 
 ### S6d — ledger closure and coverage integration
 
-Goal: add `scripts/lib/rc-closure.ps1`, `scripts/test-rc-incremental-closure.ps1`, `RcIncrementalClosureTests`; connect summary and terminal suite/run closure in `nightly-tests-impl.ps1`, `nightly-coverage.ps1` and `nightly-run-impl.ps1`. Validate exact U partition, terminal evidence and prospective outputs; keep Linux diagnostic. Do not modify publication policy.
+Goal: add `scripts/lib/rc-closure.ps1`, `scripts/test-rc-incremental-closure.ps1`, `RcIncrementalClosureTests`; connect summary and terminal suite/run closure in `nightly-tests-impl.ps1`, `nightly-coverage.ps1` and `nightly-run-impl.ps1`. Validate exact U partition, terminal evidence and prospective outputs; keep Linux diagnostic. Do not modify publication policy. A carry decision still has to meet the S8b precondition: absent sample evidence invalidates carries, and a pilot without cchunk and stratumCount is ineligible.
 
 Red witnesses V-14: `CarryPlusExecutedExactlyCloses`; `MissingCaseOrUnexpectedSkipKeepsOpen`; `SampleFailureAndLinuxCannotClaimWindows`; `FullFallbackResetsAnchorOnlyAfterExecution`. R-6: `RcCoverageAdmissionTests`, `ExpectedPlatformSkipRosterTests`, `ReleaseGatePlatformTests`, `NightlyCoreTests`, `LiveLaneRunnerTests`.
 
