@@ -460,9 +460,18 @@ function Test-RcTestOnlyPath {
 }
 
 function Test-RcProductEdgeReason {
-    param([string]$Reason, $Policy)
+    param([string]$Reason, $Policy, [string]$OwnProject)
     if (-not $Reason) { return $false }
-    foreach ($part in $Reason.Split(';')) { if ($Policy.productEdges.Contains($part)) { return $true } }
+    foreach ($part in $Reason.Split(';')) {
+        if ($Policy.productEdges.Contains($part)) { return $true }
+        # project-tree:<P> names the project whose directory holds the file.
+        # The suite's own tree stays test-only. A referenced helper does not.
+        $prefix='project-tree:'
+        if ($part.StartsWith($prefix,[StringComparison]::Ordinal)) {
+            $named=$part.Substring($prefix.Length)
+            if ($named -and $named -cne $OwnProject) { return $true }
+        }
+    }
     return $false
 }
 
@@ -473,6 +482,33 @@ function Test-RcWalkerSuite {
         if (@($root.consumers) -ccontains $SuiteId -or @($root.consumers) -ccontains '*') { return $true }
     }
     return $false
+}
+
+function Test-RcStarWalkerPath {
+    param([string]$Path, $Policy)
+    foreach ($root in @($Policy.roots)) {
+        if (-not $root.walker -or (@($root.consumers) -cnotcontains '*')) { continue }
+        if ($root.pattern.IsMatch($Path) -and -not (Test-RcRootCarves $root $Path)) { return $true }
+    }
+    return $false
+}
+
+function Get-RcTestAttributeCount([string]$Text) {
+    $count=0
+    if (-not $Text) { return 0 }
+    foreach ($line in ($Text -split '\n')) {
+        $trim=$line.Trim().TrimEnd("`r")
+        if ($trim.StartsWith('//',[StringComparison]::Ordinal) -or $trim.StartsWith('*',[StringComparison]::Ordinal) -or $trim.StartsWith('/*',[StringComparison]::Ordinal)) { continue }
+        $count += [regex]::Matches($trim,'\[Test(?![A-Za-z0-9_])').Count
+    }
+    return $count
+}
+
+function Test-RcAddedTestAttribute {
+    param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, [string]$Path)
+    $before=Get-RcTestAttributeCount (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
+    $after=Get-RcTestAttributeCount (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
+    return $after -gt $before
 }
 
 function Get-RcContainingSuiteId {
@@ -578,9 +614,10 @@ function Get-RcInputManifest {
                 foreach ($input in @($after[0].inputs)+@($before[0].inputs)) {
                     if ($null -ne $input -and [string]$input.path -ceq $path -and $input.present) { $record=$input; break }
                 }
-                if ($null -ne $record -and (Test-RcProductEdgeReason ([string]$record.reason) $policy)) { $keep=$true; continue }
+                if ($null -ne $record -and (Test-RcProductEdgeReason ([string]$record.reason) $policy ([string]$after[0].project))) { $keep=$true; continue }
                 $changeStatus= if ($status.ContainsKey($path)) { $status[$path] } else { 'M' }
                 if ((Test-RcStructuralChange $RepositoryRoot $BaselineSha $CandidateSha $path $changeStatus) -and (Test-RcWalkerSuite $id $path $policy)) { $keep=$true }
+                if ((Test-RcStarWalkerPath $path $policy) -and (Test-RcAddedTestAttribute $RepositoryRoot $BaselineSha $CandidateSha $path)) { $keep=$true }
             }
             if (-not $keep) {
                 $remove.Add($id)
