@@ -41,6 +41,8 @@ Distilled from the entries below. These are the candidates for standing guidance
    an agreed direction, and similar bookkeeping do not need sign-off. Ask only about genuine decisions.
 8. **Do not argue against the stated direction on local cost/benefit grounds.** "Small remaining gain" or
    "adds risk" is not a reason to stop short of the direction the owner has set.
+9. **"Update" means existing things.** When the thing to update does not exist, report that and stop. Do not
+   offer to create new live state (jobs, schedules, registrations) as the default way to satisfy an update.
 
 ---
 
@@ -313,6 +315,28 @@ and clones only when it is missing.)
 
 **Candidate guidance:** "Don't add machinery to speed up rare cases (fresh clones, cold machines, first runs).
 Mention the cost if it is real, but recommend the simpler design."
+
+---
+
+## 2026-11-20 - Nothing registered to update: leave Windmill alone
+
+**Context:** The owner asked to "update windmill jobs and push". The nightly-tests and release-candidates
+definitions in `scripts/windmill/` had switched from `powershell` to `pwsh`. The live workspace had none of the
+three release-gate jobs registered (nightly tests, readiness, release candidates).
+
+**What the agent recommended:** Register the nightly-tests and readiness jobs with their schedules disabled,
+through the repository's registration rules, leaving release candidates unregistered.
+
+**Why the agent picked it:** It read "update the jobs" as "make the live jobs match the repository", and
+registering-disabled looked like the safe way to get there: nothing would run until a schedule was enabled.
+
+**What the owner preferred:** "Leave Windmill alone."
+
+**Principle:** An instruction to update existing state does not extend to creating it. When the target is
+missing, the finding is the answer; creating new live state is a separate decision the owner makes unprompted.
+
+**Candidate guidance:** "If asked to update something that does not exist (a deployed job, a registration, a
+remote resource), say so and stop. Do not recommend creating it; list it as an option only if asked."
 
 ---
 
