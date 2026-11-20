@@ -31,6 +31,15 @@ function Get-CheckpointToolAssembly {
     if ($ready) { return $named } else { return $null }
 }
 
+# A tool call that throws or passes its deadline leaves every later read of this run to git: one reader from there
+# on, not a mix decided call by call.
+function Disable-CheckpointToolReads {
+    param([string]$Tool, $Failure)
+    $message = if ($null -ne $Failure.Exception.InnerException) { $Failure.Exception.InnerException.Message } else { $Failure.Exception.Message }
+    Write-Verbose ('checkpoint tool reads stopped, git answers the rest of this run: ' + $message)
+    $script:CheckpointToolLoads[$Tool] = $false
+}
+
 # The source snapshot by the tool's SourceSnapshot, shaped as Get-CheckpointSource's observation; $null when no
 # build is named or it cannot be loaded.
 function Get-CheckpointToolSource {
@@ -39,7 +48,7 @@ function Get-CheckpointToolSource {
     if ($null -eq $tool) { return $null }
     try { $fields = [Antiphon.Checkpoints.Script.CheckpointToolReads]::Capture($tool, $Repository) }
     catch {
-        Write-Verbose ('checkpoint tool source failed, git answers: ' + $_.Exception.Message)
+        Disable-CheckpointToolReads $tool $_
         return $null
     }
     $known = [string]$fields[3] -ceq 'known'
@@ -60,7 +69,10 @@ function Get-CheckpointToolRead {
     $tool = Get-CheckpointToolAssembly
     if ($null -eq $tool) { return $null }
     try { return [Antiphon.Checkpoints.Script.CheckpointToolReads]::Read($tool, $WorkDir, [string[]]$GitArgs) }
-    catch { return $null }
+    catch {
+        Disable-CheckpointToolReads $tool $_
+        return $null
+    }
 }
 
 # The tracked paths git status --porcelain=v2 -z --untracked-files=no lists, read in process; $null when git must
@@ -70,7 +82,10 @@ function Get-CheckpointToolTrackedStatus {
     $tool = Get-CheckpointToolAssembly
     if ($null -eq $tool) { return $null }
     try { $paths = [Antiphon.Checkpoints.Script.CheckpointToolReads]::TrackedStatus($tool, $Repo) }
-    catch { return $null }
+    catch {
+        Disable-CheckpointToolReads $tool $_
+        return $null
+    }
     if ($null -eq $paths) { return $null }
     return ,$paths
 }

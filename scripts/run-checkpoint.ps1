@@ -218,8 +218,8 @@ function Test-CheckpointStampRefusal {
         $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
     }
     $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
-    # One spelling per checkout (C:/x and C:\x are one key on Windows).
-    $ownerKey = try { [System.IO.Path]::GetFullPath($owner).TrimEnd('\', '/') } catch { $owner }
+    # One spelling per checkout (C:/x and C:\x are one key on Windows; a root keeps its separator).
+    $ownerKey = try { [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($owner)) } catch { $owner }
     $vouched = $null
     $toplevel = $null
     if ($script:CheckpointVerifiedToplevels.TryGetValue($ownerKey, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal) -and $vouched.Length -gt $gitStamp.Length + 1) {
@@ -298,7 +298,7 @@ function Test-CheckpointPreflight {
             $script:CheckpointVerifiedToplevels = [System.Collections.Generic.Dictionary[string,string]]::new($comparer)
         }
         $gitStamp = try { [string][System.IO.File]::GetLastWriteTimeUtc((Join-Path $owner '.git')).Ticks } catch { 'unknown' }
-        $ownerKey = try { [System.IO.Path]::GetFullPath($owner).TrimEnd('\', '/') } catch { $owner }
+        $ownerKey = try { [System.IO.Path]::TrimEndingDirectorySeparator([System.IO.Path]::GetFullPath($owner)) } catch { $owner }
         $vouched = $null
         if (-not ($script:CheckpointVerifiedToplevels.TryGetValue($ownerKey, [ref]$vouched) -and $vouched.StartsWith($gitStamp + '|', [StringComparison]::Ordinal))) {
             $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
@@ -1034,6 +1034,8 @@ function Get-CheckpointTrackedStatus {
     foreach ($path in $paths) {
         if ($seen.Add($path)) { [void]$distinct.Add($path) }
     }
+    # Ordinal order, as the tool's in-process answer above and the tool's own confinement list them.
+    $distinct.Sort([StringComparer]::Ordinal)
     return @{ Error = $null; Paths = $distinct.ToArray() }
 }
 

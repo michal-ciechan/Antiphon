@@ -126,6 +126,7 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
             }
         }
         RunGit(repository, "config", "core.autocrlf", "false");
+        RunGit(repository, "config", "maintenance.auto", "false");
     }
 
     // Direct children can drop inherited Git variables. ProcessDriver can only assign.

@@ -374,7 +374,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
         Directory.CreateDirectory(root);
         _git = CheckpointFixtureGitEnvironment.Create(Path.Combine(scope, "git-isolation"));
         Git(root, "init", "-b", "card1199"); // core.autocrlf=false too (CheckpointFixtureGitEnvironment.Git)
-        var ignore ="bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n";
+        var ignore = "bin-*/\nobj/\n.antiphon/\n.checkpoint-test-root.json\n";
         if (shape == "ignored-descendant")
             ignore += "user.dat\n";
         Write(root, ".gitignore", ignore);
@@ -560,10 +560,18 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             "-MinExecuted", "1", "-NoSlot",
         })
             start.ArgumentList.Add(arg);
-        CheckpointFixtures.UseToolReads(start);
+        // The untracked and ignored listings are where git and libgit2 could part: those shapes keep the script's
+        // git reader end to end, so this matrix still compares the tool against git there.
+        if (!GitReaderShapes.Contains(shape))
+            CheckpointFixtures.UseToolReads(start);
         _git.Apply(start);
         return await WaitAsync(start, cancellationToken);
     }
+
+    private static readonly HashSet<string> GitReaderShapes = new(StringComparer.Ordinal)
+    {
+        "untracked-descendant", "ignored-descendant", "staged-untracked", "deleted-untracked", "changed-untracked",
+    };
 
     private async Task<RunResult> ValidateReceiptAsync(string receipt, string head, CancellationToken cancellationToken)
     {

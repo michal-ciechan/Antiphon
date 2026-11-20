@@ -819,7 +819,7 @@ public static class BuildConfinement
         try
         {
             return Antiphon.GitInProcess.InProcessGitStatus.StatusPaths(repository, untracked: false, agrees: AgreesWithGitChild)
-                is { } dirty ? dirty.Order(StringComparer.Ordinal).ToList() : null;
+                is { } dirty && !AnyLossyName(dirty) ? dirty.Order(StringComparer.Ordinal).ToList() : null;
         }
         catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException || ToolLibGit2.IsNativeUnavailable(ex))
         {
@@ -910,6 +910,7 @@ public static class BuildConfinement
                 case ["ls-files", "-z", "--others", "--exclude-standard"]:
                 case ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]:
                     return Antiphon.GitInProcess.InProcessGitStatus.OtherPaths(workingDirectory, ignored: args.Count == 5, agrees: AgreesWithGitChild) is { } paths
+                        && !AnyLossyName(paths)
                         ? new GitResult(0, string.Concat(paths.Order(StringComparer.Ordinal).Select(path => path + "\0")), null) : null;
                 default:
                     return null;
@@ -926,6 +927,13 @@ public static class BuildConfinement
     /// repository's config, as the hardened git child does, but the child also reads the user's default ignore
     /// file: when that applies, git answers instead.
     /// </summary>
+    /// <summary>
+    /// libgit2's status names a path its bytes do not decode as UTF-8 with U+FFFD in it (CARD-1608): such a listing
+    /// is not read in process, so git answers and its strict decode fails closed (git-encoding) instead of a renamed
+    /// path being stamped absent. A real name containing U+FFFD goes to git too, which reads it correctly.
+    /// </summary>
+    private static bool AnyLossyName(IEnumerable<string> paths) => paths.Any(path => path.Contains((char)0xFFFD));
+
     private static bool AgreesWithGitChild(LibGit2Sharp.Configuration repositoryConfig) =>
         !Antiphon.GitInProcess.WorkTreeIdentity.UserDefaultIgnoreApplies(repositoryConfig);
 
