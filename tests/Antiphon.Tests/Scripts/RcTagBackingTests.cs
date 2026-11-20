@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Nightly;
@@ -9,7 +10,8 @@ namespace Antiphon.Tests.Scripts;
 /// <summary>
 /// CARD-1820 S5. A human tag is backed by an all-executed Windows Full of the tagged SHA.
 /// The chain form stays compiled off until a CARD-1836 D-8 producer exists. A caller
-/// integer is not trust. An anchor age of 7 days or more is not backed.
+/// integer is not trust. An anchor age of 7 days or more is not backed. Callers read
+/// the result kind rather than searching Answer for "full".
 /// </summary>
 [Category("Unit")]
 [Timeout(60_000)]
@@ -200,13 +202,23 @@ public sealed class RcTagBackingTests
     [Test]
     public void DeepNestingIsChainInvalid()
     {
-        var json = new StringBuilder();
-        for (var i = 0; i < 32; i++)
-            json.Append("{\"a\":");
-        json.Append('1');
-        for (var i = 0; i < 32; i++)
-            json.Append('}');
-        var answer = RcTagBacking.Test(json.ToString());
+        var answer = RcTagBacking.Test(NestedJson(32));
+        answer.Answer.ShouldBe("not-backed(chain-invalid)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Depth10000IsChainInvalid()
+    {
+        var answer = RcTagBacking.Test(NestedJson(10_000));
+        answer.Answer.ShouldBe("not-backed(chain-invalid)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void Depth100000IsChainInvalid()
+    {
+        var answer = RcTagBacking.Test(NestedJson(100_000));
         answer.Answer.ShouldBe("not-backed(chain-invalid)");
         answer.GateCredit.ShouldBeFalse();
     }
@@ -374,8 +386,98 @@ public sealed class RcTagBackingTests
     public void FutureDatedAnchorIsNotBacked()
     {
         var answer = RcTagBacking.Test(YoungChain(trusted: 2, anchorAge: TimeSpan.FromMinutes(-5)));
-        answer.Answer.ShouldBe("not-backed(full-anchor-future)");
+        answer.Answer.ShouldBe("not-backed(anchor-in-future)");
+        answer.Answer.Contains("full", StringComparison.Ordinal).ShouldBeFalse();
         answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void AnchorTimeUnknownIsNotBacked()
+    {
+        var head = Link("head", Tagged, "carried", "anchor-run", completed: null);
+        var anchor = Link("anchor-run", Anchor, "executed-full", origin: null, completed: null, allExecuted: true);
+        var answer = RcTagBacking.Test(Document(2, new[] { head, anchor }, Lineage(Anchor)));
+        answer.Answer.ShouldBe("not-backed(anchor-time-unknown)");
+        answer.Answer.Contains("full", StringComparison.Ordinal).ShouldBeFalse();
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ResultExposesTypedKind()
+    {
+        var full = RcTagBacking.Test(ExactFull());
+        full.Answer.ShouldBe("full");
+        var kindProperty = typeof(RcTagBackingResult).GetProperty("Kind");
+        kindProperty.ShouldNotBeNull();
+        var kindType = kindProperty!.PropertyType;
+        kindType.IsEnum.ShouldBeTrue();
+        Enum.GetNames(kindType).ShouldBe(new[] { "Full", "ChainToFull", "NotBacked" });
+        kindProperty.GetValue(full)!.ToString().ShouldBe("Full");
+
+        var refused = RcTagBacking.Test(YoungChain(trusted: 1, anchorAge: TimeSpan.FromDays(1), headDisposition: "shadow"));
+        refused.Answer.ShouldBe("not-backed(shadow-trust-absent)");
+        kindProperty.GetValue(refused)!.ToString().ShouldBe("NotBacked");
+    }
+
+    [Test]
+    public void ExactFullAtFiveMinuteSkewStaysFull()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt("2026-11-19T00:05:00Z"));
+        answer.Answer.ShouldBe("full");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ExactFullOneSecondPastFiveMinuteSkewIsNotBacked()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt("2026-11-19T00:05:01Z"));
+        answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ExactFullFarFutureIsNotBacked()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt("9999-12-31T23:59:59Z"));
+        answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ExactFullMissingTimeIsNotBacked()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt(null));
+        answer.Answer.ShouldBe("not-backed(full-time-unknown)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void DocumentUtcNowRefusesExactFullAfterIt()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt("2000-01-01T00:06:00Z", "2000-01-01T00:00:00Z"));
+        answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void DocumentUtcNowAcceptsExactFullAheadOfTheHost()
+    {
+        var answer = RcTagBacking.Test(ExactFullAt("2098-12-31T00:00:00Z", "2099-01-01T00:00:00Z"));
+        answer.Answer.ShouldBe("full");
+        answer.GateCredit.ShouldBeFalse();
+    }
+
+    [Test]
+    public void ResultConstructorAndChainFactoryAreInternal()
+    {
+        var type = typeof(RcTagBackingResult);
+        type.GetConstructors(BindingFlags.Public | BindingFlags.Instance).Length.ShouldBe(0);
+        type.GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Length.ShouldBeGreaterThan(0);
+        foreach (var name in new[] { "Chain", "Full", "NotBacked" })
+        {
+            type.GetMethod(name, BindingFlags.Public | BindingFlags.Static).ShouldBeNull();
+            type.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static).ShouldNotBeNull();
+        }
     }
 
     [Test]
@@ -409,16 +511,33 @@ public sealed class RcTagBackingTests
         return Document(trusted, new[] { head, anchor }, Lineage(Anchor));
     }
 
-    private static string Document(int trusted, TagChainEnvelope[] envelopes, TagChainCommit[] commits) =>
+    private static string Document(int trusted, TagChainEnvelope[] envelopes, TagChainCommit[] commits, string? utcNow = null) =>
         JsonSerializer.Serialize(new
         {
             format = "antiphon-rc-tag-chain-v1",
             taggedSha = Tagged,
-            utcNow = Now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture),
+            utcNow = utcNow ?? Now.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture),
             trustedShadowCuts = trusted,
             envelopes,
             commits
         });
+
+    private static string NestedJson(int depth)
+    {
+        var json = new StringBuilder(depth * 6 + 1);
+        for (var i = 0; i < depth; i++)
+            json.Append("{\"a\":");
+        json.Append('1');
+        for (var i = 0; i < depth; i++)
+            json.Append('}');
+        return json.ToString();
+    }
+
+    private static string ExactFullAt(string? completed, string? utcNow = null)
+    {
+        var full = Link("full-run", Tagged, "executed-full", origin: null, completed, allExecuted: true);
+        return Document(0, new[] { full }, new[] { new TagChainCommit(Tagged, Array.Empty<string>()) }, utcNow);
+    }
 
     private static TagChainCommit[] Lineage(string anchorSha) => new[]
     {
