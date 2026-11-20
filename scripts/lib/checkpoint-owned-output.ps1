@@ -8,7 +8,8 @@ function New-CheckpointFreshOutput {
     if ($null -ne $reason) { return $reason }
     if (-not ('Antiphon.Checkpoints.ExclusiveDirectory' -as [type])) {
         $nativeSource = Join-Path $PSScriptRoot '../../src/Antiphon.HostCleanup/Checkpoints/ExclusiveDirectory.cs'
-        Add-Type -TypeDefinition ((Read-CheckpointText $nativeSource)) -CompilerOptions '/nullable:enable'
+        Import-CheckpointCompiledSource -Source (Read-CheckpointText $nativeSource) -TypeName 'Antiphon.Checkpoints.ExclusiveDirectory' `
+            -Name 'ExclusiveDirectory' -CompilerOptions @('/nullable:enable')
     }
     $reason = [Antiphon.Checkpoints.ExclusiveDirectory]::Create($full)
     if ($null -ne $reason) { return $reason }

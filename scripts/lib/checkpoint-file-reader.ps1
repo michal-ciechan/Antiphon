@@ -600,3 +600,42 @@ function Read-CheckpointStrictText {
     }
     return $encoding.GetString($bytes, $offset, $bytes.Length - $offset)
 }
+
+# Load C# source as a compiled type, compiling it at most once per source version: the assembly is cached under
+# the user's temp directory, keyed by the SHA-256 of the source text and compiler options plus the PowerShell/.NET
+# versions, so each later process only loads it (an in-memory compile costs most of a second in every process,
+# and the checkpoint script tests start many). Concurrent first runs each compile; the first rename wins. A cache
+# that cannot be written or loaded falls back to compiling in memory, as before.
+function Import-CheckpointCompiledSource {
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$TypeName,
+          [Parameter(Mandatory)][string]$Name, [string[]]$CompilerOptions = @())
+    if ($TypeName -as [type]) { return }
+    try {
+        $key = [Text.Encoding]::UTF8.GetBytes($Source + "`n" + ($CompilerOptions -join ' ') + "`n" + $PSVersionTable.PSVersion.ToString() + "`n" + [Environment]::Version.ToString())
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($key)).Substring(0, 24).ToLowerInvariant()
+        $directory = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-checkpoint-types'
+        $dll = Join-Path $directory ($Name + '-' + $hash + '.dll')
+        if (-not [IO.File]::Exists($dll)) {
+            [void][IO.Directory]::CreateDirectory($directory)
+            $work = Join-Path $directory ('build-' + [guid]::NewGuid().ToString('N') + '.dll')
+            try {
+                $compile = @{ TypeDefinition = $Source; OutputAssembly = $work }
+                if ($CompilerOptions.Count -gt 0) { $compile.CompilerOptions = $CompilerOptions }
+                Add-Type @compile
+                try { [IO.File]::Move($work, $dll) } catch [IO.IOException] { }
+            } finally {
+                if ([IO.File]::Exists($work)) { try { [IO.File]::Delete($work) } catch { } }
+            }
+            # Assemblies of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
+            foreach ($old in @([IO.Directory]::GetFiles($directory, $Name + '-*.dll'))) {
+                if ($old -eq $dll -or [IO.File]::GetLastWriteTimeUtc($old) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
+                try { [IO.File]::Delete($old) } catch { }
+            }
+        }
+        Add-Type -Path $dll
+    } catch { }
+    if ($TypeName -as [type]) { return }
+    $inMemory = @{ TypeDefinition = $Source }
+    if ($CompilerOptions.Count -gt 0) { $inMemory.CompilerOptions = $CompilerOptions }
+    Add-Type @inMemory
+}
