@@ -334,6 +334,24 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         await AssertStagedUserFileSurvivesAsync(root, "indexed", "fresh-user.txt", bytes, cancellationToken);
     }
 
+    // Counts SDK projects the staged-user factory emits. Each one is a cold build
+    // on both checkpoint entry points.
+    [Test]
+    [Timeout(120_000)]
+    public void baseline_staged_fixture_sdk_build_count()
+    {
+        var untracked = BeginRepo();
+        WriteStageProject(untracked, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
+        var ignored = BeginRepo();
+        WriteStageProject(ignored, "git --git-dir=.git --work-tree=. add -f -- user-ignored.dat");
+        var sdk = new[]
+        {
+            File.ReadAllText(Path.Combine(untracked, "App", "App.csproj")),
+            File.ReadAllText(Path.Combine(ignored, "App", "App.csproj")),
+        }.Count(text => text.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal));
+        sdk.ShouldBeGreaterThan(1);
+    }
+
     private async Task AssertStagedUserFileSurvivesAsync(string root, string name, string relative, byte[] bytes, CancellationToken cancellationToken)
     {
         Commit(root);
