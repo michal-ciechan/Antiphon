@@ -6,7 +6,7 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>Classifies pinned Git objects after rebase. Every unknown input requires a build.</summary>
 internal sealed class LandVerificationPolicy(ILandingGit git)
 {
-    internal sealed record Decision(bool Skip, string Reason);
+    internal sealed record Decision(bool Skip, string Reason, string? Graph = null);
 
     internal async Task<Decision> DecideAsync(string repository, string targetRef, string targetSha,
         string? candidateSha, string? filter, bool forceBuild, CancellationToken ct)
@@ -30,7 +30,7 @@ internal sealed class LandVerificationPolicy(ILandingGit git)
             if (LandVerificationBuildGraph.AuditedCount is int audited
                 && audited == candidateCount
                 && candidateDigest == LandVerificationBuildGraph.Fingerprint)
-                return new(true, "non-code");
+                return new(true, "non-code", LandVerificationBuildGraph.Fingerprint);
             var target = await git.RunAsync(repository, ["ls-tree", "-r", "-z", targetSha], ct);
             if (!target.Succeeded
                 || !LandVerificationBuildGraph.TryReadGraph(target.Output, out var targetDigest, out var targetCount)
@@ -45,7 +45,7 @@ internal sealed class LandVerificationPolicy(ILandingGit git)
             if (manifestDigest is null || manifestCount is null
                 || manifestDigest != targetDigest || manifestCount != targetCount)
                 return new(false, "unrecognized-build-graph");
-            return new(true, "docs-skip-target-manifest");
+            return new(true, "docs-skip-target-manifest", manifestDigest);
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
