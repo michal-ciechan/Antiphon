@@ -385,7 +385,7 @@ function Set-C599TrxOutcome {
     $ledger = Get-Content -LiteralPath (Join-Path $dir 'ledger.json') -Raw | ConvertFrom-Json
     $row = @($ledger.chunks | Where-Object { [string]$_.chunk -eq $Chunk })[0]
     $trx = Join-Path (Split-Path -Parent $dir) ([string]$row.trx)
-    $rows = @(Read-NightlyTrxIdentities -TrxPath $trx | ForEach-Object {
+    $rows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx) | ForEach-Object {
         $o = [string]$_.Outcome
         if ([string]$_.TestId -eq $Uid) { $o = $Outcome }
         [pscustomobject]@{ Id = [string]$_.TestId; ClassName = [string]$_.ClassName; MethodName = [string]$_.MethodName; Outcome = $o } })
@@ -828,7 +828,7 @@ function Test-C599_ExpandedCoverage {
     Write-C487Execution -Path (Join-Path $diagDir 'log.diag') -Nodes $execNodes
     $before = (Get-NightlyUtcNow).AddMinutes(-5)
 
-    $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -ExecutionDiagnosticPath $diagDir -RunDirectory $run -NotBeforeUtc $before -ProcessExit 0 -Sha $ShaA -ExpectedSha $ShaA -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'h' -ExpectedPolicyHash 'h' -ProfileExclusions $exclusions -ProfileAware
+    $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $disc, $diagDir, $run, $before, 0, $ShaA, $ShaA, 'r', 'r', 'h', 'h', @(), $exclusions, $true, $null, '', $null)
     Assert-C487 -Cond ([bool]$verdict.coverageComplete) -Name 'C599 ExpandedCoverage control: both required rows executed is complete' -Detail (@($verdict.reasons) -join ';')
     Assert-C487 -Cond (($null -ne $verdict.census) -and [int]$verdict.census.RequiredCount -eq 2) -Name 'C599 ExpandedCoverage census reports 2 required uids' -Detail ([string]$verdict.census.RequiredCount)
     Assert-C487 -Cond ([int]$verdict.census.ExcludedCount -eq 1) -Name 'C599 ExpandedCoverage census reports the 1 named exclusion' -Detail ([string]$verdict.census.ExcludedCount)
@@ -839,13 +839,13 @@ function Test-C599_ExpandedCoverage {
     Write-C487Trx -Path (Join-Path $run2 'e2e.trx') -Rows @($trxRows[0])
     Write-C487Discovery -Path (Join-Path $run2 'e2e.discovery.json') -Nodes $discNodes
     Write-C487Execution -Path (Join-Path $run2 (Join-Path 'exec' 'log.diag')) -Nodes @($execNodes[0])
-    $missing = ConvertTo-NightlyNativeSuiteVerdict -TrxPath (Join-Path $run2 'e2e.trx') -DiscoveryPath (Join-Path $run2 'e2e.discovery.json') -ExecutionDiagnosticPath (Join-Path $run2 'exec') -RunDirectory $run2 -NotBeforeUtc $before -ProcessExit 0 -Sha $ShaA -ExpectedSha $ShaA -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'h' -ExpectedPolicyHash 'h' -ProfileExclusions $exclusions -ProfileAware
+    $missing = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict((Join-Path $run2 'e2e.trx'), (Join-Path $run2 'e2e.discovery.json'), (Join-Path $run2 'exec'), $run2, $before, 0, $ShaA, $ShaA, 'r', 'r', 'h', 'h', @(), $exclusions, $true, $null, '', $null)
     Assert-C487 -Cond (-not [bool]$missing.coverageComplete) -Name 'C599 ExpandedCoverage a removed expanded row is incomplete' -Detail (@($missing.reasons) -join ';')
     Assert-C487 -Cond ((@($missing.reasons) -join ';') -match 'missing-expanded-row') -Name 'C599 ExpandedCoverage names the missing expanded row' -Detail (@($missing.reasons) -join ';')
 
     # In the DEFAULT lane the same evidence would have zero required rows, which
     # is exactly the silent-green the profile lane must refuse.
-    $defaultVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -ExecutionDiagnosticPath $diagDir -RunDirectory $run -NotBeforeUtc $before -ProcessExit 0 -Sha $ShaA -ExpectedSha $ShaA -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'h' -ExpectedPolicyHash 'h'
+    $defaultVerdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $disc, $diagDir, $run, $before, 0, $ShaA, $ShaA, 'r', 'r', 'h', 'h', @(), $null, $false, $null, '', $null)
     Assert-C487 -Cond (($null -ne $defaultVerdict.census) -and [int]$defaultVerdict.census.RequiredCount -eq 0) -Name 'C599 ExpandedCoverage default lane would require zero uids here' -Detail ([string]$defaultVerdict.census.RequiredCount)
 
     # A profile lane whose every node is excluded is never green.
@@ -855,12 +855,12 @@ function Test-C599_ExpandedCoverage {
     Write-C487Trx -Path (Join-Path $run3 'e2e.trx') -Rows @(@{ Id = 'e3'; ClassName = 'E2E.LiveCanaryTests'; MethodName = 'Runs_live'; Outcome = 'Passed' })
     Write-C487Discovery -Path (Join-Path $run3 'e2e.discovery.json') -Nodes $onlyLive
     Write-C487Execution -Path (Join-Path $run3 (Join-Path 'exec' 'log.diag')) -Nodes @(@{ uid = 'e3'; state = 'Passed'; type = 'LiveCanaryTests'; method = 'Runs_live'; className = 'E2E.LiveCanaryTests' })
-    $zero = ConvertTo-NightlyNativeSuiteVerdict -TrxPath (Join-Path $run3 'e2e.trx') -DiscoveryPath (Join-Path $run3 'e2e.discovery.json') -ExecutionDiagnosticPath (Join-Path $run3 'exec') -RunDirectory $run3 -NotBeforeUtc $before -ProcessExit 0 -Sha $ShaA -ExpectedSha $ShaA -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'h' -ExpectedPolicyHash 'h' -ProfileExclusions $exclusions -ProfileAware
+    $zero = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict((Join-Path $run3 'e2e.trx'), (Join-Path $run3 'e2e.discovery.json'), (Join-Path $run3 'exec'), $run3, $before, 0, $ShaA, $ShaA, 'r', 'r', 'h', 'h', @(), $exclusions, $true, $null, '', $null)
     Assert-C487 -Cond ((-not [bool]$zero.coverageComplete) -and (-not [bool]$zero.testsPassed)) -Name 'C599 ExpandedCoverage zero required uids is never green' -Detail (@($zero.reasons) -join ';')
     Assert-C487 -Cond ((@($zero.reasons) -join ';') -match 'zero-required-uid') -Name 'C599 ExpandedCoverage names zero-required-uid' -Detail (@($zero.reasons) -join ';')
 
     # Missing execution diagnostics is incomplete even with a green TRX.
-    $noDiag = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -ExecutionDiagnosticPath '' -RunDirectory $run -NotBeforeUtc $before -ProcessExit 0 -Sha $ShaA -ExpectedSha $ShaA -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'h' -ExpectedPolicyHash 'h' -ProfileExclusions $exclusions -ProfileAware
+    $noDiag = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $disc, '', $run, $before, 0, $ShaA, $ShaA, 'r', 'r', 'h', 'h', @(), $exclusions, $true, $null, '', $null)
     Assert-C487 -Cond (-not [bool]$noDiag.coverageComplete) -Name 'C599 ExpandedCoverage missing execution diagnostics is incomplete' -Detail (@($noDiag.reasons) -join ';')
 }
 
@@ -2409,7 +2409,7 @@ function Update-C599ATrx {
     $row = @($doc.chunks | Where-Object { [string]$_.chunk -eq $Chunk })[0]
     $trxPath = Join-Path (Split-Path -Parent $authDir) ([string]$row.trx)
     $c599aTrxChunk = $Chunk
-    $current = @(Read-NightlyTrxIdentities -TrxPath $trxPath | ForEach-Object {
+    $current = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trxPath) | ForEach-Object {
         [pscustomobject]@{ Id = [string]$_.TestId; ClassName = [string]$_.ClassName; MethodName = [string]$_.MethodName; Outcome = [string]$_.Outcome } })
     $c599aTrxRows = @(& $Rows $current)
     Write-C487Trx -Path $trxPath -Rows $c599aTrxRows

@@ -6,14 +6,12 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     if (-not (Get-Command Test-NightlyCoreAvailable -ErrorAction SilentlyContinue)) {
         . (Join-Path $PSScriptRoot 'nightly-core.ps1')
     }
-    # Script scope, and only when absent. A function-scoped dot disappears on return,
-    # and a second dot of nightly-coverage.ps1 returns from the caller.
+    # Script scope, and only when absent. A function-scoped dot disappears on return.
     if (-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)) {
         . (Join-Path $PSScriptRoot 'nightly-watchdog-admission.ps1')
     }
-    if (-not (Get-Command ConvertTo-NightlyCoverageVerdict -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'nightly-coverage.ps1')
-    }
+    # The TRX reader and the coverage verdict are compiled (Antiphon.Nightly.NightlyChunkVerdict).
+    $null = Test-NightlyCoreAvailable
 }
 
 function New-RcRunEvidenceIdle {
@@ -174,7 +172,7 @@ function Write-RcRunEvidenceWarning {
 }
 
 function Test-NightlyRcOutcomeReadersReady {
-    return ((Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue) -and (Get-Command ConvertTo-NightlyCoverageVerdict -ErrorAction SilentlyContinue))
+    return ((Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue) -and $null -ne ('Antiphon.Nightly.NightlyChunkVerdict' -as [type]))
 }
 
 function Test-NightlyRcWholeNumber {
@@ -191,12 +189,12 @@ function ConvertTo-NightlyRcCheckedOutcome {
     # A null roster tolerates nothing. Do not load the production roster from Platform alone.
     $roster = @()
     if ($null -ne $ExpectedSkipRoster) { $roster = @($ExpectedSkipRoster) }
-    $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows @($Rows) -ProcessExit 0 -Sha '' -ExpectedSha '' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash '' -Platform $Platform -ExpectedSkipRoster $roster
+    $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@($Rows), 0, '', '', '', '', '', '', @(), @(), $false, $Platform, $roster, $null)
     $executedRows = [int]$verdict.passed + [int]$verdict.failed
     if ($ReportedExecuted -ne $executedRows -or $ReportedFailed -ne [int]$verdict.failed) {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-counter-mismatch' }
     }
-    if (-not (Test-NightlyCounterAgreement -Verdict $verdict -ReportedTotal $ReportedTotal -ReportedFailed $ReportedFailed)) {
+    if (-not ([Antiphon.Nightly.NightlyChunkVerdict]::CounterAgreement($verdict, $ReportedTotal, $ReportedFailed))) {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-counter-mismatch' }
     }
     if ([bool]$verdict.testsPassed -and [bool]$verdict.coverageComplete -and $CallerCoverageComplete -and $ReportedFailed -eq 0) {
@@ -242,7 +240,7 @@ function Get-NightlyRcTrxChunkOutcome {
     if ([string]$summary.Outcome -cne 'Completed') {
         return [pscustomobject]@{ Outcome = 'Failed'; Reason = 'summary-outcome' }
     }
-    try { $rows = @(Read-NightlyTrxIdentities -TrxPath $ResultsPath) } catch {
+    try { $rows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($ResultsPath)) } catch {
         return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unreadable' }
     }
     try {

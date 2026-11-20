@@ -23,7 +23,7 @@ function Initialize-TestPhaseLinuxIdentity {
     Add-Type -Path (Join-Path $PSScriptRoot 'Antiphon.Nightly/TestPhaseLinuxIdentity.cs')
 }
 
-# The Windows PowerShell body stays for Read-NightlyTrxIdentities in a process without the core.
+# Without the core (Windows PowerShell 5.1, ANTIPHON_NIGHTLY_CORE=off) the PowerShell body answers.
 function Get-TestPhasePathIdentity {
     param([string]$Path)
     $missing = [pscustomobject]@{ Kind = 'missing'; Size = [int64]0 }

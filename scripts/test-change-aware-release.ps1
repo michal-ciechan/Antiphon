@@ -120,7 +120,7 @@ function Invoke-FxRoster($Selection, $Discovery, $Label) {
     $dir = Join-Path $ResultsDirectory $Label
     $receipt = Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $Discovery -Members $members -ResultsDirectory $dir `
         -Environment @{C1313_SENTINEL=(Join-Path $ResultsDirectory 'forbidden.txt')}
-    $terminals = @(); foreach ($trx in Get-ChildItem $dir -Recurse -Filter run.trx) { $terminals += @(Read-NightlyTrxIdentities $trx.FullName) }
+    $terminals = @(); foreach ($trx in Get-ChildItem $dir -Recurse -Filter run.trx) { $terminals += @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx.FullName)) }
     return ($receipt.complete -and $terminals.Count -eq 4 -and
         @($terminals | Where-Object {$_.Outcome -cne 'Passed' -or $_.ClassName -cne 'Antiphon.Tests.FilterHost.C1313Offline'}).Count -eq 0 -and
         @($terminals | Where-Object MethodName -Match '^Rows').Count -eq 3 -and -not (Test-Path (Join-Path $ResultsDirectory 'forbidden.txt')))

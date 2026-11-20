@@ -31,7 +31,7 @@ public sealed class RcRunEvidenceTests
             ["RE " + nameof(ShadowPassedIsAtLeastTheRealCheck) + ".contract"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(70), TimeSpan.FromSeconds(10)), token);
 
-    // CARD-2008. The recorded shadow outcome goes through ConvertTo-NightlyNativeSuiteVerdict and log freshness.
+    // CARD-2008. The recorded shadow outcome goes through the native suite verdict (NightlyChunkVerdict) and log freshness.
     [Test, Timeout(120_000)] public Task ShadowPassedMatchesNativeBranch(CancellationToken token) =>
         ScriptHarness.RunHarnessCaseAsync("test-rc-run-evidence.ps1", "RE", nameof(ShadowPassedMatchesNativeBranch), 1,
             ["RE " + nameof(ShadowPassedMatchesNativeBranch) + ".contract"],

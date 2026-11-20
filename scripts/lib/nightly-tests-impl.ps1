@@ -964,7 +964,7 @@ function Prepare-NightlySuiteExecution {
         elseif ($chunks.Count -gt 0) {
             foreach ($ch in $chunks) { foreach ($c in @($ch.classes)) { $eligible += [string]$c } }
         }
-        $member = Test-NightlyChunkMembership -EligibleClasses $eligible -Chunks $chunks
+        $member = [Antiphon.Nightly.NightlyChunkVerdict]::ChunkMembership($eligible, $chunks)
         if (-not $member.Ok) {
             if ($member.Duplicates.Count -gt 0) {
                 throw ('duplicate-class {0}' -f ($member.Duplicates -join ','))
@@ -1250,7 +1250,7 @@ function Invoke-NightlyScheduledChunk {
         # Set-Content -Encoding UTF8 (pwsh 7: no BOM, one line): a failure is reported and the chunk goes on.
         try { [System.IO.File]::WriteAllText($logPath, ('C487_INVOCATION=' + $invocationId + [Environment]::NewLine)) } catch { Write-Error -ErrorRecord $_ }
     }
-    $fresh = Test-NightlyFreshEvidence -Path $logPath -RunDirectory $LogRoot -NotBeforeUtc $startedAt -InvocationId $invocationId
+    $fresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($logPath, $LogRoot, $startedAt, $invocationId)
     $row = [ordered]@{
         id = $suiteId
         chunk = [string]$chunk.id
@@ -1301,13 +1301,7 @@ function Invoke-NightlyScheduledChunk {
         $required = @()
         if ($chunk.classes) { foreach ($c in @($chunk.classes)) { $required += [string]$c } }
         $execDiagPath = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest($execDiagDir)
-        $nativeVerdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxPath -DiscoveryPath $discPath `
-            -ExecutionDiagnosticPath $execDiagPath `
-            -RunDirectory $LogRoot -NotBeforeUtc $startedAt -ProcessExit ([int]$run.ExitCode) `
-            -Sha $Sha -ExpectedSha $Sha -GitRef $GitRef -ExpectedRef $GitRef `
-            -PolicyHash $policyHash -ExpectedPolicyHash $policyHash -RequiredClasses $required `
-            -ProfileExclusions $profileExclusions -ProfileAware:$profileAware -DiscoveryIndex $suiteDiscoveryIndex `
-            -Platform $platform -ExpectedSkipRoster $expectedSkipRoster
+        $nativeVerdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trxPath, $discPath, $execDiagPath, $LogRoot, $startedAt, ([int]$run.ExitCode), $Sha, $Sha, $GitRef, $GitRef, $policyHash, $policyHash, $required, $profileExclusions, [bool]($profileAware), $suiteDiscoveryIndex, $platform, $expectedSkipRoster)
         if ($nativeVerdict.PSObject.Properties.Name -contains 'processExitTolerated' -and [bool]$nativeVerdict.processExitTolerated) {
             $exitTolerated = $true
             $row.processExitTolerated = $true
@@ -1513,7 +1507,7 @@ function Complete-NightlySuiteExecution {
                 $unionNodes.Add($dn)
             }
         }
-        $union = Test-NightlySuiteUidUnion -DiscoveryNodes $unionNodes.ToArray() -ChunkTerminalNodes $suiteTerminalNodes
+        $union = [Antiphon.Nightly.NightlyChunkVerdict]::SuiteUidUnion($unionNodes.ToArray(), $suiteTerminalNodes)
         if (-not $union.Ok) {
             $coverageComplete = $false
             $overallFailed = $true
@@ -1521,8 +1515,8 @@ function Complete-NightlySuiteExecution {
         }
     }
     if ($isNative -and $null -ne $profileDiscovery -and -not [string]::IsNullOrWhiteSpace([string]$profileDiscoveryPath) -and @($suiteDiscoveryNodes).Count -gt 0 -and @($expectedSkipRoster).Count -gt 0) {
-        $discoveryKnown = @(Get-NightlyDiscoveryKnownIdentities -Nodes @($suiteDiscoveryNodes))
-        foreach ($discoveryStale in @(Get-NightlyExpectedSkipStaleWarnings -Platform ([string]$platform) -Entries $expectedSkipRoster -KnownTestIdentities $discoveryKnown)) {
+        $discoveryKnown = @([Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(@($suiteDiscoveryNodes)))
+        foreach ($discoveryStale in @([Antiphon.Nightly.NightlyChunkVerdict]::StaleWarnings(([string]$platform), $expectedSkipRoster, $discoveryKnown))) {
             $discoveryStaleText = [string]$discoveryStale
             if ([string]::IsNullOrWhiteSpace($discoveryStaleText)) { continue }
             if ($expectedSkipWarnings -notcontains $discoveryStaleText) { $expectedSkipWarnings += $discoveryStaleText }
@@ -1954,7 +1948,7 @@ function Invoke-AntiphonNightlyTests {
     }
             $rosterFile = Join-Path $RepoRoot (Join-Path 'tests' 'expected-platform-skips.json')
             if (Test-Path -LiteralPath $rosterFile -PathType Leaf) {
-                $expectedSkipRoster = @(Get-NightlyExpectedSkipRoster -Path $rosterFile)
+                $expectedSkipRoster = @([Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster($rosterFile))
                 # The end-of-run skip scans read only tests/ and the roster: they run while the chunks do.
                 $expectedSkipScan = Start-NightlyExpectedSkipScan -RepoRoot $RepoRoot -Platform $platform -Entries $expectedSkipRoster
             }
@@ -2057,7 +2051,7 @@ function Invoke-AntiphonNightlyTests {
     }
     $expectedSkipRosterDigest = ''
     if (@($expectedSkipRoster).Count -gt 0) {
-        $expectedSkipRosterDigest = [string](Get-NightlyExpectedSkipRosterDigest -Entries $expectedSkipRoster)
+        $expectedSkipRosterDigest = [string]([Antiphon.Nightly.NightlyChunkVerdict]::RosterDigest($expectedSkipRoster))
     }
     $evidenceWriteVerdict = Merge-NightlyDeferredEvidenceVerdict -Reasons $reasons
     $reasons = @($evidenceWriteVerdict.reasons)
@@ -2136,7 +2130,7 @@ function Invoke-AntiphonNightlyTests {
 function Invoke-NightlyExactRoster {
     param([string]$AssemblyPath, $Discovery, [object[]]$Members, [string]$ResultsDirectory,
           [string[]]$ClassifiedUids = $null, [hashtable]$Environment = $null)
-    $roster = New-NightlyExactRoster -Discovery $Discovery -Members $Members -ClassifiedUids $ClassifiedUids
+    $roster = [Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($Discovery, $Members, $ClassifiedUids)
     if ($roster.AssemblyHash -cne (Get-NightlyAssemblyHash $AssemblyPath)) { throw 'discovery-build-mismatch' }
     if ($roster.UnresolvedUids.Count -gt 0) { throw 'new-uid-required: classification required before launch' }
     if (Test-Path -LiteralPath $ResultsDirectory) { throw 'execution-output-already-exists' }
@@ -2184,9 +2178,9 @@ function Invoke-NightlyExactRoster {
         [IO.File]::WriteAllText((Join-Path $dir 'console.log'), $run.Stdout + $run.Stderr)
         if ($run.TimedOut) { throw 'exact-execution-timeout' }
         $actual = [Antiphon.Nightly.NightlyDiagnosticLog]::Read(([Antiphon.Nightly.NightlyDiagnosticLog]::Latest($dir)), 'execution')
-        $trxRows = @(Read-NightlyTrxIdentities $trx)
-        $cross = Test-NightlyTrxDiagnosticCrossCheck $trxRows $actual.Nodes
-        $verdict = Test-NightlyExactCoverage $chunk.RequiredUids $actual.Nodes
+        $trxRows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx))
+        $cross = [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($trxRows, $actual.Nodes, @())
+        $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::ExactCoverage($chunk.RequiredUids, $actual.Nodes)
         $receipts += [ordered]@{ filter = $chunk.Filter; requiredUids = @($chunk.RequiredUids); executedUids = @($actual.Nodes.Uid); exitCode = $run.Exit; trx = $trx; complete = ($cross.Ok -and $verdict.Ok -and $run.Exit -eq 0) }
         $terminal += @($actual.Nodes)
         if (-not $cross.Ok -or -not $verdict.Ok -or $run.Exit -ne 0) {
@@ -2194,7 +2188,7 @@ function Invoke-NightlyExactRoster {
             throw ('exact-execution-incomplete:' + ($verdict.Reasons -join ','))
         }
     }
-    $verdict = Test-NightlyExactCoverage $roster.RequiredUids $terminal
+    $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::ExactCoverage($roster.RequiredUids, $terminal)
     $result = [ordered]@{ format='antiphon-exact-roster-v1'; complete=$verdict.Ok; executionEvidence=$true; releaseCredit=$false; assemblyHash=$roster.AssemblyHash; requiredUids=@($roster.RequiredUids); executedUids=@($terminal.Uid); chunks=$receipts }
     Write-NightlyAtomicJson (Join-Path $ResultsDirectory 'receipt.json') $result
     return $result

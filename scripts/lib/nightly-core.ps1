@@ -11,7 +11,7 @@
 # (Assert-NightlyCoreAvailable: nightly-core-required). Only what such a process still runs keeps a PowerShell
 # path that returns the same values: nightly-run.ps1 and release-cut.ps1 under Windows PowerShell 5.1 and the
 # release selection worker in a script copy (ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256,
-# Get-NightlyParentProcess, Read-NightlyJsonFile, Read-NightlyTrxIdentities).
+# Get-NightlyParentProcess, Read-NightlyJsonFile).
 
 function Get-NightlyCoreBuildIdentity {
     $projects = @(

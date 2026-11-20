@@ -118,7 +118,7 @@ function Test-C487_G029 {
 
 function Test-C487_G030 {
     foreach ($kind in @('old-ts', 'wrong-dir', 'prev-inv')) {
-        $fresh = Test-NightlyFreshEvidence -Path $policyPath -RunDirectory $repo -NotBeforeUtc ([datetime]::UtcNow.AddDays(1)) -InvocationId 'nope'
+        $fresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($policyPath, $repo, ([datetime]::UtcNow.AddDays(1)), 'nope')
         Assert-C487 -Cond (-not $fresh.Ok) -Name ('G030 {0}' -f $kind) -Detail $fresh.Reason
     }
 }
@@ -126,7 +126,7 @@ function Test-C487_G030 {
 function Test-C487_G031 {
     foreach ($kind in @('missing', 'malformed', 'empty')) {
         try {
-            $null = Read-NightlyTrxIdentities -TrxPath $(if ($kind -eq 'missing') { Join-Path $env:TEMP 'no.trx' } else { $policyPath })
+            $null = [Antiphon.Nightly.NightlyTrx]::ReadIdentities($(if ($kind -eq 'missing') { Join-Path $env:TEMP 'no.trx' } else { $policyPath }))
             Assert-C487 -Cond ($kind -ne 'missing') -Name ('G031 {0} threw or not' -f $kind)
         } catch {
             Assert-C487 -Cond $true -Name ('G031 {0} fail-closed' -f $kind)
@@ -146,42 +146,42 @@ function Test-C487_G032 {
 
 function Test-C487_G033 {
     foreach ($kind in @('inflated', 'hidden-fail')) {
-        $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
-        $ok = Test-NightlyCounterAgreement -Verdict $v -ReportedTotal $(if ($kind -eq 'inflated') { 99 } else { 1 }) -ReportedFailed $(if ($kind -eq 'hidden-fail') { 0 } else { 0 })
+        $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }), 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
+        $ok = [Antiphon.Nightly.NightlyChunkVerdict]::CounterAgreement($v, $(if ($kind -eq 'inflated') { 99 } else { 1 }), $(if ($kind -eq 'hidden-fail') { 0 } else { 0 }))
         Assert-C487 -Cond (($kind -eq 'inflated' -and -not $ok) -or ($kind -eq 'hidden-fail')) -Name ('G033 {0}' -f $kind)
     }
 }
 
 function Test-C487_G034 {
-    $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }) -ProcessExit 1 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }), 1, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
     Assert-C487 -Cond (-not $v.testsPassed) -Name 'G034 process exit 1'
 }
 
 function Test-C487_G035 {
-    $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Failed'; Identity = 'A.M' }) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Failed'; Identity = 'A.M' }), 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
     Assert-C487 -Cond (-not $v.testsPassed) -Name 'G035 failed row'
 }
 
 function Test-C487_G036 {
     foreach ($kind in @('Slow', 'broker')) {
-        $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Skipped'; Identity = ('X.{0}' -f $kind) }) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+        $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Skipped'; Identity = ('X.{0}' -f $kind) }), 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
         Assert-C487 -Cond (-not $v.coverageComplete) -Name ('G036 skip {0}' -f $kind)
     }
 }
 
 function Test-C487_G037 {
-    $m = Test-NightlyChunkMembership -EligibleClasses @('A','B') -Chunks @(@{ id = '1'; classes = @('A','A') })
+    $m = [Antiphon.Nightly.NightlyChunkVerdict]::ChunkMembership(@('A','B'), @(@{ id = '1'; classes = @('A','A') }))
     Assert-C487 -Cond (-not $m.Ok -and $m.Duplicates.Count -gt 0) -Name 'G037 duplicate class'
 }
 
 function Test-C487_G038 {
-    $m = Test-NightlyChunkMembership -EligibleClasses @('A','B') -Chunks @(@{ id = '1'; classes = @('A') })
+    $m = [Antiphon.Nightly.NightlyChunkVerdict]::ChunkMembership(@('A','B'), @(@{ id = '1'; classes = @('A') }))
     Assert-C487 -Cond (-not $m.Ok -and $m.Missing.Count -gt 0) -Name 'G038 missing class'
 }
 
 function Test-C487_G039 {
     foreach ($kind in @('Arguments', 'MethodDataSource')) {
-        $r = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows @() -RequiredUids @('uid-missing')
+        $r = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@(), @(), @('uid-missing'))
         Assert-C487 -Cond (-not $r.Ok) -Name ('G039 {0} missing uid' -f $kind)
     }
     $fx = New-Efx
@@ -198,25 +198,22 @@ function Test-C487_G039 {
     Write-C487Execution -Path $exec -Nodes @(
         @{ uid = 'uid-pass'; state = 'Passed'; type = 'SampleClass'; method = 'OtherRow' }
     )
-    $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $disc -ExecutionDiagnosticPath $exec -RunDirectory $runDir `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $disc, $exec, $runDir, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @(), $null, $false, $null, '', $null)
     $named = (($v.reasons) -join ',') -match 'uid-missing'
     Assert-C487 -Cond ((-not [bool]$v.coverageComplete) -and $named) -Name 'G039 native verdict missing uid' -Detail (($v.reasons) -join ',')
 
     $plainUid = 'C487.Probe.Ordinary.1.1.Plain.1.1.0'
     $probe = New-C487FreshProbeEvidence -RunDirectory (Join-Path $runDir 'probe-g039')
     $discUids = @($probe.Discovery.Nodes | ForEach-Object { [string]$_.Uid })
-    $guidRows = @(Read-NightlyTrxIdentities -TrxPath $probe.TrxPath)
+    $guidRows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($probe.TrxPath))
     $guidHit = $false
     foreach ($row in $guidRows) {
         if ($discUids -contains [string]$row.TestId) { $guidHit = $true }
         if ([string]$row.TestId -eq $plainUid) { $guidHit = $true }
     }
-    $uidVsTrx = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($probe.Discovery.Nodes) -TerminalRows $guidRows -RequiredUids @($plainUid)
+    $uidVsTrx = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@($probe.Discovery.Nodes), $guidRows, @($plainUid))
     Assert-C487 -Cond ((-not $guidHit) -and (-not $uidVsTrx.Ok)) -Name 'G039 TRX GUIDs are not discovery UIDs' -Detail ('guidHit=' + $guidHit + ' missing=' + ($uidVsTrx.Missing -join ','))
-    $realExpanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($probe.Discovery.Nodes) -TerminalRows @($probe.Execution.Nodes) -RequiredUids @($plainUid)
+    $realExpanded = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@($probe.Discovery.Nodes), @($probe.Execution.Nodes), @($plainUid))
     Assert-C487 -Cond $realExpanded.Ok -Name 'G039 Plain present in terminal diagnostic UIDs' -Detail ($realExpanded.Missing -join ',')
 
     Write-C487NativePassSeams -Path $fx.Seams -TracePath $fx.Trace `
@@ -236,7 +233,7 @@ function Test-C487_G039 {
 
 function Test-C487_G040 {
     foreach ($kind in @('list-only', 'inprogress')) {
-        $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @() -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -DiscoveryNodes @([pscustomobject]@{ State = 'InProgress' }) -UsedDiscoveryAsExecution ($kind -eq 'list-only')
+        $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@(), 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @([pscustomobject]@{ State = 'InProgress' }), ($kind -eq 'list-only'), '', $null, $null)
         Assert-C487 -Cond (-not $v.coverageComplete -and -not $v.testsPassed) -Name ('G040 {0}' -f $kind)
     }
     $fx = New-Efx
@@ -248,10 +245,7 @@ function Test-C487_G040 {
     New-Item -ItemType Directory -Path $runDir -Force | Out-Null
     $trx = Join-Path $runDir 'g040-missing-disc.trx'
     Write-C487Trx -Path $trx -Rows @(@{ Id = 'uid-1'; ClassName = 'SampleClass'; MethodName = 'SampleMethod'; Outcome = 'Passed' })
-    $v2 = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath '' -RunDirectory $runDir `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v2 = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, '', '', $runDir, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @(), $null, $false, $null, '', $null)
     $missingDisc = (($v2.reasons) -join ',') -match 'missing-discovery'
     Assert-C487 -Cond ((-not [bool]$v2.coverageComplete) -and [bool]$v2.testsPassed -and $missingDisc) -Name 'G040 missing discovery not complete' -Detail (($v2.reasons) -join ',')
 
@@ -279,17 +273,14 @@ function Test-C487_G040 {
         @{ uid = 'uid-pass'; type = 'SampleClass'; method = 'Ran'; namespace = 'Ns'; state = 'Discovered' },
         @{ uid = 'uid-ne'; type = 'SampleClass'; method = 'DidNotRun'; namespace = 'Ns'; state = 'Discovered' }
     )
-    $vNe = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trxNe -DiscoveryPath $discNe -RunDirectory $runNe `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $vNe = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trxNe, $discNe, '', $runNe, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @(), $null, $false, $null, '', $null)
     $neReason = (([string]($vNe.reasons | Out-String)) -match 'unexecuted-outcome')
     Assert-C487 -Cond ((-not [bool]$vNe.coverageComplete) -and $neReason) -Name 'G040 NotExecuted not complete' -Detail (($vNe.reasons) -join ',')
 
-    $vUnk = ConvertTo-NightlyCoverageVerdict -TerminalRows @(
+    $vUnk = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@(
         [pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.Ran' },
         [pscustomobject]@{ Outcome = 'WeirdState'; Identity = 'A.Unknown' }
-    ) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    ), 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
     $unkReason = (([string]($vUnk.reasons | Out-String)) -match 'unknown-outcome')
     Assert-C487 -Cond ((-not [bool]$vUnk.coverageComplete) -and (-not [bool]$vUnk.testsPassed) -and $unkReason) -Name 'G040 unknown outcome not complete' -Detail (($vUnk.reasons) -join ',')
 
@@ -368,11 +359,7 @@ function Test-C487_G040 {
 
     $probeRun = Join-Path $ResultsDirectory ('g040-probe-' + [guid]::NewGuid().ToString('N'))
     $ev = New-C487FreshProbeEvidence -RunDirectory $probeRun
-    $vReal = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ev.TrxPath -DiscoveryPath $ev.DiscoveryPath `
-        -ExecutionDiagnosticPath $ev.ExecutionPath -RunDirectory $probeRun `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $vReal = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($ev.TrxPath, $ev.DiscoveryPath, $ev.ExecutionPath, $probeRun, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @(), $null, $false, $null, '', $null)
     $reasonText = (($vReal.reasons) -join ',')
     $plainMissing = $reasonText -match 'Plain'
     Assert-C487 -Cond ([bool]$vReal.coverageComplete -and [bool]$vReal.testsPassed -and (-not $plainMissing)) `
@@ -381,17 +368,17 @@ function Test-C487_G040 {
 }
 
 function Test-C487_G041 {
-    $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }) -ProcessExit 0 -Sha 'aaa' -ExpectedSha 'bbb' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }), 0, 'aaa', 'bbb', 'origin/master', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
     Assert-C487 -Cond (-not $v.coverageComplete) -Name 'G041 sha mismatch'
 }
 
 function Test-C487_G042 {
-    $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'feature/x' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }), 0, 'a', 'a', 'feature/x', 'origin/master', 'p', 'p', @(), @(), $false, '', $null, $null)
     Assert-C487 -Cond (-not $v.coverageComplete) -Name 'G042 ref mismatch'
 }
 
 function Test-C487_G043 {
-    $v = ConvertTo-NightlyCoverageVerdict -TerminalRows @([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }) -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'old' -ExpectedPolicyHash 'new'
+    $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@([pscustomobject]@{ Outcome = 'Passed'; Identity = 'A.M' }), 0, 'a', 'a', 'origin/master', 'origin/master', 'old', 'new', @(), @(), $false, '', $null, $null)
     Assert-C487 -Cond (-not $v.coverageComplete) -Name 'G043 policy mismatch'
 }
 
@@ -464,9 +451,9 @@ function Test-C487_G051 {
     $ev = New-C487FreshProbeEvidence -RunDirectory $probeRun
     $ordinaryTerm = @($ev.Execution.Nodes | Where-Object { $_.Type -eq 'Ordinary' })
     $slowTerm = @($ev.Execution.Nodes | Where-Object { $_.Type -eq 'SlowCases' })
-    $union = Test-NightlySuiteUidUnion -DiscoveryNodes @($ev.Discovery.Nodes) -ChunkTerminalNodes (@($ordinaryTerm) + @($slowTerm))
+    $union = [Antiphon.Nightly.NightlyChunkVerdict]::SuiteUidUnion(@($ev.Discovery.Nodes), (@($ordinaryTerm) + @($slowTerm)))
     Assert-C487 -Cond $union.Ok -Name 'G051 union of chunk executions complete' -Detail ($union.Missing -join ',')
-    $half = Test-NightlySuiteUidUnion -DiscoveryNodes @($ev.Discovery.Nodes) -ChunkTerminalNodes $ordinaryTerm
+    $half = [Antiphon.Nightly.NightlyChunkVerdict]::SuiteUidUnion(@($ev.Discovery.Nodes), $ordinaryTerm)
     Assert-C487 -Cond (-not $half.Ok) -Name 'G051 single chunk is not suite union' -Detail ($half.Missing -join ',')
 
     $ordDir = Join-Path $probeRun 'chunk-ordinary'
@@ -484,21 +471,12 @@ function Test-C487_G051 {
         $ordExecNodes += @{ uid = [string]$n.Uid; state = 'Passed'; type = [string]$n.Type; method = [string]$n.Method; className = [string]$n.ClassName }
     }
     Write-C487Execution -Path $ordExec -Nodes $ordExecNodes
-    $vAssigned = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ordTrx -DiscoveryPath $ev.DiscoveryPath `
-        -ExecutionDiagnosticPath $ordExec -RunDirectory $ordDir `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' `
-        -RequiredClasses @('Ordinary')
+    $vAssigned = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($ordTrx, $ev.DiscoveryPath, $ordExec, $ordDir, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @('Ordinary'), $null, $false, $null, '', $null)
     $assignedReasons = (($vAssigned.reasons) -join ',')
     Assert-C487 -Cond ([bool]$vAssigned.coverageComplete -and ($assignedReasons -notmatch 'SlowCases') -and ($assignedReasons -notmatch 'SlowOne')) `
         -Name 'G051 chunk assigned Ordinary does not require SlowCases' `
         -Detail $assignedReasons
-    $vAll = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $ordTrx -DiscoveryPath $ev.DiscoveryPath `
-        -ExecutionDiagnosticPath $ordExec -RunDirectory $ordDir `
-        -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-5)) -ProcessExit 0 `
-        -Sha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -ExpectedSha 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
-        -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p'
+    $vAll = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($ordTrx, $ev.DiscoveryPath, $ordExec, $ordDir, ([datetime]::UtcNow.AddMinutes(-5)), 0, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'origin/master', 'origin/master', 'p', 'p', @(), $null, $false, $null, '', $null)
     $allReasons = (($vAll.reasons) -join ',')
     Assert-C487 -Cond ((-not [bool]$vAll.coverageComplete) -and ($allReasons -match 'missing-expanded-row')) `
         -Name 'G051 unfiltered chunk reports other-class UIDs missing' `
@@ -827,7 +805,7 @@ function Test-C1044_FixtureClassChunks {
     try {
         $doc = [Antiphon.Nightly.NightlyDiagnosticLog]::NewDiscoveryDocument($nodes, 'fixture-hash')
         $memberClass = 'Antiphon.Tests.Application.' + $fixture
-        $roster = New-NightlyExactRoster -Discovery $doc -Members @([pscustomobject]@{ class = $memberClass; method = 'ListsFiles' })
+        $roster = [Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($doc, @([pscustomobject]@{ class = $memberClass; method = 'ListsFiles' }), $null)
         foreach ($row in @($roster.Chunks)) {
             if ([string]$row.Filter -ceq '/*/Antiphon.Tests.Application/CardFilePolicyApiTests/ListsFiles') { $filterOk = $true }
         }
@@ -838,7 +816,7 @@ function Test-C1044_FixtureClassChunks {
     $policy = [Antiphon.Nightly.NightlyPolicy]::NodeExcluded($fixtureNode, @([pscustomobject]@{ Class = 'CardFilePolicyApiTests'; Methods = @(); Reason = 'held class'; Owner = 'C1044' }))
     $trx = @([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.CardFilePolicyApiTests'; MethodName = 'ListsFiles'; Outcome = 'Passed' })
     $terminal = @([pscustomobject]@{ ClassName = ('Antiphon.Tests.Application.' + $fixture); Type = $fixture; Method = 'ListsFiles'; Outcome = 'Passed'; Uid = 'lists-uid' })
-    $cross = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes $terminal -RequiredClasses @('Antiphon.Tests.Application.CardFilePolicyApiTests')
+    $cross = [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($trx, $terminal, @('Antiphon.Tests.Application.CardFilePolicyApiTests'))
     $classInvalid = @($invalid | Where-Object { $_ -eq 'invalid-class-filter' -or $_ -eq 'invalid-exact-filter' })
     $ok = ($nodes.Count -eq 4 -and @($chunks).Count -ge 3 -and $classInvalid.Count -eq 0 -and -not $paren -and $sawAgent -and $sawLists -and $sawPlain -and -not $sawOther -and $filterOk -and $policy -and $cross.Ok -and [string]::IsNullOrWhiteSpace($rosterError))
     Assert-C487 -Cond $ok -Name 'C1044 fixture discovery rc chunks and exact roster have zero invalid-class-filter' `
@@ -974,13 +952,11 @@ function Test-D13_RealTimeoutCancelled {
         $trx = Join-Path $ResultsDirectory "c1375-$state.trx"
         [IO.File]::WriteAllText($trx, ('<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">' +
             $decoded.Results + $decoded.Definitions + '</TestRun>'))
-        $rows = @(Read-NightlyTrxIdentities -TrxPath $trx)
+        $rows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx))
         $discovery = Join-Path $ResultsDirectory "c1375-$state.json"
         Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $uid; namespace = 'C1375.Probe';
             type = 'C1375Producer'; method = $method; state = 'Discovered' })
-        $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
-            -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 2 `
-            -Sha 'c1375' -ExpectedSha 'c1375' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $discovery, $path, $ResultsDirectory, ([datetime]::UtcNow.AddMinutes(-1)), 2, 'c1375', 'c1375', 'test', 'test', 'test', 'test', @(), $null, $false, $null, '', $null)
         Assert-C487 -Cond ($rows.Count -eq 1 -and $rows[0].ClassName -ceq $class -and
             $rows[0].MethodName -ceq $method -and $rows[0].Outcome -ceq 'Failed' -and
             $verdict.coverageComplete -and -not $verdict.testsPassed -and $verdict.reasons -contains 'failed-row' -and
@@ -1008,20 +984,17 @@ function Test-D13_ErrorTerminal {
         Assert-C487 -Cond ($parsed.Count -eq 1 -and $parsed[0].Message -ceq $expected) -Name ('D13 ' + $style + ' failure message')
         $trx = Join-Path $ResultsDirectory ('d13-' + $style + '.trx')
         [IO.File]::WriteAllText($trx, $D13FailureTrx)
-        $rows = @(Read-NightlyTrxIdentities -TrxPath $trx)
+        $rows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx))
         Assert-C487 -Cond ($rows.Count -eq 1 -and $rows[0].ClassName -ceq $class -and
             $rows[0].MethodName -ceq $method -and $rows[0].Outcome -ceq 'Failed') -Name ('D13 ' + $style + ' real TRX identity')
         $discovery = Join-Path $ResultsDirectory ('d13-' + $style + '.json')
         Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $uid; namespace = 'Antiphon.E2E';
             type = 'AgentTaskLandDeliveryE2ETests'; method = $method; state = 'Discovered' })
-        $v = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
-            -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 2 `
-            -Sha 'd13' -ExpectedSha 'd13' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        $v = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $discovery, $path, $ResultsDirectory, ([datetime]::UtcNow.AddMinutes(-1)), 2, 'd13', 'd13', 'test', 'test', 'test', 'test', @(), $null, $false, $null, '', $null)
         Assert-C487 -Cond ($v.coverageComplete -and -not $v.testsPassed -and $v.reasons -contains 'failed-row' -and
             @($v.terminalNodes).Count -eq 1 -and $v.terminalNodes[0].Message -ceq $expected) -Name ('D13 ' + $style + ' complete failed verdict')
         # Even a misleading successful process exit cannot make the failure pass.
-        $direct = ConvertTo-NightlyCoverageVerdict -TerminalRows $parsed -ProcessExit 0 `
-            -Sha 'd13' -ExpectedSha 'd13' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+        $direct = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($parsed, 0, 'd13', 'd13', 'test', 'test', 'test', 'test', @(), @(), $false, '', $null, $null)
         Assert-C487 -Cond (-not $direct.testsPassed -and $direct.reasons -contains 'failed-row') -Name ('D13 ' + $style + ' error alone stays red')
     }
 }
@@ -1066,11 +1039,11 @@ function Test-D13_ExecutionGuards {
     $omittedUid = 'Antiphon.E2E.AgentTaskLandDeliveryE2ETests.1.1.OtherMethod.1.1.0'
     $omitPath = Write-C1044Diagnostic -Name 'd13-guard-omit' -Text ($text.Replace($requiredUid, $omittedUid))
     $nodes = @(([Antiphon.Nightly.NightlyDiagnosticLog]::Read($omitPath, 'execution')).Nodes)
-    $missing = Test-NightlyExpandedRowsPresent -DiscoveryNodes @() -TerminalRows $nodes -RequiredUids @($requiredUid)
+    $missing = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@(), $nodes, @($requiredUid))
     Assert-C487 -Cond ($nodes.Count -eq 1 -and $nodes[0].Uid -ceq $omittedUid -and
         -not $missing.Ok -and @($missing.Missing).Count -eq 1 -and [string]$missing.Missing[0] -ceq $requiredUid) `
         -Name 'D13 missing failed UID refuses'
-    $extra = Test-NightlyTrxDiagnosticCrossCheck -TrxRows @() -TerminalNodes $parsed
+    $extra = [Antiphon.Nightly.NightlyVerdicts]::CrossCheck(@(), $parsed, @())
     Assert-C487 -Cond (-not $extra.Ok -and $extra.Mismatch.Count -eq 1) -Name 'D13 extra failed identity refuses'
 }
 
@@ -1212,9 +1185,7 @@ function Test-D13_StatePropertyBoundary {
     $discovery = Join-Path $ResultsDirectory 'c1325-joined.json'
     Write-C487Discovery -Path $discovery -Nodes @(@{ uid = $C1325Uid; namespace = 'Antiphon.E2E';
         type = 'AgentTaskLandDeliveryE2ETests'; method = 'C488_ApprovalPollingCannotConfirm'; state = 'Discovered' })
-    $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $trx -DiscoveryPath $discovery -ExecutionDiagnosticPath $path `
-        -RunDirectory $ResultsDirectory -NotBeforeUtc ([datetime]::UtcNow.AddMinutes(-1)) -ProcessExit 0 `
-        -Sha 'c1325' -ExpectedSha 'c1325' -GitRef 'test' -ExpectedRef 'test' -PolicyHash 'test' -ExpectedPolicyHash 'test'
+    $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($trx, $discovery, $path, $ResultsDirectory, ([datetime]::UtcNow.AddMinutes(-1)), 0, 'c1325', 'c1325', 'test', 'test', 'test', 'test', @(), $null, $false, $null, '', $null)
     Assert-C487 -Cond ($verdict.coverageComplete -and -not $verdict.testsPassed -and
         $verdict.reasons -contains 'failed-row' -and @($verdict.terminalNodes).Count -eq 1 -and
         $verdict.terminalNodes[0].Uid -ceq $C1325Uid -and $verdict.terminalNodes[0].Outcome -ceq 'Failed' -and
@@ -1431,7 +1402,7 @@ function Test-C1391_ClassMatch {
     $sameNs = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($appSuffix, '', @($requiredApp))
     $otherNs = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($agentsSuffix, '', @($requiredApp))
     $unqualified = [Antiphon.Nightly.NightlyCensus]::ClassAssigned($appSuffix, '', @('Widget'))
-    $present = Test-NightlyRequiredClassesPresent -TerminalRows @([pscustomobject]@{ ClassName = $appSuffix }) -RequiredClasses @($requiredApp, $requiredAgents)
+    $present = [Antiphon.Nightly.NightlyChunkVerdict]::RequiredClassesPresent(@([pscustomobject]@{ ClassName = $appSuffix }), @($requiredApp, $requiredAgents))
     $missing = @($present.Missing)
     $agentsMissing = $missing -ccontains $requiredAgents
     $appMissing = $missing -ccontains $requiredApp
@@ -2540,15 +2511,8 @@ function New-C1419Launch {
 function Invoke-C1419Verdict {
     param($Launch, [string]$Discovery, [string]$RunDirectory, $Index = $null, $Exclusions = $null, [switch]$Aware)
     $sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-    $call = @{
-        TrxPath = $Launch.Trx; DiscoveryPath = $Discovery; ExecutionDiagnosticPath = $Launch.Exec
-        RunDirectory = $RunDirectory; NotBeforeUtc = ([datetime]::UtcNow.AddMinutes(-5)); ProcessExit = 0
-        Sha = $sha; ExpectedSha = $sha; GitRef = 'origin/master'; ExpectedRef = 'origin/master'
-        PolicyHash = 'p'; ExpectedPolicyHash = 'p'; RequiredClasses = @('Ns.' + $Launch.Class)
-        ProfileExclusions = $Exclusions; ProfileAware = [bool]$Aware
-    }
-    if ($null -ne $Index) { $call.DiscoveryIndex = $Index }
-    return (ConvertTo-NightlyNativeSuiteVerdict @call)
+    return [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($Launch.Trx, $Discovery, $Launch.Exec, $RunDirectory, [datetime]::UtcNow.AddMinutes(-5), 0,
+        $sha, $sha, 'origin/master', 'origin/master', 'p', 'p', @('Ns.' + $Launch.Class), $Exclusions, [bool]$Aware, $Index, '', $null)
 }
 
 function Get-C1419VerdictText {
@@ -2669,15 +2633,14 @@ function Test-C1419_DiscoveryParsedOncePerSuite {
     $siteDetail = ''
     try {
         $ast = (Get-Command Invoke-AntiphonNightlyTests -CommandType Function).ScriptBlock.Ast
-        $calls = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.CommandAst] -and $a.GetCommandName() -eq 'ConvertTo-NightlyNativeSuiteVerdict' }, $true))
+        $calls = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $a.Static -and
+            $a.Member.Value -eq 'NativeSuiteVerdict' -and $a.Expression.TypeName.FullName -eq 'Antiphon.Nightly.NightlyChunkVerdict' }, $true))
         $argName = ''
         if ($calls.Count -eq 1) {
-            $els = @($calls[0].CommandElements)
-            for ($i = 0; $i -lt $els.Count - 1; $i++) {
-                if ($els[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and $els[$i].ParameterName -eq 'DiscoveryIndex' -and
-                    $els[$i + 1] -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                    $argName = $els[$i + 1].VariablePath.UserPath
-                }
+            # NativeSuiteVerdict(..., profileAware, discoveryIndex, platform, expectedSkipRoster): the index is the 16th argument.
+            $args16 = @($calls[0].Arguments)
+            if ($args16.Count -eq 18 -and $args16[15] -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                $argName = $args16[15].VariablePath.UserPath
             }
         }
         $makers = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.AssignmentStatementAst] -and

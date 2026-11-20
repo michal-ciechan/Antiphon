@@ -465,7 +465,7 @@ namespace Antiphon.Nightly {
     if ($accepted) {
         . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
         try {
-            $null = Get-NightlyExpectedSkipRosterDigest -Entries @()
+            $null = [Antiphon.Nightly.NightlyChunkVerdict]::RosterDigest(@())
             $late = $true
         } catch {
             $late = $true

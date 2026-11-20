@@ -59,7 +59,7 @@ function Test-RcRealResultsWouldPass {
     try {
         if ([string]::IsNullOrWhiteSpace($RunDirectory)) { $RunDirectory = Split-Path -Parent $Path }
         if ($NotBeforeUtc.Year -lt 1900) { $NotBeforeUtc = [datetime]::UtcNow.AddMinutes(-5) }
-        $verdict = ConvertTo-NightlyNativeSuiteVerdict -TrxPath $Path -DiscoveryPath $DiscoveryPath -ExecutionDiagnosticPath $ExecutionDiagnosticPath -RunDirectory $RunDirectory -NotBeforeUtc $NotBeforeUtc -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -RequiredClasses $RequiredClasses -Platform 'linux' -ExpectedSkipRoster @()
+        $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($Path, $DiscoveryPath, $ExecutionDiagnosticPath, $RunDirectory, $NotBeforeUtc, 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', $RequiredClasses, $null, $false, $null, 'linux', @())
         return ([bool]$verdict.testsPassed -and [bool]$verdict.coverageComplete)
     } catch { return $false }
 }
@@ -68,7 +68,7 @@ function Initialize-RcNativeWriters {
     if (-not (Get-Command Write-NightlyAtomicJson -ErrorAction SilentlyContinue)) {
         throw 'nightly-common-required'
     }
-    if (-not (Get-Command ConvertTo-NightlyNativeSuiteVerdict -ErrorAction SilentlyContinue)) {
+    if ($null -eq ('Antiphon.Nightly.NightlyChunkVerdict' -as [type])) {
         . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
     }
 }
@@ -112,7 +112,7 @@ function New-RcNativeCheckFixture {
 }
 function Get-RcNativeVerdict {
     param($Fixture, [string[]]$RequiredClasses = @())
-    return ConvertTo-NightlyNativeSuiteVerdict -TrxPath $Fixture.Trx -DiscoveryPath $Fixture.Discovery -ExecutionDiagnosticPath $Fixture.Execution -RunDirectory $Fixture.Directory -NotBeforeUtc $Fixture.NotBefore -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -RequiredClasses $RequiredClasses -Platform 'linux' -ExpectedSkipRoster @()
+    return [Antiphon.Nightly.NightlyChunkVerdict]::NativeSuiteVerdict($Fixture.Trx, $Fixture.Discovery, $Fixture.Execution, $Fixture.Directory, $Fixture.NotBefore, 0, 'a', 'a', 'origin/master', 'origin/master', 'p', 'p', $RequiredClasses, $null, $false, $null, 'linux', @())
 }
 function Get-RcBoundChunkOutcome {
     param($Fixture, $NativeVerdict, $Fresh)
@@ -126,7 +126,7 @@ function Get-RcBoundChunkOutcome {
 function Note-RcNativeGap {
     param([string]$Label, $Fixture, [string[]]$RequiredClasses = @(), [string]$RealReason = '')
     $real = Get-RcNativeVerdict -Fixture $Fixture -RequiredClasses $RequiredClasses
-    $fresh = Test-NightlyFreshEvidence -Path $Fixture.Log -RunDirectory $Fixture.Directory -NotBeforeUtc $Fixture.NotBefore -InvocationId $Fixture.Invocation
+    $fresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($Fixture.Log, $Fixture.Directory, $Fixture.NotBefore, $Fixture.Invocation)
     $shadow = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $Fixture.Trx
     $bound = Get-RcBoundChunkOutcome -Fixture $Fixture -NativeVerdict $real -Fresh $fresh
     $realPass = [bool]$real.testsPassed -and [bool]$real.coverageComplete -and [bool]$fresh.Ok
@@ -488,7 +488,7 @@ try {
             if(-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)){
                 . (Join-Path $PSScriptRoot 'lib/nightly-watchdog-admission.ps1')
             }
-            if(-not (Get-Command ConvertTo-NightlyCoverageVerdict -ErrorAction SilentlyContinue)){
+            if($null -eq ('Antiphon.Nightly.NightlyChunkVerdict' -as [type])){
                 . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
             }
             $bare=Join-Path $ResultsDirectory 'bare.trx'
@@ -553,7 +553,7 @@ try {
             $execB = @{ uid = 'uid-b'; state = 'Passed'; type = 'ClassB'; method = 'MethodB'; namespace = 'Ns'; className = 'Ns.ClassB' }
             $passFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'bound-pass') -Rows @($classA) -Discovery @($discA) -Execution @($execA)
             $passReal = Get-RcNativeVerdict -Fixture $passFx -RequiredClasses @('Ns.ClassA')
-            $passFresh = Test-NightlyFreshEvidence -Path $passFx.Log -RunDirectory $passFx.Directory -NotBeforeUtc $passFx.NotBefore -InvocationId $passFx.Invocation
+            $passFresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($passFx.Log, $passFx.Directory, $passFx.NotBefore, $passFx.Invocation)
             $passBound = Get-RcBoundChunkOutcome -Fixture $passFx -NativeVerdict $passReal -Fresh $passFresh
             Note (([bool]$passReal.testsPassed) -and ([bool]$passReal.coverageComplete) -and ([bool]$passFresh.Ok) -and ($passBound.Outcome -ceq 'Passed')) ('real-pass-stays-passed bound=' + [string]$passBound.Outcome + ' reasons=' + ((@($passReal.reasons) | ForEach-Object { [string]$_ }) -join ','))
             $staleFx = New-RcNativeCheckFixture -Directory (Join-Path $ResultsDirectory 'stale-trx') -Rows @($classA) -Discovery @($discA) -Execution @($execA) -StaleTrx
@@ -579,8 +579,8 @@ try {
                 Note $false 'unreadable-real-not-run'
             }
             $testsImpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
-            $verdictAt = $testsImpl.IndexOf('ConvertTo-NightlyNativeSuiteVerdict')
-            $freshAt = $testsImpl.IndexOf('Test-NightlyFreshEvidence')
+            $verdictAt = $testsImpl.IndexOf('NightlyChunkVerdict]::NativeSuiteVerdict(')
+            $freshAt = $testsImpl.IndexOf('NightlyChunkVerdict]::Fresh(')
             $resolveAt = $testsImpl.LastIndexOf('Resolve-NightlyRcChunkOutcome')
             Note (($resolveAt -gt $verdictAt) -and ($resolveAt -gt $freshAt)) ('recorded-after-real-check resolve=' + $resolveAt)
             Note (([regex]::Matches($testsImpl, 'Register-NightlyRcChunkRevision')).Count -eq 1) 'one-chunk-record'

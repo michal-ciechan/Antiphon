@@ -452,14 +452,14 @@ function Test-C1415_SkipExclusions {
         $packLaunched += @($pack | Where-Object { $launched -ccontains $_ } | ForEach-Object { "$platform/$_" })
         # The executor reports only launched cases; all passing leaves no skipped row.
         $terminal = @($launched | ForEach-Object { [pscustomobject]@{ Identity = $_; Outcome = 'Passed' } })
-        $verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+        $verdict = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($terminal, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null)
         Assert-C1323 ($verdict.coverageComplete -and $verdict.testsPassed -and $verdict.skipped -eq 0) "c1415-$platform-census-complete" ($verdict | ConvertTo-Json -Compress)
     }
     # CARD-1425: all nine producer-pack cases are launched on both platforms.
     Assert-C1323 ($pack.Count -eq 9 -and $packLaunched.Count -eq 18) 'c1425-pack-methods-required' ($packLaunched -join ',')
     # Control: the same identities run and skipped (no exclusion) leave the census incomplete.
     $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if ($windowsOnly -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
-    $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $control = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($skipped, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null)
     Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 2) 'c1415-launched-skips-stay-incomplete' ($control | ConvertTo-Json -Compress)
 }
 
@@ -529,7 +529,7 @@ function Test-LinuxSessionRunnerAdmission {
     Assert-C1323 (Same-C1323Set @([Antiphon.Nightly.ReleaseAuthority]::RequiredUids($authorityNodes, $authority.Exclusions, 'session-runner')) @('portable-sibling')) 'linux-runner-frozen-windows-authority'
     # A skip alone is insufficient: the coverage verdict deliberately keeps it incomplete.
     $skipped = @($nodes | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = $(if ($linuxUids -ccontains $_.Uid) { 'Skipped' } else { 'Passed' }) } })
-    $control = ConvertTo-NightlyCoverageVerdict -TerminalRows $skipped -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $control = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($skipped, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null)
     Assert-C1323 (-not $control.coverageComplete -and $control.skipped -eq 24) 'linux-runner-skip-alone-incomplete'
     Assert-C1323 ($linuxUids.Count -eq 24 -and $shipped.Object.profiles.rc.requiredSuites -ccontains 'session-runner') 'linux-runner-24-obligations-retained'
 }
@@ -833,14 +833,14 @@ function Test-LinuxOnlyWindowsExclusionPolicy {
     $windowsLaunched = @($linuxOnly | Where-Object { -not (Test-ExcludedNode $_ 'windows') })
     $siblingLaunched = @($nodes | Where-Object { $_.Class -ceq 'PortableCensusSiblingTests' -and -not (Test-ExcludedNode $_ 'windows') })
     $terminal = @($siblingLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'Passed' } })
-    $complete = ConvertTo-NightlyCoverageVerdict -TerminalRows $terminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $complete = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($terminal, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null)
     $completeReason = @($complete.reasons) -join ','
     Assert-C1323 ($windowsLaunched.Count -eq 0 -and $siblingLaunched.Count -eq 1 -and $complete.coverageComplete -and $completeReason -notlike '*unexecuted-outcome*') 'linux-only-rows-leave-census-complete' ("launched=" + $windowsLaunched.Count + ' ' + $completeReason)
     $gapNodes = @($nodes | Where-Object Gap)
     $gapLaunched = @($gapNodes | Where-Object { -not (Test-ExcludedNode $_ 'windows') })
     $gapTerminal = @($siblingLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'Passed' } })
     $gapTerminal += @($gapLaunched | ForEach-Object { [pscustomobject]@{ Identity = $_.Uid; Outcome = 'NotExecuted' } })
-    $incomplete = ConvertTo-NightlyCoverageVerdict -TerminalRows $gapTerminal -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash
+    $incomplete = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($gapTerminal, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null)
     $incompleteReason = @($incomplete.reasons) -join ','
     $gapsNamed = $true
     foreach ($g in $gapLaunched) { if ($incompleteReason -notlike ('*' + $g.Uid + '*')) { $gapsNamed = $false } }
@@ -1121,7 +1121,7 @@ function Test-C1199_WindowsRequiredRoster {
     Assert-C1323 ($linuxMiss.Count -eq 0) 'c1199-linux-required' ($linuxMiss -join ',')
 
     function New-C1199Verdict([object[]]$Rows) {
-        return (ConvertTo-NightlyCoverageVerdict -TerminalRows $Rows -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash $shipped.Hash -ExpectedPolicyHash $shipped.Hash)
+        return ([Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($Rows, 0, 'a', 'a', 'r', 'r', $shipped.Hash, $shipped.Hash, @(), @(), $false, '', $null, $null))
     }
     $gapMiss = @()
     foreach ($id in $expected) {

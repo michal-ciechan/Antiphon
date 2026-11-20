@@ -1671,7 +1671,7 @@ function Invoke-V13 {
     if ($run.StampAtBarrier -ne 'stamped') { Fail-Mp ('progress-stamp-' + $run.StampAtBarrier) }
     $log = @(Get-ChildItem -LiteralPath $run.Log -Filter '*-tests.log' -File | Select-Object -First 1)
     if ($log.Count -lt 1) { Fail-Mp 'progress-log-absent' }
-    $fresh = Test-NightlyFreshEvidence -Path $log[0].FullName -RunDirectory $run.Log -NotBeforeUtc ([datetime]'2020-01-01Z') -InvocationId 'mp-progress'
+    $fresh = [Antiphon.Nightly.NightlyChunkVerdict]::Fresh($log[0].FullName, $run.Log, ([datetime]'2020-01-01Z'), 'mp-progress')
     if (-not $fresh.Ok) { Fail-Mp ('progress-freshness ' + $fresh.Reason) }
     $prefix = Read-TestPhaseExecutedPrefix -TimingRoot $run.Timing
     if ([int]$prefix.LastSequence -lt 2) { Fail-Mp ('progress-sequence ' + $prefix.LastSequence) }

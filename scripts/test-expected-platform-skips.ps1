@@ -27,20 +27,9 @@ function Invoke-EpsVerdict {
         [string[]]$Known = $null,
         [switch]$OmitRoster
     )
-    $bound = @{
-        TerminalRows = @($Rows)
-        ProcessExit = $ProcessExit
-        Sha = 'a'
-        ExpectedSha = 'a'
-        GitRef = 'r'
-        ExpectedRef = 'r'
-        PolicyHash = 'p'
-        ExpectedPolicyHash = 'p'
-        Platform = $Platform
-    }
-    if (-not $OmitRoster) { $bound.ExpectedSkipRoster = $Roster }
-    if ($null -ne $Known) { $bound.KnownTestIdentities = $Known }
-    return (ConvertTo-NightlyCoverageVerdict @bound)
+    # The verdict takes the roster it judges by; a caller that names none judges by the committed one.
+    if ($OmitRoster) { $Roster = [Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster((Join-Path (Split-Path -Parent $PSScriptRoot) 'tests/expected-platform-skips.json')) }
+    return [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@($Rows), $ProcessExit, 'a', 'a', 'r', 'r', 'p', 'p', @(), @(), $false, $Platform, $Roster, $Known)
 }
 
 function Test-EpsVerdict {
@@ -140,7 +129,7 @@ function Test-EpsVerdict {
 </TestRun>
 '@
     [System.IO.File]::WriteAllText($trx, $xml)
-    $parsed = @(Read-NightlyTrxIdentities -TrxPath $trx)
+    $parsed = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx))
     $parsedTrace = ''
     if ($parsed.Count -eq 1 -and $parsed[0].PSObject.Properties.Name -contains 'DebugTrace') { $parsedTrace = [string]$parsed[0].DebugTrace }
     $fromTrx = $null
@@ -152,7 +141,7 @@ function Test-EpsVerdict {
     $trxOk = ($parsed.Count -eq 1 -and $parsed[0].Outcome -ceq 'NotExecuted' -and $parsed[0].Identity -ceq $cleanup -and $parsedTrace -ceq $trace -and $null -ne $fromTrx -and [bool]$fromTrx.coverageComplete -and [bool]$fromTrx.testsPassed -and [bool]$fromTrx.processExitTolerated)
     Assert-C487 -Cond $trxOk -Name 'EPS trx-debug-trace' -Detail ($parsedTrace + ' | ' + $fromReasons)
 
-    $committed = @(Get-NightlyExpectedSkipRoster)
+    $committed = @([Antiphon.Nightly.NightlyChunkVerdict]::SkipRoster((Join-Path $repo 'tests/expected-platform-skips.json')))
     $windows = @($committed | Where-Object { [string]$_.platform -ceq 'windows' })
     $unique = @($windows | ForEach-Object { [string]$_.test } | Select-Object -Unique)
     $gaps = @(Get-NightlyExpectedSkipSourceGaps -RepoRoot $repo -Platform 'windows' -Entries $committed)
@@ -282,19 +271,11 @@ function Test-EpsVerdict {
     $titleOk = ($title -match '2 failed' -and $title -notmatch 'exit 8' -and $body.Contains($summaryDigest) -and $body.Contains($cleanup) -and $body.Contains('Tolerated skips'))
     Assert-C487 -Cond $titleOk -Name 'EPS title-omits-tolerated-exit' -Detail ($(if ($reportError) { $reportError } else { $title + ' | ' + $body.Substring(0, [Math]::Min(400, $body.Length)) }))
 
-    $knownCmd = Get-Command -Name 'Get-NightlyDiscoveryKnownIdentities' -CommandType Function -ErrorAction SilentlyContinue
-    $staleCmd = Get-Command -Name 'Get-NightlyExpectedSkipStaleWarnings' -CommandType Function -ErrorAction SilentlyContinue
     $implText = [System.IO.File]::ReadAllText((Join-Path $lib 'nightly-tests-impl.ps1'))
-    $known = @()
-    $knownWarnings = @()
-    if ($null -ne $knownCmd) {
-        $known = @(Get-NightlyDiscoveryKnownIdentities -Nodes @([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.C0824RefOnlyCleanupTests'; Method = 'Remote_cleanup_still_uses_its_binding_and_generation' }))
-    }
-    if ($null -ne $staleCmd) {
-        $knownWarnings = @(Get-NightlyExpectedSkipStaleWarnings -Platform 'windows' -Entries $roster -KnownTestIdentities $known)
-    }
-    $wired = $implText.Contains('Get-NightlyDiscoveryKnownIdentities')
-    $discoveryOk = ($null -ne $knownCmd -and $null -ne $staleCmd -and @($known) -contains $cleanup -and @($knownWarnings) -contains ('stale-roster:' + $sync) -and @($knownWarnings) -notcontains ('stale-roster:' + $cleanup) -and $wired)
+    $known = @([Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(@([pscustomobject]@{ ClassName = 'Antiphon.Tests.Application.C0824RefOnlyCleanupTests'; Method = 'Remote_cleanup_still_uses_its_binding_and_generation' })))
+    $knownWarnings = @([Antiphon.Nightly.NightlyChunkVerdict]::StaleWarnings('windows', $roster, $known))
+    $wired = $implText.Contains('[Antiphon.Nightly.SuiteCompletionParts]::KnownIdentities(')
+    $discoveryOk = (@($known) -contains $cleanup -and @($knownWarnings) -contains ('stale-roster:' + $sync) -and @($knownWarnings) -notcontains ('stale-roster:' + $cleanup) -and $wired)
     Assert-C487 -Cond $discoveryOk -Name 'EPS discovery-known-identities' -Detail ('known=' + ($known -join ',') + ' warnings=' + ($knownWarnings -join ',') + ' wired=' + $wired)
 }
 

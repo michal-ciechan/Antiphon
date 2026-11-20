@@ -167,7 +167,7 @@ function Read-ReleaseSelectionBaseline {
             if ($rows.Count -ne 1 -or $rows[0].exitCode -ne 0) { throw 'baseline-chunk-incomplete' }
             $trx = Assert-ReleaseSelectionPath (Join-Path $root $rows[0].trx) $root
             if ((Get-NightlyFileSha256 $trx) -cne $rows[0].trxSha256 -or $publication.inputs.evidence.($chunk.id) -cne $rows[0].trxSha256) { throw 'baseline-trx-digest' }
-            $terminals = @(Read-NightlyTrxIdentities $trx)
+            $terminals = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($trx))
             if (@($terminals | Where-Object Outcome -CNE 'Passed').Count -ne 0 -or
                 (@($terminals.TestId | Sort-Object) -join ',') -cne (@($chunk.uids | Sort-Object) -join ',')) { throw 'baseline-chunk-incomplete' }
             $executed += @($terminals.TestId)

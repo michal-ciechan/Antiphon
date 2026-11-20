@@ -317,7 +317,7 @@ function Test-C1313_ExactExpandedExecution {
 function Test-C1313_CoverageRefusal {
     $required=@('one','row-1','row-2','row-3')
     $green=@($required|ForEach-Object {[pscustomobject]@{Uid=$_;Outcome='Passed'}})
-    Assert-C487 (Test-NightlyExactCoverage $required $green).Ok 'C1313 coverage-control'
+    Assert-C487 ([Antiphon.Nightly.NightlyChunkVerdict]::ExactCoverage($required, $green)).Ok 'C1313 coverage-control'
     foreach($fault in @('missing-uid','extra-uid','duplicate-uid','required-skip','zero-required')){
         $rows=@($required|ForEach-Object {[pscustomobject]@{Uid=$_;Outcome='Passed'}})
         switch($fault){
@@ -327,7 +327,7 @@ function Test-C1313_CoverageRefusal {
             'required-skip' {$rows[0].Outcome='Skipped'}
             'zero-required' {$rows=@()}
         }
-        $r=Test-NightlyExactCoverage $required $rows
+        $r=[Antiphon.Nightly.NightlyChunkVerdict]::ExactCoverage($required, $rows)
         Assert-C487 (-not $r.Ok -and $r.Reasons -ccontains $fault) ('C1313 '+$fault) ($r.Reasons -join ',')
     }
 }
@@ -442,11 +442,11 @@ function Test-C1313_SelectorLineEndings {
 function Test-C1313_NewUidRemainder {
     $discovery=Get-C1313FilterDiscovery
     $members=@(@{class='Antiphon.Tests.FilterHost.C1313Offline';method='One'})
-    $control=New-NightlyExactRoster $discovery $members @($discovery.nodes.uid)
+    $control=[Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($discovery, $members, @($discovery.nodes.uid))
     if($control.Widened -or $control.RequiredUids.Count -ne 1){throw 'valid remainder control failed'}
     $new=@($discovery.nodes|Where-Object {$_.type -ceq 'C1313Offline' -and $_.method -ceq 'Rows'})[0].uid
     $known=@($discovery.nodes.uid|Where-Object {$_ -cne $new})
-    $r=New-NightlyExactRoster $discovery $members $known
+    $r=[Antiphon.Nightly.NightlyChunkVerdict]::ExactRoster($discovery, $members, $known)
     . "$PSScriptRoot/lib/nightly-tests-impl.ps1"
     $refused='';try{[void](Invoke-NightlyExactRoster -AssemblyPath $FilterHost -Discovery $discovery -Members $members -ClassifiedUids $known -ResultsDirectory (Join-Path $ResultsDirectory 'must-not-launch'))}catch{$refused=$_.Exception.Message}
     Assert-C487 ($r.Widened -and $r.RequiredUids -ccontains $new -and $r.RequiredUids.Count -eq $discovery.nodes.Count -and $refused.StartsWith('new-uid-required') -and -not (Test-Path (Join-Path $ResultsDirectory 'must-not-launch'))) 'C1313 new-uid-required' $refused

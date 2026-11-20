@@ -147,7 +147,7 @@ function Test-NCCoreMatchesFallback {
 
     $trx = @($nodes | Select-Object -First 60 | ForEach-Object { [pscustomobject]@{ ClassName = $_.ClassName; MethodName = $_.Method } })
     # The mismatch list comes out in hashtable order, which differs from process to process: sorted for the golden.
-    $r = Invoke-NCBothWays { Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx -TerminalNodes @($nodes | Select-Object -First 50) -RequiredClasses $classes) } 'crossCheck'
+    $r = Invoke-NCBothWays { Get-NCSortedCross ([Antiphon.Nightly.NightlyVerdicts]::CrossCheck($trx, @($nodes | Select-Object -First 50), $classes)) } 'crossCheck'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'crossCheck' $r.Compiled
 
     $noted = 'text' | Add-Member -NotePropertyName Extra -NotePropertyValue 1 -PassThru
@@ -431,15 +431,14 @@ function Test-NCCoveragePartsMatchFallback {
     $rows = @([pscustomobject]@{ Identity = 'a'; Outcome = 'NotExecuted' }, $null, [pscustomobject]@{ Identity = 'b'; Outcome = 'Passed' })
     $coverageWitnesses = @('throw:expected-skip roster reasonClass Platform', 'diagNewest=b.diag', 'diagTie=a.diag', 'hidden=a.diag')
     $g = Test-NCGolden 'coverageParts' {
-        $digests = foreach ($roster in $rosters) { try { Get-NightlyExpectedSkipRosterDigest -Entries $roster } catch { 'throw:' + $_.Exception.Message } }
+        $digests = foreach ($roster in $rosters) { try { [Antiphon.Nightly.NightlyChunkVerdict]::RosterDigest($roster) } catch { 'throw:' + (Get-NightlyRefusalText $_) } }
         $latest = foreach ($name in $cases.Keys) {
             $found = [Antiphon.Nightly.NightlyDiagnosticLog]::Latest((Join-Path $logs $name))
             if ($null -eq $found) { $name + '=null' } else { $name + '=' + [IO.Path]::GetFileName($found) }
         }
         $verdicts = foreach ($exit in @(0, 8)) {
             foreach ($set in @($rows, @($null), @())) {
-                $v = ConvertTo-NightlyCoverageVerdict -TerminalRows $set -ProcessExit $exit -Sha 'a' -ExpectedSha 'a' -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'p' -ExpectedPolicyHash 'p' `
-                    -Platform 'windows' -ExpectedSkipRoster @([pscustomobject]@{ platform = 'windows'; test = 'a'; reasonPrefix = 'p' })
+                $v = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($set, $exit, 'a', 'a', 'r', 'r', 'p', 'p', @(), @(), $false, 'windows', @([pscustomobject]@{ platform = 'windows'; test = 'a'; reasonPrefix = 'p' }), $null)
                 [ordered]@{ exit = $exit; tolerated = $v.processExitTolerated; tests = $v.testsPassed; coverage = $v.coverageComplete; reasons = @($v.reasons); digest = $v.rosterDigest }
             }
         }
@@ -570,9 +569,9 @@ function Test-NCVerdictsMatchFallback {
     # ConvertTo-NightlyCoverageVerdict has no PowerShell copy left: its rows against the golden the copy produced.
     Assert-NCGolden 'coverageVerdicts' {
         [ordered]@{
-            verdict = ConvertTo-NightlyCoverageVerdict -TerminalRows $trx.ToArray() -ProcessExit 0 -Sha 'a' -ExpectedSha 'A' -GitRef 'r' -ExpectedRef 'r' -PolicyHash 'p' -ExpectedPolicyHash 'p'
-            verdictNull = ConvertTo-NightlyCoverageVerdict -TerminalRows $null -ProcessExit 1 -Sha 'a' -ExpectedSha 'b' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
-            verdictEmpty = ConvertTo-NightlyCoverageVerdict -TerminalRows @() -ProcessExit 0 -Sha '' -ExpectedSha '' -GitRef '' -ExpectedRef '' -PolicyHash '' -ExpectedPolicyHash ''
+            verdict = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($trx.ToArray(), 0, 'a', 'A', 'r', 'r', 'p', 'p', @(), @(), $false, '', $null, $null)
+            verdictNull = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict($null, 1, 'a', 'b', '', '', '', '', @(), @(), $false, '', $null, $null)
+            verdictEmpty = [Antiphon.Nightly.NightlyChunkVerdict]::CoverageVerdict(@(), 0, '', '', '', '', '', '', @(), @(), $false, '', $null, $null)
         }
     } @('failed-row', 'zero-terminal-rows', 'sha-mismatch')
     $r = Invoke-NCBothWays {
@@ -580,13 +579,13 @@ function Test-NCVerdictsMatchFallback {
         $view = [Antiphon.Nightly.NightlyDiscoveryIndex]::View($entry, @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy.Object, 'rc', 'antiphon', 'windows')), $true)
         [ordered]@{
             perClassSet = @(foreach ($set in $classSets) { [ordered]@{
-                cross = Get-NCSortedCross (Test-NightlyTrxDiagnosticCrossCheck -TrxRows $trx.ToArray() -TerminalNodes $terminal.ToArray() -RequiredClasses $set)
-                present = Test-NightlyRequiredClassesPresent -TerminalRows $trx.ToArray() -RequiredClasses $set
+                cross = Get-NCSortedCross ([Antiphon.Nightly.NightlyVerdicts]::CrossCheck($trx.ToArray(), $terminal.ToArray(), $set))
+                present = [Antiphon.Nightly.NightlyChunkVerdict]::RequiredClassesPresent($trx.ToArray(), $set)
                 required = @([Antiphon.Nightly.NightlyDiscoveryIndex]::RequiredUids($view, $set))
             } })
-            expanded = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $terminal.ToArray() -RequiredUids @($nodes | Select-Object -First 300 | ForEach-Object { $_.Uid })
-            expandedNull = Test-NightlyExpandedRowsPresent -DiscoveryNodes $nodes -TerminalRows $null -RequiredUids $null
-            crossNull = Test-NightlyTrxDiagnosticCrossCheck -TrxRows $null -TerminalNodes $null -RequiredClasses $null
+            expanded = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent($nodes, $terminal.ToArray(), @($nodes | Select-Object -First 300 | ForEach-Object { $_.Uid }))
+            expandedNull = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent($nodes, $null, $null)
+            crossNull = [Antiphon.Nightly.NightlyVerdicts]::CrossCheck($null, $null, $null)
         }
     } 'verdicts'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains(' trx=')) 'verdicts' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
@@ -799,7 +798,8 @@ function Test-NCSourceGapsMatchFallback {
         $h2 -ceq (Get-NightlySha256Text -Text 'assembly-two') -and $h3 -ceq (Get-NightlySha256Text -Text 'assembly-xyz') -and $h2 -cne $h1) 'assemblyHashCache' ('h1 ' + $h1 + ' h2 ' + $h2 + ' h3 ' + $h3)
 }
 
-# Read-NightlyTrxIdentities' row loop (NightlyTrx.cs) against the fallback: rows, column order and refusals.
+# NightlyTrx.ReadIdentities has no PowerShell copy left: its rows, column order and refusals against the golden the
+# copy produced (the 2500-row file as a count and digest).
 function Test-NCTrxMatchesFallback {
     $dir = Join-Path $root 'trx'
     [void][IO.Directory]::CreateDirectory($dir)
@@ -830,13 +830,18 @@ function Test-NCTrxMatchesFallback {
     $big = Join-Path $dir 'big.trx'
     Write-C487Trx $big @(foreach ($n in @(Get-NCFixtureNodes 2500)) { [pscustomobject]@{ Id = $n.Uid; ClassName = $n.ClassName; MethodName = $n.Method; Outcome = 'Passed' } })
     $paths.Add($big)
-    $r = Invoke-NCBothWays {
+    $g = Test-NCGolden 'trxIdentities' {
         @(foreach ($path in $paths) {
-            try { , @(Read-NightlyTrxIdentities -TrxPath $path) } catch { 'refused: ' + $_.Exception.Message }
+            $name = [IO.Path]::GetFileName($path)
+            try {
+                $rows = @([Antiphon.Nightly.NightlyTrx]::ReadIdentities($path))
+                if ($name -ceq 'big.trx') { [ordered]@{ file = $name; count = $rows.Count; sha256 = (Get-NightlySha256Text -Text ($rows | ConvertTo-Json -Depth 4 -Compress)) } }
+                else { , $rows }
+            } catch { 'refused: ' + (Get-NightlyRefusalText $_).Replace($path, $name) }
         })
-    }
-    $refusals = ([regex]::Matches($r.Compiled, 'refused: ')).Count
-    Assert-NC ($r.Core -and $r.Compiled -ceq $r.Fallback -and $refusals -eq 5) 'trxIdentities' ('refusals ' + $refusals + ' compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
+    } @('refused: ')
+    $refusals = ([regex]::Matches($g.Actual, 'refused: ')).Count
+    Assert-NC ($g.Ok -and $refusals -eq 5) 'trxIdentities' ('refusals ' + $refusals + ' actual ' + $g.Actual.Length + ' chars, expected ' + $g.Expected.Length)
 }
 
 # Read-NightlyJsonFile / Write-NightlyJsonFile (NightlyJson.cs, System.Text.Json) against ConvertFrom-Json and
@@ -1263,8 +1268,8 @@ function Test-NCDiscoveryCacheAgrees {
     $disk = [Antiphon.Nightly.NightlyDiagnosticLog]::ReadDiscovery($path)
     $diskUids = @([Antiphon.Nightly.NightlyCensus]::RequiredUids(@($disk.Nodes), @(), $null, $false))
     $row = [pscustomobject]@{ Uid = 'u1'; Outcome = 'Passed'; ClassName = 'N.C'; Type = 'C'; Method = 'M' }
-    $cachedCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($again.Document.Nodes) -TerminalRows @($row) -RequiredUids $againUids
-    $diskCover = Test-NightlyExpandedRowsPresent -DiscoveryNodes @($disk.Nodes) -TerminalRows @($row) -RequiredUids $diskUids
+    $cachedCover = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@($again.Document.Nodes), @($row), $againUids)
+    $diskCover = [Antiphon.Nightly.NightlyChunkVerdict]::ExpandedRowsPresent(@($disk.Nodes), @($row), $diskUids)
     $cachedUid = [string]($againUids | Select-Object -First 1)
     $diskUid = [string]($diskUids | Select-Object -First 1)
     $missing = @($diskCover.Missing) -join ','
