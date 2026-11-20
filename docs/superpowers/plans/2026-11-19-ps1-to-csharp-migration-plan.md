@@ -8,6 +8,84 @@
   they are ported.
 - Every count below comes from this checkout. The reproduction commands are in
   [Appendix B](#appendix-b-how-the-numbers-were-produced). UNKNOWN means not established here.
+- Amendment (Docs task 188ceb65), master `8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e`.
+  See [Ownership](#ownership). Counts and every row not named there are unchanged.
+
+## Ownership
+
+The change-impact project plan
+(`docs/superpowers/plans/2026-11-20-change-impact-project-plan.md`, section 3.3)
+owns the selection core. Each row named here is owned by the change-impact
+project plan (the CI slice in the table). `impacted-classes.ps1`,
+`regenerate-derived-impact-index.ps1` and `release-impact*.ps1` stay in W2
+until change-impact library v2. Section 4.2's file counts stay the 2026-11-19
+census.
+
+Task 2dda603e built the config-driven ps1 owner map on
+`feat/card-task-2dda603e` (tip `06c6ff4635eaa432db0a0a91e76817ec83d3069b`).
+Task 8f86afa1 landed it. `git ls-remote` shows `refs/heads/feat/card-task-8f86afa1`
+and `refs/heads/master` both at `8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e`.
+`git log --merges` has no merge commit for this land. The landed commits are
+the linear replay `c0a321abc83c04279c98cd708dbc5609e756fb57` through that tip.
+The C# port must reproduce that landed map byte for byte: CI-3 snapshot JSON
+equals `Read-RcInputInventory`, and CI-4 equals `Get-RcInputManifest`, both at
+`8a89aa0e5715f86062bbcc7ee778810c2cf4cb3e`. The change-impact plan's G3 note
+that 2dda603e was not landed is superseded by this tip.
+
+| Row | Was | Owned by |
+|---|---|---|
+| `scripts/lib/rc-input-manifest.ps1` | W2-rc | owned by the change-impact project plan (CI-3 and CI-4). CI-8 is the launcher. CI-9 retires the legacy copy. |
+| `scripts/lib/rc-input-owners.json` | not in Appendix A (JSON) | owned by the change-impact project plan (CI-3). The file stays the v1 config. |
+| `scripts/lib/rc-input-reader-census.json` | not in Appendix A (JSON) | owned by the change-impact project plan (CI-3 and CI-5). |
+| `scripts/rc-input-reader-census.ps1` | not in Appendix A (landed with the owner map) | owned by the change-impact project plan (CI-5). CI-8 reduces it to a launcher. |
+| `scripts/test-rc-input-manifest.ps1` | W2-rc-T | owned by the change-impact project plan (CI-3 and CI-4). |
+| `scripts/test-rc-input-owners.ps1` | not in Appendix A (landed with the owner map) | owned by the change-impact project plan (CI-4), the 12 S3 truth-table cases. |
+| graph part of `scripts/lib/rc-project-selection.ps1` (`Read-RcProjectGraph`, `Get-RcDownstream`, `Resolve-RcProjectInput`, `Read-RcProjectBlob`, `Read-RcProjectBlobBatch`) | W2-rc | owned by the change-impact project plan (CI-2). `Get-RcProjectSelection` category batches and `tests/rc-project-categories.json` stay W2-rc and call the library. |
+| graph cases of `scripts/test-rc-project-selection.ps1` | W2-rc-T | owned by the change-impact project plan (CI-2). Category-batch cases stay W2-rc-T. |
+
+### Compiled C# before S6c and S6d
+
+Operator direction 2026-11-20: port `scripts/lib/rc-shadow-sample.ps1` (S8b
+shadow-sample library) and `scripts/lib/rc-dirty-order.ps1` (S6a launch-order
+library) to compiled C# before S6c and S6d wire them in. S6c is the scheduler
+in `scripts/lib/nightly-dispatch.ps1` and `nightly-tests-impl.ps1`. S6d is
+ledger closure. Three review rounds each found PowerShell coercion holes.
+Strict types remove the class. Both libraries stay in this plan. Change-impact
+section 3.3 leaves dirty order and shadow sample here. S6c and S6d call the
+compiled port, not these ps1 files.
+
+Port inputs are the advisories in
+`docs/superpowers/reviews/2026-11-20-card-1836-s8b-followup-review-r4.md` at
+`origin/feat/card-task-31d3d11d` commit
+`8162cc6129908c611d6a90866548bf20ea9e230b` (reviewer task 31d3d11d, subject
+`98b35649d95a1c90770934eb41563bdc87353262`, verdict CLEAN). Each one already
+existed at `38efdbde6c65ba1eed378868dd8b7cb47703c222` and does not hold that land.
+
+- **A-1 Case-variant key.** Where: `Get-RcShadowField`, `Test-RcShadowResultRow`,
+  `Test-RcShadowKey`. `ConvertFrom-Json -AsHashtable` uses ordinal keys, so
+  `{"outcome":"passed","Outcome":"failed"}`, `"Provenance":"unverified"` beside
+  `"provenance":"verified"`, and evidence-level `"Results"` beside `"results"`
+  stay valid carries. Reject a case variant of any known name, at every level.
+- **A-2 Duplicate JSON keys.** Where: the caller's parse layer.
+  `"provenanceFailure":true,"provenanceFailure":false`, a duplicate `outcome`,
+  or a duplicate `results` reaches the library as the last value. Refuse
+  duplicate properties.
+- **A-3 BOM keys and other near-miss keys.** Where: `Test-RcShadowClosedFlag`.
+  A BOM-prefixed `provenanceFailure` key, or one with a trailing space, holding
+  true is ignored, and a missing flag counts as clean. Reject unknown keys on
+  result rows.
+- **A-4 ISO-8601 ids coerced to DateTime.** An ISO-8601 chunk id becomes a
+  DateTime, so a clean row fails closed as missing-outcome. Read ids as strings.
+- **A-5 Unwitnessed count checks.** Where: `$ids.Count -eq 0` and
+  `$rows.Count -eq 0` in `Get-RcShadowSampleEvidenceFailure`. No harness form
+  reaches them. `HashSet<T>`, `Enumerable.Empty` and `ExpandoObject` depend on
+  them. Use one emptiness rule over typed lists.
+- **A-6 Other coercion classes.** Strict types remove them.
+  `-is [pscustomobject]` is true for any PSObject-wrapped value. ScriptProperty
+  and AliasProperty values are computed on each read. Non-string dictionary
+  keys are skipped silently. The reserved names `PSObject` and `pstypenames`,
+  and a BOM at the start of the text, make `ConvertFrom-Json` throw, which
+  fails closed at the caller. Absent evidence stays fail-open by design (F-1).
 
 ## Summary
 
@@ -441,7 +519,7 @@ library it tests.
 |---|---|---|---:|---|---|
 | D-sweep (one-off proofs) | 11 / 895 | – | 1 | deleted | Root `approve-gate`, `check-artifacts`, `check-workflow`, `create-workflow`, `monitor-workflow`, `test-api`; `verify-card0594-linux-launch`, `validate-card0418-ordinary-evidence`, `build-card0490-bootdisk`, `prepare-card0490-linux-assets`, `run-card-1885-bounded-experiment`. Zero test or C# references; an Investigate pass confirms docs and history before deletion. |
 | W2-nightly | 40 / 17,365 | 47 / 21,042 | 17 + 11 | launchers, then deleted | `nightly-tests-impl` (2,164), `test-phase-evidence` (3,516), `nightly-run-impl` (1,067), `live-lane-*` (4,511), `c487-harness`, `nightly-failure-history`, `nightly-stopped-run-seed`, `nightly-dispatch`, `qualification-host-stats`, `toolchain-floor`, `test-selection`, `test-timings`; `nightly-run.ps1` becomes a 5.1 launcher that syncs, then publishes from the synced clone (the self-update hop is replaced by identity); `Antiphon.Scripts` folds in; `Antiphon.Nightly` loses `PowerShellStandard`. |
-| W2-rc | 39 / 10,882 | 34 / 15,326 | 11 + 8 | launchers, then deleted | `release-gate` (1,111), `release-authority` (937), `rc-ledger` (1,100), `rc-*`, `release-selection`, `release-impact*`, `qualification/*`, `qualification-supervisor*`, `publish/promote-release`, `release-cut` (Windmill, 5.1); `ManifestPublicationHarness.ps1` (1,920) converts. |
+| W2-rc | 39 / 10,882 | 34 / 15,326 | 11 + 8 | launchers, then deleted | `release-gate` (1,111), `release-authority` (937), `rc-ledger` (1,100), `rc-*` except `rc-input-manifest.ps1`, the reader census, and the graph part of `rc-project-selection.ps1` (owned by the change-impact project plan; see Ownership), `release-selection`, `release-impact*` (stays here until change-impact library v2), `qualification/*`, `qualification-supervisor*`, `publish/promote-release`, `release-cut` (Windmill, 5.1); `ManifestPublicationHarness.ps1` (1,920) converts. `rc-shadow-sample.ps1` and `rc-dirty-order.ps1` are compiled C# before S6c/S6d (Ownership). |
 | W2-deploy | 37 / 15,720 | 29 / 13,378 | 16 + 7 | launchers | `deploy-server2.ps1` (1,564), `postgres-snapshot.ps1` (2,303), `cutover-postgres-server2.ps1` (1,265), `postgres-cutover-monitor.ps1`, `restart-linux-server.ps1` (production restart, CARD-1744), `c590-*`/`c1609-*`/`c1008`/`verify-card0849-caches` (live inputs of `RemoteScriptContractTests`, 4,591 s Windows pace), windmill snapshot wrappers. |
 | W2-land | 21 / 5,546 | (in ops/land-T) | 6 | launchers | `impacted-classes.ps1` (1,375), `land-graph-land-refresh.ps1`, `audit-land-verification-*` (to `LandGraphAudit`), `check-os-witnesses.ps1`, `check-evidence-*` + `lib/evidence-policy.ps1` (CI workflow calls these), `post-land-early-warning`, `complexity-chain`, `task-commit`, `orchestrator-workspace`. |
 | W2-checkpoint | 13 / 3,995 | 20 / 4,312 | 4 + 2 | launcher to `antiphon-checkpoints row`, then deleted | `run-checkpoint.ps1` (1,520) duplicates the tool's row runner; `lib/checkpoint-*`, `build-driver-environment`, `linux-compiler-evidence`, `verify-checkpoint-*`. |
@@ -491,7 +569,10 @@ library it tests.
 - **Change-aware rc selection.** `scripts/lib/release-impact-scripts.ps1` computes a ps1 closure
   that is "always incomplete with fallback Full". Once code is C#, its closure is the
   ProjectReference graph that `rc-project-selection` already walks, so selection becomes exact
-  for ported code. This needs the `rc-project-categories.json` entry from S1.
+  for ported code. This needs the `rc-project-categories.json` entry from S1. The graph walk
+  (`Read-RcProjectGraph` and `Get-RcDownstream`) is owned by the change-impact project plan
+  (CI-2). Category batches stay W2-rc and call that library. `release-impact*.ps1` stays in
+  this plan until change-impact library v2.
 - **NativeLinux and Windows witnesses.**
   - A harness case that becomes an in-process C# test moves its `NativeLinuxOnly` attribute and
     policy row with it. The row is resealed from the witness output (repo recipe).
@@ -917,9 +998,9 @@ can over-count; Appendix B gives the commands.
 | `scripts/lib/rc-forced-full.ps1` | 182 | rc/release/qualification | ps 2 / test.cs 0 / docs 5 | no |  | 7 only | W2-rc |
 | `scripts/lib/rc-historical-evidence.ps1` | 23 | rc/release/qualification | ps 2 / test.cs 0 / docs 2 | no |  | 7 only | W2-rc |
 | `scripts/lib/rc-incremental-plan.ps1` | 347 | rc/release/qualification | ps 3 / test.cs 0 / docs 5 | no |  | 7 only | W2-rc |
-| `scripts/lib/rc-input-manifest.ps1` | 266 | rc/release/qualification | ps 3 / test.cs 1 / docs 3 | yes (1) |  | 7 only | W2-rc |
+| `scripts/lib/rc-input-manifest.ps1` | 266 | rc/release/qualification | ps 3 / test.cs 1 / docs 3 | yes (1) |  | 7 only | owned by the change-impact project plan (CI-3 and CI-4) |
 | `scripts/lib/rc-ledger.ps1` | 1100 | rc/release/qualification | ps 4 / test.cs 0 / docs 8 | no |  | 5.1 named | W2-rc |
-| `scripts/lib/rc-project-selection.ps1` | 271 | rc/release/qualification | ps 5 / test.cs 0 / docs 9 / C#:1 | no |  | 7 only | W2-rc |
+| `scripts/lib/rc-project-selection.ps1` | 271 | rc/release/qualification | ps 5 / test.cs 0 / docs 9 / C#:1 | no |  | 7 only | owned by the change-impact project plan (CI-2) for the graph part; category batches stay W2-rc |
 | `scripts/lib/rc-qualification-status.ps1` | 195 | rc/release/qualification | ps 6 / test.cs 0 / docs 11 | no |  | 5.1 named | W2-rc |
 | `scripts/lib/release-authority.ps1` | 937 | rc/release/qualification | ps 7 / test.cs 3 / docs 26 | yes (3) |  | 5.1 named | W2-rc |
 | `scripts/lib/release-gate.ps1` | 1111 | rc/release/qualification | ps 20 / test.cs 2 / docs 26 | yes (2) |  | 5.1 named | W2-rc |
@@ -1123,12 +1204,12 @@ can over-count; Appendix B gives the commands.
 | `scripts/test-rc-coverage-admission.ps1` | 152 | test driver/fixture | ps 0 / test.cs 1 / docs 2 | yes (1) |  | 7 only | W2-rc-T |
 | `scripts/test-rc-forced-full.ps1` | 196 | test driver/fixture | ps 0 / test.cs 1 / docs 3 | yes (1) |  | 7 only | W2-rc-T |
 | `scripts/test-rc-historical-evidence.ps1` | 142 | test driver/fixture | ps 0 / test.cs 1 / docs 1 / C#:1 | yes (1) |  | 7 only | W2-rc-T |
-| `scripts/test-rc-input-manifest.ps1` | 191 | test driver/fixture | ps 0 / test.cs 1 / docs 1 | yes (1) |  | 7 only | W2-rc-T |
+| `scripts/test-rc-input-manifest.ps1` | 191 | test driver/fixture | ps 0 / test.cs 1 / docs 1 | yes (1) |  | 7 only | owned by the change-impact project plan (CI-3 and CI-4) |
 | `scripts/test-rc-ledger-duration.ps1` | 244 | test driver/fixture | ps 0 / test.cs 1 / docs 0 | yes (1) |  | 5.1 named | W2-rc-T |
 | `scripts/test-rc-ledger-status.ps1` | 158 | test driver/fixture | ps 0 / test.cs 1 / docs 3 | yes (1) |  | 7 only | W2-rc-T |
 | `scripts/test-rc-ledger.ps1` | 411 | test driver/fixture | ps 0 / test.cs 1 / docs 2 | yes (1) |  | 5.1 named | W2-rc-T |
 | `scripts/test-rc-platform.ps1` | 1181 | test driver/fixture | ps 0 / test.cs 2 / docs 18 | yes (2) |  | 7 only | W2-rc-T |
-| `scripts/test-rc-project-selection.ps1` | 132 | test driver/fixture | ps 1 / test.cs 1 / docs 3 | yes (1) |  | 7 only | W2-rc-T |
+| `scripts/test-rc-project-selection.ps1` | 132 | test driver/fixture | ps 1 / test.cs 1 / docs 3 | yes (1) |  | 7 only | owned by the change-impact project plan (CI-2) for the graph cases; category-batch cases stay W2-rc-T |
 | `scripts/test-rc-roster-repairs.ps1` | 91 | test driver/fixture | ps 1 / test.cs 1 / docs 2 | yes (1) |  | 5.1 named | W2-rc-T |
 | `scripts/test-rc-speed-os-witness.ps1` | 46 | test driver/fixture | ps 1 / test.cs 1 / docs 2 | yes (1) |  | 5.1 named | W2-rc-T |
 | `scripts/test-reap-zombie-agents.ps1` | 615 | test driver/fixture | ps 1 / test.cs 0 / docs 2 | no |  | 5.1 named | W2-ops/land-T |
