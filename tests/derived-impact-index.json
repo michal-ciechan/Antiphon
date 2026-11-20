@@ -2124,7 +2124,7 @@
         "WaitCommandTests",
         "CheckpointManifestTests",
         "PlanCoverageBindingTests",
-        "CheckpointLargeStampTests"
+        "CheckpointTrackedBaselineTests"
       ]
     },
     {
