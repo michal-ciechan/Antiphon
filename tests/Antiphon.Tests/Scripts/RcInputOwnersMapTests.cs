@@ -33,4 +33,10 @@ public sealed class RcInputOwnersMapTests
     [Test, Timeout(60_000)] public Task ExplicitForcedRootsNotFallback(CancellationToken token) => Run(nameof(ExplicitForcedRootsNotFallback), token);
     [Test, Timeout(60_000)] public Task NugetConfigIgnoreCaseForcesFull(CancellationToken token) => Run(nameof(NugetConfigIgnoreCaseForcesFull), token);
     [Test, Timeout(60_000)] public Task ReaderRootsAreEverySuite(CancellationToken token) => Run(nameof(ReaderRootsAreEverySuite), token);
+    [Test, Timeout(60_000)] public Task TestOnlyMethodEditSelectsNothing(CancellationToken token) => Run(nameof(TestOnlyMethodEditSelectsNothing), token);
+    [Test, Timeout(60_000)] public Task AddedTestClassSelectsWalkers(CancellationToken token) => Run(nameof(AddedTestClassSelectsWalkers), token);
+    [Test, Timeout(60_000)] public Task ProductEdgeStillReachesSuite(CancellationToken token) => Run(nameof(ProductEdgeStillReachesSuite), token);
+    [Test, Timeout(60_000)] public Task NoOpOwnerConflictFails(CancellationToken token) => Run(nameof(NoOpOwnerConflictFails), token);
+    [Test, Timeout(60_000)] public Task UnownedListAboveFortyIsVisible(CancellationToken token) => Run(nameof(UnownedListAboveFortyIsVisible), token);
+    [Test, Timeout(60_000)] public Task ExistingCsprojIsNotANewCsproj(CancellationToken token) => Run(nameof(ExistingCsprojIsNotANewCsproj), token);
 }
