@@ -66,8 +66,9 @@ function Get-CheckpointSourceOnce {
     # certify any such index until its working content has been verified.
     # A plain version-2 index in the snapshot's git dir answers from the file (git status just accepted this
     # repository; that index can carry only the assume-unchanged flag). That git dir is git's own rev-parse answer,
-    # or FindRepository's from the same files git's discovery reads, which declines core.worktree (the case where
-    # git would read another index) and every layout it cannot settle as git does. Anything else asks ls-files -v
+    # or FindRepository's from the same files git's discovery reads, which declines core.worktree (it moves the top
+    # level away from the git dir, so <root>/.git would not lead there) and every layout it cannot settle as git
+    # does. Anything else asks ls-files -v
     # (CheckpointIndexPaths.AnyHiddenEntry), as does a session holding an older type without that method.
     $hidden = $null
     $indexPaths = 'Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]

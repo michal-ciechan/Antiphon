@@ -175,17 +175,23 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(bare, "init", "-q", "--bare");
         CheckpointProcessRunner.FindRepository(bare).ShouldBeNull("a bare repository");
         CheckpointFixtureProcess.Git(root, "config", "core.worktree", sub);
-        CheckpointProcessRunner.FindRepository(root).ShouldBeNull("core.worktree moves the top level");
-        CheckpointFixtureProcess.Git(root, "config", "--unset", "core.worktree");
+        try { CheckpointProcessRunner.FindRepository(root).ShouldBeNull("core.worktree moves the top level"); }
+        finally { CheckpointFixtureProcess.Git(root, "config", "--unset", "core.worktree"); }
         Agrees(root, "after core.worktree is unset");
 
-        // A valueless "bare" line is true to git: no work tree to name.
+        // A bare setting in any form git reads as true (valueless, on its section header's line): no work tree.
         var config = Path.Combine(root, ".git", "config");
         var original = File.ReadAllText(config);
-        File.WriteAllText(config, original + "[core]\n\tbare\n");
-        CheckpointProcessRunner.FindRepository(root).ShouldBeNull("a valueless bare line");
-        File.WriteAllText(config, original);
-        Agrees(root, "after the bare line is gone");
+        foreach (var (extra, label) in new[] { ("[core]\n\tbare\n", "a valueless bare line"), ("[core] bare = true\n", "bare on the header line") })
+        {
+            try
+            {
+                File.WriteAllText(config, original + extra);
+                CheckpointProcessRunner.FindRepository(root).ShouldBeNull(label);
+            }
+            finally { File.WriteAllText(config, original); }
+        }
+        Agrees(root, "after the bare lines are gone");
 
         // A .git file git's read_gitfile would reject ("gitdir:" with no space) is git's to report.
         var odd = Directory.CreateDirectory(Path.Combine(TempDir(), "odd")).FullName;

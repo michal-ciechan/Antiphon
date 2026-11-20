@@ -343,24 +343,15 @@ namespace Antiphon.Checkpoints
             return new RepositoryFiles { GitDir = gitDir, TopLevel = top, ConfigFiles = files };
         }
 
-        // A "bare" line in config whose value is not false (a valueless "bare" is true, as are quoted and numeric
-        // forms git accepts): the repository has no work tree to name.
-        private static readonly System.Text.RegularExpressions.Regex BareLine = new System.Text.RegularExpressions.Regex(
-            @"^\s*bare\s*(?:=\s*(?<value>[^;#\r\n]*))?\s*(?:[;#].*)?$",
+        // The one "bare" line git init writes for a checkout. Any other mention of "bare" (true in any form git
+        // accepts, valueless, quoted, on its section header's line) is a repository that may have no work tree.
+        private static readonly System.Text.RegularExpressions.Regex PlainBareFalse = new System.Text.RegularExpressions.Regex(
+            @"^[ \t]*bare[ \t]*=[ \t]*false[ \t]*$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline
             | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
-        private static bool SaysBare(string config)
-        {
-            foreach (System.Text.RegularExpressions.Match line in BareLine.Matches(config))
-            {
-                var value = line.Groups["value"].Value.Trim().Trim('"').Trim();
-                if (!(value.Equals("false", StringComparison.OrdinalIgnoreCase) || value.Equals("no", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("off", StringComparison.OrdinalIgnoreCase) || value == "0"))
-                    return true;
-            }
-            return false;
-        }
+        private static bool SaysBare(string config) =>
+            PlainBareFalse.Replace(config.Replace("\r\n", "\n"), "").IndexOf("bare", StringComparison.OrdinalIgnoreCase) >= 0;
 
         /// <summary>
         /// [top level, absolute git dir] for this directory as `git rev-parse --show-toplevel --absolute-git-dir`
