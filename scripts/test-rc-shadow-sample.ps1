@@ -479,6 +479,10 @@ try {
             # D-1. Only boolean false is a clean flag. A present string, number,
             # null, or object is a failure, including after a JSON round-trip.
             # unexpectedSkip uses the same rule.
+            # B-1. A one-element array is not boolean false. [false] and @($false)
+            # must fail closed, and so must [true], [], and [[false]]. An array
+            # outcome, provenance, or chunkId is not the scalar type.
+            # A-1. A wrong-case flag key fails closed. It is not a missing flag.
             $root = New-TempRoot
             try {
                 $trustPath = Join-Path $root 'trust-record.json'
@@ -509,6 +513,45 @@ try {
                 Note ($cleanJson.carriesInvalidated -eq $false) 'json boolean false provenanceFailure invalidated carries'
                 Note ($cleanJson.reason -ceq 'pilot-count') ('json false provenance reason=' + $cleanJson.reason)
                 Note ($cleanJson.trustGranted -eq $false -and $cleanJson.gateCredit -eq $false -and $cleanJson.effectiveMode -ceq 'Full' -and $cleanJson.incrementalValidation -ceq 'Shadow') 'json false provenance granted trust'
+                foreach ($flagName in @('provenanceFailure', 'unexpectedSkip')) {
+                    $flagKind = $(if ($flagName -ceq 'unexpectedSkip') { 'unexpected-skip' } else { 'provenance-failure' })
+                    Assert-DerivedFailure ('hashtable [false] ' + $flagName) (New-ClosedFlagEvidence $flagName @($false)) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('hashtable [true] ' + $flagName) (New-ClosedFlagEvidence $flagName @($true)) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('hashtable [] ' + $flagName) (New-ClosedFlagEvidence $flagName @()) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('hashtable [[false]] ' + $flagName) (New-ClosedFlagEvidence $flagName @(,@($false))) $flagKind 'c1' $trustPath
+                    $jsonFalseArray = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","' + $flagName + '":[false]}]}'
+                    $jsonTrueArray = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","' + $flagName + '":[true]}]}'
+                    $jsonEmptyArray = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","' + $flagName + '":[]}]}'
+                    $jsonNestedArray = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","' + $flagName + '":[[false]]}]}'
+                    Assert-DerivedFailure ('json [false] ' + $flagName) ($jsonFalseArray | ConvertFrom-Json) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('json [true] ' + $flagName) ($jsonTrueArray | ConvertFrom-Json) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('json [] ' + $flagName) ($jsonEmptyArray | ConvertFrom-Json) $flagKind 'c1' $trustPath
+                    Assert-DerivedFailure ('json [[false]] ' + $flagName) ($jsonNestedArray | ConvertFrom-Json) $flagKind 'c1' $trustPath
+                }
+                Assert-DerivedFailure 'outcome [passed]' (New-ClosedFlagEvidence 'outcome' @('passed')) 'missing-outcome' 'c1' $trustPath
+                Assert-DerivedFailure 'provenance [verified]' (New-ClosedFlagEvidence 'provenance' @('verified')) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'chunkId [c1]' (New-ClosedFlagEvidence 'chunkId' @('c1')) 'unreadable-chunk-id' '' $trustPath
+                $jsonOutcome = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":["passed"],"provenance":"verified"}]}'
+                $jsonProvenance = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":["verified"]}]}'
+                $jsonChunk = '{"sampled":["c1"],"results":[{"chunkId":["c1"],"outcome":"passed","provenance":"verified"}]}'
+                Assert-DerivedFailure 'json outcome [passed]' ($jsonOutcome | ConvertFrom-Json) 'missing-outcome' 'c1' $trustPath
+                Assert-DerivedFailure 'json provenance [verified]' ($jsonProvenance | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'json chunkId [c1]' ($jsonChunk | ConvertFrom-Json) 'unreadable-chunk-id' '' $trustPath
+                $wrongTrue = [pscustomobject]@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; ProvenanceFailure = $true }
+                $wrongFalse = [pscustomobject]@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; ProvenanceFailure = $false }
+                $wrongSkip = [pscustomobject]@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; UnexpectedSkip = $true }
+                Assert-DerivedFailure 'wrong-case ProvenanceFailure true' @{ sampled = @('c1'); results = @($wrongTrue) } 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'wrong-case ProvenanceFailure false' @{ sampled = @('c1'); results = @($wrongFalse) } 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'wrong-case UnexpectedSkip true' @{ sampled = @('c1'); results = @($wrongSkip) } 'unexpected-skip' 'c1' $trustPath
+                $jsonWrong = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","ProvenanceFailure":true}]}'
+                Assert-DerivedFailure 'json wrong-case ProvenanceFailure' ($jsonWrong | ConvertFrom-Json) 'provenance-failure' 'c1' $trustPath
+                $bothFlags = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+                $bothFlags['chunkId'] = 'c1'
+                $bothFlags['outcome'] = 'passed'
+                $bothFlags['provenance'] = 'verified'
+                $bothFlags['provenanceFailure'] = $false
+                $bothFlags['ProvenanceFailure'] = $true
+                Assert-DerivedFailure 'ordinal both flag cases' @{ sampled = @('c1'); results = @($bothFlags) } 'provenance-failure' 'c1' $trustPath
             } finally {
                 if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
             }
@@ -517,6 +560,10 @@ try {
             # D-2. A carry is not launched unless sampled names it. Any result
             # row for another carry is a contradiction, including a passed row,
             # and invalidates every carry. A dirty unsampled row stays dropped.
+            # B-2. Once sampled or results is present, a row whose chunkId is
+            # missing, null, empty, whitespace, a number, an object, or an array
+            # fails closed as unreadable-chunk-id, whatever its outcome.
+            # A-3. A non-string -Carries entry fails closed. It is not skipped.
             $root = New-TempRoot
             try {
                 $trustPath = Join-Path $root 'trust-record.json'
@@ -568,6 +615,49 @@ try {
                 Note ($kept.carriesInvalidated -eq $false) ('launched carry sample invalidated carries reason=' + $kept.reason)
                 Note ($kept.reason -ceq 'pilot-count') ('launched carry reason=' + $kept.reason)
                 Note ($kept.trustGranted -eq $false -and $kept.gateCredit -eq $false -and $kept.effectiveMode -ceq 'Full' -and $kept.incrementalValidation -ceq 'Shadow') 'launched carry sample granted trust'
+                $badRows = @(
+                    @{ label = 'missing chunkId'; row = '{"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'null chunkId'; row = '{"chunkId":null,"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'empty chunkId'; row = '{"chunkId":"","outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'whitespace chunkId'; row = '{"chunkId":" ","outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'number chunkId'; row = '{"chunkId":1,"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'object chunkId'; row = '{"chunkId":{"bad":true},"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'array chunkId'; row = '{"chunkId":["other"],"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'multi array chunkId'; row = '{"chunkId":["c2","c3"],"outcome":"failed","provenance":"verified"}' }
+                    @{ label = 'passed number chunkId'; row = '{"chunkId":2,"outcome":"passed","provenance":"verified"}' }
+                    @{ label = 'flag with null chunkId'; row = '{"chunkId":null,"outcome":"passed","provenance":"verified","provenanceFailure":true}' }
+                )
+                foreach ($bad in $badRows) {
+                    $json = '{"sampled":["s1"],"results":[{"chunkId":"s1","outcome":"passed","provenance":"verified"},' + $bad.row + ']}'
+                    Assert-DerivedFailure ('json ' + $bad.label) ($json | ConvertFrom-Json) 'unreadable-chunk-id' '' $trustPath
+                }
+                $resultsOnly = '{"results":[{"chunkId":1,"outcome":"passed","provenance":"verified"}]}'
+                Assert-DerivedFailure 'results-only passed number chunkId' ($resultsOnly | ConvertFrom-Json) 'unreadable-chunk-id' '' $trustPath
+                $resultsOnlyFailed = '{"results":[{"outcome":"failed","provenance":"verified"}]}'
+                Assert-DerivedFailure 'results-only missing chunkId' ($resultsOnlyFailed | ConvertFrom-Json) 'unreadable-chunk-id' '' $trustPath
+                $hashtableMissing = @{
+                    sampled = @('s1')
+                    results = @(
+                        @{ chunkId = 's1'; outcome = 'passed'; provenance = 'verified' }
+                        @{ outcome = 'failed'; provenance = 'verified' }
+                    )
+                }
+                Assert-DerivedFailure 'hashtable missing chunkId' $hashtableMissing 'unreadable-chunk-id' '' $trustPath
+                foreach ($carryCase in @(
+                    @{ label = 'integer carry'; carries = @('c1', 2) }
+                    @{ label = 'object carry'; carries = @([pscustomobject]@{ id = 'c9' }) }
+                )) {
+                    $threw = $false
+                    $throwMessage = ''
+                    try {
+                        $null = Get-RcShadowTrustDecision -Carries $carryCase.carries -Evidence $launched -CurrentSample 'roster' -TrustRecordPath $trustPath
+                    } catch {
+                        $threw = $true
+                        $throwMessage = [string]$_.Exception.Message
+                    }
+                    Note $threw ($carryCase.label + ' was skipped')
+                    Note ($throwMessage -ceq 'shadow-carry-id') ($carryCase.label + ' message=' + $throwMessage)
+                }
             } finally {
                 if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
             }
