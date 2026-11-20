@@ -135,7 +135,8 @@ public static class GitSnapshot
                 return "git-failed timeout";
             }
 
-            return process.ExitCode == 0 ? stdout.Trim() : "git-failed " + process.ExitCode;
+            // Only the end: porcelain status opens with a space column (" M path") that a full trim would cut.
+            return process.ExitCode == 0 ? stdout.TrimEnd() : "git-failed " + process.ExitCode;
         }
         catch (Exception ex)
         {
