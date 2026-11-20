@@ -33,8 +33,10 @@ function New-RcShadowProposal {
         [string]$Seed = '',
         [string]$ProposalPath = ''
     )
+    # GetNewClosure rebinds $script: to the closure module, so copy the root into a local first.
+    $checkout = $script:RcShadowCheckoutRoot
     return (Invoke-RcShadowCore {
-        [Antiphon.Nightly.RcShadowSample]::Proposal($Chunks, $Seed, $ProposalPath, $script:RcShadowCheckoutRoot)
+        [Antiphon.Nightly.RcShadowSample]::Proposal($Chunks, $Seed, $ProposalPath, $checkout)
     }.GetNewClosure())
 }
 
