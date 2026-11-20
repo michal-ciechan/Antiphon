@@ -16,4 +16,10 @@ public sealed class RcIncrementalShadowTests
     [Test, Timeout(60_000)] public Task SampleSizeStrataAndReplay(CancellationToken token) => Run(nameof(SampleSizeStrataAndReplay), token);
     [Test, Timeout(60_000)] public Task MismatchInvalidatesCarries(CancellationToken token) => Run(nameof(MismatchInvalidatesCarries), token);
     [Test, Timeout(60_000)] public Task NoCarryAndOnePilotDoNotGrantTrust(CancellationToken token) => Run(nameof(NoCarryAndOnePilotDoNotGrantTrust), token);
+
+    // CARD-1836 S8b follow-up. A-1 through A-4 must fail on the pre-fix trust counter.
+    [Test, Timeout(60_000)] public Task OneExecutedSampleIsNotAPilot(CancellationToken token) => Run(nameof(OneExecutedSampleIsNotAPilot), token);
+    [Test, Timeout(60_000)] public Task EmptyDigestIsUnproven(CancellationToken token) => Run(nameof(EmptyDigestIsUnproven), token);
+    [Test, Timeout(60_000)] public Task MissingCarryableIsDirty(CancellationToken token) => Run(nameof(MissingCarryableIsDirty), token);
+    [Test, Timeout(60_000)] public Task EvidenceDerivesSampleFailure(CancellationToken token) => Run(nameof(EvidenceDerivesSampleFailure), token);
 }

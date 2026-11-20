@@ -108,6 +108,45 @@ function New-Pilot([string]$CutId, [string]$Platform = 'windows', [string]$Sampl
     }
 }
 
+function New-CountedPilot {
+    param(
+        [string]$CutId,
+        [int]$Planned = 30,
+        [int]$Executed = 30,
+        [string]$Digest = 'USE',
+        [int]$Cchunk = 600,
+        [int]$Strata = 1,
+        [switch]$OmitPlan
+    )
+    if ($Digest -ceq 'USE') { $Digest = $script:Digest }
+    $pilot = @{
+        cutId = $CutId; platform = 'windows'; sample = 'executed'; shadowPilot = $true
+        discrepancy = $false; openFailure = $false; nativeReceipts = 'current'; fullOverdue = $false
+        contractDigest = $Digest; nExecuted = $Executed
+    }
+    if (-not $OmitPlan) {
+        $pilot.n = $Planned
+        $pilot.cchunk = $Cchunk
+        $pilot.stratumCount = $Strata
+    }
+    return $pilot
+}
+
+function Assert-DerivedFailure {
+    param([string]$Label, $Evidence, [string]$Kind, [string]$ChunkId, [string]$TrustPath)
+    $decision = Get-RcShadowTrustDecision -Carries @('c2', 'c1') -Evidence $Evidence -CurrentSample 'roster' -TrustRecordPath $TrustPath
+    Note ($decision.carriesInvalidated -eq $true) ($Label + ' left carries valid')
+    Note ((Join-Ids $decision.invalidatedCarries) -ceq 'c1|c2') ($Label + ' carries=' + (Join-Ids $decision.invalidatedCarries))
+    Note ((Join-Ids $decision.reasons) -ceq 'sample-failed') ($Label + ' reasons=' + (Join-Ids $decision.reasons))
+    Note ($decision.trustGranted -eq $false -and $decision.gateCredit -eq $false -and $decision.effectiveMode -ceq 'Full' -and $decision.incrementalValidation -ceq 'Shadow') ($Label + ' shadow flags')
+    Note ($decision.expandedToFull -eq $false -and $decision.trustRecordWritten -eq $false) ($Label + ' wrote trust or expanded')
+    Note (-not [IO.File]::Exists($TrustPath)) ($Label + ' created a trust record')
+    $foundKind = [string](Get-RcShadowField $decision.preservedSampleFailure 'kind')
+    $foundChunk = [string](Get-RcShadowField $decision.preservedSampleFailure 'chunkId')
+    Note ($foundKind -ceq $Kind) ($Label + ' kind=' + $foundKind)
+    if (-not [string]::IsNullOrEmpty($ChunkId)) { Note ($foundChunk -ceq $ChunkId) ($Label + ' chunk=' + $foundChunk) }
+}
+
 function Assert-ProposalShape($Result, [string]$Label) {
     Note ($Result.format -ceq 'antiphon-rc-shadow-proposal-v1') ($Label + ': format')
     Note ($Result.effectiveMode -ceq 'Full') ($Label + ': effectiveMode')
@@ -289,6 +328,131 @@ try {
                 Note ($held.observedPilots -eq 2 -and $held.reason -ceq 'trust-transition-disabled' -and $held.trustGranted -eq $false) ('held reason=' + $held.reason)
                 Note ($held.incrementalValidation -ceq 'Shadow' -and $held.effectiveMode -ceq 'Full' -and $held.expandedToFull -eq $false) 'held flipped IncrementalValidation'
                 Note (-not [IO.File]::Exists($trustPath) -and $held.trustRecordWritten -eq $false) 'held persisted the operator record'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'OneExecutedSampleIsNotAPilot' {
+            $bare = New-CountedPilot 'bare-one' -Executed 1 -OmitPlan
+            Note (-not (Test-RcShadowPilotEligible -Pilot $bare -ContractDigest $script:Digest)) 'one executed sample counted as a pilot'
+            $partial = New-CountedPilot 'partial' -Planned 30 -Executed 1 -Cchunk 600 -Strata 1
+            Note (-not (Test-RcShadowPilotEligible -Pilot $partial -ContractDigest $script:Digest)) 'one of thirty planned samples counted as a pilot'
+            $short = New-CountedPilot 'short' -Planned 1 -Executed 1 -Cchunk 600 -Strata 1
+            Note (-not (Test-RcShadowPilotEligible -Pilot $short -ContractDigest $script:Digest)) 'planned N below the D-8 minimum counted as a pilot'
+            $under = New-CountedPilot 'under' -Planned 30 -Executed 30 -Cchunk 601 -Strata 1
+            Note (-not (Test-RcShadowPilotEligible -Pilot $under -ContractDigest $script:Digest)) 'thirty samples counted when D-8 requires 31'
+            $legalOne = New-CountedPilot 'legal-one' -Planned 1 -Executed 1 -Cchunk 1 -Strata 1
+            Note (Test-RcShadowPilotEligible -Pilot $legalOne -ContractDigest $script:Digest) 'bound plan of one was refused'
+            $legal = New-CountedPilot 'legal-31' -Planned 31 -Executed 31 -Cchunk 601 -Strata 1
+            Note (Test-RcShadowPilotEligible -Pilot $legal -ContractDigest $script:Digest) 'D-8 plan of 31 was refused'
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $decision = Get-RcShadowTrustDecision -Pilots @($bare, $partial) -CurrentSample 'roster' -ContractDigest $script:Digest -TrustRecordPath $trustPath
+                Note ($decision.observedPilots -eq 0) ('one-sample observed=' + $decision.observedPilots)
+                Note ($decision.reason -ceq 'pilot-count') ('one-sample reason=' + $decision.reason)
+                Note ($decision.trustGranted -eq $false -and $decision.gateCredit -eq $false -and $decision.effectiveMode -ceq 'Full' -and $decision.incrementalValidation -ceq 'Shadow') 'one-sample granted trust'
+                Note ($decision.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) 'one-sample wrote a trust record'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'EmptyDigestIsUnproven' {
+            $empty = New-CountedPilot 'empty' -Digest ''
+            Note (-not (Test-RcShadowPilotEligible -Pilot $empty -ContractDigest '')) 'empty digest matched an empty pilot digest'
+            $missing = New-CountedPilot 'missing' -Digest ''
+            $missing.Remove('contractDigest')
+            Note (-not (Test-RcShadowPilotEligible -Pilot $missing -ContractDigest '')) 'missing digest matched'
+            $upper = New-CountedPilot 'upper' -Digest ('A' * 64)
+            Note (-not (Test-RcShadowPilotEligible -Pilot $upper -ContractDigest ('A' * 64))) 'uppercase digest matched'
+            Note (Test-RcShadowPilotEligible -Pilot (New-Pilot 'canonical') -ContractDigest $script:Digest) 'canonical digest was refused'
+            $blankContract = New-CountedPilot 'blank-contract'
+            Note (-not (Test-RcShadowPilotEligible -Pilot $blankContract -ContractDigest '')) 'empty contract digest matched a real pilot'
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $first = New-CountedPilot 'cut-1' -Digest ''
+                $second = New-CountedPilot 'cut-2' -Digest ''
+                $two = Get-RcShadowTrustDecision -Pilots @($first, $second) -CurrentSample 'roster' -ContractDigest '' -TrustRecordPath $trustPath
+                Note ($two.observedPilots -eq 0) ('empty-digest observed=' + $two.observedPilots)
+                Note ($two.reason -ceq 'pilot-count') ('empty-digest reason=' + $two.reason)
+                Note ($two.trustGranted -eq $false -and $two.gateCredit -eq $false -and $two.effectiveMode -ceq 'Full' -and $two.incrementalValidation -ceq 'Shadow') 'empty digest granted trust'
+                Note ($two.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) 'empty digest wrote a trust record'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'MissingCarryableIsDirty' {
+            $unknown = New-RcShadowProposal -Chunks @(@{ id = 'unknown'; suite = 'alpha'; boundary = 'north' }) -Seed $script:SeedA
+            Assert-ProposalShape $unknown 'unknown'
+            Note ($unknown.cchunk -eq 0) ('unknown cchunk=' + $unknown.cchunk)
+            Note ($unknown.n -eq 0) ('unknown n=' + $unknown.n)
+            Note ($unknown.sample -ceq 'not-applicable') ('unknown sample=' + $unknown.sample)
+            Note ((Join-Ids $unknown.selected) -ceq '') ('missing completelyCarryable entered the sample: ' + (Join-Ids $unknown.selected))
+            $mixed = New-RcShadowProposal -Chunks @(
+                @{ id = 'unknown'; suite = 'alpha'; boundary = 'north' }
+                @{ id = 'carry'; suite = 'alpha'; boundary = 'north'; completelyCarryable = $true }
+                @{ id = 'dirty'; suite = 'beta'; boundary = 'south'; completelyCarryable = $false }
+            ) -Seed $script:SeedA
+            Assert-ProposalShape $mixed 'mixed'
+            Note ($mixed.cchunk -eq 1) ('missing completelyCarryable diluted the sample cchunk=' + $mixed.cchunk)
+            Note ($mixed.n -eq 1) ('mixed n=' + $mixed.n)
+            Note ((Join-Ids $mixed.selected) -ceq 'carry') ('mixed selected=' + (Join-Ids $mixed.selected))
+        }
+        'EvidenceDerivesSampleFailure' {
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                Assert-DerivedFailure 'empty results' @{ sampled = @('c1'); results = @() } 'empty-results' 'c1' $trustPath
+                Assert-DerivedFailure 'missing outcome' @{
+                    sampled = @('c1'); results = @(@{ chunkId = 'c1'; provenance = 'verified' })
+                } 'missing-outcome' 'c1' $trustPath
+                Assert-DerivedFailure 'empty outcome' @{
+                    sampled = @('c1'); results = @(@{ chunkId = 'c1'; outcome = ''; provenance = 'verified' })
+                } 'missing-outcome' 'c1' $trustPath
+                Assert-DerivedFailure 'absent chunk' @{
+                    sampled = @('c1', 'c2')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified' })
+                } 'missing-outcome' 'c2' $trustPath
+                Assert-DerivedFailure 'unexpected skip' @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; unexpectedSkip = $true })
+                } 'unexpected-skip' 'c1' $trustPath
+                Assert-DerivedFailure 'skipped outcome' @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'skipped'; provenance = 'verified' })
+                } 'unexpected-skip' 'c1' $trustPath
+                Assert-DerivedFailure 'provenance' @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'failed' })
+                } 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'provenance flag' @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; provenanceFailure = $true })
+                } 'provenance-failure' 'c1' $trustPath
+                Assert-DerivedFailure 'failed outcome' @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'failed'; provenance = 'verified' })
+                } 'sample-outcome' 'c1' $trustPath
+                $cleanEvidence = @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; unexpectedSkip = $false })
+                }
+                $clean = Get-RcShadowTrustDecision -Carries @('c1') -Evidence $cleanEvidence -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($clean.carriesInvalidated -eq $false) 'clean sample invalidated carries'
+                Note ($clean.reason -ceq 'pilot-count') ('clean reason=' + $clean.reason)
+                Note ($clean.trustGranted -eq $false -and $clean.gateCredit -eq $false -and $clean.effectiveMode -ceq 'Full' -and $clean.incrementalValidation -ceq 'Shadow') 'clean sample granted trust'
+                Note ($clean.trustRecordWritten -eq $false -and -not [IO.File]::Exists($trustPath)) 'clean sample wrote a trust record'
+                $caller = @{ chunkId = 'c1'; outcome = 'failed'; receipt = 'receipt-1' }
+                $flag = Get-RcShadowTrustDecision -Carries @('c9', 'c8') -SampleFailure $caller -Evidence $cleanEvidence -TrustRecordPath $trustPath
+                Note ($flag.carriesInvalidated -eq $true) 'caller failure left carries valid'
+                Note ((Join-Ids $flag.reasons) -ceq 'sample-failed') ('caller reasons=' + (Join-Ids $flag.reasons))
+                Note ((Join-Ids $flag.invalidatedCarries) -ceq 'c8|c9') ('caller carries=' + (Join-Ids $flag.invalidatedCarries))
+                Note ((Get-RcShadowField $flag.preservedSampleFailure 'outcome') -ceq 'failed') 'caller failure was replaced'
+                Note ($flag.trustGranted -eq $false -and $flag.effectiveMode -ceq 'Full' -and $flag.gateCredit -eq $false -and $flag.incrementalValidation -ceq 'Shadow') 'caller failure granted trust'
+                $both = Get-RcShadowTrustDecision -Carries @('c1') -SampleFailure $caller -Evidence @{ sampled = @('c1'); results = @() }
+                Note ((Join-Ids $both.reasons) -ceq 'sample-failed') ('duplicate sample-failed reasons=' + (Join-Ids $both.reasons))
+                Note ((Get-RcShadowField $both.preservedSampleFailure 'outcome') -ceq 'failed') 'derived failure replaced the caller flag'
             } finally {
                 if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
             }
