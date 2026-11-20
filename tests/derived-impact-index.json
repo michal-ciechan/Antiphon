@@ -2072,10 +2072,11 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointFixtureProcess.cs",
-      "classes": 26,
+      "classes": 27,
       "reason": "cap",
-      "owed": 1,
+      "owed": 2,
       "first": [
+        "CheckpointWindowsAnchoredDeleteTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
     },
@@ -23895,8 +23896,8 @@
         "CheckpointTerminalReceiptTests",
         "CheckpointTrackedBaselineTests",
         "CheckpointTypeCacheTests",
-        "CheckpointWindowsAnchoredDeleteTests",
         "DirectoryLinkFixtureTests",
+        "EvidenceFolderTests",
         "OutputCleanupTests",
         "PosixHarnessToolTests",
         "ScriptsLaneRepairTests"
