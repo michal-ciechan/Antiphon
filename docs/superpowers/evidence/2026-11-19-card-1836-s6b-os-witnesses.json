@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "baseSha": "f3a9e07cea7033e6469eb9ec9d4de38839e109c1",
-  "headSha": "1aceeaaf6f9059fa71fbd5de63037ce63cfd8b08",
+  "baseSha": "d23f4efd8a19f8f760dd86d83a426a951b36c1d3",
+  "headSha": "292c3797f5966b3392304d1881231c91d08793c0",
   "inspectedPaths": [
     {
       "path": "scripts/lib/Antiphon.Nightly/RcRunEvidence.cs",
@@ -80,7 +80,7 @@
     "nativeObligation": {
       "status": "pending",
       "targetOS": "Windows",
-      "sourceSha": "1aceeaaf6f9059fa71fbd5de63037ce63cfd8b08",
+      "sourceSha": "292c3797f5966b3392304d1881231c91d08793c0",
       "command": "Windows startup probe for scripts/lib rc-run-evidence before an rc pick. Not run on this Linux task.",
       "reason": "S6b is shadow recording on Linux. The startup census path is unobserved on Windows."
     }
