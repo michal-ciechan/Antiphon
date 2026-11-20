@@ -1352,7 +1352,8 @@ public partial class DelegationWorktreeTests
     };
 
     internal static (AgentTaskLandService Land, DelegationWorktreeService Worktrees) CreateLand(
-        AppDbContext db, ScratchGitRepo repo, ILandingGit? protocolGit = null)
+        AppDbContext db, ScratchGitRepo repo, ILandingGit? protocolGit = null,
+        Action<AgentTaskLandingProtocol>? configureProtocol = null)
     {
         var graph = DelegationTestServices.CreateGitGraph(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }, db);
         var worktrees = graph.Worktrees;
@@ -1364,6 +1365,9 @@ public partial class DelegationWorktreeTests
             new RecordingSessionStopper(),
             TimeProvider.System,
             NullLogger<AgentTaskService>.Instance);
+        var protocol = new AgentTaskLandingProtocol(db, protocolGit ?? graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal,
+            gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot }));
+        configureProtocol?.Invoke(protocol);
         var land = new AgentTaskLandService(
             db,
             worktrees,
@@ -1374,8 +1378,7 @@ public partial class DelegationWorktreeTests
             TimeProvider.System,
             Options.Create(new DelegationSettings()),
             NullLogger<AgentTaskLandService>.Instance,
-            new AgentTaskLandingProtocol(db, protocolGit ?? graph.Git, graph.Leases, graph.Manager, new LandingSafetyHarness.ControlledVerifier(), TimeProvider.System, graph.Journal,
-                gitSettings: Options.Create(new GitSettings { WorktreeBasePath = repo.WorktreeRoot })),
+            protocol,
             graph.Leases, graph.Git,
             gitSettings: Options.Create(new GitSettings()));
         return (land, worktrees);
