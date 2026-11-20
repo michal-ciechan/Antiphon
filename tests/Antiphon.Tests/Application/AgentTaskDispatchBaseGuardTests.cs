@@ -1020,6 +1020,39 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    [Timeout(60_000)]
+    public async Task C1514_SiblingLandHoldDetailStaysStableAcrossReinspection(CancellationToken ct)
+    {
+        using var repo = new ScratchGitRepo("c1514-hold-stable");
+        await repo.CommitFileAsync("README.md", "base\n");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = CreateContext(schema);
+        var card = await SeedCardAsync(db, "CARD-1514");
+        var sibling = await SeedKeptSiblingAsync(db, repo, card.Id, commitMessage: "docs(plan): CARD-1514");
+        sibling.LandRequestedAt = DateTime.UtcNow.AddMinutes(-1);
+        await SeedPendingSiblingLandAsync(db, repo, sibling);
+        var parentSessionId = Guid.NewGuid();
+        await SeedParentSessionAsync(db, parentSessionId);
+        var task = await SeedQueuedWorktreeTaskAsync(db, repo.Path, card.Id, parentSessionId);
+        await db.SaveChangesAsync(ct);
+
+        await using var provider = CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await dispatcher.TickInspectedAsync(ct);
+        await dispatcher.TickInspectedAsync(ct);
+
+        db.ChangeTracker.Clear();
+        var held = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, ct);
+        held.Status.ShouldBe(AgentTaskStatus.Queued);
+        var events = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == task.Id && e.Type == AgentTaskEventType.Held)
+            .ToListAsync(ct);
+        events.Count(e => e.Detail == DispatchHoldDetails.SiblingInspectionPending).ShouldBe(1);
+        events.Count(e => e.Detail.Contains("is landing and is not yet in ", StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Test]
     [Timeout(30_000)]
     public async Task a_test_design_worktree_is_held_while_its_card_plan_land_is_in_flight(
         CancellationToken ct)

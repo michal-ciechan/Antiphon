@@ -143,6 +143,27 @@ public partial class AgentTaskDispatchBaseGuardTests
     }
 
     [Test]
+    public async Task C1514_ImmutableStartRefDoesNotWaitForPendingSiblingLand()
+    {
+        await using var w = await SiblingWorld.CreateAsync();
+        var sibling = await w.AddAsync();
+        sibling.Status = AgentTaskStatus.Blocked;
+        sibling.LandRequestedAt = DateTime.UtcNow;
+        var reviewed = (await w.Repo.GitReadAsync("rev-parse", sibling.WorktreeBranch!)).Trim();
+        var master = (await w.Repo.GitReadAsync("rev-parse", "master")).Trim();
+        master.ShouldNotBe(reviewed);
+        w.Task.WorktreeBaseRequestedRef = master;
+        var request = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = sibling.Id, RequestedAt = DateTime.UtcNow,
+            State = LandRequestState.Queued, IsPending = true, ExpectedSourceSha = reviewed,
+        };
+        w.Db.AgentTaskLandRequests.Add(request);
+        sibling.CurrentLandRequestId = request.Id;
+        await w.RunAsync([(sibling, 0)]);
+    }
+
+    [Test]
     [Arguments("card")]
     [Arguments("shared")]
     [Arguments("Queued")]

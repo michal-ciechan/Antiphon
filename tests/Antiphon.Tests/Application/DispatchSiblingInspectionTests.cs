@@ -416,6 +416,59 @@ public class DispatchSiblingInspectionTests
     }
 
     [Test]
+    [Timeout(90_000)]
+    public async Task C1514_ImmutableStartRefDoesNotWaitBeyondInventoryCap()
+    {
+        using var repo = new ScratchGitRepo("c1514-immutable-cap");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "pending-plan", "master");
+        source.Role = AgentTaskRole.Plan;
+        var sha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+        var master = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        var land = new AgentTaskLandRequest { Id = Guid.NewGuid(), TaskId = source.Id,
+            IsPending = true, State = LandRequestState.Running, ExpectedSourceSha = sha, RequestedAt = DateTime.UtcNow };
+        source.CurrentLandRequestId = land.Id;
+        db.AgentTaskLandRequests.Add(land);
+        for (var i = 1; i <= 256; i++)
+        {
+            var id = Guid.Parse("00000000-0000-0000-0000-" + i.ToString("D12"));
+            db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id,
+                CardId = card.Id, Title = "alias", Goal = "alias", RepoPath = repo.Path,
+                WorkingDirectory = repo.Path, Workspace = WorkspaceMode.Worktree,
+                WorktreeBranch = source.WorktreeBranch, Status = AgentTaskStatus.Succeeded,
+                CreatedAt = DateTime.UtcNow, CompletedAt = DateTime.UtcNow });
+        }
+        await db.SaveChangesAsync();
+        var request = NewRequest(repo, card.Id);
+        request.RootTaskId = request.Id;
+        request.Title = "immutable beyond cap";
+        request.Goal = "must dispatch";
+        request.WorkingDirectory = repo.Path;
+        request.Role = AgentTaskRole.Code;
+        request.AgentKind = AgentKind.ClaudeCode;
+        request.ModelLevel = AgentModelLevel.Medium;
+        request.Status = AgentTaskStatus.Queued;
+        request.ReplyTo = AgentTaskReplyTo.None;
+        request.CreatedAt = DateTime.UtcNow;
+        request.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target;
+        request.WorktreeBaseRequestedRef = master;
+        db.AgentTasks.Add(request);
+        await db.SaveChangesAsync();
+        await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(schema.ConnectionString, repo.WorktreeRoot);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+        await using var fresh = Context(schema);
+        var dispatched = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.Id);
+        dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+        var incomplete = await fresh.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .SingleAsync(i => i.TaskId == request.Id && i.WarningKey == "sibling-inspection-incomplete");
+        incomplete.Detail.ShouldContain("candidate_limit");
+    }
+
+    [Test]
     [Arguments("identical/chain")]
     [Arguments("64 divergent")]
     [Arguments("enrichment deadline")]
