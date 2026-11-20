@@ -601,40 +601,74 @@ function Read-CheckpointStrictText {
     return $encoding.GetString($bytes, $offset, $bytes.Length - $offset)
 }
 
-# Load C# source as a compiled type, compiling it at most once per source version: the assembly is cached under
-# the user's temp directory, keyed by the SHA-256 of the source text and compiler options plus the PowerShell/.NET
-# versions, so each later process only loads it (an in-memory compile costs most of a second in every process,
-# and the checkpoint script tests start many). Concurrent first runs each compile; the first rename wins. A cache
-# that cannot be written or loaded falls back to compiling in memory, as before.
+# The per-user directory compiled helper assemblies are cached in, or $null when none is safe to use. Windows: the
+# user's own temp directory. Elsewhere: $XDG_CACHE_HOME (else ~/.cache)/antiphon-checkpoint-types, created owner-only
+# and used only while it stays mode 0700, never a shared /tmp name another account could fill with assemblies.
+function Get-CheckpointTypeCacheDirectory {
+    try {
+        if ($IsWindows) {
+            $directory = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-checkpoint-types'
+            [void][IO.Directory]::CreateDirectory($directory)
+            return $directory
+        }
+        $base = $env:XDG_CACHE_HOME
+        if ([string]::IsNullOrWhiteSpace($base) -or -not [IO.Path]::IsPathRooted($base)) {
+            if ([string]::IsNullOrWhiteSpace($HOME)) { return $null }
+            $base = Join-Path $HOME '.cache'
+        }
+        $directory = Join-Path $base 'antiphon-checkpoint-types'
+        $ownerOnly = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
+        [void][IO.Directory]::CreateDirectory($base)
+        [void][IO.Directory]::CreateDirectory($directory, $ownerOnly)
+        if ([IO.File]::GetUnixFileMode($directory) -ne $ownerOnly) { return $null }
+        return $directory
+    } catch { return $null }
+}
+
+# Load C# source as a compiled type, compiling it at most once per source version: the assembly is cached in the
+# per-user directory above, keyed by the SHA-256 of the source text and compiler options plus the PowerShell/.NET
+# versions, so each later process only loads it (an in-memory compile costs about a second in every process, and the
+# checkpoint script tests start many). Concurrent first runs each compile; the first rename wins. A compile error is
+# raised once, as Add-Type raises it. A cached assembly that will not load is deleted so the next process rebuilds
+# it, and this one compiles in memory, as before the cache. Each load refreshes the file's time, so the sweep of
+# week-old versions only removes versions nothing has used for a week.
 function Import-CheckpointCompiledSource {
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$TypeName,
           [Parameter(Mandatory)][string]$Name, [string[]]$CompilerOptions = @())
     if ($TypeName -as [type]) { return }
-    try {
+    $directory = Get-CheckpointTypeCacheDirectory
+    if ($null -ne $directory) {
         $key = [Text.Encoding]::UTF8.GetBytes($Source + "`n" + ($CompilerOptions -join ' ') + "`n" + $PSVersionTable.PSVersion.ToString() + "`n" + [Environment]::Version.ToString())
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($key)).Substring(0, 24).ToLowerInvariant()
-        $directory = Join-Path ([IO.Path]::GetTempPath()) 'antiphon-checkpoint-types'
         $dll = Join-Path $directory ($Name + '-' + $hash + '.dll')
         if (-not [IO.File]::Exists($dll)) {
-            [void][IO.Directory]::CreateDirectory($directory)
             $work = Join-Path $directory ('build-' + [guid]::NewGuid().ToString('N') + '.dll')
             try {
                 $compile = @{ TypeDefinition = $Source; OutputAssembly = $work }
                 if ($CompilerOptions.Count -gt 0) { $compile.CompilerOptions = $CompilerOptions }
                 Add-Type @compile
                 try { [IO.File]::Move($work, $dll) } catch [IO.IOException] { }
+            } catch {
+                # The source does not compile: say so once. Anything else (the cache cannot be written) compiles in memory.
+                if ([string]$_.FullyQualifiedErrorId -match '^(SOURCE_CODE_ERROR|COMPILER_ERRORS)') { throw }
             } finally {
                 if ([IO.File]::Exists($work)) { try { [IO.File]::Delete($work) } catch { } }
             }
-            # Assemblies of earlier source versions: best effort, a week old (one still loaded elsewhere stays).
+            # Assemblies of earlier source versions nothing has loaded for a week: best effort.
             foreach ($old in @([IO.Directory]::GetFiles($directory, $Name + '-*.dll'))) {
-                if ($old -eq $dll -or [IO.File]::GetLastWriteTimeUtc($old) -gt [DateTime]::UtcNow.AddDays(-7)) { continue }
-                try { [IO.File]::Delete($old) } catch { }
+                if ($old -eq $dll) { continue }
+                try { if ([IO.File]::GetLastWriteTimeUtc($old) -lt [DateTime]::UtcNow.AddDays(-7)) { [IO.File]::Delete($old) } } catch { }
             }
         }
-        Add-Type -Path $dll
-    } catch { }
-    if ($TypeName -as [type]) { return }
+        try {
+            Add-Type -Path $dll
+            try { [IO.File]::SetLastWriteTimeUtc($dll, [DateTime]::UtcNow) } catch { }
+        } catch {
+            # Truncated, blocked or otherwise unloadable: let the next process rebuild it.
+            try { [IO.File]::Delete($dll) } catch { }
+        }
+        if ($TypeName -as [type]) { return }
+    }
     $inMemory = @{ TypeDefinition = $Source }
     if ($CompilerOptions.Count -gt 0) { $inMemory.CompilerOptions = $CompilerOptions }
     Add-Type @inMemory
