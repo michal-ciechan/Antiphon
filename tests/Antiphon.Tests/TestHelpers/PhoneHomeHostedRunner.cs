@@ -1,3 +1,4 @@
+using System.Data.Common;
 using Antiphon.Tests.Application;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using System.Text.Json;
@@ -60,7 +61,7 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
             {
                 ConnectionString = h._schema.ConnectionString,
                 AlwaysOn = false,
-                ConfigureDbContext = options => options.AddInterceptors(h.Activity),
+                ConfigureDbContext = options => options.AddInterceptors(h.Activity, h.Activity.Commands),
                 ConfigureServices = services =>
                 {
                     services.AddSingleton<IEventBus>(h.Bus);
@@ -220,6 +221,13 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
         public volatile bool Hold;
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public ActivityCommand Commands { get; } = new();
+
+        public HeldActivity()
+        {
+            Commands.Owner = this;
+        }
+
         public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData data,
             InterceptionResult<int> result, CancellationToken ct = default)
         {
@@ -230,6 +238,27 @@ internal sealed class PhoneHomeHostedRunner : IAsyncDisposable
                 await Release.Task.WaitAsync(ct);
             }
             return result;
+        }
+
+        /// <summary>
+        /// CARD-1987 writes LastSeenAt with <c>-- rt.activity.write</c>, not SaveChanges.
+        /// Hold that command while <c>output.activity</c> is still the active phase.
+        /// </summary>
+        public sealed class ActivityCommand : DbCommandInterceptor
+        {
+            internal HeldActivity Owner { get; set; } = null!;
+
+            public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+                DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+                CancellationToken cancellationToken = default)
+            {
+                if (Owner.Hold && command.CommandText.Contains("rt.activity.write", StringComparison.Ordinal))
+                {
+                    Owner.Entered.TrySetResult();
+                    await Owner.Release.Task.WaitAsync(cancellationToken);
+                }
+                return result;
+            }
         }
     }
 
