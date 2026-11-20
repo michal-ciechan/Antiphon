@@ -488,7 +488,20 @@ public sealed class RunCheckpointSourceScriptTests
         // A live seed root holds its owner file open (exclusive) for the life of its process; the sweep below deletes
         // only a root whose owner file it can take, so a host that is still running (or paused) keeps its seeds.
         private static FileStream? _seedOwner;
-        private static readonly Lazy<string> SeedRoot = new(() =>
+        private static readonly object SeedRootGate = new();
+        private static string? _seedRoot;
+
+        // The run's seed root, made once; a failure to make it is not kept (the next fixture tries again) and leaves
+        // no directory behind.
+        private static string SeedRoot()
+        {
+            lock (SeedRootGate)
+            {
+                return _seedRoot ??= NewSeedRoot();
+            }
+        }
+
+        private static string NewSeedRoot()
         {
             // Seed roots a killed test host left behind (ProcessExit never ran) are swept after half a day.
             IEnumerable<string> stale = [];
@@ -507,14 +520,22 @@ public sealed class RunCheckpointSourceScriptTests
             }
             var root = Path.Combine(Path.GetTempPath(), "c835-seeds-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
-            _seedOwner = new FileStream(Path.Combine(root, ".owner"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            try
+            {
+                _seedOwner = new FileStream(Path.Combine(root, ".owner"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch
+            {
+                GitFixtureCleanup.Delete(root);
+                throw;
+            }
             AppDomain.CurrentDomain.ProcessExit += (_, _) =>
             {
                 _seedOwner?.Dispose();
                 GitFixtureCleanup.Delete(root);
             };
             return root;
-        });
+        }
 
         private static (string Directory, string Head) Seed(string seed)
         {
@@ -529,7 +550,7 @@ public sealed class RunCheckpointSourceScriptTests
 
         private static (string Directory, string Head) Seeded(string seed)
         {
-            var repo = Path.Combine(SeedRoot.Value, Guid.NewGuid().ToString("N"));
+            var repo = Path.Combine(SeedRoot(), Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(repo);
             void Put(string path, string value)
             {
