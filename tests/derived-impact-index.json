@@ -6826,6 +6826,7 @@
       "path": "server/Application/Services/AgentTaskGetPollMetrics.cs",
       "classes": [
         "AgentTaskGetPollMetricsTests",
+        "AgentTaskInputFallbackTests",
         "ClaudeComposerCaptureProbeTests",
         "ClaudePasteLossCanaryTests",
         "FakeVsRealClipParityTests",
