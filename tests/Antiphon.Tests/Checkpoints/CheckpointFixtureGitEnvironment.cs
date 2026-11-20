@@ -110,27 +110,41 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
     // rev-parse; the other commands' callers do not read theirs.
     private static string? InProcess(string repository, string[] args)
     {
+        var dotGit = Path.Combine(repository, ".git");
+        var created = false;
         try
         {
             switch (args)
             {
-                case ["init", "-b", var branch] when !string.IsNullOrWhiteSpace(branch) && !Directory.Exists(Path.Combine(repository, ".git")):
+                // A fresh directory only (not a re-init, not a .git file), and a branch name git would accept.
+                case ["init", "-b", var branch] when LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch)
+                                                     && !Directory.Exists(dotGit) && !File.Exists(dotGit):
+                    created = true;
                     LibGit2Sharp.Repository.Init(repository);
-                    File.WriteAllText(Path.Combine(repository, ".git", "HEAD"), "ref: refs/heads/" + branch + "\n");
+                    File.WriteAllText(Path.Combine(dotGit, "HEAD"), "ref: refs/heads/" + branch + "\n");
                     return "";
                 case ["add", "-A"]:
                     using (var repo = new LibGit2Sharp.Repository(repository))
                         LibGit2Sharp.Commands.Stage(repo, "*");
                     return "";
+                // As git does, a path that matches nothing fails (here: git runs it and fails).
                 case ["add", "-f", "--", ..] when args.Length > 3:
                     using (var repo = new LibGit2Sharp.Repository(repository))
-                        LibGit2Sharp.Commands.Stage(repo, args.Skip(3).Select(path => Path.GetRelativePath(repository, Path.GetFullPath(path, repository)).Replace('\\', '/')),
-                            new LibGit2Sharp.StageOptions { IncludeIgnored = true });
+                        LibGit2Sharp.Commands.Stage(repo,
+                            args.Skip(3).Select(path => Path.GetRelativePath(repository, Path.GetFullPath(path, repository)).Replace('\\', '/')),
+                            new LibGit2Sharp.StageOptions
+                            {
+                                IncludeIgnored = true,
+                                ExplicitPathsOptions = new LibGit2Sharp.ExplicitPathsOptions { ShouldFailOnUnmatchedPath = true },
+                            });
                     return "";
-                case ["-c", var email, "-c", var name, "-c", "commit.gpgsign=false", "commit", "-m", var message, "--no-verify"]
-                    when email.StartsWith("user.email=", StringComparison.Ordinal) && name.StartsWith("user.name=", StringComparison.Ordinal):
+                case ["-c", var email, "-c", var name, "-c", "commit.gpgsign=false", "commit", ..] when
+                    email.StartsWith("user.email=", StringComparison.Ordinal) && name.StartsWith("user.name=", StringComparison.Ordinal)
+                    && CommitMessage(args.Skip(7).ToArray()) is { } message && !IdentityFromEnvironment():
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
+                        // git refuses an empty first commit ("nothing to commit"): git answers that.
+                        if (repo.Info.IsHeadUnborn && repo.Index.Count == 0) return null;
                         var who = new LibGit2Sharp.Signature(name["user.name=".Length..], email["user.email=".Length..], DateTimeOffset.Now);
                         repo.Commit(message, who, who);
                     }
@@ -142,12 +156,28 @@ internal sealed class CheckpointFixtureGitEnvironment : IDisposable
                     return null;
             }
         }
-        catch (Exception ex) when (ex is LibGit2Sharp.LibGit2SharpException or IOException or UnauthorizedAccessException
-                                       or DllNotFoundException or TypeInitializationException)
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
+            // Any failure leaves the command to git, from where it started: a half-made repository is removed first.
+            if (created)
+                try { Directory.Delete(dotGit, recursive: true); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
             return null;
         }
     }
+
+    // The message of `commit -m <message> --no-verify` with those two options in either order; null for any other
+    // option list.
+    private static string? CommitMessage(string[] options) => options switch
+    {
+        ["-m", var message, "--no-verify"] => message,
+        ["--no-verify", "-m", var message] => message,
+        _ => null,
+    };
+
+    // An author or committer the environment names (git prefers it over -c user.*): git answers that commit.
+    private static bool IdentityFromEnvironment() =>
+        new[] { "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_COMMITTER_DATE" }
+            .Any(name => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(name)));
 
     // A new fixture repository stores its bytes as written (core.autocrlf=false) and starts no background
     // `git maintenance run --auto` after each fixture commit (maintenance.auto=false, which could also write .git
