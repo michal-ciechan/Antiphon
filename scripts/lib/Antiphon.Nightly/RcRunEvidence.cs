@@ -93,9 +93,13 @@ namespace Antiphon.Nightly
                     var launchDir = RequireDirectory(outputDirectory);
                     if (HasNoBuild(arguments) && !string.Equals(Normalize(storedDir), launchDir, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("foreign-output");
-                    var live = SealDirectory(launchDir, doc.RootElement.GetProperty("entry").GetString());
-                    if (!SameOutputs(doc.RootElement.GetProperty("outputs"), live))
-                        throw new InvalidOperationException("output-not-joined");
+                    var storedOutputs = doc.RootElement.GetProperty("outputs");
+                    if (!StampsMatch(storedOutputs, launchDir))
+                    {
+                        var live = SealDirectory(launchDir, doc.RootElement.GetProperty("entry").GetString());
+                        if (!SameOutputs(storedOutputs, live))
+                            throw new InvalidOperationException("output-not-joined");
+                    }
                     var launchPath = Path.Combine(root, "launches", suite, chunk + ".json");
                     if (File.Exists(launchPath)) throw new InvalidOperationException("write-once");
                     var obj = BaseObject("antiphon-rc-run-launch-v1");
@@ -112,13 +116,18 @@ namespace Antiphon.Nightly
 
         public static PSObject ChunkRevision(string evidenceRoot, string suite, string chunk, string outcome, bool interrupt)
         {
+            return ChunkRevision(evidenceRoot, suite, chunk, outcome, interrupt, null);
+        }
+
+        public static PSObject ChunkRevision(string evidenceRoot, string suite, string chunk, string outcome, bool interrupt, string reason)
+        {
             RequireToken(suite, "suite-refused");
             RequireToken(chunk, "chunk-refused");
             var root = RequireEvidence(evidenceRoot, null);
             using (var gate = Acquire(root))
             {
                 var current = ReadIndex(root, false);
-                var next = (current == null ? 0 : current.Sequence) + 1;
+                var next = NextRevisionSlot(root, current);
                 var dir = Path.Combine(root, "revisions", next.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (interrupt)
                 {
@@ -134,7 +143,6 @@ namespace Antiphon.Nightly
                     throw new InvalidOperationException("writer-interrupted");
                 }
                 if (string.IsNullOrEmpty(outcome)) throw new InvalidOperationException("chunk-refused");
-                if (Directory.Exists(dir)) throw new InvalidOperationException("write-once");
                 var revision = BaseObject("antiphon-rc-run-revision-v1");
                 revision["sequence"] = next;
                 revision["state"] = "open";
@@ -142,8 +150,9 @@ namespace Antiphon.Nightly
                 revision["chunk"] = chunk;
                 revision["outcome"] = outcome;
                 revision["pending"] = "none";
+                if (!string.IsNullOrEmpty(reason)) revision["reason"] = reason;
                 var relative = "revisions/" + next.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/revision.json";
-                var digest = WriteOnce(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)), Bytes(revision));
+                var digest = PublishRevision(dir, Bytes(revision));
                 var index = BaseObject("antiphon-rc-run-evidence-index-v1");
                 index["sequence"] = next;
                 index["path"] = relative;
@@ -172,8 +181,13 @@ namespace Antiphon.Nightly
             var root = RequireEvidence(evidenceRoot, null);
             RejectReparseChain(root);
             var index = ReadIndex(root, true);
-            if (index == null) throw new InvalidOperationException("writer-interrupted");
             var pending = Pending(root);
+            if (index == null)
+            {
+                if (string.Equals(pending, "not-run", StringComparison.Ordinal))
+                    return Envelope("", "recording", "on", "state", "open", "sequence", 0, "pending", "not-run");
+                throw new InvalidOperationException("writer-interrupted");
+            }
             return Envelope(index.Sha256, "recording", "on", "state", "open", "sequence", index.Sequence, "pending", pending);
         }
 
@@ -203,6 +217,7 @@ namespace Antiphon.Nightly
             public string RelativePath;
             public string Sha256;
             public int Length;
+            public long LastWriteUtcTicks;
             public string Role;
         }
 
@@ -358,10 +373,11 @@ namespace Antiphon.Nightly
             var seenHelper = false;
             foreach (var name in names)
             {
-                var bytes = File.ReadAllBytes(Path.Combine(directory, name));
+                var info = new FileInfo(Path.Combine(directory, name));
+                var bytes = File.ReadAllBytes(info.FullName);
                 var role = string.Equals(name, entry, StringComparison.Ordinal) ? "entry" : (name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? "helper" : "dependency");
                 if (role != "entry") seenHelper = true;
-                list.Add(new SealedFile { RelativePath = name, Sha256 = Sha(bytes), Length = bytes.Length, Role = role });
+                list.Add(new SealedFile { RelativePath = name, Sha256 = Sha(bytes), Length = bytes.Length, LastWriteUtcTicks = info.LastWriteTimeUtc.Ticks, Role = role });
             }
             if (!seenHelper && names.Count > 1) throw new InvalidOperationException("build-outputs-incomplete");
             return list;
@@ -441,15 +457,104 @@ namespace Antiphon.Nightly
             return false;
         }
 
+        static int NextRevisionSlot(string root, IndexInfo current)
+        {
+            var next = (current == null ? 0 : current.Sequence) + 1;
+            if (next < 1) next = 1;
+            var revisions = Path.Combine(root, "revisions");
+            for (var guard = 0; guard < 64; guard++)
+            {
+                var dir = Path.Combine(revisions, next.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                if (!Directory.Exists(dir)) return next;
+                next++;
+            }
+            throw new InvalidOperationException("write-once");
+        }
+
+        static string PublishRevision(string directory, byte[] bytes)
+        {
+            Directory.CreateDirectory(directory);
+            var finalPath = Path.Combine(directory, "revision.json");
+            var partial = Path.Combine(directory, "revision.json.partial");
+            if (File.Exists(finalPath) || File.Exists(partial)) throw new InvalidOperationException("write-once");
+            WriteOnce(partial, bytes);
+            File.Move(partial, finalPath);
+            var read = ReadCapped(finalPath);
+            if (read.Length != bytes.Length) throw new InvalidOperationException("write-once");
+            for (var i = 0; i < bytes.Length; i++) if (read[i] != bytes[i]) throw new InvalidOperationException("write-once");
+            return Sha(read);
+        }
+
+        static bool ValidRevisionBytes(string path)
+        {
+            try
+            {
+                using (var doc = JsonDocument.Parse(ReadCapped(path)))
+                {
+                    if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+                    if (!doc.RootElement.TryGetProperty("format", out var fmt)) return false;
+                    return string.Equals(fmt.GetString(), "antiphon-rc-run-revision-v1", StringComparison.Ordinal);
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         static string Pending(string root)
         {
             var revisions = Path.Combine(root, "revisions");
             if (!Directory.Exists(revisions)) return "none";
-            foreach (var file in Directory.EnumerateFiles(revisions, "revision.json.partial", SearchOption.AllDirectories))
+            foreach (var dir in Directory.EnumerateDirectories(revisions))
             {
-                if (File.Exists(file)) return "not-run";
+                var partial = Path.Combine(dir, "revision.json.partial");
+                if (File.Exists(partial)) return "not-run";
+                var finalPath = Path.Combine(dir, "revision.json");
+                if (!File.Exists(finalPath) || !ValidRevisionBytes(finalPath)) return "not-run";
             }
             return "none";
+        }
+
+        static bool StampsMatch(JsonElement stored, string directory)
+        {
+            if (stored.ValueKind != JsonValueKind.Array) return false;
+            var liveNames = new List<string>();
+            foreach (var pattern in new[] { "*.dll", "*.deps.json", "*.runtimeconfig.json" })
+            {
+                foreach (var file in Directory.GetFiles(directory, pattern))
+                {
+                    RejectReparseFile(file);
+                    liveNames.Add(Path.GetFileName(file));
+                }
+            }
+            liveNames.Sort(StringComparer.Ordinal);
+            if (liveNames.Count != stored.GetArrayLength() || liveNames.Count == 0) return false;
+            var expected = new List<string>();
+            foreach (var row in stored.EnumerateArray())
+            {
+                if (!row.TryGetProperty("lastWriteUtcTicks", out var ticksEl) || ticksEl.ValueKind != JsonValueKind.String) return false;
+                if (!row.TryGetProperty("relativePath", out var nameEl)) return false;
+                if (!row.TryGetProperty("length", out var lengthEl) || !lengthEl.TryGetInt32(out var length)) return false;
+                var name = nameEl.GetString();
+                if (string.IsNullOrEmpty(name)) return false;
+                expected.Add(name);
+                var path = Path.Combine(directory, name);
+                if (!File.Exists(path)) return false;
+                RejectReparseFile(path);
+                var info = new FileInfo(path);
+                if (info.Length != length) return false;
+                var ticks = ticksEl.GetString();
+                var liveTicks = info.LastWriteTimeUtc.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (!string.Equals(ticks, liveTicks, StringComparison.Ordinal)) return false;
+            }
+            expected.Sort(StringComparer.Ordinal);
+            if (expected.Count != liveNames.Count) return false;
+            for (var i = 0; i < expected.Count; i++)
+            {
+                if (!string.Equals(expected[i], liveNames[i], StringComparison.Ordinal)) return false;
+            }
+            return true;
         }
 
         static void PublishIndex(string root, byte[] bytes)
@@ -498,6 +603,7 @@ namespace Antiphon.Nightly
                 item["relativePath"] = row.RelativePath;
                 item["sha256"] = row.Sha256;
                 item["length"] = row.Length;
+                item["lastWriteUtcTicks"] = row.LastWriteUtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 item["role"] = row.Role;
                 list.Add(item);
             }
