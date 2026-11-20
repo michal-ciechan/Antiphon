@@ -453,7 +453,7 @@ internal static class RcPortCorpus
         {
             if (assembly.GetName().Name == "System.Management.Automation") return automation = assembly;
         }
-        return automation = Assembly.LoadFrom(SmaPath);
+        return automation = System.Reflection.Assembly.LoadFrom(SmaPath);
     }
 
     static object Substitute(object value, Dictionary<string, string> roles, string field)
