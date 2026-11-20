@@ -24608,6 +24608,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RunCheckpointSourceScriptTests.cs",
+      "classes": [
+        "ProcessSpawnLimitTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
       "classes": [
         "AstraFixesBTests",
@@ -24760,6 +24766,7 @@
       "classes": [
         "CardFilePrivacyGitTests",
         "CardFilePrivacyPathTests",
+        "ProcessSpawnLimitTests",
         "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
         "WindowsUnitPlatformAdmissionTests"
@@ -26565,6 +26572,7 @@
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
+        "RunCheckpointSourceScriptTests",
         "ScriptModelSpawnLaneTests"
       ]
     },
