@@ -780,11 +780,19 @@ public sealed class AgentTaskLandService
             }
             var helper = await _tasks.CreateMergeTaskAsync(task, result.Conflicts, ct,
                 task.MergeTargetRef ?? "master", result.Operation?.SourceRemoteSha);
+            var regenDetail = result.Detail is string detail
+                && detail.StartsWith(DerivedImpactIndexRegen.FailurePrefix, StringComparison.Ordinal)
+                ? detail : null;
+            var stageBudget = regenDetail is null
+                ? StageOutcome.DetailMaxLength
+                : StageOutcome.DetailMaxLength - ("; ".Length + regenDetail.Length);
+            var stageSummary = AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts, stageBudget);
             Record(task, OrchestrationStage.Rebase, StageOutcomeKind.Found, DurationSeconds(result.Operation, OrchestrationStage.Rebase),
-                AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts, StageOutcome.DetailMaxLength),
+                regenDetail is null ? stageSummary : Clip(AppendDetail(stageSummary, regenDetail)),
                 helper is null ? "merge task cap reached" : DelegationReportFormatter.Short(helper.Id));
+            var eventSummary = AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts);
             var conflictEvent = Event(task.Id, AgentTaskEventType.Conflicted,
-                AgentTaskLandingProtocol.ConflictFileSummary(result.Conflicts), _clock.GetUtcNow().UtcDateTime);
+                regenDetail is null ? eventSummary : AppendDetail(eventSummary, regenDetail), _clock.GetUtcNow().UtcDateTime);
             SetLandingEvidence(conflictEvent, result.Operation);
             conflictEvent.LandRequestId = request.Id;
             request.State = LandRequestState.NeedsResolution;

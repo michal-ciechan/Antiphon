@@ -283,33 +283,52 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 await RecheckSourceAsync(op, ct);
                 var rebase = await MutateAsync(op, land,
                     ["-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", op.TargetBeforeSha], ct);
+                string? regeneratedHead = null;
                 if (!rebase.Succeeded)
                 {
                     // Only this live invocation may abort the rebase it started.
                     var conflicts = await git.RunAsync(land, ["diff", "--name-only", "--diff-filter=U", "-z"], ct);
-                    var abort = await MutateAsync(op, land, ["rebase", "--abort"], ct);
-                    if (await TryIndexLockRefusalAsync(land, ct) is { } rebaseLock)
-                        throw new LandingRefusal(rebaseLock.Code, rebaseLock.Detail);
-                    Require(abort.Succeeded, "rebase_abort_failed");
-                    await RecheckSourceAsync(op, ct);
                     var files = conflicts.Succeeded ? conflicts.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
-                    // CARD-1637: a plain -Land flattens merge commits by policy. When that conflicts, a
-                    // rebase resolver would redo what the merge already resolved; name the Merge-role path.
-                    if (files.Length > 0 && await HasMergeCommitsAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct))
+                    // FT-5: the derived-impact index is the only conflict this land resolves, and only when
+                    // the candidate is linear. Every other path aborts first, then scans, as before.
+                    var resolved = false;
+                    if (DerivedImpactIndexRegen.IsOnlyIndex(files))
                     {
-                        var contained = await IsAncestorAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct);
-                        op.LastReason = "merge_branch_needs_merge_role";
-                        _state.Transition(op, LandPhase.Refused, Now());
-                        return new(op, op.LastReason, []) { Detail = MergeRoleDetail(op, contained, files) };
+                        var attempt = await TryResolveIndexOnlyAsync(op, land, ct);
+                        if (attempt.Refusal is not null)
+                            return attempt.Refusal;
+                        if (attempt.Continued is not null)
+                        {
+                            rebase = attempt.Continued;
+                            var regenerated = await RegenerateIndexAsync(op, land, ct);
+                            if (regenerated.Refusal is not null)
+                                return regenerated.Refusal;
+                            regeneratedHead = regenerated.Head;
+                            resolved = true;
+                        }
                     }
-                    op.LastReason = files.Length > 0 ? "rebase_conflict" : "rebase_failed";
-                    _state.Transition(op, LandPhase.Refused, Now());
-                    return new(op, op.LastReason, files);
+                    if (!resolved)
+                    {
+                        await AbortRebaseAsync(op, land, ct);
+                        // CARD-1637: a plain -Land flattens merge commits by policy. When that conflicts, a
+                        // rebase resolver would redo what the merge already resolved; name the Merge-role path.
+                        if (files.Length > 0 && await HasMergeCommitsAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct))
+                        {
+                            var contained = await IsAncestorAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct);
+                            op.LastReason = "merge_branch_needs_merge_role";
+                            _state.Transition(op, LandPhase.Refused, Now());
+                            return new(op, op.LastReason, []) { Detail = MergeRoleDetail(op, contained, files) };
+                        }
+                        op.LastReason = files.Length > 0 ? "rebase_conflict" : "rebase_failed";
+                        _state.Transition(op, LandPhase.Refused, Now());
+                        return new(op, op.LastReason, files);
+                    }
                 }
-                Require(rebase.RebaseHeadSha is not null, "interrupted_rebase");
+                var rebasedHead = regeneratedHead ?? rebase.RebaseHeadSha;
+                Require(rebasedHead is not null, "interrupted_rebase");
                 await RecheckSourceAsync(op, ct);
-                Require(await CommitAsync(land, "HEAD", ct) == rebase.RebaseHeadSha, "land_worktree_changed");
-                op.RebasedSourceSha = rebase.RebaseHeadSha!;
+                Require(await CommitAsync(land, "HEAD", ct) == rebasedHead, "land_worktree_changed");
+                op.RebasedSourceSha = rebasedHead;
                 await PinAsync(op, "prepared", op.RebasedSourceSha, ct);
                 op.PreparedPinned = true;
                 op.PreparedAt = Now();
@@ -337,7 +356,7 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
                 op.VerificationPassed = false;
                 op.VerificationSkipReason = null;
                 op.VerificationCommand = decision.Skip
-                    ? $"Skipped(non-code); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={LandVerificationBuildGraph.Fingerprint}"
+                    ? $"Skipped({decision.Reason}); target={op.TargetBeforeSha}; candidate={op.RebasedSourceSha}; graph={decision.Graph ?? LandVerificationBuildGraph.Fingerprint}"
                     : $"dotnet build; dotnet run --project tests/Antiphon.Tests; policy={decision.Reason}";
                 try { logger?.LogInformation(
                     "Landing verification decision task {TaskId} operation {OperationId} request {RequestId} reason {Reason} target {TargetSha} candidate {CandidateSha}",
@@ -1041,6 +1060,238 @@ public sealed class AgentTaskLandingProtocol(AppDbContext db, ILandingGit git,
         var result = await git.RunAsync(repository, ["merge-base", "--is-ancestor", source, target], ct);
         Require(result.ExitCode is 0 or 1, "ancestry_error");
         return result.ExitCode == 0;
+    }
+
+    private const int IndexRebaseRoundLimit = 32;
+
+    private readonly record struct IndexAttempt(LandingGitResult? Continued, LandingProtocolResult? Refusal);
+
+    private readonly record struct RegeneratedIndex(LandingProtocolResult? Refusal, string? Head);
+
+    /// <summary>
+    /// Resolves an index-only conflict by taking the target blob, then continuing or skipping.
+    /// A later non-index conflict aborts and returns today's rebase_conflict with no regen detail.
+    /// Null continued and null refusal means the candidate has merge commits: the caller aborts
+    /// and keeps the Merge-role refusal. A thrown merge scan aborts first, then propagates.
+    /// </summary>
+    private async Task<IndexAttempt> TryResolveIndexOnlyAsync(AgentTaskLanding op, string land, CancellationToken ct)
+    {
+        bool merges;
+        try
+        {
+            merges = await HasMergeCommitsAsync(op.RepositoryPath, op.TargetBeforeSha, InputSha(op), ct);
+        }
+        catch
+        {
+            await AbortRebaseAsync(op, land, ct);
+            throw;
+        }
+        if (merges)
+            return default;
+
+        LandingGitResult? step = null;
+        for (var round = 0; round < IndexRebaseRoundLimit; round++)
+        {
+            var files = await UnmergedAsync(land, ct);
+            if (files is null)
+            {
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRegeneration(op, "rebase-continue"));
+            }
+            if (files.Length == 0)
+            {
+                if (step?.Succeeded == true)
+                    return new(step, null);
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRegeneration(op, "rebase-continue"));
+            }
+            if (!DerivedImpactIndexRegen.IsOnlyIndex(files))
+            {
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRebaseConflict(op, files));
+            }
+
+            var checkout = await MutateAsync(op, land,
+                ["checkout", op.TargetBeforeSha, "--", DerivedImpactIndexRegen.RelativePath], ct);
+            if (!checkout.Succeeded)
+            {
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRegeneration(op, "rebase-continue"));
+            }
+            var add = await MutateAsync(op, land, ["add", "--", DerivedImpactIndexRegen.RelativePath], ct);
+            if (!add.Succeeded)
+            {
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRegeneration(op, "rebase-continue"));
+            }
+            var quiet = await git.RunAsync(land, ["diff", "--cached", "--quiet"], ct);
+            if (quiet.ExitCode is not (0 or 1))
+            {
+                await AbortRebaseAsync(op, land, ct);
+                return new(null, RefuseRegeneration(op, "rebase-continue"));
+            }
+            IReadOnlyList<string> args = quiet.ExitCode == 0
+                ? ["-c", "commit.gpgsign=false", "rebase", "--skip"]
+                : ["-c", "core.editor=true", "-c", "sequence.editor=true", "-c", "commit.gpgsign=false", "rebase", "--continue"];
+            step = await MutateAsync(op, land, args, ct);
+            if (step.Succeeded)
+                return new(step, null);
+        }
+
+        await AbortRebaseAsync(op, land, ct);
+        return new(null, RefuseRegeneration(op, "rebase-limit"));
+    }
+
+    private async Task<RegeneratedIndex> RegenerateIndexAsync(AgentTaskLanding op, string land, CancellationToken ct)
+    {
+        if (!await WorkingTreeIsCleanAsync(land, ct))
+            return new(RefuseRegeneration(op, "dirty-tree"), null);
+
+        DerivedImpactRegenResult regen;
+        try
+        {
+            regen = await IndexRegenerator.RegenerateAsync(land, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            regen = new(false, false, "nonzero", 0);
+        }
+        try
+        {
+            logger?.LogInformation(
+                "generated_artifact regenerated={Regenerated} ms={Milliseconds}",
+                regen.Succeeded && regen.Changed ? "true" : "false",
+                regen.Milliseconds);
+        }
+        catch (Exception) { }
+
+        if (!regen.Succeeded)
+            return new(RefuseRegeneration(op, regen.Reason), null);
+
+        var records = await ReadStatusAsync(land, ct);
+        if (records is null)
+            return new(RefuseRegeneration(op, "dirty-tree"), null);
+        if (!regen.Changed)
+        {
+            if (records.Count > 0)
+                return new(RefuseRegeneration(op, "dirty-tree"), null);
+            return new(null, null);
+        }
+        if (!IsIndexModification(records))
+            return new(RefuseRegeneration(op, records.Count == 0 ? "not-dirty" : "dirty-tree"), null);
+
+        var add = await MutateAsync(op, land, ["add", "--", DerivedImpactIndexRegen.RelativePath], ct);
+        if (!add.Succeeded)
+            return new(RefuseRegeneration(op, "commit-failed"), null);
+        var committed = await MutateAsync(op, land,
+            ["-c", "commit.gpgsign=false", "commit", "-m", DerivedImpactIndexRegen.CommitMessage, "--", DerivedImpactIndexRegen.RelativePath], ct);
+        if (!committed.Succeeded)
+            return new(RefuseRegeneration(op, "commit-failed"), null);
+        if (!await WorkingTreeIsCleanAsync(land, ct))
+            return new(RefuseRegeneration(op, "dirty-tree"), null);
+        var names = await git.RunAsync(land,
+            ["-c", "core.quotepath=false", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"], ct);
+        var committedPaths = names.Succeeded ? names.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries) : [];
+        if (!names.Succeeded || !DerivedImpactIndexRegen.IsOnlyIndex(committedPaths))
+            return new(RefuseRegeneration(op, "dirty-tree"), null);
+        var subject = await git.RunAsync(land, ["log", "-1", "--format=%s"], ct);
+        if (!subject.Succeeded || subject.Output.Trim() != DerivedImpactIndexRegen.CommitMessage)
+            return new(RefuseRegeneration(op, "commit-failed"), null);
+        return new(null, await CommitAsync(land, "HEAD", ct));
+    }
+
+    private async Task AbortRebaseAsync(AgentTaskLanding op, string land, CancellationToken ct)
+    {
+        var abort = await MutateAsync(op, land, ["rebase", "--abort"], ct);
+        if (await TryIndexLockRefusalAsync(land, ct) is { } rebaseLock)
+            throw new LandingRefusal(rebaseLock.Code, rebaseLock.Detail);
+        Require(abort.Succeeded, "rebase_abort_failed");
+        await RecheckSourceAsync(op, ct);
+    }
+
+    private async Task<string[]?> UnmergedAsync(string land, CancellationToken ct)
+    {
+        var conflicts = await git.RunAsync(land, ["diff", "--name-only", "--diff-filter=U", "-z"], ct);
+        if (!conflicts.Succeeded) return null;
+        return conflicts.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private async Task<bool> WorkingTreeIsCleanAsync(string land, CancellationToken ct)
+    {
+        var records = await ReadStatusAsync(land, ct);
+        return records is { Count: 0 };
+    }
+
+    private async Task<List<(string Status, string Path)>?> ReadStatusAsync(string land, CancellationToken ct)
+    {
+        var status = await git.RunAsync(land,
+            ["-c", "core.quotepath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"], ct);
+        if (!status.Succeeded) return null;
+        return ParseStatus(status.Output);
+    }
+
+    private static List<(string Status, string Path)>? ParseStatus(string raw)
+    {
+        if (raw.Length == 0) return [];
+        if (!raw.EndsWith('\0')) return null;
+        var parts = raw.Split('\0');
+        if (parts.Length > 0 && parts[^1].Length == 0)
+            parts = parts[..^1];
+        var records = new List<(string Status, string Path)>();
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var entry = parts[i];
+            if (entry.Length < 4 || entry[2] != ' ')
+                return null;
+            var status = entry[..2];
+            var path = entry[3..];
+            if (status[0] is 'R' or 'C' || status[1] is 'R' or 'C')
+            {
+                if (i + 1 >= parts.Length) return null;
+                path = parts[++i];
+            }
+            records.Add((status, path));
+        }
+        return records;
+    }
+
+    private static bool IsIndexModification(IReadOnlyList<(string Status, string Path)> records)
+    {
+        if (records.Count != 1) return false;
+        var (status, path) = records[0];
+        if (!DerivedImpactIndexRegen.IsOnlyIndex([path])) return false;
+        return status is " M" or "M " or "MM";
+    }
+
+    private LandingProtocolResult RefuseRegeneration(AgentTaskLanding op, string? why)
+    {
+        op.LastReason = "rebase_conflict";
+        _state.Transition(op, LandPhase.Refused, Now());
+        return new(op, op.LastReason, [DerivedImpactIndexRegen.RelativePath])
+        {
+            Detail = DerivedImpactIndexRegen.FailurePrefix + RegenWhy(why),
+        };
+    }
+
+    private LandingProtocolResult RefuseRebaseConflict(AgentTaskLanding op, IReadOnlyList<string> files)
+    {
+        op.LastReason = "rebase_conflict";
+        _state.Transition(op, LandPhase.Refused, Now());
+        return new(op, op.LastReason, files);
+    }
+
+    private static string RegenWhy(string? why)
+    {
+        var text = string.IsNullOrWhiteSpace(why) ? "nonzero" : why.Trim();
+        if (text.StartsWith(DerivedImpactIndexRegen.FailurePrefix, StringComparison.Ordinal))
+            text = text[DerivedImpactIndexRegen.FailurePrefix.Length..];
+        if (text.Length is 0 or > 40 || text.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
+            return "nonzero";
+        return text;
     }
 
     private async Task<bool> HasMergeCommitsAsync(string repository, string target, string source, CancellationToken ct)
