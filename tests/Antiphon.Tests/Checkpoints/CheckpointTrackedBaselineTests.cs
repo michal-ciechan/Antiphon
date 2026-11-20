@@ -60,12 +60,9 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
     {
         var root = BeginRepo();
         Write(root, "App/App.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <Target Name="GenerateVersion" BeforeTargets="BeforeBuild">
+            <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Target Name="Restore" />
+              <Target Name="Build">
                 <WriteLinesToFile File="$(MSBuildProjectDirectory)/GeneratedVersion.txt" Lines="generated version 1" Overwrite="true" />
               </Target>
             </Project>
@@ -334,8 +331,7 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         await AssertStagedUserFileSurvivesAsync(root, "indexed", "fresh-user.txt", bytes, cancellationToken);
     }
 
-    // Counts SDK projects the staged-user factory emits. Each one is a cold build
-    // on both checkpoint entry points.
+    // Shared SDK count for the staged-user factory.
     [Test]
     [Timeout(120_000)]
     public void baseline_staged_fixture_sdk_build_count()
@@ -344,12 +340,13 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         WriteStageProject(untracked, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
         var ignored = BeginRepo();
         WriteStageProject(ignored, "git --git-dir=.git --work-tree=. add -f -- user-ignored.dat");
-        var sdk = new[]
+        var projects = new[]
         {
             File.ReadAllText(Path.Combine(untracked, "App", "App.csproj")),
             File.ReadAllText(Path.Combine(ignored, "App", "App.csproj")),
-        }.Count(text => text.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal));
-        sdk.ShouldBeGreaterThan(1);
+        };
+        projects.Count(text => text.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal)).ShouldBe(0);
+        projects.All(text => text.Contains("DefaultTargets=\"Build\"", StringComparison.Ordinal)).ShouldBeTrue();
     }
 
     private async Task AssertStagedUserFileSurvivesAsync(string root, string name, string relative, byte[] bytes, CancellationToken cancellationToken)
@@ -403,13 +400,11 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
 
     private void WriteStageProject(string root, string command)
     {
+        // Staging is the build. The classic target runs the same Exec without the SDK import.
         var xml = """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-              </PropertyGroup>
-              <Target Name="StageUserPath" BeforeTargets="Build">
+            <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Target Name="Restore" />
+              <Target Name="Build">
                 <Exec WorkingDirectory="__ROOT__" Command="__CMD__" />
               </Target>
             </Project>

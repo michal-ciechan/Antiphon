@@ -104,16 +104,19 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     public Task shape_existing_output_symlink(CancellationToken cancellationToken) =>
         AssertShapeAsync("existing-output-symlink", cancellationToken);
 
-    // Counts SDK projects the mutation factories emit. Each one is a cold build
-    // on both checkpoint entry points.
+    // Shared SDK count for the mutation factories. clean-build is the one SDK project.
     [Test]
     [Timeout(120_000)]
     public void shape_fixture_sdk_build_count()
     {
         var modified = File.ReadAllText(Path.Combine(BeginRepo("modified-tracked"), "App", "App.csproj"));
         var deleted = File.ReadAllText(Path.Combine(BeginRepo("deleted-tracked"), "App", "App.csproj"));
+        var clean = File.ReadAllText(Path.Combine(BeginRepo("clean-build"), "App", "App.csproj"));
         var sdk = new[] { modified, deleted }.Count(text => text.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal));
-        sdk.ShouldBeGreaterThan(1);
+        sdk.ShouldBe(0);
+        modified.Contains("DefaultTargets=\"Build\"", StringComparison.Ordinal).ShouldBeTrue();
+        deleted.Contains("DefaultTargets=\"Build\"", StringComparison.Ordinal).ShouldBeTrue();
+        clean.Contains("Microsoft.NET.Sdk", StringComparison.Ordinal).ShouldBeTrue();
     }
 
     private async Task AssertShapeAsync(string shape, CancellationToken cancellationToken)
@@ -496,19 +499,12 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     {
         if (CheckpointShapeWindowsFixture.Use())
             command = CheckpointShapeWindowsFixture.Write(root, command);
+        // The mutation is the build. A classic project runs that target without importing
+        // Microsoft.NET.Sdk. clean-build stays on the SDK because it executes a test.
         var xml = """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <ImplicitUsings>disable</ImplicitUsings>
-                <Nullable>disable</Nullable>
-                <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-                <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-              </PropertyGroup>
-              <ItemGroup>
-                <Compile Include="Marker.cs" />
-              </ItemGroup>
-              <Target Name="MutateShape" BeforeTargets="Build">
+            <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <Target Name="Restore" />
+              <Target Name="Build">
                 <MakeDir Directories="__ROOT__/.antiphon" />
                 <WriteLinesToFile File="__ROOT__/.antiphon/c1199-mutation-reached.txt" Lines="reached" Overwrite="true" />
                 <Exec WorkingDirectory="__ROOT__" Command="__CMD__" />
