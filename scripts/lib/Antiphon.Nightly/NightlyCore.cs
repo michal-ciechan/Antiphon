@@ -952,9 +952,25 @@ namespace Antiphon.Nightly
             return SetProcessInformation(GetCurrentProcess(), 4, ref state, System.Runtime.InteropServices.Marshal.SizeOf(typeof(PowerThrottlingState)));
         }
 
-        /// <summary>The parent process id, or -1 when it cannot be read (the caller falls back to CIM).</summary>
+        /// <summary>
+        /// The parent process id: the process's own record on Windows, /proc/pid/stat on Linux. -1 when it cannot be
+        /// read (no such process, access refused, another OS).
+        /// </summary>
         public static int ParentProcessId(int processId)
         {
+            if (OperatingSystem.IsLinux())
+            {
+                try
+                {
+                    // "pid (comm) state ppid ...": comm may hold spaces and parentheses, so read after the last ')'.
+                    var stat = System.IO.File.ReadAllText("/proc/" + processId.ToString(CultureInfo.InvariantCulture) + "/stat");
+                    var close = stat.LastIndexOf(')');
+                    if (close < 0 || close + 2 > stat.Length) return -1;
+                    var fields = stat.Substring(close + 2).Split(' ');
+                    return fields.Length > 1 && int.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out var ppid) ? ppid : -1;
+                }
+                catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException) { return -1; }
+            }
             if (!OperatingSystem.IsWindows()) return -1;
             IntPtr handle = OpenProcess(0x1000, false, processId); // PROCESS_QUERY_LIMITED_INFORMATION
             if (handle == IntPtr.Zero) return -1;

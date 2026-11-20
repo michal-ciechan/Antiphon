@@ -49,6 +49,8 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+# The job definitions are hashed as canonical JSON by the compiled core: this runs under pwsh with the core.
+Assert-NightlyCoreAvailable 'register-release-gates'
 
 $script:RegisterDefinitions = @(
     [pscustomobject]@{ Key = 'nightly'; Script = 'antiphon-nightly-tests.json'; Schedule = 'antiphon-nightly-tests.schedule.json' },
@@ -76,7 +78,7 @@ function Read-ReleaseGateRegistrationProfile {
 
 function Get-ReleaseGateDefinitionDigest {
     param($Definition)
-    return (Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object $Definition))
+    return (Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Definition)))
 }
 
 function Invoke-AntiphonRegisterReleaseGates {

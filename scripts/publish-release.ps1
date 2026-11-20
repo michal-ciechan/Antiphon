@@ -195,8 +195,8 @@ function Invoke-AntiphonPublishRelease {
     $sanitizedSuites = @($authority.Suites)
     $sanitizedExclusions = @($pinned.exclusions | ForEach-Object {
         [ordered]@{ suite = [string]$_.suite; class = [string]$_.class; reason = [string]$_.reason; owner = [string]$_.owner } })
-    $summaryDigest = Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object ([ordered]@{
-        profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions }))
+    $summaryDigest = Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(([ordered]@{
+        profile = 'rc'; policyHash = [string]$pinned.policyHash; suites = $sanitizedSuites; exclusions = $sanitizedExclusions })))
     $pubAuthority = [Antiphon.Nightly.ReleaseAuthority]::Publication($paths.Root, $authority.Pinned, $summaryDigest, [bool]$WhatIf)
     if (-not $pubAuthority.Ok) {
         Write-PublishLine ('REFUSED: {0}.' -f $pubAuthority.Reason)

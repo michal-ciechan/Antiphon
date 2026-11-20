@@ -9,9 +9,9 @@
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
 # SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
 # (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (nightly-run.ps1, release-cut.ps1,
-# release-candidate.ps1, publish-release.ps1, promote-release.ps1) run under pwsh and require the core. Only the
-# release selection worker in a script copy keeps a PowerShell path that returns the same values
-# (ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256, Get-NightlyParentProcess, Read-NightlyJsonFile).
+# release-candidate.ps1, publish-release.ps1, promote-release.ps1) run under pwsh and require the core.
+# nightly-health.ps1 still runs under Windows PowerShell 5.1 (the readiness job) and reaches only nightly-common
+# functions that need no core.
 
 function Get-NightlyCoreBuildIdentity {
     $projects = @(

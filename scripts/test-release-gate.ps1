@@ -1125,7 +1125,7 @@ function Assert-C599RcChild {
         $artifact.candidateSha -ceq $Fx.Sha -and $artifact.requestedMode -ceq 'Full' -and
         $artifact.effectiveMode -ceq 'Full' -and $artifact.coverageScope -ceq 'Full' -and
         $bound.selectionDigest -ceq (Get-NightlyFileSha256 $selectionPath) -and
-        (ConvertTo-NightlyCanonicalJson $selection) -ceq (ConvertTo-NightlyCanonicalJson $bound)) `
+        ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($selection)) -ceq ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($bound))) `
         -Name ('C599 {0} child selection matches the immutable bound artifacts' -f $Label)
 }
 
@@ -1834,7 +1834,7 @@ function New-C599WindmillFx {
         if (`$shouldFail -and -not `$commits) { return @{ Ok = `$false; Status = 500; Body = `$null } }
         if (`$key -eq 'script-create') {
             `$content = [string]`$Body.content
-            `$hash = (Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object `$Body))
+            `$hash = (Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(`$Body)))
             `$scripts[[string]`$Body.path] = [pscustomobject]@{ path = [string]`$Body.path; hash = `$hash; content = `$content; tag = [string]`$Body.tag }
             Save
         } elseif (`$key -eq 'schedule-create') {

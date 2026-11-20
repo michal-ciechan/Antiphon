@@ -90,16 +90,16 @@ if ($Case -ceq 'FullCensusUnchanged') {
         $baselineText = Read-CommissionGit @('show', ($context.baseSha + ':tests/test-execution-policy.json'))
         $baseline = $baselineText | ConvertFrom-Json
         if (([Antiphon.Nightly.NightlyPolicy]::HashText($baselineText)) -cne $baseline.policyHash -or
-            (ConvertTo-NightlyCanonicalJson $baseline) -cne (ConvertTo-NightlyCanonicalJson $preserved.policy)) { throw 'commission-baseline-policy-mismatch' }
+            ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($baseline)) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($preserved.policy))) { throw 'commission-baseline-policy-mismatch' }
         $null = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
         $candidate = [IO.File]::ReadAllText([Antiphon.Nightly.NightlyPolicy]::PolicyPath($repo)) | ConvertFrom-Json
         $rows = @($candidate.scriptCensus | Where-Object { $_.path -ceq $preserved.allowedRow.path })
-        if ($rows.Count -ne 1 -or (ConvertTo-NightlyCanonicalJson $rows[0]) -cne
-            (ConvertTo-NightlyCanonicalJson $preserved.allowedRow)) { throw 'commission-allowed-row-mismatch' }
+        if ($rows.Count -ne 1 -or ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($rows[0])) -cne
+            ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($preserved.allowedRow))) { throw 'commission-allowed-row-mismatch' }
         $candidate.scriptCensus = @($candidate.scriptCensus | Where-Object { $_.path -cne $preserved.allowedRow.path })
         $candidate.PSObject.Properties.Remove('policyHash')
         $baseline.PSObject.Properties.Remove('policyHash')
-        if ((ConvertTo-NightlyCanonicalJson $candidate) -cne (ConvertTo-NightlyCanonicalJson $baseline)) { throw 'commission-policy-changed' }
+        if (([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($candidate)) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($baseline))) { throw 'commission-policy-changed' }
         if (@($preserved.files.PSObject.Properties).Count -ne 10) { throw 'commission-gate-roster' }
         foreach ($file in $preserved.files.PSObject.Properties) {
             $seedBytes = Read-CommissionGit @('show', ($context.baseSha + ':' + $file.Name))

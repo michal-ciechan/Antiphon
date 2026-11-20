@@ -26,7 +26,7 @@ function Assert-ReleaseSelectionPath {
 
 function Write-ReleaseSelectionOnce {
     param([string]$Path, $Value)
-    $text = ConvertTo-NightlyCanonicalJson $Value
+    $text = [Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Value)
     if (Test-Path -LiteralPath $Path) {
         if ([IO.File]::ReadAllText($Path) -cne $text) { throw 'selection-attempt-conflict' }
         return
@@ -126,7 +126,7 @@ function Read-ReleaseSelectionBaseline {
         $file = @{authority='authority';executionPlan='execution-plan';discovery='discovery';ledger='ledger'}[$name]
         if ($publication.inputs.($name + 'Digest') -cne $receipt.files.('authority/' + $file + '.json')) { throw 'baseline-publication-binding' }
     }
-    $digest = Get-NightlySha256Text (ConvertTo-NightlyCanonicalJson $publication.inputs)
+    $digest = Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($publication.inputs))
     if ($publication.digest -cne $digest -or $manifest.publicationAuthorityDigest -cne $digest -or
         $published.publicationAuthorityDigest -cne $digest -or $manifest.sha -cne $receipt.sha -or
         $published.sha -cne $receipt.sha -or $published.manifestDigest -cne (Get-ReleaseGateManifestDigest $manifest)) { throw 'baseline-publication-binding' }
@@ -137,12 +137,12 @@ function Read-ReleaseSelectionBaseline {
         $ledger.prepublicationReceipt.recipient.cardId -cne $authority.releaseCardId -or
         $ledger.prepublicationReceipt.recipient.revision -lt 1) { throw 'baseline-receipt' }
     $historical = Get-ReleaseSelectionContract $Request.RepositoryRoot $receipt.sha 'rc'
-    if ((ConvertTo-NightlyCanonicalJson $historical) -cne (ConvertTo-NightlyCanonicalJson $receipt.contract)) { throw 'baseline-contract' }
+    if (([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($historical)) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($receipt.contract))) { throw 'baseline-contract' }
     if ($authority.policyHash -cne $historical.policyHash) { throw 'baseline-policy' }
     $blob = [Antiphon.Nightly.ReleaseAuthority]::ReadPinnedBlob($Request.RepositoryRoot, $receipt.sha)
     $policy = [Antiphon.Nightly.ReleaseAuthority]::PolicyFromBytes($blob.Bytes)
     if ($authority.policyBlobId -cne $blob.BlobId -or $authority.policyRawSha256 -cne ([Antiphon.Nightly.ReleaseAuthority]::Sha256($blob.Bytes)) -or
-        (ConvertTo-NightlyCanonicalJson @($authority.requiredSuites)) -cne (ConvertTo-NightlyCanonicalJson @($policy.RequiredSuites))) { throw 'baseline-policy' }
+        ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(@($authority.requiredSuites))) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(@($policy.RequiredSuites)))) { throw 'baseline-policy' }
     $plan = $documents['authority/execution-plan.json']; $discovery = $documents['authority/discovery.json']
     if ($ledger.authorityDigest -cne $receipt.files.'authority/authority.json' -or
         $ledger.executionPlanDigest -cne $receipt.files.'authority/execution-plan.json' -or
@@ -174,7 +174,7 @@ function Read-ReleaseSelectionBaseline {
         }
         if ($requiredUids.Count -eq 0 -or (@($executed | Sort-Object) -join ',') -cne (@($requiredUids | Sort-Object) -join ',')) { throw 'baseline-uids-incomplete' }
     }
-    $compatible = (ConvertTo-NightlyCanonicalJson $historical) -ceq (ConvertTo-NightlyCanonicalJson $CandidateContract)
+    $compatible = ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($historical)) -ceq ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($CandidateContract))
     return @{ sha = $receipt.sha; digest = (Get-NightlyFileSha256 $path); compatible = $compatible
         reason = $(if ($compatible) { '' } else { 'baseline-incompatible' }); path = $path }
 }
@@ -248,7 +248,7 @@ function Save-ReleaseSelectionAttempt {
     $dir = Join-Path (Join-Path $candidateRoot 'attempts') $Request.RunId
     $path = Assert-ReleaseSelectionPath (Join-Path $dir 'selection-attempt.json') $Request.ReleaseRoot $Request.RepositoryRoot
     $selectionPath = Assert-ReleaseSelectionPath (Join-Path $dir 'selection.json') $Request.ReleaseRoot $Request.RepositoryRoot
-    $selectionDigest = Get-NightlySha256Text (ConvertTo-NightlyCanonicalJson $Selection)
+    $selectionDigest = Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Selection))
     $attempt = [ordered]@{
         format='antiphon-release-selection-attempt-v1'; repository=$Request.Repository; candidateId=$Request.CandidateId
         candidateRef=$Request.CandidateRef; candidateSha=$Request.CandidateSha; baselineSha=$Selection.baselineSha
@@ -261,7 +261,7 @@ function Save-ReleaseSelectionAttempt {
     }
     # Check both immutable files before either write, including an interrupted first write.
     foreach ($pair in @(@($path, $attempt), @($selectionPath, $Selection))) {
-        if ((Test-Path -LiteralPath $pair[0]) -and [IO.File]::ReadAllText($pair[0]) -cne (ConvertTo-NightlyCanonicalJson $pair[1])) { throw 'selection-attempt-conflict' }
+        if ((Test-Path -LiteralPath $pair[0]) -and [IO.File]::ReadAllText($pair[0]) -cne ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($pair[1]))) { throw 'selection-attempt-conflict' }
     }
     Write-ReleaseSelectionOnce $selectionPath $Selection
     Write-ReleaseSelectionOnce $path $attempt

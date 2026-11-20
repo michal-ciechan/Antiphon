@@ -267,59 +267,6 @@ function Test-NightlyRunContextOwnership {
     return [pscustomobject]$result
 }
 
-# The PowerShell bodies of ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256 and Get-NightlyParentProcess stay
-# for the release selection worker in a script copy, where the compiled core does not load.
-function ConvertTo-NightlyCanonicalJson {
-    param($Object)
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Object) }
-    function Write-Node {
-        param($Node)
-        if ($null -eq $Node) { return 'null' }
-        if ($Node -is [string]) {
-            $escaped = $Node.Replace('\', '\\').Replace('"', '\"').Replace("`r", '\r').Replace("`n", '\n').Replace("`t", '\t')
-            return ('"{0}"' -f $escaped)
-        }
-        if ($Node -is [bool]) {
-            if ($Node) { return 'true' } else { return 'false' }
-        }
-        if ($Node -is [int] -or $Node -is [long] -or $Node -is [double] -or $Node -is [decimal]) {
-            return ([string]$Node)
-        }
-        if ($Node -is [System.Collections.IDictionary]) {
-            $pairs = @()
-            $dictNode = [System.Collections.IDictionary]$Node
-            $enumNode = $dictNode.GetEnumerator()
-            while ($enumNode.MoveNext()) {
-                $pairs += [pscustomobject]@{ K = [string]$enumNode.Key; V = $enumNode.Value }
-            }
-            $pairs = @($pairs | Where-Object { $_.K } | Sort-Object K)
-            $parts = @()
-            foreach ($pair in $pairs) {
-                $parts += ('"{0}":{1}' -f $pair.K, (Write-Node -Node $pair.V))
-            }
-            return ('{{{0}}}' -f ($parts -join ','))
-        }
-        if ($Node -is [System.Collections.IEnumerable] -and -not ($Node -is [string]) -and -not ($Node -is [System.Collections.IDictionary])) {
-            $parts = @()
-            foreach ($item in $Node) { $parts += (Write-Node -Node $item) }
-            return ('[{0}]' -f ($parts -join ','))
-        }
-        if ($Node.PSObject -and $Node.PSObject.Properties) {
-            $map = New-Object 'System.Collections.Specialized.OrderedDictionary'
-            foreach ($p in $Node.PSObject.Properties) {
-                if ($p.Name -eq 'Count' -and $Node -is [System.Array]) { continue }
-                if ($p.Name -eq 'Keys' -or $p.Name -eq 'Values' -or $p.Name -eq 'SyncRoot' -or $p.Name -eq 'IsFixedSize' -or $p.Name -eq 'IsReadOnly' -or $p.Name -eq 'IsSynchronized') { continue }
-                if (-not $map.Contains([string]$p.Name)) {
-                    $map.Add([string]$p.Name, $p.Value)
-                }
-            }
-            return (Write-Node -Node $map)
-        }
-        return (Write-Node -Node ([string]$Node))
-    }
-    return (Write-Node -Node $Object)
-}
-
 function Get-NightlySha256Text {
     param([string]$Text)
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
@@ -339,19 +286,10 @@ function Get-NightlyFileSha256 {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-NightlyEvidencePath $Path)) {
         throw ('missing file for hash {0}' -f $Path)
     }
+    # A queued write is hashed from memory; the disk read is compiled (NightlyClassNames.FileSha256).
     if ($script:NightlyDeferEvidenceWrites) { return [Antiphon.Nightly.EvidenceFiles]::Sha256($Path) }
-    if (Test-NightlyCoreAvailable) { return [Antiphon.Nightly.NightlyClassNames]::FileSha256($Path) }
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    $stream = [System.IO.File]::OpenRead($Path)
-    try {
-        $hash = $sha.ComputeHash($stream)
-        $sb = New-Object System.Text.StringBuilder
-        foreach ($b in $hash) { [void]$sb.Append($b.ToString('x2')) }
-        return $sb.ToString()
-    } finally {
-        $stream.Dispose()
-        $sha.Dispose()
-    }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyFileSha256' }
+    return [Antiphon.Nightly.NightlyClassNames]::FileSha256($Path)
 }
 
 function Get-NightlyAssemblyFileSha256 {
@@ -557,16 +495,11 @@ function Get-NightlyParentProcess {
     if ($script:NightlySeams -and $script:NightlySeams.GetParentProcess) {
         return $script:NightlySeams.GetParentProcess.Invoke($ProcessId)
     }
+    if (-not $script:NightlyCoreAvailable) { Assert-NightlyCoreAvailable 'Get-NightlyParentProcess' }
     try {
-        # The compiled read answers in microseconds; the first CIM query in a process takes about 0.4 s.
-        $parentId = -1
-        if ([IO.Path]::DirectorySeparatorChar -eq [char]92 -and (Test-NightlyCoreAvailable)) {
-            $parentId = [Antiphon.Nightly.NightlyProcesses]::ParentProcessId($ProcessId)
-        }
-        if ($parentId -lt 0) {
-            $row = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction Stop
-            $parentId = [int]$row.ParentProcessId
-        }
+        # Compiled (NightlyProcesses.ParentProcessId): the process's own record on Windows, /proc on Linux.
+        $parentId = [Antiphon.Nightly.NightlyProcesses]::ParentProcessId($ProcessId)
+        if ($parentId -lt 0) { return [pscustomobject]@{ Id = 0; StartTimeUtc = $null } }
         return [pscustomobject]@{
             Id = $parentId
             StartTimeUtc = (Get-NightlyProcessStartUtc -ProcessId $parentId)

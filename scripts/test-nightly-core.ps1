@@ -624,10 +624,13 @@ function Test-NCLaunchPlanMatchesFallback {
 }
 
 function Test-NCParentProcessMatchesFallback {
-    # The compiled parent read and Win32_Process agree, for this process and for a missing one.
-    $r = Invoke-NCBothWays { @(Get-NightlyParentProcess -ProcessId $PID; Get-NightlyParentProcess -ProcessId 2147483647) }
-    $hasParent = [IO.Path]::DirectorySeparatorChar -ne [char]92 -or $r.Fallback -match '"Id":[1-9]'
-    Assert-NC ($r.Compiled -ceq $r.Fallback -and $hasParent) 'parentProcess' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # The compiled parent read (the process record on Windows, /proc on Linux): this process has a live parent with a
+    # start time, and a missing process answers Id 0.
+    $mine = Get-NightlyParentProcess -ProcessId $PID
+    $live = Get-Process -Id $mine.Id -ErrorAction SilentlyContinue
+    $missing = Get-NightlyParentProcess -ProcessId 2147483647
+    $ok = $mine.Id -gt 0 -and $null -ne $live -and $null -ne $mine.StartTimeUtc -and $missing.Id -eq 0 -and $null -eq $missing.StartTimeUtc
+    Assert-NC $ok 'parentProcess' ('mine ' + $mine.Id + ' started ' + $mine.StartTimeUtc + ' missing ' + $missing.Id)
 }
 
 function Test-NCProjectWalkMatchesFallback {
@@ -741,7 +744,7 @@ function Test-NCDocumentsMatchFallback {
             $o = [pscustomobject]@{ format = [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat; tunitVersion = [Antiphon.Nightly.NightlyDiagnosticLog]::SupportedTunit; mtpVersion = [Antiphon.Nightly.NightlyDiagnosticLog]::SupportedMtp; assemblyHash = 'h'; nodes = $bad }
             try { [void]([Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryDocument($o, [Antiphon.Nightly.NightlyDiagnosticLog]::DiscoveryFormat)); 'accepted' } catch { Get-NightlyRefusalText $_ }
         })
-        [ordered]@{ json = $json; back = $back; canonical = (ConvertTo-NightlyCanonicalJson -Object $doc); refusals = $refusals }
+        [ordered]@{ json = $json; back = $back; canonical = ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($doc)); refusals = $refusals }
     } 'discoveryDocuments'
     Assert-NC ($r.Compiled -ceq $r.Fallback) 'discoveryDocuments' ('compiled ' + $r.Compiled.Length + ' chars, fallback ' + $r.Fallback.Length)
     $mixed = [ordered]@{
@@ -750,8 +753,8 @@ function Test-NCDocumentsMatchFallback {
         obj = [pscustomobject]@{ b = 2; a = 1 }; table = @{ Y = 'y'; x = 'x' }; ordered = [ordered]@{ m = @{}; l = @() }
         small = [byte]7; float = [single]0.5
     }
-    $r = Invoke-NCBothWays { @((ConvertTo-NightlyCanonicalJson -Object $mixed), (ConvertTo-NightlyCanonicalJson -Object @(1, 2)), (ConvertTo-NightlyCanonicalJson -Object 'plain'), (ConvertTo-NightlyCanonicalJson -Object $null)) }
-    Assert-NC ($r.Compiled -ceq $r.Fallback) 'canonicalJson' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
+    # ConvertTo-NightlyCanonicalJson has no PowerShell copy left: the compiled text against the golden the copy produced.
+    Assert-NCGolden 'canonicalJson' { @(([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($mixed)), ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson(@(1, 2))), ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson('plain')), ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($null))) } @('Alpha', 'plain')
 }
 
 # Get-NightlyExpectedSkipSourceGaps (NightlyTestSources.cs) over a fixture tests/ tree, and its read cache: a

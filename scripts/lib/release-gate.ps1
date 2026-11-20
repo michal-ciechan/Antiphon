@@ -473,7 +473,7 @@ function Test-ReleaseGateManifestAllowlist {
 
 function Get-ReleaseGateManifestDigest {
     param($Manifest)
-    return (Get-NightlySha256Text -Text (ConvertTo-NightlyCanonicalJson -Object $Manifest))
+    return (Get-NightlySha256Text -Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($Manifest)))
 }
 
 # -------------------------------------------------------------- publication ---

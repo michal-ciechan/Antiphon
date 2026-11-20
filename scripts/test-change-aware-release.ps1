@@ -25,7 +25,7 @@ function Get-FxTreeDigest($Root) {
     $files = @{}; foreach ($file in Get-ChildItem -LiteralPath $Root -Recurse -File -Force) {
         $files[$file.FullName.Substring($Root.Length)] = Get-NightlyFileSha256 $file.FullName
     }
-    return Get-NightlySha256Text (ConvertTo-NightlyCanonicalJson $files)
+    return Get-NightlySha256Text ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($files))
 }
 
 function New-Fx {

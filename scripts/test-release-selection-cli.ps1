@@ -59,7 +59,7 @@ function Get-RSTree([string]$Release) {
     foreach ($file in @(Get-ChildItem -LiteralPath $Release -Recurse -File -Force | Sort-Object FullName)) {
         $files[$file.FullName.Substring($Release.Length)] = Get-NightlyFileSha256 $file.FullName
     }
-    return ConvertTo-NightlyCanonicalJson $files
+    return [Antiphon.Nightly.NightlyDocuments]::CanonicalJson($files)
 }
 
 function Invoke-RSAttempt($Request, [bool]$WorkerOnly) {
@@ -67,7 +67,7 @@ function Invoke-RSAttempt($Request, [bool]$WorkerOnly) {
     if ($WorkerOnly) { $script:AntiphonScriptsCli = '' }
     try {
         $value = New-ReleaseSelectionAttempt $Request
-        $answer = 'value ' + (ConvertTo-NightlyCanonicalJson $value)
+        $answer = 'value ' + ([Antiphon.Nightly.NightlyDocuments]::CanonicalJson($value))
     } catch { $answer = 'error ' + $_.Exception.Message }
     finally { $script:AntiphonScriptsCli = $saved }
     return [pscustomobject]@{ Answer = $answer; Route = $script:ReleaseSelectionRoute; Tree = (Get-RSTree $Request.ReleaseRoot) }
