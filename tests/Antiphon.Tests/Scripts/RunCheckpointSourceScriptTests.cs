@@ -757,27 +757,35 @@ public sealed class RunCheckpointSourceScriptTests
             process.StartInfo = new ProcessStartInfo(file) { WorkingDirectory = cwd,
                 RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
             foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
-            // git in a child stays in the case's own repository whatever the host exported (a git hook's GIT_DIR).
-            foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
+            // git in a child stays in the case's own repository whatever the host exported: no variable that moves
+            // the repository or its objects (a hook's GIT_DIR, a quarantine's GIT_OBJECT_DIRECTORY) or injects `git -c`
+            // config passes. Config isolation the host sets (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM) is kept.
+            string[] redirects = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"];
+            foreach (var name in process.StartInfo.Environment.Keys.Where(key =>
+                         redirects.Contains(key, StringComparer.OrdinalIgnoreCase)
+                         || key.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase)
+                         || key.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)).ToList())
                 process.StartInfo.Environment.Remove(name);
             if (environment is not null)
                 foreach (var (key, value) in environment) process.StartInfo.Environment[key] = value;
+            var clock = Stopwatch.StartNew();
             process.Start();
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
-            // About 8 s on an idle laptop; this class runs beside the strict lane (and wider on Linux), so a child
-            // gets well over 2x a loaded host's time before the case fails.
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(180));
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(90));
             try
             {
                 await process.WaitForExitAsync(cancel.Token);
             }
             catch (OperationCanceledException)
             {
+                // Killed, tree and all, then reported with what it printed; the wait for that is bounded too.
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync();
-                await Task.WhenAll(stdout, stderr);
-                throw;
+                var drained = Task.WhenAll(process.WaitForExitAsync(), stdout, stderr);
+                var output = await Task.WhenAny(drained, Task.Delay(TimeSpan.FromSeconds(10))) == drained
+                    ? stdout.Result + stderr.Result : "(output not drained within 10 s of the kill)";
+                throw new TimeoutException($"{file} {string.Join(' ', args)} exceeded 90 s ({clock.Elapsed.TotalSeconds:F0} s):\n{output}");
             }
             return (process.ExitCode, await stdout + await stderr);
         }

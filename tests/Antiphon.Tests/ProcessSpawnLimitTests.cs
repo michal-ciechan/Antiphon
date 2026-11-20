@@ -369,6 +369,7 @@ public class ProcessSpawnLimitTests
     [
         "Antiphon.Tests.Checkpoints.CheckpointRepeatBuildIsolationTests",
         "Antiphon.Tests.Checkpoints.CheckpointRepeatHostTests",
+        "Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests",
         "Antiphon.Tests.Checkpoints.CheckpointStatePublicationTests",
         "Antiphon.Tests.Checkpoints.CheckpointTerminalReceiptTests",
         "Antiphon.Tests.Checkpoints.PhaseJournalKillDiagnosticTests",
