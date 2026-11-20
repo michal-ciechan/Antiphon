@@ -473,6 +473,8 @@ public sealed class AgentTaskInputFallbackTests
                 && t.Namespace == typeof(AgentTaskService).Namespace))
                 builder.Services.AddScoped(type, _ => throw new InvalidOperationException(
                     $"Unmounted endpoint attempted to resolve {type.Name}."));
+            // Last registration wins. GET /api/agent-tasks/{id} takes this counter.
+            builder.Services.AddSingleton<AgentTaskGetPollMetrics>();
             builder.Services.AddDbContext<AppDbContext>(o => o.UseNpgsql(connectionString));
             builder.Services.AddSingleton<DelegationWorkspaceResolver>();
             builder.Services.AddSingleton<IEventBus, MockEventBus>();
