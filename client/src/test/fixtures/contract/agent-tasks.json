@@ -63,7 +63,8 @@
       "runnerSelectionSource": null,
       "interruptWritten": null,
       "refinementDelivered": null,
-      "effectiveModelId": null
+      "effectiveModelId": null,
+      "requestedModelAlias": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000002",
@@ -127,7 +128,8 @@
       "runnerSelectionSource": null,
       "interruptWritten": null,
       "refinementDelivered": null,
-      "effectiveModelId": null
+      "effectiveModelId": null,
+      "requestedModelAlias": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000004",
@@ -191,7 +193,8 @@
       "runnerSelectionSource": null,
       "interruptWritten": null,
       "refinementDelivered": null,
-      "effectiveModelId": null
+      "effectiveModelId": null,
+      "requestedModelAlias": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000005",
@@ -255,7 +258,8 @@
       "runnerSelectionSource": null,
       "interruptWritten": null,
       "refinementDelivered": null,
-      "effectiveModelId": null
+      "effectiveModelId": null,
+      "requestedModelAlias": null
     },
     {
       "id": "aaaaaaaa-0000-0000-0000-000000000003",
@@ -319,7 +323,8 @@
       "runnerSelectionSource": null,
       "interruptWritten": null,
       "refinementDelivered": null,
-      "effectiveModelId": null
+      "effectiveModelId": null,
+      "requestedModelAlias": null
     }
   ],
   "excluded": {

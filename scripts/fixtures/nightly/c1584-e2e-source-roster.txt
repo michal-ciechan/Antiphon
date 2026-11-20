@@ -3,6 +3,7 @@
 # rc-0b05506b adds three land-verifier progress probes (186); CARD-1703 adds two verifier wiring/tie probes (188).
 # CARD-1795/1797 add three host-path cases and 906533773 adds the land-clock probe (192).
 # e2e-split-7 adds two enqueue-error probes on LandDeliveryFixtureProbeTests (194).
+# CARD-2004 A-1 adds the copied-delegate caller helper (195).
 # Planner-only identities, not captured TUnit UIDs or native execution evidence.
 # class|original method|Arguments contents (empty for a non-data test)
 Antiphon.E2E.AgentE2ETests|Agents_page_creates_agent_and_assigns_card_to_queue|
@@ -95,6 +96,7 @@ Antiphon.E2E.CreatedResourceTests|Failed_body_disposes_resource_and_preserves_ex
 Antiphon.E2E.CreatedResourceTests|Successful_body_keeps_resource_until_return_then_disposes|
 Antiphon.E2E.DelegationPipelineE2ETests|A_multi_step_job_is_classified_as_a_sub_orchestrator|
 Antiphon.E2E.DelegationPipelineE2ETests|A_small_well_defined_job_is_classified_as_a_worker|
+Antiphon.E2E.DelegationScratchCallerTests|Copied_delegate_loads_the_caller_helper_before_the_server_call|
 Antiphon.E2E.DelegationSequencingE2ETests|An_orchestrator_runs_two_delegates_in_sequence_and_the_second_sees_the_firsts_work|
 Antiphon.E2E.DirectoryAutocompleteE2ETests|Working_directory_shows_autocomplete_hints_for_typed_path|
 Antiphon.E2E.DispatchBaseWarningDeliveryE2ETests|C508_MismatchWarningReachesCaller|

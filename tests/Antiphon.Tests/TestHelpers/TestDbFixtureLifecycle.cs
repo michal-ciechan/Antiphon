@@ -797,7 +797,7 @@ internal sealed class TestDbFixtureLifecycle
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
             })
-            .AddInterceptors(TestDbFailureEvidence.Interceptor)
+            .AddInterceptors(TestDbFailureEvidence.Interceptor, RequestedModelAliasSchema.Interceptor)
             .Options;
 
     internal static DbContextOptions<AppDbContext> BuildOptions(
@@ -809,7 +809,7 @@ internal sealed class TestDbFixtureLifecycle
                 npgsql.MigrationsAssembly("Antiphon.Server");
                 npgsql.SetPostgresVersion(16, 0);
             })
-            .AddInterceptors(TestDbFailureEvidence.Interceptor);
+            .AddInterceptors(TestDbFailureEvidence.Interceptor, RequestedModelAliasSchema.Interceptor);
         if (interceptors.Length > 0)
             builder.AddInterceptors(interceptors);
         return builder.Options;

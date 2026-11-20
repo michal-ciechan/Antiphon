@@ -32,6 +32,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
     private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
     private const string LandFailure = "20261119045705_AddLandVerificationFailure";
+    private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
     private IsolatedTestSchema? _historical;
 
     [Before(Class)]
@@ -63,7 +64,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
         var chain = db.Database.GetMigrations().ToArray();
-        chain.TakeLast(9).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure }, "linear-after-master-with-original-ids");
+        chain.TakeLast(10).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias }, "linear-after-master-with-original-ids");
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
 
