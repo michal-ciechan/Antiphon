@@ -24,8 +24,9 @@ using Testcontainers.Redpanda;
 
 namespace Antiphon.Tests.TestHelpers;
 
-// The broker belongs to the test method; every matrix cell has its own schema, topic,
-// consumer group, gateway, native thread, and receipt ledger.
+// The broker may be shared by a whole test class (ChannelOutboundUnifiedTransportTests); isolation comes only from
+// each matrix cell's own schema, topic (deleted on dispose), consumer group, gateway, native thread, and receipt
+// ledger. A cell must not change broker-wide state.
 internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 {
     public required BridgeQueueHarness H { get; init; }
@@ -239,6 +240,16 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         Gateway.Dispose(); Producer.Dispose(); Http.Dispose();
         await Slack.DisposeAsync(); await H.DisposeAsync(); await Schema.DisposeAsync();
         if (Directory.Exists(StoreRoot)) Directory.Delete(StoreRoot, true);
+        // A broker shared by a class keeps no cell's topic (a dev-mode broker has a bounded partition budget).
+        // Best effort: a broker that is gone or slow leaves the topic to the container's disposal.
+        try
+        {
+            using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = Bootstrap }).Build();
+            await admin.DeleteTopicsAsync([Topic]).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        catch (Exception ex) when (ex is KafkaException or TimeoutException)
+        {
+        }
     }
 
     internal sealed class OwnedProbe(Process process, string marker, string source) : IAsyncDisposable
