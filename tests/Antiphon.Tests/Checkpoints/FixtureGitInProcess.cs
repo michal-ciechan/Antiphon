@@ -53,9 +53,16 @@ internal static class FixtureGitInProcess
                     var paths = new List<string>();
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
-                        foreach (var named in args.Skip(force ? 3 : 2).Select(path => Path.GetFullPath(path, repository)))
+                        foreach (var raw in args.Skip(force ? 3 : 2))
                         {
-                            // A trailing separator names a directory only: git refuses it on a file (git answers that).
+                            // Named literally: a path that normalising changes (a "." or ".." segment, a doubled
+                            // separator, on Windows a trailing dot or space) goes to git, whose answer for those forms
+                            // differs by platform. So does a trailing separator on anything but a directory.
+                            var literal = Path.IsPathRooted(raw) ? raw : Path.Combine(repository, raw);
+                            if (OperatingSystem.IsWindows()) literal = literal.Replace('/', '\\');
+                            var named = Path.GetFullPath(literal);
+                            if (!string.Equals(named, literal, StringComparison.Ordinal))
+                                return null;
                             var full = Path.TrimEndingDirectorySeparator(named);
                             var isDirectory = Directory.Exists(full);
                             if (full.Length != named.Length && !isDirectory)
@@ -118,7 +125,9 @@ internal static class FixtureGitInProcess
     {
         var branch = args switch
         {
-            ["init", "-b", var name] or ["init", "-q", "-b", var name] or ["init", "-b", var name, "-q"] => name,
+            ["init", "-b", var name] => name,
+            ["init", "-q", "-b", var name] => name,
+            ["init", "-b", var name, "-q"] => name,
             _ => null,
         };
         return branch is { Length: > 0 } && branch != "HEAD" && !branch.StartsWith('-')

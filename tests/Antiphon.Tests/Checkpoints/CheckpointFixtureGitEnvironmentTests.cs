@@ -316,7 +316,21 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         }
         Refused(root, "did not match any files", "add", "-f", "--", Path.Combine(root, "missing.txt"));
         Refused(quiet, "ignored", "add", "--", "src/obj/out.o");
-        Refused(quiet, "did not match any files", "add", "--", "loose.txt/");
+
+        // Odd forms of a file's name go to git, whose answer for them differs by platform (Windows git takes
+        // `odd.txt/` and stages nothing; Linux git refuses it): only the hand-off is checked.
+        void GoesToGit(string repository, params string[] args)
+        {
+            var before = git.GitChildren;
+            try { git.Git(repository, args); }
+            catch (ShouldAssertException) { }
+            git.GitChildren.ShouldBe(before + 1, string.Join(' ', args));
+        }
+        File.WriteAllText(Path.Combine(quiet, "odd.txt"), "odd\n");
+        GoesToGit(quiet, "add", "--", "odd.txt/");
+        GoesToGit(quiet, "add", "--", "odd.txt/.");
+        GoesToGit(quiet, "add", "--", "odd.txt.");
+        GoesToGit(quiet, "add", "--", "src/../odd.txt");
         File.WriteAllText(Path.Combine(root, "staged.txt"), "staged\n");
         git.Git(root, "add", "-A");
         Refused(root, "empty commit message", "-c", "user.email=a@example.invalid", "-c", "user.name=a",
