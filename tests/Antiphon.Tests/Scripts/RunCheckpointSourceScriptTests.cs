@@ -158,7 +158,11 @@ public sealed class RunCheckpointSourceScriptTests
     public async Task C835_DriftAndReuse()
     {
         using var fixture = new Fixture();
-        var built = await fixture.RunAsync(expectedSha: fixture.Head);
+        var trace = Path.Combine(fixture.External, "trace2");
+        Directory.CreateDirectory(trace);
+        var built = await fixture.RunAsync(expectedSha: fixture.Head, gitTrace: trace);
+        Directory.GetFiles(trace).Count(file => File.ReadAllText(file).Contains("\"status\"", StringComparison.Ordinal))
+            .ShouldBe(0, "the named tool build answered every source snapshot (no git status child)");
         built.Exit.ShouldBe(0, built.Output);
         var reused = await fixture.RunAsync(expectedSha: fixture.Head, noBuild: true);
         reused.Exit.ShouldBe(0, reused.Output);
@@ -202,12 +206,14 @@ public sealed class RunCheckpointSourceScriptTests
             failedRebuild.Calls.ShouldBe(before, "failed-rebuild-cannot-reuse-stale-output");
         }
 
-        using var driftFixture = new Fixture();
+        // Drift across the run's boundaries (during the build, during the run, HEAD moving, a dirty tree restored)
+        // is proven on the script's own git reader, the one production runs use.
+        using var driftFixture = new Fixture(gitReader: true);
         var drift = await driftFixture.RunAsync(driftPhase: "run");
         drift.Exit.ShouldBe(2, drift.Output);
         drift.Source.GetProperty("state").GetString().ShouldBe("changed", "driver-drift-is-changed");
         drift.Line.ShouldContain("executed=3 passed=3", Case.Sensitive, "driver-drift-retains-counts");
-        using var sameCountFixture = new Fixture();
+        using var sameCountFixture = new Fixture(gitReader: true);
         sameCountFixture.Write("tracked.txt", "first dirty value");
         var sameCount = await sameCountFixture.RunAsync(driftPhase: "same-count-run");
         sameCount.Exit.ShouldBe(2, sameCount.Output);
@@ -218,15 +224,15 @@ public sealed class RunCheckpointSourceScriptTests
                 "same-count-content-change-has-new-fingerprint");
         sameCount.Source.GetProperty("state").GetString().ShouldBe("changed",
             "same-count-driver-drift-is-changed");
-        using var buildDriftFixture = new Fixture();
+        using var buildDriftFixture = new Fixture(gitReader: true);
         var buildDrift = await buildDriftFixture.RunAsync(driftPhase: "build");
         buildDrift.Exit.ShouldBe(2, buildDrift.Output);
         buildDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "build-drift");
-        using var headDriftFixture = new Fixture();
+        using var headDriftFixture = new Fixture(gitReader: true);
         var headDrift = await headDriftFixture.RunAsync(driftPhase: "head-run");
         headDrift.Exit.ShouldBe(2, headDrift.Output);
         headDrift.Source.GetProperty("state").GetString().ShouldBe("changed", "head-movement");
-        using var restoreFixture = new Fixture();
+        using var restoreFixture = new Fixture(gitReader: true);
         restoreFixture.Write("tracked.txt", "dirty before driver");
         var restored = await restoreFixture.RunAsync(driftPhase: "restore-run");
         restored.Exit.ShouldBe(2, restored.Output);
@@ -478,8 +484,9 @@ public sealed class RunCheckpointSourceScriptTests
         public int SlotCalls => File.Exists(Path.Combine(External, "slot-calls.txt"))
             ? File.ReadAllLines(Path.Combine(External, "slot-calls.txt")).Length : 0;
         private int _round;
-        // The script's own git reader (true) or the test run's checkpoint tool build (CheckpointFixtures.UseToolReads):
-        // C835_DiagnosticReceipts keeps the git reader end to end; the git reader's own suites pin it against the tool.
+        // The script's own git reader (true) or the test run's checkpoint tool build (CheckpointFixtures.UseToolReads).
+        // C835_DiagnosticReceipts (identities) and C835_DriftAndReuse's drift fixtures (drift across run boundaries)
+        // keep the git reader end to end; CheckpointSourceStateTests pins its single snapshots against the tool.
         private readonly bool _gitReader;
         private static string ProjectRoot => DelegateScriptRunner.RepoRoot;
 
@@ -668,7 +675,7 @@ public sealed class RunCheckpointSourceScriptTests
         public async Task<Result> RunAsync(string? expectedSha = null, bool noBuild = false,
             string? trx = "c585-green.trx", int buildExit = 0, string? driftPhase = null,
             bool useSlot = false, bool slotDrift = false, string? nativeCwd = null,
-            bool interruptRunLog = false)
+            bool interruptRunLog = false, string? gitTrace = null)
         {
             var round = ++_round;
             // Rebuilds require fresh output ownership. NoBuild deliberately keeps
@@ -699,6 +706,7 @@ public sealed class RunCheckpointSourceScriptTests
                 ["C585_STAMP"] = "round-" + round,
                 ["ANTIPHON_BUILD_SLOTS_URL"] = "http://127.0.0.1:1/build-slots",
                 ["C1035_OBSERVATIONS"] = nativeCwd is null ? null : Observations,
+                ["GIT_TRACE2_EVENT"] = gitTrace,
             };
             if (nativeCwd is not null)
             {
