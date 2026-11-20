@@ -149,15 +149,19 @@ switch ($Case) {
         Ensure-RioProject $serverGit '<Project Sdk="Microsoft.NET.Sdk" />'
         $sample='tests/Antiphon.Tests/Application/StaleWorkingTranscriptWatchdogTests.cs'
         $migration='src/Antiphon.Messaging.Service/Migrations/20990101000000_Example.cs'
-        Put $sample 'class StaleWorkingTranscriptWatchdogTests {}'
+        Put $sample 'class StaleWorkingTranscriptWatchdogTests { void Body() { int x = 1; } }'
         Put $migration 'migration'
         $baseline=Commit
-        Put $sample 'class StaleWorkingTranscriptWatchdogTests { void Renamed() {} }'
+        Put $sample 'class StaleWorkingTranscriptWatchdogTests { void Body() { int x = 2; } }'
         $s=Select-Manifest (Commit)
-        Note (Owns $s $resilience $sample 'antiphon-tests-source-scan') 'd1a-resilience'
-        Note (Owns $s $serverGit $sample 'antiphon-tests-source-scan') 'd1a-server-git'
-        Note (Owns $s $gitinprocess $sample 'antiphon-tests-source-scan') 'd1a-gitinprocess'
-        Note ($s.dirtySuites -ccontains $resilience -and $s.dirtySuites -ccontains $serverGit) "d1a-dirty:$(& $shown $s)"
+        Note ($s.dirtySuites -cnotcontains $resilience) "d1a-body-skips-resilience:$(& $shown $s)"
+        Note ($s.dirtySuites -cnotcontains $serverGit) 'd1a-body-skips-server-git'
+        Note ($s.dirtySuites -cnotcontains $gitinprocess) 'd1a-body-skips-git'
+        Note ($s.dirtySuites -cnotcontains $antiphon) 'd1a-body-skips-antiphon'
+        $deferred=DeferredRows $s
+        Note ($deferred -ccontains "${resilience}:${sample}") 'd1a-resilience-deferred'
+        Note ($deferred -ccontains "${serverGit}:${sample}") 'd1a-server-git-deferred'
+        Note ($deferred -ccontains "${gitinprocess}:${sample}") 'd1a-git-deferred'
         $baseline=Git @('rev-parse','HEAD')
         Put $migration 'migration changed'
         $s=Select-Manifest (Commit)
@@ -228,31 +232,35 @@ switch ($Case) {
         Note (Owns $s $messaging 'Directory.Build.props' 'forced-full-build-graph') 'build-graph-forced-reason'
     }
     'LinkedSourceSelectsIncludingProject' {
-        Put 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'changed linked helper'; $s=Select-Manifest (Commit)
+        Put 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'class LinkedHelper { void Body() { int x = 1; } }'
+        $baseline=Commit
+        Put 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'class LinkedHelper { void Body() { int x = 2; } }'
+        $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "link-resolved:$(@($s.unresolved) -join ',')"
-        # Server.Git walks the same Antiphon.Tests tree, so the link is not only the Compile edge.
+        # The Compile edge still selects the including project. A method-body edit does not select the walkers.
         $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
-        Note (SameSet $s @($antiphon,$resilience,$gitinprocess,$serverGit)) "link-selects-including:$(& $shown $s)"
+        Note (SameSet $s @($resilience)) "link-selects-including:$(& $shown $s)"
         Note (Owns $s $resilience 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'Compile') 'link-compile-edge'
-        Note (Owns $s $serverGit 'tests/Antiphon.Tests/TestHelpers/Linked.cs' 'antiphon-tests-source-scan') 'link-server-git-walk'
+        Note ($s.dirtySuites -cnotcontains $serverGit) 'link-body-skips-server-git'
         Note (Lacks $s $messaging 'tests/Antiphon.Tests/TestHelpers/Linked.cs') 'link-misses-messaging'
+        Note ((DeferredRows $s) -ccontains "${antiphon}:tests/Antiphon.Tests/TestHelpers/Linked.cs") 'link-antiphon-deferred'
     }
     'UnrelatedFileSelectsNothing' {
         Put 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' 'changed unlinked sibling'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "sibling-resolved:$(@($s.unresolved) -join ',')"
-        # The unlinked sibling is still not a Compile edge. The directory walk owns it.
+        # A body edit of an unlinked test file selects nothing. The walkers stay deferred.
         $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
-        Note (SameSet $s @($antiphon,$gitinprocess,$resilience,$serverGit)) "sibling-selects-directory-walkers:$(& $shown $s)"
-        Note (Owns $s $resilience 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' 'antiphon-tests-source-scan') 'sibling-resilience-walk'
-        $siblingSuite=@($s.snapshots[1].suites | Where-Object id -CEQ $resilience)
-        $siblingRecord=@($siblingSuite[0].inputs | Where-Object { $_.path -ceq 'tests/Antiphon.Tests/TestHelpers/Sibling.cs' -and $_.present })
-        Note ($siblingRecord.Count -eq 1 -and @($siblingRecord[0].reason.Split(';')) -cnotcontains 'Compile') 'sibling-not-a-compile-link'
+        Note ($s.dirtySuites.Count -eq 0) "sibling-selects-nothing:$(& $shown $s)"
+        $siblingDeferred=DeferredRows $s
+        foreach ($id in @($antiphon,$gitinprocess,$resilience,$serverGit)) {
+            Note ($siblingDeferred -ccontains "${id}:tests/Antiphon.Tests/TestHelpers/Sibling.cs") "sibling-deferred:$id"
+        }
         $baseline=Git @('rev-parse','HEAD')
         Put 'tests/Antiphon.Messaging.Tests/Own.cs' 'changed unrelated'; $s=Select-Manifest (Commit)
         Note ($s.unresolved.Count -eq 0) "unrelated-resolved:$(@($s.unresolved) -join ',')"
-        Note (SameSet $s @($messaging,$antiphon)) "unrelated-selects-nothing-else:$(& $shown $s)"
-        Note (Lacks $s $resilience 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-including-project'
-        Note (Owns $s $antiphon 'tests/Antiphon.Messaging.Tests/Own.cs' 'derived-impact-scan') 'unrelated-derived-impact-scan'
+        Note ($s.dirtySuites.Count -eq 0) "unrelated-selects-nothing:$(& $shown $s)"
+        Note ((DeferredRows $s) -ccontains "${messaging}:tests/Antiphon.Messaging.Tests/Own.cs") 'unrelated-messaging-deferred'
+        Note ((DeferredRows $s) -ccontains "${antiphon}:tests/Antiphon.Messaging.Tests/Own.cs") 'unrelated-antiphon-deferred'
         Note (Lacks $s $e2e 'tests/Antiphon.Messaging.Tests/Own.cs') 'unrelated-misses-e2e'
     }
     'RuntimeReaderCensus' {

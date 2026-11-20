@@ -309,7 +309,9 @@ Write-Output ("suites-checked="+$suites.Count)
 Write-Output ("pairs-checked="+$refs.Count)
 Write-Output ("under-selected="+$under.Count)
 Write-Output ("unanalysable="+$unanalysable.Count)
+$ownerConflicts=@($inv.noopConflicts)
 Write-Output ("noop-conflict="+$noopHits.Count)
+Write-Output ("noop-vs-owner="+$ownerConflicts.Count)
 Write-Output ("unowned-count="+$unowned.Count)
 Write-Output ("unresolved-count="+@($inv.unresolved).Count)
 foreach ($reason in @($inv.unresolved)) { Write-Output ("unresolved: "+$reason) }
@@ -318,6 +320,7 @@ Write-Output ("needsOrchestratorDecision="+[string]$inv.needsOrchestratorDecisio
 if ($repoWalkSuites.Count) { Write-Output ("repo-walk="+($repoWalkSuites -join ',')) } else { Write-Output 'repo-walk=none' }
 foreach ($row in $unanalysable) { Write-Output ("UNANALYSABLE: "+$row) }
 foreach ($row in $noopHits) { Write-Output ("noop-conflict: "+$row.suite+" "+$row.path) }
+foreach ($row in $ownerConflicts) { Write-Output ("noop-vs-owner: "+$row) }
 if ($EmitRows) {
     $i=0
     foreach ($row in $under) {
@@ -334,11 +337,6 @@ $unownedFile=Join-Path $unownedDir 'rc-unowned-paths.txt'
 $unownedLines=New-Object System.Collections.Generic.List[string]
 foreach ($row in $unowned) { $unownedLines.Add(([string]$row.hint)+"`t"+[string]$row.path) }
 [IO.File]::WriteAllLines($unownedFile, $unownedLines)
-Write-Output ("UNOWNED-COUNT "+$unowned.Count)
-if ($unowned.Count -le 40) {
-    foreach ($row in $unowned) { Write-Output ("UNOWNED-PATH "+[string]$row.hint+" "+[string]$row.path) }
-} else {
-    Write-Output ("UNOWNED-LIST "+$unownedFile)
-}
-if ($under.Count -or $unanalysable.Count -or $noopHits.Count) { exit 1 }
+foreach ($line in (Format-RcUnownedCensusLines $unowned $unownedFile)) { Write-Output $line }
+if ($under.Count -or $unanalysable.Count -or $noopHits.Count -or $ownerConflicts.Count) { exit 1 }
 exit 0
