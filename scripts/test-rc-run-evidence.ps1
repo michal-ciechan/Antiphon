@@ -21,6 +21,61 @@ function New-Repo([string]$Root) {
     [void](Invoke-C487FixtureGit $Root @('commit','-qm','fixture'))
     return (Invoke-C487FixtureGit $Root @('rev-parse','HEAD'))
 }
+function Write-RcOutcomeTrx {
+    param([string]$Path,[string]$SummaryOutcome,[int]$Total,[int]$Executed,[int]$Passed,[int]$Failed,[int]$NotExecuted,[object[]]$Rows)
+    $defs=New-Object System.Text.StringBuilder
+    $results=New-Object System.Text.StringBuilder
+    [void]$defs.Append('<TestDefinitions>')
+    [void]$results.Append('<Results>')
+    foreach($r in @($Rows)){
+        $id=[string]$r.Id
+        $cls=[string]$r.ClassName
+        $method=[string]$r.MethodName
+        $outcome=[string]$r.Outcome
+        $trace=[string]$r.DebugTrace
+        [void]$defs.Append(('<UnitTest id="{0}" name="{1}.{2}"><TestMethod className="{1}" name="{2}" /></UnitTest>' -f $id,$cls,$method))
+        if([string]::IsNullOrWhiteSpace($trace)){
+            [void]$results.Append(('<UnitTestResult testId="{0}" testName="{1}.{2}" outcome="{3}" />' -f $id,$cls,$method,$outcome))
+        } else {
+            [void]$results.Append(('<UnitTestResult testId="{0}" testName="{1}.{2}" outcome="{3}"><Output><DebugTrace>{4}</DebugTrace></Output></UnitTestResult>' -f $id,$cls,$method,$outcome,$trace))
+        }
+    }
+    [void]$defs.Append('</TestDefinitions>')
+    [void]$results.Append('</Results>')
+    $summary=('<ResultSummary outcome="{0}"><Counters total="{1}" executed="{2}" passed="{3}" failed="{4}" notExecuted="{5}" /></ResultSummary>' -f $SummaryOutcome,$Total,$Executed,$Passed,$Failed,$NotExecuted)
+    $xml=('<?xml version="1.0" encoding="utf-8"?><TestRun>{0}{1}{2}</TestRun>' -f $defs.ToString(),$results.ToString(),$summary)
+    [IO.File]::WriteAllText($Path,$xml)
+}
+function Test-RcRealResultsWouldPass {
+    param([string]$Path)
+    try {
+        $text=[IO.File]::ReadAllText($Path)
+        if($text -notmatch '<TestRun[\s>]'){ return $false }
+        $summary=Read-NightlyTrxRunSummary -Path $Path
+        if(-not $summary.Present -or [string]::IsNullOrWhiteSpace([string]$summary.Outcome) -or $summary.Outcome -cne 'Completed'){ return $false }
+        $doc=New-Object System.Xml.XmlDocument
+        $doc.XmlResolver=$null
+        $doc.Load($Path)
+        $counters=$doc.SelectSingleNode('//*[local-name()="Counters"]')
+        if($null -eq $counters){ return $false }
+        if([string]::IsNullOrWhiteSpace($counters.GetAttribute('executed')) -or [string]::IsNullOrWhiteSpace($counters.GetAttribute('failed'))){ return $false }
+        $rows=@(Read-NightlyTrxIdentities -TrxPath $Path)
+        $verdict=ConvertTo-NightlyCoverageVerdict -TerminalRows $rows -ProcessExit 0 -Sha 'a' -ExpectedSha 'a' -GitRef 'origin/master' -ExpectedRef 'origin/master' -PolicyHash 'p' -ExpectedPolicyHash 'p' -Platform 'linux' -ExpectedSkipRoster @()
+        $executedRows=[int]$verdict.passed + [int]$verdict.failed
+        if([int]$summary.Executed -ne $executedRows -or [int]$summary.Failed -ne [int]$verdict.failed){ return $false }
+        if(-not (Test-NightlyCounterAgreement -Verdict $verdict -ReportedTotal @($rows).Count -ReportedFailed ([int]$summary.Failed))){ return $false }
+        if(-not [bool]$verdict.testsPassed -or -not [bool]$verdict.coverageComplete -or [int]$summary.Failed -ne 0){ return $false }
+        return $true
+    } catch { return $false }
+}
+function Note-RcShadowNotWeaker {
+    param([string]$Label,[string]$Path)
+    $shadow=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $Path
+    $real=Test-RcRealResultsWouldPass -Path $Path
+    if($real){ Note $false ($Label + ' real-did-not-fail') }
+    elseif($shadow.Outcome -ceq 'Passed'){ Note $false ($Label + ' shadow=Passed') }
+    else { Note $true $Label }
+}
 function New-Outputs([string]$Directory,[string]$Entry,[string]$Helper) {
     [void][IO.Directory]::CreateDirectory($Directory)
     [IO.File]::WriteAllBytes((Join-Path $Directory $Entry),[byte[]](1,2,3,4))
@@ -359,6 +414,40 @@ try {
             Note ($stored.sequence -eq 1 -and $body.outcome -ceq 'Failed' -and $body.reason -ceq 'exit-2' -and -not $body.gateCredit) 'reason-is-stored'
             $testsImpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
             Note ($testsImpl.Contains('Get-NightlyRcChunkOutcome')) 'chunk-outcome-is-wired'
+        }
+        'ShadowPassedIsAtLeastTheRealCheck' {
+            if(-not (Get-Command Read-NightlyTrxRunSummary -ErrorAction SilentlyContinue)){
+                . (Join-Path $PSScriptRoot 'lib/nightly-watchdog-admission.ps1')
+            }
+            if(-not (Get-Command ConvertTo-NightlyCoverageVerdict -ErrorAction SilentlyContinue)){
+                . (Join-Path $PSScriptRoot 'lib/nightly-coverage.ps1')
+            }
+            $bare=Join-Path $ResultsDirectory 'bare.trx'
+            [IO.File]::WriteAllText($bare,'<TestRun id="1"><Results /></TestRun>')
+            Note-RcShadowNotWeaker 'summary-unreadable' $bare
+            $identity=Join-Path $ResultsDirectory 'identity.trx'
+            [IO.File]::WriteAllText($identity,'<?xml version="1.0" encoding="utf-8"?><TestRun><ResultSummary outcome="Completed"><Counters total="1" executed="1" passed="1" failed="0" notExecuted="0" /></ResultSummary><Results><UnitTestResult testId="missing" testName="Ns.Sample.Method" outcome="Passed" /></Results></TestRun>')
+            Note-RcShadowNotWeaker 'identity-unreadable' $identity
+            $failed=Join-Path $ResultsDirectory 'failed.trx'
+            Write-RcOutcomeTrx -Path $failed -SummaryOutcome 'Completed' -Total 1 -Executed 1 -Passed 0 -Failed 1 -NotExecuted 0 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Failed' })
+            Note-RcShadowNotWeaker 'failed-count' $failed
+            $executed=Join-Path $ResultsDirectory 'executed.trx'
+            Write-RcOutcomeTrx -Path $executed -SummaryOutcome 'Completed' -Total 1 -Executed 4 -Passed 1 -Failed 0 -NotExecuted 0 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Passed' })
+            Note-RcShadowNotWeaker 'executed-count' $executed
+            $skip=Join-Path $ResultsDirectory 'skip.trx'
+            Write-RcOutcomeTrx -Path $skip -SummaryOutcome 'Completed' -Total 1 -Executed 0 -Passed 0 -Failed 0 -NotExecuted 1 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='NotExecuted'; DebugTrace='Skipped: not-on-this-host' })
+            Note-RcShadowNotWeaker 'expected-skip-roster' $skip
+            $coverage=Join-Path $ResultsDirectory 'coverage.trx'
+            Write-RcOutcomeTrx -Path $coverage -SummaryOutcome 'Completed' -Total 1 -Executed 0 -Passed 0 -Failed 0 -NotExecuted 1 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Skipped' })
+            Note-RcShadowNotWeaker 'coverage-incomplete' $coverage
+            $json=Join-Path $ResultsDirectory 'weak.json'
+            [IO.File]::WriteAllText($json,'{"ok":true}')
+            Note-RcShadowNotWeaker 'json-summary-unreadable' $json
+            $pass=Join-Path $ResultsDirectory 'real-pass.trx'
+            Write-RcOutcomeTrx -Path $pass -SummaryOutcome 'Completed' -Total 1 -Executed 1 -Passed 1 -Failed 0 -NotExecuted 0 -Rows @(@{ Id='1'; ClassName='Ns.Sample'; MethodName='Method'; Outcome='Passed' })
+            $passShadow=Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $pass
+            $passReal=Test-RcRealResultsWouldPass -Path $pass
+            Note ($passReal -and $passShadow.Outcome -ceq 'Passed') 'real-pass-stays-passed'
         }
         'TornRevisionStaysNotRun' {
             $repo = Join-Path $ResultsDirectory 'repo'
