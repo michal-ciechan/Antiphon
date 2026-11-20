@@ -60,7 +60,7 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
         // in-slot capture drops them, so a tracked obj/ file is stamped in neither place or in both.
         var root = BeginRepo();
         Write(root, "App/obj/tracked.txt", "force-added under a write root\n");
-        Git(root, "add", "-f", "App/obj/tracked.txt");
+        Git(root, "add", "-f", "--", "App/obj/tracked.txt");
         Git(root, "-c", "user.email=card-1241@example.invalid", "-c", "user.name=card-1241",
             "-c", "commit.gpgsign=false", "commit", "-m", "tracked under obj", "--no-verify");
         var ledger = Capture(root);
@@ -617,8 +617,8 @@ public sealed class CheckpointConfinementLedgerTests : CheckpointTestBase
     {
         var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        // Setup Git sees the user's autocrlf config; confinement uses hardened Git.
-        // Persist the same LF bytes on both hosts before either observes the file.
+        // Setup runs in process (no user config) or, for other shapes, in a git child that sees the user's autocrlf
+        // config; confinement uses hardened Git. Persist the same LF bytes on both hosts before either observes it.
         File.WriteAllText(path, content.ReplaceLineEndings("\n"));
     }
 

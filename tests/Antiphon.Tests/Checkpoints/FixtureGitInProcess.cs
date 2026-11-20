@@ -3,7 +3,8 @@ namespace Antiphon.Tests.Checkpoints;
 /// <summary>
 /// Fixture repository setup done with libgit2 in the test process instead of a git child, for the setup commands
 /// the checkpoint fixtures run most. Used by <see cref="CheckpointFixtureGitEnvironment"/> (whose git children read
-/// no user or system config) and by OutputCleanupTests (whose git children read the machine's config). libgit2 here
+/// no user or system config) and by OutputCleanupTests and CheckpointConfinementLedgerTests (whose git children read
+/// the machine's config). libgit2 here
 /// reads no user or system config and no global attributes file (LibGit2ConfigIsolation): that is the view the
 /// checkpoint code under test hardens its own git to (GIT_CONFIG_NOSYSTEM, an empty GIT_CONFIG_GLOBAL,
 /// core.attributesFile on the null device: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a repository

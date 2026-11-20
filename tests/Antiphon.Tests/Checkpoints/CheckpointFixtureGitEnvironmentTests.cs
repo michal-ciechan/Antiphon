@@ -230,7 +230,8 @@ public sealed class CheckpointFixtureGitEnvironmentTests : CheckpointTestBase
         return result.Stdout;
     }
 
-    // FixtureGitInProcess.TryRun (used by CheckpointFixtureGitEnvironment.Git and OutputCleanupTests) sets fixture
+    // FixtureGitInProcess.TryRun (used by CheckpointFixtureGitEnvironment.Git, OutputCleanupTests and
+    // CheckpointConfinementLedgerTests) sets fixture
     // repositories up in process for the common shapes (init [-q] -b, add -A, add [-f] -- <paths>, the fixture commit,
     // rev-parse HEAD). What it does in process must leave the repository git
     // itself sees as the git commands would have.
