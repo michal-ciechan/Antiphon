@@ -11,7 +11,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-1820 S5. A human tag is backed by an all-executed Windows Full of the tagged SHA.
 /// The chain form stays compiled off until a CARD-1836 D-8 producer exists. A caller
 /// integer is not trust. An anchor age of 7 days or more is not backed. Callers read
-/// the result kind rather than searching Answer for "full".
+/// <see cref="RcTagBackingKind"/> rather than searching Answer for "full".
 /// </summary>
 [Category("Unit")]
 [Timeout(60_000)]
@@ -42,7 +42,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(YoungChain(trusted: 1, anchorAge: TimeSpan.FromDays(1), headDisposition: "shadow"));
         answer.Answer.ShouldBe("not-backed(shadow-trust-absent)");
-        answer.Kind.ShouldBe("not-backed");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -107,7 +107,7 @@ public sealed class RcTagBackingTests
             allExecuted: true);
         var answer = RcTagBacking.Test(Document(0, new[] { full }, new[] { new TagChainCommit(Tagged, Array.Empty<string>()) }));
         answer.Answer.ShouldBe("full");
-        answer.Kind.ShouldBe("full");
+        answer.Kind.ShouldBe(RcTagBackingKind.Full);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -117,7 +117,7 @@ public sealed class RcTagBackingTests
         var age = TimeSpan.FromDays(7) - TimeSpan.FromSeconds(1);
         var answer = RcTagBacking.Test(YoungChain(trusted: 2, anchorAge: age));
         answer.Answer.ShouldBe("not-backed(shadow-trust-absent)");
-        answer.Kind.ShouldBe("not-backed");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.AnchorSha.ShouldBeNull();
         answer.GateCredit.ShouldBeFalse();
     }
@@ -388,6 +388,7 @@ public sealed class RcTagBackingTests
         var answer = RcTagBacking.Test(YoungChain(trusted: 2, anchorAge: TimeSpan.FromMinutes(-5)));
         answer.Answer.ShouldBe("not-backed(anchor-in-future)");
         answer.Answer.Contains("full", StringComparison.Ordinal).ShouldBeFalse();
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -399,6 +400,7 @@ public sealed class RcTagBackingTests
         var answer = RcTagBacking.Test(Document(2, new[] { head, anchor }, Lineage(Anchor)));
         answer.Answer.ShouldBe("not-backed(anchor-time-unknown)");
         answer.Answer.Contains("full", StringComparison.Ordinal).ShouldBeFalse();
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -424,6 +426,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt("2026-11-19T00:05:00Z"));
         answer.Answer.ShouldBe("full");
+        answer.Kind.ShouldBe(RcTagBackingKind.Full);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -432,6 +435,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt("2026-11-19T00:05:01Z"));
         answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -440,6 +444,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt("9999-12-31T23:59:59Z"));
         answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -448,6 +453,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt(null));
         answer.Answer.ShouldBe("not-backed(full-time-unknown)");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -456,6 +462,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt("2000-01-01T00:06:00Z", "2000-01-01T00:00:00Z"));
         answer.Answer.ShouldBe("not-backed(full-time-in-future)");
+        answer.Kind.ShouldBe(RcTagBackingKind.NotBacked);
         answer.GateCredit.ShouldBeFalse();
     }
 
@@ -464,6 +471,7 @@ public sealed class RcTagBackingTests
     {
         var answer = RcTagBacking.Test(ExactFullAt("2098-12-31T00:00:00Z", "2099-01-01T00:00:00Z"));
         answer.Answer.ShouldBe("full");
+        answer.Kind.ShouldBe(RcTagBackingKind.Full);
         answer.GateCredit.ShouldBeFalse();
     }
 

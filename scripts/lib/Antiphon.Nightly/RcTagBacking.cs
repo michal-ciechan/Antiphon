@@ -6,8 +6,11 @@
 // two distinct trusted-cut records then answers chain-form-disabled-until-trusted-cuts.
 // Fewer than two answers shadow-trust-absent. The document integer trustedShadowCuts
 // is not a trust decision. Only an all-executed Full of the exact tagged SHA is
-// backed. A chain anchor is expired at age >= 7 days. Public parse failures,
-// including reader exceptions, answer chain-invalid.
+// backed, and only when its completed time is present and not later than the
+// document utcNow by more than ExactFullClockSkew. That utcNow is the document
+// field, not the host clock. A chain anchor is expired at age >= 7 days, and a
+// chain anchor after the document utcNow is anchor-in-future with no skew.
+// Public parse failures, including reader exceptions, answer chain-invalid.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -17,35 +20,42 @@ using System.Text.Json;
 
 namespace Antiphon.Nightly
 {
+    public enum RcTagBackingKind
+    {
+        Full,
+        ChainToFull,
+        NotBacked
+    }
+
     public sealed class RcTagBackingResult
     {
-        public RcTagBackingResult(string kind, string anchorSha, TimeSpan? age, string reason, bool gateCredit)
+        internal RcTagBackingResult(RcTagBackingKind kind, string anchorSha, TimeSpan? age, string reason, bool gateCredit)
         {
             Kind = kind;
             AnchorSha = anchorSha;
             Age = age;
             Reason = reason;
             GateCredit = gateCredit;
-            Answer = kind == "full" ? "full"
-                : kind == "chain-to-full" ? "chain-to-full(" + anchorSha + "," + FormatAge(age.Value) + ")"
+            Answer = kind == RcTagBackingKind.Full ? "full"
+                : kind == RcTagBackingKind.ChainToFull ? "chain-to-full(" + anchorSha + "," + FormatAge(age.Value) + ")"
                 : "not-backed(" + reason + ")";
         }
 
-        public string Kind { get; }
+        public RcTagBackingKind Kind { get; }
         public string Answer { get; }
         public string AnchorSha { get; }
         public TimeSpan? Age { get; }
         public string Reason { get; }
         public bool GateCredit { get; }
 
-        public static RcTagBackingResult NotBacked(string reason) =>
-            new RcTagBackingResult("not-backed", null, null, reason, false);
+        internal static RcTagBackingResult NotBacked(string reason) =>
+            new RcTagBackingResult(RcTagBackingKind.NotBacked, null, null, reason, false);
 
-        public static RcTagBackingResult Full() =>
-            new RcTagBackingResult("full", null, null, null, false);
+        internal static RcTagBackingResult Full() =>
+            new RcTagBackingResult(RcTagBackingKind.Full, null, null, null, false);
 
-        public static RcTagBackingResult Chain(string anchorSha, TimeSpan age) =>
-            new RcTagBackingResult("chain-to-full", anchorSha, age, null, false);
+        internal static RcTagBackingResult Chain(string anchorSha, TimeSpan age) =>
+            new RcTagBackingResult(RcTagBackingKind.ChainToFull, anchorSha, age, null, false);
 
         public static string FormatAge(TimeSpan age)
         {
@@ -71,6 +81,8 @@ namespace Antiphon.Nightly
         public const int TrustedShadowCutsRequired = 2;
         public const bool ChainFormEnabled = false;
         public const int MaxChainLinks = 64;
+        public const int ExactFullClockSkewMinutes = 5;
+        public static readonly TimeSpan ExactFullClockSkew = TimeSpan.FromMinutes(ExactFullClockSkewMinutes);
         public static readonly TimeSpan MaxAnchorAge = TimeSpan.FromDays(7);
         private const int MaxCommits = 4096;
         private const int MaxParents = 16;
@@ -122,6 +134,11 @@ namespace Antiphon.Nightly
                     return RcTagBackingResult.NotBacked("anchor-not-all-executed");
                 if (head.CarriedCount != 0)
                     return RcTagBackingResult.NotBacked("anchor-has-carries");
+                if (string.IsNullOrEmpty(head.CompletedAtUtc))
+                    return RcTagBackingResult.NotBacked("full-time-unknown");
+                var completed = ReadUtc(head.CompletedAtUtc);
+                if (completed > chain.UtcNow + ExactFullClockSkew)
+                    return RcTagBackingResult.NotBacked("full-time-in-future");
                 return RcTagBackingResult.Full();
             }
 
@@ -181,10 +198,10 @@ namespace Antiphon.Nightly
             if (anchor.CarriedCount != 0)
                 return RcTagBackingResult.NotBacked("anchor-has-carries");
             if (string.IsNullOrEmpty(anchor.CompletedAtUtc))
-                return RcTagBackingResult.NotBacked("full-anchor-time-unknown");
+                return RcTagBackingResult.NotBacked("anchor-time-unknown");
             var completed = ReadUtc(anchor.CompletedAtUtc);
             if (completed > chain.UtcNow)
-                return RcTagBackingResult.NotBacked("full-anchor-future");
+                return RcTagBackingResult.NotBacked("anchor-in-future");
             if (!IsAncestor(chain, anchor.SourceSha, chain.TaggedSha))
                 return RcTagBackingResult.NotBacked("anchor-not-ancestor");
             var age = chain.UtcNow - completed;
