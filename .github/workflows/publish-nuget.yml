@@ -46,12 +46,12 @@ jobs:
       - name: Pack
         run: |
           set -euo pipefail
-          dotnet pack src/Antiphon.Messaging/Antiphon.Messaging.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.Client/Antiphon.Messaging.Client.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.Client.Testing/Antiphon.Messaging.Client.Testing.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.Slack/Antiphon.Messaging.Slack.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.Telegram/Antiphon.Messaging.Telegram.csproj -c Release -o out
-          dotnet pack src/Antiphon.Messaging.Gateway/Antiphon.Messaging.Gateway.csproj -c Release -o out
+          dotnet pack src/Antiphon.Messaging/Antiphon.Messaging.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
+          dotnet pack src/Antiphon.Messaging.Client/Antiphon.Messaging.Client.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
+          dotnet pack src/Antiphon.Messaging.Client.Testing/Antiphon.Messaging.Client.Testing.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
+          dotnet pack src/Antiphon.Messaging.Slack/Antiphon.Messaging.Slack.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
+          dotnet pack src/Antiphon.Messaging.Telegram/Antiphon.Messaging.Telegram.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
+          dotnet pack src/Antiphon.Messaging.Gateway/Antiphon.Messaging.Gateway.csproj -c Release -o out -p:EnableSourceLink=true -p:SourceRevisionId=${{ github.sha }}
       - name: Push to GitHub Packages
         run: >
           dotnet nuget push "out/*.nupkg"

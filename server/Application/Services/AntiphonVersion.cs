@@ -4,9 +4,9 @@ using System.Text.RegularExpressions;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// Build-time git SHA stamped into <c>AssemblyInformationalVersion</c> (CARD-0179 R3).
-/// Directory.Build.props sets <c>SourceRevisionId</c> from <c>git rev-parse HEAD</c> (fallback
-/// "unknown"); the SDK appends it after '+' on InformationalVersion.
+/// Build stamp in <c>AssemblyInformationalVersion</c> (CARD-0179 R3).
+/// Ordinary builds leave <c>SourceRevisionId</c> as "unknown". A deployed build passes
+/// <c>-p:SourceRevisionId</c>; the SDK appends it after '+' on InformationalVersion.
 /// </summary>
 public static partial class AntiphonVersion
 {

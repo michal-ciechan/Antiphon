@@ -67,7 +67,9 @@ $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.c
 $grokHome = if ($env:GROK_HOME) { $env:GROK_HOME } else { Join-Path $HOME '.grok' }
 
 if (-not $NoBuild) {
-    & (Join-Path $PSScriptRoot 'build-slot.ps1') -Label "phone-home-runner-$RunnerId" -- dotnet build $project -nologo -v:q
+    $sourceRevision = ((& git -C $PSScriptRoot rev-parse HEAD 2>$null) | Out-String).Trim().ToLowerInvariant()
+    if ($sourceRevision -notmatch '^[0-9a-f]{40}$') { throw "git rev-parse HEAD failed; refusing an unstamped runner build." }
+    & (Join-Path $PSScriptRoot 'build-slot.ps1') -Label "phone-home-runner-$RunnerId" -- dotnet build $project -nologo -v:q "-p:SourceRevisionId=$sourceRevision"
     if ($LASTEXITCODE -ne 0) { throw "Runner build failed ($LASTEXITCODE)." }
 }
 if (-not (Test-Path -LiteralPath $exe)) { throw "Runner not built: $exe" }
