@@ -54,6 +54,7 @@ param(
         [switch]$AcceptCrossCandidateSeed,
         [string]$SeedSourceCandidateId = '',
     [string]$SeamsPath = '',
+    [string]$RcEvidenceRoot = '',
     [string]$PolicyPath = '',
     [switch]$AllowSharedTree,
     [switch]$WhatIf,
@@ -104,6 +105,7 @@ $invoke = @{
     ReleaseRoot = $ReleaseRoot
     CandidateId = $CandidateId
     SeamsPath = $SeamsPath
+    RcEvidenceRoot = $RcEvidenceRoot
     PolicyPath = $PolicyPath
     AllowSharedTree = $AllowSharedTree
     WhatIf = $WhatIf
