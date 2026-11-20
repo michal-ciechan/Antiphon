@@ -24914,6 +24914,7 @@
         "RcManifestIntegrationTests",
         "RcManifestJournalTests",
         "RcManifestRecoveryTests",
+        "ReleaseAuthorityTests",
         "TestPhaseSummaryTests",
         "TestPhaseSupervisorTests",
         "TestTimingChokePointTests",
