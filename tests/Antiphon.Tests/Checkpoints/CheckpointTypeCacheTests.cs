@@ -19,6 +19,9 @@ public sealed class CheckpointTypeCacheTests
     public void Compiled_helper_is_cached_reused_rebuilt_when_corrupt_and_compile_errors_surface_once(CancellationToken cancellationToken)
     {
         var reader = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-file-reader.ps1");
+        // The pwsh children dot-source the reader by its full path and need no working directory of their own: this
+        // test's own scratch directory, never the shared checkout (CheckpointToolSpawnLimit's rule).
+        var scratch = Directory.CreateTempSubdirectory("antiphon-type-cache-test-").FullName;
         var nonce = Guid.NewGuid().ToString("N")[..12];
         var name = "Witness" + nonce;
         var source = "namespace " + name + " { public static class Probe { public static string Hello() { return \"hi\"; } } }";
@@ -56,6 +59,7 @@ public sealed class CheckpointTypeCacheTests
         {
             foreach (var file in Directory.GetFiles(directory, "*" + nonce + "-*.dll"))
                 try { File.Delete(file); } catch (IOException) { }
+            try { Directory.Delete(scratch, recursive: true); } catch (IOException) { }
         }
 
         string Pwsh(string command)
@@ -63,7 +67,7 @@ public sealed class CheckpointTypeCacheTests
             var start = new ProcessStartInfo("pwsh")
             {
                 UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = CheckpointFixtures.RepoRoot,
+                WorkingDirectory = scratch,
             };
             foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", command })
                 start.ArgumentList.Add(argument);
