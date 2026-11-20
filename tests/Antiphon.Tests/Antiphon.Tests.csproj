@@ -267,6 +267,9 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneEvidence.cs" Link="Scripts/LiveLaneEvidence.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcTagBacking.cs" Link="Scripts/RcTagBacking.cs" />
+    <Compile Include="../../scripts/lib/Antiphon.Nightly/RcPort.cs" Link="Scripts/RcPort.cs" />
+    <Compile Include="../../scripts/lib/Antiphon.Nightly/RcShadowSample.cs" Link="Scripts/RcShadowSample.cs" />
+    <Compile Include="../../scripts/lib/Antiphon.Nightly/RcDirtyOrder.cs" Link="Scripts/RcDirtyOrder.cs" />
     <Compile Include="../../scripts/lib/CheckpointIndexPaths.cs" Link="Scripts/CheckpointIndexPaths.cs" />
   </ItemGroup>
 </Project>
