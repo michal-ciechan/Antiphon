@@ -151,28 +151,16 @@ function Get-AntiphonScriptsCli {
 }
 
 # Cheap fingerprint of the source files the build hash covers: names, lengths and write times.
-# A long-lived session compares this before it trusts a core it already loaded.
+# A long-lived session compares this before it trusts a core it already loaded. The walk is compiled
+# (NightlyCoreStamp.cs): it runs before every ported call. Without a loaded core there is no stamp, and the
+# caller re-checks the build identity instead.
 function Get-NightlyCoreSourceStamp {
-    $projects = @(
+    if (-not ('Antiphon.Nightly.NightlyCoreStamp' -as [type])) { return '' }
+    $projects = [string[]]@(
         (Join-Path $PSScriptRoot 'Antiphon.Nightly'),
         [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../src/Antiphon.IO.WriteBehind'))
     )
-    $parts = New-Object System.Collections.Generic.List[string]
-    foreach ($project in $projects) {
-        if (-not [IO.Directory]::Exists($project)) { return '' }
-        foreach ($file in [IO.Directory]::EnumerateFiles($project, '*', [IO.SearchOption]::AllDirectories)) {
-            $rel = $file.Substring($project.Length).Replace([char]92, '/').TrimStart('/')
-            if ($rel -match '^(bin|obj)/' -or $rel -notmatch '\.(cs|csproj)$') { continue }
-            $info = [IO.FileInfo]::new($file)
-            [void]$parts.Add([IO.Path]::GetFileName($project) + '/' + $rel + ':' + $info.Length.ToString() + ':' + $info.LastWriteTimeUtc.Ticks.ToString())
-        }
-    }
-    $parts.Sort([StringComparer]::Ordinal)
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        $text = [string]::Join("`n", $parts.ToArray())
-        return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-', '')
-    } finally { $sha.Dispose() }
+    return [Antiphon.Nightly.NightlyCoreStamp]::Compute($projects)
 }
 
 function Set-NightlyCoreVerified {
