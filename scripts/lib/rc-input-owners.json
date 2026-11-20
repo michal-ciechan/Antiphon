@@ -45,11 +45,14 @@
     { "path": "**/appsettings.json", "consumers": ["*"], "reason": "runtime-reader-unproven" },
     { "path": "tests/**/Fixtures/**", "consumers": ["*"], "reason": "runtime-reader-unproven" },
     { "path": "tests/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-scan" },
-    { "path": "tests/Antiphon.Tests/**/*.cs", "consumers": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj"], "reason": "gitinprocess-source-scan" },
+    { "path": "src/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-source-walk" },
+    { "path": "server/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-source-walk" },
+    { "path": "tests/Antiphon.Tests/**", "consumers": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj", "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"], "reason": "antiphon-tests-source-scan" },
+    { "path": "src/Antiphon.Messaging.Service/Migrations/**", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "messaging-migration-walk" },
+    { "path": "docs/testing-and-build.md", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "doc-contract-reader" },
     { "path": "tests/**/*.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
-    { "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },
-    { "path": "**", "consumers": ["*"], "reason": "unmatched-path-fallback" }
+    { "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" }
   ]
 }

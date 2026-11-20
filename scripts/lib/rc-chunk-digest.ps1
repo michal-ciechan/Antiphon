@@ -42,7 +42,18 @@ function New-RcChunkInputManifest {
     $membershipDigest=$membership.fullDigest
     if ($membershipId -cne $Chunk.chunkId -or $membershipDigest -cne $Chunk.fullDigest) { throw 'chunk-membership-mismatch' }
     $unknown=[Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($reason in $Snapshot.unresolved) { Assert-RcDigestText $reason 'unresolved'; [void]$unknown.Add($reason) }
+    foreach ($reason in @($Snapshot.unresolved)) { Assert-RcDigestText $reason 'unresolved'; [void]$unknown.Add($reason) }
+    # Unowned paths stay out of suite inputs. Copy them into unknown so a cut
+    # that still has an unclassified path cannot compare clean. A snapshot
+    # restored without the key (admission rehash) contributes nothing here.
+    if ($Snapshot -is [Collections.IDictionary] -and $Snapshot.Contains('unowned')) {
+        foreach ($row in @($Snapshot['unowned'])) {
+            if ($null -eq $row) { continue }
+            $unownedPath=[string]$row.path
+            $token=$(if ($unownedPath) { "unowned-path:$unownedPath" } else { [string]$row.reason })
+            if ($token) { Assert-RcDigestText $token 'unowned'; [void]$unknown.Add($token) }
+        }
+    }
     if ($Chunk.boundary -ceq 'unassigned') { [void]$unknown.Add('unassigned-boundary') }
     if ($owner.inputs.Count -gt 1000000 -or $Cases.Count -gt 1000000) { throw 'manifest-entry-limit' }
     Assert-RcDigestText $owner.project 'project'

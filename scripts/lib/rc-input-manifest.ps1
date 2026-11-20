@@ -43,8 +43,19 @@ function Assert-RcInputJsonKeys {
     }
 }
 
+function Test-RcInputNoopPath([string]$Path) {
+    if (-not $script:RcInputNoopPatterns) { return $false }
+    foreach ($pattern in $script:RcInputNoopPatterns) {
+        if ($pattern.IsMatch($Path)) { return $true }
+    }
+    return $false
+}
+
 function Add-RcInventoryInput {
     param($Suite, $Tree, [string]$Path, [string]$Reason)
+    # A checked-in no-op class selects nothing, even when a star root or a
+    # project walk would otherwise claim it.
+    if (Test-RcInputNoopPath $Path) { return }
     if (-not $Suite.inputMap.ContainsKey($Path)) {
         $entry=$Tree[$Path]
         $Suite.inputMap[$Path]=[ordered]@{version=1;suite=$Suite.id;project=$Suite.project;path=$Path
@@ -59,6 +70,8 @@ function Add-RcInventoryInput {
 function Read-RcInputInventory {
     param([string]$RepositoryRoot, [string]$Sha, $DerivedIndex, [switch]$SkipUnresolvedBroadening)
     if ($Sha -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
+    $script:RcInputNoopPatterns=@()
+    $script:RcReferencedProjects=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $folded=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $unresolved=[Collections.Generic.List[string]]::new()
@@ -103,20 +116,48 @@ function Read-RcInputInventory {
             edges=[Collections.Generic.List[object]]::new()})
     }
     if (-not $suites.Count) { throw 'input-suites-empty' }
+    $noopPatterns=[Collections.Generic.List[regex]]::new()
+    $noopPath='scripts/lib/rc-input-noop.json'
+    if ($tree.ContainsKey($noopPath)) {
+        if ($tree[$noopPath].mode -cne '100644') { throw 'missing-regular-noop-map' }
+        $noopText=Get-TestSelectionBlob $RepositoryRoot $Sha $noopPath
+        if ([Text.Encoding]::UTF8.GetByteCount($noopText) -gt 1048576) { throw 'noop-map-too-large' }
+        $noopJson=[Text.Json.JsonDocument]::Parse($noopText)
+        try { Assert-RcInputJsonKeys $noopJson.RootElement } finally { $noopJson.Dispose() }
+        $noop=ConvertFrom-Json -InputObject $noopText -AsHashtable
+        Assert-TestSelectionKeys $noop @('schemaVersion','rows')
+        if (($noop.schemaVersion -isnot [long] -and $noop.schemaVersion -isnot [int]) -or $noop.schemaVersion -ne 1) { throw 'noop-map-version' }
+        if ($noop.rows -isnot [array]) { throw 'noop-map-shape' }
+        foreach ($row in @($noop.rows)) {
+            Assert-TestSelectionKeys $row @('path','reason','evidence')
+            if ($row.path -isnot [string] -or -not $row.path -or $row.reason -isnot [string] -or -not $row.reason -or
+                $row.evidence -isnot [string] -or -not $row.evidence) { throw 'invalid-noop-row' }
+            $noopPatterns.Add((New-RcInputPattern $row.path))
+        }
+    }
+    $script:RcInputNoopPatterns=$noopPatterns
     $paths=@(Get-TestSelectionSorted @($tree.Keys))
-    # ** is fallback only. Specific roots and the project walk claim their paths
-    # first; ** then covers paths still owned by nobody, before unknown-path
-    # broadens every suite.
-    $fallbackRoots=[Collections.Generic.List[object]]::new()
+    # ** with unmatched-path-fallback, or any ** whose consumers are *, is the
+    # retired broad fallback. Ignore it. A ** row with reason repo-walk names
+    # the suites that read every non-no-op path, including paths another suite owns.
     foreach ($root in $map.roots) {
         Assert-TestSelectionKeys $root @('path','consumers','reason')
         if ($root.path -isnot [string] -or $root.reason -isnot [string] -or -not $root.reason -or
             $root.consumers -isnot [array] -or -not $root.consumers.Count) { throw 'invalid-input-root' }
-        $pattern=New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$')
         foreach ($id in $root.consumers) {
             if ($id -isnot [string] -or ($id -cne '*' -and -not $suites.ContainsKey($id))) { throw 'unknown-input-consumer' }
         }
-        if ($root.path -ceq '**') { $fallbackRoots.Add(@{root=$root;pattern=$pattern}); continue }
+        if ($root.path -ceq '**') {
+            $star=$false
+            foreach ($id in $root.consumers) { if ($id -ceq '*') { $star=$true } }
+            if ($root.reason -ceq 'unmatched-path-fallback' -or $star) { continue }
+            if ($root.reason -cne 'repo-walk') { throw 'invalid-broad-root' }
+            foreach ($id in $root.consumers) {
+                foreach ($path in $paths) { Add-RcInventoryInput $suites[$id] $tree $path $root.reason }
+            }
+            continue
+        }
+        $pattern=New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$')
         foreach ($id in $root.consumers) {
             $consumers=if ($id -ceq '*') { @($suites.Values) } else { @($suites[$id]) }
             foreach ($path in $paths) {
@@ -184,7 +225,10 @@ function Read-RcInputInventory {
                                     $suite.edges.Add(@{from=$input;to=$destination;project=$project;reason=$kind})
                                     if (-not $tree.ContainsKey($destination)) { $unresolved.Add("missing-input:$destination") }
                                     if ($kind -ceq 'Import') { $queue.Enqueue($destination) }
-                                    if ($kind -ceq 'ProjectReference') { $projects.Enqueue($destination) }
+                                    if ($kind -ceq 'ProjectReference') {
+                                        $projects.Enqueue($destination)
+                                        if ($destination.EndsWith('.csproj',[StringComparison]::Ordinal)) { [void]$script:RcReferencedProjects.Add($destination) }
+                                    }
                                 }
                             } catch { $unresolved.Add("unresolved-$($kind.ToLowerInvariant()):${input}:$($_.Exception.Message)") }
                         }
@@ -193,26 +237,8 @@ function Read-RcInputInventory {
             }
         }
     }
-    if ($fallbackRoots.Count) {
-        $claimed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach ($suite in $suites.Values) { foreach ($path in $suite.inputMap.Keys) { [void]$claimed.Add($path) } }
-        foreach ($fallback in $fallbackRoots) {
-            $root=$fallback.root
-            $pattern=$fallback.pattern
-            foreach ($id in $root.consumers) {
-                $consumers=if ($id -ceq '*') { @($suites.Values) } else { @($suites[$id]) }
-                foreach ($path in $paths) {
-                    if ($claimed.Contains($path) -or -not $pattern.IsMatch($path)) { continue }
-                    foreach ($suite in $consumers) { Add-RcInventoryInput $suite $tree $path $root.reason }
-                }
-            }
-        }
-    }
-    $owned=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($suite in $suites.Values) { foreach ($path in $suite.inputMap.Keys) { [void]$owned.Add($path) } }
-    foreach ($path in $paths) { if (-not $owned.Contains($path)) { $unresolved.Add("unknown-path:$path") } }
     # Positive index edges add records in BOTH immutable revisions, even for an unchanged path.
-    # Check unknown ownership first: an index hit must never rescue an unowned path from dirty-all.
+    # Unowned is computed after these edges, so an index hit owns the path instead of flagging it.
     $indexBroadened=$false
     if ($null -ne $DerivedIndex) {
         foreach ($edge in @($DerivedIndex.edges)) {
@@ -228,16 +254,32 @@ function Read-RcInputInventory {
             }
         }
     }
-    # Any unresolved closure broadens all suites. It can never become a negative dependency proof.
-    # -SkipUnresolvedBroadening is the census seam: the reader check must see ownership without that mask.
-    if ((-not $SkipUnresolvedBroadening) -and $unresolved.Count) { foreach ($suite in $suites.Values) { foreach ($path in $paths) { Add-RcInventoryInput $suite $tree $path 'unresolved-conservative-all-inputs' } } }
+    # Unresolved closure stays a flag. It does not copy every path onto every suite.
+    # -SkipUnresolvedBroadening remains so the census call site stays valid.
+    $null=$SkipUnresolvedBroadening
+    $ownedNow=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($suite in $suites.Values) { foreach ($ownedPath in $suite.inputMap.Keys) { [void]$ownedNow.Add($ownedPath) } }
+    $unowned=[Collections.Generic.List[object]]::new()
+    foreach ($path in $paths) {
+        if ($ownedNow.Contains($path) -or (Test-RcInputNoopPath $path)) { continue }
+        $hint='unknown'
+        if ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) {
+            $suiteProject=$false
+            foreach ($suite in $suites.Values) { if ([string]$suite.project -ceq $path) { $suiteProject=$true } }
+            if (-not $suiteProject -and -not $script:RcReferencedProjects.Contains($path)) { $hint='new-csproj' }
+        } elseif ($path.StartsWith('docs/',[StringComparison]::Ordinal)) { $hint='new-docs-folder' }
+        $unowned.Add([ordered]@{path=$path;hint=$hint;reason='unowned-path'})
+    }
+    $snapshotDecision=($unowned.Count -gt 0) -or ($unresolved.Count -gt 0)
     foreach ($suite in $suites.Values) {
         $suite.inputs=@(foreach ($path in (Get-TestSelectionSorted @($suite.inputMap.Keys))) { $suite.inputMap[$path] })
         $suite.Remove('inputMap')
     }
     return @{format='antiphon-rc-input-snapshot-v1';sha=$Sha;treeId=(Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${Sha}^{tree}")).Stdout.Trim()
         mapObjectId=$tree[$mapPath].objectId;indexBroadened=$indexBroadened;suites=@(foreach ($id in (Get-TestSelectionSorted @($suites.Keys))) { $suites[$id] })
-        unresolved=@(Get-TestSelectionSorted @($unresolved))}
+        unresolved=@(Get-TestSelectionSorted @($unresolved));unowned=@($unowned.ToArray())
+        needsOrchestratorDecision=([bool]$snapshotDecision)
+        creditBlockedBy=$(if ($snapshotDecision) { 'unowned-paths' } else { $null })}
 }
 
 function Get-RcInputManifest {
@@ -282,9 +324,21 @@ function Get-RcInputManifest {
             }
         }
     }
-    if ($unresolved.Count) { foreach ($id in $ids) { [void]$dirty.Add($id) } }
+    $unownedByPath=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($snap in @($old,$new)) {
+        foreach ($row in @($snap.unowned)) {
+            if ($null -eq $row) { continue }
+            $unownedPath=[string]$row.path
+            if ($unownedPath -and -not $unownedByPath.ContainsKey($unownedPath)) { $unownedByPath[$unownedPath]=$row }
+        }
+    }
+    $manifestUnowned=@(foreach ($unownedPath in (Get-TestSelectionSorted @($unownedByPath.Keys))) { $unownedByPath[$unownedPath] })
+    $sortedUnresolved=@(Get-TestSelectionSorted @($unresolved))
+    $cutDecision=($manifestUnowned.Count -gt 0) -or ($sortedUnresolved.Count -gt 0)
     return @{format='antiphon-rc-input-inventory-v1'; baselineSha=$BaselineSha; candidateSha=$CandidateSha
-        snapshots=@($old,$new);changes=$changes.ToArray();dirtySuites=@($dirty);unresolved=@(Get-TestSelectionSorted @($unresolved))
+        snapshots=@($old,$new);changes=$changes.ToArray();dirtySuites=@($dirty);unresolved=$sortedUnresolved
+        unowned=$manifestUnowned;needsOrchestratorDecision=([bool]$cutDecision)
+        creditBlockedBy=$(if ($cutDecision) { 'unowned-paths' } else { $null })
         index=@{version=$(if ($null -ne $DerivedIndex) { $DerivedIndex.version } else { $null });broadened=$broadened;authority='positive-only'}
         requiredActualReceipts=@('sdk-runtime-os-architecture','powershell-node-browser-native','configuration-environment',
             'resolved-package-graph-and-content','generated-fixture-recipes-and-outputs','immutable-images','discovery-case-manifest')
