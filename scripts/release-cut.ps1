@@ -51,6 +51,8 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'release-selection.ps1')
+# The candidate ref, the credit decision and the policy are compiled: this entry point runs under pwsh with the core.
+Assert-NightlyCoreAvailable 'release-cut'
 
 function Write-CutLine { param([string]$Message) Write-Host ('[release-cut] {0}' -f $Message) }
 
@@ -68,7 +70,7 @@ $record = [ordered]@{
     exitCode = 1
 }
 
-$wanted = Test-ReleaseGateCandidateRef -Ref $Ref
+$wanted = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($Ref, '')
 if ([string]::IsNullOrWhiteSpace($Ref) -or -not $wanted.Ok -or $wanted.Kind -ne 'long-lived') {
     if ([string]::IsNullOrWhiteSpace($Ref)) { $record.refusal = 'rc-ref-required' }
     elseif (-not $wanted.Ok) { $record.refusal = [string]$wanted.Reason }
@@ -102,7 +104,7 @@ if ([int]$cut.ExitCode -ne 0) {
     exit ([int]$record.exitCode)
 }
 
-$candidateRoot = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $record.candidateId
+$candidateRoot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $record.candidateId)
 $stateRoot = Join-Path $candidateRoot 'state'
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 

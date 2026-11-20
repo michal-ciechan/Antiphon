@@ -111,7 +111,7 @@ function Test-NightlyCompleteGreenPredicate {
     $want = ([string]$CreditKind).Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($want)) { $want = 'master-scheduled' }
     if ($script:ReleaseGateCreditKinds -notcontains $want) { return $false }
-    $verdict = Get-ReleaseGateCreditVerdict -State $State
+    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($State)
     if (-not $verdict.Ok) { return $false }
     return ([string]$verdict.CreditKind -eq $want)
 }
@@ -393,7 +393,7 @@ function Invoke-AntiphonNightlyRunCore {
         if ($Profile -eq 'rc') {
             # D-2: an RC must never be pointed at the master state root; its attempt,
             # green, monitor and receipt files all live under its own candidate root.
-            $candidate = Test-ReleaseGateCandidateRef -Ref $Ref -Sha $ExpectedSha
+            $candidate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($Ref, $ExpectedSha)
             if (-not $candidate.Ok) {
                 Write-Host ('REFUSED: rc profile needs an rc/YYYY-MM-DD ref or a legacy release/rc-<stamp> ({0}).' -f $candidate.Reason)
                 $result.Refusal = 'rc-ref'
@@ -401,7 +401,7 @@ function Invoke-AntiphonNightlyRunCore {
                 $result.ExitCode = 3
                 return [pscustomobject]$result
             }
-            if (-not (Test-ReleaseGateFullSha -Sha $ExpectedSha)) {
+            if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($ExpectedSha))) {
                 Write-Host 'REFUSED: rc profile needs -ExpectedSha pinned to the candidate full sha.'
                 $result.Refusal = 'rc-expected-sha'
                 $result.Phase = 'profile'
@@ -676,7 +676,7 @@ function Invoke-AntiphonNightlyRunCore {
                         '-RunId', $RunId,
                         '-ContinueRunId', $RunId,
                         '-ContinueParentPid', ([string]$PID),
-                        '-ContinueParentStartedAt', (ConvertTo-ReleaseGateUtc $shared.Record.processStartedAt).ToString('o')
+                        '-ContinueParentStartedAt', ([Antiphon.Nightly.ReleaseGateCredit]::RequiredUtc($shared.Record.processStartedAt)).ToString('o')
                     )
                     if ($SelectionAttemptPath) {
                         $pwshArgs += '-Repository'; $pwshArgs += [string]$Repository
@@ -928,14 +928,14 @@ function Invoke-AntiphonNightlyRunCore {
             # only thing that ever reaches <StateRoot>\last-complete-green.json; RC green
             # lands in the candidate's own store and never touches master readiness.
             [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'closure' -CheckoutRoot $CheckoutRoot -EvidenceRoot $rcEvidenceRoot -LogRoot $LogRoot -Sha ([string]$sha))
-            $verdict = Get-ReleaseGateCreditVerdict -State $stateObj
+            $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($stateObj)
             $creditKind = [string]$verdict.CreditKind
             $result.CreditKind = $creditKind
             $stateObj.creditKind = $creditKind
             if ($creditKind -eq 'master-scheduled') {
                 Write-NightlyRunState -Path $paths.LastGreen -State $stateObj -AllowFailure | Out-Null
             } elseif ($creditKind -eq 'rc-release') {
-                $credit = Get-ReleaseGateStatePaths -CreditKind $creditKind -StateRoot $StateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+                $credit = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths($creditKind, $StateRoot, $ReleaseRoot, $CandidateId)
                 New-Item -ItemType Directory -Path $credit.Root -Force | Out-Null
                 Write-NightlyRunState -Path $credit.GreenPath -State $stateObj -AllowFailure | Out-Null
                 $result.GreenPath = $credit.GreenPath

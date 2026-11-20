@@ -129,6 +129,8 @@ $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'release-gate.ps1')
 . (Join-Path $lib 'release-selection.ps1')
 . (Join-Path $lib 'nightly-run-impl.ps1')
+# The credit decision and the policy are compiled: this entry point runs under pwsh with the core.
+Assert-NightlyCoreAvailable 'nightly-run'
 
 $invoke = @{
     Suites = $Suites

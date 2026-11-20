@@ -258,7 +258,7 @@ function New-C599RcGreen {
       complete-green, all agreeing on the same candidate/SHA/policy hash.
     #>
     param([string]$ReleaseRoot, [string]$Sha, [string]$CandidateId, [string]$Ref, [string]$PolicyHash = 'policy-1')
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+    $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $CandidateId)
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     Write-NightlyAtomicJson -Path (Join-Path $root 'candidate.json') -Object ([ordered]@{
         schemaVersion = 1; candidateId = $CandidateId; ref = $Ref; sha = $Sha
@@ -354,7 +354,7 @@ function Get-C599Discovery {
 
 function Get-C599AuthorityDir {
     param($Fx)
-    return ([Antiphon.Nightly.ReleaseAuthority]::Dir((Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId)))
+    return ([Antiphon.Nightly.ReleaseAuthority]::Dir(([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($Fx.ReleaseRoot, $CandidateId))))
 }
 
 function Update-C599Json {
@@ -408,7 +408,7 @@ function New-C599Authority {
       the production functions, then lay down one real TRX per frozen chunk.
     #>
     param([string]$ReleaseRoot, [string]$Checkout, [string]$Sha, [string]$Repository = 'michal-ciechan/Antiphon')
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+    $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $CandidateId)
     $auth = [Antiphon.Nightly.ReleaseAuthority]::Freeze($Checkout, $root, $Sha, $Repository, $CandidateId, $CandidateRef, $script:C599IntentId, $script:C599ReleaseCardId,
         ([datetime]'2026-09-23T08:30:30Z'), $here)
     $discovery = Get-C599Discovery
@@ -874,7 +874,7 @@ function Test-C599_CreditIdentity {
     foreach ($p in $profiles) {
         foreach ($t in $triggers) {
             foreach ($r in $refs) {
-                $kind = Get-ReleaseGateCreditKind -Profile $p -Trigger $t -Ref $r
+                $kind = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind($p, $t, $r)
                 $expected = ''
                 if ($p -eq 'nightly' -and $t -eq 'scheduled' -and ($r -eq 'master' -or $r -eq 'origin/master')) { $expected = 'master-scheduled' }
                 if ($p -eq 'rc' -and $t -eq 'rc' -and $r -eq $CandidateRef) { $expected = 'rc-release' }
@@ -893,60 +893,60 @@ function Test-C599_CreditIdentity {
         @('rc', '', $CandidateRef),
         @('nightly', 'feature', 'master')
     )) {
-        $kind = Get-ReleaseGateCreditKind -Profile $row[0] -Trigger $row[1] -Ref $row[2]
+        $kind = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind($row[0], $row[1], $row[2])
         Assert-C487 -Cond ([string]::IsNullOrWhiteSpace([string]$kind)) -Name ('C599 CreditIdentity malformed [{0}/{1}/{2}] earns nothing' -f $row[0], $row[1], $row[2]) -Detail ('got=' + $kind)
     }
     # An absent profile is the pre-CARD-0599 master lane, unchanged.
-    $legacy = Get-ReleaseGateCreditKind -Profile '' -Trigger 'scheduled' -Ref 'master'
+    $legacy = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('', 'scheduled', 'master')
     Assert-C487 -Cond ([string]$legacy -eq 'master-scheduled') -Name 'C599 CreditIdentity absent profile is still the master lane' -Detail $legacy
     # The refs/heads/ prefix is accepted for a candidate but not for master.
-    $prefixed = Get-ReleaseGateCreditKind -Profile 'rc' -Trigger 'rc' -Ref ('refs/heads/' + $CandidateRef)
+    $prefixed = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('rc', 'rc', ('refs/heads/' + $CandidateRef))
     Assert-C487 -Cond ([string]$prefixed -eq 'rc-release') -Name 'C599 CreditIdentity refs/heads candidate ref is accepted' -Detail $prefixed
 }
 
 function Test-C599_CreditVerdicts {
     # One invalid field at a time against a valid control, per credit kind.
     $master = New-C599State
-    $v = Get-ReleaseGateCreditVerdict -State $master
+    $v = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($master)
     Assert-C487 -Cond ([string]$v.CreditKind -eq 'master-scheduled') -Name 'C599 CreditVerdicts control master green earns master credit' -Detail (@($v.Reasons) -join ';')
     Assert-C487 -Cond (Test-NightlyCompleteGreenPredicate -State $master) -Name 'C599 CreditVerdicts predicate default asks the master question'
     Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $master -CreditKind 'rc-release')) -Name 'C599 CreditVerdicts master green never earns release credit'
 
     $rc = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha $ShaB -Candidate $CandidateId
-    $vr = Get-ReleaseGateCreditVerdict -State $rc
+    $vr = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($rc)
     Assert-C487 -Cond ([string]$vr.CreditKind -eq 'rc-release') -Name 'C599 CreditVerdicts control rc green earns release credit' -Detail (@($vr.Reasons) -join ';')
     Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $rc)) -Name 'C599 CreditVerdicts rc green never earns master credit'
 
     foreach ($field in @('coverageComplete', 'testsPassed', 'reportDelivered')) {
         $bad = New-C599State
         $bad.$field = $false
-        Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $bad).CreditKind -eq '') -Name ('C599 CreditVerdicts {0} false earns nothing' -f $field)
+        Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($bad)).CreditKind -eq '') -Name ('C599 CreditVerdicts {0} false earns nothing' -f $field)
         $str = New-C599State
         $str.$field = 'true'
-        $sv = Get-ReleaseGateCreditVerdict -State $str
+        $sv = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($str)
         Assert-C487 -Cond ([string]$sv.CreditKind -eq '') -Name ('C599 CreditVerdicts {0} as the STRING "true" earns nothing' -f $field) -Detail (@($sv.Reasons) -join ';')
         Assert-C487 -Cond ((@($sv.Reasons) -join ';') -match ('not-true-boolean:' + $field)) -Name ('C599 CreditVerdicts {0} string is named as not-true-boolean' -f $field) -Detail (@($sv.Reasons) -join ';')
     }
 
     $nonZero = New-C599State -ExitCode 1
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $nonZero).CreditKind -eq '') -Name 'C599 CreditVerdicts non-zero exit earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($nonZero)).CreditKind -eq '') -Name 'C599 CreditVerdicts non-zero exit earns nothing'
     $noExit = New-C599State
     $noExit.exitCode = $null
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $noExit).CreditKind -eq '') -Name 'C599 CreditVerdicts missing exitCode earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noExit)).CreditKind -eq '') -Name 'C599 CreditVerdicts missing exitCode earns nothing'
     $noRun = New-C599State -RunId ''
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $noRun).CreditKind -eq '') -Name 'C599 CreditVerdicts missing runId earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noRun)).CreditKind -eq '') -Name 'C599 CreditVerdicts missing runId earns nothing'
     $noPolicy = New-C599State -PolicyHash ''
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $noPolicy).CreditKind -eq '') -Name 'C599 CreditVerdicts missing policyHash earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noPolicy)).CreditKind -eq '') -Name 'C599 CreditVerdicts missing policyHash earns nothing'
 
     $shaMismatch = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha $ShaC -Candidate $CandidateId
-    $sm = Get-ReleaseGateCreditVerdict -State $shaMismatch
+    $sm = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($shaMismatch)
     Assert-C487 -Cond (([string]$sm.CreditKind -eq '') -and ((@($sm.Reasons) -join ';') -match 'rc-sha-mismatch')) -Name 'C599 CreditVerdicts rc sha mismatch earns nothing' -Detail (@($sm.Reasons) -join ';')
     $shortSha = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha 'bbbbbbb' -ExpectedSha 'bbbbbbb' -Candidate $CandidateId
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $shortSha).CreditKind -eq '') -Name 'C599 CreditVerdicts rc short sha earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($shortSha)).CreditKind -eq '') -Name 'C599 CreditVerdicts rc short sha earns nothing'
     $noCandidate = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha $ShaB -Candidate ''
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $noCandidate).CreditKind -eq '') -Name 'C599 CreditVerdicts rc without a candidate id earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noCandidate)).CreditKind -eq '') -Name 'C599 CreditVerdicts rc without a candidate id earns nothing'
     $noExpected = New-C599State -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef -Sha $ShaB -ExpectedSha '' -Candidate $CandidateId
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $noExpected).CreditKind -eq '') -Name 'C599 CreditVerdicts rc without a pinned expectedSha earns nothing'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($noExpected)).CreditKind -eq '') -Name 'C599 CreditVerdicts rc without a pinned expectedSha earns nothing'
 
     Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $master -CreditKind 'invented-kind')) -Name 'C599 CreditVerdicts an invented credit kind earns nothing'
     Assert-C487 -Cond (-not (Test-NightlyCompleteGreenPredicate -State $null)) -Name 'C599 CreditVerdicts a null state earns nothing'
@@ -1287,15 +1287,15 @@ function Test-C599_ReportLane {
     $root = New-C599Root
     $state = Join-Path $root 'state'
     $release = Join-Path $root 'releases'
-    $rcPaths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot $state -ReleaseRoot $release -CandidateId $CandidateId
-    $masterPaths = Get-ReleaseGateStatePaths -CreditKind 'master-scheduled' -StateRoot $state
+    $rcPaths = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths('rc-release', $state, $release, $CandidateId)
+    $masterPaths = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths('master-scheduled', $state, '', '')
     Assert-C487 -Cond ($rcPaths.GreenPath -ne $masterPaths.GreenPath) -Name 'C599 ReportLane the two lanes write different green files' -Detail ($rcPaths.GreenPath + ' vs ' + $masterPaths.GreenPath)
     Assert-C487 -Cond ($masterPaths.GreenPath -eq (Join-Path $state 'last-complete-green.json')) -Name 'C599 ReportLane master green path is unchanged' -Detail $masterPaths.GreenPath
     Assert-C487 -Cond ($rcPaths.GreenPath -eq (Join-Path (Join-Path (Join-Path $release 'candidates') $CandidateId) 'complete-green.json')) -Name 'C599 ReportLane rc green lands under its candidate root' -Detail $rcPaths.GreenPath
     $missing = ''
-    try { [void](Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot 'x' -CandidateId '') } catch { $missing = $_.Exception.Message }
+    try { [void]([Antiphon.Nightly.ReleaseGateCredit]::StatePaths('rc-release', 'x', '', '')) } catch { $missing = $_.Exception.Message }
     Assert-C487 -Cond ($missing -match 'candidate id') -Name 'C599 ReportLane rc credit without a candidate id throws' -Detail $missing
-    Assert-C487 -Cond ([string](Get-ReleaseGateCreditVerdict -State $rcGreen).CreditKind -ne [string](Get-ReleaseGateCreditVerdict -State $masterGreen).CreditKind) -Name 'C599 ReportLane the two lanes never share a credit kind'
+    Assert-C487 -Cond ([string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($rcGreen)).CreditKind -ne [string]([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($masterGreen)).CreditKind) -Name 'C599 ReportLane the two lanes never share a credit kind'
 }
 
 # ======================================================= V-6 publication lane ===
@@ -1451,7 +1451,7 @@ function Test-C599_CutRecovery {
             Assert-C487 -Cond ([int]$r1.ExitCode -eq 0 -and [bool]$r1.Pushed) -Name 'C599 CutRecovery a lost response is reconciled from the remote' -Detail ([string]$r1.Refusal)
             Assert-C487 -Cond ($observed -eq $ShaB) -Name 'C599 CutRecovery the remote holds exactly the pinned sha' -Detail $observed
         }
-        Assert-C487 -Cond (Test-Path -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $releaseRoot -CandidateId $CandidateId) 'candidate.json')) -Name ('C599 CutRecovery {0} wrote the journal before the remote write' -f $cut)
+        Assert-C487 -Cond (Test-Path -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($releaseRoot, $CandidateId)) 'candidate.json')) -Name ('C599 CutRecovery {0} wrote the journal before the remote write' -f $cut)
 
         # Restart from disk: the same identity resumes, never a second candidate.
         Set-C599GitFailure -Seams $git -Subcommand 'push' -Clear
@@ -1472,7 +1472,7 @@ function Test-C599_CutRecovery {
 
 function Test-C599_PublicationGate {
     $fx = New-C599PublishFx
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $greenPath = Join-Path $root 'complete-green.json'
     $good = Get-Content -LiteralPath $greenPath -Raw
 
@@ -1491,7 +1491,7 @@ function Test-C599_PublicationGate {
         @('seamed', $true, 'seam-driven run')
     )) {
         $fx2 = New-C599PublishFx
-        $p2 = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx2.ReleaseRoot -CandidateId $CandidateId) 'complete-green.json'
+        $p2 = Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx2.ReleaseRoot, $CandidateId)) 'complete-green.json'
         $obj = Get-Content -LiteralPath $p2 -Raw | ConvertFrom-Json
         $obj | Add-Member -NotePropertyName $row[0] -NotePropertyValue $row[1] -Force
         $obj | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $p2 -Encoding UTF8
@@ -1525,7 +1525,7 @@ function Test-C599_PublicationGate {
 
     # Missing evidence refuses before any remote write.
     $fx7 = New-C599PublishFx
-    Remove-Item -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx7.ReleaseRoot -CandidateId $CandidateId) 'complete-green.json') -Force
+    Remove-Item -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx7.ReleaseRoot, $CandidateId)) 'complete-green.json') -Force
     $noEvidence = Invoke-C599Publish -Fx $fx7
     Assert-C487 -Cond ([string]$noEvidence.Refusal -eq 'missing-evidence') -Name 'C599 PublicationGate missing rc green refuses' -Detail ([string]$noEvidence.Refusal)
     Assert-C487 -Cond ($null -eq (Get-C599Release -Gh $fx7.Gh -Tag 'v2026.09.23.1')) -Name 'C599 PublicationGate a refused publication created no release'
@@ -1609,7 +1609,7 @@ function Test-C599_NotesCredentialScan {
     # Exercise the real generator with the Windows exclusion list, even on Linux.
     $fx = New-C599PublishFx
     [void](Invoke-C599Publish -Fx $fx)
-    $notes = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId) 'release-notes.md') -Raw
+    $notes = Get-Content -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)) 'release-notes.md') -Raw
     $findings = @(Get-C599NotesCredentialFindings -Notes $notes)
     Assert-C487 -Cond ($notes.Contains('RefreshGithubTokenRemoteCommandTests')) -Name 'C599 NotesCredentialScan generator preserves the Windows exclusion class'
     Assert-C487 -Cond ($findings.Count -eq 0) -Name 'C599 NotesCredentialScan generated Windows exclusions are not credentials' -Detail (Format-C599NotesCredentialFindings $findings)
@@ -1654,7 +1654,7 @@ function Test-C599_AssetRecovery {
             $final = Get-C599Release -Gh $fx.Gh -Tag ([string]$r2.Tag)
             $assets = @($final.assets)
             Assert-C487 -Cond ($assets -contains 'release-manifest.json' -and $assets -contains 'verification-summary.json') -Name ('C599 AssetRecovery {0} {1} both assets are present after recovery' -f $asset, $cut) -Detail ($assets -join ',')
-            $manifestPath = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId) 'release-manifest.json'
+            $manifestPath = Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)) 'release-manifest.json'
             $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
             Assert-C487 -Cond ([string]$manifest.sha -eq $fx.Head) -Name ('C599 AssetRecovery {0} {1} the manifest is bound to the tested sha' -f $asset, $cut) -Detail ([string]$manifest.sha)
             Assert-C487 -Cond ([string]$manifest.tag -eq [string]$r2.Tag) -Name ('C599 AssetRecovery {0} {1} the manifest names the published tag' -f $asset, $cut) -Detail ([string]$manifest.tag)
@@ -1663,7 +1663,7 @@ function Test-C599_AssetRecovery {
     # A notes file exists and never leaks a credential-shaped value.
     $fx2 = New-C599PublishFx
     $r = Invoke-C599Publish -Fx $fx2
-    $notes = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx2.ReleaseRoot -CandidateId $CandidateId) 'release-notes.md') -Raw
+    $notes = Get-Content -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx2.ReleaseRoot, $CandidateId)) 'release-notes.md') -Raw
     Assert-C487 -Cond ($notes -match ([regex]::Escape([string]$r.Tag))) -Name 'C599 AssetRecovery notes name the tag' -Detail ([string]$r.Tag)
     Assert-C487 -Cond ($notes -match 'no earlier release') -Name 'C599 AssetRecovery the first release says there is no earlier release'
     $findings = @(Get-C599NotesCredentialFindings -Notes $notes)
@@ -2182,17 +2182,17 @@ function Test-C599B_PinnedPolicy {
     $rel = Get-C599Release -Gh $fx.Gh -Tag ([string]$ok.Tag)
     Assert-C487 -Cond ([int]$ok.ExitCode -eq 0 -and [bool]$ok.Published) -Name 'C599 V-18: a valid eight-suite pinned authority publishes' -Detail ([string]$ok.Refusal)
     Assert-C487 -Cond ($null -ne $rel -and -not [bool]$rel.isDraft) -Name 'C599 V-18: the recipient holds a published non-draft release'
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $manifest = Get-Content -LiteralPath (Join-Path $root 'release-manifest.json') -Raw | ConvertFrom-Json
     $ids = @($manifest.suites | ForEach-Object { [string]$_.id })
     Assert-C487 -Cond ($ids.Count -eq 8 -and ([string]$manifest.sha -eq $fx.Head)) -Name 'C599 V-18: the manifest names all eight pinned suites at the tested sha' -Detail ($ids -join ',')
 
     # A shrunken summary alone confers nothing: it is not read, the eight stay required.
     $fxS = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
-    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fxS.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
+    Update-C599Json -Path (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fxS.ReleaseRoot, $CandidateId)) 'summary.json') -Mutate {
         param($s) $s.requiredSuites = @('antiphon'); $s.suites = @($s.suites | Where-Object { [string]$_.id -eq 'antiphon' }) }
     $shrunk = Invoke-C599Publish -Fx $fxS
-    $sm = Get-Content -LiteralPath (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fxS.ReleaseRoot -CandidateId $CandidateId) 'release-manifest.json') -Raw | ConvertFrom-Json
+    $sm = Get-Content -LiteralPath (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fxS.ReleaseRoot, $CandidateId)) 'release-manifest.json') -Raw | ConvertFrom-Json
     Assert-C487 -Cond ([bool]$shrunk.Published -and @($sm.suites).Count -eq 8) -Name 'C599 V-18: a shrunken summary is not a source of required suites' -Detail ([string]$shrunk.Refusal)
 
     # G-224: a seven-suite report (plan, ledger and summary agree on seven) cannot
@@ -2200,7 +2200,7 @@ function Test-C599B_PinnedPolicy {
     $fx7 = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     Update-C599Ledger -Fx $fx7 -Plan { param($p) $p.suites = @($p.suites | Where-Object { [string]$_.id -ne 'e2e' }) } `
         -Ledger { param($l) $l.chunks = @($l.chunks | Where-Object { [string]$_.suite -ne 'e2e' }) }
-    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx7.ReleaseRoot -CandidateId $CandidateId) 'summary.json') -Mutate {
+    Update-C599Json -Path (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx7.ReleaseRoot, $CandidateId)) 'summary.json') -Mutate {
         param($s) $s.requiredSuites = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts') }
     $seven = Invoke-C599Publish -Fx $fx7
     Assert-C487 -Cond (([string]$seven.Refusal -match 'required-suite-missing:e2e') -and (Test-C599NoRemoteWrite -Fx $fx7)) -Name 'C599 G-224: seven-suite report cannot publish eight-suite policy' -Detail ([string]$seven.Refusal)
@@ -2328,13 +2328,13 @@ function Get-C599AGate {
     # publish-release.ps1's pre-write decision, with the remote answer read from the recipient.
     param($Fx)
     $gateWatch = [Diagnostics.Stopwatch]::StartNew()
-    $paths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot '' -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
+    $paths = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths('rc-release', '', $Fx.ReleaseRoot, $CandidateId)
     $green = Get-Content -LiteralPath $paths.GreenPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $remoteSha = Read-C599Remote -Seams $Fx.Git -Ref $CandidateRef
     $authority = [Antiphon.Nightly.ReleaseAuthority]::Check($paths.Root, $Fx.Checkout, $green, $candidate, 'michal-ciechan/Antiphon', $script:C599Now, $Fx.CardApi.Url, $here)
     $gate = Test-ReleaseGatePublicationGate -Green $green -Candidate $candidate -RemoteSha $remoteSha -Authority $authority
-    $verdict = Get-ReleaseGateCreditVerdict -State $green
+    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($green)
     $script:C1731Timing.gateSeconds += $gateWatch.Elapsed.TotalSeconds
     return [pscustomobject]@{ Ok = [bool]$gate.Ok; Reasons = @(@($gate.Reasons) + @($verdict.Reasons) | ForEach-Object { [string]$_ }); Suites = @($authority.Suites) }
 }
@@ -2441,7 +2441,7 @@ function Update-C599ARosterRow {
 
 function Update-C599AGreen {
     param($Fx, [scriptblock]$Mutate)
-    Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId) 'complete-green.json') -Mutate $Mutate
+    Update-C599Json -Path (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($Fx.ReleaseRoot, $CandidateId)) 'complete-green.json') -Mutate $Mutate
 }
 
 function Move-C599AEvidenceTime {
@@ -2505,7 +2505,7 @@ function Set-C599APinnedPolicy {
     $pinSha = Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('rev-parse', 'HEAD')
     $pinHash = ''
     try { $pinHash = [Antiphon.Nightly.NightlyPolicy]::HashText([System.Text.Encoding]::UTF8.GetString($PolicyBytes)) } catch { $pinHash = ('0' * 64) }
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($Fx.ReleaseRoot, $CandidateId)
     [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $Fx) 'policy.json'), $PolicyBytes)
     Update-C599Json -Path (Join-Path $croot 'candidate.json') -Mutate { param($c) $c.sha = $pinSha }
     Update-C599AGreen -Fx $Fx -Mutate { param($g) $g.sha = $pinSha; $g.expectedSha = $pinSha; $g.policyHash = $pinHash }
@@ -2596,7 +2596,7 @@ function Test-C599A_PinnedPolicy {
     # rows). Summary/report and working tree never decide.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
     $control = Get-C599AGate -Fx $fx
     Assert-C487 -Cond ($control.Ok -and @($control.Suites).Count -eq 8) -Name 'C599 V-12: the valid eight-suite control passes the publication gate' -Detail (@($control.Reasons) -join ' ')
@@ -2667,7 +2667,7 @@ function Test-C599A_PinnedPolicySchema {
     # publisher controls): the pinned blob's own shape, and what a publication writes.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $eight = @('antiphon', 'session-runner', 'pty-host', 'agents-pty', 'messaging', 'client', 'scripts', 'e2e')
     $sevenBytes = New-C599APolicyBytes -Edit { param($o) $o.profiles.rc.requiredSuites = @($eight | Where-Object { $_ -ne 'e2e' }) }
 
@@ -2902,7 +2902,7 @@ function Test-C599A_ExecutionLedger {
     # native exits and zero executions.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
     $chunks = @()
     foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
@@ -3039,7 +3039,7 @@ function Test-C599A_ExecutionLedgerChunks {
     # exact frozen chunk set, disjoint UID membership and every required expanded UID.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
     $chunks = @()
     foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
@@ -3119,7 +3119,7 @@ function Test-C599A_ExecutionLedgerCounts {
     # required sets, counts recomputed from the TRX and pinned exclusions.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
     $chunks = @()
     foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
@@ -3203,7 +3203,7 @@ function Test-C599A_ExecutionLedgerJoins {
     # (G-296..G-299), digests (G-300) and timestamps (G-301).
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
     $chunks = @()
     foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
@@ -3320,7 +3320,7 @@ function Test-C599A_ExecutionLedgerMarkers {
     # control publication.
     $fx = New-C599PublishFx -PolicyBytes (Get-C599ABasePolicyBytes)
     $snap = Save-C599ASnapshot -Fx $fx
-    $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $CandidateId
+    $croot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $CandidateId)
     $planDoc = Get-Content -LiteralPath (Join-Path (Get-C599AuthorityDir -Fx $fx) 'execution-plan.json') -Raw | ConvertFrom-Json
     $chunks = @()
     foreach ($s in @($planDoc.suites | Where-Object { [string]$_.kind -eq 'native' })) {
@@ -3717,29 +3717,29 @@ function Test-C599A_PublisherTestMode {
 function Test-C1311_LongLivedRcRef {
     # D-1/D-2: rc/YYYY-MM-DD is a candidate. Its id is one per tested SHA.
     # A legacy stamp still parses and still earns rc-release.
-    $accepted = Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-15'
+    $accepted = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-15', '')
     Assert-C487 -Cond ([bool]$accepted.Ok -and [string]$accepted.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef rc/2026-10-15 is accepted' -Detail ([string]$accepted.Reason)
 
-    $prefixed = Test-ReleaseGateCandidateRef -Ref 'refs/heads/rc/2026-10-15'
+    $prefixed = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('refs/heads/rc/2026-10-15', '')
     Assert-C487 -Cond ([bool]$prefixed.Ok -and [string]$prefixed.Ref -eq 'rc/2026-10-15') -Name 'C1311 LongLivedRcRef refs/heads/rc/2026-10-15 normalizes to rc/2026-10-15' -Detail ([string]$prefixed.Ref)
 
     $prefix = $ShaB.Substring(0, 12)
-    $withSha = Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-15' -Sha $ShaB
+    $withSha = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-15', $ShaB)
     Assert-C487 -Cond ([string]$withSha.CandidateId -eq ('rc-2026-10-15-' + $prefix)) -Name ('C1311 LongLivedRcRef candidate id is rc-2026-10-15-' + $prefix) -Detail ([string]$withSha.CandidateId)
 
-    $badDate = Test-ReleaseGateCandidateRef -Ref 'rc/2026-13-01'
+    $badDate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-13-01', '')
     Assert-C487 -Cond ((-not [bool]$badDate.Ok) -and [string]$badDate.Reason -eq 'ref-date') -Name 'C1311 LongLivedRcRef rc/2026-13-01 refuses ref-date' -Detail ([string]$badDate.Reason)
 
-    $badShape = Test-ReleaseGateCandidateRef -Ref 'rc/20261015'
+    $badShape = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/20261015', '')
     Assert-C487 -Cond ((-not [bool]$badShape.Ok) -and [string]$badShape.Reason -eq 'ref-shape') -Name 'C1311 LongLivedRcRef rc/20261015 refuses ref-shape' -Detail ([string]$badShape.Reason)
 
-    $stamp = Test-ReleaseGateCandidateRef -Ref $CandidateRef
+    $stamp = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($CandidateRef, '')
     Assert-C487 -Cond ([bool]$stamp.Ok -and [string]$stamp.CandidateId -eq $CandidateId -and [string]$stamp.Ref -eq $CandidateRef) -Name 'C1311 LongLivedRcRef legacy stamp release/rc-20260923T083000Z is accepted' -Detail ([string]$stamp.Reason)
 
-    $longCredit = Get-ReleaseGateCreditKind -Profile 'rc' -Trigger 'rc' -Ref 'rc/2026-10-15'
+    $longCredit = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('rc', 'rc', 'rc/2026-10-15')
     Assert-C487 -Cond ([string]$longCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/rc/2026-10-15 earns rc-release' -Detail ([string]$longCredit)
 
-    $stampCredit = Get-ReleaseGateCreditKind -Profile 'rc' -Trigger 'rc' -Ref $CandidateRef
+    $stampCredit = [Antiphon.Nightly.ReleaseGateCredit]::CreditKind('rc', 'rc', $CandidateRef)
     Assert-C487 -Cond ([string]$stampCredit -eq 'rc-release') -Name 'C1311 LongLivedRcRef credit rc/rc/release/rc-20260923T083000Z earns rc-release' -Detail ([string]$stampCredit)
 
     $omitRoot = New-C599Root
@@ -3847,7 +3847,7 @@ function Invoke-C1311Promote {
     $credit = $CreditSha
     if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $RemotePeel }
     if ([string]::IsNullOrWhiteSpace($credit)) { $credit = $HeadSha }
-    if (-not [string]::IsNullOrWhiteSpace($CandidateId) -and (Test-ReleaseGateFullSha -Sha $credit)) {
+    if (-not [string]::IsNullOrWhiteSpace($CandidateId) -and ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($credit))) {
         [void](New-C599RcGreen -ReleaseRoot $release -Sha $credit -CandidateId $CandidateId -Ref 'rc/2026-10-15' -PolicyHash $policyHash)
     }
     if (-not $checkout) { $checkout = New-C599OwnedReleaseClone -Root $root }
@@ -4061,7 +4061,7 @@ function Test-C1311_MovingTipAuthority {
     $secondSha = $ShaC
     $firstId = [string]$fx.CandidateId
     $secondId = 'rc-2026-10-15-' + $secondSha.Substring(0, 12)
-    $firstRoot = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $firstId
+    $firstRoot = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $firstId)
     $authPath = Join-Path ([Antiphon.Nightly.ReleaseAuthority]::Dir($firstRoot)) 'authority.json'
     $published = Invoke-C599Publish -Fx $fx -CandidateId $firstId
     $firstTag = [string]$published.Tag
@@ -4262,7 +4262,7 @@ function New-C1339FixtureSeed {
     # Keep checkout at A for publication; other commits remain real and addressable.
     [void](Invoke-C1339LocalGit $fx @('checkout', '--detach', '-q', $fx.Head))
     if (-not $Stamp) {
-        Update-C599Json -Path (Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId) 'candidate.json') -Mutate { param($c) $c.cutUtc = '2026-10-15T00:00:00Z' }
+        Update-C599Json -Path (Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $fx.CandidateId)) 'candidate.json') -Mutate { param($c) $c.cutUtc = '2026-10-15T00:00:00Z' }
     }
     $adapter = Join-Path $here 'fixtures/c1339-release-git.ps1'
     Add-Content -LiteralPath $fx.Gh.Path -Encoding ASCII -Value @"
@@ -4314,7 +4314,7 @@ function Get-C1339Peel {
     param($Fx, [string]$Tag)
     # show-ref --verify is exact; rev-parse of a ref alone also performs DWIM.
     $object = Invoke-C1339LocalGit $Fx @('show-ref', '--verify', '--hash', ('refs/tags/' + $Tag)) -Remote -AllowAbsent
-    if (-not (Test-ReleaseGateFullSha $object)) { return '' }
+    if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($object))) { return '' }
     Invoke-C1339LocalGit $Fx @('rev-parse', '--verify', ($object + '^{}')) -Remote -AllowAbsent
 }
 
@@ -4644,7 +4644,7 @@ function Test-C1339_RemoteTagAllocation {
     $fx = New-C1339AllocationFixture
     Add-C1339Tag $fx 'v2026.10.15.1' $fx.B
     $journal = Join-Path $fx.ReleaseRoot 'publications.json'
-    $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId
+    $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $fx.CandidateId)
     $pubAuthority = Join-Path ([Antiphon.Nightly.ReleaseAuthority]::Dir($root)) 'publication-authority.json'
     $preview = Invoke-C1339Publish $fx -WhatIf
     $emptyPreview = $preview.ExitCode -eq 0 -and $preview.Tag -ceq 'v2026.10.15.2-rc.1' -and -not (Test-Path -LiteralPath $journal)
@@ -4727,7 +4727,7 @@ function Set-C1339Candidate {
 function Test-C1339_AllocationUtcDay {
     $fx = New-C1339Fixture
     Set-C1339Clock $fx '2026-10-20T01:59:59+02:00' '2026-10-20T00:00:01Z'
-    $candidatePath = Join-Path (Get-ReleaseGateCandidateRoot -ReleaseRoot $fx.ReleaseRoot -CandidateId $fx.CandidateId) 'candidate.json'
+    $candidatePath = Join-Path ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($fx.ReleaseRoot, $fx.CandidateId)) 'candidate.json'
     $candidateBefore = [IO.File]::ReadAllText($candidatePath)
     $preview = Invoke-C1339Publish $fx -WhatIf
     $previewClean = -not (Test-Path (Join-Path $fx.ReleaseRoot 'publications.json'))

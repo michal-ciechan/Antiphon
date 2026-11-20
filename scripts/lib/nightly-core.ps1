@@ -8,10 +8,10 @@
 # between source versions, so a changed source rebuilds warm (no restore, only the changed project). Windows
 # PowerShell 5.1 cannot load it, a copy of the scripts without the projects or a machine without the dotnet
 # SDK cannot build it, and ANTIPHON_NIGHTLY_CORE=off turns it off. Ported code then refuses
-# (Assert-NightlyCoreAvailable: nightly-core-required). Only what such a process still runs keeps a PowerShell
-# path that returns the same values: nightly-run.ps1 and release-cut.ps1 under Windows PowerShell 5.1 and the
-# release selection worker in a script copy (ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256,
-# Get-NightlyParentProcess, Read-NightlyJsonFile).
+# (Assert-NightlyCoreAvailable: nightly-core-required). The entry points (nightly-run.ps1, release-cut.ps1,
+# release-candidate.ps1, publish-release.ps1, promote-release.ps1) run under pwsh and require the core. Only the
+# release selection worker in a script copy keeps a PowerShell path that returns the same values
+# (ConvertTo-NightlyCanonicalJson, Get-NightlyFileSha256, Get-NightlyParentProcess, Read-NightlyJsonFile).
 
 function Get-NightlyCoreBuildIdentity {
     $projects = @(

@@ -340,6 +340,32 @@ remote resource), say so and stop. Do not recommend creating it; list it as an o
 
 ---
 
+## 2026-11-20 - Move the 5.1-reachable credit checks too; run the entry scripts on pwsh
+
+**Context:** Porting `release-gate.ps1` to C#. The credit verdict (D-2), the candidate-ref check (D-3), the
+full-sha check, the candidate root and state paths and UTC conversion are called by `nightly-run-impl.ps1` and
+`release-cut.ps1`. The core loader's notes (`nightly-core.ps1`, `nightly-common.ps1`) name those two scripts as
+Windows PowerShell 5.1 hosts.
+
+**What the agent did:** Moved the tag, allocation and remote-ref readers to C#, and reported that cluster as "kept
+in PowerShell on purpose" because 5.1 cannot load the core.
+
+**Why the agent picked it:** The 2026-11-13 rule keeps a PowerShell path for what a 5.1 process still runs, and
+the loader comment listed `nightly-run.ps1` and `release-cut.ps1` as such processes.
+
+**What the owner preferred:** "Let's move those intocpowershell as wl", read as: move them into C# as well, and run
+`nightly-run.ps1` and `release-cut.ps1` under pwsh. Every real launcher already starts them with pwsh: both
+Windmill jobs since the 2026-11-19 switch, `scripts/qualification/launch-rc.ps1` and the documented commands.
+
+**Principle:** A carve-out kept for a legacy host is a bridge. When the launchers have already moved, the
+carve-out is stale. Check what actually launches a script before preserving a path for a host it no longer
+runs on.
+
+**Candidate guidance:** "Before keeping code in PowerShell for a Windows PowerShell 5.1 host, check every launcher.
+If they all use pwsh, port the code and make the entry script load and require the core."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the

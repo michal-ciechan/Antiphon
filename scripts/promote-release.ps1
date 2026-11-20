@@ -109,7 +109,7 @@ function Invoke-AntiphonPromoteRelease {
     }
     $result.Sha = $peeled
 
-    $paths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot '' -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+    $paths = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths('rc-release', '', $ReleaseRoot, $CandidateId)
     foreach ($needed in @($paths.GreenPath, $paths.JournalPath)) {
         if (-not (Test-Path -LiteralPath $needed)) {
             Write-PromoteLine ('REFUSED: missing {0}.' -f $needed)
@@ -118,7 +118,7 @@ function Invoke-AntiphonPromoteRelease {
     }
     $green = Get-Content -LiteralPath $paths.GreenPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $candidate = Get-Content -LiteralPath $paths.JournalPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $verdict = Get-ReleaseGateCreditVerdict -State $green
+    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($green)
     if ($verdict.CreditKind -ne 'rc-release' -or -not $verdict.Ok) {
         Write-PromoteLine ('REFUSED: credit is not rc-release ({0}).' -f ($verdict.Reasons -join ','))
         $result.Refusal = 'not-rc-complete-green'; $result.ExitCode = 3; return [pscustomobject]$result

@@ -1529,6 +1529,18 @@ function Test-C1698_RunLibraryLoadFailure {
             [IO.File]::Copy((Join-Path $here $n), (Join-Path $copy (Join-Path 'scripts' $n)))
         }
         foreach ($f in [IO.Directory]::GetFiles($lib)) { [IO.File]::Copy($f, (Join-Path (Join-Path $copy 'scripts') (Join-Path 'lib' ([IO.Path]::GetFileName($f))))) }
+        # nightly-run.ps1 requires the compiled core: copy its sources (not bin/ or obj/). They hash to the
+        # checkout's build identity, so the cached build is loaded, not rebuilt.
+        foreach ($project in @('scripts/lib/Antiphon.Nightly', 'src/Antiphon.IO.WriteBehind')) {
+            $from = Join-Path $repoRoot $project
+            foreach ($f in [IO.Directory]::EnumerateFiles($from, '*', [IO.SearchOption]::AllDirectories)) {
+                $rel = $f.Substring($from.Length).TrimStart([char]92, [char]47)
+                if ($rel -match '^(bin|obj)[\\/]' -or $rel -notmatch '\.(cs|csproj)$') { continue }
+                $to = Join-Path (Join-Path $copy $project) $rel
+                [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to))
+                [IO.File]::Copy($f, $to)
+            }
+        }
         Copy-Item -LiteralPath (Join-Path $repoRoot 'docker/git-minimum-version.sh') -Destination (Join-Path $copy 'docker/git-minimum-version.sh')
         Copy-Item -LiteralPath (Join-Path $repoRoot 'global.json') -Destination (Join-Path $copy 'global.json')
         Set-Content -LiteralPath (Join-Path $copy 'scripts/lib/toolchain-floor.ps1') -Value $b.Text -Encoding ASCII

@@ -120,8 +120,8 @@ function Read-ReleaseSelectionBaseline {
         $authority.profile -cne 'rc' -or $authority.repository -cne $Request.Repository -or $authority.sha -cne $receipt.sha -or
         $ledger.selection -cne 'full' -or $ledger.sha -cne $receipt.sha -or
         $ledger.seamed -isnot [bool] -or $ledger.seamed -or $ledger.diagnostic -isnot [bool] -or $ledger.diagnostic -or
-        $ledger.noReport -isnot [bool] -or $ledger.noReport -or -not (Test-ReleaseGateRealBoolean $ledger.teardownSucceeded) -or
-        -not (Get-ReleaseGateCreditVerdict $green).Ok -or $green.profile -cne 'rc' -or $green.sha -cne $receipt.sha) { throw 'baseline-full-only' }
+        $ledger.noReport -isnot [bool] -or $ledger.noReport -or -not ([Antiphon.Nightly.ReleaseGateCredit]::RealBoolean($ledger.teardownSucceeded)) -or
+        -not ([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($green)).Ok -or $green.profile -cne 'rc' -or $green.sha -cne $receipt.sha) { throw 'baseline-full-only' }
     foreach ($name in @('authority', 'executionPlan', 'discovery', 'ledger')) {
         $file = @{authority='authority';executionPlan='execution-plan';discovery='discovery';ledger='ledger'}[$name]
         if ($publication.inputs.($name + 'Digest') -cne $receipt.files.('authority/' + $file + '.json')) { throw 'baseline-publication-binding' }

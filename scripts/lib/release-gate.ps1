@@ -17,29 +17,10 @@ $script:AntiphonReleaseGateLoaded = $true
 
 $script:ReleaseGateProfiles = @('nightly', 'rc')
 $script:ReleaseGateCreditKinds = @('master-scheduled', 'rc-release')
-$script:ReleaseGateDefaultReleaseRoot = 'C:\Antiphon\releases'
 $script:ReleaseGateDefaultCoordinationRoot = 'C:\Antiphon\verification'
-$script:ReleaseGateCandidateRefPattern = '^release/rc-(?<stamp>\d{8}T\d{6}Z)$'
-$script:ReleaseGateLongLivedRefPattern = '^rc/(?<y>\d{4})-(?<m>\d{2})-(?<d>\d{2})$'
-$script:ReleaseGateTagPattern = '^v(?<y>\d{4})\.(?<m>\d{2})\.(?<d>\d{2})\.(?<n>[1-9]\d*)(?:-rc\.(?<k>[1-9]\d*))?$'
-$script:ReleaseGateLongLivedCandidateIdPattern = '^rc-\d{4}-\d{2}-\d{2}-[0-9a-f]{12}$'
 $script:ReleaseGateManifestSchema = 1
 
 # ---------------------------------------------------------------- identity ---
-
-function Test-ReleaseGateRealBoolean {
-    # D-2: a JSON string "true" is not a boolean. Only a real boolean counts.
-    param($Value)
-    if ($null -eq $Value) { return $false }
-    if ($Value -is [bool]) { return [bool]$Value }
-    return $false
-}
-
-function Test-ReleaseGateFullSha {
-    param([string]$Sha)
-    if ([string]::IsNullOrWhiteSpace($Sha)) { return $false }
-    return ($Sha -cmatch '^[0-9a-f]{40}$')
-}
 
 function Get-ReleaseGateRemoteRef {
     param([string]$WorkingDirectory, [string]$Ref)
@@ -78,7 +59,7 @@ function Push-ReleaseGateExactTag {
     $failed = @{ ExitCode = 1; Output = '' }
     $object = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('show-ref', '--verify', '--hash', ('refs/tags/' + $Tag))
     $sha = ([string]$object.Output).Trim()
-    if ($null -eq $object -or [int]$object.ExitCode -ne 0 -or -not (Test-ReleaseGateFullSha $sha)) { return $failed }
+    if ($null -eq $object -or [int]$object.ExitCode -ne 0 -or -not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($sha))) { return $failed }
     $prefix = 'refs/antiphon-release-push/' + [guid]::NewGuid().ToString('N') + '/'
     $privateRef = $prefix + $Tag
     $create = Invoke-ReleaseGateGit -WorkingDirectory $WorkingDirectory -Arguments @('update-ref', $privateRef, $sha, ('0' * 40))
@@ -94,185 +75,13 @@ function Push-ReleaseGateExactTag {
     return $push
 }
 
-function Test-ReleaseGateCandidateRef {
-    # D-3: a legacy stamp, or a long-lived rc/YYYY-MM-DD. Anything else is not a candidate.
-    # The long-lived candidate id is rc-YYYY-MM-DD- plus the first 12 hex digits of -Sha.
-    param([string]$Ref, [string]$Sha = '')
-    if ([string]::IsNullOrWhiteSpace($Ref)) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'empty-ref'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = '' }
-    }
-    $normalised = $Ref
-    if ($normalised.StartsWith('refs/heads/')) { $normalised = $normalised.Substring('refs/heads/'.Length) }
-    if ($normalised -match $script:ReleaseGateCandidateRefPattern) {
-        $stamp = $Matches['stamp']
-        $parsed = [datetime]::MinValue
-        $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-        if (-not [datetime]::TryParseExact($stamp, 'yyyyMMddTHHmmssZ', [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
-            return [pscustomobject]@{ Ok = $false; Reason = 'ref-timestamp'; Stamp = $stamp; CandidateId = ''; Ref = ''; Kind = 'stamp' }
-        }
-        return [pscustomobject]@{
-            Ok = $true
-            Reason = ''
-            Stamp = $stamp
-            Kind = 'stamp'
-            CandidateId = ('rc-{0}' -f $stamp)
-            Ref = ('release/rc-{0}' -f $stamp)
-            CutUtc = $parsed.ToUniversalTime()
-        }
-    }
-    if ($normalised -match $script:ReleaseGateLongLivedRefPattern) {
-        $dateText = '{0}-{1}-{2}' -f $Matches['y'], $Matches['m'], $Matches['d']
-        $parsed = [datetime]::MinValue
-        $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-        if (-not [datetime]::TryParseExact($dateText, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
-            return [pscustomobject]@{ Ok = $false; Reason = 'ref-date'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = 'long-lived' }
-        }
-        $candidateId = ''
-        if (-not [string]::IsNullOrWhiteSpace($Sha) -and (Test-ReleaseGateFullSha -Sha $Sha)) {
-            $candidateId = 'rc-{0}-{1}' -f $dateText, $Sha.Substring(0, 12)
-        }
-        return [pscustomobject]@{
-            Ok = $true
-            Reason = ''
-            Stamp = ''
-            Kind = 'long-lived'
-            CandidateId = $candidateId
-            Ref = ('rc/{0}' -f $dateText)
-            CutUtc = $parsed.ToUniversalTime()
-        }
-    }
-    return [pscustomobject]@{ Ok = $false; Reason = 'ref-shape'; Stamp = ''; CandidateId = ''; Ref = ''; Kind = '' }
-}
-
 function New-ReleaseGateCandidateRef {
     param([datetime]$Utc)
     if ($null -eq $Utc -or $Utc -eq [datetime]::MinValue) { $Utc = (Get-Date).ToUniversalTime() }
     return ('release/rc-{0}' -f $Utc.ToUniversalTime().ToString('yyyyMMddTHHmmss') + 'Z')
 }
 
-function Get-ReleaseGateCreditKind {
-    <#
-      D-2: the credit kind a run may earn from its own identity alone, before any
-      green flags are consulted. Returns '' when the combination is unknown; the
-      caller must treat that as no credit, never as the master default.
-    #>
-    param(
-        [string]$Profile = '',
-        [string]$Trigger = '',
-        [string]$Ref = ''
-    )
-    $p = ([string]$Profile).Trim().ToLowerInvariant()
-    $t = ([string]$Trigger).Trim().ToLowerInvariant()
-    $r = ([string]$Ref).Trim()
-    # An absent profile is the pre-CARD-0599 master lane.
-    if ([string]::IsNullOrWhiteSpace($p)) { $p = 'nightly' }
-    if ($script:ReleaseGateProfiles -notcontains $p) { return '' }
-    if ($p -eq 'nightly') {
-        if ($t -ne 'scheduled') { return '' }
-        if ($r -ne 'master' -and $r -ne 'origin/master') { return '' }
-        return 'master-scheduled'
-    }
-    if ($t -ne 'rc') { return '' }
-    $candidate = Test-ReleaseGateCandidateRef -Ref $r
-    if (-not $candidate.Ok) { return '' }
-    return 'rc-release'
-}
-
-function Test-ReleaseGateGreenFlags {
-    # D-2: the flags both credit kinds share. Real booleans and exit 0 only.
-    param($State)
-    $reasons = @()
-    if ($null -eq $State) { return [pscustomobject]@{ Ok = $false; Reasons = @('missing-state') } }
-    foreach ($field in @('coverageComplete', 'testsPassed', 'reportDelivered')) {
-        $value = $State.$field
-        if (-not (Test-ReleaseGateRealBoolean -Value $value)) { $reasons += ('not-true-boolean:' + $field) }
-    }
-    $exit = $State.exitCode
-    if ($null -eq $exit) { $reasons += 'missing-exitCode' }
-    elseif ($exit -isnot [int] -and $exit -isnot [long] -and $exit -isnot [double]) { $reasons += 'non-numeric-exitCode' }
-    elseif ([int]$exit -ne 0) { $reasons += ('exitCode:' + [string]$exit) }
-    if ([string]::IsNullOrWhiteSpace([string]$State.runId)) { $reasons += 'missing-runId' }
-    if ([string]::IsNullOrWhiteSpace([string]$State.policyHash)) { $reasons += 'missing-policyHash' }
-    return [pscustomobject]@{ Ok = ($reasons.Count -eq 0); Reasons = $reasons }
-}
-
-function Get-ReleaseGateCreditVerdict {
-    <#
-      D-2: the single decision point. Returns the credit kind this state actually
-      earns ('' when none) plus the reasons it did not. Never guesses a kind.
-    #>
-    param($State)
-    $reasons = @()
-    if ($null -eq $State) {
-        return [pscustomobject]@{ CreditKind = ''; Ok = $false; Reasons = @('missing-state') }
-    }
-    $kind = Get-ReleaseGateCreditKind -Profile ([string]$State.profile) -Trigger ([string]$State.trigger) -Ref ([string]$State.ref)
-    if ([string]::IsNullOrWhiteSpace($kind)) {
-        return [pscustomobject]@{ CreditKind = ''; Ok = $false; Reasons = @('unknown-credit-identity') }
-    }
-    # Absent scope is the historical v1 Full record. Explicit scope must be Full.
-    $scopePresent = if ($State -is [Collections.IDictionary]) { $State.Contains('coverageScope') } else { $null -ne $State.PSObject.Properties['coverageScope'] }
-    if ($scopePresent -and ($State.coverageScope -isnot [string] -or $State.coverageScope -cne 'Full')) {
-        $reasons += 'full-credit-scope-required'
-    }
-    $flags = Test-ReleaseGateGreenFlags -State $State
-    if (-not $flags.Ok) { $reasons += @($flags.Reasons) }
-    if ($kind -eq 'rc-release') {
-        # D-3: an RC only earns credit against the SHA its candidate was pinned to.
-        $sha = [string]$State.sha
-        $expected = [string]$State.expectedSha
-        if (-not (Test-ReleaseGateFullSha -Sha $sha)) { $reasons += 'rc-sha-not-full' }
-        if (-not (Test-ReleaseGateFullSha -Sha $expected)) { $reasons += 'rc-expected-sha-missing' }
-        elseif (-not [string]::Equals($sha, $expected, [StringComparison]::OrdinalIgnoreCase)) { $reasons += 'rc-sha-mismatch' }
-        if ([string]::IsNullOrWhiteSpace([string]$State.candidateId)) { $reasons += 'rc-candidate-missing' }
-    }
-    if ($reasons.Count -gt 0) {
-        return [pscustomobject]@{ CreditKind = ''; Ok = $false; Reasons = $reasons; RequestedKind = $kind }
-    }
-    return [pscustomobject]@{ CreditKind = $kind; Ok = $true; Reasons = @(); RequestedKind = $kind }
-}
-
 # ------------------------------------------------------------------- state ---
-
-function Get-ReleaseGateCandidateRoot {
-    param([string]$ReleaseRoot = '', [string]$CandidateId)
-    if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) { $ReleaseRoot = $script:ReleaseGateDefaultReleaseRoot }
-    return (Join-Path (Join-Path $ReleaseRoot 'candidates') $CandidateId)
-}
-
-function Get-ReleaseGateStatePaths {
-    <#
-      D-2: the credit store. Master green is the only thing that ever reaches
-      <StateRoot>\last-complete-green.json; RC green lands in the candidate root.
-    #>
-    param(
-        [string]$CreditKind,
-        [string]$StateRoot,
-        [string]$ReleaseRoot = '',
-        [string]$CandidateId = ''
-    )
-    if ($CreditKind -eq 'rc-release') {
-        if ([string]::IsNullOrWhiteSpace($CandidateId)) { throw 'rc credit requires a candidate id' }
-        $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
-        return [pscustomobject]@{
-            CreditKind = $CreditKind
-            Root = $root
-            GreenPath = (Join-Path $root 'complete-green.json')
-            JournalPath = (Join-Path $root 'candidate.json')
-            ManifestPath = (Join-Path $root 'release-manifest.json')
-            PublishJournalPath = (Join-Path $root 'publish.json')
-        }
-    }
-    if ($CreditKind -ne 'master-scheduled') { throw ('unknown credit kind {0}' -f $CreditKind) }
-    return [pscustomobject]@{
-        CreditKind = $CreditKind
-        Root = $StateRoot
-        GreenPath = (Join-Path $StateRoot 'last-complete-green.json')
-        JournalPath = ''
-        ManifestPath = ''
-        PublishJournalPath = ''
-    }
-}
 
 function Get-ReleaseGateMasterStateFiles {
     # The four files an RC lane must leave byte-identical (V-2).
@@ -316,31 +125,6 @@ function Test-ReleaseGateSameInstant {
     else { $rOk = [datetime]::TryParse([string]$Right, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$r) }
     if ($lOk -and $rOk) { return ($l.ToUniversalTime() -eq $r.ToUniversalTime()) }
     return [string]::Equals([string]$Left, [string]$Right, [StringComparison]::OrdinalIgnoreCase)
-}
-
-function ConvertTo-ReleaseGateUtc {
-    <#
-      A timestamp read back from JSON may already be a DateTime, and casting one
-      to string renders it in the CURRENT culture - which the invariant parser
-      then rejects. Take the DateTime directly when that is what we were handed,
-      and only parse when it really is text.
-    #>
-    param($Value, [switch]$AllowEmpty)
-    if ($Value -is [datetime]) { return ([datetime]$Value).ToUniversalTime() }
-    $text = [string]$Value
-    if ([string]::IsNullOrWhiteSpace($text)) {
-        if ($AllowEmpty) { return (Get-NightlyUtcNow) }
-        throw 'empty timestamp'
-    }
-    $parsed = [datetime]::MinValue
-    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
-    if ([datetime]::TryParse($text, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
-        return $parsed.ToUniversalTime()
-    }
-    if ([datetime]::TryParse($text, [System.Globalization.CultureInfo]::CurrentCulture, $styles, [ref]$parsed)) {
-        return $parsed.ToUniversalTime()
-    }
-    throw ('unparseable timestamp {0}' -f $text)
 }
 
 function New-ReleaseGateLockOwner {
@@ -466,7 +250,7 @@ function Get-ReleaseGateRemoteTagInventory {
         $canonical = [Antiphon.Nightly.ReleaseGateTags]::NewTag($parsed.Date, $parsed.Sequence)
         if ($parsed.Prerelease) { $canonical += '-rc.' + [string]$parsed.Rc }
         if ($tag -cne $canonical) { continue }
-        if (-not (Test-ReleaseGateFullSha $fields[0])) { return $failed }
+        if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($fields[0]))) { return $failed }
         if ($names.ContainsKey($tag) -and $names[$tag] -cne $fields[0]) { return $failed }
         $names[$tag] = $fields[0]
     }
@@ -496,7 +280,7 @@ function Get-ReleaseGateTagProposal {
         [datetime]$CutUtc,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RemoteTags
     )
-    if (-not (Test-ReleaseGateFullSha -Sha $Sha)) { throw ('reservation requires a full sha, got {0}' -f $Sha) }
+    if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($Sha))) { throw ('reservation requires a full sha, got {0}' -f $Sha) }
     if ($null -eq $CutUtc -or $CutUtc -eq [datetime]::MinValue) { $CutUtc = Get-NightlyUtcNow }
     $journal = Get-ReleaseGatePublicationJournal -Path $JournalPath
     $existing = [Antiphon.Nightly.ReleaseGateTags]::ReservedTag($journal, $CandidateId, $Sha)
@@ -617,7 +401,7 @@ function Test-ReleaseGatePromotionReservation {
     if ($matching.Count -ne 1) { return (& $fail 'ambiguous') }
     $row = $matching[0]
     if ($row.candidateId -cne $CandidateId) { return (& $fail 'candidate-mismatch') }
-    if (-not (Test-ReleaseGateFullSha $row.sha) -or $row.sha -ine $Sha) { return (& $fail 'sha-mismatch') }
+    if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($row.sha)) -or $row.sha -ine $Sha) { return (& $fail 'sha-mismatch') }
     if ($row.tag -cne $PreReleaseTag) { return (& $fail 'tag-mismatch') }
     if (-not $row.published) { return (& $fail 'unpublished') }
     if ([string]::IsNullOrWhiteSpace($row.releaseId) -or [string]::IsNullOrWhiteSpace($row.releaseUrl)) { return (& $fail 'release-identity') }
@@ -713,7 +497,7 @@ function Test-ReleaseGatePublicationGate {
         [string[]]$RequiredSuites = @()
     )
     $reasons = @()
-    $verdict = Get-ReleaseGateCreditVerdict -State $Green
+    $verdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($Green)
     if ($verdict.CreditKind -ne 'rc-release') { $reasons += 'not-rc-complete-green' }
     if ($null -eq $Candidate) { $reasons += 'missing-candidate-journal' }
     else {

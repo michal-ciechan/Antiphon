@@ -368,7 +368,7 @@ function Test-C1323_PlatformExecution {
     Assert-C1323 ($windows.ExitCode -eq 0 -and $summary.testsPassed -and $summary.coverageComplete -and $summary.coverageScope -ceq 'Full' -and $summary.platform -ceq 'windows' -and $summary.reasons.Count -eq 0) 'windows-summary-remains-full' ($summary | ConvertTo-Json -Depth 8 -Compress)
 
     $releaseRoot = "$($fx.Root)/releases"
-    $candidateId = (Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-20' -Sha $fx.Sha).CandidateId
+    $candidateId = ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-20', $fx.Sha)).CandidateId
     $green = "$releaseRoot/candidates/$candidateId/complete-green.json"
     $masterGreen = "$($fx.Root)/master/last-complete-green.json"
     Write-C1323File $fx.Root "releases/candidates/$candidateId/complete-green.json" 'candidate sentinel'
@@ -383,7 +383,7 @@ function Test-C1323_PlatformExecution {
         if ($platform -eq 'linux') {
             $record = ConvertTo-NightlyResultRecord $run
             Assert-C1323 ($state.testsPassed -and -not $state.coverageComplete -and $state.coverageScope -ceq 'PlatformDiagnostic' -and $state.platform -ceq 'linux' -and $state.reasons -contains 'windows-rc-obligations-outstanding' -and $record.coverageScope -ceq 'PlatformDiagnostic' -and $record.reasons -contains 'windows-rc-obligations-outstanding') 'linux-state-is-diagnostic' ($state | ConvertTo-Json -Depth 4 -Compress)
-            Assert-C1323 ($run.CreditKind -eq '' -and (Get-ReleaseGateCreditVerdict $state).Reasons -contains 'full-credit-scope-required') 'linux-credit-refuses'
+            Assert-C1323 ($run.CreditKind -eq '' -and ([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($state)).Reasons -contains 'full-credit-scope-required') 'linux-credit-refuses'
             Assert-C1323 ([IO.File]::ReadAllText($green) -ceq 'candidate sentinel' -and [IO.File]::ReadAllText($masterGreen) -ceq 'master sentinel') 'linux-leaves-green-files-identical'
         } else {
             Assert-C1323 ($run.ExitCode -eq 0 -and $state.coverageComplete -and $state.coverageScope -ceq 'Full' -and $state.platform -ceq 'windows' -and $run.CreditKind -ceq 'rc-release' -and [IO.File]::ReadAllText($green) -cne 'candidate sentinel') 'windows-state-preserves-full-behavior' ($state | ConvertTo-Json -Depth 4 -Compress)

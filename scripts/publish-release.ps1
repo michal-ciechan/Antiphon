@@ -153,7 +153,7 @@ function Invoke-AntiphonPublishRelease {
     }
     if ([string]::IsNullOrWhiteSpace($CheckoutRoot)) { $CheckoutRoot = Join-Path $ReleaseRoot 'checkout' }
 
-    $paths = Get-ReleaseGateStatePaths -CreditKind 'rc-release' -StateRoot '' -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId
+    $paths = [Antiphon.Nightly.ReleaseGateCredit]::StatePaths('rc-release', '', $ReleaseRoot, $CandidateId)
     foreach ($needed in @($paths.GreenPath, $paths.JournalPath)) {
         if (-not (Test-Path -LiteralPath $needed)) {
             Write-PublishLine ('REFUSED: missing {0}.' -f $needed)
@@ -204,7 +204,9 @@ function Invoke-AntiphonPublishRelease {
     }
 
     $publicationJournal = Join-Path $ReleaseRoot 'publications.json'
-    $cutUtc = ConvertTo-ReleaseGateUtc -Value $candidate.cutUtc -AllowEmpty
+    # A candidate without a cut time is cut now (the release-gate clock seam is read only then).
+    $cutUtc = [Antiphon.Nightly.ReleaseGateCredit]::Utc($candidate.cutUtc)
+    if ($null -eq $cutUtc) { $cutUtc = Get-NightlyUtcNow }
     if ([Antiphon.Nightly.ReleaseGateTags]::LongLivedCandidateId($CandidateId)) { $cutUtc = $attemptUtc }
     if ($WhatIf) {
         # Read-only: -WhatIf reports the proposed tag and never reserves it, so

@@ -1022,7 +1022,7 @@ $ReleaseGateSeams = @{
 }
 '@
     [IO.File]::WriteAllText($cutSeam, $seamTemplate.Replace('__SHA_FILE__', $shaFile).Replace("`r", ''))
-    $candidate = Test-ReleaseGateCandidateRef -Ref 'rc/2026-10-27' -Sha $sha
+    $candidate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef('rc/2026-10-27', $sha)
     $blankRun = 'blank-replay'
     $blankRequest = @{
         RepositoryRoot = $checkout; Repository = 'michal-ciechan/Antiphon'; ReleaseRoot = $release

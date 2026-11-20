@@ -83,7 +83,7 @@ $NightlySeams.E2EPrerequisites = { return @{Ok=$true;Rows=@()} }
 }
 function New-Request($Fx, $Mode = 'Shadow', $Run = '') {
     if (-not $Run) { $Run = [guid]::NewGuid().ToString('N') }
-    $id = (Test-ReleaseGateCandidateRef $Fx.Ref $Fx.A).CandidateId
+    $id = ([Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($Fx.Ref, $Fx.A)).CandidateId
     return @{RepositoryRoot=$Fx.Clone;Repository=$Fx.Repository;ReleaseRoot=$Fx.Release;CandidateId=$id;CandidateRef=$Fx.Ref
         CandidateSha=$Fx.A;BaselineSha=$Fx.B;SelectionMode=$Mode;Profile='rc';RunId=$Run;Attempt=1
         BaselineReceiptPath='';QualificationPath='';TimingRoot=(Join-Path $Fx.Release 'timing root')
@@ -130,7 +130,7 @@ function Test-C1313_ModeCredit {
     $state = @{profile='rc';trigger='rc';ref='rc/2026-10-19';sha=('a'*40);expectedSha=('a'*40);candidateId='fixture';runId='fixture';policyHash='fixture';exitCode=0
         coverageComplete=$true;testsPassed=$true;reportDelivered=$true;coverageScope='ChangeAware'}
     $rejected = $true
-    foreach ($scope in @('ChangeAware','invented','',@('Full'))) { $state.coverageScope=$scope; if ((Get-ReleaseGateCreditVerdict $state).Ok) {$rejected=$false} }
+    foreach ($scope in @('ChangeAware','invented','',@('Full'))) { $state.coverageScope=$scope; if (([Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($state)).Ok) {$rejected=$false} }
     Assert-Fx $rejected 'unqualified-no-credit'
     $fx = New-Fx; $discovery = Get-FxDiscovery
     $qualification = Join-Path $fx.Release 'qualification/active.json'; Write-Fx $fx.Release 'qualification/active.json' '{"status":"active","diagnostic":true}'
@@ -172,7 +172,7 @@ function Test-C1313_ModeCredit {
         [void](Git-Fx $fx.Seed @('read-tree',$fx.A)); [void](Git-Fx $fx.Seed @('update-index','--add','--cacheinfo',"100644,$blob,$path"))
         $tree = Git-Fx $fx.Seed @('write-tree'); $sha = Git-Fx $fx.Seed @('commit-tree',$tree,'-p',$fx.A,'-m','fallback')
         [void](Git-Fx $fx.Clone @('fetch',$fx.Seed,$sha))
-        $r = New-Request $fx 'Shadow'; $r.CandidateSha=$sha; $r.CandidateId=(Test-ReleaseGateCandidateRef $fx.Ref $sha).CandidateId
+        $r = New-Request $fx 'Shadow'; $r.CandidateSha=$sha; $r.CandidateId=([Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($fx.Ref, $sha)).CandidateId
         $b = Bind-Request $r; $sel=Get-Content $b.SelectionPath -Raw | ConvertFrom-Json
         if ($sel.proposal.mode -cne 'full' -or $sel.fallbackReasons.Count -lt 2 -or $sel.effectiveMode -cne 'Full') {$fallback=$false}
     }
@@ -280,7 +280,7 @@ function Test-C1313_BaselineAuthority {
         }
         Write-Fx $fx.Seed $path $text;[void](Git-Fx $fx.Seed @('add','--',$path));$t=Git-Fx $fx.Seed @('write-tree')
         $a=Git-Fx $fx.Seed @('commit-tree',$t,'-p',$fx.A,'-m',$variant);[void](Git-Fx $fx.Clone @('fetch',$fx.Seed,$a))
-        $q=New-Request $fx 'ChangeAware';$q.CandidateSha=$a;$q.CandidateId=(Test-ReleaseGateCandidateRef $fx.Ref $a).CandidateId;$q.BaselineReceiptPath=$archive.Path
+        $q=New-Request $fx 'ChangeAware';$q.CandidateSha=$a;$q.CandidateId=([Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($fx.Ref, $a)).CandidateId;$q.BaselineReceiptPath=$archive.Path
         $r=Bind-Request $q;if($r.Selection.effectiveMode -cne 'Full' -or $r.Selection.fallbackReasons -cnotcontains 'baseline-incompatible'){$incompatible=$false}
     }
     Assert-Fx $incompatible 'baseline-incompatible-full'

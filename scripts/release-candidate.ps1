@@ -50,6 +50,8 @@ $ErrorActionPreference = 'Continue'
 $lib = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $lib 'nightly-common.ps1')
 . (Join-Path $lib 'release-gate.ps1')
+# The candidate ref and the release paths are compiled: this entry point runs under pwsh with the core.
+Assert-NightlyCoreAvailable 'release-candidate'
 
 function Write-CandidateLine { param([string]$Message) Write-Host ('[release-candidate] {0}' -f $Message) }
 
@@ -85,7 +87,7 @@ function Invoke-AntiphonReleaseCandidate {
         $result.Pushed = $false
         return [pscustomobject]$result
     }
-    $candidate = Test-ReleaseGateCandidateRef -Ref $Ref
+    $candidate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($Ref, '')
     if (-not $candidate.Ok) {
         Write-CandidateLine ('REFUSED: candidate ref ({0}).' -f $candidate.Reason)
         $result.Refusal = $candidate.Reason
@@ -119,7 +121,7 @@ function Invoke-AntiphonReleaseCandidate {
     # tip is read. Do not create a root from the empty pre-SHA id.
     $existing = $null
     if ($candidate.Kind -ne 'long-lived') {
-        $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $candidate.CandidateId
+        $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $candidate.CandidateId)
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $journalPath = Join-Path $root 'candidate.json'
         $result.JournalPath = $journalPath
@@ -156,11 +158,11 @@ function Invoke-AntiphonReleaseCandidate {
             Write-CandidateLine ('REFUSED: remote {0} does not exist.' -f $candidate.Ref)
             $result.Refusal = 'rc-ref-missing'; $result.ExitCode = 3; return [pscustomobject]$result
         }
-        if (-not (Test-ReleaseGateFullSha -Sha $remoteSha)) {
+        if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($remoteSha))) {
             Write-CandidateLine ('REFUSED: remote {0} did not resolve to a full sha ({1}).' -f $candidate.Ref, $remoteSha)
             $result.Refusal = 'sha-unresolved'; $result.ExitCode = 1; return [pscustomobject]$result
         }
-        $candidate = Test-ReleaseGateCandidateRef -Ref $candidate.Ref -Sha $remoteSha
+        $candidate = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRef($candidate.Ref, $remoteSha)
         if (-not $candidate.Ok -or [string]::IsNullOrWhiteSpace([string]$candidate.CandidateId)) {
             Write-CandidateLine 'REFUSED: long-lived candidate id.'
             $result.Refusal = 'candidate-id'; $result.ExitCode = 3; return [pscustomobject]$result
@@ -168,7 +170,7 @@ function Invoke-AntiphonReleaseCandidate {
         $result.CandidateId = $candidate.CandidateId
         $result.Ref = $candidate.Ref
         $result.Sha = $remoteSha
-        $root = Get-ReleaseGateCandidateRoot -ReleaseRoot $ReleaseRoot -CandidateId $candidate.CandidateId
+        $root = [Antiphon.Nightly.ReleaseGateCredit]::CandidateRoot($ReleaseRoot, $candidate.CandidateId)
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $journalPath = Join-Path $root 'candidate.json'
         $result.JournalPath = $journalPath
@@ -225,7 +227,7 @@ function Invoke-AntiphonReleaseCandidate {
         }
         $rev = Invoke-ReleaseGateGit -WorkingDirectory $CheckoutRoot -Arguments @('rev-parse', 'FETCH_HEAD')
         $sha = ([string]$rev.Output).Trim()
-        if (-not (Test-ReleaseGateFullSha -Sha $sha)) {
+        if (-not ([Antiphon.Nightly.ReleaseGateCredit]::FullSha($sha))) {
             Write-CandidateLine ('REFUSED: origin/{0} did not resolve to a full sha ({1}).' -f $SourceRef, $sha)
             $result.Refusal = 'sha-unresolved'; $result.ExitCode = 1; return [pscustomobject]$result
         }

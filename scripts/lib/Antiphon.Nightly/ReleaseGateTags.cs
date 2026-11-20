@@ -1,7 +1,6 @@
 // Release tags, candidate ids and remote refs of the release gate (moved from release-gate.ps1). D-4 and D-8: release
 // tags are vYYYY.MM.DD.N from the UTC cut date and a positive daily sequence, pre-releases add -rc.K. The credit
-// verdict and the candidate-ref check stay in release-gate.ps1: nightly-run.ps1 and release-cut.ps1 run them under
-// Windows PowerShell 5.1, which cannot load this core.
+// verdict and the candidate ref are ReleaseGateCredit.
 using System;
 using System.Collections.Generic;
 using System.Globalization;

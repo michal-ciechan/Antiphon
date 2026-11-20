@@ -198,12 +198,12 @@ function Assert-OffSwitch {
     $full = [ordered]@{}
     foreach ($key in $base.Keys) { $full[$key] = $base[$key] }
     $full['coverageScope'] = 'Full'
-    $fullVerdict = Get-ReleaseGateCreditVerdict $full
+    $fullVerdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($full)
     Note ($fullVerdict.Ok -eq $true -and $fullVerdict.CreditKind -ceq 'rc-release') ('Full gate credit ' + ($fullVerdict.Reasons -join '|'))
     $incremental = [ordered]@{}
     foreach ($key in $base.Keys) { $incremental[$key] = $base[$key] }
     $incremental['coverageScope'] = 'Incremental'
-    $incrementalVerdict = Get-ReleaseGateCreditVerdict $incremental
+    $incrementalVerdict = [Antiphon.Nightly.ReleaseGateCredit]::CreditVerdict($incremental)
     Note ($incrementalVerdict.Ok -eq $false -and (@($incrementalVerdict.Reasons) -ccontains 'full-credit-scope-required')) ('Incremental gate ' + ($incrementalVerdict.Reasons -join '|'))
 }
 
