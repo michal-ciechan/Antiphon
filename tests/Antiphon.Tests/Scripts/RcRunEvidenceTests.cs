@@ -30,6 +30,12 @@ public sealed class RcRunEvidenceTests
         ScriptHarness.RunHarnessCaseAsync("test-rc-run-evidence.ps1", "RE", nameof(ShadowPassedIsAtLeastTheRealCheck), 1,
             ["RE " + nameof(ShadowPassedIsAtLeastTheRealCheck) + ".contract"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(70), TimeSpan.FromSeconds(10)), token);
+
+    // CARD-2008. The recorded shadow outcome goes through ConvertTo-NightlyNativeSuiteVerdict and log freshness.
+    [Test, Timeout(120_000)] public Task ShadowPassedMatchesNativeBranch(CancellationToken token) =>
+        ScriptHarness.RunHarnessCaseAsync("test-rc-run-evidence.ps1", "RE", nameof(ShadowPassedMatchesNativeBranch), 1,
+            ["RE " + nameof(ShadowPassedMatchesNativeBranch) + ".contract"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(100), TimeSpan.FromSeconds(15)), token);
     [Test, Timeout(60_000)] public Task TornRevisionStaysNotRun(CancellationToken token) => Run(nameof(TornRevisionStaysNotRun), token);
     [Test, Timeout(90_000)] public Task LaunchStampIsCheaper(CancellationToken token) => Run(nameof(LaunchStampIsCheaper), token);
 }
