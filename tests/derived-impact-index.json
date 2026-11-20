@@ -79,18 +79,18 @@
     },
     {
       "path": ".gitignore",
-      "classes": 156,
+      "classes": 157,
       "reason": "cap",
-      "owed": 131,
+      "owed": 132,
       "first": [
         "CheckpointConfinementLedgerTests",
+        "CheckpointFixtureGitEnvironmentTests",
         "CheckpointLargeStampTests",
         "CheckpointSelectedOutputTests",
         "CheckpointTerminalReceiptTests",
         "MatrixChildReceiptTests",
         "ReportBudgetWorkspacePortabilityTests",
-        "WorkspaceParkPublicationTests",
-        "BlockedParkWireTests"
+        "WorkspaceParkPublicationTests"
       ]
     },
     {
