@@ -26,6 +26,10 @@ public sealed class RcRunEvidenceTests
             new ScriptHarnessOptions(TimeSpan.FromSeconds(240), TimeSpan.FromSeconds(20)), token);
 
     [Test, Timeout(60_000)] public Task ChunkOutcomeNeedsResults(CancellationToken token) => Run(nameof(ChunkOutcomeNeedsResults), token);
+    [Test, Timeout(90_000)] public Task ShadowPassedIsAtLeastTheRealCheck(CancellationToken token) =>
+        ScriptHarness.RunHarnessCaseAsync("test-rc-run-evidence.ps1", "RE", nameof(ShadowPassedIsAtLeastTheRealCheck), 1,
+            ["RE " + nameof(ShadowPassedIsAtLeastTheRealCheck) + ".contract"],
+            new ScriptHarnessOptions(TimeSpan.FromSeconds(70), TimeSpan.FromSeconds(10)), token);
     [Test, Timeout(60_000)] public Task TornRevisionStaysNotRun(CancellationToken token) => Run(nameof(TornRevisionStaysNotRun), token);
     [Test, Timeout(90_000)] public Task LaunchStampIsCheaper(CancellationToken token) => Run(nameof(LaunchStampIsCheaper), token);
 }
