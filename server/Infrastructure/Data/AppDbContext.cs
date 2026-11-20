@@ -2531,6 +2531,8 @@ public partial class AppDbContext : DbContext
             // CARD-0322 D4/D8. Null when the caller left kind/level open; re-walks filter by these.
             entity.Property(t => t.ExplicitAgentKind).IsRequired(false);
             entity.Property(t => t.ExplicitModelLevel).IsRequired(false);
+            // Null keeps the tier ladder. Not SpecialistModelAlias: that column is an internal snapshot.
+            entity.Property(t => t.RequestedModelAlias).HasMaxLength(80).IsRequired(false);
             // CARD-0272. Null on every pre-existing row: S2 fills these at create.
             entity.Property(t => t.Stage).IsRequired(false);
             entity.Property(t => t.FollowUpOfTaskId).IsRequired(false);

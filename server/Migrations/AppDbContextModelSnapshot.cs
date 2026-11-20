@@ -1372,6 +1372,10 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<string>("RequestedModelAlias")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
                     b.Property<int>("RequestedWorktreeBaseMode")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("integer")

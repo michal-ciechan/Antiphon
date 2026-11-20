@@ -221,7 +221,11 @@ Antiphon dispatches at a *tier* (`Frontier` / `High` / `Medium` / `Low`), not a 
 (Medium), and Haiku (Low) are tiers within `ClaudeCode`; Astra (Frontier), Sol (High),
 Sol (Medium), and Luna (Low) are tiers within `Codex`. `scripts/delegate.ps1` accepts
 `-Kind ClaudeCode|Grok|Codex` and `-Level Frontier|High|Medium|Low`; model-tier names
-are not accepted by either parameter. For example:
+are not accepted by either parameter. Optional `-Model` names one delegatable alias,
+for example `gpt-6.2-astra`, and is sent only when set. An omitted `-Model` keeps the
+table. `-Model` does not move Frontier, High, Medium, Low, or Review; the level still
+sets reasoning effort. Unknown text, `*`, or a slug the resolved kind does not delegate
+is HTTP 422, and a hold refuses that alias only. For example:
 
 ```powershell
 # Fable review
@@ -264,6 +268,11 @@ Three things worth knowing about that table:
   `gpt-6-sol` and `gpt-5.6-terra` stay selectable profile model ids and recognized historical
   aliases; bare `sol` still normalizes to `gpt-6-sol` and bare `astra` still normalizes to
   `gpt-6-astra`. `gpt-6.2-astra` is recognized and floored, and it is not a ladder rung.
+  A caller selects it with `-Model gpt-6.2-astra` (create field `model`) for an on-demand
+  audit or review the operator chooses. The GPT-6.2 system card records a Blocker Deception
+  regression of 22.28% for GPT-6.2 Astra against 11.09% for GPT-6 Astra, so Astra 6.2 is
+  not Frontier or Review. The selected level still supplies `model_reasoning_effort`.
+  The 0.169.1 floor stays data only and is not enforced on create, retry, or launch.
   Frontier requires codex-cli 0.153.4+ (documented, not enforced). `gpt-6.2-sol` and
   `gpt-6.2-astra` require 0.169.1+. `gpt-6.1-sol` keeps 0.159.1.
   CARD-0959 reports runner-owned CLI observations and retains the 0.159.1 floor as model

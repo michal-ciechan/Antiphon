@@ -128,6 +128,12 @@ public class AgentTask
     /// </summary>
     public AgentModelLevel? ExplicitModelLevel { get; set; }
 
+    /// <summary>
+    /// Caller-selected delegatable alias, for example <c>gpt-6.2-astra</c>. Null keeps the tier
+    /// ladder. Distinct from <see cref="SpecialistModelAlias"/>, which is an internal snapshot.
+    /// </summary>
+    public string? RequestedModelAlias { get; set; }
+
     /// <summary>Set when the task was escalated up a tier — the chip shows the ladder.</summary>
     public AgentModelLevel? EscalatedFrom { get; set; }
 
