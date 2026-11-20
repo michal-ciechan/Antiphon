@@ -2441,7 +2441,7 @@ function Test-C1410_MeasuredCostGroups {
             if ($hits -eq 0) { $missing++ } elseif ($hits -gt 1) { $double++ }
         }
         $extra = $covered.Count - ($required.Count - $missing)
-        $family = (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskLandPublicationTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskDeliveryWatchdogTests') -and (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskCheckSweepTests') -and -not (Test-NightlyHeavyFamilyType -TypeName 'AgentTaskReplyIntegrationTests')
+        $family = ([Antiphon.Nightly.NightlyLaunchPlan]::HeavyFamilyType('AgentTaskLandPublicationTests')) -and ([Antiphon.Nightly.NightlyLaunchPlan]::HeavyFamilyType('AgentTaskDeliveryWatchdogTests')) -and ([Antiphon.Nightly.NightlyLaunchPlan]::HeavyFamilyType('AgentTaskCheckSweepTests')) -and -not ([Antiphon.Nightly.NightlyLaunchPlan]::HeavyFamilyType('AgentTaskReplyIntegrationTests'))
         $runAlone = @($plan | Where-Object { [string]$_.exactFilter -ceq '/*/Antiphon.Tests.C1410/C1410LandSplitTests/Run' })
         $runOr = @($plan | Where-Object { ($_.PSObject.Properties.Name -contains 'methodFilter') -and ([string]$_.methodFilter).Contains('(Run*)') })
         $rejected = $false

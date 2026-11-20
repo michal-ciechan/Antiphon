@@ -94,7 +94,7 @@ foreach ($chunk in $packed) {
         $parts = $filter.Split('/')
         $candidates = $byNamespace[$parts[2]]
         foreach ($node in $candidates) {
-            $bare = Get-NightlyBareTypeParts $node.ClassName
+            $bare = [Antiphon.Nightly.NightlyLaunchPlan]::BareTypeParts($node.ClassName)
             if ($chunk.exactFilter) { $hit = ('/*/{0}/{1}/{2}' -f $bare.Namespace,$bare.Type,$node.Method) -ceq $filter }
             else {
                 $typeRx = '^(?:' + $parts[3].Replace('*','.*') + ')$'

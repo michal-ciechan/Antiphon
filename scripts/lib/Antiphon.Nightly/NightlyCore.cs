@@ -1115,8 +1115,7 @@ namespace Antiphon.Nightly
         public static PSObject ClassCost(object nodes, string typeName, string bare, IDictionary costTable,
             double nodeSeconds, double slowNodeSeconds, double laneSlowNodeSeconds, double heavyFactor)
         {
-            var heavy = !string.IsNullOrEmpty(typeName) && (typeName.IndexOf("Land", StringComparison.Ordinal) >= 0
-                || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0 || typeName.IndexOf("Check", StringComparison.Ordinal) >= 0);
+            var heavy = HeavyFamilyType(typeName);
             var lane = !string.IsNullOrEmpty(typeName) && (typeName.IndexOf("Land", StringComparison.Ordinal) >= 0
                 || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0);
             object measured = null;
@@ -1149,6 +1148,32 @@ namespace Antiphon.Nightly
         }
 
         private static readonly Regex GroupFilterShape = new Regex(@"^/\*/([A-Za-z_][A-Za-z0-9_.]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))*)/\*$");
+        private static readonly Regex MethodFilterShape = new Regex(@"^/\*/([A-Za-z_][A-Za-z0-9_.]*)/([A-Za-z_][A-Za-z0-9_]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))+)$");
+
+        /// <summary>Test-NightlyHeavyFamilyType: a Land, Delivery or Check type (priced at the heavy-family factor).</summary>
+        public static bool HeavyFamilyType(string typeName) =>
+            !string.IsNullOrEmpty(typeName) && (typeName.IndexOf("Land", StringComparison.Ordinal) >= 0
+                || typeName.IndexOf("Delivery", StringComparison.Ordinal) >= 0 || typeName.IndexOf("Check", StringComparison.Ordinal) >= 0);
+
+        /// <summary>
+        /// Test-NightlyMethodGroupFilter: an exact-method group filter /*/namespace/type/(A*)|(B*)... for the launch's one
+        /// class, two or more distinct operands, none a prefix of another (it would also select its extensions).
+        /// </summary>
+        public static bool MethodGroupFilter(string[] classes, string methodFilter)
+        {
+            var list = classes ?? new string[] { null };
+            if (string.IsNullOrWhiteSpace(methodFilter) || list.Length != 1) return false;
+            var matched = MethodFilterShape.Match(methodFilter);
+            if (!matched.Success) return false;
+            var parts = BareTypeParts(list[0]);
+            if (parts == null || (string)parts.Properties["Namespace"].Value != matched.Groups[1].Value
+                || (string)parts.Properties["Type"].Value != matched.Groups[2].Value) return false;
+            var operands = new List<string>();
+            foreach (Match op in GroupFilterOperand.Matches(matched.Groups[3].Value)) operands.Add(op.Groups[1].Value);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var op in operands) if (!seen.Add(op)) return false;
+            return NightlyPlannerParts.PrefixUnsafeNames(operands.ToArray()).Count == 0;
+        }
         private static readonly Regex GroupFilterOperand = new Regex(@"\(([A-Za-z_][A-Za-z0-9_]*)\*\)");
 
         /// <summary>

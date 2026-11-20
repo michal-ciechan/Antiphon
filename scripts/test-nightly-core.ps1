@@ -605,7 +605,7 @@ function Test-NCLaunchPlanMatchesFallback {
         @(@('N.S.Alpha', 'N.S.Alpha'), '/*/N.S/(Alpha*)|(Beta*)/*'),
         @($null, '/*/N.S/(Alpha*)|(Beta*)/*'),
         @(@('N.S.Alpha', 'N.S.Beta'), ''))
-    $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool](Test-NightlyClassGroupFilter -Classes $c[0] -GroupFilter $c[1]) }) } 'groupFilter'
+    $r = Invoke-NCBothWays { @(foreach ($c in $cases) { [bool]([Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($c[0], $c[1])) }) } 'groupFilter'
     Assert-NC ($r.Compiled -ceq $r.Fallback -and $r.Fallback.Contains('true') -and $r.Fallback.Contains('false')) 'groupFilter' ('compiled ' + $r.Compiled + ' fallback ' + $r.Fallback)
     # Split-NightlyItemsBySeconds (NightlyLaunchPlan.FirstFitBins): first fit with ties, items with no Seconds
     # (the 0.5 default), a string Seconds, items at or over the target, and the operand cap.

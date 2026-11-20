@@ -97,26 +97,6 @@ function Get-NightlyProfileExecutionChunks {
     }
 }
 
-function Get-NightlyBareTypeParts {
-    param([string]$ClassName)
-    $bare = [Antiphon.Nightly.NightlyCensus]::BareClassIdentity($ClassName)
-    if ([string]::IsNullOrWhiteSpace($bare)) { return $null }
-    $dot = $bare.LastIndexOf('.')
-    if ($dot -lt 1) { return $null }
-    return [pscustomobject]@{
-        Bare = $bare
-        Namespace = $bare.Substring(0, $dot)
-        Type = $bare.Substring($dot + 1)
-    }
-}
-
-function Test-NightlyClassGroupFilter {
-    param([string[]]$Classes, [string]$GroupFilter)
-    if ([string]::IsNullOrWhiteSpace($GroupFilter)) { return $false }
-    Assert-NightlyCoreAvailable 'Test-NightlyClassGroupFilter'
-    return [Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter)
-}
-
 # CARD-1410. Launch groups pack by estimated serial seconds. A class with a
 # row in nightly-class-costs.json (refreshed from TRX) uses it; any other
 # class uses the node model below. With CARD-1404 group-10 prices the recorded
@@ -175,34 +155,12 @@ function Get-NightlyClassCostTable {
     return $table
 }
 
-function Test-NightlyHeavyFamilyType {
-    param([string]$TypeName)
-    if ([string]::IsNullOrEmpty($TypeName)) { return $false }
-    foreach ($family in @('Land', 'Delivery', 'Check')) {
-        if ($TypeName.IndexOf($family, [StringComparison]::Ordinal) -ge 0) { return $true }
-    }
-    return $false
-}
-
 function Get-NightlyLaunchClassCost {
     param([object[]]$Nodes, [string]$TypeName, [string]$Bare = '')
     Assert-NightlyCoreAvailable 'Get-NightlyLaunchClassCost'
     return [Antiphon.Nightly.NightlyLaunchPlan]::ClassCost($Nodes, $TypeName, $Bare, (Get-NightlyClassCostTable),
         [double]$script:NightlyLaunchNodeSeconds, [double]$script:NightlyLaunchSlowNodeSeconds,
         [double]$script:NightlyLaunchLaneSlowNodeSeconds, [double]$script:NightlyLaunchHeavyFamilyFactor)
-}
-
-function Test-NightlyMethodGroupFilter {
-    param([string[]]$Classes, [string]$MethodFilter)
-    if ([string]::IsNullOrWhiteSpace($MethodFilter) -or @($Classes).Count -ne 1) { return $false }
-    $matched = [regex]::Match($MethodFilter, '^/\*/([A-Za-z_][A-Za-z0-9_.]*)/([A-Za-z_][A-Za-z0-9_]*)/(\([A-Za-z_][A-Za-z0-9_]*\*\)(\|\([A-Za-z_][A-Za-z0-9_]*\*\))+)$')
-    if (-not $matched.Success) { return $false }
-    $parts = Get-NightlyBareTypeParts -ClassName ([string]@($Classes)[0])
-    if ($null -eq $parts -or $parts.Namespace -cne $matched.Groups[1].Value -or $parts.Type -cne $matched.Groups[2].Value) { return $false }
-    $operands = @(foreach ($op in [regex]::Matches($matched.Groups[3].Value, '\(([A-Za-z_][A-Za-z0-9_]*)\*\)')) { $op.Groups[1].Value })
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($op in $operands) { if (-not $seen.Add([string]$op)) { return $false } }
-    return (([Antiphon.Nightly.NightlyPlannerParts]::PrefixUnsafeNames($operands)).Count -eq 0)
 }
 
 function Complete-NightlyBoundaryLaunchGroups {
@@ -246,7 +204,7 @@ function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
         $members = @($rec.Nodes)
         if ($leaf.exactFilter) {
             $members = @($members | Where-Object {
-                $parts = Get-NightlyBareTypeParts -ClassName ([string]$_.ClassName)
+                $parts = [Antiphon.Nightly.NightlyLaunchPlan]::BareTypeParts(([string]$_.ClassName))
                 ('/*/{0}/{1}/{2}' -f $parts.Namespace, $parts.Type, $_.Method) -ceq $leaf.exactFilter
             })
             [string[]]$declared = @($leaf.nodes | ForEach-Object { [string]$_.Uid })
@@ -708,12 +666,12 @@ function Get-NightlyNativeExecutionArguments {
         $nativeArgs += $ExactFilter
     } elseif (-not [string]::IsNullOrWhiteSpace($MethodFilter)) {
         # CARD-1410: /*/Namespace/Type/(MethodA*)|(MethodB*) . A prefix operand is refused.
-        if (-not (Test-NightlyMethodGroupFilter -Classes $Classes -MethodFilter $MethodFilter)) { throw 'invalid-method-filter' }
+        if (-not ([Antiphon.Nightly.NightlyLaunchPlan]::MethodGroupFilter($Classes, $MethodFilter))) { throw 'invalid-method-filter' }
         $nativeArgs += '--treenode-filter'
         $nativeArgs += $MethodFilter
     } elseif (-not [string]::IsNullOrWhiteSpace($GroupFilter)) {
         # CARD-0403: /*/Namespace/(ClassA*)|(ClassB*)/* . A prefix operand is refused.
-        if (-not (Test-NightlyClassGroupFilter -Classes $Classes -GroupFilter $GroupFilter)) { throw 'invalid-group-filter' }
+        if (-not ([Antiphon.Nightly.NightlyLaunchPlan]::ClassGroupFilter($Classes, $GroupFilter))) { throw 'invalid-group-filter' }
         $nativeArgs += '--treenode-filter'
         $nativeArgs += $GroupFilter
     } elseif ($Classes -and @($Classes).Count -gt 0) {
