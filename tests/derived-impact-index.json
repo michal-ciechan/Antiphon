@@ -2153,6 +2153,7 @@
       "reason": "cap",
       "owed": 25,
       "first": [
+        "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcLedgerDurationTests",
         "RcLedgerStatusTests",
@@ -24594,6 +24595,7 @@
         "RcBoundaryChunkIdTests",
         "RcBoundaryPackTests",
         "RcChunkInputDigestTests",
+        "RcDirtyLaunchOrderTests",
         "RcFailedFirstExecutionTests",
         "RcFailedFirstPlannerTests",
         "RcFailureHistoryTests",
@@ -24601,7 +24603,6 @@
         "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
         "RcIncrementalLedgerTests",
-        "RcIncrementalShadowTests",
         "RcStoppedRunSeedTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests"
