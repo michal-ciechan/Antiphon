@@ -52,10 +52,16 @@ function Test-RcInputNoopPath([string]$Path) {
 }
 
 function Add-RcInventoryInput {
-    param($Suite, $Tree, [string]$Path, [string]$Reason)
-    # A checked-in no-op class selects nothing, even when a star root or a
-    # project walk would otherwise claim it.
-    if (Test-RcInputNoopPath $Path) { return }
+    param($Suite, $Tree, [string]$Path, [string]$Reason, [switch]$FromOwnerRoot)
+    # A checked-in no-op still skips the project walk. An explicit owner root
+    # wins, and the overlap is a noop-vs-owner conflict the census fails on.
+    if (Test-RcInputNoopPath $Path) {
+        if (-not $FromOwnerRoot) { return }
+        $conflictKey=$Path+'|'+$Reason
+        if ($script:RcNoopOwnerConflictKeys.Add($conflictKey)) {
+            $script:RcNoopOwnerConflicts.Add($Path+' reason='+$Reason)
+        }
+    }
     if (-not $Suite.inputMap.ContainsKey($Path)) {
         $entry=$Tree[$Path]
         $Suite.inputMap[$Path]=[ordered]@{version=1;suite=$Suite.id;project=$Suite.project;path=$Path
@@ -71,6 +77,9 @@ function Read-RcInputInventory {
     param([string]$RepositoryRoot, [string]$Sha, $DerivedIndex, [switch]$SkipUnresolvedBroadening)
     if ($Sha -cnotmatch '^[a-f0-9]{40}$' -or (Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-t',$Sha)).Stdout.Trim() -cne 'commit') { throw 'full-commit-required' }
     $script:RcInputNoopPatterns=@()
+    $script:RcNoopOwnerConflicts=New-Object System.Collections.Generic.List[string]
+    $script:RcNoopOwnerConflictKeys=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $script:RcParentProbeSha=$null
     $script:RcReferencedProjects=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $tree=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     $folded=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -93,7 +102,7 @@ function Read-RcInputInventory {
     $json=[Text.Json.JsonDocument]::Parse($mapText)
     try { Assert-RcInputJsonKeys $json.RootElement } finally { $json.Dispose() }
     $map=ConvertFrom-Json -InputObject $mapText -AsHashtable
-    Assert-TestSelectionKeys $map @('schemaVersion','suites','suiteProjects','roots')
+    Assert-TestSelectionKeys $map @('schemaVersion','suites','suiteProjects','roots','testOnly')
     if (($map.schemaVersion -isnot [long] -and $map.schemaVersion -isnot [int]) -or $map.schemaVersion -ne 1) { throw 'input-map-version' }
     if ($map.roots -isnot [array] -or ($map.Contains('suites') -eq $map.Contains('suiteProjects'))) { throw 'input-map-shape' }
     $suiteRows=@()
@@ -141,9 +150,11 @@ function Read-RcInputInventory {
     # retired broad fallback. Ignore it. A ** row with reason repo-walk names
     # the suites that read every non-no-op path, including paths another suite owns.
     foreach ($root in $map.roots) {
-        Assert-TestSelectionKeys $root @('path','consumers','reason')
+        Assert-TestSelectionKeys $root @('path','consumers','reason','except','walker')
         if ($root.path -isnot [string] -or $root.reason -isnot [string] -or -not $root.reason -or
             $root.consumers -isnot [array] -or -not $root.consumers.Count) { throw 'invalid-input-root' }
+        if ($root.Contains('except') -and ($root.except -isnot [array])) { throw 'invalid-input-root' }
+        if ($root.Contains('walker') -and ($root.walker -isnot [bool])) { throw 'invalid-input-root' }
         foreach ($id in $root.consumers) {
             if ($id -isnot [string] -or ($id -cne '*' -and -not $suites.ContainsKey($id))) { throw 'unknown-input-consumer' }
         }
@@ -158,10 +169,21 @@ function Read-RcInputInventory {
             continue
         }
         $pattern=New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$')
+        $except=[Collections.Generic.List[regex]]::new()
+        if ($root.Contains('except')) {
+            foreach ($item in @($root.except)) {
+                if ($item -isnot [string] -or -not $item) { throw 'invalid-input-root' }
+                $except.Add((New-RcInputPattern $item))
+            }
+        }
         foreach ($id in $root.consumers) {
             $consumers=if ($id -ceq '*') { @($suites.Values) } else { @($suites[$id]) }
             foreach ($path in $paths) {
-                if ($pattern.IsMatch($path)) { foreach ($suite in $consumers) { Add-RcInventoryInput $suite $tree $path $root.reason } }
+                if (-not $pattern.IsMatch($path)) { continue }
+                $carved=$false
+                foreach ($ex in $except) { if ($ex.IsMatch($path)) { $carved=$true; break } }
+                if ($carved) { continue }
+                foreach ($suite in $consumers) { Add-RcInventoryInput $suite $tree $path $root.reason -FromOwnerRoot }
             }
         }
     }
@@ -266,7 +288,8 @@ function Read-RcInputInventory {
         if ($path.EndsWith('.csproj',[StringComparison]::Ordinal)) {
             $suiteProject=$false
             foreach ($suite in $suites.Values) { if ([string]$suite.project -ceq $path) { $suiteProject=$true } }
-            if (-not $suiteProject -and -not $script:RcReferencedProjects.Contains($path)) { $hint='new-csproj' }
+            # new-csproj means nobody references it and the parent commit does not contain it.
+            if (-not $suiteProject -and -not $script:RcReferencedProjects.Contains($path) -and -not (Test-RcPathInParentCommit $RepositoryRoot $Sha $path)) { $hint='new-csproj' }
         } elseif ($path.StartsWith('docs/',[StringComparison]::Ordinal)) { $hint='new-docs-folder' }
         $unowned.Add([ordered]@{path=$path;hint=$hint;reason='unowned-path'})
     }
@@ -278,8 +301,197 @@ function Read-RcInputInventory {
     return @{format='antiphon-rc-input-snapshot-v1';sha=$Sha;treeId=(Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${Sha}^{tree}")).Stdout.Trim()
         mapObjectId=$tree[$mapPath].objectId;indexBroadened=$indexBroadened;suites=@(foreach ($id in (Get-TestSelectionSorted @($suites.Keys))) { $suites[$id] })
         unresolved=@(Get-TestSelectionSorted @($unresolved));unowned=@($unowned.ToArray())
+        noopConflicts=@(Get-TestSelectionSorted @($script:RcNoopOwnerConflicts))
         needsOrchestratorDecision=([bool]$snapshotDecision)
         creditBlockedBy=$(if ($snapshotDecision) { 'unowned-paths' } else { $null })}
+}
+
+function Test-RcPathInParentCommit {
+    param([string]$RepositoryRoot, [string]$Sha, [string]$Path)
+    if ($script:RcParentProbeSha -cne $Sha) {
+        $script:RcParentProbeSha=$Sha
+        $script:RcParentProbe=[Collections.Generic.Dictionary[string,bool]]::new([StringComparer]::Ordinal)
+        $parent=Invoke-TestSelectionGit $RepositoryRoot @('rev-parse',"${Sha}^") @(0,128)
+        $parentSha=$parent.Stdout.Trim()
+        if ($parent.Exit -eq 0 -and $parentSha -match '^[a-f0-9]{40}$') { $script:RcParentSha=$parentSha }
+        else { $script:RcParentSha=$null }
+    }
+    if (-not $script:RcParentSha) { return $false }
+    $present=$false
+    if (-not $script:RcParentProbe.TryGetValue($Path,[ref]$present)) {
+        $probe=Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-e',"$($script:RcParentSha):${Path}") @(0,128)
+        $present=($probe.Exit -eq 0)
+        $script:RcParentProbe[$Path]=$present
+    }
+    return $present
+}
+
+function Format-RcUnownedCensusLines {
+    param($Unowned, [string]$ListPath)
+    $rows=@($Unowned | Where-Object { $null -ne $_ })
+    $lines=New-Object System.Collections.Generic.List[string]
+    $lines.Add('UNOWNED-COUNT '+$rows.Count)
+    $limit=[Math]::Min(40, $rows.Count)
+    for ($i=0; $i -lt $limit; $i++) {
+        $lines.Add('UNOWNED-PATH '+[string]$rows[$i].hint+' '+[string]$rows[$i].path)
+    }
+    if ($rows.Count -gt 40) { $lines.Add('UNOWNED-LIST '+$ListPath) }
+    return @($lines)
+}
+
+function Get-RcClassCounts([string]$Text) {
+    $counts=[Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+    if (-not $Text) { return $counts }
+    foreach ($line in ($Text -split '\n')) {
+        $trim=$line.Trim().TrimEnd("`r")
+        if ($trim.StartsWith('//',[StringComparison]::Ordinal) -or $trim.StartsWith('*',[StringComparison]::Ordinal) -or $trim.StartsWith('/*',[StringComparison]::Ordinal)) { continue }
+        foreach ($match in [regex]::Matches($trim,'(?<![A-Za-z0-9_])class\s+([A-Za-z_][A-Za-z0-9_]*)')) {
+            $name=$match.Groups[1].Value
+            if (-not $counts.ContainsKey($name)) { $counts[$name]=0 }
+            $counts[$name]++
+        }
+    }
+    return $counts
+}
+
+function Get-RcCommitFileText {
+    param([string]$RepositoryRoot, [string]$Sha, [string]$Path)
+    if ($null -eq $script:RcBlobText) { $script:RcBlobText=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal) }
+    $key=$Sha+'|'+$Path
+    $text=$null
+    if ($script:RcBlobText.TryGetValue($key,[ref]$text)) { return $text }
+    $probe=Invoke-TestSelectionGit $RepositoryRoot @('cat-file','-e',"${Sha}:${Path}") @(0,128)
+    $text= if ($probe.Exit -eq 0) { Get-TestSelectionBlob $RepositoryRoot $Sha $Path } else { '' }
+    $script:RcBlobText[$key]=$text
+    return $text
+}
+
+function Test-RcCountMapsEqual($Left, $Right) {
+    if ($Left.Count -ne $Right.Count) { return $false }
+    foreach ($name in $Left.Keys) {
+        if (-not $Right.ContainsKey($name) -or $Right[$name] -ne $Left[$name]) { return $false }
+    }
+    return $true
+}
+
+function Get-RcAddedClassNames {
+    param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, [string]$Path)
+    $before=Get-RcClassCounts (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
+    $after=Get-RcClassCounts (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
+    $names=New-Object System.Collections.Generic.List[string]
+    foreach ($name in $after.Keys) {
+        $seen=0
+        if ($before.ContainsKey($name)) { $seen=[int]$before[$name] }
+        for ($i=$seen; $i -lt [int]$after[$name]; $i++) { $names.Add($name) }
+    }
+    return $names
+}
+
+function Test-RcStructuralChange {
+    param([string]$RepositoryRoot, [string]$BaselineSha, [string]$CandidateSha, [string]$Path, [string]$Status)
+    # File add/remove selects walkers. A class-declaration multiset change does too.
+    # A method body or signature edit does not: see the test-only checkpoint note.
+    if ($Status -cin @('A','D','T')) { return $true }
+    $before=Get-RcClassCounts (Get-RcCommitFileText $RepositoryRoot $BaselineSha $Path)
+    $after=Get-RcClassCounts (Get-RcCommitFileText $RepositoryRoot $CandidateSha $Path)
+    return -not (Test-RcCountMapsEqual $before $after)
+}
+
+function Get-RcTestOnlyPolicy {
+    param([string]$RepositoryRoot, [string]$Sha)
+    $map=ConvertFrom-Json -InputObject (Get-TestSelectionBlob $RepositoryRoot $Sha 'scripts/lib/rc-input-owners.json') -AsHashtable
+    $disabled=@{enabled=$false;paths=@();exceptPaths=@();exceptReasons=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);productEdges=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);roots=@()}
+    if (-not $map.Contains('testOnly') -or $null -eq $map.testOnly) { return $disabled }
+    $policy=$map.testOnly
+    Assert-TestSelectionKeys $policy @('enabled','paths','exceptPaths','exceptReasons','productEdgeReasons')
+    if ($policy.enabled -isnot [bool]) { throw 'invalid-test-only-class' }
+    foreach ($name in @('paths','exceptPaths','exceptReasons','productEdgeReasons')) {
+        if ($policy[$name] -isnot [array]) { throw 'invalid-test-only-class' }
+    }
+    $exceptReasons=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($reason in @($policy.exceptReasons)) {
+        if ($reason -isnot [string] -or -not $reason) { throw 'invalid-test-only-class' }
+        [void]$exceptReasons.Add($reason)
+    }
+    $productEdges=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($reason in @($policy.productEdgeReasons)) {
+        if ($reason -isnot [string] -or -not $reason) { throw 'invalid-test-only-class' }
+        [void]$productEdges.Add($reason)
+    }
+    $roots=New-Object System.Collections.Generic.List[object]
+    foreach ($root in @($map.roots)) {
+        $except=[Collections.Generic.List[regex]]::new()
+        if ($root.Contains('except')) {
+            foreach ($item in @($root.except)) { $except.Add((New-RcInputPattern $item)) }
+        }
+        $roots.Add(@{pattern=(New-RcInputPattern $root.path -IgnoreCase:($root.path -match '(?i)(^|/)nuget\.config$'));except=@($except);reason=[string]$root.reason;walker=([bool]$root.walker);consumers=@($root.consumers)})
+    }
+    return @{enabled=[bool]$policy.enabled;paths=@($(foreach ($item in @($policy.paths)) { New-RcInputPattern $item }));exceptPaths=@($(foreach ($item in @($policy.exceptPaths)) { New-RcInputPattern $item }));exceptReasons=$exceptReasons;productEdges=$productEdges;roots=@($roots)}
+}
+
+function Test-RcRootCarves($Root, [string]$Path) {
+    foreach ($pattern in @($Root.except)) { if ($pattern.IsMatch($Path)) { return $true } }
+    return $false
+}
+
+function Test-RcTestOnlyPath {
+    param([string]$Path, $Policy)
+    if (-not $Policy.enabled) { return $false }
+    $hit=$false
+    foreach ($pattern in @($Policy.paths)) { if ($pattern.IsMatch($Path)) { $hit=$true } }
+    if (-not $hit) { return $false }
+    foreach ($pattern in @($Policy.exceptPaths)) { if ($pattern.IsMatch($Path)) { return $false } }
+    foreach ($root in @($Policy.roots)) {
+        if (-not $root.pattern.IsMatch($Path) -or (Test-RcRootCarves $root $Path)) { continue }
+        if ($Policy.exceptReasons.Contains([string]$root.reason)) { return $false }
+    }
+    return $true
+}
+
+function Test-RcProductEdgeReason {
+    param([string]$Reason, $Policy)
+    if (-not $Reason) { return $false }
+    foreach ($part in $Reason.Split(';')) { if ($Policy.productEdges.Contains($part)) { return $true } }
+    return $false
+}
+
+function Test-RcWalkerSuite {
+    param([string]$SuiteId, [string]$Path, $Policy)
+    foreach ($root in @($Policy.roots)) {
+        if (-not $root.walker -or -not $root.pattern.IsMatch($Path) -or (Test-RcRootCarves $root $Path)) { continue }
+        if (@($root.consumers) -ccontains $SuiteId -or @($root.consumers) -ccontains '*') { return $true }
+    }
+    return $false
+}
+
+function Get-RcContainingSuiteId {
+    param([string]$Path, $Suites)
+    $best=$null
+    $length=-1
+    foreach ($suite in @($Suites)) {
+        $directory=[string]$suite.project -replace '[^/]+$',''
+        if ($directory -and $Path.StartsWith($directory,[StringComparison]::Ordinal) -and $directory.Length -gt $length) {
+            $best=[string]$suite.id
+            $length=$directory.Length
+        }
+    }
+    return $best
+}
+
+function Get-RcChangedInputPaths($Left, $Right) {
+    $before=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    $after=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($input in @($Left.inputs)) { if ($null -ne $input) { $before[[string]$input.path]=$input } }
+    foreach ($input in @($Right.inputs)) { if ($null -ne $input) { $after[[string]$input.path]=$input } }
+    $changed=New-Object System.Collections.Generic.List[string]
+    foreach ($path in (Get-TestSelectionSorted @(@($before.Keys)+@($after.Keys)))) {
+        $left=$null; $right=$null
+        $hasLeft=$before.TryGetValue($path,[ref]$left)
+        $hasRight=$after.TryGetValue($path,[ref]$right)
+        if (-not $hasLeft -or -not $hasRight) { $changed.Add($path); continue }
+        if ([string]$left.objectId -cne [string]$right.objectId -or [bool]$left.present -ne [bool]$right.present) { $changed.Add($path) }
+    }
+    return $changed
 }
 
 function Get-RcInputManifest {
@@ -329,15 +541,62 @@ function Get-RcInputManifest {
         foreach ($row in @($snap.unowned)) {
             if ($null -eq $row) { continue }
             $unownedPath=[string]$row.path
-            if ($unownedPath -and -not $unownedByPath.ContainsKey($unownedPath)) { $unownedByPath[$unownedPath]=$row }
+            if ($unownedPath) { $unownedByPath[$unownedPath]=$row }
+        }
+    }
+    $script:RcBlobText=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $policy=Get-RcTestOnlyPolicy $RepositoryRoot $CandidateSha
+    $deferred=[Collections.Generic.List[string]]::new()
+    $notRun=[Collections.Generic.List[string]]::new()
+    if ($policy.enabled) {
+        $status=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($change in @($changes)) { $status[[string]$change.path]=[string]$change.status }
+        $remove=New-Object System.Collections.Generic.List[string]
+        foreach ($id in @($dirty)) {
+            $before=@($old.suites | Where-Object id -CEQ $id)
+            $after=@($new.suites | Where-Object id -CEQ $id)
+            if (-not $before.Count -or -not $after.Count) { continue }
+            $changedPaths=@(Get-RcChangedInputPaths $before[0] $after[0])
+            if (-not $changedPaths.Count) { continue }
+            $keep=$false
+            $deferredPaths=New-Object System.Collections.Generic.List[string]
+            foreach ($path in $changedPaths) {
+                if (-not (Test-RcTestOnlyPath $path $policy)) { $keep=$true; continue }
+                $deferredPaths.Add($path)
+                $record=$null
+                foreach ($input in @($after[0].inputs)+@($before[0].inputs)) {
+                    if ($null -ne $input -and [string]$input.path -ceq $path -and $input.present) { $record=$input; break }
+                }
+                if ($null -ne $record -and (Test-RcProductEdgeReason ([string]$record.reason) $policy)) { $keep=$true; continue }
+                $changeStatus= if ($status.ContainsKey($path)) { $status[$path] } else { 'M' }
+                if ((Test-RcStructuralChange $RepositoryRoot $BaselineSha $CandidateSha $path $changeStatus) -and (Test-RcWalkerSuite $id $path $policy)) { $keep=$true }
+            }
+            if (-not $keep) {
+                $remove.Add($id)
+                foreach ($path in $deferredPaths) { $deferred.Add($id+':'+$path) }
+            }
+        }
+        foreach ($id in $remove) { [void]$dirty.Remove($id) }
+        foreach ($change in @($changes)) {
+            $path=[string]$change.path
+            if (-not (Test-RcTestOnlyPath $path $policy)) { continue }
+            $names=@(Get-RcAddedClassNames $RepositoryRoot $BaselineSha $CandidateSha $path)
+            if (-not $names.Count) { continue }
+            $suiteId=Get-RcContainingSuiteId $path @($new.suites)
+            if (-not $suiteId) { continue }
+            foreach ($name in $names) { $notRun.Add($suiteId+':'+$path+':'+$name) }
         }
     }
     $manifestUnowned=@(foreach ($unownedPath in (Get-TestSelectionSorted @($unownedByPath.Keys))) { $unownedByPath[$unownedPath] })
+    $conflictRows=New-Object System.Collections.Generic.List[string]
+    foreach ($snap in @($old,$new)) { foreach ($row in @($snap.noopConflicts)) { if ($row) { $conflictRows.Add([string]$row) } } }
     $sortedUnresolved=@(Get-TestSelectionSorted @($unresolved))
     $cutDecision=($manifestUnowned.Count -gt 0) -or ($sortedUnresolved.Count -gt 0)
     return @{format='antiphon-rc-input-inventory-v1'; baselineSha=$BaselineSha; candidateSha=$CandidateSha
         snapshots=@($old,$new);changes=$changes.ToArray();dirtySuites=@($dirty);unresolved=$sortedUnresolved
         unowned=$manifestUnowned;needsOrchestratorDecision=([bool]$cutDecision)
+        testOnlyDeferred=@(Get-TestSelectionSorted @($deferred));changedNotRun=@(Get-TestSelectionSorted @($notRun))
+        noopConflicts=@(Get-TestSelectionSorted @($conflictRows))
         creditBlockedBy=$(if ($cutDecision) { 'unowned-paths' } else { $null })
         index=@{version=$(if ($null -ne $DerivedIndex) { $DerivedIndex.version } else { $null });broadened=$broadened;authority='positive-only'}
         requiredActualReceipts=@('sdk-runtime-os-architecture','powershell-node-browser-native','configuration-environment',

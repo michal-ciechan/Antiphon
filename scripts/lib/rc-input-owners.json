@@ -1,9 +1,16 @@
 {
   "schemaVersion": 1,
   "suiteProjects": "tests/**/*.csproj",
+  "testOnly": {
+    "enabled": true,
+    "paths": ["tests/**/*.cs", "tests/**/Fixtures/**", "tests/fixtures/**"],
+    "exceptPaths": ["tests/Shared/**"],
+    "exceptReasons": ["forced-full-build-graph", "forced-full-policy", "forced-full-selector", "forced-full-spawn-limit", "forced-full-root", "shared-test-infrastructure"],
+    "productEdgeReasons": ["Compile", "ProjectReference", "Import", "Content", "None", "EmbeddedResource", "AdditionalFiles", "Analyzer"]
+  },
   "roots": [
-    { "path": "docs/**", "consumers": ["*"], "reason": "repository-reader-non-code" },
-    { "path": "**/*.md", "consumers": ["*"], "reason": "repository-reader-non-code" },
+    { "path": "docs/**", "except": ["docs/reviews/**", "docs/superpowers/reviews/**"], "consumers": ["*"], "reason": "repository-reader-non-code" },
+    { "path": "**/*.md", "except": ["docs/reviews/**", "docs/superpowers/reviews/**"], "consumers": ["*"], "reason": "repository-reader-non-code" },
     { "path": "scripts/**", "consumers": ["*"], "reason": "repository-reader-non-code" },
     { "path": "docker/**", "consumers": ["*"], "reason": "repository-reader-non-code" },
     { "path": ".claude/**", "consumers": ["*"], "reason": "repository-reader-non-code" },
@@ -47,7 +54,7 @@
     { "path": "tests/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-scan" },
     { "path": "src/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-source-walk" },
     { "path": "server/**/*.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "derived-impact-source-walk" },
-    { "path": "tests/Antiphon.Tests/**", "consumers": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj", "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"], "reason": "antiphon-tests-source-scan" },
+    { "path": "tests/Antiphon.Tests/**", "consumers": ["tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj", "tests/Antiphon.Resilience.Tests/Antiphon.Resilience.Tests.csproj", "tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj"], "reason": "antiphon-tests-source-scan", "walker": true },
     { "path": "src/Antiphon.Messaging.Service/Migrations/**", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "messaging-migration-walk" },
     { "path": "docs/testing-and-build.md", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "doc-contract-reader" },
     { "path": "tests/**/*.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
