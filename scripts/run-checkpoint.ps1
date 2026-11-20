@@ -203,19 +203,26 @@ function Test-CheckpointStampRefusal {
     if ([string]::IsNullOrWhiteSpace($parent)) { return 'path-unsafe' }
     $owner = Find-CheckpointGitDir $parent
     if ($null -eq $owner) { return $null }
-    # The index file's answer when it is a plain one (CheckpointIndexPaths); git for anything else.
+    # git vouches for the checkout once per run (metadata, ownership, core.worktree): its toplevel is cached.
+    if ($null -eq $script:CheckpointVerifiedToplevels) { $script:CheckpointVerifiedToplevels = @{} }
+    if ($script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
+        $toplevel = [string]$script:CheckpointVerifiedToplevels[$owner]
+    } else {
+        $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
+        if ($top.Reason) { return [string]$top.Reason }
+        if ([int]$top.Exit -ne 0) {
+            if ([string]$top.Stderr -match 'not a git repository') { return 'not-a-repository' }
+            return 'git-failed'
+        }
+        $toplevel = ([string]$top.Stdout).Trim()
+        if ([string]::IsNullOrWhiteSpace($toplevel)) { return 'git-failed' }
+        $script:CheckpointVerifiedToplevels[$owner] = $toplevel
+    }
+    # The index file's answer when it is a plain one for that same checkout (CheckpointIndexPaths); git otherwise.
     if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
-        $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]@($StampPath))
+        $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]@($StampPath), $toplevel)
         if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
     }
-    $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
-    if ($top.Reason) { return [string]$top.Reason }
-    if ([int]$top.Exit -ne 0) {
-        if ([string]$top.Stderr -match 'not a git repository') { return 'not-a-repository' }
-        return 'git-failed'
-    }
-    $toplevel = ([string]$top.Stdout).Trim()
-    if ([string]::IsNullOrWhiteSpace($toplevel)) { return 'git-failed' }
     $listed = Invoke-CheckpointGit $toplevel @('-C', $toplevel, 'ls-files', '-z', '--', $StampPath)
     if ($listed.Reason) { return [string]$listed.Reason }
     if ([int]$listed.Exit -ne 0) {
@@ -263,11 +270,21 @@ function Test-CheckpointPreflight {
     $owner = Find-CheckpointGitDir $start
     if ($null -eq $owner) { return $null }
     $fullRoots = @($Roots | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
-    # The index file's answer when it is a plain one (CheckpointIndexPaths, loaded by run-checkpoint.ps1); git for
-    # anything else, and when this function runs without that type.
+    # The index file's answer when it is a plain one for the checkout git itself reports (CheckpointIndexPaths,
+    # loaded by run-checkpoint.ps1): git vouches once per run (metadata, ownership, core.worktree) and its toplevel
+    # is cached. Git answers anything else, and every call when this function runs without that type.
     if ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type]) {
-        $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]$fullRoots)
-        if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
+        if ($null -eq $script:CheckpointVerifiedToplevels) { $script:CheckpointVerifiedToplevels = @{} }
+        if (-not $script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
+            $top = Invoke-CheckpointGit $owner @('-C', $owner, 'rev-parse', '--show-toplevel')
+            if (-not $top.Reason -and [int]$top.Exit -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$top.Stdout)) {
+                $script:CheckpointVerifiedToplevels[$owner] = ([string]$top.Stdout).Trim()
+            }
+        }
+        if ($script:CheckpointVerifiedToplevels.ContainsKey($owner)) {
+            $inIndex = [Antiphon.Checkpoints.CheckpointIndexPaths]::AnyTracked($owner, [string[]]$fullRoots, [string]$script:CheckpointVerifiedToplevels[$owner])
+            if ($null -ne $inIndex) { if ($inIndex) { return 'tracked' } else { return $null } }
+        }
     }
     # Same 8,000-character budget as CheckpointDelete.DefaultCommandLineBudget.
     # A list that fits is still one ls-files invocation, in the same order.

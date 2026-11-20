@@ -10,30 +10,37 @@ namespace Antiphon.Checkpoints
 {
     // Compiled by run-checkpoint.ps1 (Import-CheckpointCompiledSource) and linked into Antiphon.Tests. Answers
     // "would `git ls-files -z -- <paths>` run at this checkout print anything" from the index file itself, so the
-    // script's tracked-path guards start no git process. Null whenever git must answer instead: a path with a
-    // pathspec glob character, outside the checkout or beyond a symlinked parent; a gitdir it cannot locate; a
-    // core.worktree setting; and any index that is not a plain version-2 SHA-1 index with a valid checksum, only
+    // script's tracked-path guards start no git process after the first. The caller passes the toplevel git itself
+    // reported for this checkout in this run (`rev-parse --show-toplevel`, which validates the repository's
+    // metadata and ownership and resolves core.worktree from any config source); without it, or when it is not this
+    // checkout, git answers. Null too for: a path with a pathspec glob character, one Path.GetFullPath would change
+    // (trailing dots or spaces on Windows), one outside the checkout or beyond a symlinked parent; a gitdir it cannot
+    // locate; a missing index; and any index that is not a plain version-2 SHA-1 index with a valid checksum, only
     // stage-0 regular, executable or symlink entries and no required extension (the same rules as GitInProcess'
     // index listing, pinned against git there). Case-insensitive on Windows, which can only call more paths tracked
-    // (a refusal), never fewer. Re-read on every call: nothing is cached.
+    // (a refusal), never fewer. The index is re-read on every call.
     public static class CheckpointIndexPaths
     {
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
-        private static readonly Regex WorktreeSetting = new Regex(@"^\s*worktree\s*=", RegexOptions.IgnoreCase | RegexOptions.Multiline);
 
-        public static bool? AnyTracked(string root, string[] fullPaths)
+        public static bool? AnyTracked(string root, string[] fullPaths, string verifiedToplevel)
         {
-            if (string.IsNullOrEmpty(root) || fullPaths == null || fullPaths.Length == 0) return null;
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(verifiedToplevel) || fullPaths == null || fullPaths.Length == 0)
+                return null;
             var windows = OperatingSystem.IsWindows();
+            var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             var relatives = new List<string>();
             try
             {
                 root = Path.GetFullPath(root).TrimEnd('\\', '/');
+                if (!string.Equals(root, Path.GetFullPath(verifiedToplevel).TrimEnd('\\', '/'), comparison)) return null;
                 foreach (var path in fullPaths)
                 {
                     if (string.IsNullOrEmpty(path) || path.IndexOfAny(new[] { '*', '?', '[' }) >= 0 || !windows && path.IndexOf('\\') >= 0)
                         return null;
-                    var relative = Path.GetRelativePath(root, Path.GetFullPath(path)).Replace('\\', '/');
+                    var full = Path.GetFullPath(path);
+                    if (!string.Equals(Separators(full), Separators(path), comparison)) return null;
+                    var relative = Path.GetRelativePath(root, full).Replace('\\', '/');
                     if (relative == ".") relative = "";
                     if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(relative))
                         return null;
@@ -50,20 +57,23 @@ namespace Antiphon.Checkpoints
                 }
                 var gitDir = GitDirectory(root);
                 if (gitDir == null) return null;
-                foreach (var config in new[] { Path.Combine(gitDir, "config"), CommonConfig(gitDir) })
-                    if (config != null && File.Exists(config) && WorktreeSetting.IsMatch(File.ReadAllText(config))) return null;
                 var index = Path.Combine(gitDir, "index");
-                if (!File.Exists(index)) return false;
+                if (!File.Exists(index)) return null;
                 byte[] data;
                 using (var stream = new FileStream(index, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                 {
                     if (stream.Length > int.MaxValue / 2) return null;
                     data = new byte[stream.Length];
-                    stream.ReadExactly(data);
+                    var read = 0;
+                    while (read < data.Length)
+                    {
+                        var n = stream.Read(data, read, data.Length - read);
+                        if (n <= 0) return null;
+                        read += n;
+                    }
                 }
                 var entries = ListIndex(data);
                 if (entries == null) return null;
-                var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                 foreach (var entry in entries)
                     foreach (var relative in relatives)
                         if (relative.Length == 0 || entry.Equals(relative, comparison) || entry.StartsWith(relative + "/", comparison))
@@ -91,15 +101,8 @@ namespace Antiphon.Checkpoints
             return Directory.Exists(full) ? full : null;
         }
 
-        // The common directory's config for a linked worktree's gitdir (its commondir file), else null.
-        private static string CommonConfig(string gitDir)
-        {
-            var file = Path.Combine(gitDir, "commondir");
-            if (!File.Exists(file)) return null;
-            var common = File.ReadAllText(file).Trim();
-            if (common.Length == 0) return null;
-            return Path.Combine(Path.GetFullPath(Path.IsPathRooted(common) ? common : Path.Combine(gitDir, common)), "config");
-        }
+        // A path with one separator style and no trailing separator, for comparing it with its full form.
+        private static string Separators(string path) => path.Replace('\\', '/').TrimEnd('/');
 
         // Paths of a plain version-2 SHA-1 index, in file order; null for anything else (see the class comment).
         internal static List<string> ListIndex(byte[] data)

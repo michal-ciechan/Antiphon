@@ -7,5 +7,8 @@ if (-not ('Antiphon.Checkpoints.CheckpointIndexPaths' -as [type])) {
     try {
         Import-CheckpointCompiledSource -Source (Read-CheckpointText (Join-Path $PSScriptRoot 'CheckpointIndexPaths.cs')) `
             -TypeName 'Antiphon.Checkpoints.CheckpointIndexPaths' -Name 'CheckpointIndexPaths'
-    } catch { }
+    } catch {
+        # The guards then ask git, as before; say why for anyone looking (-Verbose).
+        Write-Verbose ('checkpoint index paths unavailable: ' + $_.Exception.Message)
+    }
 }
