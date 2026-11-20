@@ -3,10 +3,12 @@ namespace Antiphon.Tests.Checkpoints;
 /// <summary>
 /// Fixture repository setup done with libgit2 in the test process instead of a git child, for the setup commands
 /// the checkpoint fixtures run most. Used by <see cref="CheckpointFixtureGitEnvironment"/> (whose git children read
-/// no user or system config) and by fixtures whose git children read the machine's config: libgit2 here reads none
-/// (LibGit2ConfigIsolation), so a repository set up in process is what git makes with no such config, as on the Linux
-/// runs (bytes stored as written, no user ignore file). git keeps a blob that already has CRLF as it is, so a later
-/// git child does not see those files as changed.
+/// no user or system config) and by OutputCleanupTests (whose git children read the machine's config). libgit2 here
+/// reads no user or system config and no global attributes file (LibGit2ConfigIsolation): that is the view the
+/// checkpoint code under test hardens its own git to (GIT_CONFIG_NOSYSTEM, an empty GIT_CONFIG_GLOBAL,
+/// core.attributesFile emptied: CheckpointProcessRunner.HardenGit) and the view the Linux runs have, so a repository
+/// set up in process stores its bytes as that code expects. A git child that reads a machine's line-ending config can
+/// store them differently (legacy_hostile_config_produces_hardened_status_differential).
 /// </summary>
 internal static class FixtureGitInProcess
 {
@@ -33,9 +35,10 @@ internal static class FixtureGitInProcess
                     File.WriteAllText(Path.Combine(dotGit, "HEAD"), "ref: refs/heads/" + branch + "\n");
                     return "";
                 // git adds a nested repository as a gitlink: git answers that.
-                case ["add", "-A"] when !HasNestedRepository(repository, repository):
+                case ["add", "-A"]:
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
+                        if (HasNestedRepository(repo, repository, repository)) return null;
                         LibGit2Sharp.Commands.Stage(repo, "*");
                         applied = true;
                     }
@@ -50,14 +53,14 @@ internal static class FixtureGitInProcess
                     var paths = new List<string>();
                     using (var repo = new LibGit2Sharp.Repository(repository))
                     {
-                        foreach (var full in args.Skip(force ? 3 : 2).Select(path => Path.GetFullPath(path, repository)))
+                        foreach (var full in args.Skip(force ? 3 : 2).Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path, repository))))
                         {
                             var relative = Path.GetRelativePath(repository, full);
                             var isDirectory = Directory.Exists(full);
                             if ((!File.Exists(full) && !isDirectory) || relative == "." || relative.StartsWith("..", StringComparison.Ordinal)
                                 || Path.IsPathRooted(relative) || relative.IndexOfAny(['*', '?', '[', ']']) >= 0
                                 || (!OperatingSystem.IsWindows() && relative.Contains('\\'))
-                                || InNestedRepository(repository, full) || (isDirectory && HasNestedRepository(full, repository)))
+                                || InNestedRepository(repository, full) || (isDirectory && HasNestedRepository(repo, repository, full)))
                                 return null;
                             relative = relative.Replace('\\', '/');
                             if (!force && repo.Ignore.IsPathIgnored(isDirectory ? relative + "/" : relative))
@@ -118,8 +121,13 @@ internal static class FixtureGitInProcess
                && LibGit2Sharp.Reference.IsValidName("refs/heads/" + branch) ? branch : null;
     }
 
-    // A `.git` (directory or file) below `top`, other than the repository's own: a nested repository.
-    private static bool HasNestedRepository(string top, string repository)
+    private static StringComparison NameComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    // A `.git` (directory or file) below `top`, other than the repository's own, in a directory add would reach: a
+    // nested repository. Ignored directories are not entered (git add does not reach them without -f; with -f a named
+    // directory below an ignored one is still walked, since `top` itself is not checked).
+    private static bool HasNestedRepository(LibGit2Sharp.Repository repo, string repository, string top)
     {
         var own = Path.GetFullPath(Path.Combine(repository, ".git"));
         var pending = new Stack<string>();
@@ -128,12 +136,13 @@ internal static class FixtureGitInProcess
         {
             foreach (var entry in Directory.EnumerateFileSystemEntries(pending.Pop()))
             {
-                if (string.Equals(Path.GetFileName(entry), ".git", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(Path.GetFileName(entry), ".git", NameComparison))
                 {
-                    if (!string.Equals(Path.GetFullPath(entry), own, StringComparison.OrdinalIgnoreCase)) return true;
+                    if (!string.Equals(Path.GetFullPath(entry), own, NameComparison)) return true;
                     continue;
                 }
-                if (Directory.Exists(entry) && !File.GetAttributes(entry).HasFlag(FileAttributes.ReparsePoint))
+                if (Directory.Exists(entry) && !File.GetAttributes(entry).HasFlag(FileAttributes.ReparsePoint)
+                    && !repo.Ignore.IsPathIgnored(Path.GetRelativePath(repository, entry).Replace('\\', '/') + "/"))
                     pending.Push(entry);
             }
         }
