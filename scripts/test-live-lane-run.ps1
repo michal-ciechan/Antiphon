@@ -22,10 +22,11 @@ $repo = Split-Path $PSScriptRoot -Parent
 # the checkout matches the pin. Each root's discovery.diag is parsed here, with
 # the same core, and handed in.
 $script:ProtectedInputs = @(
-    'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/nightly-coverage.ps1',
+    'scripts/lib/nightly-common.ps1','scripts/lib/Antiphon.Nightly/NightlyPolicy.cs','scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
+    'scripts/lib/nightly-coverage.ps1',
     'scripts/lib/nightly-core.ps1','scripts/lib/Antiphon.Nightly/NightlyCore.cs',
     'tests/test-execution-policy.json','scripts/fixtures/nightly/c487-probe/discovery.diag')
-$script:PinnedInputDigest = 'e1946c2e83b620dadccd2bc2605b46f813130780d876cc41ddc62d64390ce074'
+$script:PinnedInputDigest = '15137e48291f1b0c70668a7e967965ed1391f64812cddea271387d48ce1a9365'
 function ConvertTo-LfText([string]$Text) {
     if ($null -eq $Text) { return '' }
     return ($Text -replace "`r`n", "`n" -replace "`r", "`n")
@@ -238,7 +239,7 @@ function Add-PolicyExclusion([string]$Root, [string]$Class = 'Antiphon.Tests.Age
     $policyPath = Join-Path $Root 'tests/test-execution-policy.json'
     $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json -AsHashtable
     $policy.profiles.rc.exclusions += @{ suite='antiphon'; class=$Class; reason='fixture'; owner='CARD-1545' }
-    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policy)
+    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($policy | ConvertTo-Json -Depth 100))
     [IO.File]::WriteAllText($policyPath, ($policy | ConvertTo-Json -Depth 50) + "`n")
 }
 function Read-Census($root) {
