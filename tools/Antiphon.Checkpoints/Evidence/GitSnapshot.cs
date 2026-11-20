@@ -6,8 +6,9 @@ namespace Antiphon.Checkpoints;
 
 /// <summary>
 /// The human-readable git.txt a run keeps beside its evidence (HEAD, branch, status, recent log, and the diff stat
-/// against origin/master), and the branch a run registers under. HEAD, branch and the merge base are read in process
-/// with libgit2 for a checkout libgit2 opens at its root, exactly as git prints them; status, log and diff stat stay
+/// against origin/master), and the branch a run registers under. HEAD and branch are read in process with libgit2 for
+/// a checkout libgit2 opens at its root, exactly as git prints them, and so is the merge base (libgit2's choice
+/// where criss-cross history has several best bases, which may differ from git's); status, log and diff stat stay
 /// git children, so their text is git's own (they follow the user's and system config, which libgit2 here does not
 /// read). git answers everything for anything else: a subdirectory, an unusual layout, an unborn or broken HEAD, a
 /// branch name git would print another way, libgit2 not loadable, any error.
@@ -76,8 +77,10 @@ public static class GitSnapshot
     {
         if (repo.Info.IsHeadDetached) return "HEAD";
         var name = repo.Head.FriendlyName;
-        foreach (var other in new[] { name, "refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
+        foreach (var other in new[] { "refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
             if (repo.Refs[other] is not null) return null;
+        // The bare name can only be a file in the git dir (packed-refs holds refs/ names alone); LibGit2Sharp refuses
+        // to look a bare lower-case name up at all.
         var common = Antiphon.GitInProcess.InProcessGitReads.CommonDirectory(repo.Info.Path);
         if (File.Exists(Path.Combine(repo.Info.Path, name)) || common is null || File.Exists(Path.Combine(common, name)))
             return null;
@@ -97,11 +100,12 @@ public static class GitSnapshot
         // --no-optional-locks: a diagnostic read never takes index.lock from a worktree an agent may be committing in.
         text.AppendLine(Run(worktree, "--no-optional-locks", "status", "--porcelain"));
         text.AppendLine("log:");
-        text.AppendLine(Run(worktree, "log", "-5", "--oneline"));
+        // The commit read above, not the symbolic HEAD: a commit landing meanwhile cannot split the snapshot.
+        text.AppendLine(Run(worktree, "log", "-5", "--oneline", head.Sha));
         if (mergeBase is not null)
         {
             text.AppendLine("diffstat:");
-            text.AppendLine(Run(worktree, "diff", "--stat", mergeBase.Sha + "..HEAD"));
+            text.AppendLine(Run(worktree, "diff", "--stat", mergeBase.Sha + ".." + head.Sha));
         }
 
         return text.ToString();
