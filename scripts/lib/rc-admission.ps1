@@ -13,7 +13,7 @@ function Get-RcAdmissionAlgorithmCoverage {
     $required=@('scripts/impacted-classes.ps1','scripts/lib/release-impact.ps1',
         'scripts/lib/test-selection.ps1','scripts/lib/rc-admission.ps1',
         'scripts/lib/rc-input-manifest.ps1','scripts/lib/rc-chunk-digest.ps1',
-        'scripts/lib/rc-boundary.ps1','scripts/lib/rc-historical-stream.cs',
+        'scripts/lib/Antiphon.Nightly/RcBoundary.cs','scripts/lib/rc-historical-stream.cs',
         'tests/Antiphon.Tests/Scripts/ReleaseImpactProjectGraph.cs',
         'tests/Antiphon.Tests/Scripts/ReleaseImpactGraphBuilder.cs',
         'tests/Antiphon.Tests/Scripts/DerivedImpactIndexBuilder.cs',
@@ -82,7 +82,7 @@ function Get-RcCarryAdmissionDecision {
     if (-not $Chunk) {
         try {
             $rows=@(foreach ($c in $After.cases) { @{suite=$c.suite;boundary=$After.boundary;identityKey=($c.className+'/'+$c.method);caseKey=$c.caseKey} })
-            $Chunk=New-RcBoundaryChunk $rows
+            $Chunk=[Antiphon.Nightly.RcBoundary]::NewChunk($rows)
         } catch { [void]$reasons.Add('manifest-invalid') }
     }
     if ($Chunk -and ($Chunk.boundary -ceq 'unassigned' -or $Chunk.collision -eq $true -or $Chunk.alwaysDirty -eq $true)) {
@@ -157,8 +157,11 @@ function Read-RcAdmissionTrx {
         if (-not $row.testId -or $map.ContainsKey($row.testId)) { throw 'admission-case-alias' }
         $map.Add($row.testId,$row)
     }
-    $expected=@(Sort-RcBoundaryIdentities @(foreach ($c in $Cases) { @{class=$c.className;method=$c.method;caseKey=$c.caseKey;suite=$c.suite} }))
-    $actual=@(Sort-RcBoundaryIdentities @(foreach ($c in $CaseMap) { @{class=$c.className;method=$c.method;caseKey=$c.caseKey;suite=$c.suite} }))
+    # Both rosters in the compiled boundary order (Antiphon.Nightly.RcBoundary.SortOrder: ordinal class, method, case).
+    $expected=@(foreach ($c in $Cases) { @{class=$c.className;method=$c.method;caseKey=$c.caseKey;suite=$c.suite} })
+    $expected=@(foreach ($i in [Antiphon.Nightly.RcBoundary]::SortOrder([string[]]@($expected | ForEach-Object { [string]$_.class }), [string[]]@($expected | ForEach-Object { [string]$_.method }), [string[]]@($expected | ForEach-Object { [string]$_.caseKey }))) { $expected[$i] })
+    $actual=@(foreach ($c in $CaseMap) { @{class=$c.className;method=$c.method;caseKey=$c.caseKey;suite=$c.suite} })
+    $actual=@(foreach ($i in [Antiphon.Nightly.RcBoundary]::SortOrder([string[]]@($actual | ForEach-Object { [string]$_.class }), [string[]]@($actual | ForEach-Object { [string]$_.method }), [string[]]@($actual | ForEach-Object { [string]$_.caseKey }))) { $actual[$i] })
     if ($expected.Count -ne $actual.Count -or -not $expected.Count) { throw 'admission-case-roster' }
     for ($i=0;$i -lt $expected.Count;$i++) {
         foreach ($field in @('class','method','caseKey','suite')) { if ($expected[$i][$field] -cne $actual[$i][$field]) { throw 'admission-case-roster' } }

@@ -8,7 +8,9 @@ $source=Join-Path $ResultsDirectory 'retained'
 [void][IO.Directory]::CreateDirectory($source)
 function Write-Json([string]$name,$value) { [IO.File]::WriteAllText((Join-Path $source $name),(ConvertTo-Json -Depth 60 -InputObject $value)) }
 [void](Invoke-TestSelectionGit $RepositoryRoot @('config','remote.origin.url','fixture://antiphon'))
-$chunk=New-RcBoundaryChunk @(@{suite='antiphon';boundary='core';identityKey='Example.Tests/Check';caseKey='row:a'})
+$chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(@{suite='antiphon';boundary='core';identityKey='Example.Tests/Check';caseKey='row:a'}))
+# The persisted chunk record keeps its camelCase field names (as the evidence files hold them).
+$chunk=[ordered]@{chunkId=$chunk.ChunkId;suite=$chunk.Suite;boundary=$chunk.Boundary;identityKeys=@($chunk.IdentityKeys);caseKeys=@($chunk.CaseKeys);fullDigest=$chunk.FullDigest;collision=$chunk.Collision;alwaysDirty=$chunk.AlwaysDirty}
 $cases=@(@{suite='antiphon';className='Example.Tests';method='Check';caseKey='row:a';stable=$true})
 $tree=(Read-RcInputInventory $RepositoryRoot $SourceSha).treeId
 $receipts=@(foreach ($kind in @('sdk-runtime-os-architecture','powershell-node-browser-native','configuration-environment','resolved-package-graph-and-content','generated-fixture-recipes-and-outputs','immutable-images')) {

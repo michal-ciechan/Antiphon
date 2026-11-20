@@ -48,8 +48,8 @@ Put 'src/Core/Input.txt' 'old transitive input'
 Put 'tests/Other/Other.csproj' '<Project />'
 Put 'tests/Other/Input.cs' 'unrelated'
 $baseline=Commit
-$chunk=New-RcBoundaryChunk @(@{suite='antiphon';boundary='application';identityKey='Example.Queue/Check'},
-    @{suite='antiphon';boundary='application';identityKey='Example.Queue/Other'})
+$chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(@{suite='antiphon';boundary='application';identityKey='Example.Queue/Check'},
+    @{suite='antiphon';boundary='application';identityKey='Example.Queue/Other'}))
 $cases=@(@{suite='antiphon';className='Example.Queue';method='Check';caseKey='row:a';stable=$true},
     @{suite='antiphon';className='Example.Queue';method='Check';caseKey='row:b';stable=$true},
     @{suite='antiphon';className='Example.Queue';method='Other';caseKey='singleton';stable=$true})
@@ -120,9 +120,9 @@ switch ($Case) {
         Note ($after.unknown.Count -gt 0 -and (Compare-RcChunkInputManifest $after $after).dirty) 'unowned-never-clean'
     }
     'CaseKeyedMultipleCasesMatchMembership' {
-        $chunk=New-RcBoundaryChunk @(foreach ($row in $cases) {
+        $chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(foreach ($row in $cases) {
             @{suite=$row.suite;boundary='application';identityKey=($row.className+'/'+$row.method);caseKey=$row.caseKey}
-        })
+        }))
         try {
             $manifest=Manifest $baseline
             Note ($manifest.unknown.Count -eq 0 -and $manifest.methods.Count -eq 2 -and $manifest.cases.Count -eq 3) 'case-keyed-complete'
@@ -131,15 +131,15 @@ switch ($Case) {
             Refuses { Manifest $baseline @($cases[0],$cases[2]) } 'case-membership-mismatch'
             $renamed=@($cases | ForEach-Object { $copy=$_.Clone(); if ($copy.caseKey -ceq 'row:a') { $copy.caseKey='row:c' }; $copy })
             Refuses { Manifest $baseline $renamed } 'case-membership-mismatch'
-            $forged=@{}; foreach ($key in $chunk.Keys) { $forged[$key]=$chunk[$key] }; $forged.fullDigest='f'*64
+            $forged=@{}; foreach ($property in $chunk.PSObject.Properties) { $forged[$property.Name]=$property.Value }; $forged.fullDigest='f'*64
             Refuses { New-RcChunkInputManifest (Read-RcInputInventory $root $baseline) server $forged $cases $actual } 'chunk-membership-mismatch'
         } catch { Note $false ('case-keyed-manifest:'+ $_.Exception.Message) }
     }
     'CaseKeyedSingletonsMatchMembership' {
         $cases=@($cases[0],$cases[2])
-        $chunk=New-RcBoundaryChunk @(foreach ($row in $cases) {
+        $chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(foreach ($row in $cases) {
             @{suite=$row.suite;boundary='application';identityKey=($row.className+'/'+$row.method);caseKey=$row.caseKey}
-        })
+        }))
         try {
             $manifest=Manifest $baseline
             Note ($manifest.unknown.Count -eq 0 -and $manifest.methods.Count -eq 2 -and $manifest.cases.Count -eq 2) 'case-keyed-singletons-complete'
@@ -149,7 +149,7 @@ switch ($Case) {
     }
     'CaseOnlyMembershipChangesDigest' {
         $manifests=@(foreach ($caseKey in @('row:a','row:b')) {
-            $chunk=New-RcBoundaryChunk @(@{suite='antiphon';boundary='application';identityKey='Example.Queue/Check';caseKey=$caseKey})
+            $chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(@{suite='antiphon';boundary='application';identityKey='Example.Queue/Check';caseKey=$caseKey}))
             $rows=@(@{suite='antiphon';className='Example.Queue';method='Check';caseKey=$caseKey;stable=$true})
             try {
                 $manifest=Manifest $baseline $rows

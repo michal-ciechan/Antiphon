@@ -1,7 +1,7 @@
 #requires -Version 7.0
 # CARD-1873: byte-identical boundary-pack witness. Captured before the index-once
 # change; verify compares the live packer to those bytes. Digest and identity
-# stay in scripts/lib/rc-boundary.ps1.
+# are compiled (Antiphon.Nightly.RcBoundary).
 param(
     [ValidateSet('fixtures', 'real')][string]$Target = 'fixtures',
     [string]$DiscoveryLog,
@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $golden = Join-Path $PSScriptRoot 'fixtures/rc-boundary-pack-golden'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $utf8 = [Text.UTF8Encoding]::new($false)
@@ -161,7 +161,7 @@ function Get-RealTreeInputs([object[]]$Nodes) {
         if (-not $byClass.ContainsKey($bare)) { $byClass.Add($bare, [Collections.Generic.List[object]]::new()) }
         $byClass[$bare].Add($node)
     }
-    $map = Read-RcBoundaryMap
+    $map = [Antiphon.Nightly.RcBoundary]::ReadMap((Join-Path $PSScriptRoot '..'))
     $sourceBoundaries = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
     foreach ($path in @(git -C $repo ls-files 'tests/Antiphon.Tests/*.cs' 'tests/Antiphon.Tests/**/*.cs')) {
         $source = [IO.File]::ReadAllText((Join-Path $repo $path))
@@ -170,7 +170,7 @@ function Get-RealTreeInputs([object[]]$Nodes) {
         foreach ($match in [regex]::Matches($source, '\bclass\s+([A-Za-z_][A-Za-z0-9_]*)')) {
             $bare = $ns.Groups[1].Value + '.' + $match.Groups[1].Value
             if (-not $byClass.ContainsKey($bare)) { continue }
-            $boundary = Get-RcClassBoundary -Map $map -Suite antiphon -TestPath $path -Source $source
+            $boundary = [Antiphon.Nightly.RcBoundary]::ClassBoundary($map, 'antiphon', $path, $source)
             if (-not $sourceBoundaries.ContainsKey($bare)) { $sourceBoundaries.Add($bare, [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)) }
             [void]$sourceBoundaries[$bare].Add($boundary)
         }

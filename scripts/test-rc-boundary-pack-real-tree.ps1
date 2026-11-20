@@ -12,7 +12,7 @@ $AssemblyPath = [IO.Path]::GetFullPath($AssemblyPath)
 $ResultsDirectory = [IO.Path]::GetFullPath($ResultsDirectory)
 if (Test-Path -LiteralPath $ResultsDirectory) { throw 'fresh results directory required' }
 [IO.Directory]::CreateDirectory($ResultsDirectory) | Out-Null
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 # The caller produces this fresh diagnostic with a gated, foreground
@@ -35,7 +35,7 @@ foreach ($node in $nodes) {
     $byNamespace[$node.Namespace].Add($node)
 }
 # Resolve source ownership once, including partial-class conflicts as unassigned.
-$map = Read-RcBoundaryMap
+$map = [Antiphon.Nightly.RcBoundary]::ReadMap((Join-Path $PSScriptRoot '..'))
 $sourceBoundaries = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
 foreach ($path in @(git -C $repo ls-files 'tests/Antiphon.Tests/*.cs' 'tests/Antiphon.Tests/**/*.cs')) {
     $source = [IO.File]::ReadAllText((Join-Path $repo $path))
@@ -44,7 +44,7 @@ foreach ($path in @(git -C $repo ls-files 'tests/Antiphon.Tests/*.cs' 'tests/Ant
     foreach ($match in [regex]::Matches($source, '\bclass\s+([A-Za-z_][A-Za-z0-9_]*)')) {
         $bare = $ns.Groups[1].Value + '.' + $match.Groups[1].Value
         if (-not $byClass.ContainsKey($bare)) { continue }
-        $boundary = Get-RcClassBoundary -Map $map -Suite antiphon -TestPath $path -Source $source
+        $boundary = [Antiphon.Nightly.RcBoundary]::ClassBoundary($map, 'antiphon', $path, $source)
         if (-not $sourceBoundaries.ContainsKey($bare)) { $sourceBoundaries.Add($bare, [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)) }
         [void]$sourceBoundaries[$bare].Add($boundary)
     }

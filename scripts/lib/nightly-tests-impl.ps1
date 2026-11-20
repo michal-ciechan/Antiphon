@@ -131,10 +131,10 @@ function Complete-NightlyBoundaryLaunchGroups {
     param([object[]]$Chunks, [object[]]$Memberships)
     if ($Chunks.Count -ne $Memberships.Count) { throw 'boundary-pack: launch/membership count mismatch' }
     if ($Chunks.Count -eq 0) { return @() }
-    $resolved = @(Resolve-RcBoundaryChunks -Memberships $Memberships)
+    $resolved = @([Antiphon.Nightly.RcBoundary]::ResolveChunks($Memberships))
     for ($i = 0; $i -lt $Chunks.Count; $i++) {
         $chunk = $Chunks[$i]; $membership = $resolved[$i]
-        if (-not (Test-RcBoundaryChunkId ([string]$membership.chunkId))) { throw 'boundary-pack: chunk id length' }
+        if (-not ([Antiphon.Nightly.RcBoundary]::IsChunkId(([string]$membership.chunkId)))) { throw 'boundary-pack: chunk id length' }
         $chunk.id = $membership.chunkId
         foreach ($entry in @{
             suite=$membership.suite; boundary=$membership.boundary; membershipDigest=$membership.fullDigest
@@ -146,7 +146,7 @@ function Complete-NightlyBoundaryLaunchGroups {
 }
 
 function ConvertTo-NightlyBoundaryLaunchGroupsIndexed {
-    # Compiled discovery index, once per pack. rc-boundary.ps1 still resolves ids and digests.
+    # Compiled discovery index, once per pack; ids and digests resolve in Antiphon.Nightly.RcBoundary.
     param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
     $costTable = Get-NightlyClassCostTable
     $index = [Antiphon.Nightly.NightlyLaunchPlan]::IndexBoundaryDiscovery([object[]]$DiscoveryNodes, $costTable,
@@ -214,7 +214,6 @@ function ConvertTo-NightlyBoundaryLaunchGroups {
     # missing/conflicting mappings stay unassigned. This grants no carry credit.
     # The compiled pack indexes full discovery once.
     param([object[]]$Leaves, [object[]]$DiscoveryNodes, [string]$SuiteId, [Collections.IDictionary]$ClassBoundaries)
-    . (Join-Path $PSScriptRoot 'rc-boundary.ps1')
     Assert-NightlyCoreAvailable 'ConvertTo-NightlyBoundaryLaunchGroups'
     return @(ConvertTo-NightlyBoundaryLaunchGroupsIndexed -Leaves $Leaves -DiscoveryNodes $DiscoveryNodes -SuiteId $SuiteId -ClassBoundaries $ClassBoundaries)
 }

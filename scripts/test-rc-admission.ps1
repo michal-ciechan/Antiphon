@@ -28,7 +28,9 @@ Put 'tests/Server/Server.csproj' '<Project />'
 Put 'tests/Server/Input.cs' 'test input'
 [void](Git @('add','--all')); [void](Git @('commit','-qm','fixture'))
 $sha=Git @('rev-parse','HEAD')
-$chunk=New-RcBoundaryChunk @(@{suite='antiphon';boundary='core';identityKey='Example.Tests/Check';caseKey='row:a'})
+$chunk=[Antiphon.Nightly.RcBoundary]::NewChunk(@(@{suite='antiphon';boundary='core';identityKey='Example.Tests/Check';caseKey='row:a'}))
+# The persisted chunk record keeps its camelCase field names (as the evidence files hold them).
+$chunk=[ordered]@{chunkId=$chunk.ChunkId;suite=$chunk.Suite;boundary=$chunk.Boundary;identityKeys=@($chunk.IdentityKeys);caseKeys=@($chunk.CaseKeys);fullDigest=$chunk.FullDigest;collision=$chunk.Collision;alwaysDirty=$chunk.AlwaysDirty}
 $cases=@(@{suite='antiphon';className='Example.Tests';method='Check';caseKey='row:a';stable=$true})
 $actual=@(foreach ($kind in @('sdk-runtime-os-architecture','powershell-node-browser-native','configuration-environment','resolved-package-graph-and-content','generated-fixture-recipes-and-outputs','immutable-images')) {
     @{kind=$kind;digest=('a'*64);provenanceDigest=('b'*64);sourceSha=$sha}
@@ -98,7 +100,7 @@ try {
             $members=@(foreach ($key in @('10788987499786589518','17490688019260441962')) {
                 @{suite='antiphon';boundary='core';identities=@(@{identityKey='CTests/M';caseKey=$key})}
             })
-            $resolved=@(Resolve-RcBoundaryChunks $members)
+            $resolved=@([Antiphon.Nightly.RcBoundary]::ResolveChunks($members))
             Note ($resolved.Count -eq 2 -and $resolved[0].collision -and $resolved[1].collision) 'real-s2-collision'
             foreach ($c in $resolved) {
                 $d=Get-RcCarryAdmissionDecision $manifest $manifest $facts -Chunk $c -UtcNow ([DateTimeOffset]'2026-11-13T12:00:00Z')

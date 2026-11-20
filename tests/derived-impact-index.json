@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
-      "classes": 73,
+      "classes": 72,
       "reason": "cap",
-      "owed": 48,
+      "owed": 47,
       "first": [
         "ReleaseSelectionCliTests",
         "ScriptHarnessProcessContractTests",
@@ -2162,18 +2162,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
-      "classes": 50,
+      "classes": 49,
       "reason": "cap",
-      "owed": 25,
+      "owed": 24,
       "first": [
-        "RcIncrementalShadowTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests",
         "RcLedgerStatusTests",
         "RcReleaseBaselineTests",
         "ReleaseSelectionHopSeedTests",
         "ScriptHarnessWindowsOwnershipTests",
-        "WatchQualEtaLineTests"
+        "WatchQualEtaLineTests",
+        "ChangeAwareReleaseTests"
       ]
     },
     {
@@ -16103,6 +16103,7 @@
       "path": "server/Infrastructure/Resilience/NpgsqlTransientFailureClassifier.cs",
       "classes": [
         "C1729LayeringGuardTests",
+        "RcBoundaryChunkIdTests",
         "ResiliencePredicateTests"
       ]
     },
@@ -24645,7 +24646,6 @@
         "NightlyProbeSupervisorTests",
         "NightlyScriptsTests",
         "QualificationEtaTests",
-        "RcBoundaryChunkIdTests",
         "RcBoundaryPackTests",
         "RcChunkInputDigestTests",
         "RcDirtyLaunchOrderTests",
@@ -24655,6 +24655,7 @@
         "RcForcedFullTests",
         "RcHistoricalAdmissionTests",
         "RcHistoricalEvidenceTests",
+        "RcIncrementalShadowTests",
         "RcRunEvidenceTests",
         "RcStoppedRunSeedTests",
         "ScriptHarnessLinuxOwnershipTests",

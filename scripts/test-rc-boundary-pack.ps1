@@ -1,7 +1,7 @@
 #requires -Version 7.0
 param([string]$Case, [string]$ResultsDirectory)
 $ErrorActionPreference = 'Stop'
-foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','rc-boundary','c487-harness')) {
+foreach ($name in @('nightly-common','nightly-coverage','nightly-tests-impl','c487-harness')) {
     . (Join-Path $PSScriptRoot ('lib/' + $name + '.ps1'))
 }
 $root = New-C487Root $ResultsDirectory
@@ -169,7 +169,7 @@ function Test-Collision {
     $memberships = @(foreach ($key in $keys) {
         @{ suite='antiphon'; boundary='core'; identities=@(@{ identityKey='CTests/M'; caseKey=$key }) }
     })
-    Note ((Get-RcBoundaryChunkId antiphon core @('CTests/M') -CaseKeys @($keys[0])) -ceq 'b-core-360a4ef28b10a96c') 'collision fixture moved'
+    Note (([Antiphon.Nightly.RcBoundary]::ChunkId('antiphon', 'core', @('CTests/M'), @($keys[0]))) -ceq 'b-core-360a4ef28b10a96c') 'collision fixture moved'
     try {
         $plan = @(Complete-NightlyBoundaryLaunchGroups -Chunks $chunks -Memberships $memberships)
         Note ($plan.Count -eq 2) 'collision dropped a launch'

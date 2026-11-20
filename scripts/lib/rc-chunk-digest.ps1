@@ -1,7 +1,8 @@
 #requires -Version 7.0
 # CARD-1836 S3b: reproducible input identities, never execution/carry authority.
 . (Join-Path $PSScriptRoot 'rc-input-manifest.ps1')
-. (Join-Path $PSScriptRoot 'rc-boundary.ps1')
+# The boundary identities are compiled (Antiphon.Nightly.RcBoundary).
+if (-not $script:NightlyCoreAvailable) { . (Join-Path $PSScriptRoot 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable }
 function Get-RcManifestDigest {
     param([object[]]$Rows)
     # Domain-specific rows use S2's one length-prefix and UTF-8 encoding rule.
@@ -9,13 +10,13 @@ function Get-RcManifestDigest {
     $encoder=[Text.UTF8Encoding]::new($false, $true)
     $hash=[Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
-        Add-RcBoundaryU32 $buffer ([uint32]$Rows.Count)
+        [Antiphon.Nightly.RcBoundary]::AddU32($buffer, ([uint32]$Rows.Count))
         $hash.AppendData($buffer.GetBuffer(),0,[int]$buffer.Length); $buffer.SetLength(0)
         foreach ($row in $Rows) {
-            Add-RcBoundaryU32 $buffer ([uint32]$row.Count)
+            [Antiphon.Nightly.RcBoundary]::AddU32($buffer, ([uint32]$row.Count))
             foreach ($field in $row) {
                 if ($field -isnot [string]) { throw 'digest-field-must-be-string' }
-                Add-RcBoundaryString -Buffer $buffer -Value $field -Encoder $encoder
+                [Antiphon.Nightly.RcBoundary]::AddString($buffer, $field, $encoder)
             }
             $hash.AppendData($buffer.GetBuffer(),0,[int]$buffer.Length); $buffer.SetLength(0)
         }
@@ -37,7 +38,7 @@ function New-RcChunkInputManifest {
     if ($owners.Count -ne 1) { throw 'missing-or-duplicate-input-suite' }
     $owner=$owners[0]
     # S2 owns parsing, validation, ordinal sorting and the full membership digest.
-    $membership=New-RcBoundaryChunkData -Suite $Chunk.suite -Boundary $Chunk.boundary -IdentityKeys @($Chunk.identityKeys) -CaseKeys @($Chunk.caseKeys)
+    $membership=[Antiphon.Nightly.RcBoundary]::ChunkData($Chunk.suite, $Chunk.boundary, @($Chunk.identityKeys), @($Chunk.caseKeys))
     $membershipId=$membership.chunkId
     $membershipDigest=$membership.fullDigest
     if ($membershipId -cne $Chunk.chunkId -or $membershipDigest -cne $Chunk.fullDigest) { throw 'chunk-membership-mismatch' }
@@ -109,7 +110,8 @@ function New-RcChunkInputManifest {
     }
     $caseRows=[Collections.Generic.List[object]]::new()
     $caseRows.Add(@('antiphon-rc-cases','1',[string]$Chunk.suite,[string]$Chunk.boundary))
-    $sortedCases=@(Sort-RcBoundaryIdentities $caseIdentities.ToArray())
+    $items=$caseIdentities.ToArray()
+    $sortedCases=@(foreach ($i in [Antiphon.Nightly.RcBoundary]::SortOrder([string[]]@($items | ForEach-Object { [string]$_.class }), [string[]]@($items | ForEach-Object { [string]$_.method }), [string[]]@($items | ForEach-Object { [string]$_.caseKey }))) { $items[$i] })
     if (@($Chunk.caseKeys | Where-Object { $_ -cne '' }).Count -gt 0) {
         if ($membership.identityKeys.Count -ne $sortedCases.Count) { throw 'case-membership-mismatch' }
         for ($i=0; $i -lt $sortedCases.Count; $i++) {

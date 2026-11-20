@@ -871,7 +871,7 @@ namespace Antiphon.Nightly
         private static string CheckJsonText(string text)
         {
             if (string.IsNullOrEmpty(text)) throw Invalid("json");
-            var scan = text[0] == '﻿' ? text.Substring(1) : text;
+            var scan = text[0] == '\uFEFF' ? text.Substring(1) : text;
             var frames = new List<Frame> { new Frame { K = 'r', AllowClose = false, Expect = "o:document" } };
             var cursor = 0;
             for (var match = Token.Match(scan); match.Success; match = match.NextMatch())
