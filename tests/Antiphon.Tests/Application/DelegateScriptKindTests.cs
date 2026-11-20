@@ -120,6 +120,25 @@ public sealed class DelegateScriptKindTests
     }
 
     [Test]
+    public async Task Model_is_posted_only_when_set()
+    {
+        using var omitted = new StubApi();
+        var plain = await RunDelegateAsync(
+            omitted, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex", "-Level", "High");
+        plain.ExitCode.ShouldBe(0, plain.Output);
+        omitted.LastBody.ShouldNotBeNull().RootElement.TryGetProperty("model", out _)
+            .ShouldBeFalse("an omitted -Model must not appear on the create body");
+
+        using var chosen = new StubApi();
+        var explicitModel = await RunDelegateAsync(
+            chosen, "-Role", "Test", "-Goal", "run the suite", "-Kind", "Codex", "-Level", "High",
+            "-Model", "gpt-6.2-astra");
+        explicitModel.ExitCode.ShouldBe(0, explicitModel.Output);
+        chosen.LastBody.ShouldNotBeNull().RootElement.GetProperty("model").GetString()
+            .ShouldBe("gpt-6.2-astra");
+    }
+
+    [Test]
     public async Task Kind_Codex_is_posted_as_agentKind()
     {
         // CARD-0099 S3. Until this slice, Codex was the value this file used as its EXAMPLE of a

@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -109,6 +110,104 @@ public class CodexDelegateDispatchTests
         ConfigValue(args, "model_reasoning_effort").ShouldBe(expectedEffort);
         ConfigValue(args, "disable_paste_burst").ShouldBe("true");
     }
+
+    [Test]
+    public async Task explicit_gpt_6_2_astra_at_high_launches_that_slug_with_high_effort()
+    {
+        ModelLevelAliases.ForCodex(AgentModelLevel.High).ShouldBe("gpt-6.2-sol");
+        ModelLevelAliases.ForCodex(AgentModelLevel.Frontier).ShouldBe("gpt-6-astra");
+        ModelLevelAliases.MinimumCodexCliVersion(AgentKind.Codex, ModelAlias.Gpt62Astra)!
+            .ToString().ShouldBe("0.169.1");
+        ModelAlias.CanonicalHoldAlias("astra").ShouldBeNull();
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var created = await CreateServiceWithHolds(db).CreateAsync(
+            CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra),
+            new AgentTaskService.Caller(null, null, workspace.Path),
+            CancellationToken.None);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == created.Id);
+        var (dispatcher, _) = CreateHarness();
+        var args = SpecOf(dispatcher, task).Args.ToList();
+        args[args.IndexOf("--model") + 1].ShouldBe(ModelAlias.Gpt62Astra);
+        ConfigValue(args, "model_reasoning_effort").ShouldBe("high");
+    }
+
+    [Test]
+    public async Task explicit_gpt_6_2_astra_unknown_alias_is_422()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var service = CreateServiceWithHolds(db);
+
+        var unknown = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(CodexRequest(AgentModelLevel.High, "not-a-model"), caller, CancellationToken.None));
+        unknown.StatusCode.ShouldBe(422);
+        unknown.Errors["model"][0].ShouldContain("not-a-model");
+
+        var star = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(CodexRequest(AgentModelLevel.High, "*"), caller, CancellationToken.None));
+        star.StatusCode.ShouldBe(422);
+
+        var otherKind = await Should.ThrowAsync<ValidationException>(() =>
+            service.CreateAsync(
+                new CreateAgentTaskRequest(
+                    "audit this diff",
+                    Role: AgentTaskRole.Code,
+                    AgentKind: AgentKind.ClaudeCode,
+                    ModelLevel: AgentModelLevel.High,
+                    Workspace: WorkspaceMode.Shared)
+                { Model = ModelAlias.Gpt62Astra },
+                caller,
+                CancellationToken.None));
+        otherKind.StatusCode.ShouldBe(422);
+        otherKind.Errors["model"][0].ShouldContain(ModelAlias.Gpt62Astra);
+    }
+
+    [Test]
+    public async Task explicit_gpt_6_2_astra_hold_refuses_only_that_alias()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        using var workspace = new TempWorkspace();
+        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        {
+            Id = Guid.NewGuid(),
+            Kind = AgentKind.Codex,
+            ModelAlias = ModelAlias.Gpt62Astra,
+            Source = ModelAvailabilitySource.Manual,
+            DisabledUntil = DateTime.UtcNow.AddHours(1),
+            HitAt = DateTime.UtcNow,
+            Reason = "manual hold",
+        });
+        await db.SaveChangesAsync();
+        var caller = new AgentTaskService.Caller(null, null, workspace.Path);
+        var service = CreateServiceWithHolds(db);
+
+        var refused = await Should.ThrowAsync<ModelDisabledException>(() =>
+            service.CreateAsync(CodexRequest(AgentModelLevel.High, ModelAlias.Gpt62Astra), caller, CancellationToken.None));
+        refused.StatusCode.ShouldBe(409);
+        refused.Code.ShouldBe("model_disabled");
+        refused.Message.ShouldContain("gpt-6.2-astra is disabled");
+
+        var sol = await service.CreateAsync(CodexRequest(AgentModelLevel.High, model: null), caller, CancellationToken.None);
+        sol.Status.ShouldBe(AgentTaskStatus.Queued);
+        var frontier = await service.CreateAsync(
+            CodexRequest(AgentModelLevel.Frontier, model: null), caller, CancellationToken.None);
+        frontier.Status.ShouldBe(AgentTaskStatus.Queued);
+    }
+
+    private static CreateAgentTaskRequest CodexRequest(AgentModelLevel level, string? model) =>
+        new CreateAgentTaskRequest(
+            "audit this diff",
+            Role: AgentTaskRole.Code,
+            AgentKind: AgentKind.Codex,
+            ModelLevel: level,
+            Workspace: WorkspaceMode.Shared)
+        { Model = model };
 
     [Test]
     [Arguments(AgentModelLevel.Frontier)]
@@ -633,6 +732,16 @@ public class CodexDelegateDispatchTests
         new RecordingSessionStopper(),
         TimeProvider.System,
         NullLogger<AgentTaskService>.Instance);
+
+    private static AgentTaskService CreateServiceWithHolds(AppDbContext db) => new(
+        db,
+        new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+        Options.Create(new DelegationSettings { AllowedRoots = [] }),
+        new MockEventBus(),
+        new RecordingSessionStopper(),
+        TimeProvider.System,
+        NullLogger<AgentTaskService>.Instance,
+        modelAvailability: new ModelAvailability(db, TimeProvider.System, NullLogger<ModelAvailability>.Instance));
 
     private static (AgentTaskDispatcher Dispatcher, ServiceProvider Provider) CreateHarness(
         int? budgetChars = null, bool withCodexDefinition = true)
