@@ -57,6 +57,18 @@ function UnownedRows($s,[string]$path) {
     $hits=@(@($s.unowned) | Where-Object { $null -ne $_ -and [string]$_.path -ceq $path })
     return ,$hits
 }
+function DeferredRows($s) {
+    if ($null -eq $s -or $null -eq $s.testOnlyDeferred) { return ,@() }
+    return ,@(@($s.testOnlyDeferred))
+}
+function ChangedNotRunRows($s) {
+    if ($null -eq $s -or $null -eq $s.changedNotRun) { return ,@() }
+    return ,@(@($s.changedNotRun))
+}
+function ConflictRows($s) {
+    if ($null -eq $s -or $null -eq $s.noopConflicts) { return ,@() }
+    return ,@(@($s.noopConflicts))
+}
 [void](Git @('init','-q','-b','main'))
 [void](Git @('config','user.name','Fixture')); [void](Git @('config','user.email','fixture@example.invalid'))
 $sourceRoot=Split-Path -Parent $PSScriptRoot
@@ -344,6 +356,115 @@ switch ($Case) {
         Note ($s.unresolved.Count -eq 0) "nuget-case-unresolved:$(@($s.unresolved) -join ',')"
         Note (SameSet $s $ids) "nuget-case-dirties-all:$(& $shown $s)"
         Note (Owns $s $messaging 'server/nuget.config' 'forced-full-build-graph') 'nuget-case-forced-reason'
+    }
+    'TestOnlyMethodEditSelectsNothing' {
+        # A method-body edit of test source, and a fixture edit, select nothing.
+        # tests/Shared stays forced full. The result names every deferred suite.
+        $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
+        $sibling='tests/Antiphon.Tests/TestHelpers/Sibling.cs'
+        Put $sibling "class SiblingProbe { void Body() { int x = 1; } }"
+        $baseline=Commit
+        Put $sibling "class SiblingProbe { void Body() { int x = 2; } }"
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "test-only-selects-nothing:$(& $shown $s)"
+        $deferred=DeferredRows $s
+        foreach ($id in @($antiphon,$resilience,$gitinprocess,$serverGit)) {
+            Note ($deferred -ccontains "${id}:${sibling}") "deferred:${id}"
+        }
+        $fixture='tests/Antiphon.Tests/Fixtures/probe.txt'
+        $baseline=Git @('rev-parse','HEAD')
+        Put $fixture 'fixture'
+        $baseline=Commit
+        Put $fixture 'fixture changed'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -eq 0) "fixture-selects-nothing:$(& $shown $s)"
+        Note ((DeferredRows $s) -ccontains "${antiphon}:${fixture}") 'fixture-deferred'
+        $shared='tests/Shared/Probe.cs'
+        $baseline=Git @('rev-parse','HEAD')
+        Put $shared "class SharedProbe { void Body() { int x = 1; } }"
+        $baseline=Commit
+        Put $shared "class SharedProbe { void Body() { int x = 2; } }"
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites.Count -gt 0) "shared-stays-forced:$(& $shown $s)"
+        Note ($s.dirtySuites -ccontains $messaging) 'shared-dirties-messaging'
+    }
+    'AddedTestClassSelectsWalkers' {
+        # Adding a class file selects the source walkers. The containing suite
+        # stays deferred and the new class is recorded as changed-not-run.
+        $serverGit='tests/Antiphon.Server.Git.Tests/Antiphon.Server.Git.Tests.csproj'
+        $path='tests/Antiphon.Tests/Application/BrandNewWalkerProbeTests.cs'
+        Put $path "class BrandNewWalkerProbeTests { void Body() { int x = 1; } }"
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites -ccontains $resilience) "add-selects-resilience:$(& $shown $s)"
+        Note ($s.dirtySuites -ccontains $gitinprocess) 'add-selects-git'
+        Note ($s.dirtySuites -ccontains $serverGit) 'add-selects-servergit'
+        Note ($s.dirtySuites -cnotcontains $antiphon) "add-defers-antiphon:$(& $shown $s)"
+        $notRun=ChangedNotRunRows $s
+        Note ($notRun -ccontains "${antiphon}:${path}:BrandNewWalkerProbeTests") "changed-not-run:$($notRun -join ',')"
+    }
+    'ProductEdgeStillReachesSuite' {
+        # A linked Compile edge still selects the including project when the
+        # edit is only a method body. A product file still selects its readers.
+        $linked='tests/Antiphon.Tests/TestHelpers/Linked.cs'
+        Put $linked "class LinkedProbe { void Body() { int x = 1; } }"
+        $baseline=Commit
+        Put $linked "class LinkedProbe { void Body() { int x = 2; } }"
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites -ccontains $resilience) "link-still-selects:$(& $shown $s)"
+        Note (Owns $s $resilience $linked 'Compile') 'link-compile-edge'
+        Note ($s.dirtySuites -cnotcontains $gitinprocess) "link-body-skips-walker:$(& $shown $s)"
+        Note ($s.dirtySuites -cnotcontains $antiphon) 'link-body-skips-antiphon'
+        $baseline=Git @('rev-parse','HEAD')
+        Put 'server/App.cs' 'product edge'
+        $s=Select-Manifest (Commit)
+        Note ($s.dirtySuites -ccontains $antiphon -and $s.dirtySuites -ccontains $e2e) "product-reaches:$(& $shown $s)"
+        Note (Owns $s $antiphon 'server/App.cs' 'project-tree:server/Server.csproj') 'product-project-edge'
+    }
+    'NoOpOwnerConflictFails' {
+        # A no-op row that matches an explicit owner must not win silently.
+        $path='docs/testing-and-build.md'
+        $noop=@{schemaVersion=1;rows=@(
+            @{path='docs/reviews/**';reason='reviews';evidence='fixture'},
+            @{path=$path;reason='hides the doc reader';evidence='fixture'})}
+        Put 'scripts/lib/rc-input-noop.json' ($noop | ConvertTo-Json -Depth 6)
+        Put $path 'doc'
+        $baseline=Commit
+        Put $path 'doc changed'
+        $s=Select-Manifest (Commit)
+        $conflicts=ConflictRows $s
+        Note ($conflicts.Count -ge 1) "noop-conflict-count:$($conflicts.Count)"
+        $hit=@($conflicts | Where-Object { [string]$_ -like ('*'+$path+'*') })
+        Note ($hit.Count -ge 1) "noop-conflict-names-path:$($conflicts -join ',')"
+        Note ($s.dirtySuites -ccontains $antiphon) "noop-owner-wins:$(& $shown $s)"
+    }
+    'UnownedListAboveFortyIsVisible' {
+        # Above 40 unowned paths the census result shows the count, the first
+        # 40 paths, and the path of the full list file.
+        foreach ($i in 1..41) { Put ("stray/file{0}.txt" -f $i) 'x' }
+        $s=Select-Manifest (Commit)
+        $listPath=Join-Path $root '.antiphon/rc-unowned-paths.txt'
+        $lines=@()
+        if (Get-Command Format-RcUnownedCensusLines -ErrorAction SilentlyContinue) {
+            $lines=@(Format-RcUnownedCensusLines @($s.unowned) $listPath)
+        }
+        $countLine=@($lines | Where-Object { $_ -like 'UNOWNED-COUNT *' })
+        $pathLines=@($lines | Where-Object { $_ -like 'UNOWNED-PATH *' })
+        $listLines=@($lines | Where-Object { $_ -like 'UNOWNED-LIST *' })
+        Note ($countLine.Count -eq 1 -and $countLine[0] -match '^UNOWNED-COUNT ([0-9]+)$' -and [int]$Matches[1] -gt 40) "unowned-count:$($countLine -join ',')"
+        Note ($pathLines.Count -eq 40) "unowned-first-40:$($pathLines.Count)"
+        Note ($listLines.Count -eq 1 -and $listLines[0] -ceq ('UNOWNED-LIST '+$listPath)) "unowned-list:$($listLines -join ',')"
+    }
+    'ExistingCsprojIsNotANewCsproj' {
+        # new-csproj is only for a csproj nobody references that this commit adds.
+        $path='tools/Antiphon.NativeLinuxMigrationAudit/Antiphon.NativeLinuxMigrationAudit.csproj'
+        Put $path '<Project Sdk="Microsoft.NET.Sdk" />'
+        $baseline=Commit
+        Put $path '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><Fixture>1</Fixture></PropertyGroup></Project>'
+        $s=Select-Manifest (Commit)
+        $rows=UnownedRows $s $path
+        Note ($rows.Count -eq 1) 'existing-csproj-unowned'
+        Note ([string]$rows[0].hint -cne 'new-csproj') "existing-csproj-hint:$($rows[0].hint)"
+        Note ($s.dirtySuites.Count -eq 0) "existing-csproj-selects-nothing:$(& $shown $s)"
     }
     'ReaderRootsAreEverySuite' {
         foreach ($path in @(
