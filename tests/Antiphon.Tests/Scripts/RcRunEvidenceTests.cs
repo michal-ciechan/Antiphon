@@ -24,4 +24,8 @@ public sealed class RcRunEvidenceTests
         ScriptHarness.RunHarnessCaseAsync("test-rc-run-evidence.ps1", "RE", nameof(OneEvidenceRootPerRun), 1,
             ["RE OneEvidenceRootPerRun.contract"],
             new ScriptHarnessOptions(TimeSpan.FromSeconds(240), TimeSpan.FromSeconds(20)), token);
+
+    [Test, Timeout(60_000)] public Task ChunkOutcomeNeedsResults(CancellationToken token) => Run(nameof(ChunkOutcomeNeedsResults), token);
+    [Test, Timeout(60_000)] public Task TornRevisionStaysNotRun(CancellationToken token) => Run(nameof(TornRevisionStaysNotRun), token);
+    [Test, Timeout(90_000)] public Task LaunchStampIsCheaper(CancellationToken token) => Run(nameof(LaunchStampIsCheaper), token);
 }

@@ -225,7 +225,8 @@ function New-NightlyTestsHopArgumentList {
         [string]$PriorFailuresPath,
         [string]$PriorFailuresDigest,
         [switch]$AcceptCrossCandidateSeed,
-        [string]$SeedSourceCandidateId
+        [string]$SeedSourceCandidateId,
+        [string]$RcEvidenceRoot
     )
     $testArgs = @(
         '-NoProfile', '-NonInteractive', '-File', $TestsScript,
@@ -269,6 +270,10 @@ function New-NightlyTestsHopArgumentList {
     if (-not [string]::IsNullOrWhiteSpace($SeamsPath)) {
         $testArgs += '-SeamsPath'
         $testArgs += $SeamsPath
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RcEvidenceRoot)) {
+        $testArgs += '-RcEvidenceRoot'
+        $testArgs += $RcEvidenceRoot
     }
     if ($PriorFailuresPath) { $testArgs += @('-PriorFailuresPath', $PriorFailuresPath, '-PriorFailuresDigest', $PriorFailuresDigest) }
     if ($AcceptCrossCandidateSeed) { $testArgs += '-AcceptCrossCandidateSeed' }
@@ -346,6 +351,8 @@ function Invoke-AntiphonNightlyRunCore {
     $testsPassed = $false
     $reportDelivered = $false
     $runDir = $null
+    $rcEvidenceRoot = ''
+    $script:RcRunEvidenceWarned = @{}
     $phase = 'init'
     $hopped = $false
     $script:NightlyHopCommand = ''
@@ -759,13 +766,16 @@ function Invoke-AntiphonNightlyRunCore {
             return [pscustomobject]$result
         }
 
-        # S6b shadow: snapshot the owned checkout before tests. A refusal does not change Full credit.
-        [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'admission' -CheckoutRoot $CheckoutRoot -LogRoot $LogRoot -Sha ([string]$sha))
-
+        # S6b shadow: one evidence root for this run, derived once and passed to every hook.
         $phase = 'tests'
         $runName = New-NightlyRunDirectoryName -Utc (Get-NightlyUtcNow) -RunId $RunId
         $runDir = Join-Path $LogRoot $runName
         New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+        $rcEvidenceRoot = Join-Path $runDir 'rc-run-evidence'
+        $rcInputs = @()
+        $policyRelative = 'tests/test-execution-policy.json'
+        if (Test-Path -LiteralPath (Join-Path $CheckoutRoot $policyRelative) -PathType Leaf) { $rcInputs += $policyRelative }
+        [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'admission' -CheckoutRoot $CheckoutRoot -EvidenceRoot $rcEvidenceRoot -InputPaths $rcInputs -Sha ([string]$sha))
         $stateObj.logDir = $runDir
         $stateObj.phase = $phase
         $stateObj.lastActivityAt = (Get-NightlyUtcNow).ToString('o')
@@ -792,7 +802,7 @@ function Invoke-AntiphonNightlyRunCore {
             $testsScript = Join-Path $PSScriptRoot '..\nightly-tests.ps1'
         }
         $gitRefLabel = ('origin/{0}' -f $Ref)
-        $testArgs = New-NightlyTestsHopArgumentList -TestsScript $testsScript -CheckoutRoot $CheckoutRoot -RunDir $runDir -Sha $sha -GitRefLabel $gitRefLabel -Trigger $Trigger -Profile $Profile -RunId $RunId -Repository $Repository -SelectionMode $SelectionMode -BaselineSha $BaselineSha -BaselineReceiptPath $BaselineReceiptPath -QualificationPath $QualificationPath -TimingRoot $TimingRoot -TrainManifestPath $TrainManifestPath -ReleaseIntentPath $ReleaseIntentPath -SelectionAttemptPath $SelectionAttemptPath -SelectionAttemptDigest $SelectionAttemptDigest -SelectionPath $SelectionPath -SelectionDigest $SelectionDigest -Attempt $Attempt -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId -ExpectedSha $ExpectedSha -Suites $Suites -SeamsPath $SeamsPath -PriorFailuresPath $PriorFailuresPath -PriorFailuresDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId
+        $testArgs = New-NightlyTestsHopArgumentList -TestsScript $testsScript -CheckoutRoot $CheckoutRoot -RunDir $runDir -Sha $sha -GitRefLabel $gitRefLabel -Trigger $Trigger -Profile $Profile -RunId $RunId -Repository $Repository -SelectionMode $SelectionMode -BaselineSha $BaselineSha -BaselineReceiptPath $BaselineReceiptPath -QualificationPath $QualificationPath -TimingRoot $TimingRoot -TrainManifestPath $TrainManifestPath -ReleaseIntentPath $ReleaseIntentPath -SelectionAttemptPath $SelectionAttemptPath -SelectionAttemptDigest $SelectionAttemptDigest -SelectionPath $SelectionPath -SelectionDigest $SelectionDigest -Attempt $Attempt -ReleaseRoot $ReleaseRoot -CandidateId $CandidateId -ExpectedSha $ExpectedSha -Suites $Suites -SeamsPath $SeamsPath -PriorFailuresPath $PriorFailuresPath -PriorFailuresDigest $PriorFailuresDigest -AcceptCrossCandidateSeed:$AcceptCrossCandidateSeed -SeedSourceCandidateId $SeedSourceCandidateId -RcEvidenceRoot $rcEvidenceRoot
         Write-NightlyRunLine ('running {0}' -f $testsScript)
         $script:NightlyHopCommand = 'pwsh ' + ($testArgs -join ' ')
         $testRun = Invoke-NightlyWatchedCommand -FilePath 'pwsh' -ArgumentList $testArgs -WorkingDirectory $CheckoutRoot
@@ -906,7 +916,7 @@ function Invoke-AntiphonNightlyRunCore {
             # D-2: the state itself names the kind of credit it earns. Master green is the
             # only thing that ever reaches <StateRoot>\last-complete-green.json; RC green
             # lands in the candidate's own store and never touches master readiness.
-            [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'closure' -CheckoutRoot $CheckoutRoot -LogRoot $LogRoot -Sha ([string]$sha))
+            [void](Protect-NightlyOwnedCheckoutEvidence -Phase 'closure' -CheckoutRoot $CheckoutRoot -EvidenceRoot $rcEvidenceRoot -LogRoot $LogRoot -Sha ([string]$sha))
             $verdict = Get-ReleaseGateCreditVerdict -State $stateObj
             $creditKind = [string]$verdict.CreditKind
             $result.CreditKind = $creditKind

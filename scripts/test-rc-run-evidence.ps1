@@ -171,6 +171,14 @@ try {
             $probe = Join-Path $PSScriptRoot 'fixtures/nightly/c487-probe'
             $trace = Join-Path $root 'trace.log'
             $childLog = Join-Path $root 'child.log'
+            $faultBin = Join-Path $root 'fault-bin'
+            [void][IO.Directory]::CreateDirectory($faultBin)
+            $gitStub = Join-Path $faultBin 'git'
+            [IO.File]::WriteAllText($gitStub, "#!/bin/sh`nexit 1`n")
+            [IO.File]::WriteAllText((Join-Path $faultBin 'git.cmd'), "@echo off`r`nexit /b 1`r`n")
+            if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+                & chmod 755 $gitStub
+            }
             $seamPath = Join-Path $root 'seams.ps1'
             $seam = @"
 `$NightlySeams = @{
@@ -192,6 +200,9 @@ try {
             `$psi.UseShellExecute = `$false
             `$psi.RedirectStandardOutput = `$true
             `$psi.RedirectStandardError = `$true
+            if (`$env:S6B_FAULT_CHILD_GIT -eq '1') {
+                `$psi.Environment['PATH'] = '$faultBin' + [IO.Path]::PathSeparator + [string]`$psi.Environment['PATH']
+            }
             foreach (`$arg in @(`$ArgumentList)) { [void]`$psi.ArgumentList.Add([string]`$arg) }
             `$proc = [System.Diagnostics.Process]::Start(`$psi)
             `$outTask = `$proc.StandardOutput.ReadToEndAsync()
@@ -288,8 +299,8 @@ try {
             Note ($null -ne $one -and @($one.Revisions).Count -ge 1) 'chunk-revision'
             Note ($null -ne $one -and @($one.Discovery).Count -ge 1) 'discovery-revision'
             Note ($null -ne $one -and $null -ne $two -and [string]$one.Evidence -ne [string]$two.Evidence) 'second-run-own-root'
-            $secondRefused = ($null -eq $second -or [string]$second.Refusal)
-            Note ([string]::IsNullOrWhiteSpace($secondRefused) -and $null -ne $two -and $null -ne $two.Source) 'second-run-refused'
+            $secondRefused = ($null -eq $second) -or (-not [string]::IsNullOrWhiteSpace([string]$second.Refusal))
+            Note ((-not $secondRefused) -and $null -ne $two -and $null -ne $two.Source) 'second-run-refused'
             if ($null -ne $one -and $null -ne $one.Join) {
                 Note ([string]$one.Join.effectiveMode -ceq 'Full' -and -not [bool]$one.Join.gateCredit) 'shadow-stays-full'
             }
@@ -304,9 +315,137 @@ try {
             $after = 0
             if (Test-Path -LiteralPath $offRoot) { $after = @(Get-ChildItem -LiteralPath $offRoot -Recurse -File -ErrorAction SilentlyContinue).Count }
             Note ($after -eq $before) 'off-switch-writes-nothing'
+            $warningPattern = 'rc-run-evidence: git-failed'
+            $warningsBefore = 0
+            if (Test-Path -LiteralPath $childLog) { $warningsBefore = @(Select-String -LiteralPath $childLog -Pattern $warningPattern -SimpleMatch).Count }
+            $env:S6B_FAULT_CHILD_GIT = '1'
+            try { $fault = Invoke-AntiphonNightlyRunCore @common -RunId 's6bfol03' }
+            finally { Remove-Item Env:S6B_FAULT_CHILD_GIT -ErrorAction SilentlyContinue }
+            $warningsAfter = 0
+            if (Test-Path -LiteralPath $childLog) { $warningsAfter = @(Select-String -LiteralPath $childLog -Pattern $warningPattern -SimpleMatch).Count }
+            Write-Host ('fault={0}/{1} warnings={2}' -f $fault.Phase, $fault.ExitCode, ($warningsAfter - $warningsBefore))
+            Note ($null -ne $fault -and [string]$fault.Phase -eq [string]$first.Phase -and [int]$fault.ExitCode -eq [int]$first.ExitCode) 'fault-verdict'
+            Note (($warningsAfter - $warningsBefore) -eq 1) 'fault-one-warning'
             $runText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-run-impl.ps1'))
             $testsText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
             Note ($runText -notmatch 'Incremental' -and $testsText -notmatch 'publish-release\.ps1') 'run-path-adds-no-mode-or-publish'
+        }
+        'ChunkOutcomeNeedsResults' {
+            $passedFile = Join-Path $ResultsDirectory 'passed.trx'
+            $jsonFile = Join-Path $ResultsDirectory 'passed.json'
+            $badFile = Join-Path $ResultsDirectory 'bad.txt'
+            [IO.File]::WriteAllText($passedFile, '<TestRun id="1"><Results /></TestRun>')
+            [IO.File]::WriteAllText($jsonFile, '{"ok":true}')
+            [IO.File]::WriteAllText($badFile, 'not-json')
+            $passed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $passedFile
+            $jsonPassed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $jsonFile
+            $drained = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $true } -ResultsPath $passedFile
+            $missing = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath (Join-Path $ResultsDirectory 'missing.trx')
+            $unparsed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 0; OutputDrainTimedOut = $false } -ResultsPath $badFile
+            $failed = Get-NightlyRcChunkOutcome -Run @{ ExitCode = 2; OutputDrainTimedOut = $false } -ResultsPath $passedFile
+            Note ($passed.Outcome -ceq 'Passed' -and [string]::IsNullOrWhiteSpace([string]$passed.Reason)) 'passed-needs-results'
+            Note ($jsonPassed.Outcome -ceq 'Passed') 'json-results-pass'
+            Note ($drained.Outcome -ceq 'NotRun' -and $drained.Reason -ceq 'drain-timeout') 'drain-timeout-not-run'
+            Note ($missing.Outcome -ceq 'NotRun' -and $missing.Reason -ceq 'results-missing') 'missing-results-not-run'
+            Note ($unparsed.Outcome -ceq 'NotRun' -and $unparsed.Reason -ceq 'results-unparseable') 'unparseable-results-not-run'
+            Note ($failed.Outcome -ceq 'Failed' -and $failed.Reason -ceq 'exit-2') 'nonzero-exit-failed'
+            $repo = Join-Path $ResultsDirectory 'repo'
+            $ev = Join-Path $ResultsDirectory 'evidence'
+            [void][IO.Directory]::CreateDirectory($ev)
+            $sha = New-Repo $repo
+            [void](New-RcSourceSnapshot -Repository $repo -EvidenceRoot $ev -InputPaths @('src/input.txt') -ExpectedSha $sha -Strict)
+            $stored = Register-NightlyRcChunkRevision -EvidenceRoot $ev -Suite 'server' -Chunk 'c1' -Outcome $failed.Outcome -Reason $failed.Reason -Strict
+            $body = Get-Content -LiteralPath (Join-Path $ev 'revisions/1/revision.json') -Raw | ConvertFrom-Json
+            Note ($stored.sequence -eq 1 -and $body.outcome -ceq 'Failed' -and $body.reason -ceq 'exit-2' -and -not $body.gateCredit) 'reason-is-stored'
+            $testsImpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
+            Note ($testsImpl.Contains('Get-NightlyRcChunkOutcome')) 'chunk-outcome-is-wired'
+        }
+        'TornRevisionStaysNotRun' {
+            $repo = Join-Path $ResultsDirectory 'repo'
+            $ev = Join-Path $ResultsDirectory 'evidence'
+            $out = Join-Path $ResultsDirectory 'out'
+            [void][IO.Directory]::CreateDirectory($ev)
+            $sha = New-Repo $repo
+            New-Outputs $out 'entry.dll' 'helper.dll'
+            $snap = New-RcSourceSnapshot -Repository $repo -EvidenceRoot $ev -InputPaths @('src/input.txt') -ExpectedSha $sha -Strict
+            [void](Register-NightlyRcBuildEvidence -EvidenceRoot $ev -Suite 'server' -Command 'dotnet build server.csproj -c Debug' -OutputDirectory $out -Entry 'entry.dll' -SourceDigest $snap.digest -Strict)
+            [void](Register-NightlyRcChunkRevision -EvidenceRoot $ev -Suite 'server' -Chunk 'a' -Outcome 'Passed' -Strict)
+            $tornDir = Join-Path $ev 'revisions/2'
+            [void][IO.Directory]::CreateDirectory($tornDir)
+            $tornPath = Join-Path $tornDir 'revision.json'
+            [IO.File]::WriteAllText($tornPath, '{')
+            $read = Read-RcRunEvidence -EvidenceRoot $ev -Strict
+            Note ($read.sequence -eq 1 -and $read.pending -ceq 'not-run' -and $read.effectiveMode -ceq 'Full' -and -not $read.gateCredit) 'torn-is-not-run'
+            $next = Register-NightlyRcChunkRevision -EvidenceRoot $ev -Suite 'server' -Chunk 'b' -Outcome 'Failed' -Reason 'exit-1' -Strict
+            $read = Read-RcRunEvidence -EvidenceRoot $ev -Strict
+            Note ($next.sequence -eq 3 -and $read.sequence -eq 3 -and $read.pending -ceq 'not-run') 'torn-does-not-block'
+            Note ((Get-Content -LiteralPath $tornPath -Raw) -eq '{') 'torn-file-kept'
+            $fresh = Join-Path $ResultsDirectory 'torn-only'
+            $only = Join-Path $fresh 'revisions/1'
+            [void][IO.Directory]::CreateDirectory($only)
+            [IO.File]::WriteAllText((Join-Path $only 'revision.json'), '{')
+            $orphan = Read-RcRunEvidence -EvidenceRoot $fresh -Strict
+            Note ($orphan.sequence -eq 0 -and $orphan.pending -ceq 'not-run' -and -not $orphan.gateCredit) 'orphan-root-is-not-run'
+        }
+        'LaunchStampIsCheaper' {
+            $repo = Join-Path $ResultsDirectory 'repo'
+            $ev = Join-Path $ResultsDirectory 'evidence'
+            $out = Join-Path $ResultsDirectory 'out'
+            $sample = Join-Path $ResultsDirectory 'sample'
+            [void][IO.Directory]::CreateDirectory($ev)
+            [void][IO.Directory]::CreateDirectory($sample)
+            $sha = New-Repo $repo
+            New-Outputs $out 'entry.dll' 'helper.dll'
+            $chunk = New-Object byte[] (4MB)
+            $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+            try { $rng.GetBytes($chunk) } finally { $rng.Dispose() }
+            $sampleBytes = 0L
+            foreach ($index in 1..4) {
+                $path = Join-Path $sample ('part' + $index + '.dll')
+                [IO.File]::WriteAllBytes($path, $chunk)
+                $sampleBytes += $chunk.Length
+            }
+            $snap = New-RcSourceSnapshot -Repository $repo -EvidenceRoot $ev -InputPaths @('src/input.txt') -ExpectedSha $sha -Strict
+            $build = Register-NightlyRcBuildEvidence -EvidenceRoot $ev -Suite 'server' -Command 'dotnet build server.csproj -c Debug' -OutputDirectory $out -Entry 'entry.dll' -SourceDigest $snap.digest -Strict
+            $fixtureWatch = [Diagnostics.Stopwatch]::StartNew()
+            $launch = Register-NightlyRcLaunchEvidence -EvidenceRoot $ev -Suite 'server' -Chunk 'c1' -OutputDirectory $out -Arguments @('test') -BuildDigest $build.digest -Repository $repo -ExpectedSha $sha -Strict
+            $fixtureWatch.Stop()
+            $buildText = [IO.File]::ReadAllText((Join-Path $ev 'builds/server.json'))
+            Note ($launch.joined -and $buildText.Contains('lastWriteUtcTicks')) 'stamp-joins-build'
+            [IO.File]::WriteAllBytes((Join-Path $out 'helper.dll'), [byte[]](9, 9, 9, 9))
+            Refuses { Register-NightlyRcLaunchEvidence -EvidenceRoot $ev -Suite 'server' -Chunk 'c2' -OutputDirectory $out -Arguments @('test') -BuildDigest $build.digest -Repository $repo -ExpectedSha $sha -Strict } 'output-not-joined'
+            $bulkBuildWatch = [Diagnostics.Stopwatch]::StartNew()
+            $bulkBuild = Register-NightlyRcBuildEvidence -EvidenceRoot $ev -Suite 'bulk' -Command 'dotnet build bulk.csproj -c Debug' -OutputDirectory $sample -Entry 'part1.dll' -SourceDigest $snap.digest -Strict
+            $bulkBuildWatch.Stop()
+            $bulkLaunchWatch = [Diagnostics.Stopwatch]::StartNew()
+            $bulkLaunch = Register-NightlyRcLaunchEvidence -EvidenceRoot $ev -Suite 'bulk' -Chunk 'c1' -OutputDirectory $sample -Arguments @('test') -BuildDigest $bulkBuild.digest -Repository $repo -ExpectedSha $sha -Strict
+            $bulkLaunchWatch.Stop()
+            $wide = Join-Path $ResultsDirectory 'wide'
+            [void][IO.Directory]::CreateDirectory($wide)
+            [IO.File]::WriteAllBytes((Join-Path $wide 'entry.dll'), [byte[]](1, 2, 3, 4))
+            $tiny = New-Object byte[] 32
+            foreach ($index in 1..279) {
+                [IO.File]::WriteAllBytes((Join-Path $wide ('h' + $index.ToString('000') + '.dll')), $tiny)
+            }
+            [void](Register-NightlyRcBuildEvidence -EvidenceRoot $ev -Suite 'wide' -Command 'dotnet build wide.csproj -c Debug' -OutputDirectory $wide -Entry 'entry.dll' -SourceDigest $snap.digest -Strict)
+            $wideWatch = [Diagnostics.Stopwatch]::StartNew()
+            $wideLaunch = Register-NightlyRcLaunchEvidence -EvidenceRoot $ev -Suite 'wide' -Chunk 'c1' -OutputDirectory $wide -Arguments @('test') -Repository $repo -ExpectedSha $sha -Strict
+            $wideWatch.Stop()
+            $productionBytes = 174587904.0
+            $launches = 1289.0
+            $scale = $productionBytes / [double]$sampleBytes
+            $fullMs = [math]::Round($bulkBuildWatch.Elapsed.TotalMilliseconds, 3)
+            $stampMs = [math]::Round($bulkLaunchWatch.Elapsed.TotalMilliseconds, 3)
+            $fixtureMs = [math]::Round($fixtureWatch.Elapsed.TotalMilliseconds, 3)
+            $wideMs = [math]::Round($wideWatch.Elapsed.TotalMilliseconds, 3)
+            $extrapolatedFull = [math]::Round($fullMs * $scale * $launches, 1)
+            $extrapolatedStamp = [math]::Round($wideMs * $launches, 1)
+            Write-Host ('A6 fixtureLaunchMs={0} sampleFiles=4 sampleBytes={1} fullMs={2} stampMs={3} wideFiles=280 wideLaunchMs={4} extrapolatedFull1289={5} extrapolatedStamp1289={6}' -f $fixtureMs, $sampleBytes, $fullMs, $stampMs, $wideMs, $extrapolatedFull, $extrapolatedStamp)
+            Note ($bulkLaunch.joined -and $wideLaunch.joined -and $stampMs -lt $fullMs) 'stamp-cheaper-than-full-read'
+            $testsImpl = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'lib/nightly-tests-impl.ps1'))
+            $launchAt = $testsImpl.IndexOf('Register-NightlyRcLaunchEvidence')
+            $watchAt = $testsImpl.IndexOf('$phaseWatch = [Diagnostics.Stopwatch]::StartNew()')
+            Note ($launchAt -ge 0 -and $watchAt -gt $launchAt) 'launch-evidence-outside-phase'
         }
         default { throw 'unknown-case' }
     }

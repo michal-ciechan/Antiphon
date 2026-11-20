@@ -61,6 +61,7 @@ function Invoke-RcRunEvidenceCore {
         while ($ex.InnerException -and $ex.InnerException.Message) { $ex = $ex.InnerException }
         $msg = [string]$ex.Message
         if ($Strict) { throw $msg }
+        Write-RcRunEvidenceWarning $msg
         return (New-RcRunEvidenceIdle -Recording 'unproven')
     }
 }
@@ -106,11 +107,12 @@ function Register-NightlyRcLaunchEvidence {
 }
 
 function Register-NightlyRcChunkRevision {
-    param([string]$EvidenceRoot, [string]$Suite, [string]$Chunk, [string]$Outcome, [string]$LogRoot, [switch]$Interrupt, [switch]$Strict)
+    param([string]$EvidenceRoot, [string]$Suite, [string]$Chunk, [string]$Outcome, [string]$Reason, [string]$LogRoot, [switch]$Interrupt, [switch]$Strict)
     $root = Resolve-RcRunEvidenceRoot $EvidenceRoot $LogRoot
     $interrupt = [bool]$Interrupt
+    $reasonText = [string]$Reason
     return (Invoke-RcRunEvidenceCore -Strict:$Strict -Body {
-        [Antiphon.Nightly.RcRunEvidence]::ChunkRevision([string]$root, [string]$Suite, [string]$Chunk, [string]$Outcome, $interrupt)
+        [Antiphon.Nightly.RcRunEvidence]::ChunkRevision([string]$root, [string]$Suite, [string]$Chunk, [string]$Outcome, $interrupt, [string]$reasonText)
     }.GetNewClosure())
 }
 
@@ -131,14 +133,69 @@ function Read-RcRunEvidence {
 }
 
 function Protect-NightlyOwnedCheckoutEvidence {
-    param([string]$Phase, [string]$CheckoutRoot, [string]$LogRoot, [string]$Sha, [string]$EvidenceRoot, [switch]$Strict)
+    param([string]$Phase, [string]$CheckoutRoot, [string]$LogRoot, [string]$Sha, [string]$EvidenceRoot, [string[]]$InputPaths, [switch]$Strict)
     $root = Resolve-RcRunEvidenceRoot $EvidenceRoot $LogRoot
     if ($Phase -eq 'closure') {
         return (Invoke-RcRunEvidenceCore -Strict:$Strict -Body {
             [Antiphon.Nightly.RcRunEvidence]::AssertInputs([string]$root, [string]$CheckoutRoot, [string]$Sha)
         }.GetNewClosure())
     }
+    $inputs = @()
+    foreach ($relative in @($InputPaths)) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$relative)) { $inputs += [string]$relative }
+    }
     return (Invoke-RcRunEvidenceCore -Strict:$Strict -Body {
-        [Antiphon.Nightly.RcRunEvidence]::SourceSnapshot([string]$root, [string]$CheckoutRoot, $null, [string]$Sha)
+        [Antiphon.Nightly.RcRunEvidence]::SourceSnapshot([string]$root, [string]$CheckoutRoot, [string[]]$inputs, [string]$Sha)
     }.GetNewClosure())
 }
+
+function Write-RcRunEvidenceWarning {
+    param([string]$Reason)
+    try {
+        $text = [string]$Reason
+        if ([string]::IsNullOrWhiteSpace($text)) { $text = 'unproven' }
+        $text = ($text -split "[\r\n]")[0].Trim()
+        if ($text.Length -gt 120) { $text = $text.Substring(0, 120) }
+        if (-not $script:RcRunEvidenceWarned) { $script:RcRunEvidenceWarned = @{} }
+        if ($script:RcRunEvidenceWarned.ContainsKey($text)) { return }
+        $script:RcRunEvidenceWarned[$text] = $true
+        $line = 'rc-run-evidence: ' + $text
+        if (Get-Command Write-NightlyRunLine -ErrorAction SilentlyContinue) { Write-NightlyRunLine $line }
+        else { Write-Host $line }
+    } catch { }
+}
+
+function Get-NightlyRcChunkOutcome {
+    param($Run, [string]$ResultsPath)
+    $exit = 1
+    if ($null -ne $Run -and $null -ne $Run.ExitCode) { $exit = [int]$Run.ExitCode }
+    if ($exit -ne 0) { return [pscustomobject]@{ Outcome = 'Failed'; Reason = ('exit-' + $exit) } }
+    $drain = $false
+    if ($null -ne $Run) {
+        if ($Run -is [System.Collections.IDictionary]) {
+            if ($Run.Contains('OutputDrainTimedOut')) { $drain = [bool]$Run['OutputDrainTimedOut'] }
+        } elseif ($Run.PSObject.Properties.Name -contains 'OutputDrainTimedOut') {
+            $drain = [bool]$Run.OutputDrainTimedOut
+        }
+    }
+    if ($drain) { return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'drain-timeout' } }
+    if ([string]::IsNullOrWhiteSpace($ResultsPath) -or -not (Test-Path -LiteralPath $ResultsPath -PathType Leaf)) {
+        return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-missing' }
+    }
+    $parseable = $false
+    try {
+        $text = [IO.File]::ReadAllText($ResultsPath)
+        if ($text -match '<TestRun[\s>]') {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.LoadXml($text)
+            $parseable = $null -ne $xml.DocumentElement
+        } elseif (-not [string]::IsNullOrWhiteSpace($text)) {
+            $parsed = $text | ConvertFrom-Json
+            $parseable = $null -ne $parsed
+        }
+    } catch { $parseable = $false }
+    if (-not $parseable) { return [pscustomobject]@{ Outcome = 'NotRun'; Reason = 'results-unparseable' } }
+    return [pscustomobject]@{ Outcome = 'Passed'; Reason = '' }
+}
+
+
