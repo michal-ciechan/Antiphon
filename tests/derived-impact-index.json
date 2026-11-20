@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 340,
+      "classes": 341,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 15,
+      "classes": 16,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 11,
+      "classes": 12,
       "reason": "allowlist"
     },
     {
@@ -711,9 +711,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskLandService.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
         "CheckpointSourceApprovalTests",
         "DispatchHeldAttentionTests",
@@ -721,8 +721,8 @@
         "RepositoryLeaseWaitersWiringTests",
         "RunnerTaskSettlementTests",
         "WorktreeResiduePublicationLaneTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests"
+        "SourceRevisionStampContractTests",
+        "C1677TempSweepNativeTests"
       ]
     },
     {
@@ -2130,18 +2130,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
+        "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
         "PackageVersionPinContractTests",
         "QualificationCheckoutSourceTests",
         "RefreshGithubTokenScriptTests",
         "SessionRunnerGrokLineEndingContractTests",
         "ShellFixtureLineEndingContractTests",
-        "ZombieCensusPlatformTests",
-        "DirectoryBuildRspTests"
+        "ZombieCensusPlatformTests"
       ]
     },
     {
@@ -2598,6 +2598,12 @@
       ]
     },
     {
+      "path": "Antiphon.AppHost/Antiphon.AppHost.csproj",
+      "classes": [
+        "SourceRevisionStampContractTests"
+      ]
+    },
+    {
       "path": "Antiphon.AppHost/Program.cs",
       "classes": [
         "HangfirePostgreSqlStorageTests",
@@ -2656,7 +2662,8 @@
         "ChannelOutboundIsolatedTests",
         "CustodyNamespaceBootstrapTests",
         "DockerStackContractTests",
-        "ServerImagePushCredentialTests"
+        "ServerImagePushCredentialTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -2778,7 +2785,8 @@
       "path": "dev-aspire.ps1",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -3450,7 +3458,8 @@
       "path": "scripts/apphost-common.ps1",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -3949,7 +3958,8 @@
         "LandGraphEvaluationTests",
         "LandGraphLandRefreshTests",
         "LandNonCodeSkipTests",
-        "ReleaseImpactEvaluationTests"
+        "ReleaseImpactEvaluationTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -3970,13 +3980,20 @@
       "classes": [
         "ImpactedClassesSelectorTests",
         "ReleaseImpactScriptTests",
-        "SelectorLineEndingAttributeTests"
+        "SelectorLineEndingAttributeTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
       "path": "scripts/lib/nightly-coverage.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/nightly-tests-impl.ps1",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4049,7 +4066,8 @@
       "classes": [
         "DockerStackDocumentationTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4071,6 +4089,12 @@
       "path": "scripts/run-checkpoint.ps1",
       "classes": [
         "CheckpointColdBuildTests"
+      ]
+    },
+    {
+      "path": "scripts/run-daemon.ps1",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4105,6 +4129,12 @@
       "classes": [
         "LinuxServerRestartGateTests",
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/start-windows-phone-home-runner.ps1",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -24193,7 +24223,6 @@
         "DockerStackDocumentationTests",
         "DotnetToolManifestContractTests",
         "GrokRunnerImageContractTests",
-        "GrokSha256PinTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
@@ -24205,7 +24234,8 @@
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests",
         "Server2StagingServerContractTests",
-        "ServerImagePushCredentialTests"
+        "ServerImagePushCredentialTests",
+        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -27416,6 +27446,12 @@
       "classes": [
         "CheckpointToolProjectContractTests",
         "HostCleanupCheckpointExtractionTests"
+      ]
+    },
+    {
+      "path": "tools/Antiphon.Checkpoints/Execution/BuildStep.cs",
+      "classes": [
+        "SourceRevisionStampContractTests"
       ]
     },
     {
