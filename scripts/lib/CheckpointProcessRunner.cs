@@ -87,6 +87,9 @@ namespace Antiphon.Checkpoints
                     var config = new ProcessStartInfo(start.FileName) { WorkingDirectory = start.WorkingDirectory };
                     foreach (var pair in start.Environment) config.Environment[pair.Key] = pair.Value;
                     HardenGit(config);
+                    // The read's own -C directories: the lookup reads the repository the read will use.
+                    foreach (var directory in LeadingDirectories(start.ArgumentList))
+                    { config.ArgumentList.Add("-C"); config.ArgumentList.Add(directory); }
                     config.ArgumentList.Add("config"); config.ArgumentList.Add("--null");
                     config.ArgumentList.Add("--get-regexp");
                     config.ArgumentList.Add("^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.textconv)$");
@@ -203,41 +206,74 @@ namespace Antiphon.Checkpoints
             return stdout;
         }
 
+        // The -C directories leading a git command line (after any -c pairs), in order.
+        private static List<string> LeadingDirectories(IList<string> arguments)
+        {
+            var directories = new List<string>();
+            for (var i = 0; i + 1 < arguments.Count; i += 2)
+            {
+                if (arguments[i] == "-C") directories.Add(arguments[i + 1]);
+                else if (arguments[i] != "-c") break;
+            }
+            return directories;
+        }
+
+        // Whether this directory is one git accepts as a repository's git dir: HEAD, and objects and refs (or a
+        // commondir that holds them, for a linked worktree's git dir).
+        private static bool LooksLikeGitDir(string directory) =>
+            File.Exists(Path.Combine(directory, "HEAD"))
+            && (File.Exists(Path.Combine(directory, "commondir"))
+                || (Directory.Exists(Path.Combine(directory, "objects")) && Directory.Exists(Path.Combine(directory, "refs"))));
+
         // Whether the driver lookup's answer is empty without asking git. The lookup is hardened (GIT_CONFIG_NOSYSTEM,
         // GIT_CONFIG_GLOBAL on the null device), so git reads only the repository's own config files: config in its
-        // git dir and common dir, config.worktree, and whatever they include. When the nearest repository's files
-        // all exist as plain text that never mentions "filter", "diff" or "include", no key can match the lookup
-        // (filter.*.clean|smudge|process|required, diff.*.textconv) and git would print nothing. Any doubt asks git:
-        // a variable that redirects git's repository or config, no repository found, an unreadable or odd .git,
-        // or one of those words anywhere (a URL containing "diff" included).
+        // git dir and common dir, config.worktree, and whatever they include. When the repository git would find has
+        // files that never mention "filter", "diff" or "include", no key can match the lookup
+        // (filter.*.clean|smudge|process|required, diff.*.textconv) and git would print nothing. The search follows
+        // git's: from the read's directory (its -C), each directory's .git first, then the directory itself as a git
+        // dir. Any doubt asks git: an executable other than plain git, a variable that redirects git's repository or
+        // config, a link anywhere on the path (git climbs the real path), a .git git might skip or read differently,
+        // no repository, an unreadable file, or one of those words anywhere (a URL containing "diff" included).
         private static bool NoDriverConfigured(ProcessStartInfo config)
         {
             try
             {
+                var executable = Path.GetFileName(config.FileName ?? "");
+                if (!(executable == "git" || (OperatingSystem.IsWindows() && string.Equals(executable, "git.exe", StringComparison.OrdinalIgnoreCase)))
+                    || !string.Equals(config.FileName, executable, StringComparison.Ordinal)) return false;
                 var nullPath = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
                 if (!config.Environment.TryGetValue("GIT_CONFIG_NOSYSTEM", out var noSystem) || noSystem != "1") return false;
                 if (!config.Environment.TryGetValue("GIT_CONFIG_GLOBAL", out var global)
                     || !string.Equals(global, nullPath, StringComparison.OrdinalIgnoreCase)) return false;
-                foreach (var name in new[] { "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CEILING_DIRECTORIES" })
+                foreach (var name in new[] { "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM" })
                     if (config.Environment.TryGetValue(name, out var value) && !string.IsNullOrEmpty(value)) return false;
-                var start = string.IsNullOrEmpty(config.WorkingDirectory) ? Environment.CurrentDirectory : config.WorkingDirectory;
+                var start = Path.GetFullPath(string.IsNullOrEmpty(config.WorkingDirectory) ? Environment.CurrentDirectory : config.WorkingDirectory);
+                foreach (var directory in LeadingDirectories(config.ArgumentList))
+                    start = Path.GetFullPath(Path.Combine(start, directory));
                 string gitDir = null;
-                for (var directory = new DirectoryInfo(Path.GetFullPath(start)); directory != null; directory = directory.Parent)
+                for (var directory = new DirectoryInfo(start); directory != null; directory = directory.Parent)
                 {
+                    if (!directory.Exists || (directory.Attributes & FileAttributes.ReparsePoint) != 0) return false;
                     var here = directory.FullName;
-                    // A git dir itself (bare, or a working directory inside .git): git uses it as the repository.
-                    if (File.Exists(Path.Combine(here, "HEAD")) && Directory.Exists(Path.Combine(here, "objects"))) { gitDir = here; break; }
                     var dotGit = Path.Combine(here, ".git");
-                    if (Directory.Exists(dotGit)) { gitDir = dotGit; break; }
+                    if (Directory.Exists(dotGit))
+                    {
+                        if ((File.GetAttributes(dotGit) & FileAttributes.ReparsePoint) != 0 || !LooksLikeGitDir(dotGit)) return false;
+                        gitDir = dotGit;
+                        break;
+                    }
                     if (File.Exists(dotGit))
                     {
                         var pointer = File.ReadAllText(dotGit).Trim();
                         if (!pointer.StartsWith("gitdir:", StringComparison.Ordinal)) return false;
                         gitDir = Path.GetFullPath(Path.Combine(here, pointer.Substring("gitdir:".Length).Trim()));
+                        if (!Directory.Exists(gitDir) || !LooksLikeGitDir(gitDir)) return false;
                         break;
                     }
+                    // A git dir itself (bare, or a directory inside .git): git uses it as the repository.
+                    if (LooksLikeGitDir(here)) { gitDir = here; break; }
                 }
-                if (gitDir == null || !Directory.Exists(gitDir)) return false;
+                if (gitDir == null) return false;
                 var files = new List<string> { Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") };
                 var commonPointer = Path.Combine(gitDir, "commondir");
                 if (File.Exists(commonPointer))

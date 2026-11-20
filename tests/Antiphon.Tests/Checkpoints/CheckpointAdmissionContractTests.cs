@@ -158,6 +158,23 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         Lookups(root).ShouldBe(1, "an include can name drivers the file does not show");
         starts.Count(args => args.Contains("status") && args.Contains("filter.inc.clean=")).ShouldBe(1,
             "git's answer disables the included driver");
+
+        // A stub .git git would skip (no HEAD, objects or refs) is not taken as the repository: git decides.
+        var clean = TempDir();
+        CheckpointFixtureProcess.Git(clean, "init", "-q");
+        var stub = Directory.CreateDirectory(Path.Combine(clean, "stub", ".git")).FullName;
+        File.WriteAllText(Path.Combine(stub, "config"), "[core]\n\tbare = false\n");
+        Lookups(Path.Combine(clean, "stub")).ShouldBe(1, "a stub .git leaves the answer to git");
+
+        // The lookup reads the repository the read names with -C, not the working directory's.
+        starts.Clear();
+        var target = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = clean };
+        foreach (var argument in new[] { "-C", root, "status", "--porcelain" }) target.ArgumentList.Add(argument);
+        CheckpointProcessRunner.RunObserved(target, 30_000, true,
+            child => starts.Add(child.ArgumentList.ToArray()), 0, cancellationToken).Exit.ShouldBe(0);
+        starts.Count(args => args.Contains("--get-regexp")).ShouldBe(1, "-C names a repository with an include");
+        starts.Count(args => args.Contains("status") && args.Contains("filter.inc.clean=")).ShouldBe(1,
+            "the -C repository's driver is disabled even from a driverless working directory");
     }
 
     [Test]
