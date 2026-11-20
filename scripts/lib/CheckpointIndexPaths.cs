@@ -153,9 +153,10 @@ namespace Antiphon.Checkpoints
             ListIndex(data, out assumeUnchanged, null);
 
         /// <summary>
-        /// `git ls-files -z -s` (mode, object id, stage 0, path, NUL per entry) for the index in this git dir: the
-        /// git dir CheckpointProcessRunner.TopLevelRepository names for a checkout's top level, where git lists
-        /// root-relative paths. Exactly git's bytes for a plain version-2 SHA-1 index of regular, executable and
+        /// `git ls-files -z -s` (mode, object id, stage 0, path, NUL per entry) for the index in this git dir. Valid
+        /// only for the git dir CheckpointProcessRunner.TopLevelRepository names for a checkout's top level (it has
+        /// already declined core.worktree, includes, bare and every layout it cannot settle), where git lists
+        /// root-relative paths; this method does not check that itself. Exactly git's bytes for a plain version-2 SHA-1 index of regular, executable and
         /// symlink entries at stage 0; null (git answers) for anything else, the same refusals as AnyTracked, or no
         /// index file at all.
         /// </summary>

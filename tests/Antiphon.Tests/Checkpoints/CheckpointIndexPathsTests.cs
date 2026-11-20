@@ -186,11 +186,14 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         Write(root, "dir/b.txt");
         Write(root, "dir/caf" + (char)0xE9 + ".txt");
         CheckpointFixtureProcess.Git(root, "add", "-A");
-        if (!OperatingSystem.IsWindows())
-        {
-            CheckpointFixtureProcess.Git(root, "update-index", "--chmod=+x", "a.txt");
-        }
+        // An executable and a symlink entry on every platform: both are set in the index alone.
+        CheckpointFixtureProcess.Git(root, "update-index", "--chmod=+x", "a.txt");
+        var blob = CheckpointFixtureProcess.Git(root, "hash-object", "-w", "a.txt").Trim();
+        CheckpointFixtureProcess.Git(root, "update-index", "--add", "--cacheinfo", "120000," + blob + ",link");
         CheckpointFixtureProcess.Git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed");
+        var seeded = CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s");
+        seeded.ShouldContain("100755 ");
+        seeded.ShouldContain("120000 ");
         string GitHead(string at) => CheckpointFixtureProcess.Git(at, "rev-parse", "HEAD").Trim();
         void Agrees(string at, string label)
         {
@@ -207,6 +210,8 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         var linked = Path.Combine(TempDir(), "linked");
         CheckpointFixtureProcess.Git(root, "worktree", "add", "-q", "-b", "side", linked);
         Agrees(Path.GetFullPath(CheckpointFixtureProcess.Git(linked, "rev-parse", "--show-toplevel").Trim()), "linked worktree");
+        // Its checkout made the symlink entry a real link on Linux; the fixture teardown refuses a root holding one.
+        File.Delete(Path.Combine(linked, "link"));
         CheckpointFixtureProcess.Git(root, "checkout", "-q", "--detach");
         Agrees(root, "detached HEAD");
 
@@ -220,11 +225,13 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         CheckpointFixtureProcess.Git(root, "update-index", "--skip-worktree", "a.txt");
         CheckpointIndexPaths.StageListing(Path.Combine(root, ".git")).ShouldBeNull("a version 3 index");
 
-        // The script's reader starts no git for either read, and prints what git prints.
+        // run-checkpoint.ps1's own Invoke-CheckpointGit (extracted, with the source library loaded) starts no git for
+        // either read and returns what git prints.
         CheckpointFixtureProcess.Git(root, "update-index", "--no-skip-worktree", "a.txt");
         var trace = Directory.CreateDirectory(Path.Combine(TempDir(), "trace-fileread")).FullName;
         static string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
         var source = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "checkpoint-source.ps1");
+        var script = Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "run-checkpoint.ps1");
         var start = new System.Diagnostics.ProcessStartInfo("pwsh")
         {
             WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
@@ -232,18 +239,22 @@ public sealed class CheckpointIndexPathsTests : CheckpointTestBase
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", $$"""
             $ErrorActionPreference = 'Stop'
             . {{Quote(source)}}
-            $head = Get-CheckpointFileGitRead {{Quote(root)}} @('rev-parse', 'HEAD')
-            $listing = Get-CheckpointFileGitRead {{Quote(root)}} @('ls-files', '-z', '-s')
-            'HEAD=' + $head.Trim()
-            'LISTING=' + ([string]$listing).Replace([string][char]0, '|')
+            $tokens = $null; $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile({{Quote(script)}}, [ref]$tokens, [ref]$parseErrors)
+            $fn = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-CheckpointGit' }, $true)
+            Invoke-Expression $fn.Extent.Text
+            $head = Invoke-CheckpointGit {{Quote(root)}} @('rev-parse', 'HEAD')
+            $listing = Invoke-CheckpointGit {{Quote(root)}} @('ls-files', '-z', '-s')
+            'HEAD=' + $head.Exit + ':' + ([string]$head.Stdout).Trim()
+            'LISTING=' + $listing.Exit + ':' + ([string]$listing.Stdout).Replace([string][char]0, '|')
             """ })
             start.ArgumentList.Add(argument);
         start.Environment["GIT_TRACE2_EVENT"] = trace;
         var run = await CheckpointFixtureProcess.RunAsync(start, cancellationToken);
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
-        run.Stdout.ShouldContain("HEAD=" + GitHead(root));
-        run.Stdout.ShouldContain("LISTING=" + CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s").Replace("\0", "|", StringComparison.Ordinal));
-        Directory.GetFiles(trace).ShouldBeEmpty("both reads answered from the repository's files");
+        run.Stdout.ShouldContain("HEAD=0:" + GitHead(root));
+        run.Stdout.ShouldContain("LISTING=0:" + CheckpointFixtureProcess.Git(root, "ls-files", "-z", "-s").Replace("\0", "|", StringComparison.Ordinal));
+        Directory.GetFiles(trace).ShouldBeEmpty("Invoke-CheckpointGit answered both reads from the repository's files");
     }
 
     private static bool GitTracks(string root, string full) =>
