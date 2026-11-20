@@ -5,7 +5,7 @@ Base: d663f5eed4d22e69752963878602ab1b269e7b2f.
 Authority: activation plan D-8 and S8b review advisories A-1 through A-4 (review c383b0ccb85a2fef07269e5b7c992d02d1a64215). Shadow mode only.
 Owned files: scripts/lib/rc-shadow-sample.ps1, scripts/test-rc-shadow-sample.ps1, tests/Antiphon.Tests/Scripts/RcIncrementalShadowTests.cs.
 
-The red witness commit adds four harness cases that fail on the landed trust counter. The fix commit makes those cases pass and keeps V-11 green. This plan records that red SHA once the fix commit exists.
+Red witness commit: 7288542f4c585a77448c72be5587c463e7b3d323. Those four cases fail on the landed counter. The fix commit makes them pass and keeps V-11 green.
 
 ## Verification design
 
