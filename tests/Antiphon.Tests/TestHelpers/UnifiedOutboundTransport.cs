@@ -236,18 +236,37 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_gatewayStarted) await Gateway.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
-        Gateway.Dispose(); Producer.Dispose(); Http.Dispose();
-        await Slack.DisposeAsync(); await H.DisposeAsync(); await Schema.DisposeAsync();
-        if (Directory.Exists(StoreRoot)) Directory.Delete(StoreRoot, true);
-        // A broker shared by a class keeps no cell's topic (a dev-mode broker has a bounded partition budget).
-        // Best effort: a broker that is gone or slow leaves the topic to the container's disposal.
         try
         {
-            using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = Bootstrap }).Build();
-            await admin.DeleteTopicsAsync([Topic]).WaitAsync(TimeSpan.FromSeconds(10));
+            if (_gatewayStarted) await Gateway.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+            Gateway.Dispose(); Producer.Dispose(); Http.Dispose();
+            await Slack.DisposeAsync(); await H.DisposeAsync(); await Schema.DisposeAsync();
+            if (Directory.Exists(StoreRoot)) Directory.Delete(StoreRoot, true);
         }
-        catch (Exception ex) when (ex is KafkaException or TimeoutException)
+        finally
+        {
+            await DeleteTopicAsync();
+        }
+    }
+
+    // A broker shared by a class keeps no cell's topic (a dev-mode broker has a bounded partition budget), even when
+    // the cell's other disposal failed. Best effort and bounded: a broker that is gone or slow leaves the topic to the
+    // container's disposal, and an abandoned delete is observed.
+    private async Task DeleteTopicAsync()
+    {
+        // The client is disposed inside the task, after its delete returns, never under a pending call.
+        var deleting = Task.Run(async () =>
+        {
+            using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = Bootstrap }).Build();
+            await admin.DeleteTopicsAsync([Topic]);
+        });
+        _ = deleting.ContinueWith(attempt => _ = attempt.Exception,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+        try
+        {
+            await deleting.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
         }
     }
