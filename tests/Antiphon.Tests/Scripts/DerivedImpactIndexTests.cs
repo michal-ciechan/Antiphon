@@ -659,16 +659,17 @@ public sealed class DerivedImpactIndexTests(DerivedSelectorReplay replay)
             Strings(json.RootElement, "classes").ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
             WholeClasses(json.RootElement, "windowsFilters").ShouldNotContain("RepositoryMutationLeaseTests");
             WholeClasses(json.RootElement, "windowsFilters").ShouldContain("RepositoryLeaseWindowsBoundaryTests");
-            OwedCount(json.RootElement, LandingGitPath).ShouldBe(39);
+            // LandNonCodeSkipTests subclasses LandingGit, so it leads the cap and the owed remainder is 40.
+            OwedCount(json.RootElement, LandingGitPath).ShouldBe(40);
         }
 
         var leaseText = await SelectAsync(root, "-Path", LandingGitPath);
         leaseText.Exit.ShouldBe(0, leaseText.Text);
         leaseText.Stdout.Replace("\r\n", "\n").Split('\n').ShouldContain(
-            "owed/capped server/Infrastructure/Git/LandingGit.cs count=39 first=RunnerSettlementSyncTests,"
-            + "AgentTaskLandVerifierTests,PhoneHomeTaskDispatchProjectionTests,"
+            "owed/capped server/Infrastructure/Git/LandingGit.cs count=40 first=LandNonCodeSkipTests,"
+            + "RunnerSettlementSyncTests,AgentTaskLandVerifierTests,PhoneHomeTaskDispatchProjectionTests,"
             + "RepairSourceDispatchTests,RepositoryMutationLeaseDescribeTests,RunnerAlarmDeliveryTests,"
-            + "RunnerStateAlarmExclusionTests,AgentTaskDispatchBaseGuardTests");
+            + "RunnerStateAlarmExclusionTests");
 
         var service = await SelectAsync(root, "-Path", NotificationServicePath, "-Json");
         service.Exit.ShouldBe(0, service.Text);
