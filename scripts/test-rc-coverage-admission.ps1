@@ -91,7 +91,7 @@ function Get-ManualWorkflowScopeErrors($PolicyObject) {
         $rows = @($PolicyObject.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })
         $methods = @()
         if ($rows.Count -eq 1) { $methods = @($rows[0].methods | Where-Object { $null -ne $_ }) }
-        if ($rows.Count -ne 1 -or $methods.Count -ne 1 -or $methods[0] -cne $obligation.m -or $rows[0].PSObject.Properties.Name -contains 'platform') { $manualWrong += $obligation.c }
+        if ($rows.Count -ne 1 -or $methods.Count -ne 1 -or $methods[0] -cne $obligation.m -or $null -ne $rows[0].platform -or $rows[0].PlatformInvalid) { $manualWrong += $obligation.c }
     }
     return $manualWrong
 }
@@ -101,7 +101,7 @@ Assert-C487 ($manualWrong.Count -eq 0) 'CoverageAdmission separate-method-workfl
 # class-wide row must reach the named assertion, rather than throw on a null array.
 $scopeFailures = @()
 foreach ($obligation in $manual) {
-    $fixture = $policy.Object | ConvertTo-Json -Depth 40 | ConvertFrom-Json
+    $fixture = [IO.File]::ReadAllText($policy.Path) | ConvertFrom-Json
     $row = @($fixture.profiles.rc.exclusions | Where-Object { $_.suite -ceq $obligation.s -and $_.class -ceq $obligation.c })[0]
     $row.PSObject.Properties.Remove('methods')
     try {

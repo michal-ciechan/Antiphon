@@ -809,6 +809,10 @@ namespace Antiphon.Nightly
         /// ({ Path, Object, Hash } as NightlyPolicy.Read returns it), checked against exclusionContext, and refuses
         /// unless every member resolves.
         /// </summary>
+        // The policy read (NightlyPolicy.Read's PolicyFile) the sweep checks against.
+        private static ExecutionPolicy PolicyOf(object policy) =>
+            PsOps.Base(PsValue.Prop(policy, "Object")) as ExecutionPolicy ?? throw Refuse("partial-exclusion-policy-required");
+
         public static PSObject Resolve(object history, object[] suites, string qualificationMode, object exclusionContext, object policy)
         {
             if (qualificationMode != "Full" && qualificationMode != "PriorFailureSweep") throw Refuse("history-qualification-mode");
@@ -821,11 +825,11 @@ namespace Antiphon.Nightly
             {
                 if (exclusionContext == null) warnings.Add("PARTIAL MISSING EXCLUSION CONTEXT: derived from validated history; S4a/S5 must supply bound context at every receiving hop.");
                 exclusionProfile = Str(history, "profile");
-                var contextMap = NightlyPolicy.Map(exclusionContext);
+                var contextMap = PsValue.NoteMap(exclusionContext);
                 if ((exclusionProfile != "rc" && exclusionProfile != "nightly") || (exclusionContext != null && PsValue.Str(contextMap[(object)"profile"]) != exclusionProfile))
                     throw Refuse("partial-exclusion-profile-mismatch");
                 if (policy == null) throw Refuse("partial-exclusion-policy-required");
-                NightlyPolicy.Profile(PsValue.Prop(policy, "Object"), exclusionProfile);
+                NightlyPolicy.Profile(PolicyOf(policy), exclusionProfile);
                 policyFileDigest = Digest(Str(policy, "Path"));
                 if (exclusionContext != null)
                 {
@@ -845,7 +849,7 @@ namespace Antiphon.Nightly
             {
                 exclusionsBySuite = new Hashtable(StringComparer.OrdinalIgnoreCase);
                 foreach (var suite in suites ?? new object[0])
-                    exclusionsBySuite[Str(suite, "id")] = NightlyPolicy.ProfileExclusions(PsValue.Prop(policy, "Object"), exclusionProfile, Str(suite, "id"), platform);
+                    exclusionsBySuite[Str(suite, "id")] = NightlyPolicy.ProfileExclusions(PolicyOf(policy), exclusionProfile, Str(suite, "id"), platform);
             }
             var map = PriorFailures.Map(history, suites, exclusionsBySuite, exclusionProfile);
             var unresolved = PsValue.AsArray(PsValue.Prop(map, "unresolved"));

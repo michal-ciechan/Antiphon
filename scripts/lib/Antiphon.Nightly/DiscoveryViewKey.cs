@@ -52,6 +52,27 @@ namespace Antiphon.Nightly
         private static bool Append(StringBuilder sb, object value, int depth)
         {
             if (value == null) { sb.Append("n;"); return true; }
+            if ((value is PSObject wrapper ? wrapper.BaseObject : value) is ExclusionRow row)
+            {
+                // A reader row converts like the five-note-property object it replaced (its properties in declaration
+                // order), unless members were added to this instance: its JSON would carry them.
+                if (depth > MaxContainerDepth) return false;
+                foreach (var property in PSObject.AsPSObject(value).Properties)
+                    if (property is PSNoteProperty) return false;
+                sb.Append("o5{");
+                AppendText(sb, 'k', "Suite");
+                if (!Append(sb, row.Suite, depth + 1)) return false;
+                AppendText(sb, 'k', "Class");
+                if (!Append(sb, row.Class, depth + 1)) return false;
+                AppendText(sb, 'k', "Methods");
+                if (!Append(sb, row.Methods, depth + 1)) return false;
+                AppendText(sb, 'k', "Reason");
+                if (!Append(sb, row.Reason, depth + 1)) return false;
+                AppendText(sb, 'k', "Owner");
+                if (!Append(sb, row.Owner, depth + 1)) return false;
+                sb.Append('}');
+                return true;
+            }
             if (value is PSObject ps)
             {
                 if (!(ps.BaseObject is PSCustomObject)) return false;

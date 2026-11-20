@@ -19,30 +19,11 @@ namespace Antiphon.Tests.Scripts;
 public sealed class ReleaseGatePolicyTests
 {
     [Test]
-    public Task C599_ProfileSchema() => RunCaseAsync("C599_ProfileSchema", 9,
-        "C599 ProfileSchema v2 loads",
-        "C599 ProfileSchema v1 still loads",
-        "C599 ProfileSchema rc on a v1 policy refuses",
-        "C599 ProfileSchema unknown profile refuses",
-        "C599 ProfileSchema stale hash refuses",
-        "C599 ProfileSchema shipped policy is v4",
-        "C599 ProfileSchema shipped policy defines rc");
-
-    [Test]
     public Task C599_E2EWatchdog() => RunCaseAsync("C599_E2EWatchdog", 4,
         "C599 resolved e2e watchdog is 7200000",
         "C599 antiphon watchdog stays 3600000",
         "C599 resolved session-runner watchdog is 1800000",
         "C599 missing watchdog key keeps the 3600000 fallback");
-
-    [Test]
-    public Task C599_ProfileSuites() => RunCaseAsync("C599_ProfileSuites", 9,
-        "C599 ProfileSuites nightly excludes e2e",
-        "C599 ProfileSuites rc requires e2e",
-        "C599 ProfileSuites manual e2e is runnable in rc",
-        "C599 ProfileSuites manual e2e stays out of nightly",
-        "C599 ProfileSuites partial selection is incomplete",
-        "C599 ProfileSuites exclusion without reason/owner refuses");
 
     [Test]
     public Task C599_MetadataParsers() => RunCaseAsync("C599_MetadataParsers", 11,

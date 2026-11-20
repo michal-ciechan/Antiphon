@@ -160,8 +160,8 @@ function Write-RSPolicy([string]$Root, [scriptblock]$EditPolicy, [scriptblock]$E
         $policy.selectionCatalog.hash = $catalog.catalogHash
     }
     if ($EditPolicy) { & $EditPolicy $policy }
-    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policy)
-    [IO.File]::WriteAllText($policyPath, (ConvertTo-Json $policy -Depth 30))
+    $policy.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText((ConvertTo-Json $policy -Depth 100))
+    [IO.File]::WriteAllText($policyPath, (ConvertTo-Json $policy -Depth 100))
 }
 
 # The selection inputs plus a small project graph for the planner: an ancestor Directory.Build import, a project

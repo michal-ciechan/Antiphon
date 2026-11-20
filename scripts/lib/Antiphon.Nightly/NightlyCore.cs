@@ -35,6 +35,29 @@ namespace Antiphon.Nightly
             return PSObject.AsPSObject(o).Properties[name]?.Value;
         }
 
+        /// <summary>ConvertTo-NightlyPolicyMap: a dictionary's keys or an object's note properties, first wins.</summary>
+        public static System.Collections.Specialized.OrderedDictionary NoteMap(object o)
+        {
+            var map = new System.Collections.Specialized.OrderedDictionary(StringComparer.OrdinalIgnoreCase);
+            if (o == null) return map;
+            var bare = o is PSObject wrapper ? wrapper.BaseObject : o;
+            if (bare is IDictionary d)
+            {
+                foreach (DictionaryEntry e in d)
+                {
+                    var name = Str(e.Key);
+                    if (!string.IsNullOrWhiteSpace(name) && !map.Contains(name)) map.Add(name, e.Value);
+                }
+                return map;
+            }
+            foreach (var p in PSObject.AsPSObject(o).Properties)
+            {
+                if (!(p is PSNoteProperty) || string.IsNullOrWhiteSpace(p.Name) || map.Contains(p.Name)) continue;
+                map.Add(p.Name, p.Value);
+            }
+            return map;
+        }
+
         /// <summary><c>[string]$o</c>.</summary>
         public static string Str(object o)
         {

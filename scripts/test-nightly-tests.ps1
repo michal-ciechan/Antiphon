@@ -397,7 +397,7 @@ function Test-C487_G043 {
 
 function Test-C487_G044 {
     foreach ($n in @('ANTIPHON_HEADED_TESTS', 'ANTIPHON_HEADED_LONG_TESTS', 'ANTIPHON_CARD0133_RUN_P3')) {
-        $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
+        $pol = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
         $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'antiphon', @{ $n = '1' })
         $mapOk = [string]$envMap[$n] -eq ''
         $prevSeams = $script:NightlySeams
@@ -425,7 +425,7 @@ function Test-C487_G044 {
 
 function Test-C487_G045 {
     foreach ($n in @('ANTIPHON_TG_TEST_TOKEN', 'ANTIPHON_DISTILLER_APPLY_CANARY')) {
-        $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
+        $pol = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
         $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'antiphon', @{ $n = 'SECRETVALUE' })
         Assert-C487 -Cond ([string]$envMap[$n] -eq '') -Name ('G045 credential {0}' -f $n)
     }
@@ -436,7 +436,7 @@ function Test-C487_G046 {
 }
 
 function Test-C487_G047 {
-    $pol = (Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json)
+    $pol = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
     $envMap = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($pol, 'messaging', $null)
     Assert-C487 -Cond ($envMap['ANTIPHON_BROKER_TESTS'] -eq '1') -Name 'G047 broker enabled'
 }
@@ -562,7 +562,7 @@ function Get-C487ScriptCensusDrift {
 }
 
 function Test-C487_G056 {
-    $pol = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+    $pol = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
     $census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($pol))
     $expected = $script:C487ScriptCensusInventory
     $drift = @(Get-C487ScriptCensusDrift -Census $census -Expected $expected)
@@ -2740,7 +2740,7 @@ function Test-C1698_SummaryRecordsToolchain {
 # which is read back from disk.
 function Test-C1698_SummaryJsonRecordsToolchain {
     $fx = New-Efx
-    $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
+    $policy = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
     foreach ($p in @([Antiphon.Nightly.NightlyPolicy]::ProjectUniverse($policy))) {
         $src = Join-Path $repo $p
         $dest = Join-Path $fx.Clone $p

@@ -27,6 +27,7 @@ $script:LiveLaneProtectedPaths = @(
     'tests/test-execution-policy.json',
     'scripts/lib/nightly-common.ps1',
     'scripts/lib/Antiphon.Nightly/NightlyPolicy.cs',
+    'scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs',
     'scripts/lib/nightly-coverage.ps1'
 )
 # Discovery child budget. Loaded-host n=3 discovery 71966, 74696, 79685 ms (p95 = 79685).
@@ -2408,7 +2409,7 @@ function Get-LiveLaneCachedExclusions {
     $key = $item.FullName + '|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks + '|' + $Platform
     if ($null -eq $script:LiveLaneExclusionCache) { $script:LiveLaneExclusionCache = @{} }
     if ($script:LiveLaneExclusionCache.ContainsKey($key)) { return @($script:LiveLaneExclusionCache[$key]) }
-    $obj = [System.IO.File]::ReadAllText($PolicyPath) | ConvertFrom-Json
+    $obj = [Antiphon.Nightly.ExecutionPolicy]::Parse([System.IO.File]::ReadAllText($PolicyPath), $PolicyPath)
     $rows = @(Get-LiveLaneExclusionsFromObject $obj $Platform)
     $script:LiveLaneExclusionCache[$key] = $rows
     return $rows
@@ -2668,12 +2669,11 @@ function Invoke-LiveLaneCensus {
         $fast = $Mutant -and $Mutant.ContainsKey('fastHash') -and $Mutant.fastHash
         if ($fast) {
             Initialize-LiveLaneNightly -RepoRoot $repo
-            $beforeObj = [System.IO.File]::ReadAllText((Join-Path $before 'tests/test-execution-policy.json')) | ConvertFrom-Json
+            $beforeText = [System.IO.File]::ReadAllText((Join-Path $before 'tests/test-execution-policy.json'))
             $afterPolicyFile = Join-Path $afterRoot 'tests/test-execution-policy.json'
             if ($Mutant.ContainsKey('policyPath') -and -not [string]::IsNullOrWhiteSpace([string]$Mutant.policyPath)) { $afterPolicyFile = [string]$Mutant.policyPath }
-            $afterObj = [System.IO.File]::ReadAllText($afterPolicyFile) | ConvertFrom-Json
-            $beforeHash = [Antiphon.Nightly.NightlyPolicy]::Hash($beforeObj)
-            $afterHash = [Antiphon.Nightly.NightlyPolicy]::Hash($afterObj)
+            $beforeHash = [Antiphon.Nightly.NightlyPolicy]::HashText($beforeText)
+            $afterHash = [Antiphon.Nightly.NightlyPolicy]::HashText([System.IO.File]::ReadAllText($afterPolicyFile))
         } else {
             $beforeHash = Get-LiveLanePolicyHashProcess -RepoRoot $repo -PolicyRoot $before
             $afterPolicyArg = ''
@@ -2845,18 +2845,17 @@ function New-LiveLaneDanglingSeed {
 function New-LiveLanePolicyMutant {
     param([string]$RepoRoot, [scriptblock]$Edit)
     $scratch = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('policy' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path (Join-Path $scratch 'tests') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $scratch 'scripts/lib') -Force | Out-Null
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
-        Copy-Item -LiteralPath (Join-Path $RepoRoot $rel) -Destination (Join-Path $scratch $rel) -Force
+        $dest = Join-Path $scratch $rel
+        [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot $rel) -Destination $dest -Force
     }
     $policyPath = Join-Path $scratch 'tests/test-execution-policy.json'
     $obj = [System.IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
     & $Edit $obj
     Initialize-LiveLaneNightly -RepoRoot $RepoRoot
-    $hash = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
-    $obj.policyHash = $hash
-    ($obj | ConvertTo-Json -Depth 30) | Set-Content -LiteralPath $policyPath -Encoding utf8
+    $obj.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($obj | ConvertTo-Json -Depth 100))
+    ($obj | ConvertTo-Json -Depth 100) | Set-Content -LiteralPath $policyPath -Encoding utf8
     return @{ Root = $scratch; PolicyPath = $policyPath }
 }
 
@@ -3002,10 +3001,10 @@ function Invoke-LiveLaneFullCensusBody {
     if (-not (Test-LiveLaneCensusHas $nightCase @('nightly-disposition-changed'))) { $missing.Add('default-disposition') }
 
     $readerRoot = New-LiveLaneOwnedScratch -RepoRoot $RepoRoot -Leaf ('reader' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path (Join-Path $readerRoot 'scripts/lib') -Force | Out-Null
-    New-Item -ItemType Directory -Path (Join-Path $readerRoot 'tests') -Force | Out-Null
     foreach ($rel in @($script:LiveLaneProtectedPaths)) {
-        Copy-Item -LiteralPath (Join-Path $RepoRoot $rel) -Destination (Join-Path $readerRoot $rel) -Force
+        $dest = Join-Path $readerRoot $rel
+        [void][IO.Directory]::CreateDirectory((Split-Path $dest -Parent))
+        Copy-Item -LiteralPath (Join-Path $RepoRoot $rel) -Destination $dest -Force
     }
     Add-Content -LiteralPath (Join-Path $readerRoot 'scripts/lib/nightly-coverage.ps1') -Value "`n# c1545 scratch`n" -Encoding ascii
     $readerCase = Invoke-LiveLaneCensus -Context $context -Mutant @{ afterRoot = $readerRoot; fastHash = $true }

@@ -47,7 +47,7 @@ function Get-ReleaseSelectionContract {
     param([string]$RepositoryRoot, [string]$Sha, [string]$Profile)
     Add-TestSelectionBlobPrefetch $RepositoryRoot $Sha @('tests/test-execution-policy.json', 'tests/test-selection-policy.json',
         'scripts/select-test-rosters.ps1', 'scripts/lib/test-selection.ps1', 'global.json')
-    $policy = Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-execution-policy.json' | ConvertFrom-Json
+    $policy = [Antiphon.Nightly.ExecutionPolicy]::Parse((Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-execution-policy.json'))
     if ($policy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))) { throw 'policy-hash-stale' }
     [void]([Antiphon.Nightly.NightlyPolicy]::Profile($policy, $Profile))
     $catalog = ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $Sha 'tests/test-selection-policy.json')

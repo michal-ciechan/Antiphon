@@ -1792,10 +1792,8 @@ function Invoke-AntiphonNightlyTests {
     $qualificationBuildSeconds = $null
 
     $chunksBySuite = @{}
-    if ($policy.Object.chunks) {
-        foreach ($p in $policy.Object.chunks.PSObject.Properties) {
-            $chunksBySuite[$p.Name] = @($p.Value)
-        }
+    if ($policy.Object.Chunks) {
+        foreach ($p in $policy.Object.Chunks.GetEnumerator()) { $chunksBySuite[$p.Key] = @($p.Value) }
     }
 
 

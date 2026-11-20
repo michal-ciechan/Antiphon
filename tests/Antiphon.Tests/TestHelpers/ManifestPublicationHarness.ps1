@@ -1102,7 +1102,7 @@ function New-MpScopedPolicy {
         $chunks | Add-Member -NotePropertyName $name -NotePropertyValue @($row) -Force
     }
     $obj | Add-Member -NotePropertyName chunks -NotePropertyValue $chunks -Force
-    $obj.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
+    $obj.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($obj | ConvertTo-Json -Depth 100))
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, ($obj | ConvertTo-Json -Depth 30), $utf8)
 }

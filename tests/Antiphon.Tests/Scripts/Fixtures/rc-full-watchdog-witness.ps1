@@ -346,7 +346,7 @@ try {
             if (-not $legacy.Admitted -or [double]$legacy.WatchdogSeconds -ne 3600) { Add-Problem 'legacy-estimate-refused' }
             if ($nan.Admitted) { Add-Problem 'nan-admitted' }
 
-            $suiteIds = @($policy.Object.watchdogs.PSObject.Properties.Name | Sort-Object)
+            $suiteIds = @($policy.Object.Watchdogs.Keys | Sort-Object)
             $suitePairingOk = $true
             foreach ($suiteName in $suiteIds) {
                 $capSeconds = Get-NightlySuiteWatchdogSeconds -PolicyObject $policy.Object -SuiteId $suiteName
@@ -683,10 +683,10 @@ $NightlySeams = @{
             } else {
                 Add-Member -InputObject $policyObj -NotePropertyName chunks -NotePropertyValue $pricedChunks -Force
             }
-            $policyObj.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($policyObj)
+            $policyObj.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($policyObj | ConvertTo-Json -Depth 100))
             [System.IO.File]::WriteAllText($refusedPolicy, ($policyObj | ConvertTo-Json -Depth 100))
             $reparsed = [System.IO.File]::ReadAllText($refusedPolicy) | ConvertFrom-Json
-            $reparsed.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($reparsed)
+            $reparsed.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($reparsed | ConvertTo-Json -Depth 100))
             [System.IO.File]::WriteAllText($refusedPolicy, ($reparsed | ConvertTo-Json -Depth 100))
             $refusedSeam = @'
 $NightlySeams = @{

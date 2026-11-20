@@ -15,8 +15,10 @@ function Copy-C1323Object($Object) { return ($Object | ConvertTo-Json -Depth 40 
 function Same-C1323Set($Actual, $Expected) {
     return ((@($Actual | Sort-Object -CaseSensitive) -join "`n") -ceq (@($Expected | Sort-Object -CaseSensitive) -join "`n"))
 }
+function ConvertTo-C1323Policy($Object) { return [Antiphon.Nightly.ExecutionPolicy]::Parse(($Object | ConvertTo-Json -Depth 40)) }
+function Get-C1323PolicyJson { return ([IO.File]::ReadAllText("$repoRoot/tests/test-execution-policy.json") | ConvertFrom-Json) }
 function Write-C1323Policy($Object, $Path) {
-    $Object.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($Object)
+    $Object.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($Object | ConvertTo-Json -Depth 40))
     [IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 40))
 }
 function Invoke-C1323Git($Root, $Arguments) { return (Invoke-TestSelectionGit $Root $Arguments).Stdout.Trim() }
@@ -56,16 +58,16 @@ function Test-C1323_PlatformPolicy {
     $policy.profiles.rc.exclusions += [pscustomobject]@{ suite = 'e2e'; class = 'MixedTests'; methods = @('Live'); reason = 'legacy live method'; owner = 'fixture' }
     $nodes = @(New-C1323Nodes)
     $expectedWindows = @($nodes.uid | Where-Object { $_ -ne 'legacy-live' })
-    $windows = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'windows'))
+    $windows = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions((ConvertTo-C1323Policy $policy), 'rc', 'e2e', 'windows'))
     $actualWindows = @(Get-C1323Required $nodes $windows)
     $retained = Same-C1323Set $actualWindows $expectedWindows
     Assert-C1323 $retained 'windows-retains-69-and-siblings' ($actualWindows -join ',')
     if (-not $retained) { return }
-    $linux = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'linux'))
+    $linux = @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions((ConvertTo-C1323Policy $policy), 'rc', 'e2e', 'linux'))
     Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes $linux) @('unclassified', 'legacy-sibling')) 'linux-excludes-exactly-69'
     $scoped = @($linux | Where-Object Owner -eq 'CARD-1323')
     Assert-C1323 ($scoped.Count -eq 3 -and @($scoped | Where-Object { -not $_.Reason -or -not $_.Owner }).Count -eq 0) 'exclusion-reasons-and-owners'
-    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($policy, 'rc', 'e2e', 'windows'))) $expectedWindows) 'default-is-windows'
+    Assert-C1323 (Same-C1323Set (Get-C1323Required $nodes @([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions((ConvertTo-C1323Policy $policy), 'rc', 'e2e', 'windows'))) $expectedWindows) 'default-is-windows'
     $path = Join-Path $ResultsDirectory 'policy.json'
     Write-C1323Policy $policy $path
     $loaded = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)
@@ -81,7 +83,7 @@ function Test-C1323_PlatformPolicy {
     if ($policy.suites.observability) {
         $missing = Copy-C1323Object $policy
         $missing.profiles.rc.requiredSuites = @($missing.profiles.rc.requiredSuites | Where-Object { $_ -cne 'observability' })
-        $missing.policyHash = [Antiphon.Nightly.NightlyPolicy]::Hash($missing)
+        $missing.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($missing | ConvertTo-Json -Depth 40))
         $message = ''
         try { [void](ConvertFrom-ReleaseAuthorityPolicyBytes ([Text.Encoding]::UTF8.GetBytes(($missing | ConvertTo-Json -Depth 40)))) } catch { $message = $_.Exception.Message }
         $observabilityRequired = $message -ceq 'policy-rc-suite-missing:observability'
@@ -107,13 +109,13 @@ function Test-C1323_PlatformPolicy {
         $bad = Copy-C1323Object $policy
         @($bad.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].$field = ''
         $message = ''
-        try { [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($bad, 'rc', 'antiphon', 'windows')) } catch { $message = $_.Exception.Message }
+        try { [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions((ConvertTo-C1323Policy $bad), 'rc', 'antiphon', 'windows')) } catch { $message = $_.Exception.Message }
         if ($message -notmatch 'reason and owner') { $missed += $field }
     }
     Assert-C1323 ($missed.Count -eq 0) 'invalid-attribution-refuses-before-filtering' ($missed -join ',')
     $changed = Copy-C1323Object $policy
     @($changed.profiles.rc.exclusions | Where-Object owner -eq 'CARD-1323')[0].platform = 'windows'
-    Assert-C1323 (([Antiphon.Nightly.NightlyPolicy]::Hash($changed)) -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))) 'platform-only-hash-changes'
+    Assert-C1323 (([Antiphon.Nightly.NightlyPolicy]::HashText(($changed | ConvertTo-Json -Depth 40))) -cne ([Antiphon.Nightly.NightlyPolicy]::HashText(($policy | ConvertTo-Json -Depth 40)))) 'platform-only-hash-changes'
     [IO.File]::WriteAllText($path, ($changed | ConvertTo-Json -Depth 40))
     $message = ''; try { [void]([Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $path)) } catch { $message = $_.Exception.Message }
     Assert-C1323 ($message -match 'stale policy hash') 'stale-platform-hash-refuses'
@@ -615,9 +617,9 @@ function Get-C1323LinuxOnlyCensus {
     $prefix = 'Linux-only by construction:'
     $problems = [Collections.Generic.List[string]]::new()
     $suiteDirs = [ordered]@{}
-    foreach ($suite in $Policy.suites.PSObject.Properties) {
-        $project = [string]$suite.Value.project
-        if ($project) { $suiteDirs[$suite.Name] = ($project.Substring(0, $project.LastIndexOf('/') + 1)) }
+    foreach ($suite in $Policy.Suites.Values) {
+        $project = [string]$suite.Project
+        if ($project) { $suiteDirs[$suite.Id] = ($project.Substring(0, $project.LastIndexOf('/') + 1)) }
     }
     $rowKeys = @()
     foreach ($row in @($Policy.profiles.rc.exclusions | Where-Object { [string]$_.reason -like ($prefix + '*') })) {
@@ -866,9 +868,9 @@ function Test-C1686_LinuxOnlyCensus {
         'tests/Shared/NativeLinuxOnlyAttribute.cs' = "public sealed class NativeLinuxOnlyAttribute : SkipAttribute`n{`n    public NativeLinuxOnlyAttribute(string reason) : base(reason) { }`n    internal static object Pin() => new Antiphon.TestSupport.NativeLinuxOnlyAttribute(`"pin`");`n}`n"
     }
     function New-C1686Policy($Rows) {
-        $policy = Copy-C1323Object $shipped.Object
+        $policy = Get-C1323PolicyJson
         $policy.profiles.rc.exclusions = @(@{ suite = 'antiphon'; class = 'LegacyTests'; reason = 'legacy row'; owner = 'CARD-1313' }) + @($Rows)
-        return (Copy-C1323Object $policy)
+        return (ConvertTo-C1323Policy $policy)
     }
     $rows = @(
         @{ suite = 'antiphon'; class = 'AlphaTests'; platform = 'windows'; reason = $prefix; owner = 'CARD-1686' }

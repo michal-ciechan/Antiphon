@@ -160,7 +160,7 @@ try {
             Assert-ParentEnvironment
             Set-EnvironmentSentinel 'ANTIPHON_HEADED_TESTS' '1'
             $policyPath = [Antiphon.Nightly.NightlyPolicy]::PolicyPath((Split-Path $PSScriptRoot -Parent))
-            $policy = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
+            $policy = [Antiphon.Nightly.ExecutionPolicy]::Parse([IO.File]::ReadAllText($policyPath))
             $map = [Antiphon.Nightly.NightlyPolicy]::SafeChildEnvironment($policy, 'antiphon', $null)
             $cleared = @($policy.safeEnvironment.clear | Where-Object { [string]$map[$_] -eq '' })
             Assert-Native ($cleared.Count -gt 0) 'real policy clear list admitted'

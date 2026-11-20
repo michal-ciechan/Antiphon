@@ -92,7 +92,7 @@ function New-C1313Candidate($Fx,[string[]]$Paths,[string]$Content='changed'){
 function New-C1313PolicyCandidate($Fx,$Catalog){
     $Catalog.catalogHash=Get-TestSelectionCatalogHash $Catalog
     $p=Get-Content "$repoRoot/tests/test-execution-policy.json" -Raw|ConvertFrom-Json -AsHashtable
-    $p.selectionCatalog.hash=$Catalog.catalogHash;$p.policyHash=[Antiphon.Nightly.NightlyPolicy]::Hash($p)
+    $p.selectionCatalog.hash=$Catalog.catalogHash;$p.policyHash=[Antiphon.Nightly.NightlyPolicy]::HashText(($p|ConvertTo-Json -Depth 100))
     [void](Invoke-C1313Git $Fx.Root @('read-tree',$Fx.B))
     Write-C1313File $Fx.Root 'tests/test-selection-policy.json' ($Catalog|ConvertTo-Json -Depth 30)
     Write-C1313File $Fx.Root 'tests/test-execution-policy.json' ($p|ConvertTo-Json -Depth 30)

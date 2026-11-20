@@ -904,7 +904,7 @@ function Invoke-FFPreparationArm {
     $suiteMap=[Antiphon.Nightly.NightlyPolicy]::SuiteMap($policy.Object)
     $ids=@('antiphon','session-runner','agents-pty')
     if($Failure -ceq 'e2e'){$ids=@('antiphon','e2e','agents-pty')}
-    foreach($id in $ids){$policy.Object.profiles.rc.exclusions += [pscustomobject]@{suite=$id;class='Fixture.Never';reason='fixture';owner='CARD-1514'}}
+    foreach($id in $ids){$policy.Object.Profiles['rc'].Exclusions += [Antiphon.Nightly.ProfileExclusion]@{Suite=$id;Class='Fixture.Never';Reason='fixture';Owner='CARD-1514'}}
     $requiredSuites=$ids;$chunksBySuite=@{};$qualificationBuildSeconds=1.25
     $invocationId='preparation-run';$Attempt=1;$Sha='a'*40;$GitRef='origin/master'
     $startedAt=[datetime]::UtcNow.AddSeconds(-1)
@@ -1153,7 +1153,8 @@ function New-FFLoopHistory($Fixture) {
 function Invoke-FFActualLoop {
     param($Fixture, [string]$Name, $History, [string]$Variant='pass', [switch]$NoExclusions)
     $dir=Join-Path $root $Name; [void][IO.Directory]::CreateDirectory($dir)
-    $p=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+    $null=[Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+    $p=[pscustomobject]@{Object=([IO.File]::ReadAllText([Antiphon.Nightly.NightlyPolicy]::PolicyPath($repo)) | ConvertFrom-Json)}
     $p.Object.profiles.rc.requiredSuites=@($Fixture.suites.id)
     $p.Object | Add-Member -NotePropertyName chunks -NotePropertyValue ([pscustomobject]@{}) -Force
     foreach ($suite in $Fixture.suites) {
@@ -1167,7 +1168,7 @@ function Invoke-FFActualLoop {
     if (-not $NoExclusions) {
         foreach($suite in $Fixture.suites){$p.Object.profiles.rc.exclusions += [pscustomobject]@{suite=$suite.id;class='Fixture.Never';reason='fixture';owner='CARD-1514'}}
     }
-    $p.Object.policyHash=[Antiphon.Nightly.NightlyPolicy]::Hash($p.Object)
+    $p.Object.policyHash=[Antiphon.Nightly.NightlyPolicy]::HashText(($p.Object | ConvertTo-Json -Depth 40))
     $policyFile=Join-Path $dir 'policy.json'; Write-FFJson $policyFile $p.Object
     $bySuite=@{}
     foreach($s in $Fixture.suites){$bySuite[$s.id]=[AntiphonFixture.FFText]::IndexByUid($s.nodes)}

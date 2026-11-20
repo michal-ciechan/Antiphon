@@ -211,10 +211,9 @@ function ConvertFrom-ReleaseAuthorityPolicyBytes {
     param([byte[]]$Bytes)
     $text = [System.Text.Encoding]::UTF8.GetString($Bytes)
     if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
-    try { $obj = $text | ConvertFrom-Json } catch { throw 'policy-unparseable' }
-    if ($null -eq $obj) { throw 'policy-unparseable' }
-    $version = $obj.schemaVersion
-    if ($null -eq $version -or ($version -isnot [int] -and $version -isnot [long]) -or [int]$version -notin @(2, 3, 4)) { throw 'policy-schema-unsupported' }
+    try { $obj = [Antiphon.Nightly.ExecutionPolicy]::Parse($text) } catch { throw 'policy-unparseable' }
+    $version = $obj.SchemaVersion
+    if ($version -notin @(2, 3, 4)) { throw 'policy-schema-unsupported' }
     $computed = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
     $stated = [string]$obj.policyHash
     if ([string]::IsNullOrWhiteSpace($stated) -or -not [string]::Equals($stated, $computed, [StringComparison]::OrdinalIgnoreCase)) {

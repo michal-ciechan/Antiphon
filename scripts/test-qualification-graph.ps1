@@ -87,10 +87,12 @@ if ($Case -ceq 'FullCensusUnchanged') {
         if ($preserved.baseSha -cne $context.baseSha) { throw 'commission-base-mismatch' }
         . "$PSScriptRoot/lib/nightly-common.ps1"
         . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
-        $baseline = (Read-CommissionGit @('show', ($context.baseSha + ':tests/test-execution-policy.json'))) | ConvertFrom-Json
-        if (([Antiphon.Nightly.NightlyPolicy]::Hash($baseline)) -cne $baseline.policyHash -or
+        $baselineText = Read-CommissionGit @('show', ($context.baseSha + ':tests/test-execution-policy.json'))
+        $baseline = $baselineText | ConvertFrom-Json
+        if (([Antiphon.Nightly.NightlyPolicy]::HashText($baselineText)) -cne $baseline.policyHash -or
             (ConvertTo-NightlyCanonicalJson $baseline) -cne (ConvertTo-NightlyCanonicalJson $preserved.policy)) { throw 'commission-baseline-policy-mismatch' }
-        $candidate = ([Antiphon.Nightly.NightlyPolicy]::Read($repo, '')).Object
+        $null = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+        $candidate = [IO.File]::ReadAllText([Antiphon.Nightly.NightlyPolicy]::PolicyPath($repo)) | ConvertFrom-Json
         $rows = @($candidate.scriptCensus | Where-Object { $_.path -ceq $preserved.allowedRow.path })
         if ($rows.Count -ne 1 -or (ConvertTo-NightlyCanonicalJson $rows[0]) -cne
             (ConvertTo-NightlyCanonicalJson $preserved.allowedRow)) { throw 'commission-allowed-row-mismatch' }
@@ -385,8 +387,9 @@ Check ($r.Accepted -and (Get-QualificationUidSetDigest $changedUids) -ceq $chang
 . "$PSScriptRoot/lib/nightly-common.ps1"
 . "$PSScriptRoot/lib/nightly-core.ps1"; $null = Test-NightlyCoreAvailable
 $preservation = Load 'preservation.json' | ConvertFrom-Json
-$policy = ([Antiphon.Nightly.NightlyPolicy]::Read($repo, '')).Object
-$census = @([Antiphon.Nightly.NightlyPolicy]::ScriptCensus($policy))
+$null = [Antiphon.Nightly.NightlyPolicy]::Read($repo, '')
+# The rows as the policy file states them (the reader's records name every field).
+$census = @(([IO.File]::ReadAllText([Antiphon.Nightly.NightlyPolicy]::PolicyPath($repo)) | ConvertFrom-Json).scriptCensus)
 $newRows = @($census | Where-Object { $_.path -ceq 'scripts/test-qualification-graph.ps1' })
 Check ($newRows.Count -eq 1 -and (Json $newRows[0]) -ceq (Json $preservation.allowedRow) -and
     @($census | Where-Object { $_.path -ceq 'scripts/lib/qualification-graph.ps1' }).Count -eq 0) 'script-census'

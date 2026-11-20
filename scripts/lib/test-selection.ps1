@@ -274,7 +274,7 @@ function Get-TestSelectionCore {
     $policyPath='tests/test-execution-policy.json'
     Add-TestSelectionBlobPrefetch $RepositoryRoot $CandidateSha @($policyPath,'tests/test-selection-policy.json','scripts/select-test-rosters.ps1','scripts/lib/test-selection.ps1')
     $policyText=Get-TestSelectionBlob $RepositoryRoot $CandidateSha $policyPath
-    $policy=$policyText|ConvertFrom-Json
+    $policy=[Antiphon.Nightly.ExecutionPolicy]::Parse($policyText)
     if($policy.schemaVersion -notin @(3,4)){throw 'policy-schema-unsupported'}
     if($policy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($policy))){throw 'policy-hash-stale'}
     [void]([Antiphon.Nightly.NightlyPolicy]::Profile($policy, $Profile))
@@ -298,7 +298,7 @@ function Get-TestSelectionCore {
     $oldTree=(Invoke-TestSelectionGit $RepositoryRoot @('ls-tree','--name-only','-z',$BaselineSha,'--',$catalogPath)).Stdout
     if($oldTree){
         $baselineCatalog=ConvertFrom-TestSelectionCatalogText (Get-TestSelectionBlob $RepositoryRoot $BaselineSha $catalogPath)
-        $baselinePolicy=Get-TestSelectionBlob $RepositoryRoot $BaselineSha $policyPath | ConvertFrom-Json
+        $baselinePolicy=[Antiphon.Nightly.ExecutionPolicy]::Parse((Get-TestSelectionBlob $RepositoryRoot $BaselineSha $policyPath))
         if($baselinePolicy.policyHash -cne ([Antiphon.Nightly.NightlyPolicy]::Hash($baselinePolicy)) -or $baselinePolicy.selectionCatalog.hash -cne $baselineCatalog.catalogHash){throw 'baseline-policy-hash-stale'}
     }
     $fallback=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)

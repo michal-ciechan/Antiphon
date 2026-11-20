@@ -867,7 +867,7 @@ function New-ReleaseGateManifest {
 function Test-ReleaseGateManifestAllowlist {
     param($Manifest)
     $extra = @()
-    $map = [Antiphon.Nightly.NightlyPolicy]::Map($Manifest)
+    $map = [Antiphon.Nightly.PsValue]::NoteMap($Manifest)
     foreach ($key in @($map.Keys)) {
         if ($script:ReleaseGateManifestAllowlist -notcontains [string]$key) { $extra += [string]$key }
     }

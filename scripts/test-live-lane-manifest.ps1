@@ -69,8 +69,7 @@ if ($Case -eq 'EmitPolicyHash') {
     . (Join-Path $policyLib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
     $hashPath = $PolicyPath
     if ([string]::IsNullOrWhiteSpace($hashPath)) { $hashPath = Join-Path $PolicyRoot 'tests/test-execution-policy.json' }
-    $policyObject = [System.IO.File]::ReadAllText($hashPath) | ConvertFrom-Json
-    [Console]::Out.WriteLine(([Antiphon.Nightly.NightlyPolicy]::Hash($policyObject)))
+    [Console]::Out.WriteLine(([Antiphon.Nightly.NightlyPolicy]::HashText([System.IO.File]::ReadAllText($hashPath))))
     exit 0
 }
 

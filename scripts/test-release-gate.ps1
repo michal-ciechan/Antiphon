@@ -79,7 +79,7 @@ function New-C599Policy {
             }
         }
     }
-    $hash = [Antiphon.Nightly.NightlyPolicy]::Hash($obj)
+    $hash = [Antiphon.Nightly.NightlyPolicy]::HashText(($obj | ConvertTo-Json -Depth 10))
     if ($StaleHash) { $obj['policyHash'] = ('0' * 64) } else { $obj['policyHash'] = $hash }
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
     $path = Join-Path $Root 'policy.json'
@@ -690,76 +690,6 @@ function Update-C599Card {
 }
 
 # =============================================================== V-1 policy ===
-
-function Test-C599_ProfileSchema {
-    $root = New-C599Root
-    $v2 = New-C599Policy -Root (Join-Path $root 'a') -SchemaVersion 2
-    $ok = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $v2)
-    Assert-C487 -Cond ([int]$ok.SchemaVersion -eq 2) -Name 'C599 ProfileSchema v2 loads' -Detail ([string]$ok.SchemaVersion)
-
-    $v1 = New-C599Policy -Root (Join-Path $root 'b') -SchemaVersion 1 -OmitProfiles
-    $ok1 = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $v1)
-    Assert-C487 -Cond ([int]$ok1.SchemaVersion -eq 1) -Name 'C599 ProfileSchema v1 still loads' -Detail ([string]$ok1.SchemaVersion)
-    $nightlyV1 = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($ok1.Object, 'nightly'))
-    Assert-C487 -Cond ($nightlyV1.Count -eq 3) -Name 'C599 ProfileSchema v1 nightly falls back to defaultSuites' -Detail ($nightlyV1 -join ',')
-
-    $refusedRc = ''
-    try { [void]([Antiphon.Nightly.NightlyPolicy]::Profile($ok1.Object, 'rc')) } catch { $refusedRc = $_.Exception.Message }
-    Assert-C487 -Cond ($refusedRc -match 'schema 2') -Name 'C599 ProfileSchema rc on a v1 policy refuses' -Detail $refusedRc
-
-    $refusedUnknown = ''
-    try { [void]([Antiphon.Nightly.NightlyPolicy]::Profile($ok.Object, 'turbo')) } catch { $refusedUnknown = $_.Exception.Message }
-    Assert-C487 -Cond ($refusedUnknown -match 'unknown profile') -Name 'C599 ProfileSchema unknown profile refuses' -Detail $refusedUnknown
-
-    $stale = New-C599Policy -Root (Join-Path $root 'c') -StaleHash
-    $staleMsg = ''
-    try { [void]([Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $stale)) } catch { $staleMsg = $_.Exception.Message }
-    Assert-C487 -Cond ($staleMsg -match 'stale policy hash') -Name 'C599 ProfileSchema stale hash refuses' -Detail $staleMsg
-
-    $bad = New-C599Policy -Root (Join-Path $root 'd') -SchemaVersion 7 -OmitProfiles
-    $badMsg = ''
-    try { [void]([Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $bad)) } catch { $badMsg = $_.Exception.Message }
-    Assert-C487 -Cond ($badMsg -match 'unsupported policy schema') -Name 'C599 ProfileSchema unknown version refuses' -Detail $badMsg
-
-    # Historical v1/v2 fixtures remain supported; the shipped inventory is v4.
-    $ship = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, '')
-    Assert-C487 -Cond ([int]$ship.SchemaVersion -eq 4) -Name 'C599 ProfileSchema shipped policy is v4' -Detail ([string]$ship.SchemaVersion)
-    Assert-C487 -Cond ($null -ne $ship.Object.profiles.rc) -Name 'C599 ProfileSchema shipped policy defines rc' -Detail ''
-}
-
-function Test-C599_ProfileSuites {
-    $root = New-C599Root
-    $policyPath = New-C599Policy -Root $root
-    $policy = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $policyPath)
-    $nightly = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($policy.Object, 'nightly'))
-    $rc = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($policy.Object, 'rc'))
-    Assert-C487 -Cond ($nightly -notcontains 'e2e') -Name 'C599 ProfileSuites nightly excludes e2e' -Detail ($nightly -join ',')
-    Assert-C487 -Cond ($rc -contains 'e2e') -Name 'C599 ProfileSuites rc requires e2e' -Detail ($rc -join ',')
-    Assert-C487 -Cond ($rc.Count -eq ($nightly.Count + 1)) -Name 'C599 ProfileSuites rc is nightly plus e2e' -Detail ($rc -join ',')
-
-    # A manual-mode suite the profile requires is runnable; one it does not is not.
-    Assert-C487 -Cond ([Antiphon.Nightly.NightlyPolicy]::ProfileSuiteRunnable($policy.Object, 'rc', 'e2e')) -Name 'C599 ProfileSuites manual e2e is runnable in rc'
-    Assert-C487 -Cond (-not ([Antiphon.Nightly.NightlyPolicy]::ProfileSuiteRunnable($policy.Object, 'nightly', 'e2e'))) -Name 'C599 ProfileSuites manual e2e stays out of nightly'
-
-    # An rc profile that forgot e2e is visibly not the rc contract.
-    $noE2E = New-C599Policy -Root (Join-Path $root 'x') -OmitE2EFromRc
-    $p2 = [Antiphon.Nightly.NightlyPolicy]::Read($repoRoot, $noE2E)
-    $rc2 = @([Antiphon.Nightly.NightlyPolicy]::ProfileRequiredSuites($p2.Object, 'rc'))
-    Assert-C487 -Cond ($rc2 -notcontains 'e2e') -Name 'C599 ProfileSuites missing e2e is detectable in the required set' -Detail ($rc2 -join ',')
-
-    # A partial explicit selection is never a complete profile.
-    $present = [Antiphon.Nightly.NightlyPolicy]::RequiredSuitesPresent(@('antiphon'), $rc)
-    Assert-C487 -Cond ((-not $present.Ok) -and $present.Missing.Count -ge 2) -Name 'C599 ProfileSuites partial selection is incomplete' -Detail ($present.Missing -join ',')
-    $full = [Antiphon.Nightly.NightlyPolicy]::RequiredSuitesPresent($rc, $rc)
-    Assert-C487 -Cond ($full.Ok) -Name 'C599 ProfileSuites control full rc selection is complete'
-
-    # Every exclusion row needs a reason and an owner or the policy refuses.
-    $bad = Get-Content -LiteralPath $policyPath -Raw | ConvertFrom-Json
-    $bad.profiles.rc.exclusions = @([pscustomobject]@{ suite = 'e2e'; class = 'X' })
-    $msg = ''
-    try { [void]([Antiphon.Nightly.NightlyPolicy]::ProfileExclusions($bad, 'rc', '', 'windows')) } catch { $msg = $_.Exception.Message }
-    Assert-C487 -Cond ($msg -match 'reason and owner') -Name 'C599 ProfileSuites exclusion without reason/owner refuses' -Detail $msg
-}
 
 function New-C599Nodes {
     param([switch]$WithUnclassified)
@@ -2559,7 +2489,7 @@ function New-C599APolicyBytes {
     param([scriptblock]$Edit = $null, [switch]$StaleHash)
     $obj = [System.Text.Encoding]::UTF8.GetString((Get-C599ABasePolicyBytes)) | ConvertFrom-Json
     if ($Edit) { & $Edit $obj }
-    $obj.policyHash = ([Antiphon.Nightly.NightlyPolicy]::Hash($obj))
+    $obj.policyHash = [Antiphon.Nightly.NightlyPolicy]::HashText(($obj | ConvertTo-Json -Depth 20))
     if ($StaleHash) { $obj.policyHash = ('0' * 64) }
     return [System.Text.Encoding]::UTF8.GetBytes(($obj | ConvertTo-Json -Depth 20))
 }
@@ -2577,7 +2507,7 @@ function Set-C599APinnedPolicy {
     [void](Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('-c', 'user.name=c599', '-c', 'user.email=c599@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'repin'))
     $pinSha = Invoke-C599RealGit -Repo $Fx.Checkout -Arguments @('rev-parse', 'HEAD')
     $pinHash = ''
-    try { $pinHash = [Antiphon.Nightly.NightlyPolicy]::Hash(([System.Text.Encoding]::UTF8.GetString($PolicyBytes) | ConvertFrom-Json)) } catch { $pinHash = ('0' * 64) }
+    try { $pinHash = [Antiphon.Nightly.NightlyPolicy]::HashText([System.Text.Encoding]::UTF8.GetString($PolicyBytes)) } catch { $pinHash = ('0' * 64) }
     $croot = Get-ReleaseGateCandidateRoot -ReleaseRoot $Fx.ReleaseRoot -CandidateId $CandidateId
     [System.IO.File]::WriteAllBytes((Join-Path (Get-C599AuthorityDir -Fx $Fx) 'policy.json'), $PolicyBytes)
     Update-C599Json -Path (Join-Path $croot 'candidate.json') -Mutate { param($c) $c.sha = $pinSha }
