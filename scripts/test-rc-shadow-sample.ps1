@@ -705,6 +705,86 @@ try {
                 if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
             }
         }
+        'EmptyCollectionFailsClosed' {
+            # Round-4 B-1. A present sampled or results value that yields no ids
+            # or rows is empty-results. On 38efdbde an empty List or ArrayList
+            # keeps carries valid with reason pilot-count. An empty string is
+            # missing-outcome or unreadable-chunk-id. Whitespace results are
+            # unreadable-chunk-id. Empty arrays and @() already fail closed.
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $forms = @(
+                    @{ label = 'List results'; evidence = @{ results = [Collections.Generic.List[object]]::new() } }
+                    @{ label = 'List sampled'; evidence = @{ sampled = [Collections.Generic.List[string]]::new() } }
+                    @{ label = 'ArrayList results'; evidence = @{ results = [Collections.ArrayList]::new() } }
+                    @{ label = 'ArrayList sampled'; evidence = @{ sampled = [Collections.ArrayList]::new() } }
+                    @{ label = 'empty array results'; evidence = @{ results = [object[]]::new(0) } }
+                    @{ label = 'empty array sampled'; evidence = @{ sampled = [string[]]::new(0) } }
+                    @{ label = '@() results'; evidence = @{ results = @() } }
+                    @{ label = '@() sampled'; evidence = @{ sampled = @() } }
+                    @{ label = 'empty string results'; evidence = @{ results = '' } }
+                    @{ label = 'empty string sampled'; evidence = @{ sampled = '' } }
+                    @{ label = 'whitespace results'; evidence = @{ results = '   ' } }
+                    @{ label = 'whitespace sampled'; evidence = @{ sampled = '   ' } }
+                )
+                foreach ($form in $forms) {
+                    Assert-DerivedFailure $form.label $form.evidence 'empty-results' '' $trustPath
+                }
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
+        'DictionaryKeyShadowFailsClosed' {
+            # Round-4 B-2. A dictionary key named Keys, Count, Values, or Item
+            # must not hide sampled, results, or a closed flag. On 38efdbde a
+            # Keys entry keeps carries valid. ConvertFrom-Json -AsHashtable and
+            # a hand-built hashtable both do this.
+            $root = New-TempRoot
+            try {
+                $trustPath = Join-Path $root 'trust-record.json'
+                $rowFlags = @(
+                    @{ flag = 'provenanceFailure'; value = $true; kind = 'provenance-failure' }
+                    @{ flag = 'unexpectedSkip'; value = $true; kind = 'unexpected-skip' }
+                    @{ flag = 'UnexpectedSkip'; value = $true; kind = 'unexpected-skip' }
+                )
+                $shadows = @('Keys', 'Count', 'Values', 'Item')
+                foreach ($flag in $rowFlags) {
+                    foreach ($shadow in $shadows) {
+                        $hand = @{
+                            chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'
+                        }
+                        $hand[$flag.flag] = $flag.value
+                        $hand[$shadow] = @('chunkId', 'outcome', 'provenance')
+                        Assert-DerivedFailure ('hand row ' + $shadow + ' ' + $flag.flag) @{ sampled = @('c1'); results = @($hand) } $flag.kind 'c1' $trustPath
+                        $json = '{"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"passed","provenance":"verified","' + $flag.flag + '":true,"' + $shadow + '":["chunkId","outcome","provenance"]}]}'
+                        Assert-DerivedFailure ('json row ' + $shadow + ' ' + $flag.flag) ($json | ConvertFrom-Json -AsHashtable) $flag.kind 'c1' $trustPath
+                    }
+                }
+                foreach ($shadow in $shadows) {
+                    $handEvidence = @{
+                        sampled = @('c1')
+                        results = @(@{ chunkId = 'c1'; outcome = 'failed'; provenance = 'verified' })
+                    }
+                    $handEvidence[$shadow] = @()
+                    Assert-DerivedFailure ('hand evidence ' + $shadow) $handEvidence 'sample-outcome' 'c1' $trustPath
+                    $jsonEmpty = '{"' + $shadow + '":[],"sampled":["c1"],"results":[{"chunkId":"c1","outcome":"failed","provenance":"verified"}]}'
+                    Assert-DerivedFailure ('json evidence empty ' + $shadow) ($jsonEmpty | ConvertFrom-Json -AsHashtable) 'sample-outcome' 'c1' $trustPath
+                    $jsonText = '{"' + $shadow + '":"x","sampled":["c1"],"results":[{"chunkId":"c1","outcome":"failed","provenance":"verified"}]}'
+                    Assert-DerivedFailure ('json evidence text ' + $shadow) ($jsonText | ConvertFrom-Json -AsHashtable) 'sample-outcome' 'c1' $trustPath
+                }
+                $clean = @{
+                    sampled = @('c1')
+                    results = @(@{ chunkId = 'c1'; outcome = 'passed'; provenance = 'verified'; provenanceFailure = $false; Keys = @('chunkId') })
+                }
+                $kept = Get-RcShadowTrustDecision -Carries @('c1') -Evidence $clean -CurrentSample 'roster' -TrustRecordPath $trustPath
+                Note ($kept.carriesInvalidated -eq $false) ('clean Keys row invalidated carries reason=' + $kept.reason)
+                Note ($kept.reason -ceq 'pilot-count') ('clean Keys row reason=' + $kept.reason)
+                Note ($kept.trustGranted -eq $false -and $kept.gateCredit -eq $false -and $kept.effectiveMode -ceq 'Full' -and $kept.incrementalValidation -ceq 'Shadow') 'clean Keys row granted trust'
+            } finally {
+                if ([IO.Directory]::Exists($root)) { [IO.Directory]::Delete($root, $true) }
+            }
+        }
         default { throw ('unknown case ' + $Case) }
     }
 } catch { Note $false ('unexpected harness error: ' + $_.Exception.Message) }
