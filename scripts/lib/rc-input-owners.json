@@ -6,7 +6,7 @@
     "paths": ["tests/**/*.cs", "tests/**/Fixtures/**", "tests/fixtures/**"],
     "exceptPaths": ["tests/Shared/**"],
     "exceptReasons": ["forced-full-build-graph", "forced-full-policy", "forced-full-selector", "forced-full-spawn-limit", "forced-full-root", "shared-test-infrastructure"],
-    "productEdgeReasons": ["Compile", "ProjectReference", "Import", "Content", "None", "EmbeddedResource", "AdditionalFiles", "Analyzer"]
+    "productEdgeReasons": ["Compile", "ProjectReference", "Import", "Content", "None", "EmbeddedResource", "AdditionalFiles", "Analyzer", "runtime-reader-scan"]
   },
   "roots": [
     { "path": "docs/**", "except": ["docs/reviews/**", "docs/superpowers/reviews/**"], "consumers": ["*"], "reason": "repository-reader-non-code" },
@@ -46,7 +46,7 @@
     { "path": "tests/Antiphon.Tests/Agents/Fixtures/compact-boundary.jsonl", "consumers": ["*"], "reason": "runtime-reader-until-index" },
     { "path": "tests/Antiphon.Tests/Fixtures/Card0418/manifest.json", "consumers": ["*"], "reason": "runtime-reader-until-index" },
     { "path": "tests/Antiphon.SessionRunner.Tests/slow-tests-allowlist.txt", "consumers": ["*"], "reason": "runtime-reader-until-index" },
-    { "path": "tests/Antiphon.E2E/**/*.cs", "consumers": ["*"], "reason": "runtime-reader-unproven" },
+    { "path": "tests/Antiphon.E2E/**/*.cs", "consumers": ["*"], "reason": "runtime-reader-unproven", "walker": true },
     { "path": "Antiphon.AppHost/**", "consumers": ["*"], "reason": "runtime-reader-unproven" },
     { "path": "src/Antiphon.Messaging.FakeGateway/**", "consumers": ["*"], "reason": "runtime-reader-unproven" },
     { "path": "**/appsettings.json", "consumers": ["*"], "reason": "runtime-reader-unproven" },
