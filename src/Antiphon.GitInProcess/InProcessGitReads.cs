@@ -208,7 +208,7 @@ internal static partial class InProcessGitReads
         return (config, true);
     }
 
-    private static string? CommonDirectory(string gitDir)
+    internal static string? CommonDirectory(string gitDir)
     {
         var file = Path.Combine(gitDir, "commondir");
         if (!File.Exists(file)) return gitDir;

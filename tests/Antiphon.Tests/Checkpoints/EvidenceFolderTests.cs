@@ -143,7 +143,9 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         File.WriteAllText(Path.Combine(root, "loose.txt"), "new\n");
         var head = CheckpointFixtureProcess.Git(root, "rev-parse", "HEAD").Trim();
 
-        GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("this checkout is read in process");
+        // Where libgit2 loads (ANTIPHON_GIT_INPROCESS not off), this checkout is read in process.
+        var inProcess = ToolLibGit2.Available;
+        if (inProcess) GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("this checkout is read in process");
         var text = GitSnapshot.Capture(root);
         text.ShouldContain("HEAD=" + head);
         text.ShouldContain("branch=snap");
@@ -158,13 +160,18 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
         GitSnapshot.Capture(root).ShouldContain("branch=" + CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
         CheckpointFixtureProcess.Git(root, "tag", "-d", "snap");
+        // A file of the branch's name in the git dir (as ORIG_HEAD is): git prints heads/<name> too.
+        File.WriteAllText(Path.Combine(root, ".git", "snap"), head + "\n");
+        GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+        File.Delete(Path.Combine(root, ".git", "snap"));
+        GitSnapshot.Branch(root).ShouldBe("snap");
 
         // Detached: git prints HEAD for the branch.
         CheckpointFixtureProcess.Git(root, "checkout", "-q", "--detach");
         GitSnapshot.Branch(root).ShouldBe("HEAD");
         GitSnapshot.Branch(root).ShouldBe(CheckpointFixtureProcess.Git(root, "rev-parse", "--abbrev-ref", "HEAD").Trim());
         GitSnapshot.Capture(root).ShouldContain("branch=HEAD");
-        GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("a detached checkout is read in process too");
+        if (inProcess) GitSnapshot.CaptureInProcess(root).ShouldNotBeNull("a detached checkout is read in process too");
     }
 
     private static ReportModel Model(string dir, int exit) => new()

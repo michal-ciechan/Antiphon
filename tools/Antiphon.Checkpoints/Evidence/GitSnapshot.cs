@@ -6,12 +6,11 @@ namespace Antiphon.Checkpoints;
 
 /// <summary>
 /// The human-readable git.txt a run keeps beside its evidence (HEAD, branch, status, recent log, and the diff stat
-/// against origin/master), and the branch a run registers under. HEAD, branch, log, merge base and diff stat are read
-/// in process with libgit2 for a checkout libgit2 opens at its root; the status stays one `git status --porcelain`
-/// child (libgit2 here does not read the user's or system config, which can change what status shows, such as
-/// core.autocrlf or an ignore file). git answers everything for anything else: a subdirectory, an unusual layout, an
-/// unborn or broken HEAD, an ambiguous branch name, libgit2 not loadable, any error. Log and diff stat are git's in
-/// substance, not byte for byte; the branch is exactly what `git rev-parse --abbrev-ref HEAD` prints.
+/// against origin/master), and the branch a run registers under. HEAD, branch and the merge base are read in process
+/// with libgit2 for a checkout libgit2 opens at its root, exactly as git prints them; status, log and diff stat stay
+/// git children, so their text is git's own (they follow the user's and system config, which libgit2 here does not
+/// read). git answers everything for anything else: a subdirectory, an unusual layout, an unborn or broken HEAD, a
+/// branch name git would print another way, libgit2 not loadable, any error.
 /// </summary>
 public static class GitSnapshot
 {
@@ -23,7 +22,7 @@ public static class GitSnapshot
         text.AppendLine("HEAD=" + Run(worktree, "rev-parse", "HEAD"));
         text.AppendLine("branch=" + Run(worktree, "rev-parse", "--abbrev-ref", "HEAD"));
         text.AppendLine("status:");
-        text.AppendLine(Run(worktree, "status", "--porcelain"));
+        text.AppendLine(Run(worktree, "--no-optional-locks", "status", "--porcelain"));
         text.AppendLine("log:");
         text.AppendLine(Run(worktree, "log", "-5", "--oneline"));
         var mergeBase = Run(worktree, "merge-base", "origin/master", "HEAD");
@@ -63,21 +62,25 @@ public static class GitSnapshot
                 return null;
             return read(repo);
         }
-        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException))
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
         {
             // Any failure (a missing object, an odd path, libgit2 not loadable): git answers, as before.
             return null;
         }
     }
 
-    // git prints refs/heads/<name> shortened as far as it stays unambiguous: "heads/<name>" when a ref of that
-    // short name exists elsewhere. Such a name is git's to print.
+    // git prints refs/heads/<name> shortened as far as it stays unambiguous (shorten_unambiguous_ref): "heads/<name>"
+    // when the bare name ($GIT_DIR/<name>, such as a branch called ORIG_HEAD) or a ref of that short name elsewhere
+    // also resolves. Such a name is git's to print.
     private static string? BranchOf(Repository repo)
     {
         if (repo.Info.IsHeadDetached) return "HEAD";
         var name = repo.Head.FriendlyName;
-        foreach (var other in new[] { "refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
+        foreach (var other in new[] { name, "refs/" + name, "refs/tags/" + name, "refs/remotes/" + name, "refs/remotes/" + name + "/HEAD" })
             if (repo.Refs[other] is not null) return null;
+        var common = Antiphon.GitInProcess.InProcessGitReads.CommonDirectory(repo.Info.Path);
+        if (File.Exists(Path.Combine(repo.Info.Path, name)) || common is null || File.Exists(Path.Combine(common, name)))
+            return null;
         return name;
     }
 
@@ -85,28 +88,20 @@ public static class GitSnapshot
     {
         var head = repo.Head.Tip;
         if (BranchOf(repo) is not { } branch) return null;
+        var upstream = repo.Branches["origin/master"]?.Tip;
+        var mergeBase = upstream is null ? null : repo.ObjectDatabase.FindMergeBase(upstream, head);
         var text = new StringBuilder();
         text.AppendLine("HEAD=" + head.Sha);
         text.AppendLine("branch=" + branch);
         text.AppendLine("status:");
-        text.AppendLine(Run(worktree, "status", "--porcelain"));
+        // --no-optional-locks: a diagnostic read never takes index.lock from a worktree an agent may be committing in.
+        text.AppendLine(Run(worktree, "--no-optional-locks", "status", "--porcelain"));
         text.AppendLine("log:");
-        text.AppendLine(string.Join('\n', repo.Commits.Take(5).Select(commit =>
-            repo.ObjectDatabase.ShortenObjectId(commit) + " " + commit.MessageShort)));
-        var upstream = repo.Branches["origin/master"]?.Tip;
-        var mergeBase = upstream is null ? null : repo.ObjectDatabase.FindMergeBase(upstream, head);
+        text.AppendLine(Run(worktree, "log", "-5", "--oneline"));
         if (mergeBase is not null)
         {
             text.AppendLine("diffstat:");
-            var patch = repo.Diff.Compare<Patch>(mergeBase.Tree, head.Tree,
-                new CompareOptions { Similarity = SimilarityOptions.Renames });
-            var lines = patch.Select(file => " " + file.Path.Replace('\\', '/') + " | "
-                + (file.IsBinaryComparison ? "Bin" : (file.LinesAdded + file.LinesDeleted).ToString(System.Globalization.CultureInfo.InvariantCulture))).ToList();
-            if (lines.Count > 0)
-                lines.Add(" " + lines.Count + (lines.Count == 1 ? " file changed" : " files changed")
-                    + (patch.LinesAdded > 0 ? ", " + patch.LinesAdded + (patch.LinesAdded == 1 ? " insertion(+)" : " insertions(+)") : "")
-                    + (patch.LinesDeleted > 0 ? ", " + patch.LinesDeleted + (patch.LinesDeleted == 1 ? " deletion(-)" : " deletions(-)") : ""));
-            text.AppendLine(string.Join('\n', lines));
+            text.AppendLine(Run(worktree, "diff", "--stat", mergeBase.Sha + "..HEAD"));
         }
 
         return text.ToString();
